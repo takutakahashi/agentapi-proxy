@@ -6,11 +6,13 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
 
 var (
 	port    string
-	config  string
+	cfg     string
 	verbose bool
 )
 
@@ -23,7 +25,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&port, "port", "p", "8080", "Port to listen on")
-	rootCmd.PersistentFlags().StringVarP(&config, "config", "c", "config.json", "Configuration file path")
+	rootCmd.PersistentFlags().StringVarP(&cfg, "config", "c", "config.json", "Configuration file path")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
 
 	// Bind flags to viper
@@ -43,16 +45,16 @@ func runProxy(cmd *cobra.Command, args []string) {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
 
-	cfg, err := LoadConfig(config)
+	config, err := config.LoadConfig(cfg)
 	if err != nil {
-		log.Printf("Failed to load config from %s, using defaults: %v", config, err)
-		cfg = DefaultConfig()
+		log.Printf("Failed to load config from %s, using defaults: %v", cfg, err)
+		config = config.DefaultConfig()
 	}
 
-	proxy := NewProxy(cfg, verbose)
+	proxyServer := proxy.NewProxy(config, verbose)
 
 	log.Printf("Starting agentapi-proxy on port %s", port)
-	if err := proxy.GetEcho().Start(":" + port); err != nil {
+	if err := proxyServer.GetEcho().Start(":" + port); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }

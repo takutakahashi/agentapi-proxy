@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
 // AgentSession represents a running agentapi server instance
@@ -32,7 +33,7 @@ type AgentSession struct {
 
 // Proxy represents the HTTP proxy server
 type Proxy struct {
-	config        *Config
+	config        *config.Config
 	echo          *echo.Echo
 	verbose       bool
 	sessions      map[string]*AgentSession
@@ -41,7 +42,7 @@ type Proxy struct {
 }
 
 // NewProxy creates a new proxy instance
-func NewProxy(config *Config, verbose bool) *Proxy {
+func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	e := echo.New()
 
 	// Disable Echo's default logger and use custom logging
@@ -51,7 +52,7 @@ func NewProxy(config *Config, verbose bool) *Proxy {
 	e.Use(middleware.Recover())
 
 	p := &Proxy{
-		config:        config,
+		config:        cfg,
 		echo:          e,
 		verbose:       verbose,
 		sessions:      make(map[string]*AgentSession),

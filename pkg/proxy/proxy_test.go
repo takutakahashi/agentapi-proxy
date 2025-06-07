@@ -1,25 +1,27 @@
-package main
+package proxy
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
 func TestNewProxy(t *testing.T) {
-	config := &Config{
+	cfg := &config.Config{
 		DefaultBackend: "http://localhost:3000",
 		Routes: map[string]string{
 			"/api/{org}/{repo}": "http://localhost:3001",
 		},
 	}
 
-	proxy := NewProxy(config, false)
+	proxy := NewProxy(cfg, false)
 	if proxy == nil {
 		t.Fatal("NewProxy returned nil")
 	}
 
-	if proxy.config != config {
+	if proxy.config != cfg {
 		t.Error("Proxy config not set correctly")
 	}
 
@@ -36,7 +38,7 @@ func TestProxyRouting(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	config := &Config{
+	cfg := &config.Config{
 		DefaultBackend: backend.URL,
 		Routes: map[string]string{
 			"/api/{org}/{repo}": backend.URL,
@@ -44,7 +46,7 @@ func TestProxyRouting(t *testing.T) {
 		},
 	}
 
-	proxy := NewProxy(config, true)
+	proxy := NewProxy(cfg, true)
 
 	tests := []struct {
 		name           string
@@ -83,13 +85,13 @@ func TestProxyRouting(t *testing.T) {
 }
 
 func TestProxyWithoutDefaultBackend(t *testing.T) {
-	config := &Config{
+	cfg := &config.Config{
 		Routes: map[string]string{
 			"/health": "http://localhost:3001",
 		},
 	}
 
-	proxy := NewProxy(config, false)
+	proxy := NewProxy(cfg, false)
 
 	// Test unmatched route without default backend
 	req := httptest.NewRequest("GET", "/nonexistent", nil)
@@ -103,13 +105,13 @@ func TestProxyWithoutDefaultBackend(t *testing.T) {
 }
 
 func TestProxyErrorHandling(t *testing.T) {
-	config := &Config{
+	cfg := &config.Config{
 		Routes: map[string]string{
 			"/api/{org}/{repo}": "http://invalid-backend:99999",
 		},
 	}
 
-	proxy := NewProxy(config, false)
+	proxy := NewProxy(cfg, false)
 
 	req := httptest.NewRequest("GET", "/api/test/repo", nil)
 	w := httptest.NewRecorder()
@@ -122,8 +124,8 @@ func TestProxyErrorHandling(t *testing.T) {
 }
 
 func TestStartAgentAPIServer(t *testing.T) {
-	config := DefaultConfig()
-	proxy := NewProxy(config, false)
+	cfg := config.DefaultConfig()
+	proxy := NewProxy(cfg, false)
 
 	req := httptest.NewRequest("POST", "/sessions/start", nil)
 	w := httptest.NewRecorder()
@@ -142,8 +144,8 @@ func TestStartAgentAPIServer(t *testing.T) {
 }
 
 func TestSessionRoutingNotFound(t *testing.T) {
-	config := DefaultConfig()
-	proxy := NewProxy(config, false)
+	cfg := config.DefaultConfig()
+	proxy := NewProxy(cfg, false)
 
 	// Test routing to non-existent session
 	req := httptest.NewRequest("GET", "/sessions/nonexistent-session-id/health", nil)
