@@ -13,14 +13,14 @@ func TestIntegrationFullProxy(t *testing.T) {
 	backend1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Backend", "backend1")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Response from backend 1"))
+		_, _ = w.Write([]byte("Response from backend 1"))
 	}))
 	defer backend1.Close()
 
 	backend2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Backend", "backend2")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Response from backend 2"))
+		_, _ = w.Write([]byte("Response from backend 2"))
 	}))
 	defer backend2.Close()
 
@@ -88,7 +88,7 @@ func TestIntegrationFullProxy(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			w := httptest.NewRecorder()
 
-			proxy.ServeHTTP(w, req)
+			proxy.GetEcho().ServeHTTP(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
@@ -133,7 +133,7 @@ func TestProxyHeaders(t *testing.T) {
 	req.Host = "example.com"
 	w := httptest.NewRecorder()
 
-	proxy.ServeHTTP(w, req)
+	proxy.GetEcho().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
@@ -156,7 +156,7 @@ func TestConcurrentRequests(t *testing.T) {
 		// Simulate some processing time
 		time.Sleep(10 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	}))
 	defer backend.Close()
 
@@ -176,7 +176,7 @@ func TestConcurrentRequests(t *testing.T) {
 		go func(id int) {
 			req := httptest.NewRequest("GET", "/api/org/repo", nil)
 			w := httptest.NewRecorder()
-			proxy.ServeHTTP(w, req)
+			proxy.GetEcho().ServeHTTP(w, req)
 			results <- w.Code
 		}(i)
 	}

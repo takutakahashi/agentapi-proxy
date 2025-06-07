@@ -1,4 +1,4 @@
-.PHONY: help build test lint clean docker-build docker-push e2e ci
+.PHONY: help install-deps build test lint clean docker-build docker-push e2e ci
 
 BINARY_NAME := agentapi-proxy
 GO_FILES := $(shell find . -name "*.go" -type f)
@@ -9,6 +9,7 @@ FULL_IMAGE_NAME := $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
 
 help:
 	@echo "Available targets:"
+	@echo "  install-deps - Install project dependencies"
 	@echo "  build        - Build the Go binary"
 	@echo "  test         - Run Go tests"
 	@echo "  lint         - Run linters (golangci-lint)"
@@ -18,10 +19,21 @@ help:
 	@echo "  e2e          - Run end-to-end tests"
 	@echo "  ci           - Run CI pipeline (lint, test, build)"
 
+install-deps:
+	@echo "Installing project dependencies..."
+	@echo "Installing Go modules..."
+	go mod download
+	@echo "Installing golangci-lint..."
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not found, installing..."; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
+	}
+	@echo "Dependencies installed successfully"
+
 build:
 	@echo "Building $(BINARY_NAME)..."
 	go mod tidy
-	go build -o bin/$(BINARY_NAME) ./cmd/$(BINARY_NAME)
+	go build -o bin/$(BINARY_NAME)
 
 test:
 	@echo "Running tests..."

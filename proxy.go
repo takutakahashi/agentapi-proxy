@@ -101,7 +101,12 @@ func (p *Proxy) createProxyHandler(backendURL string) echo.HandlerFunc {
 		originalDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
 			originalDirector(req)
-			req.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
+			// Preserve the original Host header from the Echo context
+			originalHost := c.Request().Host
+			if originalHost == "" {
+				originalHost = c.Request().Header.Get("Host")
+			}
+			req.Header.Set("X-Forwarded-Host", originalHost)
 			req.Header.Set("X-Forwarded-Proto", "http")
 			if req.TLS != nil {
 				req.Header.Set("X-Forwarded-Proto", "https")

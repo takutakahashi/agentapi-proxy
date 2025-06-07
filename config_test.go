@@ -51,12 +51,12 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	if _, err := tmpfile.Write(configData); err != nil {
 		t.Fatalf("Failed to write config file: %v", err)
 	}
-	tmpfile.Close()
+	_ = tmpfile.Close()
 
 	// Load the config
 	loadedConfig, err := LoadConfig(tmpfile.Name())
@@ -83,13 +83,13 @@ func TestLoadConfigInvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	invalidJSON := `{"invalid": json}`
 	if _, err := tmpfile.WriteString(invalidJSON); err != nil {
 		t.Fatalf("Failed to write invalid JSON: %v", err)
 	}
-	tmpfile.Close()
+	_ = tmpfile.Close()
 
 	_, err = LoadConfig(tmpfile.Name())
 	if err == nil {
