@@ -33,7 +33,7 @@ install-deps:
 build:
 	@echo "Building $(BINARY_NAME)..."
 	go mod tidy
-	go build -o bin/$(BINARY_NAME)
+	go build -o bin/$(BINARY_NAME) ./cmd/agentapi-proxy
 
 test:
 	@echo "Running tests..."
