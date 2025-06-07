@@ -1,0 +1,19 @@
+run:
+  timeout: 5m
+  go: '1.23'
+  skip-dirs:
+    - vendor
+
+linters:
+  disable-all: true
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - errcheck
+
+linters-settings:
+  govet:
+    check-shadowing: false
+  errcheck:
+    check-type-assertions: false

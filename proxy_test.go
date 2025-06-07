@@ -125,19 +125,19 @@ func TestStartAgentAPIServer(t *testing.T) {
 	config := DefaultConfig()
 	proxy := NewProxy(config, false)
 
-	req := httptest.NewRequest("POST", "/start", nil)
+	req := httptest.NewRequest("POST", "/sessions/start", nil)
 	w := httptest.NewRecorder()
 
 	proxy.GetEcho().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("Expected status %d for /start endpoint, got %d", http.StatusOK, w.Code)
+		t.Errorf("Expected status %d for /sessions/start endpoint, got %d", http.StatusOK, w.Code)
 	}
 
 	// Check if response contains session_id
 	response := w.Body.String()
 	if response == "" {
-		t.Error("Expected non-empty response from /start endpoint")
+		t.Error("Expected non-empty response from /sessions/start endpoint")
 	}
 }
 
@@ -146,7 +146,7 @@ func TestSessionRoutingNotFound(t *testing.T) {
 	proxy := NewProxy(config, false)
 
 	// Test routing to non-existent session
-	req := httptest.NewRequest("GET", "/nonexistent-session-id/health", nil)
+	req := httptest.NewRequest("GET", "/sessions/nonexistent-session-id/health", nil)
 	w := httptest.NewRecorder()
 
 	proxy.GetEcho().ServeHTTP(w, req)
