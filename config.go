@@ -1,32 +1,44 @@
 package main
 
 import (
-	"encoding/json"
-	"os"
+	"github.com/spf13/viper"
 )
 
 // Config represents the proxy configuration
 type Config struct {
 	// DefaultBackend is used when no route matches
-	DefaultBackend string `json:"default_backend,omitempty"`
+	DefaultBackend string `mapstructure:"default_backend"`
 	
 	// Routes maps path patterns to backend URLs
 	// Pattern can include variables like {org} and {repo}
-	Routes map[string]string `json:"routes"`
+	Routes map[string]string `mapstructure:"routes"`
 }
 
-// LoadConfig loads configuration from a JSON file
+// LoadConfig loads configuration using Viper
 func LoadConfig(filename string) (*Config, error) {
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, err
+	viper.SetConfigFile(filename)
+	viper.SetConfigType("json")
+	
+	// Set default values
+	viper.SetDefault("default_backend", "http://localhost:3000")
+	viper.SetDefault("routes", map[string]string{
+		"/api/{org}/{repo}": "http://localhost:3000",
+		"/health":           "http://localhost:3000",
+	})
+	
+	// Read the config file
+	if err := viper.ReadInConfig(); err != nil {
+		// If file doesn't exist, use defaults
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, err
+		}
 	}
-
+	
 	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
+	if err := viper.Unmarshal(&config); err != nil {
 		return nil, err
 	}
-
+	
 	return &config, nil
 }
 

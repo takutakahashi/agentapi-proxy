@@ -2,7 +2,11 @@ module github.com/takutakahashi/agentapi-proxy
 
 go 1.19
 
-require github.com/labstack/echo/v4 v4.12.0
+require (
+	github.com/labstack/echo/v4 v4.12.0
+	github.com/spf13/cobra v1.8.0
+	github.com/spf13/viper v1.18.2
+)
 
 require (
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
