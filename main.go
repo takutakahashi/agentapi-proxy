@@ -28,7 +28,7 @@ func main() {
 	proxy := NewProxy(cfg, *verbose)
 	
 	log.Printf("Starting agentapi-proxy on port %s", *port)
-	if err := http.ListenAndServe(":"+*port, proxy); err != nil {
+	if err := proxy.GetEcho().Start(":" + *port); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }

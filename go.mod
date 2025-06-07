@@ -3,5 +3,5 @@ module github.com/takutakahashi/agentapi-proxy
 go 1.21
 
 require (
-	github.com/gorilla/mux v1.8.1
+	github.com/labstack/echo/v4 v4.12.0
 )

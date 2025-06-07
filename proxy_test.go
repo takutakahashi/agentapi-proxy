@@ -23,8 +23,8 @@ func TestNewProxy(t *testing.T) {
 		t.Error("Proxy config not set correctly")
 	}
 
-	if proxy.router == nil {
-		t.Error("Router not initialized")
+	if proxy.echo == nil {
+		t.Error("Echo instance not initialized")
 	}
 }
 
@@ -73,7 +73,7 @@ func TestProxyRouting(t *testing.T) {
 			req := httptest.NewRequest("GET", tt.path, nil)
 			w := httptest.NewRecorder()
 
-			proxy.ServeHTTP(w, req)
+			proxy.GetEcho().ServeHTTP(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
@@ -95,7 +95,7 @@ func TestProxyWithoutDefaultBackend(t *testing.T) {
 	req := httptest.NewRequest("GET", "/nonexistent", nil)
 	w := httptest.NewRecorder()
 
-	proxy.ServeHTTP(w, req)
+	proxy.GetEcho().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("Expected status %d, got %d", http.StatusNotFound, w.Code)
@@ -114,7 +114,7 @@ func TestProxyErrorHandling(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/test/repo", nil)
 	w := httptest.NewRecorder()
 
-	proxy.ServeHTTP(w, req)
+	proxy.GetEcho().ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadGateway {
 		t.Errorf("Expected status %d for invalid backend, got %d", http.StatusBadGateway, w.Code)
