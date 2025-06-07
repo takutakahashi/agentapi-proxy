@@ -45,13 +45,13 @@ func runProxy(cmd *cobra.Command, args []string) {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
 
-	config, err := config.LoadConfig(cfg)
+	configData, err := config.LoadConfig(cfg)
 	if err != nil {
 		log.Printf("Failed to load config from %s, using defaults: %v", cfg, err)
-		config = config.DefaultConfig()
+		configData = config.DefaultConfig()
 	}
 
-	proxyServer := proxy.NewProxy(config, verbose)
+	proxyServer := proxy.NewProxy(configData, verbose)
 
 	log.Printf("Starting agentapi-proxy on port %s", port)
 	if err := proxyServer.GetEcho().Start(":" + port); err != nil {

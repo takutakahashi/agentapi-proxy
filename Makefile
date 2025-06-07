@@ -1,4 +1,4 @@
-.PHONY: help install-deps build test lint clean docker-build docker-push e2e ci
+.PHONY: help install-deps build test lint clean docker-build docker-push e2e ci gofmt
 
 BINARY_NAME := agentapi-proxy
 GO_FILES := $(shell find . -name "*.go" -type f)
@@ -13,6 +13,7 @@ help:
 	@echo "  build        - Build the Go binary"
 	@echo "  test         - Run Go tests"
 	@echo "  lint         - Run linters (golangci-lint)"
+	@echo "  gofmt        - Format Go code with gofmt -s -w"
 	@echo "  clean        - Clean build artifacts"
 	@echo "  docker-build - Build Docker image"
 	@echo "  docker-push  - Push Docker image to registry"
@@ -35,11 +36,15 @@ build:
 	go mod tidy
 	go build -o bin/$(BINARY_NAME) ./cmd/agentapi-proxy
 
-test:
+gofmt:
+	@echo "Formatting Go code..."
+	gofmt -s -w $(GO_FILES)
+
+test: gofmt
 	@echo "Running tests..."
 	go test -v -race ./...
 
-lint:
+lint: gofmt
 	@echo "Running linters..."
 	golangci-lint run --timeout=5m
 
