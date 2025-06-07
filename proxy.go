@@ -9,11 +9,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/coder/agentapi"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -23,7 +24,7 @@ import (
 type AgentSession struct {
 	ID        string
 	Port      int
-	Server    *http.Server
+	Process   *exec.Cmd
 	Cancel    context.CancelFunc
 	StartedAt time.Time
 }
@@ -293,7 +294,7 @@ func (p *Proxy) getAvailablePort() (int, error) {
 	return 0, fmt.Errorf("no available ports in range %d-%d", p.nextPort, p.nextPort+1000)
 }
 
-// runAgentAPIServer runs an agentapi server instance
+// runAgentAPIServer runs an agentapi server instance using exec.Command
 func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
 	defer func() {
 		// Clean up session when server stops
@@ -305,48 +306,75 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
 			log.Printf("Cleaned up session %s", session.ID)
 		}
 	}()
-	// Create agentapi server configuration
+
+	// Create agentapi command
 	serverAddr := fmt.Sprintf(":%d", session.Port)
-	
-	// Create agentapi server instance
-	server, err := agentapi.NewServer(agentapi.ServerOptions{
-		Address: serverAddr,
-	})
-	if err != nil {
-		log.Printf("Failed to create agentapi server for session %s: %v", session.ID, err)
-		return
-	}
-	
-	// Create HTTP server with agentapi handler
-	srv := &http.Server{
-		Addr:    serverAddr,
-		Handler: server,
-	}
+	cmd := exec.CommandContext(ctx, "agentapi", "server", "--addr", serverAddr)
 
-	session.Server = srv
+	// Set process group ID for proper cleanup
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	// Start server in a goroutine
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("AgentAPI server error for session %s: %v", session.ID, err)
-		}
-	}()
+	// Store the command in the session
+	session.Process = cmd
 
 	if p.verbose {
-		log.Printf("AgentAPI server started for session %s on %s", session.ID, serverAddr)
+		log.Printf("Starting agentapi process for session %s on %s", session.ID, serverAddr)
 	}
 
-	// Wait for context cancellation
-	<-ctx.Done()
+	// Start the process
+	if err := cmd.Start(); err != nil {
+		log.Printf("Failed to start agentapi process for session %s: %v", session.ID, err)
+		return
+	}
 
-	// Shutdown server gracefully
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
+	if p.verbose {
+		log.Printf("AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
+	}
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Error shutting down agentapi server for session %s: %v", session.ID, err)
-	} else if p.verbose {
-		log.Printf("AgentAPI server stopped for session %s", session.ID)
+	// Wait for the process to finish or context cancellation
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Context cancelled, terminate the process
+		if p.verbose {
+			log.Printf("Terminating agentapi process for session %s", session.ID)
+		}
+
+		// Try graceful shutdown first (SIGTERM)
+		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+			log.Printf("Failed to send SIGTERM to process %d: %v", cmd.Process.Pid, err)
+		}
+
+		// Wait for graceful shutdown with timeout
+		gracefulTimeout := time.After(5 * time.Second)
+		select {
+		case <-done:
+			if p.verbose {
+				log.Printf("AgentAPI process for session %s terminated gracefully", session.ID)
+			}
+		case <-gracefulTimeout:
+			// Force kill if graceful shutdown failed
+			if p.verbose {
+				log.Printf("Force killing agentapi process for session %s", session.ID)
+			}
+			if err := cmd.Process.Kill(); err != nil {
+				log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, err)
+			} else {
+				<-done // Wait for the process to actually exit
+			}
+		}
+
+	case err := <-done:
+		// Process finished on its own
+		if err != nil {
+			log.Printf("AgentAPI process for session %s exited with error: %v", session.ID, err)
+		} else if p.verbose {
+			log.Printf("AgentAPI process for session %s exited normally", session.ID)
+		}
 	}
 }
 
