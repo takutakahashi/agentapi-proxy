@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
 
 func TestIntegrationFullProxy(t *testing.T) {
@@ -24,7 +27,7 @@ func TestIntegrationFullProxy(t *testing.T) {
 	}))
 	defer backend2.Close()
 
-	config := &Config{
+	cfg := &config.Config{
 		DefaultBackend: backend1.URL,
 		Routes: map[string]string{
 			"/api/{org}/{repo}":        backend1.URL,
@@ -33,7 +36,7 @@ func TestIntegrationFullProxy(t *testing.T) {
 		},
 	}
 
-	proxy := NewProxy(config, true)
+	proxyServer := proxy.NewProxy(cfg, true)
 
 	tests := []struct {
 		name             string
@@ -88,7 +91,7 @@ func TestIntegrationFullProxy(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			w := httptest.NewRecorder()
 
-			proxy.GetEcho().ServeHTTP(w, req)
+			proxyServer.GetEcho().ServeHTTP(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
@@ -121,19 +124,19 @@ func TestProxyHeaders(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	config := &Config{
+	cfg := &config.Config{
 		Routes: map[string]string{
 			"/test": backend.URL,
 		},
 	}
 
-	proxy := NewProxy(config, false)
+	proxyServer := proxy.NewProxy(cfg, false)
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Host = "example.com"
 	w := httptest.NewRecorder()
 
-	proxy.GetEcho().ServeHTTP(w, req)
+	proxyServer.GetEcho().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
@@ -160,13 +163,13 @@ func TestConcurrentRequests(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	config := &Config{
+	cfg := &config.Config{
 		Routes: map[string]string{
 			"/api/{org}/{repo}": backend.URL,
 		},
 	}
 
-	proxy := NewProxy(config, false)
+	proxyServer := proxy.NewProxy(cfg, false)
 
 	// Test concurrent requests
 	const numRequests = 10
@@ -176,7 +179,7 @@ func TestConcurrentRequests(t *testing.T) {
 		go func(id int) {
 			req := httptest.NewRequest("GET", "/api/org/repo", nil)
 			w := httptest.NewRecorder()
-			proxy.GetEcho().ServeHTTP(w, req)
+			proxyServer.GetEcho().ServeHTTP(w, req)
 			results <- w.Code
 		}(i)
 	}
