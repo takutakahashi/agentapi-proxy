@@ -27,9 +27,15 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
 
 	// Bind flags to viper
-	viper.BindPFlag("port", rootCmd.PersistentFlags().Lookup("port"))
-	viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
-	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+	if err := viper.BindPFlag("port", rootCmd.PersistentFlags().Lookup("port")); err != nil {
+		log.Printf("Failed to bind port flag: %v", err)
+	}
+	if err := viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config")); err != nil {
+		log.Printf("Failed to bind config flag: %v", err)
+	}
+	if err := viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose")); err != nil {
+		log.Printf("Failed to bind verbose flag: %v", err)
+	}
 }
 
 func runProxy(cmd *cobra.Command, args []string) {
@@ -44,7 +50,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	proxy := NewProxy(cfg, verbose)
-	
+
 	log.Printf("Starting agentapi-proxy on port %s", port)
 	if err := proxy.GetEcho().Start(":" + port); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
