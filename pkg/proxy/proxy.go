@@ -288,7 +288,9 @@ func (p *Proxy) getAvailablePort() (int, error) {
 	for port := p.nextPort; port < p.nextPort+1000; port++ {
 		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err == nil {
-			ln.Close()
+			if err := ln.Close(); err != nil {
+				log.Printf("Failed to close listener: %v", err)
+			}
 			p.nextPort = port + 1
 			return port, nil
 		}
