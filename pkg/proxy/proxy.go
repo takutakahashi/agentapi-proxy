@@ -2,14 +2,18 @@ package proxy
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +25,9 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
+
+//go:embed scripts/*
+var scriptsFS embed.FS
 
 // AgentSession represents a running agentapi server instance
 type AgentSession struct {
@@ -183,6 +190,9 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to allocate port")
 	}
 
+	// Determine which script to use based on request parameters
+	scriptName := p.selectScript(c)
+
 	// Start agentapi server in goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -199,10 +209,14 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	p.sessionsMutex.Unlock()
 
 	// Start agentapi server in goroutine
-	go p.runAgentAPIServer(ctx, session)
+	go p.runAgentAPIServer(ctx, session, scriptName)
 
 	if p.verbose {
-		log.Printf("Started agentapi server for session %s on port %d", sessionID, port)
+		if scriptName != "" {
+			log.Printf("Started agentapi server for session %s on port %d using script %s", sessionID, port, scriptName)
+		} else {
+			log.Printf("Started agentapi server for session %s on port %d using direct command", sessionID, port)
+		}
 	}
 
 	// Return session ID
@@ -210,6 +224,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		"session_id": sessionID,
 		"port":       port,
 		"started_at": session.StartedAt,
+		"script":     scriptName,
 	})
 }
 
@@ -296,9 +311,18 @@ func (p *Proxy) getAvailablePort() (int, error) {
 	return 0, fmt.Errorf("no available ports in range %d-%d", p.nextPort, p.nextPort+1000)
 }
 
-// runAgentAPIServer runs an agentapi server instance using exec.Command
-func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
+// runAgentAPIServer runs an agentapi server instance using exec.Command or scripts
+func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string) {
+	var tmpScriptPath string
+	
 	defer func() {
+		// Clean up temporary script file if it was created
+		if tmpScriptPath != "" {
+			if err := os.Remove(tmpScriptPath); err != nil && p.verbose {
+				log.Printf("Failed to remove temporary script file %s: %v", tmpScriptPath, err)
+			}
+		}
+
 		// Clean up session when server stops
 		p.sessionsMutex.Lock()
 		delete(p.sessions, session.ID)
@@ -309,18 +333,37 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
 		}
 	}()
 
-	// Create agentapi command
-	cmd := exec.CommandContext(ctx, "agentapi", "server", "--port", strconv.Itoa(session.Port))
+	var cmd *exec.Cmd
+
+	if scriptName != "" {
+		// Extract script to temporary file
+		var err error
+		tmpScriptPath, err = p.extractScriptToTempFile(scriptName)
+		if err != nil {
+			log.Printf("Failed to extract script %s for session %s: %v", scriptName, session.ID, err)
+			return
+		}
+
+		// Execute script with port as argument
+		cmd = exec.CommandContext(ctx, "/bin/bash", tmpScriptPath, strconv.Itoa(session.Port))
+		
+		if p.verbose {
+			log.Printf("Starting agentapi process for session %s on %d using script %s", session.ID, session.Port, scriptName)
+		}
+	} else {
+		// Use direct agentapi command (fallback)
+		cmd = exec.CommandContext(ctx, "agentapi", "server", "--port", strconv.Itoa(session.Port))
+		
+		if p.verbose {
+			log.Printf("Starting agentapi process for session %s on %d using direct command", session.ID, session.Port)
+		}
+	}
 
 	// Set process group ID for proper cleanup
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Store the command in the session
 	session.Process = cmd
-
-	if p.verbose {
-		log.Printf("Starting agentapi process for session %s on %d", session.ID, session.Port)
-	}
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -377,6 +420,50 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
 	}
+}
+
+// extractScriptToTempFile extracts an embedded script to a temporary file and returns the file path
+func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
+	// Read the script content from embedded filesystem
+	scriptPath := filepath.Join("scripts", scriptName)
+	content, err := scriptsFS.ReadFile(scriptPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read embedded script %s: %v", scriptName, err)
+	}
+
+	// Create temporary file
+	tmpFile, err := ioutil.TempFile("", fmt.Sprintf("agentapi-script-*.sh"))
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary file: %v", err)
+	}
+
+	// Write script content to temporary file
+	if _, err := tmpFile.Write(content); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("failed to write script content: %v", err)
+	}
+
+	// Make the file executable
+	if err := tmpFile.Chmod(0755); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("failed to make script executable: %v", err)
+	}
+
+	tmpFile.Close()
+	return tmpFile.Name(), nil
+}
+
+// selectScript determines which script to use based on request parameters
+func (p *Proxy) selectScript(c echo.Context) string {
+	// Check if github_repo parameter is present
+	if githubRepo := c.QueryParam("github_repo"); githubRepo != "" {
+		return "agentapi_with_github.sh"
+	}
+
+	// Default to direct agentapi execution (no script)
+	return ""
 }
 
 // GetEcho returns the Echo instance for external access
