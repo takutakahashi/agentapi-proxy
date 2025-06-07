@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -308,8 +309,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
 	}()
 
 	// Create agentapi command
-	serverAddr := fmt.Sprintf(":%d", session.Port)
-	cmd := exec.CommandContext(ctx, "agentapi", "server", "--addr", serverAddr)
+	cmd := exec.CommandContext(ctx, "agentapi", "server", "--port", strconv.Itoa(session.Port))
 
 	// Set process group ID for proper cleanup
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -318,7 +318,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
 	session.Process = cmd
 
 	if p.verbose {
-		log.Printf("Starting agentapi process for session %s on %s", session.ID, serverAddr)
+		log.Printf("Starting agentapi process for session %s on %d", session.ID, session.Port)
 	}
 
 	// Start the process
