@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/agentapi"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -306,21 +307,22 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
 		}
 	}()
 	
-	// Create agentapi server
-	// Note: This is a placeholder implementation since we need to understand
-	// the actual agentapi server.Server interface from coder/agentapi
+	// Create agentapi server configuration
 	serverAddr := fmt.Sprintf(":%d", session.Port)
 	
-	// Create a simple HTTP server for now - this would be replaced with actual agentapi server
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "ok", "session": "` + session.ID + `"}`))
+	// Create agentapi server instance
+	server, err := agentapi.NewServer(agentapi.ServerOptions{
+		Address: serverAddr,
 	})
+	if err != nil {
+		log.Printf("Failed to create agentapi server for session %s: %v", session.ID, err)
+		return
+	}
 	
+	// Create HTTP server with agentapi handler
 	srv := &http.Server{
 		Addr:    serverAddr,
-		Handler: mux,
+		Handler: server,
 	}
 	
 	session.Server = srv
