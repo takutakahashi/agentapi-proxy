@@ -31,9 +31,10 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Install golangci-lint
-      run: |
-        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.54.2
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
 
     - name: Run CI pipeline
-      run: make ci
+      run: make test
