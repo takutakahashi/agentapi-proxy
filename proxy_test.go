@@ -120,3 +120,38 @@ func TestProxyErrorHandling(t *testing.T) {
 		t.Errorf("Expected status %d for invalid backend, got %d", http.StatusBadGateway, w.Code)
 	}
 }
+
+func TestStartAgentAPIServer(t *testing.T) {
+	config := DefaultConfig()
+	proxy := NewProxy(config, false)
+
+	req := httptest.NewRequest("POST", "/start", nil)
+	w := httptest.NewRecorder()
+
+	proxy.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d for /start endpoint, got %d", http.StatusOK, w.Code)
+	}
+
+	// Check if response contains session_id
+	response := w.Body.String()
+	if response == "" {
+		t.Error("Expected non-empty response from /start endpoint")
+	}
+}
+
+func TestSessionRoutingNotFound(t *testing.T) {
+	config := DefaultConfig()
+	proxy := NewProxy(config, false)
+
+	// Test routing to non-existent session
+	req := httptest.NewRequest("GET", "/nonexistent-session-id/health", nil)
+	w := httptest.NewRecorder()
+
+	proxy.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status %d for non-existent session, got %d", http.StatusNotFound, w.Code)
+	}
+}
