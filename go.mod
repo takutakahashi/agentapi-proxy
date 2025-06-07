@@ -3,6 +3,7 @@ module github.com/takutakahashi/agentapi-proxy
 go 1.23
 
 require (
+	github.com/coder/agentapi v1.0.0
 	github.com/google/uuid v1.6.0
 	github.com/labstack/echo/v4 v4.12.0
 	github.com/spf13/cobra v1.8.0
