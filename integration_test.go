@@ -356,3 +356,122 @@ func TestClientErrorHandling(t *testing.T) {
 		t.Error("Expected error when getting status from invalid session")
 	}
 }
+
+func TestTagFunctionality(t *testing.T) {
+	cfg := config.DefaultConfig()
+	proxyServer := proxy.NewProxy(cfg, false)
+
+	server := httptest.NewServer(proxyServer.GetEcho())
+	defer server.Close()
+
+	clientInstance := client.NewClient(server.URL)
+	ctx := context.Background()
+
+	// Test 1: Start sessions with different tags
+	startReq1 := &client.StartRequest{
+		UserID: "tag-test-user",
+		Tags: map[string]string{
+			"repository": "agentapi-proxy",
+			"branch":     "main",
+			"env":        "test",
+		},
+	}
+
+	startResp1, err := clientInstance.Start(ctx, startReq1)
+	if err != nil {
+		t.Fatalf("Failed to start session with tags: %v", err)
+	}
+
+	startReq2 := &client.StartRequest{
+		UserID: "tag-test-user",
+		Tags: map[string]string{
+			"repository": "agentapi",
+			"branch":     "develop",
+			"env":        "test",
+		},
+	}
+
+	startResp2, err := clientInstance.Start(ctx, startReq2)
+	if err != nil {
+		t.Fatalf("Failed to start second session with tags: %v", err)
+	}
+
+	// Test 2: Search with tag filters
+	searchResp, err := clientInstance.SearchWithTags(ctx, "tag-test-user", "", map[string]string{
+		"repository": "agentapi-proxy",
+	})
+	if err != nil {
+		t.Fatalf("Failed to search sessions with tags: %v", err)
+	}
+
+	// Should find only the first session
+	if len(searchResp.Sessions) != 1 {
+		t.Errorf("Expected 1 session with repository=agentapi-proxy, got %d", len(searchResp.Sessions))
+	}
+
+	if len(searchResp.Sessions) > 0 {
+		session := searchResp.Sessions[0]
+		if session.SessionID != startResp1.SessionID {
+			t.Errorf("Expected session ID %s, got %s", startResp1.SessionID, session.SessionID)
+		}
+		if session.Tags["repository"] != "agentapi-proxy" {
+			t.Errorf("Expected repository tag 'agentapi-proxy', got '%s'", session.Tags["repository"])
+		}
+		if session.Tags["branch"] != "main" {
+			t.Errorf("Expected branch tag 'main', got '%s'", session.Tags["branch"])
+		}
+	}
+
+	// Test 3: Search with multiple tag filters
+	searchResp, err = clientInstance.SearchWithTags(ctx, "", "", map[string]string{
+		"env":    "test",
+		"branch": "develop",
+	})
+	if err != nil {
+		t.Fatalf("Failed to search sessions with multiple tags: %v", err)
+	}
+
+	// Should find only the second session
+	if len(searchResp.Sessions) != 1 {
+		t.Errorf("Expected 1 session with env=test and branch=develop, got %d", len(searchResp.Sessions))
+	}
+
+	if len(searchResp.Sessions) > 0 {
+		session := searchResp.Sessions[0]
+		if session.SessionID != startResp2.SessionID {
+			t.Errorf("Expected session ID %s, got %s", startResp2.SessionID, session.SessionID)
+		}
+	}
+
+	// Test 4: Search with non-matching tag
+	searchResp, err = clientInstance.SearchWithTags(ctx, "", "", map[string]string{
+		"nonexistent": "value",
+	})
+	if err != nil {
+		t.Fatalf("Failed to search sessions with non-matching tag: %v", err)
+	}
+
+	if len(searchResp.Sessions) != 0 {
+		t.Errorf("Expected 0 sessions with nonexistent tag, got %d", len(searchResp.Sessions))
+	}
+
+	// Test 5: Search all sessions by user and verify tags are included
+	searchResp, err = clientInstance.Search(ctx, "tag-test-user", "")
+	if err != nil {
+		t.Fatalf("Failed to search all sessions: %v", err)
+	}
+
+	if len(searchResp.Sessions) != 2 {
+		t.Errorf("Expected 2 sessions for tag-test-user, got %d", len(searchResp.Sessions))
+	}
+
+	// Verify all sessions have tags
+	for _, session := range searchResp.Sessions {
+		if session.Tags == nil {
+			t.Error("Session should have tags field")
+		}
+		if len(session.Tags) == 0 {
+			t.Error("Session should have non-empty tags")
+		}
+	}
+}
