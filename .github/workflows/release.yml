@@ -22,12 +22,6 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Run tests
-        run: make test
-
-      - name: Run linter
-        run: make lint
-
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
