@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"io"
 	"log"
@@ -11,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +22,17 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+)
+
+//go:embed scripts/*
+var embeddedScripts embed.FS
+
+// embedded script cache
+var scriptCache map[string][]byte
+
+const (
+	ScriptWithGithub = "agentapi_with_github.sh"
+	ScriptDefault    = "agentapi_default.sh"
 )
 
 // AgentSession represents a running agentapi server instance
@@ -55,6 +66,23 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 
 	// Add recovery middleware
 	e.Use(middleware.Recover())
+
+	// --- scriptCache初期化 ---
+	if scriptCache == nil {
+		scriptCache = make(map[string][]byte)
+		entries, err := embeddedScripts.ReadDir("scripts")
+		if err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					b, err := embeddedScripts.ReadFile("scripts/" + entry.Name())
+					if err == nil {
+						scriptCache[entry.Name()] = b
+					}
+				}
+			}
+		}
+	}
+	// --- ここまで ---
 
 	p := &Proxy{
 		config:        cfg,
@@ -146,7 +174,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	}
 
 	// Determine which script to use based on request parameters
-	scriptName := p.selectScript(c)
+	scriptName := p.selectScript(c, scriptCache)
 
 	// Start agentapi server in goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -164,7 +192,8 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	p.sessionsMutex.Lock()
 	p.sessions[sessionID] = session
 	p.sessionsMutex.Unlock()
-
+	log.Printf("session: %+v", session)
+	log.Printf("scriptName: %s", scriptName)
 	// Start agentapi server in goroutine
 	go p.runAgentAPIServer(ctx, session, scriptName)
 
@@ -309,6 +338,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 		if p.verbose {
 			log.Printf("Starting agentapi process for session %s on %d using script %s", session.ID, session.Port, scriptName)
+			log.Printf("[VERBOSE] Executing command: /bin/bash %s %s", tmpScriptPath, strconv.Itoa(session.Port))
 		}
 	} else {
 		// Use direct agentapi command (fallback)
@@ -316,6 +346,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 		if p.verbose {
 			log.Printf("Starting agentapi process for session %s on %d using direct command", session.ID, session.Port)
+			log.Printf("[VERBOSE] Executing command: agentapi server --port %s", strconv.Itoa(session.Port))
 		}
 	}
 
@@ -384,11 +415,10 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 // extractScriptToTempFile extracts a script to a temporary file and returns the file path
 func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
-	// Read the script content from filesystem
-	scriptPath := filepath.Join("scripts", scriptName)
-	content, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read script %s: %v", scriptName, err)
+	// scriptCache からスクリプト内容を取得
+	content, ok := scriptCache[scriptName]
+	if !ok {
+		return "", fmt.Errorf("script %s not found in embedded cache", scriptName)
 	}
 
 	// Create temporary file
@@ -426,13 +456,15 @@ func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
 }
 
 // selectScript determines which script to use based on request parameters
-func (p *Proxy) selectScript(c echo.Context) string {
-	// Check if github_repo parameter is present
+func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte) string {
 	if githubRepo := c.QueryParam("github_repo"); githubRepo != "" {
-		return "agentapi_with_github.sh"
+		if _, ok := scriptCache[ScriptWithGithub]; ok {
+			return ScriptWithGithub
+		}
 	}
-
-	// Default to direct agentapi execution (no script)
+	if _, ok := scriptCache[ScriptDefault]; ok {
+		return ScriptDefault
+	}
 	return ""
 }
 
