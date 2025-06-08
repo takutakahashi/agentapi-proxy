@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/client"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
@@ -174,5 +176,183 @@ func TestConcurrentSessionRequests(t *testing.T) {
 
 	if len(sessionIDs) != numSessions {
 		t.Errorf("Expected %d unique sessions, got %d", numSessions, len(sessionIDs))
+	}
+}
+
+func TestClientIntegration(t *testing.T) {
+	cfg := config.DefaultConfig()
+	proxyServer := proxy.NewProxy(cfg, false)
+
+	server := httptest.NewServer(proxyServer.GetEcho())
+	defer server.Close()
+
+	clientInstance := client.NewClient(server.URL)
+	ctx := context.Background()
+
+	// Test 1: Start a new session
+	startReq := &client.StartRequest{
+		UserID: "integration-test-user",
+		Environment: map[string]string{
+			"TEST_ENV": "integration_test",
+		},
+	}
+
+	startResp, err := clientInstance.Start(ctx, startReq)
+	if err != nil {
+		t.Fatalf("Failed to start session: %v", err)
+	}
+
+	if startResp.SessionID == "" {
+		t.Fatal("Expected non-empty session ID")
+	}
+
+	sessionID := startResp.SessionID
+
+	// Test 2: Search for sessions
+	searchResp, err := clientInstance.Search(ctx, "integration-test-user", "")
+	if err != nil {
+		t.Fatalf("Failed to search sessions: %v", err)
+	}
+
+	found := false
+	for _, session := range searchResp.Sessions {
+		if session.SessionID == sessionID {
+			found = true
+			if session.UserID != "integration-test-user" {
+				t.Errorf("Expected UserID 'integration-test-user', got %s", session.UserID)
+			}
+			if session.Status != "active" {
+				t.Errorf("Expected status 'active', got %s", session.Status)
+			}
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("Session %s not found in search results", sessionID)
+	}
+
+	// Test 3: Search with filters
+	filteredResp, err := clientInstance.Search(ctx, "integration-test-user", "active")
+	if err != nil {
+		t.Fatalf("Failed to search filtered sessions: %v", err)
+	}
+
+	found = false
+	for _, session := range filteredResp.Sessions {
+		if session.SessionID == sessionID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("Session %s not found in filtered search results", sessionID)
+	}
+
+	// Test 4: Search with non-matching filter
+	noMatchResp, err := clientInstance.Search(ctx, "nonexistent-user", "")
+	if err != nil {
+		t.Fatalf("Failed to search sessions: %v", err)
+	}
+
+	for _, session := range noMatchResp.Sessions {
+		if session.SessionID == sessionID {
+			t.Errorf("Session %s should not appear in filtered results", sessionID)
+		}
+	}
+}
+
+func TestClientConcurrentOperations(t *testing.T) {
+	cfg := config.DefaultConfig()
+	proxyServer := proxy.NewProxy(cfg, false)
+
+	server := httptest.NewServer(proxyServer.GetEcho())
+	defer server.Close()
+
+	clientInstance := client.NewClient(server.URL)
+	ctx := context.Background()
+
+	const numOperations = 10
+	results := make(chan error, numOperations)
+
+	// Concurrent session creation
+	for i := 0; i < numOperations; i++ {
+		go func(id int) {
+			startReq := &client.StartRequest{
+				UserID: "concurrent-test-user",
+				Environment: map[string]string{
+					"OPERATION_ID": string(rune(id + '0')),
+				},
+			}
+
+			_, err := clientInstance.Start(ctx, startReq)
+			results <- err
+		}(i)
+	}
+
+	// Check all operations completed successfully
+	for i := 0; i < numOperations; i++ {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Errorf("Operation %d failed: %v", i, err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Operation %d timed out", i)
+		}
+	}
+
+	// Verify all sessions were created
+	searchResp, err := clientInstance.Search(ctx, "concurrent-test-user", "")
+	if err != nil {
+		t.Fatalf("Failed to search sessions: %v", err)
+	}
+
+	if len(searchResp.Sessions) != numOperations {
+		t.Errorf("Expected %d sessions, got %d", numOperations, len(searchResp.Sessions))
+	}
+}
+
+func TestClientErrorHandling(t *testing.T) {
+	// Test with non-existent server
+	clientInstance := client.NewClient("http://localhost:99999")
+	ctx := context.Background()
+
+	_, err := clientInstance.Start(ctx, &client.StartRequest{UserID: "test"})
+	if err == nil {
+		t.Error("Expected error when connecting to non-existent server")
+	}
+
+	_, err = clientInstance.Search(ctx, "", "")
+	if err == nil {
+		t.Error("Expected error when connecting to non-existent server")
+	}
+
+	// Test with invalid session ID
+	cfg := config.DefaultConfig()
+	proxyServer := proxy.NewProxy(cfg, false)
+
+	server := httptest.NewServer(proxyServer.GetEcho())
+	defer server.Close()
+
+	validClient := client.NewClient(server.URL)
+
+	_, err = validClient.SendMessage(ctx, "invalid-session", &client.Message{
+		Content: "test",
+		Type:    "user",
+	})
+	if err == nil {
+		t.Error("Expected error when sending message to invalid session")
+	}
+
+	_, err = validClient.GetMessages(ctx, "invalid-session")
+	if err == nil {
+		t.Error("Expected error when getting messages from invalid session")
+	}
+
+	_, err = validClient.GetStatus(ctx, "invalid-session")
+	if err == nil {
+		t.Error("Expected error when getting status from invalid session")
 	}
 }
