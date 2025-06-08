@@ -35,15 +35,22 @@ const (
 	ScriptDefault    = "agentapi_default.sh"
 )
 
+// StartRequest represents the request body for starting a new agentapi server
+type StartRequest struct {
+	UserID      string            `json:"user_id,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
+}
+
 // AgentSession represents a running agentapi server instance
 type AgentSession struct {
-	ID        string
-	Port      int
-	Process   *exec.Cmd
-	Cancel    context.CancelFunc
-	StartedAt time.Time
-	UserID    string
-	Status    string
+	ID          string
+	Port        int
+	Process     *exec.Cmd
+	Cancel      context.CancelFunc
+	StartedAt   time.Time
+	UserID      string
+	Status      string
+	Environment map[string]string
 }
 
 // Proxy represents the HTTP proxy server
@@ -160,8 +167,21 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	// Generate UUID for session
 	sessionID := uuid.New().String()
 
-	// Get user_id from query parameters or request
+	// Parse request body for environment variables and other parameters
+	var startReq StartRequest
+
+	// Try to parse JSON body, but don't fail if it's empty or invalid
+	if err := c.Bind(&startReq); err != nil {
+		if p.verbose {
+			log.Printf("Failed to parse request body (using defaults): %v", err)
+		}
+	}
+
+	// Get user_id from query parameters, request body, or default
 	userID := c.QueryParam("user_id")
+	if userID == "" && startReq.UserID != "" {
+		userID = startReq.UserID
+	}
 	if userID == "" {
 		userID = "anonymous"
 	}
@@ -180,12 +200,13 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	session := &AgentSession{
-		ID:        sessionID,
-		Port:      port,
-		Cancel:    cancel,
-		StartedAt: time.Now(),
-		UserID:    userID,
-		Status:    "active",
+		ID:          sessionID,
+		Port:        port,
+		Cancel:      cancel,
+		StartedAt:   time.Now(),
+		UserID:      userID,
+		Status:      "active",
+		Environment: startReq.Environment,
 	}
 
 	// Store session
@@ -352,6 +373,21 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	// Set process group ID for proper cleanup
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	// Set environment variables for the process
+	// Start with the current environment from agentapi-proxy
+	cmd.Env = os.Environ()
+
+	// Override with any environment variables passed in the request
+	if session.Environment != nil {
+		for key, value := range session.Environment {
+			// Add or override environment variable
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
+			if p.verbose {
+				log.Printf("Setting environment variable for session %s: %s=%s", session.ID, key, value)
+			}
+		}
+	}
 
 	// Store the command in the session
 	session.Process = cmd
