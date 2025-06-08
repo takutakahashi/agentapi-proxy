@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -11,78 +11,39 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
 
-func TestIntegrationFullProxy(t *testing.T) {
-	// Create multiple backend servers to simulate different services
-	backend1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Backend", "backend1")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("Response from backend 1"))
-	}))
-	defer backend1.Close()
-
-	backend2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Backend", "backend2")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("Response from backend 2"))
-	}))
-	defer backend2.Close()
-
-	cfg := &config.Config{
-		DefaultBackend: backend1.URL,
-		Routes: map[string]string{
-			"/api/{org}/{repo}":        backend1.URL,
-			"/api/{org}/{repo}/issues": backend2.URL,
-			"/health":                  backend1.URL,
-		},
-	}
-
+func TestIntegrationSessionAPI(t *testing.T) {
+	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, true)
 
 	tests := []struct {
-		name             string
-		method           string
-		path             string
-		expectedStatus   int
-		expectedBackend  string
-		expectedResponse string
+		name           string
+		method         string
+		path           string
+		expectedStatus int
 	}{
 		{
-			name:             "API route to backend 1",
-			method:           "GET",
-			path:             "/api/myorg/myrepo",
-			expectedStatus:   http.StatusOK,
-			expectedBackend:  "backend1",
-			expectedResponse: "Response from backend 1",
-		},
-		{
-			name:             "Issues route to backend 2",
-			method:           "GET",
-			path:             "/api/myorg/myrepo/issues",
-			expectedStatus:   http.StatusOK,
-			expectedBackend:  "backend2",
-			expectedResponse: "Response from backend 2",
-		},
-		{
-			name:             "Health check",
-			method:           "GET",
-			path:             "/health",
-			expectedStatus:   http.StatusOK,
-			expectedBackend:  "backend1",
-			expectedResponse: "Response from backend 1",
-		},
-		{
-			name:             "Default route",
-			method:           "GET",
-			path:             "/some/unknown/path",
-			expectedStatus:   http.StatusOK,
-			expectedBackend:  "backend1",
-			expectedResponse: "Response from backend 1",
-		},
-		{
-			name:           "POST request",
+			name:           "Start new session",
 			method:         "POST",
-			path:           "/api/test/repo",
+			path:           "/start",
 			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Search sessions",
+			method:         "GET",
+			path:           "/search",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Search sessions with filter",
+			method:         "GET",
+			path:           "/search?user_id=test&status=active",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Route to non-existent session",
+			method:         "GET",
+			path:           "/non-existent-session/status",
+			expectedStatus: http.StatusNotFound,
 		},
 	}
 
@@ -97,102 +58,121 @@ func TestIntegrationFullProxy(t *testing.T) {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 
-			if tt.expectedBackend != "" {
-				backend := w.Header().Get("X-Backend")
-				if backend != tt.expectedBackend {
-					t.Errorf("Expected backend %s, got %s", tt.expectedBackend, backend)
-				}
-			}
-
-			if tt.expectedResponse != "" {
+			// For successful responses, check JSON format
+			if w.Code == http.StatusOK {
+				var result map[string]interface{}
 				body := w.Body.String()
-				if !strings.Contains(body, tt.expectedResponse) {
-					t.Errorf("Expected response to contain %s, got %s", tt.expectedResponse, body)
+				if err := json.Unmarshal([]byte(body), &result); err != nil {
+					t.Errorf("Response should be valid JSON: %v, body: %s", err, body)
 				}
 			}
 		})
 	}
 }
 
-func TestProxyHeaders(t *testing.T) {
-	// Backend that returns request headers for inspection
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Echo back the forwarded headers
-		w.Header().Set("X-Forwarded-Host-Echo", r.Header.Get("X-Forwarded-Host"))
-		w.Header().Set("X-Forwarded-Proto-Echo", r.Header.Get("X-Forwarded-Proto"))
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer backend.Close()
-
-	cfg := &config.Config{
-		Routes: map[string]string{
-			"/test": backend.URL,
-		},
-	}
-
+func TestSessionLifecycle(t *testing.T) {
+	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, false)
 
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.Host = "example.com"
+	// Step 1: Start a new session
+	req := httptest.NewRequest("POST", "/start?user_id=testuser", nil)
 	w := httptest.NewRecorder()
-
 	proxyServer.GetEcho().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+		t.Fatalf("Failed to start session: status %d", w.Code)
 	}
 
-	// Check if forwarded headers are set correctly
-	forwardedHost := w.Header().Get("X-Forwarded-Host-Echo")
-	if forwardedHost != "example.com" {
-		t.Errorf("Expected X-Forwarded-Host to be 'example.com', got '%s'", forwardedHost)
+	var startResponse map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &startResponse); err != nil {
+		t.Fatalf("Failed to parse start response: %v", err)
 	}
 
-	forwardedProto := w.Header().Get("X-Forwarded-Proto-Echo")
-	if forwardedProto != "http" {
-		t.Errorf("Expected X-Forwarded-Proto to be 'http', got '%s'", forwardedProto)
+	sessionID, ok := startResponse["session_id"].(string)
+	if !ok || sessionID == "" {
+		t.Fatalf("Invalid session_id in response: %v", startResponse)
+	}
+
+	// Step 2: Verify session appears in search
+	req = httptest.NewRequest("GET", "/search?user_id=testuser", nil)
+	w = httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Failed to search sessions: status %d", w.Code)
+	}
+
+	var searchResponse map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &searchResponse); err != nil {
+		t.Fatalf("Failed to parse search response: %v", err)
+	}
+
+	sessions, ok := searchResponse["sessions"].([]interface{})
+	if !ok {
+		t.Fatalf("Invalid sessions array in response: %v", searchResponse)
+	}
+
+	// Check if our session is in the list
+	found := false
+	for _, s := range sessions {
+		if session, ok := s.(map[string]interface{}); ok {
+			if session["session_id"] == sessionID {
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		t.Errorf("Started session %s not found in search results", sessionID)
 	}
 }
 
-func TestConcurrentRequests(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Simulate some processing time
-		time.Sleep(10 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	}))
-	defer backend.Close()
-
-	cfg := &config.Config{
-		Routes: map[string]string{
-			"/api/{org}/{repo}": backend.URL,
-		},
-	}
-
+func TestConcurrentSessionRequests(t *testing.T) {
+	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, false)
 
-	// Test concurrent requests
-	const numRequests = 10
-	results := make(chan int, numRequests)
+	// Test concurrent session creation
+	const numSessions = 5
+	results := make(chan string, numSessions)
 
-	for i := 0; i < numRequests; i++ {
+	for i := 0; i < numSessions; i++ {
 		go func(id int) {
-			req := httptest.NewRequest("GET", "/api/org/repo", nil)
+			req := httptest.NewRequest("POST", "/start", nil)
 			w := httptest.NewRecorder()
 			proxyServer.GetEcho().ServeHTTP(w, req)
-			results <- w.Code
+
+			if w.Code == http.StatusOK {
+				var response map[string]interface{}
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err == nil {
+					if sessionID, ok := response["session_id"].(string); ok {
+						results <- sessionID
+						return
+					}
+				}
+			}
+			results <- ""
 		}(i)
 	}
 
 	// Collect results
-	for i := 0; i < numRequests; i++ {
+	sessionIDs := make(map[string]bool)
+	for i := 0; i < numSessions; i++ {
 		select {
-		case status := <-results:
-			if status != http.StatusOK {
-				t.Errorf("Request %d failed with status %d", i, status)
+		case sessionID := <-results:
+			if sessionID == "" {
+				t.Errorf("Session %d failed to start", i)
+			} else if sessionIDs[sessionID] {
+				t.Errorf("Duplicate session ID: %s", sessionID)
+			} else {
+				sessionIDs[sessionID] = true
 			}
 		case <-time.After(5 * time.Second):
-			t.Fatalf("Request %d timed out", i)
+			t.Fatalf("Session %d timed out", i)
 		}
+	}
+
+	if len(sessionIDs) != numSessions {
+		t.Errorf("Expected %d unique sessions, got %d", numSessions, len(sessionIDs))
 	}
 }

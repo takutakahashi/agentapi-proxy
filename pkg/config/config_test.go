@@ -14,31 +14,20 @@ func TestDefaultConfig(t *testing.T) {
 		t.Fatal("DefaultConfig returned nil")
 	}
 
-	if config.DefaultBackend == "" {
-		t.Error("DefaultBackend should not be empty")
+	if config.StartPort == 0 {
+		t.Error("StartPort should not be zero")
 	}
 
-	if len(config.Routes) == 0 {
-		t.Error("Routes should not be empty")
-	}
-
-	// Check if expected routes exist
-	expectedRoutes := []string{"/api/{org}/{repo}", "/health"}
-	for _, route := range expectedRoutes {
-		if _, exists := config.Routes[route]; !exists {
-			t.Errorf("Expected route %s not found in default config", route)
-		}
+	expectedStartPort := 9000
+	if config.StartPort != expectedStartPort {
+		t.Errorf("Expected StartPort to be %d, got %d", expectedStartPort, config.StartPort)
 	}
 }
 
 func TestLoadConfig(t *testing.T) {
 	// Create a temporary config file
 	tempConfig := &Config{
-		DefaultBackend: "http://example.com:8080",
-		Routes: map[string]string{
-			"/api/{org}/{repo}": "http://backend1.com",
-			"/v1/{service}":     "http://backend2.com",
-		},
+		StartPort: 8000,
 	}
 
 	configData, err := json.Marshal(tempConfig)
