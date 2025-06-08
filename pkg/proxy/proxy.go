@@ -31,6 +31,8 @@ type AgentSession struct {
 	Process   *exec.Cmd
 	Cancel    context.CancelFunc
 	StartedAt time.Time
+	UserID    string
+	Status    string
 }
 
 // Proxy represents the HTTP proxy server
@@ -41,6 +43,7 @@ type Proxy struct {
 	sessions      map[string]*AgentSession
 	sessionsMutex sync.RWMutex
 	nextPort      int
+	portMutex     sync.Mutex
 }
 
 // NewProxy creates a new proxy instance
@@ -59,7 +62,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		verbose:       verbose,
 		sessions:      make(map[string]*AgentSession),
 		sessionsMutex: sync.RWMutex{},
-		nextPort:      9000, // Starting port for agentapi servers
+		nextPort:      cfg.StartPort,
 	}
 
 	// Add logging middleware if verbose
@@ -84,99 +87,56 @@ func (p *Proxy) loggingMiddleware() echo.MiddlewareFunc {
 
 // setupRoutes configures the router with all defined routes
 func (p *Proxy) setupRoutes() {
-	// Add existing configured routes first (more specific routes)
-	for pattern, backend := range p.config.Routes {
-		p.addRoute(pattern, backend)
-	}
-
-	// Add agentapi session management routes with specific prefix
-	p.echo.POST("/sessions/start", p.startAgentAPIServer)
-	p.echo.Any("/sessions/:sessionId/*", p.routeToSession)
-
-	// Add default handler for unmatched routes
-	p.echo.Any("/*", p.defaultHandler)
+	// Add session management routes according to API specification
+	p.echo.POST("/start", p.startAgentAPIServer)
+	p.echo.GET("/search", p.searchSessions)
+	p.echo.Any("/:sessionId/*", p.routeToSession)
 }
 
-// addRoute adds a single route to the router
-func (p *Proxy) addRoute(pattern, backend string) {
-	// Convert gorilla/mux pattern {param} to Echo pattern :param
-	echoPattern := strings.ReplaceAll(pattern, "{", ":")
-	echoPattern = strings.ReplaceAll(echoPattern, "}", "")
+// searchSessions handles GET /search requests to list and filter sessions
+func (p *Proxy) searchSessions(c echo.Context) error {
+	userID := c.QueryParam("user_id")
+	status := c.QueryParam("status")
 
-	if p.verbose {
-		log.Printf("Adding route: %s -> %s (Echo pattern: %s)", pattern, backend, echoPattern)
-	}
+	p.sessionsMutex.RLock()
+	defer p.sessionsMutex.RUnlock()
 
-	handler := p.createProxyHandler(backend)
-	p.echo.Any(echoPattern, handler)
-}
+	var filteredSessions []map[string]interface{}
 
-// createProxyHandler creates a reverse proxy handler for the given backend
-func (p *Proxy) createProxyHandler(backendURL string) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		// Parse the backend URL
-		target, err := url.Parse(backendURL)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid backend URL: %v", err))
+	for _, session := range p.sessions {
+		// Apply filters
+		if userID != "" && session.UserID != userID {
+			continue
+		}
+		if status != "" && session.Status != status {
+			continue
 		}
 
-		// Get request and response from Echo context
-		req := c.Request()
-		w := c.Response()
-
-		// Create reverse proxy
-		proxy := httputil.NewSingleHostReverseProxy(target)
-
-		// Customize the director to preserve the original path
-		originalDirector := proxy.Director
-		proxy.Director = func(req *http.Request) {
-			originalDirector(req)
-			// Preserve the original Host header from the Echo context
-			originalHost := c.Request().Host
-			if originalHost == "" {
-				originalHost = c.Request().Header.Get("Host")
-			}
-			req.Header.Set("X-Forwarded-Host", originalHost)
-			req.Header.Set("X-Forwarded-Proto", "http")
-			if req.TLS != nil {
-				req.Header.Set("X-Forwarded-Proto", "https")
-			}
+		sessionData := map[string]interface{}{
+			"session_id": session.ID,
+			"user_id":    session.UserID,
+			"status":     session.Status,
+			"started_at": session.StartedAt,
+			"port":       session.Port,
 		}
-
-		// Custom error handler
-		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("Proxy error for %s: %v", r.URL.Path, err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-		}
-
-		if p.verbose {
-			log.Printf("Proxying %s %s to %s", req.Method, req.URL.Path, target)
-		}
-
-		proxy.ServeHTTP(w, req)
-		return nil
-	}
-}
-
-// defaultHandler handles requests that don't match any configured routes
-func (p *Proxy) defaultHandler(c echo.Context) error {
-	if p.config.DefaultBackend != "" {
-		handler := p.createProxyHandler(p.config.DefaultBackend)
-		return handler(c)
+		filteredSessions = append(filteredSessions, sessionData)
 	}
 
-	// No default backend configured, return 404
-	req := c.Request()
-	if p.verbose {
-		log.Printf("No route found for %s %s", req.Method, req.URL.Path)
-	}
-	return echo.NewHTTPError(http.StatusNotFound, "Not Found")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"sessions": filteredSessions,
+	})
 }
 
 // startAgentAPIServer starts a new agentapi server instance and returns session ID
 func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	// Generate UUID for session
 	sessionID := uuid.New().String()
+
+	// Get user_id from query parameters or request
+	userID := c.QueryParam("user_id")
+	if userID == "" {
+		userID = "anonymous"
+	}
 
 	// Find available port
 	port, err := p.getAvailablePort()
@@ -196,6 +156,8 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		Port:      port,
 		Cancel:    cancel,
 		StartedAt: time.Now(),
+		UserID:    userID,
+		Status:    "active",
 	}
 
 	// Store session
@@ -214,12 +176,9 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		}
 	}
 
-	// Return session ID
+	// Return session ID according to API specification
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": sessionID,
-		"port":       port,
-		"started_at": session.StartedAt,
-		"script":     scriptName,
 	})
 }
 
@@ -257,12 +216,12 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
 
-		// Remove /sessions/sessionId prefix from path
+		// Remove /sessionId prefix from path
 		originalPath := req.URL.Path
-		// Remove the /sessions/sessionId prefix from the path
-		pathParts := strings.SplitN(originalPath, "/", 4)
-		if len(pathParts) >= 4 {
-			req.URL.Path = "/" + pathParts[3]
+		// Remove the /sessionId prefix from the path
+		pathParts := strings.SplitN(originalPath, "/", 3)
+		if len(pathParts) >= 3 {
+			req.URL.Path = "/" + pathParts[2]
 		} else {
 			req.URL.Path = "/"
 		}
@@ -295,7 +254,11 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 
 // getAvailablePort finds an available port starting from nextPort
 func (p *Proxy) getAvailablePort() (int, error) {
-	for port := p.nextPort; port < p.nextPort+1000; port++ {
+	p.portMutex.Lock()
+	defer p.portMutex.Unlock()
+
+	startPort := p.nextPort
+	for port := startPort; port < startPort+1000; port++ {
 		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err == nil {
 			if err := ln.Close(); err != nil {
@@ -305,7 +268,7 @@ func (p *Proxy) getAvailablePort() (int, error) {
 			return port, nil
 		}
 	}
-	return 0, fmt.Errorf("no available ports in range %d-%d", p.nextPort, p.nextPort+1000)
+	return 0, fmt.Errorf("no available ports in range %d-%d", startPort, startPort+1000)
 }
 
 // runAgentAPIServer runs an agentapi server instance using exec.Command or scripts
