@@ -1,153 +1,256 @@
 # agentapi-proxy
 
-Proxy and Process Provisioner for coder/agentapi
-
-A configurable HTTP proxy server that routes requests based on URL patterns to different backend services. Designed specifically for proxying agentapi requests to appropriate backend services.
+A session-based proxy server for [coder/agentapi](https://github.com/coder/agentapi) that provides process provisioning and lifecycle management for multiple agentapi server instances.
 
 ## Features
 
-- **Flexible Routing**: Route requests based on URL patterns like `/api/{org}/{repo}`
-- **Configurable Backends**: Map different routes to different backend services
-- **Default Fallback**: Configure a default backend for unmatched routes
-- **Header Forwarding**: Automatically forwards `X-Forwarded-Host` and `X-Forwarded-Proto` headers
-- **Comprehensive Logging**: Optional verbose logging for debugging
-- **Health Checks**: Built-in support for health check endpoints
-- **Concurrent Request Handling**: Efficient handling of multiple simultaneous requests
+- **Session Management**: Create and manage multiple agentapi server instances with unique session IDs
+- **Process Provisioning**: Dynamically spawn agentapi servers on available ports
+- **Environment Configuration**: Pass custom environment variables to agentapi server instances
+- **Script Support**: Execute custom startup scripts (with GitHub integration support)
+- **Session Search**: Query and filter active sessions by user ID and status
+- **Request Routing**: Proxy requests to appropriate agentapi server instances based on session ID
+- **Graceful Shutdown**: Proper cleanup of all running sessions on server shutdown
+- **Client Library**: Go client for programmatic interaction with the proxy server
+
+## Architecture
+
+The proxy acts as a reverse proxy and process manager:
+
+1. **Session Creation**: `/start` endpoint creates new agentapi server instances
+2. **Request Routing**: `/:sessionId/*` routes requests to the appropriate backend server
+3. **Session Discovery**: `/search` endpoint lists and filters active sessions
+
+Each session runs an independent agentapi server process on a unique port, allowing isolated workspaces for different users or projects.
+
+## Installation
+
+### From Source
+
+```bash
+# Clone the repository
+git clone https://github.com/takutakahashi/agentapi-proxy.git
+cd agentapi-proxy
+
+# Install dependencies
+make install-deps
+
+# Build the binary
+make build
+```
+
+### Using Docker
+
+```bash
+docker pull ghcr.io/takutakahashi/agentapi-proxy:latest
+```
 
 ## Usage
 
-### Command Line Options
+### Starting the Server
 
 ```bash
-./agentapi-proxy [options]
+# Using the built binary
+./bin/agentapi-proxy server
 
-Options:
-  -port string
-        Port to listen on (default "8080")
-  -config string
-        Configuration file path (default "config.json")
-  -verbose
-        Enable verbose logging
+# With custom configuration
+./bin/agentapi-proxy server --config config.json --port 8080 --verbose
+
+# Using Docker
+docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json ghcr.io/takutakahashi/agentapi-proxy:latest server
 ```
+
+### Command Line Options
+
+- `--port, -p`: Port to listen on (default: 8080)
+- `--config, -c`: Configuration file path (default: config.json)
+- `--verbose, -v`: Enable verbose logging
 
 ### Configuration
 
-The proxy uses a JSON configuration file to define routing rules:
+Create a `config.json` file:
 
 ```json
 {
-  "default_backend": "http://localhost:3000",
-  "routes": {
-    "/api/{org}/{repo}": "http://agentapi-backend:8080",
-    "/api/{org}/{repo}/issues": "http://issues-service:9000",
-    "/api/{org}/{repo}/pulls": "http://pr-service:9001",
-    "/health": "http://health-check:8080"
-  }
+  "start_port": 9000
 }
 ```
 
 #### Configuration Fields
 
-- `default_backend` (optional): Backend URL to use for routes that don't match any pattern
-- `routes`: Map of URL patterns to backend URLs
+- `start_port`: Starting port number for agentapi server instances (default: 9000)
 
-#### URL Patterns
+## API Endpoints
 
-- Use `{variable}` syntax for path variables (e.g., `{org}`, `{repo}`)
-- Patterns are matched using gorilla/mux router
-- More specific patterns take precedence over general ones
+### Create Session
 
-## Examples
+**POST** `/start`
 
-### Basic Usage
+Create a new agentapi server instance.
 
-1. Create a configuration file:
 ```bash
-cp config.json.example config.json
-# Edit config.json to match your backend services
+curl -X POST http://localhost:8080/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "environment": {
+      "GITHUB_TOKEN": "your-token",
+      "WORKSPACE_NAME": "my-project"
+    }
+  }'
 ```
 
-2. Run the proxy:
-```bash
-go run .
+**Response:**
+```json
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000"
+}
 ```
 
-3. The proxy will start on port 8080 and route requests according to your configuration.
+### Search Sessions
 
-### Example Requests
+**GET** `/search`
 
-With the example configuration:
+List and filter active sessions.
 
 ```bash
-# Routes to agentapi-backend:8080
-curl http://localhost:8080/api/myorg/myrepo
+# List all sessions
+curl http://localhost:8080/search
 
-# Routes to issues-service:9000  
-curl http://localhost:8080/api/myorg/myrepo/issues
+# Filter by user ID
+curl http://localhost:8080/search?user_id=alice
 
-# Routes to health-check:8080
-curl http://localhost:8080/health
+# Filter by status
+curl http://localhost:8080/search?status=active
+```
 
-# Routes to default_backend (if configured)
-curl http://localhost:8080/some/other/path
+**Response:**
+```json
+{
+  "sessions": [
+    {
+      "session_id": "550e8400-e29b-41d4-a716-446655440000",
+      "user_id": "alice",
+      "status": "active",
+      "started_at": "2024-01-01T12:00:00Z",
+      "port": 9000
+    }
+  ]
+}
+```
+
+### Route to Session
+
+**ANY** `/:sessionId/*`
+
+Route requests to the agentapi server instance for the given session.
+
+```bash
+# Forward request to session's agentapi server
+curl http://localhost:8080/550e8400-e29b-41d4-a716-446655440000/api/workspaces
+```
+
+## Client Library
+
+Use the Go client library for programmatic access:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    
+    "github.com/takutakahashi/agentapi-proxy/pkg/client"
+)
+
+func main() {
+    // Create client
+    c := client.NewClient("http://localhost:8080")
+    
+    // Start new session
+    resp, err := c.Start(context.Background(), &client.StartRequest{
+        UserID: "alice",
+        Environment: map[string]string{
+            "GITHUB_TOKEN": "your-token",
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    log.Printf("Created session: %s", resp.SessionID)
+    
+    // Search sessions
+    sessions, err := c.Search(context.Background(), "alice", "active")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    log.Printf("Found %d sessions", len(sessions.Sessions))
+}
 ```
 
 ## Development
 
-### Building
+### Prerequisites
+
+- Go 1.23+
+- [golangci-lint](https://golangci-lint.run/)
+- [coder/agentapi](https://github.com/coder/agentapi) binary (for testing)
+
+### Building and Testing
 
 ```bash
-go build -o agentapi-proxy .
+# Format code
+make gofmt
+
+# Run linting
+make lint
+
+# Run tests
+make test
+
+# Run full CI pipeline
+make ci
+
+# Build binary
+make build
+
+# Run end-to-end tests (requires agentapi binary)
+make e2e
 ```
 
-### Testing
+### Project Structure
 
-Run all tests:
-```bash
-go test -v ./...
+```
+├── cmd/
+│   └── agentapi-proxy/     # Binary entry point
+├── pkg/
+│   ├── client/             # Go client library
+│   ├── config/             # Configuration management
+│   └── proxy/              # Core proxy server logic
+│       └── scripts/        # Embedded startup scripts
+├── docs/                   # Documentation
+└── .github/workflows/      # CI/CD pipelines
 ```
 
-Run specific test suites:
-```bash
-# Unit tests
-go test -v -run TestProxy
-go test -v -run TestConfig
+## Scripts
 
-# Integration tests  
-go test -v -run TestIntegration
-```
+The proxy supports custom startup scripts for agentapi servers:
 
-### Running Tests with Coverage
+- `agentapi_default.sh`: Default startup script
+- `agentapi_with_github.sh`: Script with GitHub integration
 
-```bash
-go test -v -cover ./...
-```
+Scripts are embedded in the binary and extracted to temporary files at runtime.
 
-## Docker Usage
+## Environment Variables
 
-```dockerfile
-FROM golang:1.21-alpine AS builder
-WORKDIR /app
-COPY . .
-RUN go build -o agentapi-proxy .
+Sessions can receive custom environment variables:
 
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY --from=builder /app/agentapi-proxy .
-COPY config.json .
-EXPOSE 8080
-CMD ["./agentapi-proxy"]
-```
-
-## Architecture
-
-The proxy consists of several key components:
-
-- **Router**: Uses gorilla/mux for URL pattern matching and routing
-- **Reverse Proxy**: Built on Go's `httputil.ReverseProxy` for efficient request forwarding
-- **Configuration Manager**: Handles loading and parsing of JSON configuration files
-- **Error Handling**: Proper error responses and logging for debugging
+- **GITHUB_TOKEN**: GitHub personal access token
+- **WORKSPACE_NAME**: Custom workspace identifier  
+- **DEBUG**: Enable debug mode for agentapi
 
 ## License
 
