@@ -10,5 +10,4 @@ PORT="${1:-8080}"
 export AGENTAPI_GITHUB_INTEGRATION=true
 
 # Start agentapi server with GitHub integration enabled
-# exec agentapi server --port 9001 -- calude
-sleep 1000000
+exec agentapi server --port "$PORT" -- claude
