@@ -31,6 +31,55 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
+    - name: Cache agentapi binary
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/agentapi
+        key: ${{ runner.os }}-agentapi-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-agentapi-
+
+    - name: Download agentapi binary
+      run: |
+        mkdir -p ~/.cache/agentapi
+        if [ ! -f ~/.cache/agentapi/agentapi ]; then
+          echo "Downloading agentapi binary..."
+          curl -L -o ~/.cache/agentapi/agentapi https://github.com/coder/agentapi/releases/latest/download/agentapi-linux-amd64
+          chmod +x ~/.cache/agentapi/agentapi
+        else
+          echo "Using cached agentapi binary"
+        fi
+        sudo ln -sf ~/.cache/agentapi/agentapi /usr/local/bin/agentapi
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
+
+    - name: Cache Claude Code
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/claude-code
+        key: ${{ runner.os }}-claude-code-v1
+        restore-keys: |
+          ${{ runner.os }}-claude-code-
+
+    - name: Install Claude Code
+      run: |
+        mkdir -p ~/.cache/claude-code
+        if [ ! -f ~/.cache/claude-code/claude ]; then
+          echo "Installing Claude Code..."
+          npm install -g @anthropic-ai/claude-code
+          cp $(which claude) ~/.cache/claude-code/claude
+        else
+          echo "Using cached Claude Code"
+          sudo ln -sf ~/.cache/claude-code/claude /usr/local/bin/claude
+        fi
+
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v6
       with:

@@ -268,8 +268,8 @@ func (c *Client) StreamEvents(ctx context.Context, sessionID string) (<-chan str
 			return
 		}
 		defer func() {
-		_ = resp.Body.Close()
-	}()
+			_ = resp.Body.Close()
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)

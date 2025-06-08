@@ -78,8 +78,8 @@ func TestClient_Start(t *testing.T) {
 
 				w.WriteHeader(tt.serverStatus)
 				if _, err := w.Write([]byte(tt.serverResponse)); err != nil {
-				t.Errorf("Failed to write response: %v", err)
-			}
+					t.Errorf("Failed to write response: %v", err)
+				}
 			}))
 			defer server.Close()
 
@@ -154,8 +154,8 @@ func TestClient_Search(t *testing.T) {
 
 				w.WriteHeader(tt.serverStatus)
 				if _, err := w.Write([]byte(tt.serverResponse)); err != nil {
-				t.Errorf("Failed to write response: %v", err)
-			}
+					t.Errorf("Failed to write response: %v", err)
+				}
 			}))
 			defer server.Close()
 
@@ -233,8 +233,8 @@ func TestClient_SendMessage(t *testing.T) {
 
 				w.WriteHeader(tt.serverStatus)
 				if _, err := w.Write([]byte(tt.serverResponse)); err != nil {
-				t.Errorf("Failed to write response: %v", err)
-			}
+					t.Errorf("Failed to write response: %v", err)
+				}
 			}))
 			defer server.Close()
 
