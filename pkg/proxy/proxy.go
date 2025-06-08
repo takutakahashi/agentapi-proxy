@@ -468,6 +468,65 @@ func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte) stri
 	return ""
 }
 
+// Shutdown gracefully stops all running sessions and waits for them to terminate
+func (p *Proxy) Shutdown(timeout time.Duration) error {
+	log.Printf("Shutting down proxy, terminating %d active sessions...", len(p.sessions))
+
+	// Get all session cancel functions
+	p.sessionsMutex.RLock()
+	var sessions []*AgentSession
+	for _, session := range p.sessions {
+		sessions = append(sessions, session)
+	}
+	p.sessionsMutex.RUnlock()
+
+	if len(sessions) == 0 {
+		log.Printf("No active sessions to terminate")
+		return nil
+	}
+
+	// Cancel all sessions
+	for _, session := range sessions {
+		if session.Cancel != nil {
+			if session.Process != nil && session.Process.Process != nil {
+				log.Printf("Terminating session %s (PID: %d)", session.ID, session.Process.Process.Pid)
+			} else {
+				log.Printf("Terminating session %s", session.ID)
+			}
+			session.Cancel()
+		}
+	}
+
+	// Wait for all sessions to complete with timeout
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			p.sessionsMutex.RLock()
+			remaining := len(p.sessions)
+			p.sessionsMutex.RUnlock()
+
+			if remaining == 0 {
+				return
+			}
+
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+
+	select {
+	case <-done:
+		log.Printf("All sessions terminated gracefully")
+		return nil
+	case <-time.After(timeout):
+		p.sessionsMutex.RLock()
+		remaining := len(p.sessions)
+		p.sessionsMutex.RUnlock()
+		log.Printf("Timeout reached, %d sessions may still be running", remaining)
+		return fmt.Errorf("shutdown timeout reached with %d sessions still running", remaining)
+	}
+}
+
 // GetEcho returns the Echo instance for external access
 func (p *Proxy) GetEcho() *echo.Echo {
 	return p.echo

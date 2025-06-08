@@ -1,7 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -52,8 +58,57 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	proxyServer := proxy.NewProxy(configData, verbose)
 
-	log.Printf("Starting agentapi-proxy on port %s", port)
-	if err := proxyServer.GetEcho().Start(":" + port); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	// Start server in a goroutine
+	go func() {
+		log.Printf("Starting agentapi-proxy on port %s", port)
+		if err := proxyServer.GetEcho().Start(":" + port); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed to start: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutdown signal received, shutting down gracefully...")
+
+	// Create a context with timeout for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown the proxy and all sessions
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- proxyServer.Shutdown(25 * time.Second)
+	}()
+
+	// Shutdown the HTTP server
+	serverShutdownDone := make(chan error, 1)
+	go func() {
+		serverShutdownDone <- proxyServer.GetEcho().Shutdown(ctx)
+	}()
+
+	// Wait for both shutdowns to complete
+	var proxyErr, serverErr error
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-shutdownDone:
+			proxyErr = err
+		case err := <-serverShutdownDone:
+			serverErr = err
+		case <-ctx.Done():
+			log.Printf("Shutdown timeout reached")
+			return
+		}
 	}
+
+	if proxyErr != nil {
+		log.Printf("Proxy shutdown error: %v", proxyErr)
+	}
+	if serverErr != nil {
+		log.Printf("Server shutdown error: %v", serverErr)
+	}
+
+	log.Printf("Server shutdown complete")
 }
