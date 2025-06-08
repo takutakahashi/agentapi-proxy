@@ -2,10 +2,8 @@ package proxy
 
 import (
 	"context"
-	"embed"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -25,9 +23,6 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
-
-//go:embed scripts/*
-var scriptsFS embed.FS
 
 // AgentSession represents a running agentapi server instance
 type AgentSession struct {
@@ -316,7 +311,7 @@ func (p *Proxy) getAvailablePort() (int, error) {
 // runAgentAPIServer runs an agentapi server instance using exec.Command or scripts
 func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string) {
 	var tmpScriptPath string
-	
+
 	defer func() {
 		// Clean up temporary script file if it was created
 		if tmpScriptPath != "" {
@@ -348,14 +343,14 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 		// Execute script with port as argument
 		cmd = exec.CommandContext(ctx, "/bin/bash", tmpScriptPath, strconv.Itoa(session.Port))
-		
+
 		if p.verbose {
 			log.Printf("Starting agentapi process for session %s on %d using script %s", session.ID, session.Port, scriptName)
 		}
 	} else {
 		// Use direct agentapi command (fallback)
 		cmd = exec.CommandContext(ctx, "agentapi", "server", "--port", strconv.Itoa(session.Port))
-		
+
 		if p.verbose {
 			log.Printf("Starting agentapi process for session %s on %d using direct command", session.ID, session.Port)
 		}
@@ -424,36 +419,46 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	}
 }
 
-// extractScriptToTempFile extracts an embedded script to a temporary file and returns the file path
+// extractScriptToTempFile extracts a script to a temporary file and returns the file path
 func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
-	// Read the script content from embedded filesystem
+	// Read the script content from filesystem
 	scriptPath := filepath.Join("scripts", scriptName)
-	content, err := scriptsFS.ReadFile(scriptPath)
+	content, err := os.ReadFile(scriptPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read embedded script %s: %v", scriptName, err)
+		return "", fmt.Errorf("failed to read script %s: %v", scriptName, err)
 	}
 
 	// Create temporary file
-	tmpFile, err := ioutil.TempFile("", fmt.Sprintf("agentapi-script-*.sh"))
+	tmpFile, err := os.CreateTemp("", "agentapi-script-*.sh")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temporary file: %v", err)
 	}
 
 	// Write script content to temporary file
 	if _, err := tmpFile.Write(content); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			log.Printf("Failed to close temp file: %v", closeErr)
+		}
+		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil {
+			log.Printf("Failed to remove temp file: %v", removeErr)
+		}
 		return "", fmt.Errorf("failed to write script content: %v", err)
 	}
 
 	// Make the file executable
 	if err := tmpFile.Chmod(0755); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			log.Printf("Failed to close temp file: %v", closeErr)
+		}
+		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil {
+			log.Printf("Failed to remove temp file: %v", removeErr)
+		}
 		return "", fmt.Errorf("failed to make script executable: %v", err)
 	}
 
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		log.Printf("Warning: failed to close temp file: %v", err)
+	}
 	return tmpFile.Name(), nil
 }
 
