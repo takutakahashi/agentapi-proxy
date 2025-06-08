@@ -288,7 +288,9 @@ func (s *MockAgentServer) statusHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.Log("Error encoding status response: %v", err)
+	}
 	s.Log("Status request: %s", response.Status)
 }
 
@@ -324,7 +326,9 @@ func (s *MockAgentServer) messageHandler(w http.ResponseWriter, r *http.Request)
 
 	response := MessageResponse{OK: true}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.Log("Error encoding message response: %v", err)
+	}
 	s.Log("Message received (Type: %s): %s", req.Type, req.Content)
 }
 
@@ -342,7 +346,9 @@ func (s *MockAgentServer) messagesHandler(w http.ResponseWriter, r *http.Request
 
 	response := MessagesResponse{Messages: messages}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.Log("Error encoding messages response: %v", err)
+	}
 	s.Log("Messages request: returning %d messages", len(messages))
 }
 
@@ -418,8 +424,12 @@ func (s *MockAgentServer) eventsHandler(w http.ResponseWriter, r *http.Request) 
 // writeSSEEvent writes a Server-Sent Event to the response writer
 func (s *MockAgentServer) writeSSEEvent(w http.ResponseWriter, event SSEEvent) {
 	data, _ := json.Marshal(event.Data)
-	fmt.Fprintf(w, "event: %s\n", event.Event)
-	fmt.Fprintf(w, "data: %s\n\n", string(data))
+	if _, err := fmt.Fprintf(w, "event: %s\n", event.Event); err != nil {
+		s.Log("Error writing SSE event: %v", err)
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", string(data)); err != nil {
+		s.Log("Error writing SSE data: %v", err)
+	}
 }
 
 // writeError writes an error response
@@ -434,7 +444,9 @@ func (s *MockAgentServer) writeError(w http.ResponseWriter, status int, title, d
 		Type:   "https://example.com/errors",
 	}
 
-	json.NewEncoder(w).Encode(error)
+	if err := json.NewEncoder(w).Encode(error); err != nil {
+		s.Log("Error encoding error response: %v", err)
+	}
 	s.Log("Error response: %d %s - %s", status, title, detail)
 }
 
@@ -449,7 +461,9 @@ func (s *MockAgentServer) Start() {
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status": "healthy", "service": "mock-agentapi"}`)
+		if _, err := fmt.Fprintf(w, `{"status": "healthy", "service": "mock-agentapi"}`); err != nil {
+			s.Log("Error writing health response: %v", err)
+		}
 	})
 
 	addr := fmt.Sprintf(":%d", s.port)
