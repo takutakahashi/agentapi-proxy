@@ -92,7 +92,9 @@ func (c *Client) Start(ctx context.Context, req *StartRequest) (*StartResponse, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -132,7 +134,9 @@ func (c *Client) Search(ctx context.Context, userID, status string) (*SearchResp
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -165,7 +169,9 @@ func (c *Client) SendMessage(ctx context.Context, sessionID string, message *Mes
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -192,7 +198,9 @@ func (c *Client) GetMessages(ctx context.Context, sessionID string) (*MessagesRe
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -219,7 +227,9 @@ func (c *Client) GetStatus(ctx context.Context, sessionID string) (*StatusRespon
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -257,7 +267,9 @@ func (c *Client) StreamEvents(ctx context.Context, sessionID string) (<-chan str
 			errorChan <- fmt.Errorf("failed to send request: %w", err)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+		_ = resp.Body.Close()
+	}()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
