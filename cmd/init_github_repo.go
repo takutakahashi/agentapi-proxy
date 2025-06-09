@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,7 +41,7 @@ Authentication options (one required):
 - GitHub App credentials:
   - GITHUB_APP_PEM_PATH: Path to private key file
   - GITHUB_APP_ID: GitHub App ID
-  - GITHUB_INSTALLATION_ID: Installation ID
+  - GITHUB_INSTALLATION_ID: Installation ID (optional, will auto-detect if not provided)
 
 Optional:
 - GITHUB_CLONE_DIR: Target directory for cloning (defaults to current directory)
@@ -67,9 +68,23 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
 		}
 
-		installationID, err := parseInstallationID(os.Getenv("GITHUB_INSTALLATION_ID"))
-		if err != nil {
-			return fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
+		installationIDStr := os.Getenv("GITHUB_INSTALLATION_ID")
+		var installationID int64
+
+		if installationIDStr != "" {
+			// Use manually provided installation ID
+			installationID, err = parseInstallationID(installationIDStr)
+			if err != nil {
+				return fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
+			}
+		} else {
+			// Auto-detect installation ID
+			fmt.Println("No GITHUB_INSTALLATION_ID provided, attempting auto-detection...")
+			installationID, err = findInstallationIDForRepo(appID, os.Getenv("GITHUB_APP_PEM_PATH"), repoURL, getAPIBase())
+			if err != nil {
+				return fmt.Errorf("failed to auto-detect installation ID: %w", err)
+			}
+			fmt.Printf("Auto-detected installation ID: %d\n", installationID)
 		}
 
 		appConfig := GitHubAppConfig{
@@ -80,7 +95,7 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 		}
 
 		if appConfig.AppID == 0 || appConfig.InstallationID == 0 || appConfig.PEMPath == "" {
-			return fmt.Errorf("either GITHUB_TOKEN or GitHub App credentials (GITHUB_APP_ID, GITHUB_INSTALLATION_ID, GITHUB_APP_PEM_PATH) must be provided")
+			return fmt.Errorf("either GITHUB_TOKEN or GitHub App credentials (GITHUB_APP_ID, GITHUB_APP_PEM_PATH) must be provided")
 		}
 
 		generatedToken, err := generateInstallationToken(appConfig)
@@ -315,6 +330,112 @@ func parseInstallationID(installationIDStr string) (int64, error) {
 		return 0, fmt.Errorf("GITHUB_INSTALLATION_ID must be a valid integer: %w", err)
 	}
 	return installationID, nil
+}
+
+func findInstallationIDForRepo(appID int64, pemPath, repoURL, apiBase string) (int64, error) {
+	// Parse repository owner and name from URL
+	owner, repo, err := parseRepositoryFromURL(repoURL)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse repository URL: %w", err)
+	}
+
+	// Read the private key
+	pemData, err := os.ReadFile(pemPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read PEM file: %w", err)
+	}
+
+	// Create GitHub App transport
+	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, appID, pemData)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create GitHub App transport: %w", err)
+	}
+
+	// Set base URL if specified (for GitHub Enterprise)
+	if apiBase != "" && apiBase != "https://api.github.com" {
+		transport.BaseURL = apiBase
+	}
+
+	// Create GitHub client
+	var client *github.Client
+	if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
+		client = github.NewClient(&http.Client{Transport: transport})
+	} else {
+		client, err = github.NewClient(&http.Client{Transport: transport}).WithEnterpriseURLs(apiBase, apiBase)
+		if err != nil {
+			return 0, fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
+		}
+	}
+
+	ctx := context.Background()
+
+	// List installations for the app
+	installations, _, err := client.Apps.ListInstallations(ctx, &github.ListOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list installations: %w", err)
+	}
+
+	// Check each installation for repository access
+	for _, installation := range installations {
+		installationID := installation.GetID()
+
+		// Create installation client to check repository access
+		installationTransport := ghinstallation.NewFromAppsTransport(transport, installationID)
+		var installationClient *github.Client
+		if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
+			installationClient = github.NewClient(&http.Client{Transport: installationTransport})
+		} else {
+			installationClient, err = github.NewClient(&http.Client{Transport: installationTransport}).WithEnterpriseURLs(apiBase, apiBase)
+			if err != nil {
+				continue // Skip this installation if we can't create a client
+			}
+		}
+
+		// Try to access the repository with this installation
+		_, _, err := installationClient.Repositories.Get(ctx, owner, repo)
+		if err == nil {
+			// Successfully accessed the repository with this installation
+			return installationID, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no installation found with access to repository %s/%s", owner, repo)
+}
+
+func parseRepositoryFromURL(repoURL string) (string, string, error) {
+	// Handle different URL formats
+	var repoPath string
+
+	if strings.HasPrefix(repoURL, "https://github.com/") {
+		repoPath = strings.TrimPrefix(repoURL, "https://github.com/")
+	} else if strings.HasPrefix(repoURL, "git@github.com:") {
+		repoPath = strings.TrimPrefix(repoURL, "git@github.com:")
+	} else if strings.HasPrefix(repoURL, "http://github.com/") {
+		repoPath = strings.TrimPrefix(repoURL, "http://github.com/")
+	} else {
+		// Try to parse as URL
+		u, err := url.Parse(repoURL)
+		if err != nil {
+			return "", "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
+		}
+
+		if u.Host != "github.com" {
+			return "", "", fmt.Errorf("only github.com repositories are supported")
+		}
+
+		repoPath = strings.TrimPrefix(u.Path, "/")
+	}
+
+	// Remove .git suffix if present
+	repoPath = strings.TrimSuffix(repoPath, ".git")
+
+	// Split into owner/repo
+	parts := strings.Split(repoPath, "/")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid repository path: %s", repoPath)
+	}
+
+	return parts[0], parts[1], nil
 }
 
 func init() {
