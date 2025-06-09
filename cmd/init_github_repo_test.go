@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
@@ -26,29 +27,39 @@ func TestGenerateInstallationToken(t *testing.T) {
 	}
 	defer os.Remove(pemFile)
 
-	// Mock GitHub API server
+	// Mock GitHub API server that handles installation token requests
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			t.Errorf("Expected POST request, got %s", r.Method)
+		// Handle installation token request with API v3 prefix
+		if r.URL.Path == "/api/v3/app/installations/12345/access_tokens" && r.Method == "POST" {
+			auth := r.Header.Get("Authorization")
+			if auth == "" || !startsWith(auth, "Bearer ") {
+				t.Errorf("Expected Bearer token in Authorization header, got %s", auth)
+			}
+
+			w.WriteHeader(http.StatusCreated)
+			response := map[string]interface{}{
+				"token":      "test-installation-token",
+				"expires_at": "2025-06-09T04:00:00Z",
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		
+		// For go-github library, it may make additional requests for JWT authentication
+		if r.Method == "GET" && (r.URL.Path == "/api/v3/app" || r.URL.Path == "/api/v3/user") {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{}`)
+			return
 		}
 
-		if r.URL.Path != "/app/installations/12345/access_tokens" {
-			t.Errorf("Expected path /app/installations/12345/access_tokens, got %s", r.URL.Path)
-		}
-
-		auth := r.Header.Get("Authorization")
-		if auth == "" || !startsWith(auth, "Bearer ") {
-			t.Errorf("Expected Bearer token in Authorization header, got %s", auth)
-		}
-
-		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"token":"test-installation-token","expires_at":"2025-06-09T04:00:00Z"}`)
+		t.Logf("Unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
 	config := GitHubAppConfig{
-		AppID:          "123",
-		InstallationID: "12345",
+		AppID:          123,
+		InstallationID: 12345,
 		PEMPath:        pemFile,
 		APIBase:        server.URL,
 	}
@@ -75,8 +86,8 @@ func TestGenerateInstallationTokenWithInvalidPEM(t *testing.T) {
 	tmpFile.Close()
 
 	config := GitHubAppConfig{
-		AppID:          "123",
-		InstallationID: "12345",
+		AppID:          123,
+		InstallationID: 12345,
 		PEMPath:        tmpFile.Name(),
 		APIBase:        "https://api.github.com",
 	}
@@ -109,8 +120,8 @@ func TestGenerateInstallationTokenWithAPIError(t *testing.T) {
 	defer server.Close()
 
 	config := GitHubAppConfig{
-		AppID:          "123",
-		InstallationID: "12345",
+		AppID:          123,
+		InstallationID: 12345,
 		PEMPath:        pemFile,
 		APIBase:        server.URL,
 	}
@@ -267,8 +278,115 @@ func TestRunInitGitHubRepoValidation(t *testing.T) {
 	defer os.Unsetenv("GITHUB_REPO_URL")
 
 	err = runInitGitHubRepo(nil, nil)
-	if err == nil || !contains(err.Error(), "GITHUB_TOKEN or GitHub App credentials") {
-		t.Errorf("Expected error about missing authentication, got: %v", err)
+	if err == nil || !contains(err.Error(), "GITHUB_APP_ID") {
+		t.Errorf("Expected error about invalid GITHUB_APP_ID, got: %v", err)
+	}
+}
+
+func TestParseAppID(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expected    int64
+		expectError bool
+	}{
+		{
+			name:     "Valid app ID",
+			input:    "123",
+			expected: 123,
+		},
+		{
+			name:     "Large app ID",
+			input:    "123456789",
+			expected: 123456789,
+		},
+		{
+			name:        "Empty string",
+			input:       "",
+			expectError: true,
+		},
+		{
+			name:        "Invalid number",
+			input:       "abc",
+			expectError: true,
+		},
+		{
+			name:     "Negative number",
+			input:    "-123",
+			expected: -123,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseAppID(tt.input)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if result != tt.expected {
+				t.Errorf("Expected %d, got %d", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestParseInstallationID(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expected    int64
+		expectError bool
+	}{
+		{
+			name:     "Valid installation ID",
+			input:    "12345",
+			expected: 12345,
+		},
+		{
+			name:     "Large installation ID",
+			input:    "987654321",
+			expected: 987654321,
+		},
+		{
+			name:        "Empty string",
+			input:       "",
+			expectError: true,
+		},
+		{
+			name:        "Invalid number",
+			input:       "xyz",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseInstallationID(tt.input)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if result != tt.expected {
+				t.Errorf("Expected %d, got %d", tt.expected, result)
+			}
+		})
 	}
 }
 

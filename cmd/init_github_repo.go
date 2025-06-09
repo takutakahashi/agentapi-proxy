@@ -2,33 +2,25 @@ package cmd
 
 import (
 	"bytes"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/json"
-	"encoding/pem"
+	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/bradleyfalzon/ghinstallation/v2"
+	"github.com/google/go-github/v57/github"
 	"github.com/spf13/cobra"
 )
 
 type GitHubAppConfig struct {
-	AppID          string
-	InstallationID string
+	AppID          int64
+	InstallationID int64
 	PEMPath        string
 	APIBase        string
-}
-
-type InstallationTokenResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
 }
 
 var initGitHubRepoCmd = &cobra.Command{
@@ -70,14 +62,24 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 	if token == "" {
 		fmt.Println("No GITHUB_TOKEN found, attempting to generate from GitHub App credentials...")
 
+		appID, err := parseAppID(os.Getenv("GITHUB_APP_ID"))
+		if err != nil {
+			return fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
+		}
+
+		installationID, err := parseInstallationID(os.Getenv("GITHUB_INSTALLATION_ID"))
+		if err != nil {
+			return fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
+		}
+
 		appConfig := GitHubAppConfig{
-			AppID:          os.Getenv("GITHUB_APP_ID"),
-			InstallationID: os.Getenv("GITHUB_INSTALLATION_ID"),
+			AppID:          appID,
+			InstallationID: installationID,
 			PEMPath:        os.Getenv("GITHUB_APP_PEM_PATH"),
 			APIBase:        getAPIBase(),
 		}
 
-		if appConfig.AppID == "" || appConfig.InstallationID == "" || appConfig.PEMPath == "" {
+		if appConfig.AppID == 0 || appConfig.InstallationID == 0 || appConfig.PEMPath == "" {
 			return fmt.Errorf("either GITHUB_TOKEN or GitHub App credentials (GITHUB_APP_ID, GITHUB_INSTALLATION_ID, GITHUB_APP_PEM_PATH) must be provided")
 		}
 
@@ -134,76 +136,44 @@ func generateInstallationToken(config GitHubAppConfig) (string, error) {
 		return "", fmt.Errorf("failed to read PEM file: %w", err)
 	}
 
-	// Parse the private key
-	block, _ := pem.Decode(pemData)
-	if block == nil {
-		return "", fmt.Errorf("failed to decode PEM block")
+	// Create GitHub App transport
+	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, config.AppID, pemData)
+	if err != nil {
+		return "", fmt.Errorf("failed to create GitHub App transport: %w", err)
 	}
 
-	var privateKey *rsa.PrivateKey
-	if block.Type == "RSA PRIVATE KEY" {
-		privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
-	} else if block.Type == "PRIVATE KEY" {
-		parsedKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			return "", fmt.Errorf("failed to parse PKCS8 private key: %w", err)
-		}
-		var ok bool
-		privateKey, ok = parsedKey.(*rsa.PrivateKey)
-		if !ok {
-			return "", fmt.Errorf("parsed key is not RSA private key")
-		}
+	// Set base URL if specified (for GitHub Enterprise)
+	if config.APIBase != "" && config.APIBase != "https://api.github.com" {
+		transport.BaseURL = config.APIBase
+	}
+
+	// Create GitHub client
+	var client *github.Client
+	if config.APIBase == "" || strings.Contains(config.APIBase, "https://api.github.com") {
+		client = github.NewClient(&http.Client{Transport: transport})
 	} else {
-		return "", fmt.Errorf("unsupported PEM block type: %s", block.Type)
+		client, err = github.NewEnterpriseClient(
+			config.APIBase,
+			config.APIBase,
+			&http.Client{Transport: transport},
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
+		}
 	}
 
+	// Create installation token
+	ctx := context.Background()
+	token, _, err := client.Apps.CreateInstallationToken(
+		ctx,
+		config.InstallationID,
+		&github.InstallationTokenOptions{},
+	)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse private key: %w", err)
+		return "", fmt.Errorf("failed to create installation token: %w", err)
 	}
 
-	// Create JWT token
-	now := time.Now()
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iat": now.Unix(),
-		"exp": now.Add(10 * time.Minute).Unix(),
-		"iss": config.AppID,
-	})
-
-	tokenString, err := token.SignedString(privateKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign JWT: %w", err)
-	}
-
-	// Exchange JWT for installation token
-	url := fmt.Sprintf("%s/app/installations/%s/access_tokens", config.APIBase, config.InstallationID)
-
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+tokenString)
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "agentapi-proxy-helper")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var tokenResp InstallationTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return tokenResp.Token, nil
+	return token.GetToken(), nil
 }
 
 func setupRepository(repoURL, token, cloneDir string) error {
@@ -327,6 +297,28 @@ func saveEnvironmentVariables(token, cloneDir string) error {
 	buf.WriteString(fmt.Sprintf("GITHUB_CLONE_DIR=%s\n", cloneDir))
 
 	return os.WriteFile(envFile, buf.Bytes(), 0600)
+}
+
+func parseAppID(appIDStr string) (int64, error) {
+	if appIDStr == "" {
+		return 0, fmt.Errorf("GITHUB_APP_ID is required")
+	}
+	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("GITHUB_APP_ID must be a valid integer: %w", err)
+	}
+	return appID, nil
+}
+
+func parseInstallationID(installationIDStr string) (int64, error) {
+	if installationIDStr == "" {
+		return 0, fmt.Errorf("GITHUB_INSTALLATION_ID is required")
+	}
+	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("GITHUB_INSTALLATION_ID must be a valid integer: %w", err)
+	}
+	return installationID, nil
 }
 
 func init() {
