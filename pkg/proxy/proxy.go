@@ -219,6 +219,12 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to allocate port")
 	}
 
+	// Check if repository tag exists and execute init git repo helper
+	if err := p.handleRepositoryTag(startReq.Tags); err != nil {
+		log.Printf("Failed to handle repository tag: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to initialize repository: %v", err))
+	}
+
 	// Determine which script to use based on request parameters
 	scriptName := p.selectScript(c, scriptCache)
 
@@ -594,6 +600,58 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 		log.Printf("Timeout reached, %d sessions may still be running", remaining)
 		return fmt.Errorf("shutdown timeout reached with %d sessions still running", remaining)
 	}
+}
+
+// handleRepositoryTag checks if there's a repository tag and executes the init git repo helper
+func (p *Proxy) handleRepositoryTag(tags map[string]string) error {
+	if tags == nil {
+		return nil
+	}
+
+	repoURL, exists := tags["repository"]
+	if !exists || repoURL == "" {
+		return nil
+	}
+
+	// Only process repository URLs that look like valid GitHub URLs
+	if !isValidRepositoryURL(repoURL) {
+		if p.verbose {
+			log.Printf("Repository tag found: %s, but it's not a valid repository URL. Skipping init git repo helper.", repoURL)
+		}
+		return nil
+	}
+
+	if p.verbose {
+		log.Printf("Repository tag found: %s. Executing init git repo helper...", repoURL)
+	}
+
+	// Set environment variable for the helper
+	os.Setenv("GITHUB_REPO_URL", repoURL)
+
+	// Execute the init git repo helper command
+	cmd := exec.Command("agentapi-proxy", "helpers", "init-github-repository")
+	cmd.Env = os.Environ() // Use current environment including our GITHUB_REPO_URL
+
+	// Capture output for debugging
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("Init git repo helper failed: %v, output: %s", err, string(output))
+		return fmt.Errorf("init git repo helper failed: %v", err)
+	}
+
+	if p.verbose {
+		log.Printf("Init git repo helper completed successfully. Output: %s", string(output))
+	}
+
+	return nil
+}
+
+// isValidRepositoryURL checks if a repository URL is valid for GitHub
+func isValidRepositoryURL(repoURL string) bool {
+	// Check for common GitHub URL patterns
+	return strings.HasPrefix(repoURL, "https://github.com/") ||
+		strings.HasPrefix(repoURL, "git@github.com:") ||
+		strings.HasPrefix(repoURL, "http://github.com/")
 }
 
 // GetEcho returns the Echo instance for external access
