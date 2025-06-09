@@ -226,7 +226,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	}
 
 	// Determine which script to use based on request parameters
-	scriptName := p.selectScript(c, scriptCache)
+	scriptName := p.selectScript(c, scriptCache, startReq.Tags)
 
 	// Start agentapi server in goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -527,12 +527,23 @@ func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
 }
 
 // selectScript determines which script to use based on request parameters
-func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte) string {
+func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte, tags map[string]string) string {
+	// Use GitHub script if repository tag is present
+	if tags != nil {
+		if repoURL, exists := tags["repository"]; exists && repoURL != "" {
+			if _, ok := scriptCache[ScriptWithGithub]; ok {
+				return ScriptWithGithub
+			}
+		}
+	}
+
+	// Legacy support: Use GitHub script if github_repo query parameter is present
 	if githubRepo := c.QueryParam("github_repo"); githubRepo != "" {
 		if _, ok := scriptCache[ScriptWithGithub]; ok {
 			return ScriptWithGithub
 		}
 	}
+
 	if _, ok := scriptCache[ScriptDefault]; ok {
 		return ScriptDefault
 	}
@@ -602,7 +613,7 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 	}
 }
 
-// handleRepositoryTag checks if there's a repository tag and executes the init git repo helper
+// handleRepositoryTag checks if there's a repository tag and sets up environment for shell script execution
 func (p *Proxy) handleRepositoryTag(tags map[string]string) error {
 	if tags == nil {
 		return nil
@@ -622,26 +633,11 @@ func (p *Proxy) handleRepositoryTag(tags map[string]string) error {
 	}
 
 	if p.verbose {
-		log.Printf("Repository tag found: %s. Executing init git repo helper...", repoURL)
+		log.Printf("Repository tag found: %s. Will execute init git repo helper via shell script.", repoURL)
 	}
 
-	// Set environment variable for the helper
+	// Set environment variable for the shell script to use
 	os.Setenv("GITHUB_REPO_URL", repoURL)
-
-	// Execute the init git repo helper command
-	cmd := exec.Command("agentapi-proxy", "helpers", "init-github-repository")
-	cmd.Env = os.Environ() // Use current environment including our GITHUB_REPO_URL
-
-	// Capture output for debugging
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("Init git repo helper failed: %v, output: %s", err, string(output))
-		return fmt.Errorf("init git repo helper failed: %v", err)
-	}
-
-	if p.verbose {
-		log.Printf("Init git repo helper completed successfully. Output: %s", string(output))
-	}
 
 	return nil
 }
