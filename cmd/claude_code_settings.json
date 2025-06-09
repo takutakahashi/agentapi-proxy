@@ -1,20 +1,4 @@
 {
   "dontCrawlDirectory": true,
-  "hasTrustDialogAccepted": true,
-  "workspaceSettings": {
-    "agentapiProxy": {
-      "defaultStartPort": 9000,
-      "enableVerboseLogging": false,
-      "configPath": "config.json"
-    }
-  },
-  "projectSettings": {
-    "lintCommand": "make lint",
-    "testCommand": "make test",
-    "buildCommand": "make build"
-  },
-  "preferences": {
-    "autoSaveOnEdit": true,
-    "showFileTreeByDefault": true
-  }
+  "hasTrustDialogAccepted": true
 }
