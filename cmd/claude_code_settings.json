@@ -1,4 +1,6 @@
 {
+  "dontCrawlDirectory": true,
+  "hasTrustDialogAccepted": true,
   "workspaceSettings": {
     "agentapiProxy": {
       "defaultStartPort": 9000,
