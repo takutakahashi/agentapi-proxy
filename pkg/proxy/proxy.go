@@ -39,6 +39,7 @@ const (
 type StartRequest struct {
 	UserID      string            `json:"user_id,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
 }
 
 // AgentSession represents a running agentapi server instance
@@ -51,6 +52,7 @@ type AgentSession struct {
 	UserID      string
 	Status      string
 	Environment map[string]string
+	Tags        map[string]string
 }
 
 // Proxy represents the HTTP proxy server
@@ -133,6 +135,15 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 	userID := c.QueryParam("user_id")
 	status := c.QueryParam("status")
 
+	// Extract tag filters from query parameters
+	tagFilters := make(map[string]string)
+	for paramName, paramValues := range c.QueryParams() {
+		if strings.HasPrefix(paramName, "tag.") && len(paramValues) > 0 {
+			tagKey := strings.TrimPrefix(paramName, "tag.")
+			tagFilters[tagKey] = paramValues[0]
+		}
+	}
+
 	p.sessionsMutex.RLock()
 	defer p.sessionsMutex.RUnlock()
 
@@ -147,12 +158,26 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 			continue
 		}
 
+		// Apply tag filters
+		matchAllTags := true
+		for tagKey, tagValue := range tagFilters {
+			sessionTagValue, exists := session.Tags[tagKey]
+			if !exists || sessionTagValue != tagValue {
+				matchAllTags = false
+				break
+			}
+		}
+		if !matchAllTags {
+			continue
+		}
+
 		sessionData := map[string]interface{}{
 			"session_id": session.ID,
 			"user_id":    session.UserID,
 			"status":     session.Status,
 			"started_at": session.StartedAt,
 			"port":       session.Port,
+			"tags":       session.Tags,
 		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
@@ -207,6 +232,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		UserID:      userID,
 		Status:      "active",
 		Environment: startReq.Environment,
+		Tags:        startReq.Tags,
 	}
 
 	// Store session

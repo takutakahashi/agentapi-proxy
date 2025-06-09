@@ -30,6 +30,7 @@ func NewClient(baseURL string) *Client {
 type StartRequest struct {
 	UserID      string            `json:"user_id,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
 }
 
 // StartResponse represents the response from starting a new agentapi server
@@ -39,11 +40,12 @@ type StartResponse struct {
 
 // SessionInfo represents information about a session
 type SessionInfo struct {
-	SessionID string    `json:"session_id"`
-	UserID    string    `json:"user_id"`
-	Status    string    `json:"status"`
-	StartedAt time.Time `json:"started_at"`
-	Port      int       `json:"port"`
+	SessionID string            `json:"session_id"`
+	UserID    string            `json:"user_id"`
+	Status    string            `json:"status"`
+	StartedAt time.Time         `json:"started_at"`
+	Port      int               `json:"port"`
+	Tags      map[string]string `json:"tags,omitempty"`
 }
 
 // SearchResponse represents the response from searching sessions
@@ -111,6 +113,11 @@ func (c *Client) Start(ctx context.Context, req *StartRequest) (*StartResponse, 
 
 // Search lists and filters sessions
 func (c *Client) Search(ctx context.Context, userID, status string) (*SearchResponse, error) {
+	return c.SearchWithTags(ctx, userID, status, nil)
+}
+
+// SearchWithTags lists and filters sessions with tag support
+func (c *Client) SearchWithTags(ctx context.Context, userID, status string, tags map[string]string) (*SearchResponse, error) {
 	u, err := url.Parse(c.baseURL + "/search")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
@@ -122,6 +129,10 @@ func (c *Client) Search(ctx context.Context, userID, status string) (*SearchResp
 	}
 	if status != "" {
 		q.Set("status", status)
+	}
+	// Add tag filters
+	for key, value := range tags {
+		q.Set("tag."+key, value)
 	}
 	u.RawQuery = q.Encode()
 
