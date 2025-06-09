@@ -219,8 +219,14 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to allocate port")
 	}
 
+	// Check if repository tag exists and execute init git repo helper
+	if err := p.handleRepositoryTag(startReq.Tags); err != nil {
+		log.Printf("Failed to handle repository tag: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to initialize repository: %v", err))
+	}
+
 	// Determine which script to use based on request parameters
-	scriptName := p.selectScript(c, scriptCache)
+	scriptName := p.selectScript(c, scriptCache, startReq.Tags)
 
 	// Start agentapi server in goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -521,12 +527,23 @@ func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
 }
 
 // selectScript determines which script to use based on request parameters
-func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte) string {
+func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte, tags map[string]string) string {
+	// Use GitHub script if repository tag is present
+	if tags != nil {
+		if repoURL, exists := tags["repository"]; exists && repoURL != "" {
+			if _, ok := scriptCache[ScriptWithGithub]; ok {
+				return ScriptWithGithub
+			}
+		}
+	}
+
+	// Legacy support: Use GitHub script if github_repo query parameter is present
 	if githubRepo := c.QueryParam("github_repo"); githubRepo != "" {
 		if _, ok := scriptCache[ScriptWithGithub]; ok {
 			return ScriptWithGithub
 		}
 	}
+
 	if _, ok := scriptCache[ScriptDefault]; ok {
 		return ScriptDefault
 	}
@@ -594,6 +611,43 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 		log.Printf("Timeout reached, %d sessions may still be running", remaining)
 		return fmt.Errorf("shutdown timeout reached with %d sessions still running", remaining)
 	}
+}
+
+// handleRepositoryTag checks if there's a repository tag and sets up environment for shell script execution
+func (p *Proxy) handleRepositoryTag(tags map[string]string) error {
+	if tags == nil {
+		return nil
+	}
+
+	repoURL, exists := tags["repository"]
+	if !exists || repoURL == "" {
+		return nil
+	}
+
+	// Only process repository URLs that look like valid GitHub URLs
+	if !isValidRepositoryURL(repoURL) {
+		if p.verbose {
+			log.Printf("Repository tag found: %s, but it's not a valid repository URL. Skipping init git repo helper.", repoURL)
+		}
+		return nil
+	}
+
+	if p.verbose {
+		log.Printf("Repository tag found: %s. Will execute init git repo helper via shell script.", repoURL)
+	}
+
+	// Set environment variable for the shell script to use
+	os.Setenv("GITHUB_REPO_URL", repoURL)
+
+	return nil
+}
+
+// isValidRepositoryURL checks if a repository URL is valid for GitHub
+func isValidRepositoryURL(repoURL string) bool {
+	// Check for common GitHub URL patterns
+	return strings.HasPrefix(repoURL, "https://github.com/") ||
+		strings.HasPrefix(repoURL, "git@github.com:") ||
+		strings.HasPrefix(repoURL, "http://github.com/")
 }
 
 // GetEcho returns the Echo instance for external access
