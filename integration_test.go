@@ -16,6 +16,11 @@ import (
 func TestIntegrationSessionAPI(t *testing.T) {
 	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, true)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
 
 	tests := []struct {
 		name           string
@@ -75,6 +80,11 @@ func TestIntegrationSessionAPI(t *testing.T) {
 func TestSessionLifecycle(t *testing.T) {
 	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, false)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
 
 	// Step 1: Start a new session
 	req := httptest.NewRequest("POST", "/start?user_id=testuser", nil)
@@ -133,6 +143,11 @@ func TestSessionLifecycle(t *testing.T) {
 func TestConcurrentSessionRequests(t *testing.T) {
 	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, false)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
 
 	// Test concurrent session creation
 	const numSessions = 5
@@ -182,6 +197,11 @@ func TestConcurrentSessionRequests(t *testing.T) {
 func TestClientIntegration(t *testing.T) {
 	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, false)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
 
 	server := httptest.NewServer(proxyServer.GetEcho())
 	defer server.Close()
@@ -266,6 +286,11 @@ func TestClientIntegration(t *testing.T) {
 func TestClientConcurrentOperations(t *testing.T) {
 	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, false)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
 
 	server := httptest.NewServer(proxyServer.GetEcho())
 	defer server.Close()
@@ -332,6 +357,11 @@ func TestClientErrorHandling(t *testing.T) {
 	// Test with invalid session ID
 	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, false)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
 
 	server := httptest.NewServer(proxyServer.GetEcho())
 	defer server.Close()
@@ -360,6 +390,11 @@ func TestClientErrorHandling(t *testing.T) {
 func TestTagFunctionality(t *testing.T) {
 	cfg := config.DefaultConfig()
 	proxyServer := proxy.NewProxy(cfg, false)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
 
 	server := httptest.NewServer(proxyServer.GetEcho())
 	defer server.Close()
