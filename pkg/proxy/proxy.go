@@ -44,15 +44,16 @@ type StartRequest struct {
 
 // AgentSession represents a running agentapi server instance
 type AgentSession struct {
-	ID          string
-	Port        int
-	Process     *exec.Cmd
-	Cancel      context.CancelFunc
-	StartedAt   time.Time
-	UserID      string
-	Status      string
-	Environment map[string]string
-	Tags        map[string]string
+	ID           string
+	Port         int
+	Process      *exec.Cmd
+	Cancel       context.CancelFunc
+	StartedAt    time.Time
+	UserID       string
+	Status       string
+	Environment  map[string]string
+	Tags         map[string]string
+	processMutex sync.RWMutex
 }
 
 // Proxy represents the HTTP proxy server
@@ -415,11 +416,13 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		}
 	}
 
-	// Store the command in the session
+	// Store the command in the session and start the process
+	session.processMutex.Lock()
 	session.Process = cmd
+	err := cmd.Start()
+	session.processMutex.Unlock()
 
-	// Start the process
-	if err := cmd.Start(); err != nil {
+	if err != nil {
 		log.Printf("Failed to start agentapi process for session %s: %v", session.ID, err)
 		return
 	}
@@ -550,8 +553,12 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 	// Cancel all sessions
 	for _, session := range sessions {
 		if session.Cancel != nil {
-			if session.Process != nil && session.Process.Process != nil {
-				log.Printf("Terminating session %s (PID: %d)", session.ID, session.Process.Process.Pid)
+			session.processMutex.RLock()
+			process := session.Process
+			session.processMutex.RUnlock()
+
+			if process != nil && process.Process != nil {
+				log.Printf("Terminating session %s (PID: %d)", session.ID, process.Process.Pid)
 			} else {
 				log.Printf("Terminating session %s", session.ID)
 			}
