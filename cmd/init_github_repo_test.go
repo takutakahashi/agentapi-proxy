@@ -25,7 +25,7 @@ func TestGenerateInstallationToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp PEM file: %v", err)
 	}
-	defer os.Remove(pemFile)
+	defer func() { _ = os.Remove(pemFile) }()
 
 	// Mock GitHub API server that handles installation token requests
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,14 +41,14 @@ func TestGenerateInstallationToken(t *testing.T) {
 				"token":      "test-installation-token",
 				"expires_at": "2025-06-09T04:00:00Z",
 			}
-			json.NewEncoder(w).Encode(response)
+			_ = json.NewEncoder(w).Encode(response)
 			return
 		}
-		
+
 		// For go-github library, it may make additional requests for JWT authentication
 		if r.Method == "GET" && (r.URL.Path == "/api/v3/app" || r.URL.Path == "/api/v3/user") {
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, `{}`)
+			_, _ = fmt.Fprint(w, `{}`)
 			return
 		}
 
@@ -80,10 +80,10 @@ func TestGenerateInstallationTokenWithInvalidPEM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	tmpFile.WriteString("invalid pem content")
-	tmpFile.Close()
+	_, _ = tmpFile.WriteString("invalid pem content")
+	_ = tmpFile.Close()
 
 	config := GitHubAppConfig{
 		AppID:          123,
@@ -110,12 +110,12 @@ func TestGenerateInstallationTokenWithAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp PEM file: %v", err)
 	}
-	defer os.Remove(pemFile)
+	defer func() { _ = os.Remove(pemFile) }()
 
 	// Mock GitHub API server that returns an error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, `{"message":"Bad credentials"}`)
+		_, _ = fmt.Fprint(w, `{"message":"Bad credentials"}`)
 	}))
 	defer server.Close()
 
@@ -210,10 +210,10 @@ func TestGetAPIBase(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set environment variable
 			if tt.envValue != "" {
-				os.Setenv("GITHUB_API", tt.envValue)
-				defer os.Unsetenv("GITHUB_API")
+				_ = os.Setenv("GITHUB_API", tt.envValue)
+				defer func() { _ = os.Unsetenv("GITHUB_API") }()
 			} else {
-				os.Unsetenv("GITHUB_API")
+				_ = os.Unsetenv("GITHUB_API")
 			}
 
 			result := getAPIBase()
@@ -236,7 +236,7 @@ func TestSaveEnvironmentVariables(t *testing.T) {
 	// Check if the file was created
 	pid := os.Getpid()
 	envFile := fmt.Sprintf("/tmp/github_env_%d", pid)
-	defer os.Remove(envFile)
+	defer func() { _ = os.Remove(envFile) }()
 
 	content, err := os.ReadFile(envFile)
 	if err != nil {
@@ -262,11 +262,11 @@ func TestSaveEnvironmentVariables(t *testing.T) {
 
 func TestRunInitGitHubRepoValidation(t *testing.T) {
 	// Test missing GITHUB_REPO_URL
-	os.Unsetenv("GITHUB_REPO_URL")
-	os.Unsetenv("GITHUB_TOKEN")
-	os.Unsetenv("GITHUB_APP_ID")
-	os.Unsetenv("GITHUB_INSTALLATION_ID")
-	os.Unsetenv("GITHUB_APP_PEM_PATH")
+	_ = os.Unsetenv("GITHUB_REPO_URL")
+	_ = os.Unsetenv("GITHUB_TOKEN")
+	_ = os.Unsetenv("GITHUB_APP_ID")
+	_ = os.Unsetenv("GITHUB_INSTALLATION_ID")
+	_ = os.Unsetenv("GITHUB_APP_PEM_PATH")
 
 	err := runInitGitHubRepo(nil, nil)
 	if err == nil || !contains(err.Error(), "GITHUB_REPO_URL") {
@@ -274,8 +274,8 @@ func TestRunInitGitHubRepoValidation(t *testing.T) {
 	}
 
 	// Test missing authentication
-	os.Setenv("GITHUB_REPO_URL", "https://github.com/test/repo")
-	defer os.Unsetenv("GITHUB_REPO_URL")
+	_ = os.Setenv("GITHUB_REPO_URL", "https://github.com/test/repo")
+	defer func() { _ = os.Unsetenv("GITHUB_REPO_URL") }()
 
 	err = runInitGitHubRepo(nil, nil)
 	if err == nil || !contains(err.Error(), "GITHUB_APP_ID") {
@@ -397,7 +397,7 @@ func createTempPEMFile(privateKey *rsa.PrivateKey) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 
 	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
 	privateKeyPEM := &pem.Block{

@@ -152,11 +152,7 @@ func generateInstallationToken(config GitHubAppConfig) (string, error) {
 	if config.APIBase == "" || strings.Contains(config.APIBase, "https://api.github.com") {
 		client = github.NewClient(&http.Client{Transport: transport})
 	} else {
-		client, err = github.NewEnterpriseClient(
-			config.APIBase,
-			config.APIBase,
-			&http.Client{Transport: transport},
-		)
+		client, err = github.NewClient(&http.Client{Transport: transport}).WithEnterpriseURLs(config.APIBase, config.APIBase)
 		if err != nil {
 			return "", fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
 		}
