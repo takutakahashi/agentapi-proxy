@@ -77,6 +77,20 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Add recovery middleware
 	e.Use(middleware.Recover())
 
+	// Add CORS middleware with proper configuration (only for non-proxy routes)
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		Skipper: func(c echo.Context) bool {
+			// Skip CORS middleware for proxy routes (they handle CORS manually)
+			path := c.Request().URL.Path
+			return len(strings.Split(path, "/")) >= 3 && path != "/start" && path != "/search"
+		},
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodDelete, http.MethodOptions},
+		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Requested-With", "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host"},
+		AllowCredentials: true,
+		MaxAge:           86400,
+	}))
+
 	// --- scriptCache初期化 ---
 	if scriptCache == nil {
 		scriptCache = make(map[string][]byte)
@@ -319,6 +333,22 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 		if req.TLS != nil {
 			req.Header.Set("X-Forwarded-Proto", "https")
 		}
+	}
+
+	// Add CORS headers to response
+	originalModifyResponse := proxy.ModifyResponse
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		// Set CORS headers
+		resp.Header.Set("Access-Control-Allow-Origin", "*")
+		resp.Header.Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
+		resp.Header.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host")
+		resp.Header.Set("Access-Control-Allow-Credentials", "true")
+		resp.Header.Set("Access-Control-Max-Age", "86400")
+
+		if originalModifyResponse != nil {
+			return originalModifyResponse(resp)
+		}
+		return nil
 	}
 
 	// Custom error handler
@@ -637,7 +667,9 @@ func (p *Proxy) handleRepositoryTag(tags map[string]string) error {
 	}
 
 	// Set environment variable for the shell script to use
-	os.Setenv("GITHUB_REPO_URL", repoURL)
+	if err := os.Setenv("GITHUB_REPO_URL", repoURL); err != nil {
+		log.Printf("Failed to set GITHUB_REPO_URL environment variable: %v", err)
+	}
 
 	return nil
 }
