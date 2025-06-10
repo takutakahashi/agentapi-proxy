@@ -451,7 +451,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 			log.Printf("  GitHub Repository: (not specified)")
 		}
 		log.Printf("  Session ID: %s", session.ID)
-		if session.Tags != nil && len(session.Tags) > 0 {
+		if len(session.Tags) > 0 {
 			log.Printf("  Request tags:")
 			for key, value := range session.Tags {
 				log.Printf("    %s=%s", key, value)
@@ -480,7 +480,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	// Log environment variable setup
 	log.Printf("Environment variables for session %s:", session.ID)
-	if session.Environment != nil && len(session.Environment) > 0 {
+	if len(session.Environment) > 0 {
 		log.Printf("  Custom environment variables:")
 		for key, value := range session.Environment {
 			// Add or override environment variable
