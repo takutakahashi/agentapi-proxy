@@ -308,6 +308,9 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 	// Create reverse proxy
 	proxy := httputil.NewSingleHostReverseProxy(target)
 
+	// Configure for streaming responses (SSE support)
+	proxy.FlushInterval = time.Millisecond * 100 // Flush every 100ms for real-time streaming
+
 	// Customize the director to preserve the original path (minus the session ID part)
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -344,6 +347,15 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 		resp.Header.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host")
 		resp.Header.Set("Access-Control-Allow-Credentials", "true")
 		resp.Header.Set("Access-Control-Max-Age", "86400")
+
+		// Handle Server-Sent Events (SSE) specific headers
+		if resp.Header.Get("Content-Type") == "text/event-stream" {
+			// Ensure proper SSE headers are maintained
+			resp.Header.Set("Cache-Control", "no-cache")
+			resp.Header.Set("Connection", "keep-alive")
+			// Don't set Content-Length for streaming responses
+			resp.Header.Del("Content-Length")
+		}
 
 		if originalModifyResponse != nil {
 			return originalModifyResponse(resp)
