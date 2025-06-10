@@ -570,22 +570,7 @@ func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
 
 // selectScript determines which script to use based on request parameters
 func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte, tags map[string]string) string {
-	// Use GitHub script if repository tag is present
-	if tags != nil {
-		if repoURL, exists := tags["repository"]; exists && repoURL != "" {
-			if _, ok := scriptCache[ScriptWithGithub]; ok {
-				return ScriptWithGithub
-			}
-		}
-	}
-
-	// Legacy support: Use GitHub script if github_repo query parameter is present
-	if githubRepo := c.QueryParam("github_repo"); githubRepo != "" {
-		if _, ok := scriptCache[ScriptWithGithub]; ok {
-			return ScriptWithGithub
-		}
-	}
-
+	// Always use default script
 	if _, ok := scriptCache[ScriptDefault]; ok {
 		return ScriptDefault
 	}

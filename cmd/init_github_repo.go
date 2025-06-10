@@ -50,10 +50,12 @@ Optional:
 	RunE: runInitGitHubRepo,
 }
 
+var ignoreMissingConfig bool
+
 func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 	// Validate required environment variables
 	repoURL := os.Getenv("GITHUB_REPO_URL")
-	if repoURL == "" {
+	if repoURL == "" && !ignoreMissingConfig {
 		return fmt.Errorf("GITHUB_REPO_URL environment variable is required")
 	}
 
@@ -61,6 +63,10 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 
 	// If no token provided, try to generate one from GitHub App credentials
 	if token == "" {
+		if ignoreMissingConfig {
+			fmt.Println("Skipping GitHub setup due to --ignore-missing-config flag")
+			return nil
+		}
 		fmt.Println("No GITHUB_TOKEN found, attempting to generate from GitHub App credentials...")
 
 		appID, err := parseAppID(os.Getenv("GITHUB_APP_ID"))
@@ -123,7 +129,7 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 	}
 
 	// Setup MCP integration
-	if err := setupMCPIntegration(token); err != nil {
+	if err := setupMCPIntegration(token, cloneDir); err != nil {
 		return fmt.Errorf("failed to setup MCP integration: %w", err)
 	}
 
@@ -276,25 +282,20 @@ func createAuthenticatedURL(repoURL, token string) (string, error) {
 	return "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
 }
 
-func setupMCPIntegration(token string) error {
+func setupMCPIntegration(token, cloneDir string) error {
 	fmt.Println("Setting up MCP integration...")
 
 	// Add GitHub MCP server to Claude
-	cmd := exec.Command("mise", "exec", "--", "claude", "mcp", "add", "github")
+	cmd := exec.Command("claude",
+		"mcp", "add", "github",
+		"--",
+		"docker", "run", "-i", "--rm",
+		"-e", "GITHUB_PERSONAL_ACCESS_TOKEN="+token,
+		"ghcr.io/github/github-mcp-server")
+	cmd.Dir = cloneDir
 	if err := cmd.Run(); err != nil {
 		fmt.Printf("Warning: failed to add GitHub MCP server to Claude: %v\n", err)
 	}
-
-	// Run GitHub MCP server as Docker container
-	dockerCmd := exec.Command("docker", "run", "-d",
-		"--name", "github-mcp-server",
-		"-e", "GITHUB_TOKEN="+token,
-		"github-mcp-server")
-
-	if err := dockerCmd.Run(); err != nil {
-		fmt.Printf("Warning: failed to start GitHub MCP server container: %v\n", err)
-	}
-
 	fmt.Println("MCP integration setup completed")
 	return nil
 }
@@ -439,5 +440,6 @@ func parseRepositoryFromURL(repoURL string) (string, string, error) {
 }
 
 func init() {
+	initGitHubRepoCmd.Flags().BoolVar(&ignoreMissingConfig, "ignore-missing-config", false, "Skip execution when required configuration is not provided")
 	HelpersCmd.AddCommand(initGitHubRepoCmd)
 }

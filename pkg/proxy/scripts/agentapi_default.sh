@@ -6,5 +6,6 @@
 # Get port from command line argument
 PORT="${1:-8080}"
 
+agentapi-agent helpers setup-github --ignore-missing-config
 agentapi-agent helpers setup-claude-code
 exec agentapi server --port "$PORT" $AGENTAPI_ARGS -- claude $CLAUDE_ARGS
