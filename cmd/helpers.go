@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -61,6 +62,19 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 	if err := os.WriteFile(settingsPath, []byte(claudeCodeSettings), 0644); err != nil {
 		fmt.Printf("Error writing settings file %s: %v\n", settingsPath, err)
 		os.Exit(1)
+	}
+	claudeSettingsMap := map[string]string{
+		"hasTrustDialogAccepted":        "true",
+		"hasCompletedProjectOnboarding": "true",
+		"dontCrawlDirectory":            "true",
+	}
+
+	for key, value := range claudeSettingsMap {
+		claudeCmd := exec.Command("claude", "config", "set", key, value)
+		if err := claudeCmd.Run(); err != nil {
+			fmt.Printf("Error setting Claude config: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	fmt.Printf("Successfully created Claude Code configuration at %s\n", settingsPath)

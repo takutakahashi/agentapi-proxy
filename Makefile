@@ -34,7 +34,7 @@ install-deps:
 build:
 	@echo "Building $(BINARY_NAME)..."
 	go mod tidy
-	go build -o bin/$(BINARY_NAME) ./cmd/agentapi-proxy
+	go build -o bin/$(BINARY_NAME) main.go
 
 gofmt:
 	@echo "Formatting Go code..."
