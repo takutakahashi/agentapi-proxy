@@ -439,8 +439,26 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		}
 		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
 
+		// Log script execution details
+		log.Printf("Starting agentapi process for session %s on %d using script %s", session.ID, session.Port, scriptName)
+		log.Printf("Script execution parameters:")
+		log.Printf("  Script: %s", scriptName)
+		log.Printf("  Port: %d", session.Port)
+		if repoInfo != nil {
+			log.Printf("  GitHub Repository: %s", repoInfo.FullName)
+			log.Printf("  Clone Directory: %s", repoInfo.CloneDir)
+		} else {
+			log.Printf("  GitHub Repository: (not specified)")
+		}
+		log.Printf("  Session ID: %s", session.ID)
+		if session.Tags != nil && len(session.Tags) > 0 {
+			log.Printf("  Request tags:")
+			for key, value := range session.Tags {
+				log.Printf("    %s=%s", key, value)
+			}
+		}
+		log.Printf("  Full command: /bin/bash %s", strings.Join(args, " "))
 		if p.verbose {
-			log.Printf("Starting agentapi process for session %s on %d using script %s", session.ID, session.Port, scriptName)
 			log.Printf("[VERBOSE] Executing command: /bin/bash %s %s", tmpScriptPath, strconv.Itoa(session.Port))
 		}
 	} else {
@@ -460,14 +478,29 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	// Start with the current environment from agentapi-proxy
 	cmd.Env = os.Environ()
 
-	// Override with any environment variables passed in the request
-	if session.Environment != nil {
+	// Log environment variable setup
+	log.Printf("Environment variables for session %s:", session.ID)
+	if session.Environment != nil && len(session.Environment) > 0 {
+		log.Printf("  Custom environment variables:")
 		for key, value := range session.Environment {
 			// Add or override environment variable
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
-			if p.verbose {
-				log.Printf("Setting environment variable for session %s: %s=%s", session.ID, key, value)
-			}
+			log.Printf("    %s=%s", key, value)
+		}
+	} else {
+		log.Printf("  Using default environment (no custom variables)")
+	}
+
+	// Log relevant standard environment variables
+	agentapiArgs := os.Getenv("AGENTAPI_ARGS")
+	claudeArgs := os.Getenv("CLAUDE_ARGS")
+	if agentapiArgs != "" || claudeArgs != "" {
+		log.Printf("  Standard environment variables:")
+		if agentapiArgs != "" {
+			log.Printf("    AGENTAPI_ARGS=%s", agentapiArgs)
+		}
+		if claudeArgs != "" {
+			log.Printf("    CLAUDE_ARGS=%s", claudeArgs)
 		}
 	}
 
