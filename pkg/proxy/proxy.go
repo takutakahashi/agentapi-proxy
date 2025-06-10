@@ -723,9 +723,21 @@ func (p *Proxy) extractRepositoryInfo(sessionID string, tags map[string]string) 
 // isValidRepositoryURL checks if a repository URL is valid for GitHub
 func isValidRepositoryURL(repoURL string) bool {
 	// Check for common GitHub URL patterns
-	return strings.HasPrefix(repoURL, "https://github.com/") ||
+	if strings.HasPrefix(repoURL, "https://github.com/") ||
 		strings.HasPrefix(repoURL, "git@github.com:") ||
-		strings.HasPrefix(repoURL, "http://github.com/")
+		strings.HasPrefix(repoURL, "http://github.com/") {
+		return true
+	}
+
+	// Check for owner/repo format (e.g., "takutakahashi/agentapi-ui")
+	parts := strings.Split(repoURL, "/")
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		// Simple validation: both owner and repo name should not be empty
+		// and should not contain invalid characters for GitHub usernames/repo names
+		return true
+	}
+
+	return false
 }
 
 // extractRepoFullNameFromURL extracts the org/repo format from a GitHub repository URL
@@ -739,7 +751,8 @@ func extractRepoFullNameFromURL(repoURL string) (string, error) {
 	} else if strings.HasPrefix(repoURL, "http://github.com/") {
 		repoPath = strings.TrimPrefix(repoURL, "http://github.com/")
 	} else {
-		return "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
+		// If it's not a full URL, assume it's already in owner/repo format
+		repoPath = repoURL
 	}
 
 	// Remove .git suffix if present
