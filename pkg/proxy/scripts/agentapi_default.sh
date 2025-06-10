@@ -3,13 +3,18 @@
 # AgentAPI startup script with GitHub integration
 # This script is executed when the github_repo parameter is present
 
-# Get port from command line argument
+# Get parameters from command line arguments
 PORT="${1:-8080}"
+GITHUB_REPO_FULLNAME="${2}"
+GITHUB_CLONE_DIR="${3}"
 
-agentapi-agent helpers setup-github --ignore-missing-config
-if [[ -n "$GITHUB_CLONE_DIR" ]]; then
+# Set up GitHub repository if parameters are provided
+if [[ -n "$GITHUB_REPO_FULLNAME" && -n "$GITHUB_CLONE_DIR" ]]; then
+    agentapi-agent helpers init-github-repository --ignore-missing-config --repo-fullname "$GITHUB_REPO_FULLNAME" --clone-dir "$GITHUB_CLONE_DIR"
     echo "Changing directory to $GITHUB_CLONE_DIR"
     cd "$GITHUB_CLONE_DIR"
+else
+    echo "GitHub parameters not provided, skipping repository setup"
 fi
 
 CLAUDE_DIR=. agentapi-agent helpers setup-claude-code

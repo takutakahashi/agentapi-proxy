@@ -32,8 +32,9 @@ This command will:
 2. Clone or update the specified GitHub repository
 3. Set up MCP integration with Claude
 
-Required environment variables:
-- GITHUB_REPO_FULLNAME: The GitHub repository in org/repo format (e.g., "owner/repository")
+Parameters:
+- --repo-fullname: The GitHub repository in org/repo format (e.g., "owner/repository")
+- --clone-dir: Target directory for cloning (defaults to current directory)
 
 Authentication options (one required):
 - GITHUB_TOKEN: Personal access token or existing token
@@ -43,19 +44,22 @@ Authentication options (one required):
   - GITHUB_INSTALLATION_ID: Installation ID (optional, will auto-detect if not provided)
 
 Optional:
-- GITHUB_CLONE_DIR: Target directory for cloning (defaults to current directory)
 - GITHUB_API: GitHub API base URL (defaults to https://api.github.com)
 `,
 	RunE: runInitGitHubRepo,
 }
 
 var ignoreMissingConfig bool
+var repoFullName string
+var cloneDir string
 
 func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
-	// Validate required environment variables
-	repoFullName := os.Getenv("GITHUB_REPO_FULLNAME")
+	// Get repository fullname from flag or environment variable
+	if repoFullName == "" {
+		repoFullName = os.Getenv("GITHUB_REPO_FULLNAME")
+	}
 	if repoFullName == "" && !ignoreMissingConfig {
-		return fmt.Errorf("GITHUB_REPO_FULLNAME environment variable is required")
+		return fmt.Errorf("repository fullname is required (use --repo-fullname flag or GITHUB_REPO_FULLNAME environment variable)")
 	}
 
 	token := os.Getenv("GITHUB_TOKEN")
@@ -112,8 +116,10 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 		fmt.Println("Successfully generated installation token")
 	}
 
-	// Get clone directory
-	cloneDir := os.Getenv("GITHUB_CLONE_DIR")
+	// Get clone directory from flag or environment variable
+	if cloneDir == "" {
+		cloneDir = os.Getenv("GITHUB_CLONE_DIR")
+	}
 	if cloneDir == "" {
 		var err error
 		cloneDir, err = os.Getwd()
@@ -408,5 +414,7 @@ func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase strin
 
 func init() {
 	initGitHubRepoCmd.Flags().BoolVar(&ignoreMissingConfig, "ignore-missing-config", false, "Skip execution when required configuration is not provided")
+	initGitHubRepoCmd.Flags().StringVar(&repoFullName, "repo-fullname", "", "GitHub repository in org/repo format")
+	initGitHubRepoCmd.Flags().StringVar(&cloneDir, "clone-dir", "", "Target directory for cloning")
 	HelpersCmd.AddCommand(initGitHubRepoCmd)
 }

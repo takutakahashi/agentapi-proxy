@@ -42,6 +42,12 @@ type StartRequest struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 }
 
+// RepositoryInfo contains repository information extracted from tags
+type RepositoryInfo struct {
+	FullName string
+	CloneDir string
+}
+
 // AgentSession represents a running agentapi server instance
 type AgentSession struct {
 	ID           string
@@ -233,11 +239,8 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to allocate port")
 	}
 
-	// Check if repository tag exists and execute init git repo helper
-	if err := p.handleRepositoryTag(sessionID, startReq.Tags); err != nil {
-		log.Printf("Failed to handle repository tag: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to initialize repository: %v", err))
-	}
+	// Extract repository information from tags
+	repoInfo := p.extractRepositoryInfo(sessionID, startReq.Tags)
 
 	// Determine which script to use based on request parameters
 	scriptName := p.selectScript(c, scriptCache, startReq.Tags)
@@ -263,7 +266,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	log.Printf("session: %+v", session)
 	log.Printf("scriptName: %s", scriptName)
 	// Start agentapi server in goroutine
-	go p.runAgentAPIServer(ctx, session, scriptName)
+	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo)
 
 	if p.verbose {
 		if scriptName != "" {
@@ -397,7 +400,7 @@ func (p *Proxy) getAvailablePort() (int, error) {
 }
 
 // runAgentAPIServer runs an agentapi server instance using exec.Command or scripts
-func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string) {
+func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo) {
 	var tmpScriptPath string
 
 	defer func() {
@@ -429,8 +432,12 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 			return
 		}
 
-		// Execute script with port as argument
-		cmd = exec.CommandContext(ctx, "/bin/bash", tmpScriptPath, strconv.Itoa(session.Port))
+		// Execute script with port and repository parameters
+		args := []string{tmpScriptPath, strconv.Itoa(session.Port)}
+		if repoInfo != nil && repoInfo.FullName != "" && repoInfo.CloneDir != "" {
+			args = append(args, repoInfo.FullName, repoInfo.CloneDir)
+		}
+		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
 
 		if p.verbose {
 			log.Printf("Starting agentapi process for session %s on %d using script %s", session.ID, session.Port, scriptName)
@@ -640,16 +647,8 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 	}
 }
 
-// handleRepositoryTag checks if there's a repository tag and sets up environment for shell script execution
-func (p *Proxy) handleRepositoryTag(sessionID string, tags map[string]string) error {
-	// Always set GITHUB_CLONE_DIR to session ID
-	if err := os.Setenv("GITHUB_CLONE_DIR", sessionID); err != nil {
-		log.Printf("Failed to set GITHUB_CLONE_DIR environment variable: %v", err)
-	}
-	if p.verbose {
-		log.Printf("Set GITHUB_CLONE_DIR to session ID: %s", sessionID)
-	}
-
+// extractRepositoryInfo extracts repository information from tags
+func (p *Proxy) extractRepositoryInfo(sessionID string, tags map[string]string) *RepositoryInfo {
 	if tags == nil {
 		return nil
 	}
@@ -662,31 +661,30 @@ func (p *Proxy) handleRepositoryTag(sessionID string, tags map[string]string) er
 	// Only process repository URLs that look like valid GitHub URLs
 	if !isValidRepositoryURL(repoURL) {
 		if p.verbose {
-			log.Printf("Repository tag found: %s, but it's not a valid repository URL. Skipping init git repo helper.", repoURL)
+			log.Printf("Repository tag found: %s, but it's not a valid repository URL. Skipping repository setup.", repoURL)
 		}
 		return nil
 	}
 
 	if p.verbose {
-		log.Printf("Repository tag found: %s. Will execute init git repo helper via shell script.", repoURL)
+		log.Printf("Repository tag found: %s. Will pass to script as parameters.", repoURL)
 	}
 
 	// Extract org/repo format from repository URL
 	repoFullName, err := extractRepoFullNameFromURL(repoURL)
 	if err != nil {
 		log.Printf("Failed to extract repository full name from URL %s: %v", repoURL, err)
-		return err
+		return nil
 	}
 
-	// Set environment variable for the shell script to use
-	if err := os.Setenv("GITHUB_REPO_FULLNAME", repoFullName); err != nil {
-		log.Printf("Failed to set GITHUB_REPO_FULLNAME environment variable: %v", err)
-	}
 	if p.verbose {
-		log.Printf("Set GITHUB_REPO_FULLNAME to: %s", repoFullName)
+		log.Printf("Extracted repository info - FullName: %s, CloneDir: %s", repoFullName, sessionID)
 	}
 
-	return nil
+	return &RepositoryInfo{
+		FullName: repoFullName,
+		CloneDir: sessionID,
+	}
 }
 
 // isValidRepositoryURL checks if a repository URL is valid for GitHub
