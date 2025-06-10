@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +33,7 @@ This command will:
 3. Set up MCP integration with Claude
 
 Required environment variables:
-- GITHUB_REPO_URL: The GitHub repository URL to clone
+- GITHUB_REPO_FULLNAME: The GitHub repository in org/repo format (e.g., "owner/repository")
 
 Authentication options (one required):
 - GITHUB_TOKEN: Personal access token or existing token
@@ -54,9 +53,9 @@ var ignoreMissingConfig bool
 
 func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 	// Validate required environment variables
-	repoURL := os.Getenv("GITHUB_REPO_URL")
-	if repoURL == "" && !ignoreMissingConfig {
-		return fmt.Errorf("GITHUB_REPO_URL environment variable is required")
+	repoFullName := os.Getenv("GITHUB_REPO_FULLNAME")
+	if repoFullName == "" && !ignoreMissingConfig {
+		return fmt.Errorf("GITHUB_REPO_FULLNAME environment variable is required")
 	}
 
 	token := os.Getenv("GITHUB_TOKEN")
@@ -86,7 +85,7 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 		} else {
 			// Auto-detect installation ID
 			fmt.Println("No GITHUB_INSTALLATION_ID provided, attempting auto-detection...")
-			installationID, err = findInstallationIDForRepo(appID, os.Getenv("GITHUB_APP_PEM_PATH"), repoURL, getAPIBase())
+			installationID, err = findInstallationIDForRepo(appID, os.Getenv("GITHUB_APP_PEM_PATH"), repoFullName, getAPIBase())
 			if err != nil {
 				return fmt.Errorf("failed to auto-detect installation ID: %w", err)
 			}
@@ -122,6 +121,9 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
 	}
+
+	// Convert fullname to URL for cloning
+	repoURL := fmt.Sprintf("https://github.com/%s", repoFullName)
 
 	// Setup repository
 	if err := setupRepository(repoURL, token, cloneDir); err != nil {
@@ -333,12 +335,13 @@ func parseInstallationID(installationIDStr string) (int64, error) {
 	return installationID, nil
 }
 
-func findInstallationIDForRepo(appID int64, pemPath, repoURL, apiBase string) (int64, error) {
-	// Parse repository owner and name from URL
-	owner, repo, err := parseRepositoryFromURL(repoURL)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse repository URL: %w", err)
+func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase string) (int64, error) {
+	// Parse repository owner and name from fullname
+	parts := strings.Split(repoFullName, "/")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid repository fullname format, expected 'owner/repo': %s", repoFullName)
 	}
+	owner, repo := parts[0], parts[1]
 
 	// Read the private key
 	pemData, err := os.ReadFile(pemPath)
@@ -401,42 +404,6 @@ func findInstallationIDForRepo(appID int64, pemPath, repoURL, apiBase string) (i
 	}
 
 	return 0, fmt.Errorf("no installation found with access to repository %s/%s", owner, repo)
-}
-
-func parseRepositoryFromURL(repoURL string) (string, string, error) {
-	// Handle different URL formats
-	var repoPath string
-
-	if strings.HasPrefix(repoURL, "https://github.com/") {
-		repoPath = strings.TrimPrefix(repoURL, "https://github.com/")
-	} else if strings.HasPrefix(repoURL, "git@github.com:") {
-		repoPath = strings.TrimPrefix(repoURL, "git@github.com:")
-	} else if strings.HasPrefix(repoURL, "http://github.com/") {
-		repoPath = strings.TrimPrefix(repoURL, "http://github.com/")
-	} else {
-		// Try to parse as URL
-		u, err := url.Parse(repoURL)
-		if err != nil {
-			return "", "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
-		}
-
-		if u.Host != "github.com" {
-			return "", "", fmt.Errorf("only github.com repositories are supported")
-		}
-
-		repoPath = strings.TrimPrefix(u.Path, "/")
-	}
-
-	// Remove .git suffix if present
-	repoPath = strings.TrimSuffix(repoPath, ".git")
-
-	// Split into owner/repo
-	parts := strings.Split(repoPath, "/")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid repository path: %s", repoPath)
-	}
-
-	return parts[0], parts[1], nil
 }
 
 func init() {

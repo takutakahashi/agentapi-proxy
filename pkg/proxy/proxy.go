@@ -234,7 +234,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	}
 
 	// Check if repository tag exists and execute init git repo helper
-	if err := p.handleRepositoryTag(startReq.Tags); err != nil {
+	if err := p.handleRepositoryTag(sessionID, startReq.Tags); err != nil {
 		log.Printf("Failed to handle repository tag: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to initialize repository: %v", err))
 	}
@@ -641,7 +641,15 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 }
 
 // handleRepositoryTag checks if there's a repository tag and sets up environment for shell script execution
-func (p *Proxy) handleRepositoryTag(tags map[string]string) error {
+func (p *Proxy) handleRepositoryTag(sessionID string, tags map[string]string) error {
+	// Always set GITHUB_CLONE_DIR to session ID
+	if err := os.Setenv("GITHUB_CLONE_DIR", sessionID); err != nil {
+		log.Printf("Failed to set GITHUB_CLONE_DIR environment variable: %v", err)
+	}
+	if p.verbose {
+		log.Printf("Set GITHUB_CLONE_DIR to session ID: %s", sessionID)
+	}
+
 	if tags == nil {
 		return nil
 	}
@@ -663,9 +671,19 @@ func (p *Proxy) handleRepositoryTag(tags map[string]string) error {
 		log.Printf("Repository tag found: %s. Will execute init git repo helper via shell script.", repoURL)
 	}
 
+	// Extract org/repo format from repository URL
+	repoFullName, err := extractRepoFullNameFromURL(repoURL)
+	if err != nil {
+		log.Printf("Failed to extract repository full name from URL %s: %v", repoURL, err)
+		return err
+	}
+
 	// Set environment variable for the shell script to use
-	if err := os.Setenv("GITHUB_REPO_URL", repoURL); err != nil {
-		log.Printf("Failed to set GITHUB_REPO_URL environment variable: %v", err)
+	if err := os.Setenv("GITHUB_REPO_FULLNAME", repoFullName); err != nil {
+		log.Printf("Failed to set GITHUB_REPO_FULLNAME environment variable: %v", err)
+	}
+	if p.verbose {
+		log.Printf("Set GITHUB_REPO_FULLNAME to: %s", repoFullName)
 	}
 
 	return nil
@@ -677,6 +695,32 @@ func isValidRepositoryURL(repoURL string) bool {
 	return strings.HasPrefix(repoURL, "https://github.com/") ||
 		strings.HasPrefix(repoURL, "git@github.com:") ||
 		strings.HasPrefix(repoURL, "http://github.com/")
+}
+
+// extractRepoFullNameFromURL extracts the org/repo format from a GitHub repository URL
+func extractRepoFullNameFromURL(repoURL string) (string, error) {
+	var repoPath string
+
+	if strings.HasPrefix(repoURL, "https://github.com/") {
+		repoPath = strings.TrimPrefix(repoURL, "https://github.com/")
+	} else if strings.HasPrefix(repoURL, "git@github.com:") {
+		repoPath = strings.TrimPrefix(repoURL, "git@github.com:")
+	} else if strings.HasPrefix(repoURL, "http://github.com/") {
+		repoPath = strings.TrimPrefix(repoURL, "http://github.com/")
+	} else {
+		return "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
+	}
+
+	// Remove .git suffix if present
+	repoPath = strings.TrimSuffix(repoPath, ".git")
+
+	// Split into org/repo
+	parts := strings.Split(repoPath, "/")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid repository path: %s", repoPath)
+	}
+
+	return repoPath, nil
 }
 
 // GetEcho returns the Echo instance for external access

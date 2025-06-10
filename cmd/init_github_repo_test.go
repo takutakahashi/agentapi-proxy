@@ -261,21 +261,21 @@ func TestSaveEnvironmentVariables(t *testing.T) {
 }
 
 func TestRunInitGitHubRepoValidation(t *testing.T) {
-	// Test missing GITHUB_REPO_URL
-	_ = os.Unsetenv("GITHUB_REPO_URL")
+	// Test missing GITHUB_REPO_FULLNAME
+	_ = os.Unsetenv("GITHUB_REPO_FULLNAME")
 	_ = os.Unsetenv("GITHUB_TOKEN")
 	_ = os.Unsetenv("GITHUB_APP_ID")
 	_ = os.Unsetenv("GITHUB_INSTALLATION_ID")
 	_ = os.Unsetenv("GITHUB_APP_PEM_PATH")
 
 	err := runInitGitHubRepo(nil, nil)
-	if err == nil || !contains(err.Error(), "GITHUB_REPO_URL") {
-		t.Errorf("Expected error about missing GITHUB_REPO_URL, got: %v", err)
+	if err == nil || !contains(err.Error(), "GITHUB_REPO_FULLNAME") {
+		t.Errorf("Expected error about missing GITHUB_REPO_FULLNAME, got: %v", err)
 	}
 
 	// Test missing authentication
-	_ = os.Setenv("GITHUB_REPO_URL", "https://github.com/test/repo")
-	defer func() { _ = os.Unsetenv("GITHUB_REPO_URL") }()
+	_ = os.Setenv("GITHUB_REPO_FULLNAME", "test/repo")
+	defer func() { _ = os.Unsetenv("GITHUB_REPO_FULLNAME") }()
 
 	err = runInitGitHubRepo(nil, nil)
 	if err == nil || !contains(err.Error(), "GITHUB_APP_ID") {

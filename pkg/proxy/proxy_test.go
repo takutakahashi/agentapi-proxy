@@ -85,3 +85,74 @@ func TestSessionRoutingNotFound(t *testing.T) {
 		t.Errorf("Expected status %d for non-existent session, got %d", http.StatusNotFound, w.Code)
 	}
 }
+
+func TestExtractRepoFullNameFromURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		repoURL     string
+		expected    string
+		expectError bool
+	}{
+		{
+			name:     "HTTPS URL",
+			repoURL:  "https://github.com/owner/repo",
+			expected: "owner/repo",
+		},
+		{
+			name:     "HTTPS URL with .git",
+			repoURL:  "https://github.com/owner/repo.git",
+			expected: "owner/repo",
+		},
+		{
+			name:     "SSH URL",
+			repoURL:  "git@github.com:owner/repo.git",
+			expected: "owner/repo",
+		},
+		{
+			name:     "SSH URL without .git",
+			repoURL:  "git@github.com:owner/repo",
+			expected: "owner/repo",
+		},
+		{
+			name:     "HTTP URL",
+			repoURL:  "http://github.com/owner/repo",
+			expected: "owner/repo",
+		},
+		{
+			name:        "Invalid URL format",
+			repoURL:     "invalid-url",
+			expectError: true,
+		},
+		{
+			name:        "Invalid repository path (too many parts)",
+			repoURL:     "https://github.com/owner/repo/extra",
+			expectError: true,
+		},
+		{
+			name:        "Invalid repository path (too few parts)",
+			repoURL:     "https://github.com/owner",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := extractRepoFullNameFromURL(tt.repoURL)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if result != tt.expected {
+				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
+	}
+}
