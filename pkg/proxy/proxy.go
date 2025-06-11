@@ -46,6 +46,8 @@ type ScriptTemplateData struct {
 	GitHubAppPEMPath          string
 	GitHubAPI                 string
 	GitHubPersonalAccessToken string
+	RepoFullName              string
+	CloneDir                  string
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -436,7 +438,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	var cmd *exec.Cmd
 
-	// Prepare template data with environment variables
+	// Prepare template data with environment variables and repository info
 	templateData := &ScriptTemplateData{
 		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
 		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
@@ -448,6 +450,12 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
 	}
 
+	// Add repository information to template data if available
+	if repoInfo != nil {
+		templateData.RepoFullName = repoInfo.FullName
+		templateData.CloneDir = repoInfo.CloneDir
+	}
+
 	if scriptName != "" {
 		// Extract script to temporary file
 		var err error
@@ -457,11 +465,8 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 			return
 		}
 
-		// Execute script with port and repository parameters
+		// Execute script with port parameter (repository info is now embedded in template)
 		args := []string{tmpScriptPath, strconv.Itoa(session.Port)}
-		if repoInfo != nil && repoInfo.FullName != "" && repoInfo.CloneDir != "" {
-			args = append(args, repoInfo.FullName, repoInfo.CloneDir)
-		}
 		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
 
 		// Log script execution details
@@ -469,12 +474,6 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		log.Printf("Script execution parameters:")
 		log.Printf("  Script: %s", scriptName)
 		log.Printf("  Port: %d", session.Port)
-		if repoInfo != nil {
-			log.Printf("  GitHub Repository: %s", repoInfo.FullName)
-			log.Printf("  Clone Directory: %s", repoInfo.CloneDir)
-		} else {
-			log.Printf("  GitHub Repository: (not specified)")
-		}
 		log.Printf("  Session ID: %s", session.ID)
 		if len(session.Tags) > 0 {
 			log.Printf("  Request tags:")
@@ -543,10 +542,17 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		if templateData.GitHubPersonalAccessToken != "" {
 			log.Printf("    GitHubPersonalAccessToken=%s", maskToken(templateData.GitHubPersonalAccessToken))
 		}
+		if templateData.RepoFullName != "" {
+			log.Printf("    RepoFullName=%s", templateData.RepoFullName)
+		}
+		if templateData.CloneDir != "" {
+			log.Printf("    CloneDir=%s", templateData.CloneDir)
+		}
 		if templateData.AgentAPIArgs == "" && templateData.ClaudeArgs == "" &&
 			templateData.GitHubToken == "" && templateData.GitHubAppID == "" &&
 			templateData.GitHubInstallationID == "" && templateData.GitHubAppPEMPath == "" &&
-			templateData.GitHubAPI == "" && templateData.GitHubPersonalAccessToken == "" {
+			templateData.GitHubAPI == "" && templateData.GitHubPersonalAccessToken == "" &&
+			templateData.RepoFullName == "" && templateData.CloneDir == "" {
 			log.Printf("    No template arguments specified")
 		}
 	}

@@ -3,10 +3,10 @@
 # AgentAPI startup script with GitHub integration
 # This script is executed when the github_repo parameter is present
 
-# Get parameters from command line arguments
+# Get parameters from command line arguments and templates
 PORT="${1:-8080}"
-GITHUB_REPO_FULLNAME="${2}"
-GITHUB_CLONE_DIR="${3}"
+GITHUB_REPO_FULLNAME="{{.RepoFullName}}"
+GITHUB_CLONE_DIR="{{.CloneDir}}"
 
 # GitHub environment variables embedded from template
 export GITHUB_TOKEN="{{.GitHubToken}}"
