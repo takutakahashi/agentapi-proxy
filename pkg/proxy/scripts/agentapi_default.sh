@@ -18,4 +18,4 @@ else
 fi
 
 CLAUDE_DIR=. agentapi-agent helpers setup-claude-code
-exec agentapi server --port "$PORT" $AGENTAPI_ARGS -- claude $CLAUDE_ARGS
+exec agentapi server --port "$PORT" {{.AgentAPIArgs}} -- claude {{.ClaudeArgs}}

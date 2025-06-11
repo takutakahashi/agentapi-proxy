@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,12 @@ const (
 	ScriptWithGithub = "agentapi_with_github.sh"
 	ScriptDefault    = "agentapi_default.sh"
 )
+
+// ScriptTemplateData holds data for script templates
+type ScriptTemplateData struct {
+	AgentAPIArgs string
+	ClaudeArgs   string
+}
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
@@ -423,10 +430,16 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	var cmd *exec.Cmd
 
+	// Prepare template data with environment variables
+	templateData := &ScriptTemplateData{
+		AgentAPIArgs: os.Getenv("AGENTAPI_ARGS"),
+		ClaudeArgs:   os.Getenv("CLAUDE_ARGS"),
+	}
+
 	if scriptName != "" {
 		// Extract script to temporary file
 		var err error
-		tmpScriptPath, err = p.extractScriptToTempFile(scriptName)
+		tmpScriptPath, err = p.extractScriptToTempFile(scriptName, templateData)
 		if err != nil {
 			log.Printf("Failed to extract script %s for session %s: %v", scriptName, session.ID, err)
 			return
@@ -491,16 +504,17 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		log.Printf("  Using default environment (no custom variables)")
 	}
 
-	// Log relevant standard environment variables
-	agentapiArgs := os.Getenv("AGENTAPI_ARGS")
-	claudeArgs := os.Getenv("CLAUDE_ARGS")
-	if agentapiArgs != "" || claudeArgs != "" {
-		log.Printf("  Standard environment variables:")
-		if agentapiArgs != "" {
-			log.Printf("    AGENTAPI_ARGS=%s", agentapiArgs)
+	// Log template arguments that are embedded in the script
+	if scriptName != "" {
+		log.Printf("  Template arguments embedded in script:")
+		if templateData.AgentAPIArgs != "" {
+			log.Printf("    AgentAPIArgs=%s", templateData.AgentAPIArgs)
 		}
-		if claudeArgs != "" {
-			log.Printf("    CLAUDE_ARGS=%s", claudeArgs)
+		if templateData.ClaudeArgs != "" {
+			log.Printf("    ClaudeArgs=%s", templateData.ClaudeArgs)
+		}
+		if templateData.AgentAPIArgs == "" && templateData.ClaudeArgs == "" {
+			log.Printf("    No template arguments specified")
 		}
 	}
 
@@ -567,11 +581,28 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 }
 
 // extractScriptToTempFile extracts a script to a temporary file and returns the file path
-func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
+func (p *Proxy) extractScriptToTempFile(scriptName string, templateData *ScriptTemplateData) (string, error) {
 	// scriptCache からスクリプト内容を取得
 	content, ok := scriptCache[scriptName]
 	if !ok {
 		return "", fmt.Errorf("script %s not found in embedded cache", scriptName)
+	}
+
+	// Process content as a template if templateData is provided
+	var processedContent []byte
+	if templateData != nil {
+		tmpl, err := template.New(scriptName).Parse(string(content))
+		if err != nil {
+			return "", fmt.Errorf("failed to parse script template: %v", err)
+		}
+
+		var buf strings.Builder
+		if err := tmpl.Execute(&buf, templateData); err != nil {
+			return "", fmt.Errorf("failed to execute script template: %v", err)
+		}
+		processedContent = []byte(buf.String())
+	} else {
+		processedContent = content
 	}
 
 	// Create temporary file
@@ -581,7 +612,7 @@ func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
 	}
 
 	// Write script content to temporary file
-	if _, err := tmpFile.Write(content); err != nil {
+	if _, err := tmpFile.Write(processedContent); err != nil {
 		if closeErr := tmpFile.Close(); closeErr != nil {
 			log.Printf("Failed to close temp file: %v", closeErr)
 		}
