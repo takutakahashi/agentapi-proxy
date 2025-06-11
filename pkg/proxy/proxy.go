@@ -38,8 +38,14 @@ const (
 
 // ScriptTemplateData holds data for script templates
 type ScriptTemplateData struct {
-	AgentAPIArgs string
-	ClaudeArgs   string
+	AgentAPIArgs              string
+	ClaudeArgs                string
+	GitHubToken               string
+	GitHubAppID               string
+	GitHubInstallationID      string
+	GitHubAppPEMPath          string
+	GitHubAPI                 string
+	GitHubPersonalAccessToken string
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -432,8 +438,14 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	// Prepare template data with environment variables
 	templateData := &ScriptTemplateData{
-		AgentAPIArgs: os.Getenv("AGENTAPI_ARGS"),
-		ClaudeArgs:   os.Getenv("CLAUDE_ARGS"),
+		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
+		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
+		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
+		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
+		GitHubInstallationID:      os.Getenv("GITHUB_INSTALLATION_ID"),
+		GitHubAppPEMPath:          os.Getenv("GITHUB_APP_PEM_PATH"),
+		GitHubAPI:                 os.Getenv("GITHUB_API"),
+		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
 	}
 
 	if scriptName != "" {
@@ -513,7 +525,28 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		if templateData.ClaudeArgs != "" {
 			log.Printf("    ClaudeArgs=%s", templateData.ClaudeArgs)
 		}
-		if templateData.AgentAPIArgs == "" && templateData.ClaudeArgs == "" {
+		if templateData.GitHubToken != "" {
+			log.Printf("    GitHubToken=%s", maskToken(templateData.GitHubToken))
+		}
+		if templateData.GitHubAppID != "" {
+			log.Printf("    GitHubAppID=%s", templateData.GitHubAppID)
+		}
+		if templateData.GitHubInstallationID != "" {
+			log.Printf("    GitHubInstallationID=%s", templateData.GitHubInstallationID)
+		}
+		if templateData.GitHubAppPEMPath != "" {
+			log.Printf("    GitHubAppPEMPath=%s", templateData.GitHubAppPEMPath)
+		}
+		if templateData.GitHubAPI != "" {
+			log.Printf("    GitHubAPI=%s", templateData.GitHubAPI)
+		}
+		if templateData.GitHubPersonalAccessToken != "" {
+			log.Printf("    GitHubPersonalAccessToken=%s", maskToken(templateData.GitHubPersonalAccessToken))
+		}
+		if templateData.AgentAPIArgs == "" && templateData.ClaudeArgs == "" &&
+			templateData.GitHubToken == "" && templateData.GitHubAppID == "" &&
+			templateData.GitHubInstallationID == "" && templateData.GitHubAppPEMPath == "" &&
+			templateData.GitHubAPI == "" && templateData.GitHubPersonalAccessToken == "" {
 			log.Printf("    No template arguments specified")
 		}
 	}
@@ -796,6 +829,17 @@ func extractRepoFullNameFromURL(repoURL string) (string, error) {
 	}
 
 	return repoPath, nil
+}
+
+// maskToken masks sensitive tokens for logging
+func maskToken(token string) string {
+	if token == "" {
+		return ""
+	}
+	if len(token) <= 8 {
+		return "****"
+	}
+	return token[:4] + "****" + token[len(token)-4:]
 }
 
 // GetEcho returns the Echo instance for external access
