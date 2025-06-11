@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,20 @@ const (
 	ScriptWithGithub = "agentapi_with_github.sh"
 	ScriptDefault    = "agentapi_default.sh"
 )
+
+// ScriptTemplateData holds data for script templates
+type ScriptTemplateData struct {
+	AgentAPIArgs              string
+	ClaudeArgs                string
+	GitHubToken               string
+	GitHubAppID               string
+	GitHubInstallationID      string
+	GitHubAppPEMPath          string
+	GitHubAPI                 string
+	GitHubPersonalAccessToken string
+	RepoFullName              string
+	CloneDir                  string
+}
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
@@ -423,20 +438,35 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	var cmd *exec.Cmd
 
+	// Prepare template data with environment variables and repository info
+	templateData := &ScriptTemplateData{
+		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
+		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
+		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
+		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
+		GitHubInstallationID:      os.Getenv("GITHUB_INSTALLATION_ID"),
+		GitHubAppPEMPath:          os.Getenv("GITHUB_APP_PEM_PATH"),
+		GitHubAPI:                 os.Getenv("GITHUB_API"),
+		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
+	}
+
+	// Add repository information to template data if available
+	if repoInfo != nil {
+		templateData.RepoFullName = repoInfo.FullName
+		templateData.CloneDir = repoInfo.CloneDir
+	}
+
 	if scriptName != "" {
 		// Extract script to temporary file
 		var err error
-		tmpScriptPath, err = p.extractScriptToTempFile(scriptName)
+		tmpScriptPath, err = p.extractScriptToTempFile(scriptName, templateData)
 		if err != nil {
 			log.Printf("Failed to extract script %s for session %s: %v", scriptName, session.ID, err)
 			return
 		}
 
-		// Execute script with port and repository parameters
+		// Execute script with port parameter (repository info is now embedded in template)
 		args := []string{tmpScriptPath, strconv.Itoa(session.Port)}
-		if repoInfo != nil && repoInfo.FullName != "" && repoInfo.CloneDir != "" {
-			args = append(args, repoInfo.FullName, repoInfo.CloneDir)
-		}
 		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
 
 		// Log script execution details
@@ -444,12 +474,6 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		log.Printf("Script execution parameters:")
 		log.Printf("  Script: %s", scriptName)
 		log.Printf("  Port: %d", session.Port)
-		if repoInfo != nil {
-			log.Printf("  GitHub Repository: %s", repoInfo.FullName)
-			log.Printf("  Clone Directory: %s", repoInfo.CloneDir)
-		} else {
-			log.Printf("  GitHub Repository: (not specified)")
-		}
 		log.Printf("  Session ID: %s", session.ID)
 		if len(session.Tags) > 0 {
 			log.Printf("  Request tags:")
@@ -491,16 +515,45 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		log.Printf("  Using default environment (no custom variables)")
 	}
 
-	// Log relevant standard environment variables
-	agentapiArgs := os.Getenv("AGENTAPI_ARGS")
-	claudeArgs := os.Getenv("CLAUDE_ARGS")
-	if agentapiArgs != "" || claudeArgs != "" {
-		log.Printf("  Standard environment variables:")
-		if agentapiArgs != "" {
-			log.Printf("    AGENTAPI_ARGS=%s", agentapiArgs)
+	// Log template arguments that are embedded in the script
+	if scriptName != "" {
+		log.Printf("  Template arguments embedded in script:")
+		if templateData.AgentAPIArgs != "" {
+			log.Printf("    AgentAPIArgs=%s", templateData.AgentAPIArgs)
 		}
-		if claudeArgs != "" {
-			log.Printf("    CLAUDE_ARGS=%s", claudeArgs)
+		if templateData.ClaudeArgs != "" {
+			log.Printf("    ClaudeArgs=%s", templateData.ClaudeArgs)
+		}
+		if templateData.GitHubToken != "" {
+			log.Printf("    GitHubToken=%s", maskToken(templateData.GitHubToken))
+		}
+		if templateData.GitHubAppID != "" {
+			log.Printf("    GitHubAppID=%s", templateData.GitHubAppID)
+		}
+		if templateData.GitHubInstallationID != "" {
+			log.Printf("    GitHubInstallationID=%s", templateData.GitHubInstallationID)
+		}
+		if templateData.GitHubAppPEMPath != "" {
+			log.Printf("    GitHubAppPEMPath=%s", templateData.GitHubAppPEMPath)
+		}
+		if templateData.GitHubAPI != "" {
+			log.Printf("    GitHubAPI=%s", templateData.GitHubAPI)
+		}
+		if templateData.GitHubPersonalAccessToken != "" {
+			log.Printf("    GitHubPersonalAccessToken=%s", maskToken(templateData.GitHubPersonalAccessToken))
+		}
+		if templateData.RepoFullName != "" {
+			log.Printf("    RepoFullName=%s", templateData.RepoFullName)
+		}
+		if templateData.CloneDir != "" {
+			log.Printf("    CloneDir=%s", templateData.CloneDir)
+		}
+		if templateData.AgentAPIArgs == "" && templateData.ClaudeArgs == "" &&
+			templateData.GitHubToken == "" && templateData.GitHubAppID == "" &&
+			templateData.GitHubInstallationID == "" && templateData.GitHubAppPEMPath == "" &&
+			templateData.GitHubAPI == "" && templateData.GitHubPersonalAccessToken == "" &&
+			templateData.RepoFullName == "" && templateData.CloneDir == "" {
+			log.Printf("    No template arguments specified")
 		}
 	}
 
@@ -567,11 +620,28 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 }
 
 // extractScriptToTempFile extracts a script to a temporary file and returns the file path
-func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
+func (p *Proxy) extractScriptToTempFile(scriptName string, templateData *ScriptTemplateData) (string, error) {
 	// scriptCache からスクリプト内容を取得
 	content, ok := scriptCache[scriptName]
 	if !ok {
 		return "", fmt.Errorf("script %s not found in embedded cache", scriptName)
+	}
+
+	// Process content as a template if templateData is provided
+	var processedContent []byte
+	if templateData != nil {
+		tmpl, err := template.New(scriptName).Parse(string(content))
+		if err != nil {
+			return "", fmt.Errorf("failed to parse script template: %v", err)
+		}
+
+		var buf strings.Builder
+		if err := tmpl.Execute(&buf, templateData); err != nil {
+			return "", fmt.Errorf("failed to execute script template: %v", err)
+		}
+		processedContent = []byte(buf.String())
+	} else {
+		processedContent = content
 	}
 
 	// Create temporary file
@@ -581,7 +651,7 @@ func (p *Proxy) extractScriptToTempFile(scriptName string) (string, error) {
 	}
 
 	// Write script content to temporary file
-	if _, err := tmpFile.Write(content); err != nil {
+	if _, err := tmpFile.Write(processedContent); err != nil {
 		if closeErr := tmpFile.Close(); closeErr != nil {
 			log.Printf("Failed to close temp file: %v", closeErr)
 		}
@@ -765,6 +835,17 @@ func extractRepoFullNameFromURL(repoURL string) (string, error) {
 	}
 
 	return repoPath, nil
+}
+
+// maskToken masks sensitive tokens for logging
+func maskToken(token string) string {
+	if token == "" {
+		return ""
+	}
+	if len(token) <= 8 {
+		return "****"
+	}
+	return token[:4] + "****" + token[len(token)-4:]
 }
 
 // GetEcho returns the Echo instance for external access
