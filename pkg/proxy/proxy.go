@@ -644,6 +644,14 @@ func (p *Proxy) extractScriptToTempFile(scriptName string, templateData *ScriptT
 		processedContent = content
 	}
 
+	// Log script content when verbose mode is enabled
+	if p.verbose {
+		log.Printf("[VERBOSE] Script content for %s:", scriptName)
+		log.Printf("--- Script Start ---")
+		log.Printf("%s", string(processedContent))
+		log.Printf("--- Script End ---")
+	}
+
 	// Create temporary file
 	tmpFile, err := os.CreateTemp("", "agentapi-script-*.sh")
 	if err != nil {
