@@ -1,6 +1,6 @@
 module github.com/takutakahashi/agentapi-proxy
 
-go 1.23
+go 1.20
 
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.16.0
