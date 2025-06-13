@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -55,6 +57,7 @@ type StartRequest struct {
 	UserID      string            `json:"user_id,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
+	Message     string            `json:"message,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -260,6 +263,17 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	// Determine which script to use based on request parameters
 	scriptName := p.selectScript(c, scriptCache, startReq.Tags)
 
+	// Determine initial message - check tags.message first, then startReq.Message
+	var initialMessage string
+	if startReq.Tags != nil {
+		if msg, exists := startReq.Tags["message"]; exists && msg != "" {
+			initialMessage = msg
+		}
+	}
+	if initialMessage == "" && startReq.Message != "" {
+		initialMessage = startReq.Message
+	}
+
 	// Start agentapi server in goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -281,7 +295,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	log.Printf("session: %+v", session)
 	log.Printf("scriptName: %s", scriptName)
 	// Start agentapi server in goroutine
-	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo)
+	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo, initialMessage)
 
 	if p.verbose {
 		if scriptName != "" {
@@ -415,7 +429,7 @@ func (p *Proxy) getAvailablePort() (int, error) {
 }
 
 // runAgentAPIServer runs an agentapi server instance using exec.Command or scripts
-func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo) {
+func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
 	var tmpScriptPath string
 
 	defer func() {
@@ -570,6 +584,11 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	if p.verbose {
 		log.Printf("AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
+	}
+
+	// Send initial message if provided
+	if initialMessage != "" {
+		go p.sendInitialMessage(session, initialMessage)
 	}
 
 	// Wait for the process to finish or context cancellation
@@ -854,6 +873,64 @@ func maskToken(token string) string {
 		return "****"
 	}
 	return token[:4] + "****" + token[len(token)-4:]
+}
+
+// sendInitialMessage sends an initial message to the agentapi server after startup
+func (p *Proxy) sendInitialMessage(session *AgentSession, message string) {
+	// Wait a bit for the server to start up
+	time.Sleep(2 * time.Second)
+
+	// Check server health first
+	maxRetries := 30
+	for i := 0; i < maxRetries; i++ {
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", session.Port))
+		if err == nil {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				log.Printf("Failed to close response body: %v", closeErr)
+			}
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		if i == maxRetries-1 {
+			log.Printf("AgentAPI server for session %s not ready after %d retries, skipping initial message", session.ID, maxRetries)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Prepare message request
+	messageReq := map[string]interface{}{
+		"content": message,
+		"type":    "user",
+	}
+
+	jsonBody, err := json.Marshal(messageReq)
+	if err != nil {
+		log.Printf("Failed to marshal message request for session %s: %v", session.ID, err)
+		return
+	}
+
+	// Send message to agentapi
+	url := fmt.Sprintf("http://localhost:%d/message", session.Port)
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		log.Printf("Failed to send initial message to session %s: %v", session.ID, err)
+		return
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("Failed to close response body: %v", closeErr)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Failed to send initial message to session %s (status: %d): %s", session.ID, resp.StatusCode, string(body))
+		return
+	}
+
+	log.Printf("Successfully sent initial message to session %s", session.ID)
 }
 
 // GetEcho returns the Echo instance for external access
