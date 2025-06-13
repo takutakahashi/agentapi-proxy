@@ -187,7 +187,7 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 	p.sessionsMutex.RLock()
 	defer p.sessionsMutex.RUnlock()
 
-	var filteredSessions []map[string]interface{}
+	filteredSessions := make([]map[string]interface{}, 0)
 
 	for _, session := range p.sessions {
 		// Apply filters
