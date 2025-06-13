@@ -166,6 +166,7 @@ func (p *Proxy) setupRoutes() {
 	// Add session management routes according to API specification
 	p.echo.POST("/start", p.startAgentAPIServer)
 	p.echo.GET("/search", p.searchSessions)
+	p.echo.DELETE("/sessions/:sessionId", p.deleteSession)
 	p.echo.Any("/:sessionId/*", p.routeToSession)
 }
 
@@ -186,7 +187,7 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 	p.sessionsMutex.RLock()
 	defer p.sessionsMutex.RUnlock()
 
-	var filteredSessions []map[string]interface{}
+	filteredSessions := make([]map[string]interface{}, 0)
 
 	for _, session := range p.sessions {
 		// Apply filters
@@ -223,6 +224,38 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"sessions": filteredSessions,
+	})
+}
+
+// deleteSession handles DELETE /sessions/:sessionId requests to terminate a session
+func (p *Proxy) deleteSession(c echo.Context) error {
+	sessionID := c.Param("sessionId")
+
+	if sessionID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
+	}
+
+	p.sessionsMutex.Lock()
+	session, exists := p.sessions[sessionID]
+	if !exists {
+		p.sessionsMutex.Unlock()
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	p.sessionsMutex.Unlock()
+
+	// Cancel the session context to trigger graceful shutdown
+	if session.Cancel != nil {
+		session.Cancel()
+	}
+
+	if p.verbose {
+		log.Printf("Initiated termination of session %s", sessionID)
+	}
+
+	// Return success response
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":    "Session terminated successfully",
+		"session_id": sessionID,
 	})
 }
 

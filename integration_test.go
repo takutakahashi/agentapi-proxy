@@ -52,6 +52,12 @@ func TestIntegrationSessionAPI(t *testing.T) {
 			path:           "/non-existent-session/status",
 			expectedStatus: http.StatusNotFound,
 		},
+		{
+			name:           "Delete non-existent session",
+			method:         "DELETE",
+			path:           "/sessions/non-existent-session",
+			expectedStatus: http.StatusNotFound,
+		},
 	}
 
 	for _, tt := range tests {
@@ -137,6 +143,115 @@ func TestSessionLifecycle(t *testing.T) {
 
 	if !found {
 		t.Errorf("Started session %s not found in search results", sessionID)
+	}
+}
+
+func TestSessionDeletion(t *testing.T) {
+	cfg := config.DefaultConfig()
+	proxyServer := proxy.NewProxy(cfg, false)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
+
+	// Step 1: Start a new session
+	req := httptest.NewRequest("POST", "/start?user_id=deletiontest", nil)
+	w := httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Failed to start session: status %d", w.Code)
+	}
+
+	var startResponse map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &startResponse); err != nil {
+		t.Fatalf("Failed to parse start response: %v", err)
+	}
+
+	sessionID, ok := startResponse["session_id"].(string)
+	if !ok || sessionID == "" {
+		t.Fatalf("Invalid session_id in response: %v", startResponse)
+	}
+
+	// Step 2: Verify session exists in search
+	req = httptest.NewRequest("GET", "/search?user_id=deletiontest", nil)
+	w = httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Failed to search sessions: status %d", w.Code)
+	}
+
+	var searchResponse map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &searchResponse); err != nil {
+		t.Fatalf("Failed to parse search response: %v", err)
+	}
+
+	sessions, ok := searchResponse["sessions"].([]interface{})
+	if !ok {
+		t.Fatalf("Invalid sessions array in response: %v", searchResponse)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("Expected 1 session, got %d", len(sessions))
+	}
+
+	// Step 3: Delete the session
+	req = httptest.NewRequest("DELETE", "/sessions/"+sessionID, nil)
+	w = httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Failed to delete session: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var deleteResponse map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &deleteResponse); err != nil {
+		t.Fatalf("Failed to parse delete response: %v", err)
+	}
+
+	// Verify delete response content
+	if deleteResponse["session_id"] != sessionID {
+		t.Errorf("Expected session_id %s in delete response, got %v", sessionID, deleteResponse["session_id"])
+	}
+
+	if deleteResponse["message"] == "" {
+		t.Error("Expected message in delete response")
+	}
+
+	// Step 4: Wait a moment for cleanup
+	time.Sleep(100 * time.Millisecond)
+
+	// Step 5: Verify session no longer exists in search
+	req = httptest.NewRequest("GET", "/search?user_id=deletiontest", nil)
+	w = httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Failed to search sessions after deletion: status %d", w.Code)
+	}
+
+	if err := json.Unmarshal(w.Body.Bytes(), &searchResponse); err != nil {
+		t.Fatalf("Failed to parse search response after deletion: %v", err)
+	}
+
+	sessions, ok = searchResponse["sessions"].([]interface{})
+	if !ok {
+		t.Fatalf("Invalid sessions array in response after deletion: %v", searchResponse)
+	}
+
+	if len(sessions) != 0 {
+		t.Errorf("Expected 0 sessions after deletion, got %d", len(sessions))
+	}
+
+	// Step 6: Verify that trying to delete the same session again returns 404
+	req = httptest.NewRequest("DELETE", "/sessions/"+sessionID, nil)
+	w = httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404 when deleting non-existent session, got %d", w.Code)
 	}
 }
 
@@ -270,7 +385,40 @@ func TestClientIntegration(t *testing.T) {
 		t.Errorf("Session %s not found in filtered search results", sessionID)
 	}
 
-	// Test 4: Search with non-matching filter
+	// Test 4: Delete the session using client
+	deleteResp, err := clientInstance.DeleteSession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("Failed to delete session: %v", err)
+	}
+
+	if deleteResp.SessionID != sessionID {
+		t.Errorf("Expected session_id %s in delete response, got %s", sessionID, deleteResp.SessionID)
+	}
+
+	if deleteResp.Message == "" {
+		t.Error("Expected message in delete response")
+	}
+
+	// Test 5: Verify session no longer exists
+	time.Sleep(100 * time.Millisecond) // Wait for cleanup
+	finalResp, err := clientInstance.Search(ctx, "integration-test-user", "")
+	if err != nil {
+		t.Fatalf("Failed to search sessions after deletion: %v", err)
+	}
+
+	for _, session := range finalResp.Sessions {
+		if session.SessionID == sessionID {
+			t.Errorf("Session %s should not exist after deletion", sessionID)
+		}
+	}
+
+	// Test 6: Verify deleting non-existent session returns error
+	_, err = clientInstance.DeleteSession(ctx, sessionID)
+	if err == nil {
+		t.Error("Expected error when deleting non-existent session")
+	}
+
+	// Test 7: Search with non-matching filter
 	noMatchResp, err := clientInstance.Search(ctx, "nonexistent-user", "")
 	if err != nil {
 		t.Fatalf("Failed to search sessions: %v", err)

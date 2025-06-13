@@ -77,6 +77,12 @@ type StatusResponse struct {
 	Status string `json:"status"` // "stable" or "running"
 }
 
+// DeleteResponse represents the response from deleting a session
+type DeleteResponse struct {
+	Message   string `json:"message"`
+	SessionID string `json:"session_id"`
+}
+
 // Start creates a new agentapi session
 func (c *Client) Start(ctx context.Context, req *StartRequest) (*StartResponse, error) {
 	jsonData, err := json.Marshal(req)
@@ -160,6 +166,43 @@ func (c *Client) SearchWithTags(ctx context.Context, userID, status string, tags
 	}
 
 	return &searchResp, nil
+}
+
+// DeleteSession terminates and deletes a session
+func (c *Client) DeleteSession(ctx context.Context, sessionID string) (*DeleteResponse, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("session ID is required")
+	}
+
+	url := fmt.Sprintf("%s/sessions/%s", c.baseURL, sessionID)
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("session not found")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var deleteResp DeleteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&deleteResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &deleteResp, nil
 }
 
 // SendMessage sends a message to an agentapi session
