@@ -49,6 +49,12 @@ func TestIntegrationSessionAPI(t *testing.T) {
 			expectedStatus: http.StatusOK,
 		},
 		{
+			name:           "OPTIONS for DELETE session endpoint",
+			method:         "OPTIONS",
+			path:           "/sessions/test-session-id",
+			expectedStatus: http.StatusNoContent,
+		},
+		{
 			name:           "Route to non-existent session",
 			method:         "GET",
 			path:           "/non-existent-session/status",
@@ -739,5 +745,97 @@ func TestTagFunctionality(t *testing.T) {
 		if len(session.Tags) == 0 {
 			t.Error("Session should have non-empty tags")
 		}
+	}
+}
+
+// TestCORSHeaders tests that CORS headers are properly set for OPTIONS requests
+func TestCORSHeaders(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false // Disable auth for testing
+	proxyServer := proxy.NewProxy(cfg, true)
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		origin string
+	}{
+		{
+			name:   "OPTIONS for DELETE /sessions/:sessionId",
+			method: "OPTIONS",
+			path:   "/sessions/test-session-id",
+			origin: "http://localhost:3000",
+		},
+		{
+			name:   "DELETE /sessions/:sessionId with CORS",
+			method: "DELETE",
+			path:   "/sessions/non-existent",
+			origin: "http://localhost:3000",
+		},
+		{
+			name:   "OPTIONS for POST /start",
+			method: "OPTIONS",
+			path:   "/start",
+			origin: "https://example.com",
+		},
+		{
+			name:   "OPTIONS for GET /search",
+			method: "OPTIONS",
+			path:   "/search",
+			origin: "https://app.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(tt.method, tt.path, nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+
+			// Add CORS headers
+			req.Header.Set("Origin", tt.origin)
+			req.Header.Set("Access-Control-Request-Method", "DELETE")
+			req.Header.Set("Access-Control-Request-Headers", "Content-Type, Authorization")
+
+			rec := httptest.NewRecorder()
+			proxyServer.GetEcho().ServeHTTP(rec, req)
+
+			// For OPTIONS requests, always check CORS headers and status
+			if tt.method == "OPTIONS" {
+				// Check CORS headers
+				if origin := rec.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
+					t.Errorf("Expected Access-Control-Allow-Origin to be *, got %s", origin)
+				}
+
+				if methods := rec.Header().Get("Access-Control-Allow-Methods"); methods == "" {
+					t.Error("Access-Control-Allow-Methods header is missing")
+				} else if !strings.Contains(methods, "DELETE") || !strings.Contains(methods, "OPTIONS") {
+					t.Errorf("Expected Access-Control-Allow-Methods to include DELETE and OPTIONS, got %s", methods)
+				}
+
+				if headers := rec.Header().Get("Access-Control-Allow-Headers"); headers == "" {
+					t.Error("Access-Control-Allow-Headers header is missing")
+				}
+
+				if credentials := rec.Header().Get("Access-Control-Allow-Credentials"); credentials != "true" {
+					t.Errorf("Expected Access-Control-Allow-Credentials to be true, got %s", credentials)
+				}
+
+				// Expect 204 No Content
+				if rec.Code != http.StatusNoContent {
+					t.Errorf("Expected status %d for OPTIONS request, got %d", http.StatusNoContent, rec.Code)
+				}
+			} else {
+				// For non-OPTIONS requests, just verify that the request was processed
+				// CORS headers on actual requests (not preflight) are optional according to the spec
+				t.Logf("%s %s returned status %d", tt.method, tt.path, rec.Code)
+			}
+		})
 	}
 }
