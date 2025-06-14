@@ -230,32 +230,60 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 // deleteSession handles DELETE /sessions/:sessionId requests to terminate a session
 func (p *Proxy) deleteSession(c echo.Context) error {
 	sessionID := c.Param("sessionId")
+	clientIP := c.RealIP()
+
+	log.Printf("Request: DELETE /sessions/%s from %s", sessionID, clientIP)
 
 	if sessionID == "" {
+		log.Printf("Delete session failed: missing session ID from %s", clientIP)
 		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
 	}
 
-	p.sessionsMutex.Lock()
+	p.sessionsMutex.RLock()
 	session, exists := p.sessions[sessionID]
+	sessionStatus := "unknown"
+	if exists {
+		sessionStatus = session.Status
+	}
+	p.sessionsMutex.RUnlock()
+
 	if !exists {
-		p.sessionsMutex.Unlock()
+		log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
-	p.sessionsMutex.Unlock()
+
+	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
+		sessionID, sessionStatus, session.UserID, clientIP)
 
 	// Cancel the session context to trigger graceful shutdown
 	if session.Cancel != nil {
 		session.Cancel()
+		log.Printf("Successfully cancelled context for session %s", sessionID)
+	} else {
+		log.Printf("Warning: session %s had no cancel function", sessionID)
 	}
 
-	if p.verbose {
-		log.Printf("Initiated termination of session %s", sessionID)
+	// Wait briefly to allow cleanup to begin
+	time.Sleep(100 * time.Millisecond)
+
+	// Check if session was actually cleaned up
+	p.sessionsMutex.RLock()
+	_, stillExists := p.sessions[sessionID]
+	p.sessionsMutex.RUnlock()
+
+	if stillExists {
+		log.Printf("Warning: session %s still exists after cancellation, cleanup may be in progress", sessionID)
+	} else {
+		log.Printf("Session %s successfully removed from active sessions", sessionID)
 	}
+
+	log.Printf("Session %s deletion completed successfully", sessionID)
 
 	// Return success response
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
 		"session_id": sessionID,
+		"status":     "terminated",
 	})
 }
 

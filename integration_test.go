@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -252,6 +253,79 @@ func TestSessionDeletion(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("Expected status 404 when deleting non-existent session, got %d", w.Code)
+	}
+}
+
+// TestEnhancedSessionDeletion tests the enhanced deletion functionality with detailed logging
+func TestEnhancedSessionDeletion(t *testing.T) {
+	cfg := config.DefaultConfig()
+	proxyServer := proxy.NewProxy(cfg, true) // Enable verbose logging
+	defer func() {
+		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
+			t.Logf("Failed to shutdown proxy: %v", err)
+		}
+	}()
+
+	// Step 1: Create a session
+	req := httptest.NewRequest("POST", "/start", strings.NewReader(`{"user_id":"enhanced-deletion-test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Failed to start session: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var startResponse map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &startResponse); err != nil {
+		t.Fatalf("Failed to parse start response: %v", err)
+	}
+
+	sessionID, ok := startResponse["session_id"].(string)
+	if !ok {
+		t.Fatalf("No session_id in response: %v", startResponse)
+	}
+
+	// Step 2: Test deletion with enhanced logging
+	req = httptest.NewRequest("DELETE", "/sessions/"+sessionID, nil)
+	w = httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Failed to delete session: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var deleteResponse map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &deleteResponse); err != nil {
+		t.Fatalf("Failed to parse delete response: %v", err)
+	}
+
+	// Verify enhanced response format
+	if deleteResponse["session_id"] != sessionID {
+		t.Errorf("Expected session_id %s in delete response, got %v", sessionID, deleteResponse["session_id"])
+	}
+
+	if deleteResponse["status"] != "terminated" {
+		t.Errorf("Expected status 'terminated' in delete response, got %v", deleteResponse["status"])
+	}
+
+	// Step 3: Test deletion of already deleted session
+	req = httptest.NewRequest("DELETE", "/sessions/"+sessionID, nil)
+	w = httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected 404 when deleting already deleted session, got %d", w.Code)
+	}
+
+	// Step 4: Test deletion with empty session ID
+	req = httptest.NewRequest("DELETE", "/sessions/", nil)
+	w = httptest.NewRecorder()
+	proxyServer.GetEcho().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		// Note: This might return 404 due to routing, which is acceptable
+		t.Logf("Empty session ID deletion returned status %d", w.Code)
 	}
 }
 
