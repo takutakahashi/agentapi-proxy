@@ -11,6 +11,9 @@ import (
 func TestNewProxy(t *testing.T) {
 	cfg := &config.Config{
 		StartPort: 9000,
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
 	}
 
 	proxy := NewProxy(cfg, false)
@@ -33,6 +36,7 @@ func TestNewProxy(t *testing.T) {
 
 func TestStartEndpoint(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxy := NewProxy(cfg, false)
 
 	req := httptest.NewRequest("POST", "/start", nil)
@@ -53,6 +57,7 @@ func TestStartEndpoint(t *testing.T) {
 
 func TestSearchEndpoint(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxy := NewProxy(cfg, false)
 
 	req := httptest.NewRequest("GET", "/search", nil)
@@ -73,6 +78,7 @@ func TestSearchEndpoint(t *testing.T) {
 
 func TestSessionRoutingNotFound(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxy := NewProxy(cfg, false)
 
 	// Test routing to non-existent session

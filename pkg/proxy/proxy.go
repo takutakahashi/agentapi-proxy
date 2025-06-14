@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
@@ -154,6 +155,9 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		e.Use(p.loggingMiddleware())
 	}
 
+	// Add authentication middleware
+	e.Use(auth.AuthMiddleware(cfg))
+
 	p.setupRoutes()
 	return p
 }
@@ -172,16 +176,22 @@ func (p *Proxy) loggingMiddleware() echo.MiddlewareFunc {
 // setupRoutes configures the router with all defined routes
 func (p *Proxy) setupRoutes() {
 	// Add session management routes according to API specification
-	p.echo.POST("/start", p.startAgentAPIServer)
-	p.echo.GET("/search", p.searchSessions)
-	p.echo.DELETE("/sessions/:sessionId", p.deleteSession)
-	p.echo.Any("/:sessionId/*", p.routeToSession)
+	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission("session:create"))
+	p.echo.GET("/search", p.searchSessions, auth.RequirePermission("session:list"))
+	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
+	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission("session:access"))
 }
 
 // searchSessions handles GET /search requests to list and filter sessions
 func (p *Proxy) searchSessions(c echo.Context) error {
+	user := auth.GetUserFromContext(c)
 	userID := c.QueryParam("user_id")
 	status := c.QueryParam("status")
+
+	// Non-admin users can only see their own sessions
+	if user != nil && user.Role != "admin" {
+		userID = user.UserID
+	}
 
 	// Extract tag filters from query parameters
 	tagFilters := make(map[string]string)
@@ -198,6 +208,11 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 	filteredSessions := make([]map[string]interface{}, 0)
 
 	for _, session := range p.sessions {
+		// Apply user filtering based on role
+		if user != nil && user.Role != "admin" && session.UserID != user.UserID {
+			continue
+		}
+
 		// Apply filters
 		if userID != "" && session.UserID != userID {
 			continue
@@ -260,6 +275,12 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
+	// Check if user has access to this session
+	if !auth.UserOwnsSession(c, session.UserID) {
+		log.Printf("Delete session failed: user does not own session %s (requested by %s)", sessionID, clientIP)
+		return echo.NewHTTPError(http.StatusForbidden, "You can only delete your own sessions")
+	}
+
 	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
 		sessionID, sessionStatus, session.UserID, clientIP)
 
@@ -310,11 +331,22 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		}
 	}
 
-	// Get user_id from query parameters, request body, or default
+	// Get user_id from authenticated context, query parameters, or request body
+	user := auth.GetUserFromContext(c)
 	userID := c.QueryParam("user_id")
 	if userID == "" && startReq.UserID != "" {
 		userID = startReq.UserID
 	}
+
+	// Use authenticated user ID if available and no specific user ID was requested
+	if user != nil && userID == "" {
+		userID = user.UserID
+	} else if user != nil && user.Role != "admin" && userID != user.UserID {
+		// Non-admin users can only create sessions for themselves
+		log.Printf("User %s attempted to create session for %s (forbidden)", user.UserID, userID)
+		return echo.NewHTTPError(http.StatusForbidden, "You can only create sessions for yourself")
+	}
+
 	if userID == "" {
 		userID = "anonymous"
 	}
@@ -393,6 +425,12 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 			log.Printf("Session %s not found", sessionID)
 		}
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+
+	// Check if user has access to this session
+	if !auth.UserOwnsSession(c, session.UserID) {
+		log.Printf("User does not have access to session %s", sessionID)
+		return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
 	}
 
 	// Create target URL for the agentapi server
