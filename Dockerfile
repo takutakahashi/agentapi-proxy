@@ -22,8 +22,19 @@ RUN go build -o bin/agentapi-proxy ./cmd/agentapi-proxy
 # Runtime stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates, curl, and bash for mise installation
+RUN apk --no-cache add ca-certificates curl bash git
+
+# Install mise
+RUN curl https://mise.run | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Install Node.js via mise
+RUN mise install node@latest
+RUN mise global node@latest
+
+# Install claude code via npm
+RUN eval "$(mise activate bash)" && npm install -g @anthropic-ai/claude-code
 
 # Create non-root user
 RUN addgroup -g 1001 -S agentapi && \
@@ -32,11 +43,8 @@ RUN addgroup -g 1001 -S agentapi && \
 # Set working directory
 WORKDIR /app
 
-# Copy binary from builder stage
+# Copy binary from builder stage (agentapi-proxy binary only)
 COPY --from=builder /app/bin/agentapi-proxy .
-
-# Copy config example (optional)
-COPY config.json.example ./config.json.example
 
 # Change ownership to non-root user
 RUN chown -R agentapi:agentapi /app
