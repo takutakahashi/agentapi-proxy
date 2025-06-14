@@ -16,6 +16,7 @@ import (
 
 func TestIntegrationSessionAPI(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false // Disable auth for testing
 	proxyServer := proxy.NewProxy(cfg, true)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -86,6 +87,7 @@ func TestIntegrationSessionAPI(t *testing.T) {
 
 func TestSessionLifecycle(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxyServer := proxy.NewProxy(cfg, false)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -149,6 +151,7 @@ func TestSessionLifecycle(t *testing.T) {
 
 func TestSessionDeletion(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxyServer := proxy.NewProxy(cfg, false)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -259,6 +262,7 @@ func TestSessionDeletion(t *testing.T) {
 // TestEnhancedSessionDeletion tests the enhanced deletion functionality with detailed logging
 func TestEnhancedSessionDeletion(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxyServer := proxy.NewProxy(cfg, true) // Enable verbose logging
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -331,6 +335,7 @@ func TestEnhancedSessionDeletion(t *testing.T) {
 
 func TestConcurrentSessionRequests(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxyServer := proxy.NewProxy(cfg, false)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -385,6 +390,7 @@ func TestConcurrentSessionRequests(t *testing.T) {
 
 func TestClientIntegration(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxyServer := proxy.NewProxy(cfg, false)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -507,6 +513,7 @@ func TestClientIntegration(t *testing.T) {
 
 func TestClientConcurrentOperations(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxyServer := proxy.NewProxy(cfg, false)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -578,6 +585,7 @@ func TestClientErrorHandling(t *testing.T) {
 
 	// Test with invalid session ID
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxyServer := proxy.NewProxy(cfg, false)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -611,6 +619,7 @@ func TestClientErrorHandling(t *testing.T) {
 
 func TestTagFunctionality(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
 	proxyServer := proxy.NewProxy(cfg, false)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {

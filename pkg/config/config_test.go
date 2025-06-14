@@ -5,6 +5,9 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -53,9 +56,19 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	// Compare loaded config with original
-	if !reflect.DeepEqual(tempConfig, loadedConfig) {
-		t.Errorf("Loaded config doesn't match original.\nExpected: %+v\nGot: %+v", tempConfig, loadedConfig)
+	// Expected config after loading (with defaults applied)
+	expectedConfig := &Config{
+		StartPort: 8000,
+		Auth: AuthConfig{
+			Enabled:    false,
+			HeaderName: "X-API-Key",
+			APIKeys:    nil, // Will be nil after JSON unmarshaling if not specified
+		},
+	}
+
+	// Compare loaded config with expected
+	if !reflect.DeepEqual(expectedConfig, loadedConfig) {
+		t.Errorf("Loaded config doesn't match expected.\nExpected: %+v\nGot: %+v", expectedConfig, loadedConfig)
 	}
 }
 
@@ -84,4 +97,96 @@ func TestLoadConfigInvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Error("LoadConfig should return error for invalid JSON")
 	}
+}
+
+func TestValidateAPIKey_AuthDisabled(t *testing.T) {
+	cfg := &Config{
+		Auth: AuthConfig{
+			Enabled: false,
+		},
+	}
+
+	_, valid := cfg.ValidateAPIKey("any-key")
+	assert.False(t, valid)
+}
+
+func TestValidateAPIKey_ValidKey(t *testing.T) {
+	cfg := &Config{
+		Auth: AuthConfig{
+			Enabled: true,
+			APIKeys: []APIKey{
+				{
+					Key:         "valid-key",
+					UserID:      "user1",
+					Role:        "user",
+					Permissions: []string{"session:create"},
+					CreatedAt:   "2024-01-01T00:00:00Z",
+				},
+			},
+		},
+	}
+
+	apiKey, valid := cfg.ValidateAPIKey("valid-key")
+	assert.True(t, valid)
+	assert.NotNil(t, apiKey)
+	assert.Equal(t, "user1", apiKey.UserID)
+	assert.Equal(t, "user", apiKey.Role)
+}
+
+func TestValidateAPIKey_InvalidKey(t *testing.T) {
+	cfg := &Config{
+		Auth: AuthConfig{
+			Enabled: true,
+			APIKeys: []APIKey{
+				{
+					Key:    "valid-key",
+					UserID: "user1",
+				},
+			},
+		},
+	}
+
+	_, valid := cfg.ValidateAPIKey("invalid-key")
+	assert.False(t, valid)
+}
+
+func TestValidateAPIKey_ExpiredKey(t *testing.T) {
+	// Create an expired key
+	expiredTime := time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
+
+	cfg := &Config{
+		Auth: AuthConfig{
+			Enabled: true,
+			APIKeys: []APIKey{
+				{
+					Key:       "expired-key",
+					UserID:    "user1",
+					ExpiresAt: expiredTime,
+				},
+			},
+		},
+	}
+
+	_, valid := cfg.ValidateAPIKey("expired-key")
+	assert.False(t, valid)
+}
+
+func TestAPIKey_HasPermission(t *testing.T) {
+	apiKey := &APIKey{
+		Permissions: []string{"session:create", "session:delete"},
+	}
+
+	assert.True(t, apiKey.HasPermission("session:create"))
+	assert.True(t, apiKey.HasPermission("session:delete"))
+	assert.False(t, apiKey.HasPermission("session:admin"))
+}
+
+func TestAPIKey_HasPermission_Wildcard(t *testing.T) {
+	apiKey := &APIKey{
+		Permissions: []string{"*"},
+	}
+
+	assert.True(t, apiKey.HasPermission("session:create"))
+	assert.True(t, apiKey.HasPermission("session:delete"))
+	assert.True(t, apiKey.HasPermission("any:permission"))
 }
