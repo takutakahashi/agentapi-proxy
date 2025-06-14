@@ -104,9 +104,17 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Add CORS middleware with proper configuration (only for non-proxy routes)
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		Skipper: func(c echo.Context) bool {
-			// Skip CORS middleware for proxy routes (they handle CORS manually)
+			// Skip CORS middleware only for proxy routes (/:sessionId/* pattern)
+			// These routes handle CORS manually in the proxy
 			path := c.Request().URL.Path
-			return len(strings.Split(path, "/")) >= 3 && path != "/start" && path != "/search"
+			pathParts := strings.Split(path, "/")
+			// Skip CORS only for proxy routes that match /:sessionId/* pattern
+			// (at least 3 parts, not starting with "start", "search", or "sessions")
+			if len(pathParts) >= 3 && pathParts[1] != "" {
+				firstSegment := pathParts[1]
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions"
+			}
+			return false
 		},
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodDelete, http.MethodOptions},
