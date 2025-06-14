@@ -179,6 +179,10 @@ func (p *Proxy) setupRoutes() {
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission("session:create"))
 	p.echo.GET("/search", p.searchSessions, auth.RequirePermission("session:list"))
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
+	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
+	p.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
 	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission("session:access"))
 }
 
