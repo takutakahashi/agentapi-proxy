@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  agentapi-proxy:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./:/app/workspace
+      - agentapi-proxy-home:/home/agentapi
+    environment:
+      - HOME=/home/agentapi
+    working_dir: /app/workspace
+    restart: unless-stopped
+
+volumes:
+  agentapi-proxy-home:
