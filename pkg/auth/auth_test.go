@@ -255,3 +255,61 @@ func TestUserOwnsSession_OtherSession(t *testing.T) {
 	// User should not have access to other user's session
 	assert.False(t, UserOwnsSession(c, "user2"))
 }
+
+func TestAuthMiddleware_CaseInsensitiveHeaders(t *testing.T) {
+	// Create config with auth enabled and valid API keys
+	cfg := &config.Config{
+		Auth: config.AuthConfig{
+			Enabled:    true,
+			HeaderName: "X-API-Key",
+			APIKeys: []config.APIKey{
+				{
+					Key:         "valid-key",
+					UserID:      "user1",
+					Role:        "user",
+					Permissions: []string{"session:create"},
+				},
+			},
+		},
+	}
+
+	testCases := []struct {
+		name       string
+		headerName string
+		expected   bool
+	}{
+		{"Exact case", "X-API-Key", true},
+		{"All lowercase", "x-api-key", true},
+		{"All uppercase", "X-API-KEY", true},
+		{"Mixed case 1", "x-Api-Key", true},
+		{"Mixed case 2", "X-api-key", true},
+		{"Mixed case 3", "x-API-key", true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := echo.New()
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set(tc.headerName, "valid-key")
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+
+			middleware := AuthMiddleware(cfg)
+			handler := func(c echo.Context) error {
+				user := GetUserFromContext(c)
+				assert.NotNil(t, user)
+				assert.Equal(t, "user1", user.UserID)
+				assert.Equal(t, "user", user.Role)
+				return c.String(http.StatusOK, "success")
+			}
+
+			err := middleware(handler)(c)
+			if tc.expected {
+				assert.NoError(t, err)
+				assert.Equal(t, http.StatusOK, rec.Code)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+}

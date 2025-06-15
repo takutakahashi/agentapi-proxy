@@ -3,6 +3,7 @@ package auth
 import (
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -14,6 +15,16 @@ type UserContext struct {
 	Role        string
 	Permissions []string
 	APIKey      string
+}
+
+// getCaseInsensitiveHeader retrieves header value case-insensitively
+func getCaseInsensitiveHeader(headers http.Header, headerName string) string {
+	for key, values := range headers {
+		if strings.EqualFold(key, headerName) && len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
 }
 
 // AuthMiddleware creates authentication middleware
@@ -28,8 +39,8 @@ func AuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			// Get API key from header
-			apiKey := c.Request().Header.Get(cfg.Auth.HeaderName)
+			// Get API key from header (case-insensitive)
+			apiKey := getCaseInsensitiveHeader(c.Request().Header, cfg.Auth.HeaderName)
 			if apiKey == "" {
 				log.Printf("Authentication failed: missing API key in header %s from %s", cfg.Auth.HeaderName, c.RealIP())
 				return echo.NewHTTPError(http.StatusUnauthorized, "API key required")
