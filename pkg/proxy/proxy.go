@@ -119,7 +119,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		},
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodDelete, http.MethodOptions},
-		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Requested-With", "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host"},
+		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Requested-With", "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host", "X-API-Key"},
 		AllowCredentials: true,
 		MaxAge:           86400,
 	}))
@@ -487,7 +487,7 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 		// Set CORS headers
 		resp.Header.Set("Access-Control-Allow-Origin", "*")
 		resp.Header.Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
-		resp.Header.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host")
+		resp.Header.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
 		resp.Header.Set("Access-Control-Allow-Credentials", "true")
 		resp.Header.Set("Access-Control-Max-Age", "86400")
 
