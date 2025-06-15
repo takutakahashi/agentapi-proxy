@@ -1,21 +1,18 @@
 package cmd
 
 import (
-	"context"
+	"crypto/rand"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
-	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
-	"github.com/google/go-github/v57/github"
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
 //go:embed claude_code_settings.json
@@ -28,7 +25,7 @@ var HelpersCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Available helpers:")
 		fmt.Println("  setup-claude-code - Setup Claude Code configuration")
-		fmt.Println("  generate-token - Generate GitHub tokens and save to JSON file")
+		fmt.Println("  generate-token - Generate API keys for agentapi-proxy authentication")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
 }
@@ -42,33 +39,42 @@ var setupClaudeCodeCmd = &cobra.Command{
 
 var generateTokenCmd = &cobra.Command{
 	Use:   "generate-token",
-	Short: "Generate GitHub tokens and save to JSON file",
-	Long: `Generate GitHub installation tokens using GitHub App credentials and save to a JSON file.
+	Short: "Generate API keys for agentapi-proxy authentication",
+	Long: `Generate API keys for agentapi-proxy authentication and save to a JSON file.
 
-This command generates installation tokens using GitHub App authentication and saves them to
-a specified JSON file. If the file already exists, the new tokens will be merged with existing content.
+This command generates API keys for agentapi-proxy authentication and saves them to
+a specified JSON file. If the file already exists, the new API key will be merged with existing content.
 
-Authentication (all required):
-- GITHUB_APP_ID: GitHub App ID
-- GITHUB_APP_PEM_PATH: Path to private key file
-- GITHUB_INSTALLATION_ID: Installation ID (optional, will auto-detect if not provided)
-
-Optional:
-- GITHUB_API: GitHub API base URL (defaults to https://api.github.com)
-- --repo-fullname: Repository to generate token for (for auto-detection of installation ID)
+The generated API key includes:
+- Unique API key with configurable prefix
+- User ID and role assignment
+- Permission configuration
+- Creation and expiration timestamps
 
 Usage:
-  agentapi-proxy helpers generate-token --output-path /path/to/tokens.json`,
+  agentapi-proxy helpers generate-token --output-path /path/to/api_keys.json --user-id alice --role user`,
 	RunE: runGenerateToken,
 }
 
 var outputPath string
-var repoFullNameForToken string
+var userID string
+var role string
+var permissions []string
+var expiryDays int
+var keyPrefix string
 
 func init() {
-	generateTokenCmd.Flags().StringVar(&outputPath, "output-path", "", "Path to JSON file where tokens will be saved (required)")
-	generateTokenCmd.Flags().StringVar(&repoFullNameForToken, "repo-fullname", "", "Repository fullname for auto-detection of installation ID (optional)")
+	generateTokenCmd.Flags().StringVar(&outputPath, "output-path", "", "Path to JSON file where API keys will be saved (required)")
+	generateTokenCmd.Flags().StringVar(&userID, "user-id", "", "User ID for the API key (required)")
+	generateTokenCmd.Flags().StringVar(&role, "role", "user", "Role for the API key (admin, user, readonly)")
+	generateTokenCmd.Flags().StringSliceVar(&permissions, "permissions", []string{"session:create", "session:list", "session:delete", "session:access"}, "Permissions for the API key")
+	generateTokenCmd.Flags().IntVar(&expiryDays, "expiry-days", 365, "Number of days until the API key expires")
+	generateTokenCmd.Flags().StringVar(&keyPrefix, "key-prefix", "ap", "Prefix for the generated API key")
+
 	if err := generateTokenCmd.MarkFlagRequired("output-path"); err != nil {
+		panic(err)
+	}
+	if err := generateTokenCmd.MarkFlagRequired("user-id"); err != nil {
 		panic(err)
 	}
 
@@ -120,101 +126,74 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 	fmt.Printf("Successfully created Claude Code configuration at %s\n", settingsPath)
 }
 
-type TokenData struct {
-	Token          string    `json:"token"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	CreatedAt      time.Time `json:"created_at"`
-	AppID          string    `json:"app_id"`
-	InstallationID string    `json:"installation_id"`
-}
-
-type TokenStorage struct {
-	Tokens map[string]TokenData `json:"tokens"`
+type APIKeysFile struct {
+	APIKeys []config.APIKey `json:"api_keys"`
 }
 
 func runGenerateToken(cmd *cobra.Command, args []string) error {
-	// Validate required environment variables
-	appIDStr := os.Getenv("GITHUB_APP_ID")
-	if appIDStr == "" {
-		return fmt.Errorf("GITHUB_APP_ID environment variable is required")
+	// Validate role
+	if role != "admin" && role != "user" && role != "readonly" {
+		return fmt.Errorf("invalid role: %s. Must be one of: admin, user, readonly", role)
 	}
 
-	pemPath := os.Getenv("GITHUB_APP_PEM_PATH")
-	if pemPath == "" {
-		return fmt.Errorf("GITHUB_APP_PEM_PATH environment variable is required")
+	// Set default permissions based on role if not explicitly provided
+	if !cmd.Flags().Changed("permissions") {
+		switch role {
+		case "admin":
+			permissions = []string{"*"}
+		case "user":
+			permissions = []string{"session:create", "session:list", "session:delete", "session:access"}
+		case "readonly":
+			permissions = []string{"session:list"}
+		}
 	}
 
-	// Parse App ID
-	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	// Generate random API key
+	apiKey, err := generateAPIKey(userID, keyPrefix)
 	if err != nil {
-		return fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
+		return fmt.Errorf("failed to generate API key: %w", err)
 	}
 
-	// Get or auto-detect Installation ID
-	installationIDStr := os.Getenv("GITHUB_INSTALLATION_ID")
-	var installationID int64
+	// Create timestamps
+	createdAt := time.Now()
+	expiresAt := createdAt.AddDate(0, 0, expiryDays)
 
-	if installationIDStr != "" {
-		installationID, err = strconv.ParseInt(installationIDStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
-		}
-	} else {
-		if repoFullNameForToken == "" {
-			return fmt.Errorf("either GITHUB_INSTALLATION_ID environment variable or --repo-fullname flag is required for auto-detection")
-		}
-
-		fmt.Println("Auto-detecting installation ID...")
-		installationID, err = findInstallationIDForRepo(appID, pemPath, repoFullNameForToken, getAPIBaseForToken())
-		if err != nil {
-			return fmt.Errorf("failed to auto-detect installation ID: %w", err)
-		}
-		fmt.Printf("Auto-detected installation ID: %d\n", installationID)
+	// Create new API key entry
+	newAPIKey := config.APIKey{
+		Key:         apiKey,
+		UserID:      userID,
+		Role:        role,
+		Permissions: permissions,
+		CreatedAt:   createdAt.Format(time.RFC3339),
+		ExpiresAt:   expiresAt.Format(time.RFC3339),
 	}
 
-	// Generate token
-	fmt.Println("Generating installation token...")
-	token, expiresAt, err := generateInstallationTokenWithExpiry(appID, installationID, pemPath, getAPIBaseForToken())
-	if err != nil {
-		return fmt.Errorf("failed to generate installation token: %w", err)
-	}
-
-	// Create token data
-	tokenKey := fmt.Sprintf("github_app_%s_installation_%d", appIDStr, installationID)
-	tokenData := TokenData{
-		Token:          token,
-		ExpiresAt:      expiresAt,
-		CreatedAt:      time.Now(),
-		AppID:          appIDStr,
-		InstallationID: strconv.FormatInt(installationID, 10),
-	}
-
-	// Load existing tokens or create new structure
-	var storage TokenStorage
+	// Load existing API keys or create new structure
+	var keysFile APIKeysFile
 	if _, err := os.Stat(outputPath); err == nil {
 		// File exists, load and merge
 		data, err := os.ReadFile(outputPath)
 		if err != nil {
-			return fmt.Errorf("failed to read existing token file: %w", err)
+			return fmt.Errorf("failed to read existing API keys file: %w", err)
 		}
 
-		if err := json.Unmarshal(data, &storage); err != nil {
-			return fmt.Errorf("failed to parse existing token file: %w", err)
+		if err := json.Unmarshal(data, &keysFile); err != nil {
+			return fmt.Errorf("failed to parse existing API keys file: %w", err)
 		}
 	} else {
 		// File doesn't exist, create new structure
-		storage = TokenStorage{
-			Tokens: make(map[string]TokenData),
+		keysFile = APIKeysFile{
+			APIKeys: []config.APIKey{},
 		}
 	}
 
-	// Add new token
-	storage.Tokens[tokenKey] = tokenData
+	// Add new API key
+	keysFile.APIKeys = append(keysFile.APIKeys, newAPIKey)
 
 	// Save to file
-	data, err := json.MarshalIndent(storage, "", "  ")
+	data, err := json.MarshalIndent(keysFile, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal token data: %w", err)
+		return fmt.Errorf("failed to marshal API keys data: %w", err)
 	}
 
 	// Ensure directory exists
@@ -225,62 +204,30 @@ func runGenerateToken(cmd *cobra.Command, args []string) error {
 
 	// Write file
 	if err := os.WriteFile(outputPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write token file: %w", err)
+		return fmt.Errorf("failed to write API keys file: %w", err)
 	}
 
-	fmt.Printf("Successfully generated and saved token to %s\n", outputPath)
-	fmt.Printf("Token key: %s\n", tokenKey)
+	fmt.Printf("Successfully generated and saved API key to %s\n", outputPath)
+	fmt.Printf("API Key: %s\n", apiKey)
+	fmt.Printf("User ID: %s\n", userID)
+	fmt.Printf("Role: %s\n", role)
+	fmt.Printf("Permissions: %v\n", permissions)
 	fmt.Printf("Expires at: %s\n", expiresAt.Format(time.RFC3339))
 	return nil
 }
 
-func getAPIBaseForToken() string {
-	apiBase := os.Getenv("GITHUB_API")
-	if apiBase == "" {
-		apiBase = "https://api.github.com"
-	}
-	return apiBase
-}
-
-func generateInstallationTokenWithExpiry(appID, installationID int64, pemPath, apiBase string) (string, time.Time, error) {
-	// Read the private key
-	pemData, err := os.ReadFile(pemPath)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("failed to read PEM file: %w", err)
+func generateAPIKey(userID, prefix string) (string, error) {
+	// Generate 16 random bytes
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 
-	// Create GitHub App transport
-	transport, err := ghinstallation.NewAppsTransport(nil, appID, pemData)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("failed to create GitHub App transport: %w", err)
-	}
+	// Convert to hex string
+	randomString := hex.EncodeToString(randomBytes)
 
-	// Set base URL if specified (for GitHub Enterprise)
-	if apiBase != "" && apiBase != "https://api.github.com" {
-		transport.BaseURL = apiBase
-	}
+	// Create API key with format: {prefix}_{role}_{userID}_{randomString}
+	apiKey := fmt.Sprintf("%s_%s_%s", prefix, userID, randomString)
 
-	// Create GitHub client
-	var client *github.Client
-	if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
-		client = github.NewClient(&http.Client{Transport: transport})
-	} else {
-		client, err = github.NewClient(&http.Client{Transport: transport}).WithEnterpriseURLs(apiBase, apiBase)
-		if err != nil {
-			return "", time.Time{}, fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
-		}
-	}
-
-	// Create installation token
-	ctx := context.Background()
-	token, _, err := client.Apps.CreateInstallationToken(
-		ctx,
-		installationID,
-		&github.InstallationTokenOptions{},
-	)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("failed to create installation token: %w", err)
-	}
-
-	return token.GetToken(), token.GetExpiresAt().Time, nil
+	return apiKey, nil
 }
