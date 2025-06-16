@@ -124,13 +124,27 @@ func (c *Config) ValidateAPIKey(key string) (*APIKey, bool) {
 					continue
 				}
 				if time.Now().After(expiryTime) {
-					log.Printf("API key expired for user %s", apiKey.UserID)
+					maskedExpiredKey := key
+					if len(key) > 8 {
+						maskedExpiredKey = key[:8] + "***"
+					} else if len(key) > 0 {
+						maskedExpiredKey = key[:1] + "***"
+					}
+					log.Printf("API key expired for user %s (key: %s)", apiKey.UserID, maskedExpiredKey)
 					continue
 				}
 			}
 			return &apiKey, true
 		}
 	}
+	// Log invalid API key attempt with masked key for security
+	maskedKey := key
+	if len(key) > 8 {
+		maskedKey = key[:8] + "***"
+	} else if len(key) > 0 {
+		maskedKey = key[:1] + "***"
+	}
+	log.Printf("API key validation failed: invalid key %s", maskedKey)
 	return nil, false
 }
 

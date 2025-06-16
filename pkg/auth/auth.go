@@ -81,11 +81,13 @@ func RequirePermission(permission string) echo.MiddlewareFunc {
 
 			user := GetUserFromContext(c)
 			if user == nil {
+				log.Printf("Authorization failed: authentication required for permission %s from %s", permission, c.RealIP())
 				return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 			}
 
 			if !hasPermission(user.Permissions, permission) {
-				log.Printf("Authorization failed: user %s lacks permission %s", user.UserID, permission)
+				log.Printf("Authorization failed: user %s (role: %s) lacks permission %s, has permissions: %v, from %s",
+					user.UserID, user.Role, permission, user.Permissions, c.RealIP())
 				return echo.NewHTTPError(http.StatusForbidden, "Insufficient permissions")
 			}
 
@@ -133,6 +135,7 @@ func UserOwnsSession(c echo.Context, sessionUserID string) bool {
 
 	user := GetUserFromContext(c)
 	if user == nil {
+		log.Printf("Session access denied: no authenticated user for session %s from %s", sessionUserID, c.RealIP())
 		return false
 	}
 
@@ -142,5 +145,10 @@ func UserOwnsSession(c echo.Context, sessionUserID string) bool {
 	}
 
 	// Users can only access their own sessions
-	return user.UserID == sessionUserID
+	if user.UserID != sessionUserID {
+		log.Printf("Session access denied: user %s (role: %s) attempted to access session owned by %s from %s",
+			user.UserID, user.Role, sessionUserID, c.RealIP())
+		return false
+	}
+	return true
 }
