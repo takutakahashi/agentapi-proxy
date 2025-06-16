@@ -43,7 +43,6 @@ func TestClient_Start(t *testing.T) {
 		{
 			name: "successful start",
 			request: &StartRequest{
-				UserID:      "test-user",
 				Environment: map[string]string{"TEST": "value"},
 			},
 			serverResponse: `{"session_id": "test-session-123"}`,
@@ -53,7 +52,7 @@ func TestClient_Start(t *testing.T) {
 		},
 		{
 			name:           "server error",
-			request:        &StartRequest{UserID: "test-user"},
+			request:        &StartRequest{},
 			serverResponse: `{"error": "internal server error"}`,
 			serverStatus:   http.StatusInternalServerError,
 			wantErr:        true,
@@ -72,9 +71,7 @@ func TestClient_Start(t *testing.T) {
 					t.Errorf("Failed to decode request: %v", err)
 				}
 
-				if req.UserID != tt.request.UserID {
-					t.Errorf("Expected UserID %s, got %s", tt.request.UserID, req.UserID)
-				}
+				// UserID field removed from StartRequest
 
 				w.WriteHeader(tt.serverStatus)
 				if _, err := w.Write([]byte(tt.serverResponse)); err != nil {
@@ -108,7 +105,6 @@ func TestClient_Start(t *testing.T) {
 func TestClient_Search(t *testing.T) {
 	tests := []struct {
 		name           string
-		userID         string
 		status         string
 		serverResponse string
 		serverStatus   int
@@ -117,7 +113,6 @@ func TestClient_Search(t *testing.T) {
 	}{
 		{
 			name:           "successful search",
-			userID:         "test-user",
 			status:         "active",
 			serverResponse: `{"sessions": [{"session_id": "session1", "user_id": "test-user", "status": "active", "started_at": "2023-01-01T00:00:00Z", "port": 9000}]}`,
 			serverStatus:   http.StatusOK,
@@ -126,7 +121,6 @@ func TestClient_Search(t *testing.T) {
 		},
 		{
 			name:           "empty result",
-			userID:         "nonexistent",
 			status:         "",
 			serverResponse: `{"sessions": []}`,
 			serverStatus:   http.StatusOK,
@@ -142,12 +136,8 @@ func TestClient_Search(t *testing.T) {
 					t.Errorf("Expected GET /search, got %s %s", r.Method, r.URL.Path)
 				}
 
-				userID := r.URL.Query().Get("user_id")
 				status := r.URL.Query().Get("status")
 
-				if userID != tt.userID {
-					t.Errorf("Expected userID %s, got %s", tt.userID, userID)
-				}
 				if status != tt.status {
 					t.Errorf("Expected status %s, got %s", tt.status, status)
 				}
@@ -160,7 +150,7 @@ func TestClient_Search(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(server.URL)
-			resp, err := client.Search(context.Background(), tt.userID, tt.status)
+			resp, err := client.Search(context.Background(), tt.status)
 
 			if tt.wantErr {
 				if err == nil {

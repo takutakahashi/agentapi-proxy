@@ -55,7 +55,6 @@ type ScriptTemplateData struct {
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
-	UserID      string            `json:"user_id,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
 	Message     string            `json:"message,omitempty"`
@@ -199,13 +198,15 @@ func (p *Proxy) setupRoutes() {
 // searchSessions handles GET /search requests to list and filter sessions
 func (p *Proxy) searchSessions(c echo.Context) error {
 	user := auth.GetUserFromContext(c)
-	userID := c.QueryParam("user_id")
 	status := c.QueryParam("status")
 
-	// Non-admin users can only see their own sessions
+	// Determine userID for filtering based on authentication
+	var userID string
 	if user != nil && user.Role != "admin" {
+		// Non-admin users can only see their own sessions
 		userID = user.UserID
 	}
+	// Admin users can see all sessions (userID remains empty for no filtering)
 
 	// Extract tag filters from query parameters
 	tagFilters := make(map[string]string)
@@ -345,23 +346,12 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		}
 	}
 
-	// Get user_id from authenticated context, query parameters, or request body
+	// Get user_id from authenticated context
 	user := auth.GetUserFromContext(c)
-	userID := c.QueryParam("user_id")
-	if userID == "" && startReq.UserID != "" {
-		userID = startReq.UserID
-	}
-
-	// Use authenticated user ID if available and no specific user ID was requested
-	if user != nil && userID == "" {
+	var userID string
+	if user != nil {
 		userID = user.UserID
-	} else if user != nil && user.Role != "admin" && userID != user.UserID {
-		// Non-admin users can only create sessions for themselves
-		log.Printf("User %s attempted to create session for %s (forbidden)", user.UserID, userID)
-		return echo.NewHTTPError(http.StatusForbidden, "You can only create sessions for yourself")
-	}
-
-	if userID == "" {
+	} else {
 		userID = "anonymous"
 	}
 

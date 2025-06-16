@@ -28,7 +28,6 @@ func NewClient(baseURL string) *Client {
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
-	UserID      string            `json:"user_id,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
 }
@@ -118,21 +117,18 @@ func (c *Client) Start(ctx context.Context, req *StartRequest) (*StartResponse, 
 }
 
 // Search lists and filters sessions
-func (c *Client) Search(ctx context.Context, userID, status string) (*SearchResponse, error) {
-	return c.SearchWithTags(ctx, userID, status, nil)
+func (c *Client) Search(ctx context.Context, status string) (*SearchResponse, error) {
+	return c.SearchWithTags(ctx, status, nil)
 }
 
 // SearchWithTags lists and filters sessions with tag support
-func (c *Client) SearchWithTags(ctx context.Context, userID, status string, tags map[string]string) (*SearchResponse, error) {
+func (c *Client) SearchWithTags(ctx context.Context, status string, tags map[string]string) (*SearchResponse, error) {
 	u, err := url.Parse(c.baseURL + "/search")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
 
 	q := u.Query()
-	if userID != "" {
-		q.Set("user_id", userID)
-	}
 	if status != "" {
 		q.Set("status", status)
 	}

@@ -14,7 +14,6 @@
 #### リクエストボディ例
 ```json
 {
-  "user_id": "user123",
   "environment": {
     "CUSTOM_VAR": "value"
   },
@@ -25,6 +24,8 @@
   }
 }
 ```
+
+**注意**: `user_id` は認証されたユーザーのトークンから自動的に割り当てられます。
 
 ### /session_id/*
 - すべての `/session_id/*` へのリクエストは、該当セッションの `agentapi` へ転送されます。
@@ -38,16 +39,17 @@
 - タグによるフィルタリングが可能です（`tag.キー名=値` の形式）。
 
 #### サポートするクエリパラメータ
-- `user_id`: ユーザーIDでフィルタ
 - `status`: ステータスでフィルタ
 - `tag.{key}`: 指定したタグキーの値でフィルタ
 
 #### リクエスト例
 ```
-GET /search?user_id=123&status=active
+GET /search?status=active
 GET /search?tag.repository=agentapi-proxy&tag.env=production
-GET /search?user_id=123&tag.branch=main
+GET /search?tag.branch=main
 ```
+
+**注意**: セッションのフィルタリングは認証されたユーザーのコンテキストに基づいて自動的に行われます。管理者以外のユーザーは自分のセッションのみを表示できます。
 
 #### レスポンス例
 ```json
