@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -219,7 +220,8 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 	p.sessionsMutex.RLock()
 	defer p.sessionsMutex.RUnlock()
 
-	filteredSessions := make([]map[string]interface{}, 0)
+	// First, collect matching sessions
+	matchingSessions := make([]*AgentSession, 0)
 
 	for _, session := range p.sessions {
 		// Apply user filtering based on role
@@ -248,6 +250,17 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 			continue
 		}
 
+		matchingSessions = append(matchingSessions, session)
+	}
+
+	// Sort sessions by creation time (newest first)
+	sort.Slice(matchingSessions, func(i, j int) bool {
+		return matchingSessions[i].StartedAt.After(matchingSessions[j].StartedAt)
+	})
+
+	// Convert sorted sessions to response format
+	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
+	for _, session := range matchingSessions {
 		sessionData := map[string]interface{}{
 			"session_id": session.ID,
 			"user_id":    session.UserID,
