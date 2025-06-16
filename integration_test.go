@@ -45,7 +45,7 @@ func TestIntegrationSessionAPI(t *testing.T) {
 		{
 			name:           "Search sessions with filter",
 			method:         "GET",
-			path:           "/search?user_id=test&status=active",
+			path:           "/search?status=active",
 			expectedStatus: http.StatusOK,
 		},
 		{
@@ -102,7 +102,7 @@ func TestSessionLifecycle(t *testing.T) {
 	}()
 
 	// Step 1: Start a new session
-	req := httptest.NewRequest("POST", "/start?user_id=testuser", nil)
+	req := httptest.NewRequest("POST", "/start", nil)
 	w := httptest.NewRecorder()
 	proxyServer.GetEcho().ServeHTTP(w, req)
 
@@ -121,7 +121,7 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 
 	// Step 2: Verify session appears in search
-	req = httptest.NewRequest("GET", "/search?user_id=testuser", nil)
+	req = httptest.NewRequest("GET", "/search", nil)
 	w = httptest.NewRecorder()
 	proxyServer.GetEcho().ServeHTTP(w, req)
 
@@ -166,7 +166,7 @@ func TestSessionDeletion(t *testing.T) {
 	}()
 
 	// Step 1: Start a new session
-	req := httptest.NewRequest("POST", "/start?user_id=deletiontest", nil)
+	req := httptest.NewRequest("POST", "/start", nil)
 	w := httptest.NewRecorder()
 	proxyServer.GetEcho().ServeHTTP(w, req)
 
@@ -185,7 +185,7 @@ func TestSessionDeletion(t *testing.T) {
 	}
 
 	// Step 2: Verify session exists in search
-	req = httptest.NewRequest("GET", "/search?user_id=deletiontest", nil)
+	req = httptest.NewRequest("GET", "/search", nil)
 	w = httptest.NewRecorder()
 	proxyServer.GetEcho().ServeHTTP(w, req)
 
@@ -234,7 +234,7 @@ func TestSessionDeletion(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Step 5: Verify session no longer exists in search
-	req = httptest.NewRequest("GET", "/search?user_id=deletiontest", nil)
+	req = httptest.NewRequest("GET", "/search", nil)
 	w = httptest.NewRecorder()
 	proxyServer.GetEcho().ServeHTTP(w, req)
 
@@ -277,8 +277,7 @@ func TestEnhancedSessionDeletion(t *testing.T) {
 	}()
 
 	// Step 1: Create a session
-	req := httptest.NewRequest("POST", "/start", strings.NewReader(`{"user_id":"enhanced-deletion-test"}`))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest("POST", "/start", nil)
 	w := httptest.NewRecorder()
 	proxyServer.GetEcho().ServeHTTP(w, req)
 
@@ -412,7 +411,6 @@ func TestClientIntegration(t *testing.T) {
 
 	// Test 1: Start a new session
 	startReq := &client.StartRequest{
-		UserID: "integration-test-user",
 		Environment: map[string]string{
 			"TEST_ENV": "integration_test",
 		},
@@ -430,7 +428,7 @@ func TestClientIntegration(t *testing.T) {
 	sessionID := startResp.SessionID
 
 	// Test 2: Search for sessions
-	searchResp, err := clientInstance.Search(ctx, "integration-test-user", "")
+	searchResp, err := clientInstance.Search(ctx, "")
 	if err != nil {
 		t.Fatalf("Failed to search sessions: %v", err)
 	}
@@ -439,9 +437,7 @@ func TestClientIntegration(t *testing.T) {
 	for _, session := range searchResp.Sessions {
 		if session.SessionID == sessionID {
 			found = true
-			if session.UserID != "integration-test-user" {
-				t.Errorf("Expected UserID 'integration-test-user', got %s", session.UserID)
-			}
+			// UserID check removed since auth is disabled
 			if session.Status != "active" {
 				t.Errorf("Expected status 'active', got %s", session.Status)
 			}
@@ -454,7 +450,7 @@ func TestClientIntegration(t *testing.T) {
 	}
 
 	// Test 3: Search with filters
-	filteredResp, err := clientInstance.Search(ctx, "integration-test-user", "active")
+	filteredResp, err := clientInstance.Search(ctx, "active")
 	if err != nil {
 		t.Fatalf("Failed to search filtered sessions: %v", err)
 	}
@@ -487,7 +483,7 @@ func TestClientIntegration(t *testing.T) {
 
 	// Test 5: Verify session no longer exists
 	time.Sleep(100 * time.Millisecond) // Wait for cleanup
-	finalResp, err := clientInstance.Search(ctx, "integration-test-user", "")
+	finalResp, err := clientInstance.Search(ctx, "")
 	if err != nil {
 		t.Fatalf("Failed to search sessions after deletion: %v", err)
 	}
@@ -505,7 +501,7 @@ func TestClientIntegration(t *testing.T) {
 	}
 
 	// Test 7: Search with non-matching filter
-	noMatchResp, err := clientInstance.Search(ctx, "nonexistent-user", "")
+	noMatchResp, err := clientInstance.Search(ctx, "inactive")
 	if err != nil {
 		t.Fatalf("Failed to search sessions: %v", err)
 	}
@@ -540,7 +536,6 @@ func TestClientConcurrentOperations(t *testing.T) {
 	for i := 0; i < numOperations; i++ {
 		go func(id int) {
 			startReq := &client.StartRequest{
-				UserID: "concurrent-test-user",
 				Environment: map[string]string{
 					"OPERATION_ID": string(rune(id + '0')),
 				},
@@ -564,7 +559,7 @@ func TestClientConcurrentOperations(t *testing.T) {
 	}
 
 	// Verify all sessions were created
-	searchResp, err := clientInstance.Search(ctx, "concurrent-test-user", "")
+	searchResp, err := clientInstance.Search(ctx, "")
 	if err != nil {
 		t.Fatalf("Failed to search sessions: %v", err)
 	}
@@ -579,12 +574,12 @@ func TestClientErrorHandling(t *testing.T) {
 	clientInstance := client.NewClient("http://localhost:99999")
 	ctx := context.Background()
 
-	_, err := clientInstance.Start(ctx, &client.StartRequest{UserID: "test"})
+	_, err := clientInstance.Start(ctx, &client.StartRequest{})
 	if err == nil {
 		t.Error("Expected error when connecting to non-existent server")
 	}
 
-	_, err = clientInstance.Search(ctx, "", "")
+	_, err = clientInstance.Search(ctx, "")
 	if err == nil {
 		t.Error("Expected error when connecting to non-existent server")
 	}
@@ -641,7 +636,6 @@ func TestTagFunctionality(t *testing.T) {
 
 	// Test 1: Start sessions with different tags
 	startReq1 := &client.StartRequest{
-		UserID: "tag-test-user",
 		Tags: map[string]string{
 			"repository": "agentapi-proxy",
 			"branch":     "main",
@@ -655,7 +649,6 @@ func TestTagFunctionality(t *testing.T) {
 	}
 
 	startReq2 := &client.StartRequest{
-		UserID: "tag-test-user",
 		Tags: map[string]string{
 			"repository": "agentapi",
 			"branch":     "develop",
@@ -669,7 +662,7 @@ func TestTagFunctionality(t *testing.T) {
 	}
 
 	// Test 2: Search with tag filters
-	searchResp, err := clientInstance.SearchWithTags(ctx, "tag-test-user", "", map[string]string{
+	searchResp, err := clientInstance.SearchWithTags(ctx, "", map[string]string{
 		"repository": "agentapi-proxy",
 	})
 	if err != nil {
@@ -695,7 +688,7 @@ func TestTagFunctionality(t *testing.T) {
 	}
 
 	// Test 3: Search with multiple tag filters
-	searchResp, err = clientInstance.SearchWithTags(ctx, "", "", map[string]string{
+	searchResp, err = clientInstance.SearchWithTags(ctx, "", map[string]string{
 		"env":    "test",
 		"branch": "develop",
 	})
@@ -716,7 +709,7 @@ func TestTagFunctionality(t *testing.T) {
 	}
 
 	// Test 4: Search with non-matching tag
-	searchResp, err = clientInstance.SearchWithTags(ctx, "", "", map[string]string{
+	searchResp, err = clientInstance.SearchWithTags(ctx, "", map[string]string{
 		"nonexistent": "value",
 	})
 	if err != nil {
@@ -727,14 +720,14 @@ func TestTagFunctionality(t *testing.T) {
 		t.Errorf("Expected 0 sessions with nonexistent tag, got %d", len(searchResp.Sessions))
 	}
 
-	// Test 5: Search all sessions by user and verify tags are included
-	searchResp, err = clientInstance.Search(ctx, "tag-test-user", "")
+	// Test 5: Search all sessions and verify tags are included
+	searchResp, err = clientInstance.Search(ctx, "")
 	if err != nil {
 		t.Fatalf("Failed to search all sessions: %v", err)
 	}
 
-	if len(searchResp.Sessions) != 2 {
-		t.Errorf("Expected 2 sessions for tag-test-user, got %d", len(searchResp.Sessions))
+	if len(searchResp.Sessions) < 2 {
+		t.Errorf("Expected at least 2 sessions, got %d", len(searchResp.Sessions))
 	}
 
 	// Verify all sessions have tags
