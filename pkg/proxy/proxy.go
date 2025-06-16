@@ -183,6 +183,16 @@ func (p *Proxy) setupRoutes() {
 	p.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
+	// Add explicit OPTIONS handler for session proxy routes to ensure CORS preflight works
+	p.echo.OPTIONS("/:sessionId/*", func(c echo.Context) error {
+		// Set CORS headers for preflight
+		c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+		c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
+		c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
+		c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Response().Header().Set("Access-Control-Max-Age", "86400")
+		return c.NoContent(http.StatusNoContent)
+	})
 	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission("session:access"))
 }
 
@@ -431,10 +441,13 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
-	// Check if user has access to this session
-	if !auth.UserOwnsSession(c, session.UserID) {
-		log.Printf("User does not have access to session %s", sessionID)
-		return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
+	// Check if user has access to this session (only if auth is enabled)
+	cfg := auth.GetConfigFromContext(c)
+	if cfg != nil && cfg.Auth.Enabled {
+		if !auth.UserOwnsSession(c, session.UserID) {
+			log.Printf("User does not have access to session %s", sessionID)
+			return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
+		}
 	}
 
 	// Create target URL for the agentapi server
