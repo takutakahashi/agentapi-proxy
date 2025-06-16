@@ -28,6 +28,12 @@ func AuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 				return next(c)
 			}
 
+			// Skip auth for OPTIONS requests (CORS preflight)
+			if c.Request().Method == "OPTIONS" {
+				log.Printf("Skipping auth for OPTIONS request: %s", c.Request().URL.Path)
+				return next(c)
+			}
+
 			// Get API key from header
 			apiKey := c.Request().Header.Get(cfg.Auth.HeaderName)
 			if apiKey == "" {
@@ -65,6 +71,11 @@ func RequirePermission(permission string) echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			// Check if auth is disabled by looking for config in context
 			if cfg := GetConfigFromContext(c); cfg != nil && !cfg.Auth.Enabled {
+				return next(c)
+			}
+
+			// Skip permission check for OPTIONS requests (CORS preflight)
+			if c.Request().Method == "OPTIONS" {
 				return next(c)
 			}
 
