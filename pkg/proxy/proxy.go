@@ -444,12 +444,18 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
-	// Check if user has access to this session (only if auth is enabled)
-	cfg := auth.GetConfigFromContext(c)
-	if cfg != nil && cfg.Auth.Enabled {
-		if !auth.UserOwnsSession(c, session.UserID) {
-			log.Printf("User does not have access to session %s", sessionID)
-			return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
+	// Skip session access check for OPTIONS requests (CORS preflight)
+	if c.Request().Method == "OPTIONS" {
+		// For OPTIONS requests, skip session access validation
+		// since auth middleware already skipped authentication
+	} else {
+		// Check if user has access to this session (only if auth is enabled)
+		cfg := auth.GetConfigFromContext(c)
+		if cfg != nil && cfg.Auth.Enabled {
+			if !auth.UserOwnsSession(c, session.UserID) {
+				log.Printf("User does not have access to session %s", sessionID)
+				return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
+			}
 		}
 	}
 
