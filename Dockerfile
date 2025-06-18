@@ -19,36 +19,31 @@ COPY . .
 # Build the application
 RUN go build -o bin/agentapi-proxy main.go
 
-# Download agentapi binary stage
-FROM alpine:latest AS agentapi-downloader
+# Build agentapi from source stage
+FROM golang:1.23-alpine AS agentapi-builder
 
-# Install curl
-RUN apk add --no-cache curl
+# Install git for cloning
+RUN apk add --no-cache git
 
 # Set the agentapi version
 ARG AGENTAPI_VERSION=v0.2.1
 
-# Set target platform arguments
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
-
-# Download the appropriate agentapi binary
+# Clone and build agentapi from source
+WORKDIR /agentapi-src
 RUN set -ex && \
-    if [ "${TARGETOS}" = "windows" ]; then \
-        BINARY_NAME="agentapi-${TARGETOS}-${TARGETARCH}.exe"; \
-    else \
-        BINARY_NAME="agentapi-${TARGETOS}-${TARGETARCH}"; \
-    fi && \
-    DOWNLOAD_URL="https://github.com/coder/agentapi/releases/download/${AGENTAPI_VERSION}/${BINARY_NAME}" && \
-    echo "Downloading agentapi from: ${DOWNLOAD_URL}" && \
-    curl -fsSL "${DOWNLOAD_URL}" -o /agentapi && \
-    chmod +x /agentapi
+    echo "Building agentapi ${AGENTAPI_VERSION} from source for native architecture" && \
+    git clone --depth 1 --branch ${AGENTAPI_VERSION} https://github.com/coder/agentapi.git . && \
+    go mod download && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentapi ./cmd/agentapi && \
+    echo "Built agentapi binary info:" && \
+    file /agentapi && \
+    ls -la /agentapi
 
 # Runtime stage
-FROM ubuntu
+FROM debian:bookworm-slim
 
 # Install ca-certificates, curl, and bash for mise installation
-RUN apt update && apt install -y ca-certificates curl bash git python3 gcc
+RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -g 1001 agentapi && \
@@ -60,8 +55,8 @@ WORKDIR /app
 # Copy binary from builder stage (agentapi-proxy binary only)
 COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
 
-# Copy agentapi binary from downloader stage
-COPY --from=agentapi-downloader /agentapi /usr/local/bin/agentapi
+# Copy agentapi binary from builder stage
+COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 
 # Change ownership to non-root user
 RUN chown -R agentapi:agentapi /app
