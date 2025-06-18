@@ -34,7 +34,7 @@ RUN set -ex && \
     echo "Building agentapi ${AGENTAPI_VERSION} from source for native architecture" && \
     git clone --depth 1 --branch ${AGENTAPI_VERSION} https://github.com/coder/agentapi.git . && \
     go mod download && \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentapi ./cmd/agentapi && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentapi . && \
     echo "Built agentapi binary info:" && \
     file /agentapi && \
     ls -la /agentapi
