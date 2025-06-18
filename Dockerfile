@@ -36,7 +36,6 @@ RUN set -ex && \
     go mod download && \
     CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentapi . && \
     echo "Built agentapi binary info:" && \
-    file /agentapi && \
     ls -la /agentapi
 
 # Runtime stage

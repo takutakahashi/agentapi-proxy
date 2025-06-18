@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   agentapi-proxy:
-    build: .
+    image: ghcr.io/takutakahashi/agentapi-proxy:0.18.0
     ports:
       - "8889:8080"
     volumes:
