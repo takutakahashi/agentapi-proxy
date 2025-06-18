@@ -19,43 +19,23 @@ COPY . .
 # Build the application
 RUN go build -o bin/agentapi-proxy main.go
 
-# Download agentapi binary stage
-FROM debian:bookworm-slim AS agentapi-downloader
+# Build agentapi from source stage
+FROM golang:1.23-alpine AS agentapi-builder
 
-# Install curl and file command for debugging
-RUN apt-get update && apt-get install -y curl file && rm -rf /var/lib/apt/lists/*
+# Install git for cloning
+RUN apk add --no-cache git
 
 # Set the agentapi version
 ARG AGENTAPI_VERSION=v0.2.1
 
-# Set target platform arguments
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
-
-# Download the appropriate agentapi binary with fallback for ARM64
+# Clone and build agentapi from source
+WORKDIR /agentapi-src
 RUN set -ex && \
-    echo "Building for OS: ${TARGETOS:-linux}, ARCH: ${TARGETARCH:-amd64}" && \
-    if [ "${TARGETOS:-linux}" = "windows" ]; then \
-        BINARY_NAME="agentapi-${TARGETOS:-linux}-${TARGETARCH:-amd64}.exe"; \
-    else \
-        BINARY_NAME="agentapi-${TARGETOS:-linux}-${TARGETARCH:-amd64}"; \
-    fi && \
-    DOWNLOAD_URL="https://github.com/coder/agentapi/releases/download/${AGENTAPI_VERSION}/${BINARY_NAME}" && \
-    echo "Downloading agentapi from: ${DOWNLOAD_URL}" && \
-    if curl -fsSL "${DOWNLOAD_URL}" -o /agentapi; then \
-        echo "Successfully downloaded ${BINARY_NAME}"; \
-    elif [ "${TARGETARCH:-amd64}" = "arm64" ] && [ "${TARGETOS:-linux}" = "linux" ]; then \
-        echo "ARM64 Linux binary not available, falling back to AMD64 binary with QEMU compatibility"; \
-        FALLBACK_BINARY_NAME="agentapi-linux-amd64"; \
-        FALLBACK_URL="https://github.com/coder/agentapi/releases/download/${AGENTAPI_VERSION}/${FALLBACK_BINARY_NAME}"; \
-        echo "Downloading fallback agentapi from: ${FALLBACK_URL}"; \
-        curl -fsSL "${FALLBACK_URL}" -o /agentapi; \
-    else \
-        echo "Failed to download ${BINARY_NAME} and no fallback available"; \
-        exit 1; \
-    fi && \
-    chmod +x /agentapi && \
-    echo "Downloaded binary info:" && \
+    echo "Building agentapi ${AGENTAPI_VERSION} from source for native architecture" && \
+    git clone --depth 1 --branch ${AGENTAPI_VERSION} https://github.com/coder/agentapi.git . && \
+    go mod download && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentapi ./cmd/agentapi && \
+    echo "Built agentapi binary info:" && \
     file /agentapi && \
     ls -la /agentapi
 
@@ -75,8 +55,8 @@ WORKDIR /app
 # Copy binary from builder stage (agentapi-proxy binary only)
 COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
 
-# Copy agentapi binary from downloader stage
-COPY --from=agentapi-downloader /agentapi /usr/local/bin/agentapi
+# Copy agentapi binary from builder stage
+COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 
 # Change ownership to non-root user
 RUN chown -R agentapi:agentapi /app
