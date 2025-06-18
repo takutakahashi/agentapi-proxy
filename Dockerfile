@@ -20,10 +20,10 @@ COPY . .
 RUN go build -o bin/agentapi-proxy main.go
 
 # Download agentapi binary stage
-FROM alpine:latest AS agentapi-downloader
+FROM debian:bookworm-slim AS agentapi-downloader
 
-# Install curl
-RUN apk add --no-cache curl
+# Install curl and file command for debugging
+RUN apt-get update && apt-get install -y curl file && rm -rf /var/lib/apt/lists/*
 
 # Set the agentapi version
 ARG AGENTAPI_VERSION=v0.2.1
@@ -32,23 +32,38 @@ ARG AGENTAPI_VERSION=v0.2.1
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
-# Download the appropriate agentapi binary
+# Download the appropriate agentapi binary with fallback for ARM64
 RUN set -ex && \
-    if [ "${TARGETOS}" = "windows" ]; then \
-        BINARY_NAME="agentapi-${TARGETOS}-${TARGETARCH}.exe"; \
+    echo "Building for OS: ${TARGETOS:-linux}, ARCH: ${TARGETARCH:-amd64}" && \
+    if [ "${TARGETOS:-linux}" = "windows" ]; then \
+        BINARY_NAME="agentapi-${TARGETOS:-linux}-${TARGETARCH:-amd64}.exe"; \
     else \
-        BINARY_NAME="agentapi-${TARGETOS}-${TARGETARCH}"; \
+        BINARY_NAME="agentapi-${TARGETOS:-linux}-${TARGETARCH:-amd64}"; \
     fi && \
     DOWNLOAD_URL="https://github.com/coder/agentapi/releases/download/${AGENTAPI_VERSION}/${BINARY_NAME}" && \
     echo "Downloading agentapi from: ${DOWNLOAD_URL}" && \
-    curl -fsSL "${DOWNLOAD_URL}" -o /agentapi && \
-    chmod +x /agentapi
+    if curl -fsSL "${DOWNLOAD_URL}" -o /agentapi; then \
+        echo "Successfully downloaded ${BINARY_NAME}"; \
+    elif [ "${TARGETARCH:-amd64}" = "arm64" ] && [ "${TARGETOS:-linux}" = "linux" ]; then \
+        echo "ARM64 Linux binary not available, falling back to AMD64 binary with QEMU compatibility"; \
+        FALLBACK_BINARY_NAME="agentapi-linux-amd64"; \
+        FALLBACK_URL="https://github.com/coder/agentapi/releases/download/${AGENTAPI_VERSION}/${FALLBACK_BINARY_NAME}"; \
+        echo "Downloading fallback agentapi from: ${FALLBACK_URL}"; \
+        curl -fsSL "${FALLBACK_URL}" -o /agentapi; \
+    else \
+        echo "Failed to download ${BINARY_NAME} and no fallback available"; \
+        exit 1; \
+    fi && \
+    chmod +x /agentapi && \
+    echo "Downloaded binary info:" && \
+    file /agentapi && \
+    ls -la /agentapi
 
 # Runtime stage
-FROM ubuntu
+FROM debian:bookworm-slim
 
 # Install ca-certificates, curl, and bash for mise installation
-RUN apt update && apt install -y ca-certificates curl bash git python3 gcc
+RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -g 1001 agentapi && \
