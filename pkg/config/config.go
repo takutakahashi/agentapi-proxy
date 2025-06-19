@@ -25,12 +25,23 @@ type APIKey struct {
 	ExpiresAt   string   `json:"expires_at,omitempty" mapstructure:"expires_at"`
 }
 
+// PersistenceConfig represents session persistence configuration
+type PersistenceConfig struct {
+	Enabled        bool   `json:"enabled" mapstructure:"enabled"`
+	Backend        string `json:"backend" mapstructure:"backend"` // "file", "sqlite", "postgres"
+	FilePath       string `json:"file_path" mapstructure:"file_path"`
+	SyncInterval   int    `json:"sync_interval_seconds" mapstructure:"sync_interval_seconds"`
+	EncryptSecrets bool   `json:"encrypt_sensitive_data" mapstructure:"encrypt_sensitive_data"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
 	// StartPort is the starting port for agentapi servers
 	StartPort int `json:"start_port" mapstructure:"start_port"`
 	// Auth represents authentication configuration
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
+	// Persistence represents session persistence configuration
+	Persistence PersistenceConfig `json:"persistence" mapstructure:"persistence"`
 }
 
 // LoadConfig loads configuration from a JSON file
@@ -79,6 +90,13 @@ func DefaultConfig() *Config {
 			Enabled:    false,
 			HeaderName: "X-API-Key",
 			APIKeys:    []APIKey{},
+		},
+		Persistence: PersistenceConfig{
+			Enabled:        false,
+			Backend:        "file",
+			FilePath:       "./sessions.json",
+			SyncInterval:   30,
+			EncryptSecrets: true,
 		},
 	}
 }
