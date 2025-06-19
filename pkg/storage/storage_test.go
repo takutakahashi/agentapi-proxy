@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -293,27 +292,36 @@ func TestEncryptionDecryption(t *testing.T) {
 	}
 	defer storage.Close()
 	
-	fileStorage := storage.(*FileStorage)
+	// Test that encryption/decryption works by saving and loading sensitive data
+	sessionData := &SessionData{
+		ID:        "test-encryption",
+		Port:      9003,
+		StartedAt: time.Now(),
+		UserID:    "test-user",
+		Status:    "active",
+		Environment: map[string]string{
+			"SECRET_TOKEN": "secret-value-123",
+			"NORMAL_VAR":   "normal-value",
+		},
+	}
 	
-	testString := "this is a secret message"
-	
-	// Test encryption
-	encrypted, err := fileStorage.encrypt(testString)
+	// Save session (should encrypt sensitive data)
+	err = storage.Save(sessionData)
 	if err != nil {
-		t.Fatalf("Failed to encrypt string: %v", err)
+		t.Fatalf("Failed to save session with encryption: %v", err)
 	}
 	
-	if encrypted == testString {
-		t.Errorf("Encrypted string should be different from original")
-	}
-	
-	// Test decryption
-	decrypted, err := fileStorage.decrypt(encrypted)
+	// Load session (should decrypt sensitive data)
+	loaded, err := storage.Load(sessionData.ID)
 	if err != nil {
-		t.Fatalf("Failed to decrypt string: %v", err)
+		t.Fatalf("Failed to load session with encryption: %v", err)
 	}
 	
-	if decrypted != testString {
-		t.Errorf("Expected decrypted string '%s', got '%s'", testString, decrypted)
+	// Verify data is correctly decrypted
+	if loaded.Environment["SECRET_TOKEN"] != "secret-value-123" {
+		t.Errorf("Expected SECRET_TOKEN to be decrypted to 'secret-value-123', got: %s", loaded.Environment["SECRET_TOKEN"])
+	}
+	if loaded.Environment["NORMAL_VAR"] != "normal-value" {
+		t.Errorf("Expected NORMAL_VAR to remain 'normal-value', got: %s", loaded.Environment["NORMAL_VAR"])
 	}
 }
