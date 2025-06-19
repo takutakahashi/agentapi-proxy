@@ -73,8 +73,13 @@ var eventsCmd = &cobra.Command{
 func init() {
 	ClientCmd.PersistentFlags().StringVarP(&endpoint, "endpoint", "e", "", "AgentAPI endpoint URL (required)")
 	ClientCmd.PersistentFlags().StringVarP(&sessionID, "session-id", "s", "", "Session ID for the agent (required)")
-	ClientCmd.MarkPersistentFlagRequired("endpoint")
-	ClientCmd.MarkPersistentFlagRequired("session-id")
+	
+	if err := ClientCmd.MarkPersistentFlagRequired("endpoint"); err != nil {
+		panic(err)
+	}
+	if err := ClientCmd.MarkPersistentFlagRequired("session-id"); err != nil {
+		panic(err)
+	}
 
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
