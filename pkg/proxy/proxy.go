@@ -27,6 +27,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 )
 
 //go:embed scripts/*
@@ -90,6 +91,7 @@ type Proxy struct {
 	sessionsMutex sync.RWMutex
 	nextPort      int
 	portMutex     sync.Mutex
+	logger        *logger.Logger
 }
 
 // NewProxy creates a new proxy instance
@@ -148,6 +150,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		sessions:      make(map[string]*AgentSession),
 		sessionsMutex: sync.RWMutex{},
 		nextPort:      cfg.StartPort,
+		logger:        logger.NewLogger(),
 	}
 
 	// Add logging middleware if verbose
@@ -336,6 +339,12 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 
 	log.Printf("Session %s deletion completed successfully", sessionID)
 
+	// Log session end with estimated message count
+	// Since we don't track actual message count, we'll use 0 as placeholder
+	if err := p.logger.LogSessionEnd(sessionID, 0); err != nil {
+		log.Printf("Failed to log session end for %s: %v", sessionID, err)
+	}
+
 	// Return success response
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
@@ -412,6 +421,16 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	p.sessionsMutex.Unlock()
 	log.Printf("session: %+v", session)
 	log.Printf("scriptName: %s", scriptName)
+	
+	// Log session start
+	repository := ""
+	if repoInfo != nil {
+		repository = repoInfo.FullName
+	}
+	if err := p.logger.LogSessionStart(sessionID, repository); err != nil {
+		log.Printf("Failed to log session start for %s: %v", sessionID, err)
+	}
+	
 	// Start agentapi server in goroutine
 	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo, initialMessage)
 
@@ -577,6 +596,11 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		p.sessionsMutex.Lock()
 		delete(p.sessions, session.ID)
 		p.sessionsMutex.Unlock()
+		
+		// Log session end when process terminates naturally
+		if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
+			log.Printf("Failed to log session end for %s: %v", session.ID, err)
+		}
 
 		if p.verbose {
 			log.Printf("Cleaned up session %s", session.ID)
