@@ -421,7 +421,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	p.sessionsMutex.Unlock()
 	log.Printf("session: %+v", session)
 	log.Printf("scriptName: %s", scriptName)
-	
+
 	// Log session start
 	repository := ""
 	if repoInfo != nil {
@@ -430,7 +430,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	if err := p.logger.LogSessionStart(sessionID, repository); err != nil {
 		log.Printf("Failed to log session start for %s: %v", sessionID, err)
 	}
-	
+
 	// Start agentapi server in goroutine
 	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo, initialMessage)
 
@@ -596,7 +596,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		p.sessionsMutex.Lock()
 		delete(p.sessions, session.ID)
 		p.sessionsMutex.Unlock()
-		
+
 		// Log session end when process terminates naturally
 		if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
 			log.Printf("Failed to log session end for %s: %v", session.ID, err)

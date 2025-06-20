@@ -85,23 +85,28 @@ func runMCPServer(cmd *cobra.Command, args []string) {
 	)
 	mcpServer.AddTool(getStatusTool, apiServer.handleGetStatus)
 
+	// Create HTTP server for the MCP server
+	httpServer := server.NewStreamableHTTPServer(mcpServer,
+		server.WithEndpointPath("/mcp"),
+	)
+
 	addr := fmt.Sprintf(":%d", mcpPort)
 	log.Printf("MCP Server listening on %s", addr)
 
-	if err := mcpServer.Serve(addr); err != nil {
+	if err := httpServer.Start(addr); err != nil {
 		log.Fatalf("Failed to start MCP server: %v", err)
 	}
 }
 
 func (s *AgentAPIServer) handleStartSession(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	userID, ok := request.Params.Arguments["user_id"].(string)
-	if !ok {
+	userID := mcp.ParseString(request, "user_id", "")
+	if userID == "" {
 		return nil, fmt.Errorf("user_id is required")
 	}
 
 	environment := make(map[string]string)
-	if env, ok := request.Params.Arguments["environment"].(map[string]interface{}); ok {
-		for k, v := range env {
+	if envMap := mcp.ParseStringMap(request, "environment", nil); envMap != nil {
+		for k, v := range envMap {
 			if strVal, ok := v.(string); ok {
 				environment[k] = strVal
 			}
@@ -123,30 +128,15 @@ func (s *AgentAPIServer) handleStartSession(ctx context.Context, request mcp.Cal
 
 	resp, err := s.client.Start(ctx, req)
 	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to start session: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to start session: %v", err)), nil
 	}
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			{
-				Type: "text",
-				Text: fmt.Sprintf("Session started successfully. Session ID: %s", resp.SessionID),
-			},
-		},
-	}, nil
+	return mcp.NewToolResultText(fmt.Sprintf("Session started successfully. Session ID: %s", resp.SessionID)), nil
 }
 
 func (s *AgentAPIServer) handleSearchSessions(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	userID, _ := request.Params.Arguments["user_id"].(string)
-	status, _ := request.Params.Arguments["status"].(string)
+	userID := mcp.ParseString(request, "user_id", "")
+	status := mcp.ParseString(request, "status", "")
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -161,15 +151,7 @@ func (s *AgentAPIServer) handleSearchSessions(ctx context.Context, request mcp.C
 
 	resp, err := s.client.SearchWithTags(ctx, status, tags)
 	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to search sessions: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to search sessions: %v", err)), nil
 	}
 
 	result := fmt.Sprintf("Found %d sessions:\n", len(resp.Sessions))
@@ -178,31 +160,21 @@ func (s *AgentAPIServer) handleSearchSessions(ctx context.Context, request mcp.C
 			session.SessionID, session.UserID, session.Status, session.Port, session.StartedAt.Format(time.RFC3339))
 	}
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			{
-				Type: "text",
-				Text: result,
-			},
-		},
-	}, nil
+	return mcp.NewToolResultText(result), nil
 }
 
 func (s *AgentAPIServer) handleSendMessage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID, ok := request.Params.Arguments["session_id"].(string)
-	if !ok {
+	sessionID := mcp.ParseString(request, "session_id", "")
+	if sessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
 
-	message, ok := request.Params.Arguments["message"].(string)
-	if !ok {
+	message := mcp.ParseString(request, "message", "")
+	if message == "" {
 		return nil, fmt.Errorf("message is required")
 	}
 
-	messageType, _ := request.Params.Arguments["type"].(string)
-	if messageType == "" {
-		messageType = "user"
-	}
+	messageType := mcp.ParseString(request, "type", "user")
 
 	// Use client to send message instead of direct HTTP call
 	msg := &client.Message{
@@ -215,30 +187,15 @@ func (s *AgentAPIServer) handleSendMessage(ctx context.Context, request mcp.Call
 
 	resp, err := s.client.SendMessage(ctx, sessionID, msg)
 	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to send message: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to send message: %v", err)), nil
 	}
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			{
-				Type: "text",
-				Text: fmt.Sprintf("Message sent successfully. ID: %s", resp.ID),
-			},
-		},
-	}, nil
+	return mcp.NewToolResultText(fmt.Sprintf("Message sent successfully. ID: %s", resp.ID)), nil
 }
 
 func (s *AgentAPIServer) handleGetMessages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID, ok := request.Params.Arguments["session_id"].(string)
-	if !ok {
+	sessionID := mcp.ParseString(request, "session_id", "")
+	if sessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
 
@@ -247,15 +204,7 @@ func (s *AgentAPIServer) handleGetMessages(ctx context.Context, request mcp.Call
 
 	resp, err := s.client.GetMessages(ctx, sessionID)
 	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to get messages: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to get messages: %v", err)), nil
 	}
 
 	result := fmt.Sprintf("Conversation History (%d messages):\n", len(resp.Messages))
@@ -264,19 +213,12 @@ func (s *AgentAPIServer) handleGetMessages(ctx context.Context, request mcp.Call
 			msg.Timestamp.Format("15:04:05"), msg.Role, msg.Content)
 	}
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			{
-				Type: "text",
-				Text: result,
-			},
-		},
-	}, nil
+	return mcp.NewToolResultText(result), nil
 }
 
 func (s *AgentAPIServer) handleGetStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID, ok := request.Params.Arguments["session_id"].(string)
-	if !ok {
+	sessionID := mcp.ParseString(request, "session_id", "")
+	if sessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
 
@@ -285,23 +227,8 @@ func (s *AgentAPIServer) handleGetStatus(ctx context.Context, request mcp.CallTo
 
 	resp, err := s.client.GetStatus(ctx, sessionID)
 	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to get status: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to get status: %v", err)), nil
 	}
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			{
-				Type: "text",
-				Text: fmt.Sprintf("Agent Status: %s", resp.Status),
-			},
-		},
-	}, nil
+	return mcp.NewToolResultText(fmt.Sprintf("Agent Status: %s", resp.Status)), nil
 }
