@@ -151,7 +151,9 @@ func TestProfileIntegration(t *testing.T) {
 		}
 
 		var createResponse profile.ProfileResponse
-		json.Unmarshal(rec.Body.Bytes(), &createResponse)
+		if err := json.Unmarshal(rec.Body.Bytes(), &createResponse); err != nil {
+			t.Fatalf("Failed to unmarshal create response: %v", err)
+		}
 		profileID := createResponse.Profile.ID
 
 		// Now get the profile
@@ -206,7 +208,9 @@ func TestProfileIntegration(t *testing.T) {
 		}
 
 		var createResponse profile.ProfileResponse
-		json.Unmarshal(rec.Body.Bytes(), &createResponse)
+		if err := json.Unmarshal(rec.Body.Bytes(), &createResponse); err != nil {
+			t.Fatalf("Failed to unmarshal create response: %v", err)
+		}
 		profileID := createResponse.Profile.ID
 
 		// Now update the profile
@@ -274,7 +278,9 @@ func TestProfileIntegration(t *testing.T) {
 		}
 
 		var createResponse profile.ProfileResponse
-		json.Unmarshal(rec.Body.Bytes(), &createResponse)
+		if err := json.Unmarshal(rec.Body.Bytes(), &createResponse); err != nil {
+			t.Fatalf("Failed to unmarshal create response: %v", err)
+		}
 		profileID := createResponse.Profile.ID
 
 		// Now delete the profile
@@ -327,7 +333,9 @@ func TestProfileIntegration(t *testing.T) {
 		}
 
 		var createResponse profile.ProfileResponse
-		json.Unmarshal(rec.Body.Bytes(), &createResponse)
+		if err := json.Unmarshal(rec.Body.Bytes(), &createResponse); err != nil {
+			t.Fatalf("Failed to unmarshal create response: %v", err)
+		}
 		profileID := createResponse.Profile.ID
 
 		// Add repository
@@ -368,7 +376,9 @@ func TestProfileIntegration(t *testing.T) {
 		}
 
 		var getResponse profile.ProfileResponse
-		json.Unmarshal(rec.Body.Bytes(), &getResponse)
+		if err := json.Unmarshal(rec.Body.Bytes(), &getResponse); err != nil {
+			t.Fatalf("Failed to unmarshal get response: %v", err)
+		}
 
 		if len(getResponse.Profile.RepositoryHistory) != 1 {
 			t.Errorf("Expected 1 repository, got %d", len(getResponse.Profile.RepositoryHistory))

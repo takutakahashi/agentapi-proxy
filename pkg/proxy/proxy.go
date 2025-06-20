@@ -378,7 +378,9 @@ func (p *Proxy) isPortInUse(port int) bool {
 	if err != nil {
 		return true // Port is in use
 	}
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		log.Printf("Warning: failed to close connection: %v", err)
+	}
 	return false
 }
 
