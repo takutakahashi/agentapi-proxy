@@ -64,7 +64,7 @@ func TestAgentAPIServer_handleStartSession(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/start" {
 					w.WriteHeader(tt.mockStatusCode)
-					w.Write([]byte(tt.mockResponse))
+					_, _ = w.Write([]byte(tt.mockResponse))
 					return
 				}
 				w.WriteHeader(http.StatusNotFound)
@@ -158,7 +158,7 @@ func TestAgentAPIServer_handleSearchSessions(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/search" {
 					w.WriteHeader(tt.mockStatusCode)
-					w.Write([]byte(tt.mockResponse))
+					_, _ = w.Write([]byte(tt.mockResponse))
 					return
 				}
 				w.WriteHeader(http.StatusNotFound)
@@ -248,7 +248,7 @@ func TestAgentAPIServer_handleSendMessage(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasPrefix(r.URL.Path, "/test-session/message") {
 					w.WriteHeader(tt.mockStatusCode)
-					w.Write([]byte(tt.mockResponse))
+					_, _ = w.Write([]byte(tt.mockResponse))
 					return
 				}
 				w.WriteHeader(http.StatusNotFound)
@@ -341,7 +341,7 @@ func TestAgentAPIServer_handleGetMessages(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasPrefix(r.URL.Path, "/test-session/messages") {
 					w.WriteHeader(tt.mockStatusCode)
-					w.Write([]byte(tt.mockResponse))
+					_, _ = w.Write([]byte(tt.mockResponse))
 					return
 				}
 				w.WriteHeader(http.StatusNotFound)
@@ -419,7 +419,7 @@ func TestAgentAPIServer_handleGetStatus(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasPrefix(r.URL.Path, "/test-session/status") {
 					w.WriteHeader(tt.mockStatusCode)
-					w.Write([]byte(tt.mockResponse))
+					_, _ = w.Write([]byte(tt.mockResponse))
 					return
 				}
 				w.WriteHeader(http.StatusNotFound)
@@ -483,7 +483,7 @@ func TestAgentAPIServer_contextTimeout(t *testing.T) {
 		// Simulate slow response
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"session_id": "test"}`))
+		_, _ = w.Write([]byte(`{"session_id": "test"}`))
 	}))
 	defer slowServer.Close()
 
@@ -520,7 +520,7 @@ func TestAgentAPIServer_invalidJSON(t *testing.T) {
 	// Test handling of invalid JSON responses
 	invalidJSONServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{invalid json`))
+		_, _ = w.Write([]byte(`{invalid json`))
 	}))
 	defer invalidJSONServer.Close()
 
