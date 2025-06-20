@@ -207,8 +207,8 @@ func TestProfile_AddRepositoryEntry(t *testing.T) {
 
 	// Add repository entry
 	repoEntry := RepositoryEntry{
-		URL:  "https://github.com/example/repo",
-		Name: "example-repo",
+		URL:    "https://github.com/example/repo",
+		Name:   "example-repo",
 		Branch: "main",
 	}
 
@@ -253,10 +253,10 @@ func TestProfile_AddMessageTemplate(t *testing.T) {
 
 	// Add message template
 	template := MessageTemplate{
-		Name:     "Test Template",
-		Content:  "This is a test template with {{variable}}",
+		Name:      "Test Template",
+		Content:   "This is a test template with {{variable}}",
 		Variables: []string{"variable"},
-		Category: "test",
+		Category:  "test",
 	}
 
 	err = service.AddMessageTemplate(profile.ID, template)

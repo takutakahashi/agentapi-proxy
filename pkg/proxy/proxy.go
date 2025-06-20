@@ -388,7 +388,7 @@ func (p *Proxy) setupRoutes() {
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission("session:create"))
 	p.echo.GET("/search", p.searchSessions, auth.RequirePermission("session:list"))
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
-	
+
 	// Add profile management routes
 	p.echo.POST("/profiles", p.createProfile, auth.RequirePermission("profile:create"))
 	p.echo.GET("/profiles", p.listProfiles, auth.RequirePermission("profile:list"))
@@ -398,7 +398,7 @@ func (p *Proxy) setupRoutes() {
 	p.echo.POST("/profiles/:profileId/repositories", p.addRepositoryToProfile, auth.RequirePermission("profile:update"))
 	p.echo.POST("/profiles/:profileId/templates", p.addTemplateToProfile, auth.RequirePermission("profile:update"))
 	p.echo.POST("/start-with-profile", p.startSessionWithProfile, auth.RequirePermission("session:create"))
-	
+
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
 	p.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)

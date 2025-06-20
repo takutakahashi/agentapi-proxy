@@ -32,3 +32,12 @@ go.work.sum
 # .vscode/
 bin/
 .claude/
+
+# Session and log files
+logs/
+*.json
+!config*.json
+!api_keys.example.json
+!go.mod
+!go.sum
+!.tool-versions
