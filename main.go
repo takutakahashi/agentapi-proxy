@@ -18,6 +18,7 @@ func init() {
 	rootCmd.AddCommand(cmd.ServerCmd)
 	rootCmd.AddCommand(cmd.HelpersCmd)
 	rootCmd.AddCommand(cmd.ClientCmd)
+	rootCmd.AddCommand(cmd.MCPCmd)
 }
 
 func main() {
