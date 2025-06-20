@@ -132,10 +132,10 @@ func (fs *FileStorage) Update(session *SessionData) error {
 // Close stops the sync routine and performs final sync
 func (fs *FileStorage) Close() error {
 	close(fs.stopSync)
-	
+
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	
+
 	return fs.syncToFile()
 }
 
@@ -172,10 +172,10 @@ func (fs *FileStorage) syncToFile() error {
 	// Encode sessions
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	
+
 	data := struct {
-		Sessions []*SessionData `json:"sessions"`
-		UpdatedAt time.Time     `json:"updated_at"`
+		Sessions  []*SessionData `json:"sessions"`
+		UpdatedAt time.Time      `json:"updated_at"`
 	}{
 		Sessions:  make([]*SessionData, 0, len(fs.sessions)),
 		UpdatedAt: time.Now(),
@@ -299,7 +299,7 @@ func (fs *FileStorage) encrypt(text string) (string, error) {
 	plaintext := []byte(text)
 	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
 	iv := ciphertext[:aes.BlockSize]
-	
+
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		return "", err
 	}
@@ -339,7 +339,7 @@ func (fs *FileStorage) decrypt(cryptoText string) (string, error) {
 func containsIgnoreCase(s, substr string) bool {
 	s = string([]rune(s))
 	substr = string([]rune(substr))
-	
+
 	for i := 0; i <= len(s)-len(substr); i++ {
 		match := true
 		for j := 0; j < len(substr); j++ {
@@ -352,6 +352,6 @@ func containsIgnoreCase(s, substr string) bool {
 			return true
 		}
 	}
-	
+
 	return false
 }

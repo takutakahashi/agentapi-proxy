@@ -163,7 +163,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			SyncInterval:   cfg.Persistence.SyncInterval,
 			EncryptSecrets: cfg.Persistence.EncryptSecrets,
 		}
-		
+
 		var err error
 		p.storage, err = storage.NewStorage(storageConfig)
 		if err != nil {
@@ -185,12 +185,12 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	e.Use(auth.AuthMiddleware(cfg))
 
 	p.setupRoutes()
-	
+
 	// Load existing sessions from storage if persistence is enabled
 	if cfg.Persistence.Enabled {
 		p.recoverSessions()
 	}
-	
+
 	return p
 }
 
@@ -209,14 +209,14 @@ func (p *Proxy) loggingMiddleware() echo.MiddlewareFunc {
 func (p *Proxy) sessionToStorage(session *AgentSession) *storage.SessionData {
 	var processID int
 	var command []string
-	
+
 	session.processMutex.RLock()
 	if session.Process != nil {
 		processID = session.Process.Process.Pid
 		command = session.Process.Args
 	}
 	session.processMutex.RUnlock()
-	
+
 	return &storage.SessionData{
 		ID:          session.ID,
 		Port:        session.Port,
@@ -250,7 +250,7 @@ func (p *Proxy) saveSession(session *AgentSession) {
 	if p.storage == nil {
 		return
 	}
-	
+
 	sessionData := p.sessionToStorage(session)
 	if err := p.storage.Save(sessionData); err != nil {
 		log.Printf("Failed to save session %s: %v", session.ID, err)
@@ -262,7 +262,7 @@ func (p *Proxy) updateSession(session *AgentSession) {
 	if p.storage == nil {
 		return
 	}
-	
+
 	sessionData := p.sessionToStorage(session)
 	if err := p.storage.Update(sessionData); err != nil {
 		log.Printf("Failed to update session %s: %v", session.ID, err)
@@ -274,7 +274,7 @@ func (p *Proxy) deleteSessionFromStorage(sessionID string) {
 	if p.storage == nil {
 		return
 	}
-	
+
 	if err := p.storage.Delete(sessionID); err != nil {
 		log.Printf("Failed to delete session %s from storage: %v", sessionID, err)
 	}
@@ -285,16 +285,16 @@ func (p *Proxy) recoverSessions() {
 	if p.storage == nil {
 		return
 	}
-	
+
 	sessions, err := p.storage.LoadAll()
 	if err != nil {
 		log.Printf("Failed to load sessions from storage: %v", err)
 		return
 	}
-	
+
 	recovered := 0
 	cleaned := 0
-	
+
 	for _, sessionData := range sessions {
 		// Validate the session is still valid
 		if !p.validateRecoveredSession(sessionData) {
@@ -302,23 +302,23 @@ func (p *Proxy) recoverSessions() {
 			cleaned++
 			continue
 		}
-		
+
 		// Convert to AgentSession and add to memory
 		session := p.sessionFromStorage(sessionData)
 		session.Status = "recovered" // Mark as recovered
-		
+
 		p.sessionsMutex.Lock()
 		p.sessions[session.ID] = session
-		
+
 		// Update next port to avoid conflicts
 		if session.Port >= p.nextPort {
 			p.nextPort = session.Port + 1
 		}
 		p.sessionsMutex.Unlock()
-		
+
 		recovered++
 	}
-	
+
 	if recovered > 0 || cleaned > 0 {
 		log.Printf("Session recovery completed: %d recovered, %d cleaned up", recovered, cleaned)
 	}
@@ -339,19 +339,19 @@ func (p *Proxy) validateRecoveredSession(sessionData *storage.SessionData) bool 
 			}
 		}
 	}
-	
+
 	// Check if port is available for reuse
 	if p.isPortInUse(sessionData.Port) {
 		log.Printf("Session %s port %d is in use by another process", sessionData.ID, sessionData.Port)
 		return false
 	}
-	
+
 	// Check if session is too old (more than 24 hours)
 	if time.Since(sessionData.StartedAt) > 24*time.Hour {
 		log.Printf("Session %s is too old, cleaning up", sessionData.ID)
 		return false
 	}
-	
+
 	return true
 }
 
@@ -608,7 +608,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	p.sessionsMutex.Lock()
 	p.sessions[sessionID] = session
 	p.sessionsMutex.Unlock()
-	
+
 	// Persist session to storage
 	p.saveSession(session)
 	log.Printf("session: %+v", session)
@@ -788,7 +788,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		p.sessionsMutex.Lock()
 		delete(p.sessions, session.ID)
 		p.sessionsMutex.Unlock()
-		
+
 		// Remove session from persistent storage
 		p.deleteSessionFromStorage(session.ID)
 		// Log session end when process terminates naturally
