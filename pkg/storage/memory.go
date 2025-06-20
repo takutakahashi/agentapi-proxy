@@ -22,11 +22,11 @@ func NewMemoryStorage() *MemoryStorage {
 func (m *MemoryStorage) Save(session *SessionData) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if session.ID == "" {
 		return fmt.Errorf("session ID cannot be empty")
 	}
-	
+
 	m.sessions[session.ID] = session
 	return nil
 }
@@ -35,12 +35,12 @@ func (m *MemoryStorage) Save(session *SessionData) error {
 func (m *MemoryStorage) Load(sessionID string) (*SessionData, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	session, exists := m.sessions[sessionID]
 	if !exists {
 		return nil, fmt.Errorf("session %s not found", sessionID)
 	}
-	
+
 	return session, nil
 }
 
@@ -48,12 +48,12 @@ func (m *MemoryStorage) Load(sessionID string) (*SessionData, error) {
 func (m *MemoryStorage) LoadAll() ([]*SessionData, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	sessions := make([]*SessionData, 0, len(m.sessions))
 	for _, session := range m.sessions {
 		sessions = append(sessions, session)
 	}
-	
+
 	return sessions, nil
 }
 
@@ -61,7 +61,7 @@ func (m *MemoryStorage) LoadAll() ([]*SessionData, error) {
 func (m *MemoryStorage) Delete(sessionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	delete(m.sessions, sessionID)
 	return nil
 }

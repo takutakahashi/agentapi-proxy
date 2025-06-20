@@ -14,7 +14,7 @@ type SessionData struct {
 	Environment map[string]string `json:"environment"`
 	Tags        map[string]string `json:"tags"`
 	ProcessID   int               `json:"process_id,omitempty"` // For validation on recovery
-	Command     []string          `json:"command,omitempty"`     // To recreate process if needed
+	Command     []string          `json:"command,omitempty"`    // To recreate process if needed
 	WorkingDir  string            `json:"working_dir,omitempty"`
 }
 

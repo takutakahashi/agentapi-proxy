@@ -24,7 +24,7 @@ func TestLogger(t *testing.T) {
 	// Test session start logging
 	sessionID := "test-session-123"
 	repository := "owner/repo"
-	
+
 	err = logger.LogSessionStart(sessionID, repository)
 	if err != nil {
 		t.Fatalf("Failed to log session start: %v", err)

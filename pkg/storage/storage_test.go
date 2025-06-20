@@ -17,13 +17,13 @@ func TestFileStorage(t *testing.T) {
 	// Create temporary file for testing
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test_sessions.json")
-	
+
 	storage, err := NewFileStorage(tmpFile, 0, false) // Disable sync for testing
 	if err != nil {
 		t.Fatalf("Failed to create file storage: %v", err)
 	}
 	defer storage.Close()
-	
+
 	testStorageInterface(t, storage)
 }
 
@@ -31,13 +31,13 @@ func TestFileStorage(t *testing.T) {
 func TestFileStorageWithEncryption(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test_sessions_encrypted.json")
-	
+
 	storage, err := NewFileStorage(tmpFile, 0, true) // Enable encryption
 	if err != nil {
 		t.Fatalf("Failed to create file storage with encryption: %v", err)
 	}
 	defer storage.Close()
-	
+
 	// Test with sensitive environment variables
 	sessionData := &SessionData{
 		ID:        "test-session-encrypted",
@@ -54,19 +54,19 @@ func TestFileStorageWithEncryption(t *testing.T) {
 			"environment": "test",
 		},
 	}
-	
+
 	// Save session
 	err = storage.Save(sessionData)
 	if err != nil {
 		t.Fatalf("Failed to save session: %v", err)
 	}
-	
+
 	// Load session
 	loaded, err := storage.Load(sessionData.ID)
 	if err != nil {
 		t.Fatalf("Failed to load session: %v", err)
 	}
-	
+
 	// Check that sensitive data is properly decrypted
 	if loaded.Environment["GITHUB_TOKEN"] != "sensitive-token-123" {
 		t.Errorf("Expected GITHUB_TOKEN to be decrypted, got: %s", loaded.Environment["GITHUB_TOKEN"])
@@ -83,7 +83,7 @@ func TestFileStorageWithEncryption(t *testing.T) {
 func TestFileStoragePersistence(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test_sessions_persist.json")
-	
+
 	sessionData := &SessionData{
 		ID:        "persist-test",
 		Port:      9002,
@@ -97,32 +97,32 @@ func TestFileStoragePersistence(t *testing.T) {
 			"test": "true",
 		},
 	}
-	
+
 	// Create first storage instance and save data
 	storage1, err := NewFileStorage(tmpFile, 0, false)
 	if err != nil {
 		t.Fatalf("Failed to create first storage instance: %v", err)
 	}
-	
+
 	err = storage1.Save(sessionData)
 	if err != nil {
 		t.Fatalf("Failed to save session: %v", err)
 	}
-	
+
 	storage1.Close()
-	
+
 	// Create second storage instance and verify data exists
 	storage2, err := NewFileStorage(tmpFile, 0, false)
 	if err != nil {
 		t.Fatalf("Failed to create second storage instance: %v", err)
 	}
 	defer storage2.Close()
-	
+
 	loaded, err := storage2.Load(sessionData.ID)
 	if err != nil {
 		t.Fatalf("Failed to load session from second instance: %v", err)
 	}
-	
+
 	if loaded.ID != sessionData.ID {
 		t.Errorf("Expected ID %s, got %s", sessionData.ID, loaded.ID)
 	}
@@ -152,19 +152,19 @@ func testStorageInterface(t *testing.T, storage Storage) {
 		Command:    []string{"agentapi", "--port", "9000"},
 		WorkingDir: "/tmp",
 	}
-	
+
 	// Test Save
 	err := storage.Save(sessionData)
 	if err != nil {
 		t.Fatalf("Failed to save session: %v", err)
 	}
-	
+
 	// Test Load
 	loaded, err := storage.Load(sessionData.ID)
 	if err != nil {
 		t.Fatalf("Failed to load session: %v", err)
 	}
-	
+
 	// Verify loaded data
 	if loaded.ID != sessionData.ID {
 		t.Errorf("Expected ID %s, got %s", sessionData.ID, loaded.ID)
@@ -186,13 +186,13 @@ func testStorageInterface(t *testing.T, storage Storage) {
 			t.Errorf("Expected environment[%s] = %s, got %s", key, expectedValue, actualValue)
 		}
 	}
-	
+
 	// Test LoadAll
 	sessions, err := storage.LoadAll()
 	if err != nil {
 		t.Fatalf("Failed to load all sessions: %v", err)
 	}
-	
+
 	found := false
 	for _, session := range sessions {
 		if session.ID == sessionData.ID {
@@ -203,41 +203,41 @@ func testStorageInterface(t *testing.T, storage Storage) {
 	if !found {
 		t.Errorf("Session %s not found in LoadAll results", sessionData.ID)
 	}
-	
+
 	// Test Update
 	sessionData.Status = "updated"
 	sessionData.Environment["NEW_KEY"] = "new_value"
-	
+
 	err = storage.Update(sessionData)
 	if err != nil {
 		t.Fatalf("Failed to update session: %v", err)
 	}
-	
+
 	// Verify update
 	updated, err := storage.Load(sessionData.ID)
 	if err != nil {
 		t.Fatalf("Failed to load updated session: %v", err)
 	}
-	
+
 	if updated.Status != "updated" {
 		t.Errorf("Expected updated status 'updated', got %s", updated.Status)
 	}
 	if updated.Environment["NEW_KEY"] != "new_value" {
 		t.Errorf("Expected NEW_KEY to be 'new_value', got %s", updated.Environment["NEW_KEY"])
 	}
-	
+
 	// Test Delete
 	err = storage.Delete(sessionData.ID)
 	if err != nil {
 		t.Fatalf("Failed to delete session: %v", err)
 	}
-	
+
 	// Verify deletion
 	_, err = storage.Load(sessionData.ID)
 	if err == nil {
 		t.Errorf("Expected error when loading deleted session, but got none")
 	}
-	
+
 	// Test Load non-existent session
 	_, err = storage.Load("non-existent-session")
 	if err == nil {
@@ -256,7 +256,7 @@ func TestStorageFactory(t *testing.T) {
 	if _, ok := memStorage.(*MemoryStorage); !ok {
 		t.Errorf("Expected MemoryStorage, got %T", memStorage)
 	}
-	
+
 	// Test file storage
 	tmpDir := t.TempDir()
 	fileConfig := &StorageConfig{
@@ -272,7 +272,7 @@ func TestStorageFactory(t *testing.T) {
 		t.Errorf("Expected FileStorage, got %T", fileStorage)
 	}
 	fileStorage.Close()
-	
+
 	// Test unknown storage type
 	unknownConfig := &StorageConfig{Type: "unknown"}
 	_, err = NewStorage(unknownConfig)
@@ -285,13 +285,13 @@ func TestStorageFactory(t *testing.T) {
 func TestEncryptionDecryption(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test_encrypt.json")
-	
+
 	storage, err := NewFileStorage(tmpFile, 0, true)
 	if err != nil {
 		t.Fatalf("Failed to create file storage: %v", err)
 	}
 	defer storage.Close()
-	
+
 	// Test that encryption/decryption works by saving and loading sensitive data
 	sessionData := &SessionData{
 		ID:        "test-encryption",
@@ -304,19 +304,19 @@ func TestEncryptionDecryption(t *testing.T) {
 			"NORMAL_VAR":   "normal-value",
 		},
 	}
-	
+
 	// Save session (should encrypt sensitive data)
 	err = storage.Save(sessionData)
 	if err != nil {
 		t.Fatalf("Failed to save session with encryption: %v", err)
 	}
-	
+
 	// Load session (should decrypt sensitive data)
 	loaded, err := storage.Load(sessionData.ID)
 	if err != nil {
 		t.Fatalf("Failed to load session with encryption: %v", err)
 	}
-	
+
 	// Verify data is correctly decrypted
 	if loaded.Environment["SECRET_TOKEN"] != "secret-value-123" {
 		t.Errorf("Expected SECRET_TOKEN to be decrypted to 'secret-value-123', got: %s", loaded.Environment["SECRET_TOKEN"])
