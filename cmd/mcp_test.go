@@ -76,7 +76,12 @@ func TestAgentAPIServer_handleStartSession(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			result, err := server.handleStartSession(ctx, tt.args)
+			request := mcp.CallToolRequest{
+				Params: mcp.CallToolRequestParams{
+					Arguments: tt.args,
+				},
+			}
+			result, err := server.handleStartSession(ctx, request)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -88,8 +93,7 @@ func TestAgentAPIServer_handleStartSession(t *testing.T) {
 			
 			if tt.expectContent != "" {
 				require.Len(t, result.Content, 1)
-				content, ok := result.Content[0].(mcp.TextContent)
-				require.True(t, ok)
+				content := result.Content[0]
 				assert.Contains(t, content.Text, tt.expectContent)
 			}
 		})
@@ -165,7 +169,12 @@ func TestAgentAPIServer_handleSearchSessions(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			result, err := server.handleSearchSessions(ctx, tt.args)
+			request := mcp.CallToolRequest{
+				Params: mcp.CallToolRequestParams{
+					Arguments: tt.args,
+				},
+			}
+			result, err := server.handleSearchSessions(ctx, request)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -177,8 +186,7 @@ func TestAgentAPIServer_handleSearchSessions(t *testing.T) {
 			
 			if tt.expectContent != "" {
 				require.Len(t, result.Content, 1)
-				content, ok := result.Content[0].(mcp.TextContent)
-				require.True(t, ok)
+				content := result.Content[0]
 				assert.Contains(t, content.Text, tt.expectContent)
 			}
 		})
@@ -250,7 +258,12 @@ func TestAgentAPIServer_handleSendMessage(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			result, err := server.handleSendMessage(ctx, tt.args)
+			request := mcp.CallToolRequest{
+				Params: mcp.CallToolRequestParams{
+					Arguments: tt.args,
+				},
+			}
+			result, err := server.handleSendMessage(ctx, request)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -262,8 +275,7 @@ func TestAgentAPIServer_handleSendMessage(t *testing.T) {
 			
 			if tt.expectContent != "" {
 				require.Len(t, result.Content, 1)
-				content, ok := result.Content[0].(mcp.TextContent)
-				require.True(t, ok)
+				content := result.Content[0]
 				assert.Contains(t, content.Text, tt.expectContent)
 			}
 		})
@@ -338,7 +350,12 @@ func TestAgentAPIServer_handleGetMessages(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			result, err := server.handleGetMessages(ctx, tt.args)
+			request := mcp.CallToolRequest{
+				Params: mcp.CallToolRequestParams{
+					Arguments: tt.args,
+				},
+			}
+			result, err := server.handleGetMessages(ctx, request)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -350,8 +367,7 @@ func TestAgentAPIServer_handleGetMessages(t *testing.T) {
 			
 			if tt.expectContent != "" {
 				require.Len(t, result.Content, 1)
-				content, ok := result.Content[0].(mcp.TextContent)
-				require.True(t, ok)
+				content := result.Content[0]
 				assert.Contains(t, content.Text, tt.expectContent)
 			}
 		})
@@ -411,7 +427,12 @@ func TestAgentAPIServer_handleGetStatus(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			result, err := server.handleGetStatus(ctx, tt.args)
+			request := mcp.CallToolRequest{
+				Params: mcp.CallToolRequestParams{
+					Arguments: tt.args,
+				},
+			}
+			result, err := server.handleGetStatus(ctx, request)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -423,8 +444,7 @@ func TestAgentAPIServer_handleGetStatus(t *testing.T) {
 			
 			if tt.expectContent != "" {
 				require.Len(t, result.Content, 1)
-				content, ok := result.Content[0].(mcp.TextContent)
-				require.True(t, ok)
+				content := result.Content[0]
 				assert.Contains(t, content.Text, tt.expectContent)
 			}
 		})
@@ -474,15 +494,19 @@ func TestAgentAPIServer_contextTimeout(t *testing.T) {
 		"user_id": "test-user",
 	}
 
-	result, err := server.handleStartSession(ctx, args)
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolRequestParams{
+			Arguments: args,
+		},
+	}
+	result, err := server.handleStartSession(ctx, request)
 	
 	// Should not return error, but result should indicate failure
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsError)
 	
-	content, ok := result.Content[0].(mcp.TextContent)
-	require.True(t, ok)
+	content := result.Content[0]
 	assert.Contains(t, content.Text, "Failed to start session:")
 }
 
@@ -503,13 +527,17 @@ func TestAgentAPIServer_invalidJSON(t *testing.T) {
 		"session_id": "test-session",
 	}
 
-	result, err := server.handleGetMessages(ctx, args)
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolRequestParams{
+			Arguments: args,
+		},
+	}
+	result, err := server.handleGetMessages(ctx, request)
 	
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.IsError)
 	
-	content, ok := result.Content[0].(mcp.TextContent)
-	require.True(t, ok)
+	content := result.Content[0]
 	assert.Contains(t, content.Text, "Failed to parse messages:")
 }
