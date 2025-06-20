@@ -1,8 +1,6 @@
 package proxy
 
 import (
-	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -406,7 +404,7 @@ func TestProxyPersistenceAPI(t *testing.T) {
 		req.Header.Set("X-User-ID", "test-user")
 		
 		rec := httptest.NewRecorder()
-		c := echo.New().NewContext(req, rec)
+		_ = echo.New().NewContext(req, rec)
 		
 		// Note: This test is simplified since we can't easily mock the full agentapi process
 		// In a real scenario, you'd need to mock the process execution
