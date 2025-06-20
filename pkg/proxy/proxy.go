@@ -28,6 +28,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/profile"
 	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 )
 
@@ -85,15 +86,16 @@ type AgentSession struct {
 
 // Proxy represents the HTTP proxy server
 type Proxy struct {
-	config        *config.Config
-	echo          *echo.Echo
-	verbose       bool
-	sessions      map[string]*AgentSession
-	sessionsMutex sync.RWMutex
-	nextPort      int
-	portMutex     sync.Mutex
-	logger        *logger.Logger
-	storage       storage.Storage
+	config         *config.Config
+	echo           *echo.Echo
+	verbose        bool
+	sessions       map[string]*AgentSession
+	sessionsMutex  sync.RWMutex
+	nextPort       int
+	portMutex      sync.Mutex
+	logger         *logger.Logger
+	storage        storage.Storage
+	profileService *profile.Service
 }
 
 // NewProxy creates a new proxy instance
@@ -175,6 +177,21 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		// Use memory storage by default
 		p.storage = storage.NewMemoryStorage()
 	}
+
+	// Initialize profile service
+	var profileStorage profile.Storage
+	if cfg.Persistence.Enabled {
+		profileFilePath := cfg.Persistence.FilePath + ".profiles"
+		var err error
+		profileStorage, err = profile.NewFileStorage(profileFilePath)
+		if err != nil {
+			log.Printf("Failed to initialize profile storage: %v", err)
+			profileStorage = profile.NewMemoryStorage()
+		}
+	} else {
+		profileStorage = profile.NewMemoryStorage()
+	}
+	p.profileService = profile.NewService(profileStorage)
 
 	// Add logging middleware if verbose
 	if verbose {
@@ -361,7 +378,9 @@ func (p *Proxy) isPortInUse(port int) bool {
 	if err != nil {
 		return true // Port is in use
 	}
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		log.Printf("Warning: failed to close connection: %v", err)
+	}
 	return false
 }
 
@@ -371,8 +390,22 @@ func (p *Proxy) setupRoutes() {
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission("session:create"))
 	p.echo.GET("/search", p.searchSessions, auth.RequirePermission("session:list"))
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
+
+	// Add profile management routes
+	p.echo.POST("/profiles", p.createProfile, auth.RequirePermission("profile:create"))
+	p.echo.GET("/profiles", p.listProfiles, auth.RequirePermission("profile:list"))
+	p.echo.GET("/profiles/:profileId", p.getProfile, auth.RequirePermission("profile:read"))
+	p.echo.PUT("/profiles/:profileId", p.updateProfile, auth.RequirePermission("profile:update"))
+	p.echo.DELETE("/profiles/:profileId", p.deleteProfile, auth.RequirePermission("profile:delete"))
+	p.echo.POST("/profiles/:profileId/repositories", p.addRepositoryToProfile, auth.RequirePermission("profile:update"))
+	p.echo.POST("/profiles/:profileId/templates", p.addTemplateToProfile, auth.RequirePermission("profile:update"))
+	p.echo.POST("/start-with-profile", p.startSessionWithProfile, auth.RequirePermission("session:create"))
+
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
 	p.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+	p.echo.OPTIONS("/profiles/:profileId", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 	// Add explicit OPTIONS handler for session proxy routes to ensure CORS preflight works
