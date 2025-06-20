@@ -28,6 +28,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 )
 
 //go:embed scripts/*
@@ -92,6 +93,7 @@ type Proxy struct {
 	nextPort      int
 	portMutex     sync.Mutex
 	logger        *logger.Logger
+	storage       storage.Storage
 }
 
 // NewProxy creates a new proxy instance
@@ -153,6 +155,27 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		logger:        logger.NewLogger(),
 	}
 
+	// Initialize storage if persistence is enabled
+	if cfg.Persistence.Enabled {
+		storageConfig := &storage.StorageConfig{
+			Type:           cfg.Persistence.Backend,
+			FilePath:       cfg.Persistence.FilePath,
+			SyncInterval:   cfg.Persistence.SyncInterval,
+			EncryptSecrets: cfg.Persistence.EncryptSecrets,
+		}
+		
+		var err error
+		p.storage, err = storage.NewStorage(storageConfig)
+		if err != nil {
+			log.Printf("Failed to initialize storage: %v", err)
+			// Fall back to memory storage
+			p.storage = storage.NewMemoryStorage()
+		}
+	} else {
+		// Use memory storage by default
+		p.storage = storage.NewMemoryStorage()
+	}
+
 	// Add logging middleware if verbose
 	if verbose {
 		e.Use(p.loggingMiddleware())
@@ -162,6 +185,12 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	e.Use(auth.AuthMiddleware(cfg))
 
 	p.setupRoutes()
+	
+	// Load existing sessions from storage if persistence is enabled
+	if cfg.Persistence.Enabled {
+		p.recoverSessions()
+	}
+	
 	return p
 }
 
@@ -174,6 +203,166 @@ func (p *Proxy) loggingMiddleware() echo.MiddlewareFunc {
 			return next(c)
 		}
 	})
+}
+
+// sessionToStorage converts an AgentSession to SessionData for storage
+func (p *Proxy) sessionToStorage(session *AgentSession) *storage.SessionData {
+	var processID int
+	var command []string
+	
+	session.processMutex.RLock()
+	if session.Process != nil {
+		processID = session.Process.Process.Pid
+		command = session.Process.Args
+	}
+	session.processMutex.RUnlock()
+	
+	return &storage.SessionData{
+		ID:          session.ID,
+		Port:        session.Port,
+		StartedAt:   session.StartedAt,
+		UserID:      session.UserID,
+		Status:      session.Status,
+		Environment: session.Environment,
+		Tags:        session.Tags,
+		ProcessID:   processID,
+		Command:     command,
+		WorkingDir:  "", // Add working directory if needed
+	}
+}
+
+// sessionFromStorage converts SessionData to AgentSession during recovery
+func (p *Proxy) sessionFromStorage(data *storage.SessionData) *AgentSession {
+	return &AgentSession{
+		ID:          data.ID,
+		Port:        data.Port,
+		StartedAt:   data.StartedAt,
+		UserID:      data.UserID,
+		Status:      data.Status,
+		Environment: data.Environment,
+		Tags:        data.Tags,
+		// Process and Cancel will be nil - these need special handling
+	}
+}
+
+// saveSession persists a session to storage
+func (p *Proxy) saveSession(session *AgentSession) {
+	if p.storage == nil {
+		return
+	}
+	
+	sessionData := p.sessionToStorage(session)
+	if err := p.storage.Save(sessionData); err != nil {
+		log.Printf("Failed to save session %s: %v", session.ID, err)
+	}
+}
+
+// updateSession updates a session in storage
+func (p *Proxy) updateSession(session *AgentSession) {
+	if p.storage == nil {
+		return
+	}
+	
+	sessionData := p.sessionToStorage(session)
+	if err := p.storage.Update(sessionData); err != nil {
+		log.Printf("Failed to update session %s: %v", session.ID, err)
+	}
+}
+
+// deleteSessionFromStorage removes a session from storage
+func (p *Proxy) deleteSessionFromStorage(sessionID string) {
+	if p.storage == nil {
+		return
+	}
+	
+	if err := p.storage.Delete(sessionID); err != nil {
+		log.Printf("Failed to delete session %s from storage: %v", sessionID, err)
+	}
+}
+
+// recoverSessions loads persisted sessions on startup
+func (p *Proxy) recoverSessions() {
+	if p.storage == nil {
+		return
+	}
+	
+	sessions, err := p.storage.LoadAll()
+	if err != nil {
+		log.Printf("Failed to load sessions from storage: %v", err)
+		return
+	}
+	
+	recovered := 0
+	cleaned := 0
+	
+	for _, sessionData := range sessions {
+		// Validate the session is still valid
+		if !p.validateRecoveredSession(sessionData) {
+			p.deleteSessionFromStorage(sessionData.ID)
+			cleaned++
+			continue
+		}
+		
+		// Convert to AgentSession and add to memory
+		session := p.sessionFromStorage(sessionData)
+		session.Status = "recovered" // Mark as recovered
+		
+		p.sessionsMutex.Lock()
+		p.sessions[session.ID] = session
+		
+		// Update next port to avoid conflicts
+		if session.Port >= p.nextPort {
+			p.nextPort = session.Port + 1
+		}
+		p.sessionsMutex.Unlock()
+		
+		recovered++
+	}
+	
+	if recovered > 0 || cleaned > 0 {
+		log.Printf("Session recovery completed: %d recovered, %d cleaned up", recovered, cleaned)
+	}
+}
+
+// validateRecoveredSession checks if a recovered session is still valid
+func (p *Proxy) validateRecoveredSession(sessionData *storage.SessionData) bool {
+	// Check if port is still in use by checking if process is running
+	if sessionData.ProcessID > 0 {
+		// Check if process is still running
+		if process, err := os.FindProcess(sessionData.ProcessID); err == nil {
+			// Send signal 0 to check if process exists
+			if err := process.Signal(syscall.Signal(0)); err == nil {
+				// Process is still running, check if it's listening on the expected port
+				if p.isPortInUse(sessionData.Port) {
+					return true
+				}
+			}
+		}
+	}
+	
+	// Check if port is available for reuse
+	if p.isPortInUse(sessionData.Port) {
+		log.Printf("Session %s port %d is in use by another process", sessionData.ID, sessionData.Port)
+		return false
+	}
+	
+	// Check if session is too old (more than 24 hours)
+	if time.Since(sessionData.StartedAt) > 24*time.Hour {
+		log.Printf("Session %s is too old, cleaning up", sessionData.ID)
+		return false
+	}
+	
+	return true
+}
+
+// isPortInUse checks if a port is currently in use
+func (p *Proxy) isPortInUse(port int) bool {
+	conn, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return true // Port is in use
+	}
+	conn.Close()
+	return false
 }
 
 // setupRoutes configures the router with all defined routes
@@ -419,6 +608,9 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	p.sessionsMutex.Lock()
 	p.sessions[sessionID] = session
 	p.sessionsMutex.Unlock()
+	
+	// Persist session to storage
+	p.saveSession(session)
 	log.Printf("session: %+v", session)
 	log.Printf("scriptName: %s", scriptName)
 
@@ -596,7 +788,9 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		p.sessionsMutex.Lock()
 		delete(p.sessions, session.ID)
 		p.sessionsMutex.Unlock()
-
+		
+		// Remove session from persistent storage
+		p.deleteSessionFromStorage(session.ID)
 		// Log session end when process terminates naturally
 		if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
 			log.Printf("Failed to log session end for %s: %v", session.ID, err)
@@ -738,6 +932,9 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		log.Printf("Failed to start agentapi process for session %s: %v", session.ID, err)
 		return
 	}
+
+	// Update session in storage after process is started
+	p.updateSession(session)
 
 	if p.verbose {
 		log.Printf("AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
