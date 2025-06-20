@@ -1,13 +1,9 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -172,12 +168,17 @@ func (s *AgentAPIServer) handleStartSession(ctx context.Context, args map[string
 		}
 	}
 
+	// Add user_id as a tag since StartRequest doesn't have UserID field
+	tags := map[string]string{
+		"user_id": userID,
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	req := &client.StartRequest{
-		UserID:      userID,
 		Environment: environment,
+		Tags:        tags,
 	}
 
 	resp, err := s.client.Start(ctx, req)
@@ -210,7 +211,15 @@ func (s *AgentAPIServer) handleSearchSessions(ctx context.Context, args map[stri
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	resp, err := s.client.Search(ctx, userID, status)
+	// Create tags filter for user_id if provided
+	var tags map[string]string
+	if userID != "" {
+		tags = map[string]string{
+			"user_id": userID,
+		}
+	}
+
+	resp, err := s.client.SearchWithTags(ctx, status, tags)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []interface{}{
@@ -255,27 +264,16 @@ func (s *AgentAPIServer) handleSendMessage(ctx context.Context, args map[string]
 		messageType = "user"
 	}
 
-	url := fmt.Sprintf("%s/%s/message", proxyURL, sessionID)
-
-	payload := map[string]interface{}{
-		"content": message,
-		"type":    messageType,
+	// Use client to send message instead of direct HTTP call
+	msg := &client.Message{
+		Content: message,
+		Type:    messageType,
 	}
 
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to marshal message: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := s.client.SendMessage(ctx, sessionID, msg)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []interface{}{
@@ -287,38 +285,12 @@ func (s *AgentAPIServer) handleSendMessage(ctx context.Context, args map[string]
 			IsError: true,
 		}, nil
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to read response: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("HTTP error %d: %s", resp.StatusCode, string(body)),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
 
 	return &mcp.CallToolResult{
 		Content: []interface{}{
 			mcp.TextContent{
 				Type: "text",
-				Text: fmt.Sprintf("Message sent successfully: %s", string(body)),
+				Text: fmt.Sprintf("Message sent successfully. ID: %s", resp.ID),
 			},
 		},
 	}, nil
@@ -330,9 +302,10 @@ func (s *AgentAPIServer) handleGetMessages(ctx context.Context, args map[string]
 		return nil, fmt.Errorf("session_id is required")
 	}
 
-	url := fmt.Sprintf("%s/%s/messages", proxyURL, sessionID)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
-	resp, err := http.Get(url)
+	resp, err := s.client.GetMessages(ctx, sessionID)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []interface{}{
@@ -344,48 +317,9 @@ func (s *AgentAPIServer) handleGetMessages(ctx context.Context, args map[string]
 			IsError: true,
 		}, nil
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to read response: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("HTTP error %d: %s", resp.StatusCode, string(body)),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
-
-	var messages []MessageResponse
-	if err := json.Unmarshal(body, &messages); err != nil {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to parse messages: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
-
-	result := fmt.Sprintf("Conversation History (%d messages):\n", len(messages))
-	for _, msg := range messages {
+	result := fmt.Sprintf("Conversation History (%d messages):\n", len(resp.Messages))
+	for _, msg := range resp.Messages {
 		result += fmt.Sprintf("[%s] %s: %s\n",
 			msg.Timestamp.Format("15:04:05"), msg.Role, msg.Content)
 	}
@@ -406,9 +340,10 @@ func (s *AgentAPIServer) handleGetStatus(ctx context.Context, args map[string]in
 		return nil, fmt.Errorf("session_id is required")
 	}
 
-	url := fmt.Sprintf("%s/%s/status", proxyURL, sessionID)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
-	resp, err := http.Get(url)
+	resp, err := s.client.GetStatus(ctx, sessionID)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []interface{}{
@@ -420,63 +355,13 @@ func (s *AgentAPIServer) handleGetStatus(ctx context.Context, args map[string]in
 			IsError: true,
 		}, nil
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to read response: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("HTTP error %d: %s", resp.StatusCode, string(body)),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
-
-	var status StatusResponse
-	if err := json.Unmarshal(body, &status); err != nil {
-		return &mcp.CallToolResult{
-			Content: []interface{}{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("Failed to parse status: %v", err),
-				},
-			},
-			IsError: true,
-		}, nil
-	}
 
 	return &mcp.CallToolResult{
 		Content: []interface{}{
 			mcp.TextContent{
 				Type: "text",
-				Text: fmt.Sprintf("Agent Status: %s", status.Status),
+				Text: fmt.Sprintf("Agent Status: %s", resp.Status),
 			},
 		},
 	}, nil
-}
-
-type MessageResponse struct {
-	ID        string    `json:"id"`
-	Role      string    `json:"role"`
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-type StatusResponse struct {
-	Status string `json:"status"`
 }
