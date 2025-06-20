@@ -8,7 +8,7 @@ import (
 )
 
 // BenchmarkMemoryStorage benchmarks memory storage operations
-func BenchmarkMemoryStorage(t *testing.B) {
+func BenchmarkMemoryStorage(b *testing.B) {
 	storage := NewMemoryStorage()
 	
 	// Create test sessions
@@ -31,7 +31,7 @@ func BenchmarkMemoryStorage(t *testing.B) {
 		}
 	}
 	
-	t.Run("Save", func(b *testing.B) {
+	b.Run("Save", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			session := sessions[i%len(sessions)]
@@ -42,7 +42,7 @@ func BenchmarkMemoryStorage(t *testing.B) {
 		}
 	})
 	
-	t.Run("Load", func(b *testing.B) {
+	b.Run("Load", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
 			if err := storage.Save(session); err != nil {
@@ -59,7 +59,7 @@ func BenchmarkMemoryStorage(t *testing.B) {
 		}
 	})
 	
-	t.Run("LoadAll", func(b *testing.B) {
+	b.Run("LoadAll", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
 			if err := storage.Save(session); err != nil {
@@ -75,7 +75,7 @@ func BenchmarkMemoryStorage(t *testing.B) {
 		}
 	})
 	
-	t.Run("Update", func(b *testing.B) {
+	b.Run("Update", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
 			if err := storage.Save(session); err != nil {
@@ -93,7 +93,7 @@ func BenchmarkMemoryStorage(t *testing.B) {
 		}
 	})
 	
-	t.Run("Delete", func(b *testing.B) {
+	b.Run("Delete", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			// Create and save session
@@ -116,13 +116,13 @@ func BenchmarkMemoryStorage(t *testing.B) {
 }
 
 // BenchmarkFileStorage benchmarks file storage operations
-func BenchmarkFileStorage(t *testing.B) {
-	tmpDir := t.TempDir()
+func BenchmarkFileStorage(b *testing.B) {
+	tmpDir := b.TempDir()
 	tmpFile := filepath.Join(tmpDir, "benchmark.json")
 	
 	storage, err := NewFileStorage(tmpFile, 0, false) // Disable sync for benchmarks
 	if err != nil {
-		t.Fatalf("Failed to create file storage: %v", err)
+		b.Fatalf("Failed to create file storage: %v", err)
 	}
 	defer storage.Close()
 	
@@ -146,7 +146,7 @@ func BenchmarkFileStorage(t *testing.B) {
 		}
 	}
 	
-	t.Run("Save", func(b *testing.B) {
+	b.Run("Save", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			session := sessions[i%len(sessions)]
@@ -157,7 +157,7 @@ func BenchmarkFileStorage(t *testing.B) {
 		}
 	})
 	
-	t.Run("Load", func(b *testing.B) {
+	b.Run("Load", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
 			if err := storage.Save(session); err != nil {
@@ -174,7 +174,7 @@ func BenchmarkFileStorage(t *testing.B) {
 		}
 	})
 	
-	t.Run("LoadAll", func(b *testing.B) {
+	b.Run("LoadAll", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
 			if err := storage.Save(session); err != nil {
@@ -192,13 +192,13 @@ func BenchmarkFileStorage(t *testing.B) {
 }
 
 // BenchmarkFileStorageWithEncryption benchmarks file storage with encryption
-func BenchmarkFileStorageWithEncryption(t *testing.B) {
-	tmpDir := t.TempDir()
+func BenchmarkFileStorageWithEncryption(b *testing.B) {
+	tmpDir := b.TempDir()
 	tmpFile := filepath.Join(tmpDir, "encrypted_benchmark.json")
 	
 	storage, err := NewFileStorage(tmpFile, 0, true) // Enable encryption
 	if err != nil {
-		t.Fatalf("Failed to create encrypted file storage: %v", err)
+		b.Fatalf("Failed to create encrypted file storage: %v", err)
 	}
 	defer storage.Close()
 	
@@ -219,7 +219,7 @@ func BenchmarkFileStorageWithEncryption(t *testing.B) {
 		}
 	}
 	
-	t.Run("SaveWithEncryption", func(b *testing.B) {
+	b.Run("SaveWithEncryption", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			session := sessions[i%len(sessions)]
@@ -230,7 +230,7 @@ func BenchmarkFileStorageWithEncryption(t *testing.B) {
 		}
 	})
 	
-	t.Run("LoadWithDecryption", func(b *testing.B) {
+	b.Run("LoadWithDecryption", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
 			if err := storage.Save(session); err != nil {
@@ -249,8 +249,8 @@ func BenchmarkFileStorageWithEncryption(t *testing.B) {
 }
 
 // BenchmarkStorageFactory benchmarks storage factory operations
-func BenchmarkStorageFactory(t *testing.B) {
-	tmpDir := t.TempDir()
+func BenchmarkStorageFactory(b *testing.B) {
+	tmpDir := b.TempDir()
 	
 	configs := []*StorageConfig{
 		{Type: "memory"},
@@ -265,7 +265,7 @@ func BenchmarkStorageFactory(t *testing.B) {
 		},
 	}
 	
-	t.Run("CreateStorage", func(b *testing.B) {
+	b.Run("CreateStorage", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			config := configs[i%len(configs)]
@@ -290,7 +290,7 @@ func BenchmarkStorageFactory(t *testing.B) {
 }
 
 // BenchmarkConcurrentAccess benchmarks concurrent access patterns
-func BenchmarkConcurrentAccess(t *testing.B) {
+func BenchmarkConcurrentAccess(b *testing.B) {
 	storage := NewMemoryStorage()
 	
 	// Pre-populate with some sessions
@@ -302,11 +302,11 @@ func BenchmarkConcurrentAccess(t *testing.B) {
 			Status: "active",
 		}
 		if err := storage.Save(session); err != nil {
-			t.Fatalf("Failed to pre-populate storage: %v", err)
+			b.Fatalf("Failed to pre-populate storage: %v", err)
 		}
 	}
 	
-	t.Run("ConcurrentReads", func(b *testing.B) {
+	b.Run("ConcurrentReads", func(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
 			for pb.Next() {
@@ -317,7 +317,7 @@ func BenchmarkConcurrentAccess(t *testing.B) {
 		})
 	})
 	
-	t.Run("ConcurrentWrites", func(b *testing.B) {
+	b.Run("ConcurrentWrites", func(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
 			for pb.Next() {
@@ -333,7 +333,7 @@ func BenchmarkConcurrentAccess(t *testing.B) {
 		})
 	})
 	
-	t.Run("MixedOperations", func(b *testing.B) {
+	b.Run("MixedOperations", func(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
 			for pb.Next() {

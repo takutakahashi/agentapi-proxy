@@ -194,8 +194,27 @@ func testConcurrentAccess(t *testing.T, storage Storage) {
 						errors <- fmt.Errorf("worker %d op %d load failed: %v", workerID, j, err)
 					}
 				} else {
-					session.Status = "updated"
-					if err := storage.Update(session); err != nil {
+					// Create a copy to avoid race condition
+					updateSession := &SessionData{
+						ID:          session.ID,
+						Port:        session.Port,
+						StartedAt:   session.StartedAt,
+						UserID:      session.UserID,
+						Status:      "updated",
+						Environment: make(map[string]string),
+						Tags:        make(map[string]string),
+						ProcessID:   session.ProcessID,
+						Command:     append([]string{}, session.Command...),
+						WorkingDir:  session.WorkingDir,
+					}
+					// Copy maps to avoid race
+					for k, v := range session.Environment {
+						updateSession.Environment[k] = v
+					}
+					for k, v := range session.Tags {
+						updateSession.Tags[k] = v
+					}
+					if err := storage.Update(updateSession); err != nil {
 						errors <- fmt.Errorf("worker %d op %d update failed: %v", workerID, j, err)
 					}
 				}
