@@ -36,46 +36,60 @@ func BenchmarkMemoryStorage(t *testing.B) {
 		for i := 0; i < b.N; i++ {
 			session := sessions[i%len(sessions)]
 			session.ID = fmt.Sprintf("bench-save-%d-%d", i, session.Port)
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Save failed: %v", err)
+			}
 		}
 	})
 	
 	t.Run("Load", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Pre-populate save failed: %v", err)
+			}
 		}
 		
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			sessionID := sessions[i%len(sessions)].ID
-			storage.Load(sessionID)
+			if _, err := storage.Load(sessionID); err != nil {
+				b.Errorf("Load failed: %v", err)
+			}
 		}
 	})
 	
 	t.Run("LoadAll", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Pre-populate save failed: %v", err)
+			}
 		}
 		
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			storage.LoadAll()
+			if _, err := storage.LoadAll(); err != nil {
+				b.Errorf("LoadAll failed: %v", err)
+			}
 		}
 	})
 	
 	t.Run("Update", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Pre-populate save failed: %v", err)
+			}
 		}
 		
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			session := sessions[i%len(sessions)]
 			session.Status = fmt.Sprintf("updated-%d", i)
-			storage.Update(session)
+			if err := storage.Update(session); err != nil {
+				b.Errorf("Update failed: %v", err)
+			}
 		}
 	})
 	
@@ -89,10 +103,14 @@ func BenchmarkMemoryStorage(t *testing.B) {
 				UserID: "user",
 				Status: "active",
 			}
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Save failed: %v", err)
+			}
 			
 			// Delete it
-			storage.Delete(session.ID)
+			if err := storage.Delete(session.ID); err != nil {
+				b.Errorf("Delete failed: %v", err)
+			}
 		}
 	})
 }
@@ -133,32 +151,42 @@ func BenchmarkFileStorage(t *testing.B) {
 		for i := 0; i < b.N; i++ {
 			session := sessions[i%len(sessions)]
 			session.ID = fmt.Sprintf("file-bench-save-%d-%d", i, session.Port)
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Save failed: %v", err)
+			}
 		}
 	})
 	
 	t.Run("Load", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Pre-populate save failed: %v", err)
+			}
 		}
 		
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			sessionID := sessions[i%len(sessions)].ID
-			storage.Load(sessionID)
+			if _, err := storage.Load(sessionID); err != nil {
+				b.Errorf("Load failed: %v", err)
+			}
 		}
 	})
 	
 	t.Run("LoadAll", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Pre-populate save failed: %v", err)
+			}
 		}
 		
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			storage.LoadAll()
+			if _, err := storage.LoadAll(); err != nil {
+				b.Errorf("LoadAll failed: %v", err)
+			}
 		}
 	})
 }
@@ -196,20 +224,26 @@ func BenchmarkFileStorageWithEncryption(t *testing.B) {
 		for i := 0; i < b.N; i++ {
 			session := sessions[i%len(sessions)]
 			session.ID = fmt.Sprintf("encrypted-bench-save-%d-%d", i, session.Port)
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Save failed: %v", err)
+			}
 		}
 	})
 	
 	t.Run("LoadWithDecryption", func(b *testing.B) {
 		// Pre-populate storage
 		for _, session := range sessions {
-			storage.Save(session)
+			if err := storage.Save(session); err != nil {
+				b.Errorf("Pre-populate save failed: %v", err)
+			}
 		}
 		
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			sessionID := sessions[i%len(sessions)].ID
-			storage.Load(sessionID)
+			if _, err := storage.Load(sessionID); err != nil {
+				b.Errorf("Load failed: %v", err)
+			}
 		}
 	})
 }
@@ -247,7 +281,9 @@ func BenchmarkStorageFactory(t *testing.B) {
 			}
 			
 			if storage != nil {
-				storage.Close()
+				if err := storage.Close(); err != nil {
+					b.Errorf("Failed to close storage: %v", err)
+				}
 			}
 		}
 	})
@@ -265,7 +301,9 @@ func BenchmarkConcurrentAccess(t *testing.B) {
 			UserID: fmt.Sprintf("user-%d", i),
 			Status: "active",
 		}
-		storage.Save(session)
+		if err := storage.Save(session); err != nil {
+			t.Fatalf("Failed to pre-populate storage: %v", err)
+		}
 	}
 	
 	t.Run("ConcurrentReads", func(b *testing.B) {
@@ -273,7 +311,7 @@ func BenchmarkConcurrentAccess(t *testing.B) {
 			i := 0
 			for pb.Next() {
 				sessionID := fmt.Sprintf("concurrent-session-%d", i%100)
-				storage.Load(sessionID)
+				_, _ = storage.Load(sessionID) // Ignore errors in benchmark
 				i++
 			}
 		})
@@ -289,7 +327,7 @@ func BenchmarkConcurrentAccess(t *testing.B) {
 					UserID: "benchmark-user",
 					Status: "active",
 				}
-				storage.Save(session)
+				_ = storage.Save(session) // Ignore errors in benchmark
 				i++
 			}
 		})
@@ -307,10 +345,10 @@ func BenchmarkConcurrentAccess(t *testing.B) {
 						UserID: "benchmark-user",
 						Status: "active",
 					}
-					storage.Save(session)
+					_ = storage.Save(session) // Ignore errors in benchmark
 				case 1: // Load
 					sessionID := fmt.Sprintf("concurrent-session-%d", i%100)
-					storage.Load(sessionID)
+					_, _ = storage.Load(sessionID) // Ignore errors in benchmark
 				case 2: // Update
 					session := &SessionData{
 						ID:     fmt.Sprintf("concurrent-session-%d", i%100),
@@ -318,9 +356,9 @@ func BenchmarkConcurrentAccess(t *testing.B) {
 						UserID: "updated-user",
 						Status: "updated",
 					}
-					storage.Update(session)
+					_ = storage.Update(session) // Ignore errors in benchmark
 				case 3: // LoadAll
-					storage.LoadAll()
+					_, _ = storage.LoadAll() // Ignore errors in benchmark
 				}
 				i++
 			}
