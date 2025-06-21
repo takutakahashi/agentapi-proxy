@@ -203,6 +203,7 @@ func TestProxySessionRecovery(t *testing.T) {
 		// Create proxy with persistence (should recover sessions)
 		cfg := createTestConfigWithPersistence(tmpDir)
 		cfg.Persistence.FilePath = storageFile
+		cfg.DisableZombieCleanup = true // Disable zombie cleanup for recovery test
 
 		proxy := NewProxy(cfg, false)
 		defer func() {
@@ -430,6 +431,8 @@ func createTestConfigWithPersistence(tmpDir string) *config.Config {
 			SyncInterval:   0, // Disable periodic sync for tests
 			EncryptSecrets: false,
 		},
+		DisableHeartbeat:     false,
+		DisableZombieCleanup: false,
 	}
 }
 
@@ -440,6 +443,8 @@ func TestSessionConversion(t *testing.T) {
 		Persistence: config.PersistenceConfig{
 			Enabled: false,
 		},
+		DisableHeartbeat:     false,
+		DisableZombieCleanup: false,
 	}
 
 	proxy := NewProxy(cfg, false)

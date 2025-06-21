@@ -42,6 +42,10 @@ type Config struct {
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
 	// Persistence represents session persistence configuration
 	Persistence PersistenceConfig `json:"persistence" mapstructure:"persistence"`
+	// DisableHeartbeat disables heartbeat checking (default: false)
+	DisableHeartbeat bool `json:"disable_heartbeat" mapstructure:"disable_heartbeat"`
+	// DisableZombieCleanup disables automatic zombie session cleanup (default: false)
+	DisableZombieCleanup bool `json:"disable_zombie_cleanup" mapstructure:"disable_zombie_cleanup"`
 }
 
 // LoadConfig loads configuration from a JSON file
@@ -98,6 +102,8 @@ func DefaultConfig() *Config {
 			SyncInterval:   30,
 			EncryptSecrets: true,
 		},
+		DisableHeartbeat:     false,
+		DisableZombieCleanup: false,
 	}
 }
 
