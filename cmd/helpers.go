@@ -26,6 +26,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("Available helpers:")
 		fmt.Println("  setup-claude-code - Setup Claude Code configuration")
 		fmt.Println("  generate-token - Generate API keys for agentapi-proxy authentication")
+		fmt.Println("  init - Initialize Claude configuration (alias for setup-claude-code)")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
 }
@@ -34,6 +35,13 @@ var setupClaudeCodeCmd = &cobra.Command{
 	Use:   "setup-claude-code",
 	Short: "Setup Claude Code configuration",
 	Long:  "Creates Claude Code configuration directory and settings file at $CLAUDE_DIR/.claude/settings.json",
+	Run:   runSetupClaudeCode,
+}
+
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize Claude configuration (alias for setup-claude-code)",
+	Long:  "Creates Claude Code configuration directory and settings file at $CLAUDE_DIR/.claude/settings.json, and merges config/claude.json into ~/.claude.json",
 	Run:   runSetupClaudeCode,
 }
 
@@ -79,6 +87,7 @@ func init() {
 	}
 
 	HelpersCmd.AddCommand(setupClaudeCodeCmd)
+	HelpersCmd.AddCommand(initCmd)
 	HelpersCmd.AddCommand(generateTokenCmd)
 }
 
@@ -109,6 +118,13 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 		fmt.Printf("Error writing settings file %s: %v\n", settingsPath, err)
 		os.Exit(1)
 	}
+
+	// Merge config/claude.json into ~/.claude.json
+	if err := mergeClaudeConfig(); err != nil {
+		fmt.Printf("Warning: Failed to merge claude config: %v\n", err)
+		// Don't exit on error, just warn
+	}
+
 	claudeSettingsMap := map[string]string{
 		"hasTrustDialogAccepted":        "true",
 		"hasCompletedProjectOnboarding": "true",
@@ -124,6 +140,80 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("Successfully created Claude Code configuration at %s\n", settingsPath)
+}
+
+func mergeClaudeConfig() error {
+	// Get home directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	// Paths
+	// Get the absolute path for config/claude.json
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+	execDir := filepath.Dir(execPath)
+	configPath := filepath.Join(execDir, "..", "config", "claude.json")
+	
+	// Also try relative path if the above doesn't exist
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		configPath = "config/claude.json"
+	}
+	
+	targetPath := filepath.Join(homeDir, ".claude.json")
+
+	// Read config/claude.json
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// config/claude.json doesn't exist, nothing to merge
+			return nil
+		}
+		return fmt.Errorf("failed to read config/claude.json: %w", err)
+	}
+
+	// Parse config JSON
+	var configJSON map[string]interface{}
+	if err := json.Unmarshal(configData, &configJSON); err != nil {
+		return fmt.Errorf("failed to parse config/claude.json: %w", err)
+	}
+
+	// Read existing ~/.claude.json if it exists
+	var targetJSON map[string]interface{}
+	targetData, err := os.ReadFile(targetPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read ~/.claude.json: %w", err)
+		}
+		// File doesn't exist, we'll create it
+		targetJSON = make(map[string]interface{})
+	} else {
+		// Parse existing JSON
+		if err := json.Unmarshal(targetData, &targetJSON); err != nil {
+			return fmt.Errorf("failed to parse ~/.claude.json: %w", err)
+		}
+	}
+
+	// Merge config into target (config values override existing values)
+	for key, value := range configJSON {
+		targetJSON[key] = value
+	}
+
+	// Write merged JSON back
+	mergedData, err := json.MarshalIndent(targetJSON, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal merged JSON: %w", err)
+	}
+
+	if err := os.WriteFile(targetPath, mergedData, 0644); err != nil {
+		return fmt.Errorf("failed to write ~/.claude.json: %w", err)
+	}
+
+	fmt.Printf("Successfully merged config/claude.json into %s\n", targetPath)
+	return nil
 }
 
 type APIKeysFile struct {
