@@ -27,12 +27,12 @@ type APIKey struct {
 
 // PersistenceConfig represents session persistence configuration
 type PersistenceConfig struct {
-	Enabled                bool `json:"enabled" mapstructure:"enabled"`
-	Backend                string `json:"backend" mapstructure:"backend"` // "file", "sqlite", "postgres"
-	FilePath               string `json:"file_path" mapstructure:"file_path"`
-	SyncInterval           int    `json:"sync_interval_seconds" mapstructure:"sync_interval_seconds"`
-	EncryptSecrets         bool   `json:"encrypt_sensitive_data" mapstructure:"encrypt_sensitive_data"`
-	SessionRecoveryMaxAge  int    `json:"session_recovery_max_age_hours" mapstructure:"session_recovery_max_age_hours"` // Max age in hours for session recovery
+	Enabled               bool   `json:"enabled" mapstructure:"enabled"`
+	Backend               string `json:"backend" mapstructure:"backend"` // "file", "sqlite", "postgres"
+	FilePath              string `json:"file_path" mapstructure:"file_path"`
+	SyncInterval          int    `json:"sync_interval_seconds" mapstructure:"sync_interval_seconds"`
+	EncryptSecrets        bool   `json:"encrypt_sensitive_data" mapstructure:"encrypt_sensitive_data"`
+	SessionRecoveryMaxAge int    `json:"session_recovery_max_age_hours" mapstructure:"session_recovery_max_age_hours"` // Max age in hours for session recovery
 }
 
 // Config represents the proxy configuration
@@ -43,10 +43,6 @@ type Config struct {
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
 	// Persistence represents session persistence configuration
 	Persistence PersistenceConfig `json:"persistence" mapstructure:"persistence"`
-	// DisableHeartbeat disables heartbeat checking (default: false)
-	DisableHeartbeat bool `json:"disable_heartbeat" mapstructure:"disable_heartbeat"`
-	// DisableZombieCleanup disables automatic zombie session cleanup (default: false)
-	DisableZombieCleanup bool `json:"disable_zombie_cleanup" mapstructure:"disable_zombie_cleanup"`
 }
 
 // LoadConfig loads configuration from a JSON file
@@ -104,8 +100,6 @@ func DefaultConfig() *Config {
 			EncryptSecrets:        true,
 			SessionRecoveryMaxAge: 24, // Default 24 hours
 		},
-		DisableHeartbeat:     true,
-		DisableZombieCleanup: false,
 	}
 }
 

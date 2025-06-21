@@ -82,8 +82,6 @@ type AgentSession struct {
 	Environment  map[string]string
 	Tags         map[string]string
 	processMutex sync.RWMutex
-	LastHeartbeat time.Time
-	heartbeatMutex sync.RWMutex
 }
 
 // Proxy represents the HTTP proxy server
@@ -98,10 +96,6 @@ type Proxy struct {
 	logger         *logger.Logger
 	storage        storage.Storage
 	profileService *profile.Service
-
-	// Health check components
-	healthCheckInterval time.Duration
-	healthCheckStop     chan struct{}
 }
 
 // NewProxy creates a new proxy instance
@@ -154,15 +148,13 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// --- ここまで ---
 
 	p := &Proxy{
-		config:              cfg,
-		echo:                e,
-		verbose:             verbose,
-		sessions:            make(map[string]*AgentSession),
-		sessionsMutex:       sync.RWMutex{},
-		nextPort:            cfg.StartPort,
-		logger:              logger.NewLogger(),
-		healthCheckInterval: 30 * time.Second,
-		healthCheckStop:     make(chan struct{}),
+		config:        cfg,
+		echo:          e,
+		verbose:       verbose,
+		sessions:      make(map[string]*AgentSession),
+		sessionsMutex: sync.RWMutex{},
+		nextPort:      cfg.StartPort,
+		logger:        logger.NewLogger(),
 	}
 
 	// Initialize storage if persistence is enabled
@@ -217,147 +209,6 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	}
 
 	return p
-}
-
-// Start begins the health check routine
-func (p *Proxy) Start() {
-	// Start health check goroutine
-	log.Println("[HEALTH_CHECK] Starting session health check routine")
-	go p.healthCheckRoutine()
-}
-
-// Stop gracefully stops the proxy and health checks
-func (p *Proxy) Stop() {
-	if p.healthCheckStop != nil {
-		close(p.healthCheckStop)
-	}
-}
-
-// healthCheckRoutine periodically checks the health of all sessions
-func (p *Proxy) healthCheckRoutine() {
-	ticker := time.NewTicker(p.healthCheckInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			p.checkAllSessions()
-		case <-p.healthCheckStop:
-			log.Println("Health check routine stopped")
-			return
-		}
-	}
-}
-
-// checkAllSessions verifies the health of all active sessions
-func (p *Proxy) checkAllSessions() {
-	p.sessionsMutex.RLock()
-	sessionIDs := make([]string, 0, len(p.sessions))
-	for id := range p.sessions {
-		sessionIDs = append(sessionIDs, id)
-	}
-	p.sessionsMutex.RUnlock()
-
-	for _, id := range sessionIDs {
-		p.checkSession(id)
-	}
-}
-
-// checkSession verifies a specific session is still healthy
-func (p *Proxy) checkSession(sessionID string) {
-	p.sessionsMutex.RLock()
-	session, exists := p.sessions[sessionID]
-	p.sessionsMutex.RUnlock()
-
-	if !exists {
-		return
-	}
-
-	// Check heartbeat timeout (5 minutes without heartbeat is considered unhealthy)
-	session.heartbeatMutex.RLock()
-	lastHeartbeat := session.LastHeartbeat
-	session.heartbeatMutex.RUnlock()
-
-	if time.Since(lastHeartbeat) > 5*time.Minute {
-		log.Printf("[SESSION_ZOMBIE] Session %s heartbeat timeout (last: %v ago)", 
-			sessionID, time.Since(lastHeartbeat))
-		p.handleZombieSession(sessionID)
-		return
-	}
-
-	// Check if the process is still running
-	session.processMutex.RLock()
-	process := session.Process
-	session.processMutex.RUnlock()
-
-	if process == nil {
-		log.Printf("[SESSION_ZOMBIE] Session %s has no process", sessionID)
-		p.handleZombieSession(sessionID)
-		return
-	}
-
-	// Check if process is still alive
-	if process.Process != nil {
-		err := process.Process.Signal(syscall.Signal(0))
-		if err != nil {
-			log.Printf("[SESSION_ZOMBIE] Session %s process not responding (pid: %d): %v", 
-				sessionID, process.Process.Pid, err)
-			p.handleZombieSession(sessionID)
-			return
-		}
-	}
-
-	// Check if the port is still accessible
-	if !p.isPortResponding(session.Port) {
-		log.Printf("[SESSION_ZOMBIE] Session %s port %d not responding", sessionID, session.Port)
-		p.handleZombieSession(sessionID)
-		return
-	}
-}
-
-// isPortResponding checks if a port is responding to connections
-func (p *Proxy) isPortResponding(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 5*time.Second)
-	if err != nil {
-		return false
-	}
-	if err := conn.Close(); err != nil {
-		log.Printf("Warning: failed to close test connection: %v", err)
-	}
-	return true
-}
-
-// handleZombieSession cleans up a session that is no longer healthy
-func (p *Proxy) handleZombieSession(sessionID string) {
-	log.Printf("[SESSION_CLEANUP] Starting cleanup for zombie session: %s", sessionID)
-
-	p.sessionsMutex.Lock()
-	session, exists := p.sessions[sessionID]
-	if !exists {
-		p.sessionsMutex.Unlock()
-		return
-	}
-	delete(p.sessions, sessionID)
-	p.sessionsMutex.Unlock()
-
-	// Cancel the context if it exists
-	if session.Cancel != nil {
-		session.Cancel()
-	}
-
-	// Try to kill the process if it's still around
-	session.processMutex.Lock()
-	if session.Process != nil && session.Process.Process != nil {
-		if err := session.Process.Process.Kill(); err != nil {
-			log.Printf("Failed to kill zombie process for session %s: %v", sessionID, err)
-		}
-	}
-	session.processMutex.Unlock()
-
-	// Remove from persistent storage
-	p.deleteSessionFromStorage(sessionID)
-
-	log.Printf("[SESSION_CLEANUP] Zombie session %s cleaned up successfully", sessionID)
 }
 
 // loggingMiddleware returns Echo middleware for request logging
@@ -462,12 +313,6 @@ func (p *Proxy) recoverSessions() {
 	cleaned := 0
 
 	for _, sessionData := range sessions {
-		// Validate the session is still valid
-		if !p.validateRecoveredSession(sessionData) {
-			p.deleteSessionFromStorage(sessionData.ID)
-			cleaned++
-			continue
-		}
 
 		// Convert to AgentSession and add to memory
 		session := p.sessionFromStorage(sessionData)
@@ -490,67 +335,12 @@ func (p *Proxy) recoverSessions() {
 	}
 }
 
-// validateRecoveredSession checks if a recovered session is still valid
-func (p *Proxy) validateRecoveredSession(sessionData *storage.SessionData) bool {
-	// Skip zombie cleanup if disabled
-	if p.config.DisableZombieCleanup {
-		log.Printf("Zombie session cleanup disabled, keeping session %s", sessionData.ID)
-		return true
-	}
-
-	// Check if port is still in use by checking if process is running
-	if sessionData.ProcessID > 0 {
-		// Check if process is still running
-		if process, err := os.FindProcess(sessionData.ProcessID); err == nil {
-			// Send signal 0 to check if process exists
-			if err := process.Signal(syscall.Signal(0)); err == nil {
-				// Process is still running, check if it's listening on the expected port
-				if p.isPortInUse(sessionData.Port) {
-					return true
-				}
-			}
-		}
-	}
-
-	// Check if port is available for reuse
-	if p.isPortInUse(sessionData.Port) {
-		log.Printf("Session %s port %d is in use by another process", sessionData.ID, sessionData.Port)
-		return false
-	}
-
-	// Check if session is too old (configurable max age)
-	maxAge := time.Duration(p.config.Persistence.SessionRecoveryMaxAge) * time.Hour
-	if maxAge == 0 {
-		maxAge = 24 * time.Hour // Default to 24 hours if not configured
-	}
-	if time.Since(sessionData.StartedAt) > maxAge {
-		log.Printf("Session %s is too old (%v > %v), cleaning up", 
-			sessionData.ID, time.Since(sessionData.StartedAt), maxAge)
-		return false
-	}
-
-	return true
-}
-
-// isPortInUse checks if a port is currently in use
-func (p *Proxy) isPortInUse(port int) bool {
-	conn, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return true // Port is in use
-	}
-	if err := conn.Close(); err != nil {
-		log.Printf("Warning: failed to close connection: %v", err)
-	}
-	return false
-}
-
 // setupRoutes configures the router with all defined routes
 func (p *Proxy) setupRoutes() {
 	// Add session management routes according to API specification
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission("session:create"))
 	p.echo.GET("/search", p.searchSessions, auth.RequirePermission("session:list"))
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
-	p.echo.POST("/sessions/:sessionId/heartbeat", p.heartbeatSession, auth.RequirePermission("session:update"))
 
 	// Add profile management routes
 	p.echo.POST("/profiles", p.createProfile, auth.RequirePermission("profile:create"))
@@ -736,43 +526,6 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 	})
 }
 
-// heartbeatSession handles POST /sessions/:sessionId/heartbeat requests to update session heartbeat
-func (p *Proxy) heartbeatSession(c echo.Context) error {
-	sessionID := c.Param("sessionId")
-	clientIP := c.RealIP()
-
-	if sessionID == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
-	}
-
-	p.sessionsMutex.RLock()
-	session, exists := p.sessions[sessionID]
-	p.sessionsMutex.RUnlock()
-
-	if !exists {
-		log.Printf("Heartbeat failed: session %s not found (requested by %s)", sessionID, clientIP)
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
-	}
-
-	// Check if user has access to this session
-	if !auth.UserOwnsSession(c, session.UserID) {
-		return echo.NewHTTPError(http.StatusForbidden, "You can only update your own sessions")
-	}
-
-	// Update heartbeat timestamp
-	session.heartbeatMutex.Lock()
-	session.LastHeartbeat = time.Now()
-	session.heartbeatMutex.Unlock()
-
-	log.Printf("[SESSION_HEARTBEAT] Session: %s, From: %s", sessionID, clientIP)
-
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"session_id": sessionID,
-		"status":     "alive",
-		"timestamp":  time.Now().Unix(),
-	})
-}
-
 // startAgentAPIServer starts a new agentapi server instance and returns session ID
 func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	// Generate UUID for session
@@ -825,15 +578,14 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	session := &AgentSession{
-		ID:            sessionID,
-		Port:          port,
-		Cancel:        cancel,
-		StartedAt:     time.Now(),
-		UserID:        userID,
-		Status:        "active",
-		Environment:   startReq.Environment,
-		Tags:          startReq.Tags,
-		LastHeartbeat: time.Now(),
+		ID:          sessionID,
+		Port:        port,
+		Cancel:      cancel,
+		StartedAt:   time.Now(),
+		UserID:      userID,
+		Status:      "active",
+		Environment: startReq.Environment,
+		Tags:        startReq.Tags,
 	}
 
 	// Store session
@@ -841,7 +593,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	p.sessions[sessionID] = session
 	p.sessionsMutex.Unlock()
 
-	log.Printf("[SESSION_CREATED] ID: %s, Port: %d, User: %s, Tags: %v", 
+	log.Printf("[SESSION_CREATED] ID: %s, Port: %d, User: %s, Tags: %v",
 		sessionID, port, userID, startReq.Tags)
 
 	// Persist session to storage
@@ -1180,11 +932,6 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		go p.sendInitialMessage(session, initialMessage)
 	}
 
-	// Start heartbeat monitoring if enabled
-	if !p.config.DisableHeartbeat {
-		go p.startHeartbeatMonitoring(ctx, session)
-	}
-
 	// Wait for the process to finish or context cancellation
 	done := make(chan error, 1)
 	go func() {
@@ -1467,47 +1214,6 @@ func maskToken(token string) string {
 		return "****"
 	}
 	return token[:4] + "****" + token[len(token)-4:]
-}
-
-// startHeartbeatMonitoring starts heartbeat monitoring for a session
-func (p *Proxy) startHeartbeatMonitoring(ctx context.Context, session *AgentSession) {
-	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Check if session is still responding
-			if !p.checkSessionHealth(session) {
-				log.Printf("Session %s failed heartbeat check, marking as unhealthy", session.ID)
-				// Update session status but don't terminate automatically
-				session.Status = "unhealthy"
-				p.updateSession(session)
-			}
-		}
-	}
-}
-
-// checkSessionHealth performs a health check on a session
-func (p *Proxy) checkSessionHealth(session *AgentSession) bool {
-	// Try to connect to the session's health endpoint
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/health", session.Port))
-	if err != nil {
-		if p.verbose {
-			log.Printf("Health check failed for session %s: %v", session.ID, err)
-		}
-		return false
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("Failed to close health check response body: %v", closeErr)
-		}
-	}()
-
-	return resp.StatusCode == http.StatusOK
 }
 
 // sendInitialMessage sends an initial message to the agentapi server after startup
