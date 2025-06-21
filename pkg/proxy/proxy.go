@@ -492,6 +492,12 @@ func (p *Proxy) recoverSessions() {
 
 // validateRecoveredSession checks if a recovered session is still valid
 func (p *Proxy) validateRecoveredSession(sessionData *storage.SessionData) bool {
+	// Skip zombie cleanup if disabled
+	if p.config.DisableZombieCleanup {
+		log.Printf("Zombie session cleanup disabled, keeping session %s", sessionData.ID)
+		return true
+	}
+
 	// Check if port is still in use by checking if process is running
 	if sessionData.ProcessID > 0 {
 		// Check if process is still running
@@ -1174,6 +1180,11 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		go p.sendInitialMessage(session, initialMessage)
 	}
 
+	// Start heartbeat monitoring if enabled
+	if !p.config.DisableHeartbeat {
+		go p.startHeartbeatMonitoring(ctx, session)
+	}
+
 	// Wait for the process to finish or context cancellation
 	done := make(chan error, 1)
 	go func() {
@@ -1456,6 +1467,47 @@ func maskToken(token string) string {
 		return "****"
 	}
 	return token[:4] + "****" + token[len(token)-4:]
+}
+
+// startHeartbeatMonitoring starts heartbeat monitoring for a session
+func (p *Proxy) startHeartbeatMonitoring(ctx context.Context, session *AgentSession) {
+	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Check if session is still responding
+			if !p.checkSessionHealth(session) {
+				log.Printf("Session %s failed heartbeat check, marking as unhealthy", session.ID)
+				// Update session status but don't terminate automatically
+				session.Status = "unhealthy"
+				p.updateSession(session)
+			}
+		}
+	}
+}
+
+// checkSessionHealth performs a health check on a session
+func (p *Proxy) checkSessionHealth(session *AgentSession) bool {
+	// Try to connect to the session's health endpoint
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/health", session.Port))
+	if err != nil {
+		if p.verbose {
+			log.Printf("Health check failed for session %s: %v", session.ID, err)
+		}
+		return false
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("Failed to close health check response body: %v", closeErr)
+		}
+	}()
+
+	return resp.StatusCode == http.StatusOK
 }
 
 // sendInitialMessage sends an initial message to the agentapi server after startup
