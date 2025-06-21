@@ -203,7 +203,6 @@ func TestProxySessionRecovery(t *testing.T) {
 		// Create proxy with persistence (should recover sessions)
 		cfg := createTestConfigWithPersistence(tmpDir)
 		cfg.Persistence.FilePath = storageFile
-		cfg.DisableZombieCleanup = true // Disable zombie cleanup for recovery test
 
 		proxy := NewProxy(cfg, false)
 		defer func() {
@@ -245,56 +244,6 @@ func TestProxySessionRecovery(t *testing.T) {
 		}
 	})
 
-	t.Run("StaleSessionCleanup", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		storageFile := filepath.Join(tmpDir, "stale_cleanup_test.json")
-
-		// Create storage with old session (older than 24 hours)
-		oldSession := &storage.SessionData{
-			ID:        "old-session",
-			Port:      9006,
-			StartedAt: time.Now().Add(-25 * time.Hour), // 25 hours ago (stale)
-			UserID:    "user",
-			Status:    "active",
-		}
-
-		initialStorage, err := storage.NewFileStorage(storageFile, 0, false)
-		if err != nil {
-			t.Fatalf("Failed to create initial storage: %v", err)
-		}
-
-		err = initialStorage.Save(oldSession)
-		if err != nil {
-			t.Fatalf("Failed to save old session: %v", err)
-		}
-		initialStorage.Close()
-
-		// Create proxy (should clean up stale session)
-		cfg := createTestConfigWithPersistence(tmpDir)
-		cfg.Persistence.FilePath = storageFile
-
-		proxy := NewProxy(cfg, false)
-		defer func() {
-			if proxy.storage != nil {
-				proxy.storage.Close()
-			}
-		}()
-
-		// Verify stale session was not recovered
-		proxy.sessionsMutex.RLock()
-		_, exists := proxy.sessions["old-session"]
-		proxy.sessionsMutex.RUnlock()
-
-		if exists {
-			t.Error("Stale session should not have been recovered")
-		}
-
-		// Verify session was removed from storage
-		_, err = proxy.storage.Load("old-session")
-		if err == nil {
-			t.Error("Stale session should have been removed from storage")
-		}
-	})
 }
 
 // TestProxyPersistenceConfiguration tests persistence configuration scenarios
@@ -431,8 +380,6 @@ func createTestConfigWithPersistence(tmpDir string) *config.Config {
 			SyncInterval:   0, // Disable periodic sync for tests
 			EncryptSecrets: false,
 		},
-		DisableHeartbeat:     false,
-		DisableZombieCleanup: false,
 	}
 }
 
@@ -443,8 +390,6 @@ func TestSessionConversion(t *testing.T) {
 		Persistence: config.PersistenceConfig{
 			Enabled: false,
 		},
-		DisableHeartbeat:     false,
-		DisableZombieCleanup: false,
 	}
 
 	proxy := NewProxy(cfg, false)

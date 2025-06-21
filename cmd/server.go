@@ -58,9 +58,6 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	proxyServer := proxy.NewProxy(configData, verbose)
 
-	// Start health check routine
-	proxyServer.Start()
-
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Starting agentapi-proxy on port %s", port)
@@ -79,9 +76,6 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Create a context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	// Stop health checks first
-	proxyServer.Stop()
 
 	// Shutdown the proxy and all sessions
 	shutdownDone := make(chan error, 1)
