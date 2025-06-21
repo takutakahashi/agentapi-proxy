@@ -18,7 +18,7 @@ import (
 //go:embed claude_code_settings.json
 var claudeCodeSettings string
 
-//go:embed ../config/claude.json
+//go:embed claude.json
 var claudeConfig string
 
 var HelpersCmd = &cobra.Command{
@@ -48,24 +48,6 @@ var initCmd = &cobra.Command{
 	Run:   runSetupClaudeCode,
 }
 
-var debugEmbedCmd = &cobra.Command{
-	Use:   "debug-embed",
-	Short: "Debug embedded config",
-	Long:  "Debug command to check if embedded config is working",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("claudeCodeSettings length: %d\n", len(claudeCodeSettings))
-		fmt.Printf("claudeConfig length: %d\n", len(claudeConfig))
-		fmt.Printf("claudeConfig content: %s\n", claudeConfig)
-		if claudeConfig != "" {
-			var configJSON map[string]interface{}
-			if err := json.Unmarshal([]byte(claudeConfig), &configJSON); err != nil {
-				fmt.Printf("Error parsing embedded config: %v\n", err)
-			} else {
-				fmt.Printf("Parsed config: %+v\n", configJSON)
-			}
-		}
-	},
-}
 
 var generateTokenCmd = &cobra.Command{
 	Use:   "generate-token",
@@ -110,7 +92,6 @@ func init() {
 
 	HelpersCmd.AddCommand(setupClaudeCodeCmd)
 	HelpersCmd.AddCommand(initCmd)
-	HelpersCmd.AddCommand(debugEmbedCmd)
 	HelpersCmd.AddCommand(generateTokenCmd)
 }
 
