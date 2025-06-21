@@ -152,25 +152,13 @@ func mergeClaudeConfig() error {
 
 	targetPath := filepath.Join(homeDir, ".claude.json")
 
-	// Try to read config/claude.json
-	configPath := "config/claude.json"
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// config/claude.json doesn't exist, nothing to merge
-			fmt.Printf("config/claude.json not found, skipping merge\n")
-			return nil
-		}
-		return fmt.Errorf("failed to read config/claude.json: %w", err)
+	// Define the configuration to merge as a map
+	configToMerge := map[string]interface{}{
+		"hasCompletedOnboarding":        true,
+		"bypassPermissionsModeAccepted": true,
 	}
 
-	// Parse config JSON
-	var configJSON map[string]interface{}
-	if err := json.Unmarshal(configData, &configJSON); err != nil {
-		return fmt.Errorf("failed to parse config/claude.json: %w", err)
-	}
-
-	fmt.Printf("Read config from config/claude.json\n")
+	fmt.Printf("Using hardcoded configuration map\n")
 
 	// Read existing ~/.claude.json if it exists
 	var targetJSON map[string]interface{}
@@ -188,8 +176,8 @@ func mergeClaudeConfig() error {
 		}
 	}
 
-	// Merge config into target (config values override existing values)
-	for key, value := range configJSON {
+	// Merge configuration map into target (config values override existing values)
+	for key, value := range configToMerge {
 		targetJSON[key] = value
 	}
 
