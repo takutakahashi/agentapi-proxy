@@ -18,9 +18,6 @@ import (
 //go:embed claude_code_settings.json
 var claudeCodeSettings string
 
-//go:embed claude.json
-var claudeConfig string
-
 var HelpersCmd = &cobra.Command{
 	Use:   "helpers",
 	Short: "Helper utilities for agentapi-proxy",
@@ -155,27 +152,25 @@ func mergeClaudeConfig() error {
 
 	targetPath := filepath.Join(homeDir, ".claude.json")
 
-	// Default configuration based on config/claude.json content
-	// This ensures we always have the correct settings even if embedding fails
-	configJSON := map[string]interface{}{
-		"hasCompletedOnboarding":        true,
-		"bypassPermissionsModeAccepted": true,
+	// Try to read config/claude.json
+	configPath := "config/claude.json"
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// config/claude.json doesn't exist, nothing to merge
+			fmt.Printf("config/claude.json not found, skipping merge\n")
+			return nil
+		}
+		return fmt.Errorf("failed to read config/claude.json: %w", err)
 	}
 
-	// Try to use embedded claude config if available
-	if claudeConfig != "" {
-		var embeddedConfig map[string]interface{}
-		if err := json.Unmarshal([]byte(claudeConfig), &embeddedConfig); err != nil {
-			fmt.Printf("Warning: failed to parse embedded claude config, using hardcoded default: %v\n", err)
-			// Keep using the hardcoded default
-		} else {
-			// Use embedded config
-			configJSON = embeddedConfig
-			fmt.Printf("Using embedded claude config\n")
-		}
-	} else {
-		fmt.Printf("No embedded config found, using hardcoded default\n")
+	// Parse config JSON
+	var configJSON map[string]interface{}
+	if err := json.Unmarshal(configData, &configJSON); err != nil {
+		return fmt.Errorf("failed to parse config/claude.json: %w", err)
 	}
+
+	fmt.Printf("Read config from config/claude.json\n")
 
 	// Read existing ~/.claude.json if it exists
 	var targetJSON map[string]interface{}
