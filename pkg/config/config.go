@@ -104,7 +104,7 @@ func DefaultConfig() *Config {
 			EncryptSecrets:        true,
 			SessionRecoveryMaxAge: 24, // Default 24 hours
 		},
-		DisableHeartbeat:     false,
+		DisableHeartbeat:     true,
 		DisableZombieCleanup: false,
 	}
 }
