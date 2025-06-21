@@ -18,6 +18,9 @@ import (
 //go:embed claude_code_settings.json
 var claudeCodeSettings string
 
+//go:embed ../config/claude.json
+var claudeConfig string
+
 var HelpersCmd = &cobra.Command{
 	Use:   "helpers",
 	Short: "Helper utilities for agentapi-proxy",
@@ -149,36 +152,25 @@ func mergeClaudeConfig() error {
 		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	// Paths
-	// Get the absolute path for config/claude.json
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-	execDir := filepath.Dir(execPath)
-	configPath := filepath.Join(execDir, "..", "config", "claude.json")
-	
-	// Also try relative path if the above doesn't exist
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		configPath = "config/claude.json"
-	}
-	
 	targetPath := filepath.Join(homeDir, ".claude.json")
 
-	// Read config/claude.json
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// config/claude.json doesn't exist, nothing to merge
-			return nil
-		}
-		return fmt.Errorf("failed to read config/claude.json: %w", err)
+	// Default configuration based on config/claude.json content
+	defaultConfig := map[string]interface{}{
+		"hasCompletedOnboarding":        true,
+		"bypassPermissionsModeAccepted": true,
 	}
 
-	// Parse config JSON
 	var configJSON map[string]interface{}
-	if err := json.Unmarshal(configData, &configJSON); err != nil {
-		return fmt.Errorf("failed to parse config/claude.json: %w", err)
+
+	// Try to use embedded claude config first, fall back to default
+	if claudeConfig != "" {
+		if err := json.Unmarshal([]byte(claudeConfig), &configJSON); err != nil {
+			fmt.Printf("Warning: failed to parse embedded claude config, using default: %v\n", err)
+			configJSON = defaultConfig
+		}
+	} else {
+		// Use default config
+		configJSON = defaultConfig
 	}
 
 	// Read existing ~/.claude.json if it exists
@@ -212,7 +204,7 @@ func mergeClaudeConfig() error {
 		return fmt.Errorf("failed to write ~/.claude.json: %w", err)
 	}
 
-	fmt.Printf("Successfully merged config/claude.json into %s\n", targetPath)
+	fmt.Printf("Successfully merged claude config into %s\n", targetPath)
 	return nil
 }
 
