@@ -48,6 +48,25 @@ var initCmd = &cobra.Command{
 	Run:   runSetupClaudeCode,
 }
 
+var debugEmbedCmd = &cobra.Command{
+	Use:   "debug-embed",
+	Short: "Debug embedded config",
+	Long:  "Debug command to check if embedded config is working",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("claudeCodeSettings length: %d\n", len(claudeCodeSettings))
+		fmt.Printf("claudeConfig length: %d\n", len(claudeConfig))
+		fmt.Printf("claudeConfig content: %s\n", claudeConfig)
+		if claudeConfig != "" {
+			var configJSON map[string]interface{}
+			if err := json.Unmarshal([]byte(claudeConfig), &configJSON); err != nil {
+				fmt.Printf("Error parsing embedded config: %v\n", err)
+			} else {
+				fmt.Printf("Parsed config: %+v\n", configJSON)
+			}
+		}
+	},
+}
+
 var generateTokenCmd = &cobra.Command{
 	Use:   "generate-token",
 	Short: "Generate API keys for agentapi-proxy authentication",
@@ -91,6 +110,7 @@ func init() {
 
 	HelpersCmd.AddCommand(setupClaudeCodeCmd)
 	HelpersCmd.AddCommand(initCmd)
+	HelpersCmd.AddCommand(debugEmbedCmd)
 	HelpersCmd.AddCommand(generateTokenCmd)
 }
 
@@ -155,22 +175,25 @@ func mergeClaudeConfig() error {
 	targetPath := filepath.Join(homeDir, ".claude.json")
 
 	// Default configuration based on config/claude.json content
-	defaultConfig := map[string]interface{}{
+	// This ensures we always have the correct settings even if embedding fails
+	configJSON := map[string]interface{}{
 		"hasCompletedOnboarding":        true,
 		"bypassPermissionsModeAccepted": true,
 	}
 
-	var configJSON map[string]interface{}
-
-	// Try to use embedded claude config first, fall back to default
+	// Try to use embedded claude config if available
 	if claudeConfig != "" {
-		if err := json.Unmarshal([]byte(claudeConfig), &configJSON); err != nil {
-			fmt.Printf("Warning: failed to parse embedded claude config, using default: %v\n", err)
-			configJSON = defaultConfig
+		var embeddedConfig map[string]interface{}
+		if err := json.Unmarshal([]byte(claudeConfig), &embeddedConfig); err != nil {
+			fmt.Printf("Warning: failed to parse embedded claude config, using hardcoded default: %v\n", err)
+			// Keep using the hardcoded default
+		} else {
+			// Use embedded config
+			configJSON = embeddedConfig
+			fmt.Printf("Using embedded claude config\n")
 		}
 	} else {
-		// Use default config
-		configJSON = defaultConfig
+		fmt.Printf("No embedded config found, using hardcoded default\n")
 	}
 
 	// Read existing ~/.claude.json if it exists
