@@ -23,7 +23,7 @@ func init() {
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
-		log.Println(err)
+		log.Printf("Fatal error executing command: %v", err)
 		os.Exit(1)
 	}
 }
