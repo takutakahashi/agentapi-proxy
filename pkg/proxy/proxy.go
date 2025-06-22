@@ -916,7 +916,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	session.processMutex.Unlock()
 
 	if err != nil {
-		log.Printf("Failed to start agentapi process for session %s: %v", session.ID, err)
+		p.logProcessStartError(session.ID, err)
 		return
 	}
 
@@ -972,10 +972,111 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	case err := <-done:
 		// Process finished on its own
 		if err != nil {
-			log.Printf("AgentAPI process for session %s exited with error: %v", session.ID, err)
+			p.logProcessExitError(session.ID, err, cmd.Process.Pid)
 		} else if p.verbose {
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
+	}
+}
+
+// logProcessStartError logs detailed information about why an agentapi process failed to start
+func (p *Proxy) logProcessStartError(sessionID string, err error) {
+	log.Printf("ERROR: Failed to start agentapi process for session %s", sessionID)
+	log.Printf("  Error: %v", err)
+
+	// Provide troubleshooting hints based on error type
+	errorStr := err.Error()
+	switch {
+	case strings.Contains(errorStr, "no such file or directory"):
+		log.Printf("  Troubleshooting: agentapi binary not found")
+		log.Printf("  - Check if agentapi is installed: which agentapi")
+		log.Printf("  - Verify PATH environment variable includes agentapi location")
+		log.Printf("  - Install agentapi if missing")
+	case strings.Contains(errorStr, "permission denied"):
+		log.Printf("  Troubleshooting: Permission denied")
+		log.Printf("  - Check if agentapi binary has execute permissions: ls -la $(which agentapi)")
+		log.Printf("  - Fix permissions if needed: chmod +x $(which agentapi)")
+		log.Printf("  - Check if current user has necessary permissions")
+	case strings.Contains(errorStr, "bind: address already in use"):
+		log.Printf("  Troubleshooting: Port already in use")
+		log.Printf("  - Another process is using the assigned port")
+		log.Printf("  - Check running processes: netstat -tlnp | grep <port>")
+		log.Printf("  - Kill conflicting process or wait for automatic port assignment")
+	case strings.Contains(errorStr, "resource temporarily unavailable"):
+		log.Printf("  Troubleshooting: System resource exhaustion")
+		log.Printf("  - Check system memory: free -h")
+		log.Printf("  - Check process limits: ulimit -u")
+		log.Printf("  - Check disk space: df -h")
+	default:
+		log.Printf("  Troubleshooting: General startup failure")
+		log.Printf("  - Check system logs: journalctl -u agentapi-proxy")
+		log.Printf("  - Verify agentapi configuration and dependencies")
+		log.Printf("  - Check if all required environment variables are set")
+	}
+}
+
+// logProcessExitError logs detailed information about why an agentapi process exited with an error
+func (p *Proxy) logProcessExitError(sessionID string, err error, pid int) {
+	var exitCode int = -1
+	var exitReason string
+
+	// Extract exit code and reason from the error
+	if exitError, ok := err.(*exec.ExitError); ok {
+		if status, ok := exitError.Sys().(syscall.WaitStatus); ok {
+			exitCode = status.ExitStatus()
+
+			switch exitCode {
+			case 1:
+				exitReason = "general error or script command failed"
+			case 2:
+				exitReason = "misuse of shell builtins or invalid command-line arguments"
+			case 126:
+				exitReason = "command found but not executable (permission denied)"
+			case 127:
+				exitReason = "command not found"
+			case 128:
+				exitReason = "invalid exit argument"
+			case 130:
+				exitReason = "script terminated by Ctrl+C (SIGINT)"
+			case 143:
+				exitReason = "script terminated by SIGTERM"
+			case 137:
+				exitReason = "script terminated by SIGKILL (kill -9)"
+			default:
+				if exitCode >= 128 && exitCode <= 165 {
+					signal := exitCode - 128
+					exitReason = fmt.Sprintf("terminated by signal %d", signal)
+				} else {
+					exitReason = "unknown error"
+				}
+			}
+		}
+	}
+
+	// Log comprehensive error information
+	log.Printf("ERROR: AgentAPI process for session %s (PID: %d) exited with error", sessionID, pid)
+	log.Printf("  Exit Code: %d", exitCode)
+	log.Printf("  Exit Reason: %s", exitReason)
+	log.Printf("  Raw Error: %v", err)
+
+	// Provide troubleshooting hints based on exit code
+	switch exitCode {
+	case 1:
+		log.Printf("  Troubleshooting: Check script execution logs above for specific command failures")
+		log.Printf("  Common causes: GitHub credentials invalid, network issues, missing dependencies")
+	case 126:
+		log.Printf("  Troubleshooting: Check file permissions for agentapi binary and script files")
+	case 127:
+		log.Printf("  Troubleshooting: Ensure agentapi binary is installed and in PATH")
+		log.Printf("  Try running: which agentapi")
+	case 130:
+		log.Printf("  Troubleshooting: Process was interrupted, this may be expected during shutdown")
+	case 143:
+		log.Printf("  Troubleshooting: Process was terminated gracefully, this may be expected during shutdown")
+	case 137:
+		log.Printf("  Troubleshooting: Process was force-killed, check system resources and logs")
+	default:
+		log.Printf("  Troubleshooting: Check system logs and agentapi server logs for more details")
 	}
 }
 
