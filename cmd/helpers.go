@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,7 +45,6 @@ var initCmd = &cobra.Command{
 	Long:  "Creates Claude Code configuration directory and settings file at $CLAUDE_DIR/.claude/settings.json, and merges config/claude.json into ~/.claude.json",
 	Run:   runSetupClaudeCode,
 }
-
 
 var generateTokenCmd = &cobra.Command{
 	Use:   "generate-token",
@@ -96,6 +96,7 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 	claudeDir := os.Getenv("CLAUDE_DIR")
 	if claudeDir == "" {
 		fmt.Println("Error: CLAUDE_DIR environment variable is not set")
+		log.Printf("Fatal error: CLAUDE_DIR environment variable is not set")
 		os.Exit(1)
 	}
 
@@ -103,6 +104,7 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 	claudeConfigDir := filepath.Join(claudeDir, ".claude")
 	if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
 		fmt.Printf("Error creating directory %s: %v\n", claudeConfigDir, err)
+		log.Printf("Fatal error creating directory %s: %v", claudeConfigDir, err)
 		os.Exit(1)
 	}
 
@@ -110,6 +112,7 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 	var tempSettings interface{}
 	if err := json.Unmarshal([]byte(claudeCodeSettings), &tempSettings); err != nil {
 		fmt.Printf("Error: Invalid embedded settings JSON: %v\n", err)
+		log.Printf("Fatal error: Invalid embedded settings JSON: %v", err)
 		os.Exit(1)
 	}
 
@@ -117,6 +120,7 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 	settingsPath := filepath.Join(claudeConfigDir, "settings.json")
 	if err := os.WriteFile(settingsPath, []byte(claudeCodeSettings), 0644); err != nil {
 		fmt.Printf("Error writing settings file %s: %v\n", settingsPath, err)
+		log.Printf("Fatal error writing settings file %s: %v", settingsPath, err)
 		os.Exit(1)
 	}
 
@@ -136,6 +140,7 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 		claudeCmd := exec.Command("claude", "config", "set", key, value)
 		if err := claudeCmd.Run(); err != nil {
 			fmt.Printf("Error setting Claude config: %v\n", err)
+			log.Printf("Fatal error setting Claude config for key '%s': %v", key, err)
 			os.Exit(1)
 		}
 	}
