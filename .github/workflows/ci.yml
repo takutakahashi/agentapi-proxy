@@ -56,6 +56,8 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: '**/go.mod'
 
     - name: Cache Claude Code
       uses: actions/cache@v3
@@ -72,19 +74,11 @@ jobs:
         if [ ! -f ~/.cache/claude-code/claude ]; then
           echo "Installing Claude Code..."
           npm install -g @anthropic-ai/claude-code
-          # Check if claude is available and copy it
-          if which claude > /dev/null 2>&1; then
-            cp $(which claude) ~/.cache/claude-code/claude
-          else
-            echo "Warning: claude command not found after npm install"
-            # Create a dummy claude file for testing
-            echo '#!/bin/bash' > ~/.cache/claude-code/claude
-            echo 'echo "Claude Code mock for testing"' >> ~/.cache/claude-code/claude
-            chmod +x ~/.cache/claude-code/claude
-          fi
+          cp $(which claude) ~/.cache/claude-code/claude
+        else
+          echo "Using cached Claude Code"
+          sudo ln -sf ~/.cache/claude-code/claude /usr/local/bin/claude
         fi
-        # Always ensure claude is available in PATH
-        sudo ln -sf ~/.cache/claude-code/claude /usr/local/bin/claude
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v6
@@ -92,8 +86,4 @@ jobs:
         version: latest
 
     - name: Run CI pipeline
-      run: |
-        # Clean up potential temp files and logs from previous runs
-        rm -rf /tmp/agentapi-script-* logs/ || true
-        mkdir -p logs
-        make test
+      run: make test
