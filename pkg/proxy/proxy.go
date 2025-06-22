@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"embed"
@@ -850,6 +851,12 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	// Set process group ID for proper cleanup
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	// Capture stderr for error logging
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		log.Printf("Failed to create stderr pipe for session %s: %v", session.ID, err)
+	}
+
 	// Set environment variables for the process
 	// Start with the current environment from agentapi-proxy
 	cmd.Env = os.Environ()
@@ -912,7 +919,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	// Store the command in the session and start the process
 	session.processMutex.Lock()
 	session.Process = cmd
-	err := cmd.Start()
+	err = cmd.Start()
 	session.processMutex.Unlock()
 
 	if err != nil {
@@ -925,6 +932,11 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	if p.verbose {
 		log.Printf("AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
+	}
+
+	// Start stderr monitoring goroutine
+	if stderrPipe != nil {
+		go p.monitorProcessStderr(session.ID, stderrPipe)
 	}
 
 	// Send initial message if provided
@@ -976,6 +988,23 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		} else if p.verbose {
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
+	}
+}
+
+// monitorProcessStderr reads and logs stderr output from the agentapi process
+func (p *Proxy) monitorProcessStderr(sessionID string, stderrPipe io.ReadCloser) {
+	defer stderrPipe.Close()
+
+	scanner := bufio.NewScanner(stderrPipe)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			log.Printf("AgentAPI stderr [%s]: %s", sessionID, line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("Error reading stderr for session %s: %v", sessionID, err)
 	}
 }
 
