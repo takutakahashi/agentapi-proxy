@@ -850,6 +850,10 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	// Set process group ID for proper cleanup
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	// Capture stderr output for logging on exit code 1
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
 	// Set environment variables for the process
 	// Start with the current environment from agentapi-proxy
 	cmd.Env = os.Environ()
@@ -972,7 +976,16 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	case err := <-done:
 		// Process finished on its own
 		if err != nil {
-			log.Printf("AgentAPI process for session %s exited with error: %v", session.ID, err)
+			// Check if error is exit code 1 and log stderr output if available
+			if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
+				log.Printf("AgentAPI process for session %s exited with code 1: %v", session.ID, err)
+				// Log stderr output if available
+				if stderrOutput := stderrBuf.String(); stderrOutput != "" {
+					log.Printf("Stderr output for session %s: %s", session.ID, stderrOutput)
+				}
+			} else {
+				log.Printf("AgentAPI process for session %s exited with error: %v", session.ID, err)
+			}
 		} else if p.verbose {
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
