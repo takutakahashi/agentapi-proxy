@@ -42,7 +42,7 @@ gofmt:
 
 test: gofmt
 	@echo "Running tests..."
-	go test -v -race -p 1 ./...
+	go test -v -race ./...
 
 lint: gofmt
 	@echo "Running linters..."
