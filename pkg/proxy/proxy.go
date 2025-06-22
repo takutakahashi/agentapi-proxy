@@ -972,7 +972,23 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	case err := <-done:
 		// Process finished on its own
 		if err != nil {
-			log.Printf("AgentAPI process for session %s exited with error: %v", session.ID, err)
+			// Check if error is exit code 1 and log script content if so
+			if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
+				log.Printf("AgentAPI process for session %s exited with code 1: %v", session.ID, err)
+				if scriptName != "" && tmpScriptPath != "" {
+					// Log the script content that failed
+					if scriptContent, readErr := os.ReadFile(tmpScriptPath); readErr == nil {
+						log.Printf("Script content that exited with code 1 for session %s:", session.ID)
+						log.Printf("--- Script Content Start ---")
+						log.Printf("%s", string(scriptContent))
+						log.Printf("--- Script Content End ---")
+					} else {
+						log.Printf("Failed to read script content for session %s: %v", session.ID, readErr)
+					}
+				}
+			} else {
+				log.Printf("AgentAPI process for session %s exited with error: %v", session.ID, err)
+			}
 		} else if p.verbose {
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
