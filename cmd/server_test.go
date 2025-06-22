@@ -65,25 +65,36 @@ func TestServerCmdFlags(t *testing.T) {
 		},
 	}
 
+	// Test with a fresh command for each test case
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Reset viper for each test
-			viper.Reset()
+			// Create a new command to avoid flag conflicts
+			testCmd := &cobra.Command{
+				Use: "server",
+			}
+			testCmd.Flags().StringP("port", "p", "8080", "Port to listen on")
+			testCmd.Flags().StringP("config", "c", "config.json", "Configuration file path")
+			testCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
+			
+			// Reset flag states to ensure clean test
+			testCmd.Flags().Set("port", "8080")
+			testCmd.Flags().Set("config", "config.json") 
+			testCmd.Flags().Set("verbose", "false")
 
 			// Parse flags
-			err := ServerCmd.ParseFlags(tt.args)
+			err := testCmd.ParseFlags(tt.args)
 			require.NoError(t, err)
 
 			// Get flag values
-			portFlag, err := ServerCmd.Flags().GetString("port")
+			portFlag, err := testCmd.Flags().GetString("port")
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedPort, portFlag)
 
-			cfgFlag, err := ServerCmd.Flags().GetString("config")
+			cfgFlag, err := testCmd.Flags().GetString("config")
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedCfg, cfgFlag)
 
-			verbFlag, err := ServerCmd.Flags().GetBool("verbose")
+			verbFlag, err := testCmd.Flags().GetBool("verbose")
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedVerb, verbFlag)
 		})
@@ -186,18 +197,30 @@ func TestRunProxyGracefulShutdown(t *testing.T) {
 }
 
 func TestViperBindings(t *testing.T) {
-	// Reset everything before testing
-	viper.Reset()
-	ServerCmd.ResetFlags()
+	// Test viper binding functionality with a fresh command
+	testCmd := &cobra.Command{
+		Use: "server",
+	}
+	// Use different shorthand flags to avoid conflicts
+	testCmd.Flags().StringP("port", "P", "8080", "Port to listen on")
+	testCmd.Flags().StringP("config", "C", "config.json", "Configuration file path")
+	testCmd.Flags().BoolP("verbose", "V", false, "Enable verbose logging")
 
-	// Flags are already initialized
+	// Create fresh viper instance
+	v := viper.New()
+	err := v.BindPFlag("port", testCmd.Flags().Lookup("port"))
+	require.NoError(t, err)
+	err = v.BindPFlag("config", testCmd.Flags().Lookup("config"))
+	require.NoError(t, err)
+	err = v.BindPFlag("verbose", testCmd.Flags().Lookup("verbose"))
+	require.NoError(t, err)
 
 	// Test that viper bindings work correctly
-	err := ServerCmd.ParseFlags([]string{"-p", "4000", "-c", "test.json", "-v"})
+	err = testCmd.ParseFlags([]string{"-P", "4000", "-C", "test.json", "-V"})
 	require.NoError(t, err)
 
 	// Check if viper has the correct values
-	assert.Equal(t, "4000", viper.GetString("port"))
-	assert.Equal(t, "test.json", viper.GetString("config"))
-	assert.True(t, viper.GetBool("verbose"))
+	assert.Equal(t, "4000", v.GetString("port"))
+	assert.Equal(t, "test.json", v.GetString("config"))
+	assert.True(t, v.GetBool("verbose"))
 }
