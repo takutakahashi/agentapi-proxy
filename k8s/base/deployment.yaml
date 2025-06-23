@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentapi-proxy
+  namespace: default
+  labels:
+    app: agentapi-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentapi-proxy
+  template:
+    metadata:
+      labels:
+        app: agentapi-proxy
+    spec:
+      securityContext:
+        fsGroup: 1001
+        runAsUser: 1001
+        runAsGroup: 1001
+        runAsNonRoot: true
+      containers:
+      - name: agentapi-proxy
+        image: ghcr.io/takutakahashi/agentapi-proxy:0.18.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        # Port range for spawned agentapi instances
+        - name: agentapi-start
+          containerPort: 9000
+          protocol: TCP
+        env:
+        - name: HOME
+          value: "/home/agentapi"
+        - name: CLAUDE_ARGS
+          valueFrom:
+            configMapKeyRef:
+              name: agentapi-proxy-config
+              key: CLAUDE_ARGS
+        - name: GITHUB_URL
+          valueFrom:
+            configMapKeyRef:
+              name: agentapi-proxy-config
+              key: GITHUB_URL
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: agentapi-proxy-secrets
+              key: GITHUB_TOKEN
+              optional: true
+        - name: GITHUB_APP_ID
+          valueFrom:
+            secretKeyRef:
+              name: agentapi-proxy-secrets
+              key: GITHUB_APP_ID
+              optional: true
+        - name: GITHUB_APP_PEM_PATH
+          value: "/home/agentapi/github-app.pem"
+        - name: API_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: agentapi-proxy-secrets
+              key: API_KEYS
+              optional: true
+        volumeMounts:
+        - name: data
+          mountPath: /home/agentapi
+        - name: config
+          mountPath: /home/agentapi/config.json
+          subPath: config.json
+        - name: github-app-pem
+          mountPath: /home/agentapi/github-app.pem
+          subPath: GITHUB_APP_PEM
+          readOnly: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: agentapi-proxy-data
+      - name: config
+        configMap:
+          name: agentapi-proxy-config
+      - name: github-app-pem
+        secret:
+          secretName: agentapi-proxy-secrets
+          optional: true
+          items:
+          - key: GITHUB_APP_PEM
+            path: GITHUB_APP_PEM
