@@ -1,0 +1,45 @@
+{
+  "start_port": 9000,
+  "auth": {
+    "enabled": true,
+    "github": {
+      "enabled": true,
+      "base_url": "https://api.github.com",
+      "token_header": "Authorization",
+      "user_mapping": {
+        "default_role": "guest",
+        "default_permissions": ["read"],
+        "team_role_mapping": {
+          "mycompany/platform-team": {
+            "role": "admin",
+            "permissions": ["*"]
+          },
+          "mycompany/backend-developers": {
+            "role": "developer",
+            "permissions": ["read", "write", "execute", "debug"]
+          },
+          "mycompany/frontend-developers": {
+            "role": "developer", 
+            "permissions": ["read", "write", "execute"]
+          },
+          "mycompany/qa-team": {
+            "role": "tester",
+            "permissions": ["read", "execute"]
+          },
+          "partnerorg/consultants": {
+            "role": "contractor",
+            "permissions": ["read", "limited_write"]
+          }
+        }
+      }
+    }
+  },
+  "persistence": {
+    "enabled": true,
+    "backend": "file",
+    "file_path": "./sessions.json",
+    "sync_interval_seconds": 30,
+    "encrypt_sensitive_data": true,
+    "session_recovery_max_age_hours": 24
+  }
+}

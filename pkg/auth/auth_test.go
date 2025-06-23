@@ -37,8 +37,11 @@ func TestAuthMiddleware_MissingAPIKey(t *testing.T) {
 	// Create config with auth enabled
 	cfg := &config.Config{
 		Auth: config.AuthConfig{
-			Enabled:    true,
-			HeaderName: "X-API-Key",
+			Enabled: true,
+			Static: &config.StaticAuthConfig{
+				Enabled:    true,
+				HeaderName: "X-API-Key",
+			},
 		},
 	}
 
@@ -63,14 +66,17 @@ func TestAuthMiddleware_InvalidAPIKey(t *testing.T) {
 	// Create config with auth enabled and valid API keys
 	cfg := &config.Config{
 		Auth: config.AuthConfig{
-			Enabled:    true,
-			HeaderName: "X-API-Key",
-			APIKeys: []config.APIKey{
-				{
-					Key:         "valid-key",
-					UserID:      "user1",
-					Role:        "user",
-					Permissions: []string{"session:create"},
+			Enabled: true,
+			Static: &config.StaticAuthConfig{
+				Enabled:    true,
+				HeaderName: "X-API-Key",
+				APIKeys: []config.APIKey{
+					{
+						Key:         "valid-key",
+						UserID:      "user1",
+						Role:        "user",
+						Permissions: []string{"session:create"},
+					},
 				},
 			},
 		},
@@ -98,14 +104,17 @@ func TestAuthMiddleware_ValidAPIKey(t *testing.T) {
 	// Create config with auth enabled and valid API keys
 	cfg := &config.Config{
 		Auth: config.AuthConfig{
-			Enabled:    true,
-			HeaderName: "X-API-Key",
-			APIKeys: []config.APIKey{
-				{
-					Key:         "valid-key",
-					UserID:      "user1",
-					Role:        "user",
-					Permissions: []string{"session:create"},
+			Enabled: true,
+			Static: &config.StaticAuthConfig{
+				Enabled:    true,
+				HeaderName: "X-API-Key",
+				APIKeys: []config.APIKey{
+					{
+						Key:         "valid-key",
+						UserID:      "user1",
+						Role:        "user",
+						Permissions: []string{"session:create"},
+					},
 				},
 			},
 		},

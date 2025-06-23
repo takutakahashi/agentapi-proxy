@@ -60,9 +60,17 @@ func TestLoadConfig(t *testing.T) {
 	expectedConfig := &Config{
 		StartPort: 8000,
 		Auth: AuthConfig{
-			Enabled:    false,
-			HeaderName: "X-API-Key",
-			APIKeys:    nil, // Will be nil after JSON unmarshaling if not specified
+			Enabled: false,
+			Static:  nil, // JSON doesn't specify static auth, so it remains nil
+			GitHub:  nil, // JSON doesn't specify GitHub auth, so it remains nil
+		},
+		Persistence: PersistenceConfig{
+			Enabled:               false,
+			Backend:               "file",
+			FilePath:              "./sessions.json",
+			SyncInterval:          30,
+			EncryptSecrets:        true,
+			SessionRecoveryMaxAge: 24,
 		},
 	}
 
@@ -114,13 +122,16 @@ func TestValidateAPIKey_ValidKey(t *testing.T) {
 	cfg := &Config{
 		Auth: AuthConfig{
 			Enabled: true,
-			APIKeys: []APIKey{
-				{
-					Key:         "valid-key",
-					UserID:      "user1",
-					Role:        "user",
-					Permissions: []string{"session:create"},
-					CreatedAt:   "2024-01-01T00:00:00Z",
+			Static: &StaticAuthConfig{
+				Enabled: true,
+				APIKeys: []APIKey{
+					{
+						Key:         "valid-key",
+						UserID:      "user1",
+						Role:        "user",
+						Permissions: []string{"session:create"},
+						CreatedAt:   "2024-01-01T00:00:00Z",
+					},
 				},
 			},
 		},
@@ -137,10 +148,13 @@ func TestValidateAPIKey_InvalidKey(t *testing.T) {
 	cfg := &Config{
 		Auth: AuthConfig{
 			Enabled: true,
-			APIKeys: []APIKey{
-				{
-					Key:    "valid-key",
-					UserID: "user1",
+			Static: &StaticAuthConfig{
+				Enabled: true,
+				APIKeys: []APIKey{
+					{
+						Key:    "valid-key",
+						UserID: "user1",
+					},
 				},
 			},
 		},
@@ -157,11 +171,14 @@ func TestValidateAPIKey_ExpiredKey(t *testing.T) {
 	cfg := &Config{
 		Auth: AuthConfig{
 			Enabled: true,
-			APIKeys: []APIKey{
-				{
-					Key:       "expired-key",
-					UserID:    "user1",
-					ExpiresAt: expiredTime,
+			Static: &StaticAuthConfig{
+				Enabled: true,
+				APIKeys: []APIKey{
+					{
+						Key:       "expired-key",
+						UserID:    "user1",
+						ExpiresAt: expiredTime,
+					},
 				},
 			},
 		},
