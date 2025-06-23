@@ -23,7 +23,7 @@ helm install my-agentapi-proxy ./helm/agentapi-proxy
 Once published to ghcr.io, you can install directly from the OCI registry:
 
 ```bash
-helm install my-agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
+helm install my-agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0
 ```
 
 The command deploys AgentAPI Proxy on the Kubernetes cluster in the default configuration. The [Parameters](#parameters) section lists the parameters that can be configured during installation.
@@ -134,7 +134,7 @@ The command removes all the Kubernetes components associated with the chart and 
 helm install agentapi-proxy ./helm/agentapi-proxy
 
 # From OCI registry
-helm install agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
+helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0
 ```
 
 ### With Custom Values
@@ -147,7 +147,7 @@ helm install agentapi-proxy ./helm/agentapi-proxy \
   --set persistence.size=20Gi
 
 # From OCI registry
-helm install agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy \
+helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
   --version 0.1.0 \
   --set image.tag=latest \
   --set replicaCount=2 \
@@ -177,7 +177,7 @@ ingress:
 helm install agentapi-proxy ./helm/agentapi-proxy -f values.yaml
 
 # From OCI registry
-helm install agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0 -f values.yaml
+helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0 -f values.yaml
 ```
 
 ### With Environment Variables
@@ -233,7 +233,7 @@ The chart uses StatefulSet for better session persistence. Each replica gets its
 helm upgrade agentapi-proxy ./helm/agentapi-proxy --set replicaCount=3
 
 # Scale to 3 replicas (OCI registry)
-helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0 --set replicaCount=3
+helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0 --set replicaCount=3
 ```
 
 ## Troubleshooting
@@ -277,7 +277,7 @@ To upgrade an existing release:
 helm upgrade agentapi-proxy ./helm/agentapi-proxy
 
 # Upgrade from OCI registry
-helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
+helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0
 ```
 
 ## Values File Example
