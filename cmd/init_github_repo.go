@@ -45,6 +45,7 @@ Authentication options (one required):
 
 Optional:
 - GITHUB_API: GitHub API base URL (defaults to https://api.github.com)
+- GITHUB_URL: GitHub base URL (defaults to https://github.com)
 `,
 	RunE: runInitGitHubRepo,
 }
@@ -129,7 +130,8 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 	}
 
 	// Convert fullname to URL for cloning
-	repoURL := fmt.Sprintf("https://github.com/%s", repoFullName)
+	githubURL := getGitHubURL()
+	repoURL := fmt.Sprintf("%s/%s", githubURL, repoFullName)
 
 	// Setup repository
 	if err := setupRepository(repoURL, token, cloneDir); err != nil {
@@ -156,6 +158,14 @@ func getAPIBase() string {
 		apiBase = "https://api.github.com"
 	}
 	return apiBase
+}
+
+func getGitHubURL() string {
+	githubURL := os.Getenv("GITHUB_URL")
+	if githubURL == "" {
+		githubURL = "https://github.com"
+	}
+	return githubURL
 }
 
 func generateInstallationToken(config GitHubAppConfig) (string, error) {
@@ -277,14 +287,18 @@ func setupRepository(repoURL, token, cloneDir string) error {
 }
 
 func createAuthenticatedURL(repoURL, token string) (string, error) {
+	githubURL := getGitHubURL()
+	githubHost := strings.TrimPrefix(githubURL, "https://")
+	githubHost = strings.TrimPrefix(githubHost, "http://")
+	
 	// Parse the repository URL and insert the token
-	if strings.HasPrefix(repoURL, "https://github.com/") {
-		parts := strings.TrimPrefix(repoURL, "https://github.com/")
-		return fmt.Sprintf("https://%s@github.com/%s", token, parts), nil
-	} else if strings.HasPrefix(repoURL, "git@github.com:") {
-		parts := strings.TrimPrefix(repoURL, "git@github.com:")
+	if strings.HasPrefix(repoURL, githubURL+"/") {
+		parts := strings.TrimPrefix(repoURL, githubURL+"/")
+		return fmt.Sprintf("https://%s@%s/%s", token, githubHost, parts), nil
+	} else if strings.HasPrefix(repoURL, "git@"+githubHost+":") {
+		parts := strings.TrimPrefix(repoURL, "git@"+githubHost+":")
 		parts = strings.TrimSuffix(parts, ".git")
-		return fmt.Sprintf("https://%s@github.com/%s.git", token, parts), nil
+		return fmt.Sprintf("https://%s@%s/%s.git", token, githubHost, parts), nil
 	}
 
 	return "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
