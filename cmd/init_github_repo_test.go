@@ -137,37 +137,64 @@ func TestCreateAuthenticatedURL(t *testing.T) {
 		name        string
 		repoURL     string
 		token       string
+		githubURL   string
 		expected    string
 		expectError bool
 	}{
 		{
-			name:     "HTTPS URL",
-			repoURL:  "https://github.com/user/repo",
-			token:    "test-token",
-			expected: "https://test-token@github.com/user/repo",
+			name:      "HTTPS URL",
+			repoURL:   "https://github.com/user/repo",
+			token:     "test-token",
+			githubURL: "https://github.com",
+			expected:  "https://test-token@github.com/user/repo",
 		},
 		{
-			name:     "SSH URL",
-			repoURL:  "git@github.com:user/repo.git",
-			token:    "test-token",
-			expected: "https://test-token@github.com/user/repo.git",
+			name:      "SSH URL",
+			repoURL:   "git@github.com:user/repo.git",
+			token:     "test-token",
+			githubURL: "https://github.com",
+			expected:  "https://test-token@github.com/user/repo.git",
 		},
 		{
-			name:     "SSH URL without .git",
-			repoURL:  "git@github.com:user/repo",
-			token:    "test-token",
-			expected: "https://test-token@github.com/user/repo.git",
+			name:      "SSH URL without .git",
+			repoURL:   "git@github.com:user/repo",
+			token:     "test-token",
+			githubURL: "https://github.com",
+			expected:  "https://test-token@github.com/user/repo.git",
+		},
+		{
+			name:      "Enterprise GitHub HTTPS URL",
+			repoURL:   "https://github.enterprise.com/user/repo",
+			token:     "test-token",
+			githubURL: "https://github.enterprise.com",
+			expected:  "https://test-token@github.enterprise.com/user/repo",
+		},
+		{
+			name:      "Enterprise GitHub SSH URL",
+			repoURL:   "git@github.enterprise.com:user/repo.git",
+			token:     "test-token",
+			githubURL: "https://github.enterprise.com",
+			expected:  "https://test-token@github.enterprise.com/user/repo.git",
 		},
 		{
 			name:        "Invalid URL",
 			repoURL:     "invalid-url",
 			token:       "test-token",
+			githubURL:   "https://github.com",
 			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Set GITHUB_URL environment variable
+			if tt.githubURL != "" {
+				_ = os.Setenv("GITHUB_URL", tt.githubURL)
+				defer func() { _ = os.Unsetenv("GITHUB_URL") }()
+			} else {
+				_ = os.Unsetenv("GITHUB_URL")
+			}
+
 			result, err := createAuthenticatedURL(tt.repoURL, tt.token)
 
 			if tt.expectError {
@@ -217,6 +244,42 @@ func TestGetAPIBase(t *testing.T) {
 			}
 
 			result := getAPIBase()
+			if result != tt.expected {
+				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestGetGitHubURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		envValue string
+		expected string
+	}{
+		{
+			name:     "Default GitHub URL",
+			envValue: "",
+			expected: "https://github.com",
+		},
+		{
+			name:     "Custom GitHub URL",
+			envValue: "https://github.enterprise.com",
+			expected: "https://github.enterprise.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set environment variable
+			if tt.envValue != "" {
+				_ = os.Setenv("GITHUB_URL", tt.envValue)
+				defer func() { _ = os.Unsetenv("GITHUB_URL") }()
+			} else {
+				_ = os.Unsetenv("GITHUB_URL")
+			}
+
+			result := getGitHubURL()
 			if result != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, result)
 			}
