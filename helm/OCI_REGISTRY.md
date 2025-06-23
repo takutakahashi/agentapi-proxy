@@ -88,42 +88,48 @@ helm push agentapi-proxy-0.2.0.tgz oci://ghcr.io/takutakahashi
 
 ## Automation with GitHub Actions
 
-Add this workflow to automatically publish charts:
+The repository includes automated workflows for Helm chart management:
 
-```yaml
-# .github/workflows/helm-publish.yml
-name: Publish Helm Chart
+### Automatic Publishing (`.github/workflows/helm-publish.yml`)
 
-on:
-  push:
-    tags:
-      - 'v*'
+This workflow automatically publishes the Helm chart when you create a git tag:
 
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: '3.18.3'
-      
-      - name: Package Chart
-        run: helm package helm/agentapi-proxy/
-      
-      - name: Login to ghcr.io
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
-      
-      - name: Push Chart
-        run: |
-          helm push agentapi-proxy-*.tgz oci://ghcr.io/${{ github.repository_owner }}
+```bash
+# Create and push a tag to trigger publishing
+git tag v0.1.0
+git push origin v0.1.0
+
+# Or create a helm-specific tag
+git tag helm-v0.2.0
+git push origin helm-v0.2.0
 ```
+
+**Workflow Features:**
+- ✅ Triggers on `v*` or `helm-v*` tags
+- ✅ Automatically updates Chart.yaml version from git tag
+- ✅ Lints and validates the chart before publishing
+- ✅ Pushes to `oci://ghcr.io/[owner]/agentapi-proxy`
+- ✅ Creates release notes and artifacts
+- ✅ Uses `GITHUB_TOKEN` (no additional secrets needed)
+
+### Chart Testing (`.github/workflows/helm-test.yml`)
+
+This workflow tests the Helm chart on every PR and push:
+
+**Test Features:**
+- ✅ Helm lint validation
+- ✅ Template rendering tests
+- ✅ Kubernetes manifest validation with kubeval
+- ✅ Tests with different values configurations
+- ✅ Uploads test artifacts for review
+
+### Required Permissions
+
+The workflows use the default `GITHUB_TOKEN` with these permissions:
+- `contents: read` - To checkout the repository
+- `packages: write` - To push to ghcr.io
+
+No additional secrets or configuration required!
 
 ## Private Registry Access
 
