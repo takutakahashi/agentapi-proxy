@@ -61,11 +61,8 @@ func TestLoadConfig(t *testing.T) {
 		StartPort: 8000,
 		Auth: AuthConfig{
 			Enabled: false,
-			Static: &StaticAuthConfig{
-				Enabled:    false,
-				HeaderName: "X-API-Key",
-				APIKeys:    []APIKey{},
-			},
+			Static:  nil, // JSON doesn't specify static auth, so it remains nil
+			GitHub:  nil, // JSON doesn't specify GitHub auth, so it remains nil
 		},
 		Persistence: PersistenceConfig{
 			Enabled:               false,

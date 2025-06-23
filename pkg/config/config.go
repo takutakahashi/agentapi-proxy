@@ -96,6 +96,21 @@ func LoadConfig(filename string) (*Config, error) {
 		config.StartPort = 9000
 	}
 
+	// Set default persistence configuration
+	if config.Persistence.Backend == "" {
+		config.Persistence.Backend = "file"
+	}
+	if config.Persistence.FilePath == "" {
+		config.Persistence.FilePath = "./sessions.json"
+	}
+	if config.Persistence.SyncInterval == 0 {
+		config.Persistence.SyncInterval = 30
+	}
+	if !config.Persistence.Enabled {
+		config.Persistence.EncryptSecrets = true
+		config.Persistence.SessionRecoveryMaxAge = 24
+	}
+
 	// Set default auth configuration
 	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
 		config.Auth.Static.HeaderName = "X-API-Key"
