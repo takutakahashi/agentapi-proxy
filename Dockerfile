@@ -80,6 +80,8 @@ RUN mise global node@latest
 # Install claude code via npm
 RUN mise exec -- npm install -g @anthropic-ai/claude-code
 
+# Copy CLAUDE.md to user's home directory
+COPY --chown=agentapi:agentapi config/CLAUDE.md /home/agentapi/.claude/CLAUDE.md
 
 # Expose port
 EXPOSE 8080
