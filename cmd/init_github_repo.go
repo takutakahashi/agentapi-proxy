@@ -290,7 +290,7 @@ func createAuthenticatedURL(repoURL, token string) (string, error) {
 	githubURL := getGitHubURL()
 	githubHost := strings.TrimPrefix(githubURL, "https://")
 	githubHost = strings.TrimPrefix(githubHost, "http://")
-	
+
 	// Parse the repository URL and insert the token
 	if strings.HasPrefix(repoURL, githubURL+"/") {
 		parts := strings.TrimPrefix(repoURL, githubURL+"/")

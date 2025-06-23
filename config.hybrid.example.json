@@ -1,0 +1,62 @@
+{
+  "start_port": 9000,
+  "auth": {
+    "enabled": true,
+    "static": {
+      "enabled": true,
+      "header_name": "X-API-Key",
+      "api_keys": [
+        {
+          "key": "admin-key-12345",
+          "user_id": "system-admin",
+          "role": "admin",
+          "permissions": ["*"],
+          "created_at": "2024-01-01T00:00:00Z"
+        },
+        {
+          "key": "service-key-67890",
+          "user_id": "ci-service",
+          "role": "service",
+          "permissions": ["read", "write"],
+          "created_at": "2024-01-01T00:00:00Z",
+          "expires_at": "2024-12-31T23:59:59Z"
+        }
+      ]
+    },
+    "github": {
+      "enabled": true,
+      "base_url": "https://api.github.com",
+      "token_header": "Authorization",
+      "user_mapping": {
+        "default_role": "guest",
+        "default_permissions": ["read"],
+        "team_role_mapping": {
+          "acme-corp/infrastructure": {
+            "role": "admin",
+            "permissions": ["*"]
+          },
+          "acme-corp/senior-engineers": {
+            "role": "senior_dev",
+            "permissions": ["read", "write", "execute", "debug", "deploy"]
+          },
+          "acme-corp/engineers": {
+            "role": "developer",
+            "permissions": ["read", "write", "execute"]
+          },
+          "acme-corp/interns": {
+            "role": "trainee",
+            "permissions": ["read"]
+          }
+        }
+      }
+    }
+  },
+  "persistence": {
+    "enabled": true,
+    "backend": "file",
+    "file_path": "./sessions.json",
+    "sync_interval_seconds": 30,
+    "encrypt_sensitive_data": true,
+    "session_recovery_max_age_hours": 24
+  }
+}

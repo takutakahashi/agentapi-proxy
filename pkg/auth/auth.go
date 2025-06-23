@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -14,6 +15,8 @@ type UserContext struct {
 	Role        string
 	Permissions []string
 	APIKey      string
+	AuthType    string          // "api_key" or "github_oauth"
+	GitHubUser  *GitHubUserInfo // GitHub user info when using GitHub auth
 }
 
 // AuthMiddleware creates authentication middleware
@@ -34,33 +37,31 @@ func AuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			// Get API key from header
-			apiKey := c.Request().Header.Get(cfg.Auth.HeaderName)
-			if apiKey == "" {
-				log.Printf("Authentication failed: missing API key in header %s from %s", cfg.Auth.HeaderName, c.RealIP())
-				return echo.NewHTTPError(http.StatusUnauthorized, "API key required")
+			var userCtx *UserContext
+			var err error
+
+			// Try GitHub authentication first
+			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
+				if userCtx, err = tryGitHubAuth(c, cfg.Auth.GitHub); err == nil {
+					c.Set("user", userCtx)
+					log.Printf("GitHub authentication successful: user %s (role: %s) from %s", userCtx.UserID, userCtx.Role, c.RealIP())
+					return next(c)
+				}
+				log.Printf("GitHub authentication failed: %v from %s", err, c.RealIP())
 			}
 
-			// Validate API key
-			keyInfo, valid := cfg.ValidateAPIKey(apiKey)
-			if !valid {
-				log.Printf("Authentication failed: invalid API key from %s", c.RealIP())
-				return echo.NewHTTPError(http.StatusUnauthorized, "Invalid API key")
+			// Try static API key authentication
+			if cfg.Auth.Static != nil && cfg.Auth.Static.Enabled {
+				if userCtx, err = tryStaticAuth(c, cfg.Auth.Static, cfg); err == nil {
+					c.Set("user", userCtx)
+					log.Printf("Static authentication successful: user %s (role: %s) from %s", userCtx.UserID, userCtx.Role, c.RealIP())
+					return next(c)
+				}
+				log.Printf("Static authentication failed: %v from %s", err, c.RealIP())
 			}
 
-			// Create user context
-			userCtx := &UserContext{
-				UserID:      keyInfo.UserID,
-				Role:        keyInfo.Role,
-				Permissions: keyInfo.Permissions,
-				APIKey:      apiKey,
-			}
-
-			// Store user context in Echo context
-			c.Set("user", userCtx)
-
-			log.Printf("Authentication successful: user %s (role: %s) from %s", userCtx.UserID, userCtx.Role, c.RealIP())
-			return next(c)
+			log.Printf("Authentication failed: no valid credentials provided from %s", c.RealIP())
+			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
 	}
 }
@@ -114,6 +115,50 @@ func GetConfigFromContext(c echo.Context) *config.Config {
 		}
 	}
 	return nil
+}
+
+// tryGitHubAuth attempts GitHub OAuth authentication
+func tryGitHubAuth(c echo.Context, cfg *config.GitHubAuthConfig) (*UserContext, error) {
+	tokenHeader := c.Request().Header.Get(cfg.TokenHeader)
+	if tokenHeader == "" {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub token required")
+	}
+
+	token := ExtractTokenFromHeader(tokenHeader)
+	if token == "" {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid GitHub token format")
+	}
+
+	provider := NewGitHubAuthProvider(cfg)
+	ctx := context.WithValue(c.Request().Context(), "echo", c)
+
+	userCtx, err := provider.Authenticate(ctx, token)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub authentication failed")
+	}
+
+	return userCtx, nil
+}
+
+// tryStaticAuth attempts static API key authentication
+func tryStaticAuth(c echo.Context, staticCfg *config.StaticAuthConfig, cfg *config.Config) (*UserContext, error) {
+	apiKey := c.Request().Header.Get(staticCfg.HeaderName)
+	if apiKey == "" {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "API key required")
+	}
+
+	keyInfo, valid := cfg.ValidateAPIKey(apiKey)
+	if !valid {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid API key")
+	}
+
+	return &UserContext{
+		UserID:      keyInfo.UserID,
+		Role:        keyInfo.Role,
+		Permissions: keyInfo.Permissions,
+		APIKey:      apiKey,
+		AuthType:    "api_key",
+	}, nil
 }
 
 // hasPermission checks if user has a specific permission

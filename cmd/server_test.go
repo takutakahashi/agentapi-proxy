@@ -75,10 +75,10 @@ func TestServerCmdFlags(t *testing.T) {
 			testCmd.Flags().StringP("port", "p", "8080", "Port to listen on")
 			testCmd.Flags().StringP("config", "c", "config.json", "Configuration file path")
 			testCmd.Flags().BoolP("verbose", "v", false, "Enable verbose logging")
-			
+
 			// Reset flag states to ensure clean test
 			_ = testCmd.Flags().Set("port", "8080")
-			_ = testCmd.Flags().Set("config", "config.json") 
+			_ = testCmd.Flags().Set("config", "config.json")
 			_ = testCmd.Flags().Set("verbose", "false")
 
 			// Parse flags

@@ -9,10 +9,38 @@ import (
 
 // AuthConfig represents authentication configuration
 type AuthConfig struct {
+	Enabled bool              `json:"enabled" mapstructure:"enabled"`
+	Static  *StaticAuthConfig `json:"static,omitempty" mapstructure:"static"`
+	GitHub  *GitHubAuthConfig `json:"github,omitempty" mapstructure:"github"`
+}
+
+// StaticAuthConfig represents static API key authentication
+type StaticAuthConfig struct {
 	Enabled    bool     `json:"enabled" mapstructure:"enabled"`
 	APIKeys    []APIKey `json:"api_keys" mapstructure:"api_keys"`
 	KeysFile   string   `json:"keys_file" mapstructure:"keys_file"`
 	HeaderName string   `json:"header_name" mapstructure:"header_name"`
+}
+
+// GitHubAuthConfig represents GitHub OAuth authentication
+type GitHubAuthConfig struct {
+	Enabled     bool              `json:"enabled" mapstructure:"enabled"`
+	BaseURL     string            `json:"base_url" mapstructure:"base_url"`
+	TokenHeader string            `json:"token_header" mapstructure:"token_header"`
+	UserMapping GitHubUserMapping `json:"user_mapping" mapstructure:"user_mapping"`
+}
+
+// GitHubUserMapping represents user role mapping configuration
+type GitHubUserMapping struct {
+	DefaultRole        string                  `json:"default_role" mapstructure:"default_role"`
+	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions"`
+	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping"`
+}
+
+// TeamRoleRule represents a team-based role rule
+type TeamRoleRule struct {
+	Role        string   `json:"role" mapstructure:"role"`
+	Permissions []string `json:"permissions" mapstructure:"permissions"`
 }
 
 // APIKey represents an API key configuration
@@ -69,14 +97,20 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	// Set default auth configuration
-	if config.Auth.HeaderName == "" {
-		config.Auth.HeaderName = "X-API-Key"
+	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
+		config.Auth.Static.HeaderName = "X-API-Key"
+	}
+	if config.Auth.GitHub != nil && config.Auth.GitHub.BaseURL == "" {
+		config.Auth.GitHub.BaseURL = "https://api.github.com"
+	}
+	if config.Auth.GitHub != nil && config.Auth.GitHub.TokenHeader == "" {
+		config.Auth.GitHub.TokenHeader = "Authorization"
 	}
 
 	// Load API keys from external file if specified
-	if config.Auth.Enabled && config.Auth.KeysFile != "" {
+	if config.Auth.Enabled && config.Auth.Static != nil && config.Auth.Static.KeysFile != "" {
 		if err := config.loadAPIKeysFromFile(); err != nil {
-			log.Printf("Warning: Failed to load API keys from %s: %v", config.Auth.KeysFile, err)
+			log.Printf("Warning: Failed to load API keys from %s: %v", config.Auth.Static.KeysFile, err)
 		}
 	}
 
@@ -88,9 +122,12 @@ func DefaultConfig() *Config {
 	return &Config{
 		StartPort: 9000,
 		Auth: AuthConfig{
-			Enabled:    false,
-			HeaderName: "X-API-Key",
-			APIKeys:    []APIKey{},
+			Enabled: false,
+			Static: &StaticAuthConfig{
+				Enabled:    false,
+				HeaderName: "X-API-Key",
+				APIKeys:    []APIKey{},
+			},
 		},
 		Persistence: PersistenceConfig{
 			Enabled:               false,
@@ -105,7 +142,7 @@ func DefaultConfig() *Config {
 
 // loadAPIKeysFromFile loads API keys from an external JSON file
 func (c *Config) loadAPIKeysFromFile() error {
-	file, err := os.Open(c.Auth.KeysFile)
+	file, err := os.Open(c.Auth.Static.KeysFile)
 	if err != nil {
 		return err
 	}
@@ -124,17 +161,17 @@ func (c *Config) loadAPIKeysFromFile() error {
 		return err
 	}
 
-	c.Auth.APIKeys = keysData.APIKeys
+	c.Auth.Static.APIKeys = keysData.APIKeys
 	return nil
 }
 
 // ValidateAPIKey validates an API key and returns user information
 func (c *Config) ValidateAPIKey(key string) (*APIKey, bool) {
-	if !c.Auth.Enabled {
+	if !c.Auth.Enabled || c.Auth.Static == nil || !c.Auth.Static.Enabled {
 		return nil, false
 	}
 
-	for _, apiKey := range c.Auth.APIKeys {
+	for _, apiKey := range c.Auth.Static.APIKeys {
 		if apiKey.Key == key {
 			// Check if key is expired
 			if apiKey.ExpiresAt != "" {
