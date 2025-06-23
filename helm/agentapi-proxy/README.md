@@ -10,13 +10,25 @@ A Helm chart for deploying AgentAPI Proxy - a reverse proxy and process manager 
 
 ## Installing the Chart
 
+### From Local Chart
+
 To install the chart with the release name `my-agentapi-proxy`:
 
 ```bash
 helm install my-agentapi-proxy ./helm/agentapi-proxy
 ```
 
+### From OCI Registry (Recommended)
+
+Once published to ghcr.io, you can install directly from the OCI registry:
+
+```bash
+helm install my-agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
+```
+
 The command deploys AgentAPI Proxy on the Kubernetes cluster in the default configuration. The [Parameters](#parameters) section lists the parameters that can be configured during installation.
+
+> **Note**: For OCI registry publishing instructions, see [OCI_REGISTRY.md](../OCI_REGISTRY.md)
 
 ## Uninstalling the Chart
 
@@ -118,13 +130,25 @@ The command removes all the Kubernetes components associated with the chart and 
 ### Basic Installation
 
 ```bash
+# From local chart
 helm install agentapi-proxy ./helm/agentapi-proxy
+
+# From OCI registry
+helm install agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
 ```
 
 ### With Custom Values
 
 ```bash
+# From local chart
 helm install agentapi-proxy ./helm/agentapi-proxy \
+  --set image.tag=latest \
+  --set replicaCount=2 \
+  --set persistence.size=20Gi
+
+# From OCI registry
+helm install agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy \
+  --version 0.1.0 \
   --set image.tag=latest \
   --set replicaCount=2 \
   --set persistence.size=20Gi
@@ -149,7 +173,11 @@ ingress:
 ```
 
 ```bash
+# From local chart
 helm install agentapi-proxy ./helm/agentapi-proxy -f values.yaml
+
+# From OCI registry
+helm install agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0 -f values.yaml
 ```
 
 ### With Environment Variables
@@ -201,8 +229,11 @@ readinessProbe:
 The chart uses StatefulSet for better session persistence. Each replica gets its own persistent volume:
 
 ```bash
-# Scale to 3 replicas
+# Scale to 3 replicas (local chart)
 helm upgrade agentapi-proxy ./helm/agentapi-proxy --set replicaCount=3
+
+# Scale to 3 replicas (OCI registry)
+helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0 --set replicaCount=3
 ```
 
 ## Troubleshooting
@@ -242,7 +273,11 @@ kubectl port-forward agentapi-proxy-0 8080:8080
 To upgrade an existing release:
 
 ```bash
+# Upgrade from local chart
 helm upgrade agentapi-proxy ./helm/agentapi-proxy
+
+# Upgrade from OCI registry
+helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
 ```
 
 ## Values File Example
