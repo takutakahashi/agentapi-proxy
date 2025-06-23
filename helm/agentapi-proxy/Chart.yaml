@@ -1,0 +1,16 @@
+apiVersion: v2
+name: agentapi-proxy
+description: A Helm chart for AgentAPI Proxy - a reverse proxy and process manager for agentapi server instances
+type: application
+version: 0.1.0
+appVersion: "0.18.0"
+home: https://github.com/takutakahashi/agentapi-proxy
+sources:
+  - https://github.com/takutakahashi/agentapi-proxy
+maintainers:
+  - name: takutakahashi
+keywords:
+  - proxy
+  - api
+  - claude
+  - session-management

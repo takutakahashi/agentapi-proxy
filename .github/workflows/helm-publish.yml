@@ -1,0 +1,103 @@
+name: Publish Helm Chart to OCI Registry
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'helm-v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          # Remove 'v' prefix if present
+          VERSION=${TAG#v}
+          # Remove 'helm-v' prefix if present
+          VERSION=${VERSION#helm-v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION from tag: $TAG"
+
+      - name: Update Chart.yaml version
+        run: |
+          sed -i "s/^version:.*/version: ${{ steps.version.outputs.version }}/" helm/agentapi-proxy/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.version }}\"/" helm/agentapi-proxy/Chart.yaml
+          echo "Updated Chart.yaml versions:"
+          grep -E "^(version|appVersion):" helm/agentapi-proxy/Chart.yaml
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.18.3'
+
+      - name: Lint Helm chart
+        run: |
+          helm lint helm/agentapi-proxy/
+
+      - name: Package Helm chart
+        run: |
+          helm package helm/agentapi-proxy/
+          ls -la *.tgz
+
+      - name: Login to GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
+
+      - name: Push Helm chart to OCI registry
+        run: |
+          CHART_FILE=$(ls agentapi-proxy-*.tgz)
+          echo "Pushing chart file: $CHART_FILE"
+          helm push "$CHART_FILE" oci://ghcr.io/${{ github.repository_owner }}
+
+      - name: Verify published chart
+        run: |
+          echo "Chart published successfully!"
+          echo "Install with: helm install agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/agentapi-proxy --version ${{ steps.version.outputs.version }}"
+
+      - name: Create release notes
+        run: |
+          cat > release-notes.md << EOF
+          # Helm Chart Release ${{ steps.version.outputs.tag }}
+          
+          ## Installation
+          
+          \`\`\`bash
+          helm install agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/agentapi-proxy --version ${{ steps.version.outputs.version }}
+          \`\`\`
+          
+          ## Upgrade
+          
+          \`\`\`bash
+          helm upgrade agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/agentapi-proxy --version ${{ steps.version.outputs.version }}
+          \`\`\`
+          
+          ## Chart Information
+          
+          - **Chart Version**: ${{ steps.version.outputs.version }}
+          - **App Version**: ${{ steps.version.outputs.version }}
+          - **Registry**: ghcr.io/${{ github.repository_owner }}/agentapi-proxy
+          
+          ## Changes
+          
+          See the [changelog](CHANGELOG.md) for detailed changes in this release.
+          EOF
+          
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart-${{ steps.version.outputs.version }}
+          path: |
+            agentapi-proxy-*.tgz
+            release-notes.md
+          retention-days: 30

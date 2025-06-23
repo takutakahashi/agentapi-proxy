@@ -1,0 +1,75 @@
+name: Test Helm Chart
+
+on:
+  pull_request:
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm-*.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm-*.yml'
+
+jobs:
+  test-helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.18.3'
+
+      - name: Lint Helm chart
+        run: |
+          helm lint helm/agentapi-proxy/
+
+      - name: Template Helm chart
+        run: |
+          helm template test-release helm/agentapi-proxy/ > /tmp/rendered-templates.yaml
+          echo "Rendered templates:"
+          cat /tmp/rendered-templates.yaml
+
+      - name: Validate Kubernetes manifests
+        run: |
+          # Install kubeval for validation
+          curl -L https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz | tar xz
+          sudo mv kubeval /usr/local/bin
+          
+          # Validate the rendered templates
+          helm template test-release helm/agentapi-proxy/ | kubeval
+
+      - name: Test with different values
+        run: |
+          # Test with ingress enabled
+          helm template test-release helm/agentapi-proxy/ \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=test.example.com > /tmp/ingress-test.yaml
+          
+          # Test with custom values
+          helm template test-release helm/agentapi-proxy/ \
+            --set replicaCount=3 \
+            --set persistence.size=20Gi \
+            --set image.tag=latest > /tmp/custom-test.yaml
+          
+          echo "Templates generated successfully with custom values"
+
+      - name: Package chart (dry-run)
+        run: |
+          helm package helm/agentapi-proxy/ --destination /tmp/
+          ls -la /tmp/agentapi-proxy-*.tgz
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-test-artifacts
+          path: |
+            /tmp/rendered-templates.yaml
+            /tmp/ingress-test.yaml
+            /tmp/custom-test.yaml
+            /tmp/agentapi-proxy-*.tgz
+          retention-days: 7
