@@ -4,10 +4,8 @@ kind: Kustomization
 namespace: default
 
 resources:
-  - configmap.yaml
-  - secret.yaml
   - pvc.yaml
-  - deployment.yaml
+  - statefulset.yaml
   - service.yaml
   - ingress.yaml
 

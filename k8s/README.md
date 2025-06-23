@@ -1,6 +1,6 @@
 # Kubernetes Manifests for AgentAPI Proxy
 
-This directory contains Kubernetes manifests for deploying the AgentAPI Proxy application.
+This directory contains Kubernetes manifests for deploying the AgentAPI Proxy application using StatefulSet.
 
 ## Prerequisites
 
@@ -14,53 +14,38 @@ This directory contains Kubernetes manifests for deploying the AgentAPI Proxy ap
 ```
 k8s/
 └── base/
-    ├── configmap.yaml      # Application configuration
-    ├── secret.yaml         # Sensitive data (GitHub tokens, API keys)
     ├── pvc.yaml           # Persistent storage for sessions
-    ├── deployment.yaml     # Main application deployment
-    ├── service.yaml        # Internal service
+    ├── statefulset.yaml   # Main application StatefulSet
+    ├── service.yaml       # Internal service
     ├── ingress.yaml       # External access configuration
-    └── kustomization.yaml  # Kustomize configuration
+    └── kustomization.yaml # Kustomize configuration
 ```
 
 ## Configuration
 
-### 1. Update Secret (Required)
+### 1. Environment Variables (Configure as needed)
 
-Edit `k8s/base/secret.yaml` and configure authentication:
+The StatefulSet template includes environment variable placeholders. Configure these externally using:
+- Kubernetes ConfigMaps
+- Kubernetes Secrets
+- Environment variable injection tools
+- Container orchestration platforms
 
-```yaml
-stringData:
-  # Option 1: GitHub Personal Access Token
-  GITHUB_TOKEN: "your-actual-github-pat"
-  
-  # Option 2: GitHub App (uncomment and fill)
-  # GITHUB_APP_ID: "your-app-id"
-  # GITHUB_APP_PEM: |
-  #   -----BEGIN RSA PRIVATE KEY-----
-  #   your-private-key-here
-  #   -----END RSA PRIVATE KEY-----
-  
-  # API Keys for authentication
-  API_KEYS: "your-api-key-1,your-api-key-2"
-```
+Common environment variables:
+- `GITHUB_TOKEN`: GitHub Personal Access Token
+- `GITHUB_APP_ID`, `GITHUB_APP_PEM_PATH`: GitHub App credentials
+- `CLAUDE_ARGS`: Claude CLI arguments
+- `API_KEYS`: Authentication API keys
 
-### 2. Update ConfigMap (Optional)
-
-Modify `k8s/base/configmap.yaml` to adjust:
-- `start_port`: Starting port for spawned agentapi instances
-- Authentication configuration
-- Persistence settings
-
-### 3. Update Ingress (Required for external access)
+### 2. Update Ingress (Required for external access)
 
 Edit `k8s/base/ingress.yaml`:
 - Replace `agentapi.example.com` with your actual domain
 - Adjust annotations based on your ingress controller
 
-### 4. Storage Class (Optional)
+### 3. Storage Class (Optional)
 
-The PVC uses `standard` storage class. Update if your cluster uses a different default:
+The StatefulSet uses `standard` storage class. Update if your cluster uses a different default:
 
 ```yaml
 storageClassName: your-storage-class
@@ -75,10 +60,8 @@ storageClassName: your-storage-class
 kubectl apply -f k8s/base/
 
 # Or deploy individually
-kubectl apply -f k8s/base/configmap.yaml
-kubectl apply -f k8s/base/secret.yaml
 kubectl apply -f k8s/base/pvc.yaml
-kubectl apply -f k8s/base/deployment.yaml
+kubectl apply -f k8s/base/statefulset.yaml
 kubectl apply -f k8s/base/service.yaml
 kubectl apply -f k8s/base/ingress.yaml
 ```
@@ -96,8 +79,8 @@ kubectl apply -k k8s/base/
 ## Verification
 
 ```bash
-# Check deployment status
-kubectl get deployment agentapi-proxy
+# Check StatefulSet status
+kubectl get statefulset agentapi-proxy
 
 # Check pod status
 kubectl get pods -l app=agentapi-proxy
@@ -126,35 +109,36 @@ https://agentapi.example.com  # Replace with your domain
 
 ## Scaling Considerations
 
-The current setup runs a single replica. For production:
+The StatefulSet provides stable network identities and persistent storage:
 
-1. **Session Persistence**: The file-based persistence doesn't support multiple replicas. Consider:
-   - Using external storage (Redis, PostgreSQL)
-   - Implementing session affinity
-   - Using a shared filesystem (NFS, EFS)
+1. **Session Persistence**: Each replica gets its own persistent volume
+   - Sessions are isolated per pod
+   - No shared state between replicas
+   - Scale by increasing replica count
 
-2. **Port Range**: Each spawned agentapi instance needs a unique port. With multiple replicas:
-   - Use a headless service for direct pod access
-   - Implement port coordination across replicas
-   - Consider using a service mesh
+2. **Port Range**: Each spawned agentapi instance needs a unique port:
+   - Use headless service for direct pod access
+   - Pods have predictable names (agentapi-proxy-0, agentapi-proxy-1, etc.)
+   - Consider using a service mesh for advanced routing
 
 ## Security Notes
 
-1. **Never commit real secrets** to version control
-2. Use sealed-secrets or external secret management (Vault, AWS Secrets Manager)
-3. Enable RBAC and network policies in production
-4. Regular image updates for security patches
+1. **Environment Variables**: Configure sensitive data using Kubernetes Secrets
+2. **RBAC**: Enable RBAC and network policies in production
+3. **Image Updates**: Regular image updates for security patches
+4. **Network Policies**: Restrict pod-to-pod communication as needed
 
 ## Troubleshooting
 
-### Pod not starting
+### StatefulSet not starting
 ```bash
+kubectl describe statefulset agentapi-proxy
 kubectl describe pod -l app=agentapi-proxy
 kubectl logs -l app=agentapi-proxy
 ```
 
 ### Permission issues
-- Ensure PVC is properly bound
+- Ensure persistent volumes are properly bound
 - Check security context matches image requirements
 
 ### Health check failures
@@ -186,11 +170,18 @@ bases:
   - ../../base
 
 patchesStrategicMerge:
-  - deployment-patch.yaml
+  - statefulset-patch.yaml
 
-configMapGenerator:
-  - name: agentapi-proxy-config
-    behavior: merge
-    literals:
-      - CLAUDE_ARGS="--model claude-3-5-sonnet"
+patchesJson6902:
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: agentapi-proxy
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: CLAUDE_ARGS
+          value: "--model claude-3-5-sonnet"
 ```
