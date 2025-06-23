@@ -46,7 +46,7 @@ Once you push a tag matching `v*` or `helm-v*`, GitHub Actions will:
 3. ✅ Lint and validate the chart
 4. ✅ Package the chart into a `.tgz` file
 5. ✅ Login to `ghcr.io` using `GITHUB_TOKEN`
-6. ✅ Push the chart to `oci://ghcr.io/takutakahashi/agentapi-proxy`
+6. ✅ Push the chart to `oci://ghcr.io/takutakahashi/charts/agentapi-proxy`
 7. ✅ Create release notes and upload artifacts
 
 ### 4. Verify the Release
@@ -55,7 +55,7 @@ Once you push a tag matching `v*` or `helm-v*`, GitHub Actions will:
 2. **Check Packages**: Visit https://github.com/takutakahashi?tab=packages
 3. **Test Installation**:
    ```bash
-   helm install test oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
+   helm install test oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0
    ```
 
 ## Version Strategy
@@ -149,7 +149,7 @@ helm package helm/agentapi-proxy/
 echo $GITHUB_TOKEN | helm registry login ghcr.io --username takutakahashi --password-stdin
 
 # 4. Push the chart
-helm push agentapi-proxy-0.1.0.tgz oci://ghcr.io/takutakahashi
+helm push agentapi-proxy-0.1.0.tgz oci://ghcr.io/takutakahashi/charts
 ```
 
 ## Best Practices

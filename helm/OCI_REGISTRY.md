@@ -35,7 +35,7 @@ echo $GITHUB_TOKEN | helm registry login ghcr.io --username YOUR_GITHUB_USERNAME
 ### 3. Push to OCI Registry
 
 ```bash
-helm push agentapi-proxy-0.1.0.tgz oci://ghcr.io/takutakahashi
+helm push agentapi-proxy-0.1.0.tgz oci://ghcr.io/takutakahashi/charts
 ```
 
 ### 4. Verify the Push
@@ -49,14 +49,14 @@ Once published, users can install the chart directly from the OCI registry:
 ### Method 1: Direct Install
 
 ```bash
-helm install agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
+helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0
 ```
 
 ### Method 2: Pull and Install
 
 ```bash
 # Pull the chart
-helm pull oci://ghcr.io/takutakahashi/agentapi-proxy --version 0.1.0
+helm pull oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0
 
 # Extract and install
 tar -xzf agentapi-proxy-0.1.0.tgz
@@ -66,7 +66,7 @@ helm install agentapi-proxy ./agentapi-proxy
 ### Method 3: With Custom Values
 
 ```bash
-helm install agentapi-proxy oci://ghcr.io/takutakahashi/agentapi-proxy \
+helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
   --version 0.1.0 \
   --set ingress.enabled=true \
   --set ingress.hosts[0].host=agentapi.yourdomain.com
@@ -83,7 +83,7 @@ When updating the chart version:
 ```bash
 # Update Chart.yaml version to 0.2.0
 helm package helm/agentapi-proxy/
-helm push agentapi-proxy-0.2.0.tgz oci://ghcr.io/takutakahashi
+helm push agentapi-proxy-0.2.0.tgz oci://ghcr.io/takutakahashi/charts
 ```
 
 ## Automation with GitHub Actions
@@ -108,7 +108,7 @@ git push origin helm-v0.2.0
 - ✅ Triggers on `v*` or `helm-v*` tags
 - ✅ Automatically updates Chart.yaml version from git tag
 - ✅ Lints and validates the chart before publishing
-- ✅ Pushes to `oci://ghcr.io/[owner]/agentapi-proxy`
+- ✅ Pushes to `oci://ghcr.io/[owner]/charts/agentapi-proxy`
 - ✅ Creates release notes and artifacts
 - ✅ Uses `GITHUB_TOKEN` (no additional secrets needed)
 

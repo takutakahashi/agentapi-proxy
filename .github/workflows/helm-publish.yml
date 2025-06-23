@@ -58,12 +58,12 @@ jobs:
         run: |
           CHART_FILE=$(ls agentapi-proxy-*.tgz)
           echo "Pushing chart file: $CHART_FILE"
-          helm push "$CHART_FILE" oci://ghcr.io/${{ github.repository_owner }}
+          helm push "$CHART_FILE" oci://ghcr.io/${{ github.repository_owner }}/charts
 
       - name: Verify published chart
         run: |
           echo "Chart published successfully!"
-          echo "Install with: helm install agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/agentapi-proxy --version ${{ steps.version.outputs.version }}"
+          echo "Install with: helm install agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/charts/agentapi-proxy --version ${{ steps.version.outputs.version }}"
 
       - name: Create release notes
         run: |
@@ -73,20 +73,20 @@ jobs:
           ## Installation
           
           \`\`\`bash
-          helm install agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/agentapi-proxy --version ${{ steps.version.outputs.version }}
+          helm install agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/charts/agentapi-proxy --version ${{ steps.version.outputs.version }}
           \`\`\`
           
           ## Upgrade
           
           \`\`\`bash
-          helm upgrade agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/agentapi-proxy --version ${{ steps.version.outputs.version }}
+          helm upgrade agentapi-proxy oci://ghcr.io/${{ github.repository_owner }}/charts/agentapi-proxy --version ${{ steps.version.outputs.version }}
           \`\`\`
           
           ## Chart Information
           
           - **Chart Version**: ${{ steps.version.outputs.version }}
           - **App Version**: ${{ steps.version.outputs.version }}
-          - **Registry**: ghcr.io/${{ github.repository_owner }}/agentapi-proxy
+          - **Registry**: ghcr.io/${{ github.repository_owner }}/charts/agentapi-proxy
           
           ## Changes
           
