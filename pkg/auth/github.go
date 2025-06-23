@@ -12,6 +12,11 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
+// contextKey is used for context keys to avoid collisions
+type contextKey string
+
+const echoContextKey contextKey = "echo"
+
 // GitHubUserInfo represents GitHub user information
 type GitHubUserInfo struct {
 	Login         string                 `json:"login"`

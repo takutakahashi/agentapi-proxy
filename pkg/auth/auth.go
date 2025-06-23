@@ -130,7 +130,7 @@ func tryGitHubAuth(c echo.Context, cfg *config.GitHubAuthConfig) (*UserContext, 
 	}
 
 	provider := NewGitHubAuthProvider(cfg)
-	ctx := context.WithValue(c.Request().Context(), "echo", c)
+	ctx := context.WithValue(c.Request().Context(), echoContextKey, c)
 
 	userCtx, err := provider.Authenticate(ctx, token)
 	if err != nil {
