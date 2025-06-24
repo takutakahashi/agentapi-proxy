@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash
 
 # AgentAPI startup script with GitHub integration
 # This script is executed when the github_repo parameter is present
@@ -18,7 +18,7 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="{{.GitHubPersonalAccessToken}}"
 
 # Set up GitHub repository if parameters are provided
 if [[ -n "$GITHUB_REPO_FULLNAME" && -n "$GITHUB_CLONE_DIR" ]]; then
-    if ! agentapi-proxy helpers init-github-repository --repo-fullname "$GITHUB_REPO_FULLNAME" --clone-dir "$GITHUB_CLONE_DIR"; then
+    if ! agentapi-proxy helpers init-github-repository --ignore-missing-config --repo-fullname "$GITHUB_REPO_FULLNAME" --clone-dir "$GITHUB_CLONE_DIR"; then
         echo "Failed to initialize GitHub repository" >&2
         exit 1
     fi
