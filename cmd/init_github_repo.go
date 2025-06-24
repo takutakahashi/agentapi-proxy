@@ -117,6 +117,14 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 		fmt.Println("Successfully generated installation token")
 	}
 
+	// Authenticate gh CLI for Enterprise Server if GITHUB_URL is set
+	githubURL := getGitHubURL()
+	if githubURL != "https://github.com" {
+		if err := authenticateGHCLI(githubURL, token); err != nil {
+			return fmt.Errorf("failed to authenticate gh CLI for Enterprise Server: %w", err)
+		}
+	}
+
 	// Get clone directory from flag or environment variable
 	if cloneDir == "" {
 		cloneDir = os.Getenv("GITHUB_CLONE_DIR")
@@ -130,7 +138,6 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 	}
 
 	// Convert fullname to URL for cloning
-	githubURL := getGitHubURL()
 	repoURL := fmt.Sprintf("%s/%s", githubURL, repoFullName)
 
 	// Setup repository
@@ -424,6 +431,37 @@ func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase strin
 	}
 
 	return 0, fmt.Errorf("no installation found with access to repository %s/%s", owner, repo)
+}
+
+func authenticateGHCLI(githubURL, token string) error {
+	fmt.Printf("Authenticating gh CLI for Enterprise Server: %s\n", githubURL)
+
+	// Use gh auth login with token for Enterprise Server
+	cmd := exec.Command("gh", "auth", "login", "--hostname", extractHostname(githubURL), "--with-token")
+	cmd.Stdin = strings.NewReader(token)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh auth login failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	fmt.Printf("Successfully authenticated gh CLI for %s\n", githubURL)
+	return nil
+}
+
+func extractHostname(githubURL string) string {
+	// Remove protocol prefix
+	hostname := strings.TrimPrefix(githubURL, "https://")
+	hostname = strings.TrimPrefix(hostname, "http://")
+
+	// Remove any path components
+	if idx := strings.Index(hostname, "/"); idx != -1 {
+		hostname = hostname[:idx]
+	}
+
+	return hostname
 }
 
 func init() {
