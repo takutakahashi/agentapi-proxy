@@ -80,11 +80,16 @@ RUN mise global node@latest
 # Install claude code via npm
 RUN mise exec -- npm install -g @anthropic-ai/claude-code
 
-# Copy CLAUDE.md to user's home directory
-COPY --chown=agentapi:agentapi config/CLAUDE.md /home/agentapi/.claude/CLAUDE.md
+# Copy CLAUDE.md to temporary location for entrypoint script
+COPY --chown=agentapi:agentapi config/CLAUDE.md /tmp/config/CLAUDE.md
+
+# Copy entrypoint script
+COPY --chown=agentapi:agentapi scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Expose port
 EXPOSE 8080
 
-# Run the application
+# Run the application with entrypoint
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["mise", "exec", "--", "agentapi-proxy", "server"]
