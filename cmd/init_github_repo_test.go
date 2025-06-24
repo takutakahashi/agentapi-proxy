@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/google/go-github/v57/github"
 )
 
 func TestGenerateInstallationToken(t *testing.T) {
@@ -914,23 +916,35 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 			repoFullName: "owner/repo",
 			apiBase:      "",
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				// Log the request for debugging
+				t.Logf("Request: %s %s", r.Method, r.URL.Path)
+				
 				switch r.URL.Path {
-				case "/app/installations":
+				case "/app/installations", "/api/v3/app/installations":
+					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
-					response := []map[string]interface{}{
-						{"id": 12345},
-						{"id": 67890},
+					// GitHub API returns array of Installation objects
+					response := []*github.Installation{
+						{ID: github.Int64(12345)},
+						{ID: github.Int64(67890)},
 					}
 					_ = json.NewEncoder(w).Encode(response)
-				case "/repos/owner/repo":
+				case "/repos/owner/repo", "/api/v3/repos/owner/repo":
 					// Return 200 for the first installation
 					if r.Header.Get("Authorization") != "" {
+						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusOK)
-						_, _ = fmt.Fprint(w, `{"id": 123456}`)
+						_, _ = fmt.Fprint(w, `{"id": 123456, "name": "repo", "owner": {"login": "owner"}}`)
 					} else {
 						w.WriteHeader(http.StatusNotFound)
 					}
+				case "/app", "/user", "/api/v3/app", "/api/v3/user":
+					// These endpoints are called during authentication
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = fmt.Fprint(w, `{}`)
 				default:
+					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
 					_, _ = fmt.Fprint(w, `{}`)
 				}
@@ -944,17 +958,29 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 			repoFullName: "owner/repo",
 			apiBase:      "",
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				// Log the request for debugging
+				t.Logf("Request: %s %s", r.Method, r.URL.Path)
+				
 				switch r.URL.Path {
-				case "/app/installations":
+				case "/app/installations", "/api/v3/app/installations":
+					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
-					response := []map[string]interface{}{
-						{"id": 12345},
+					// GitHub API returns array of Installation objects
+					response := []*github.Installation{
+						{ID: github.Int64(12345)},
 					}
 					_ = json.NewEncoder(w).Encode(response)
-				case "/repos/owner/repo":
+				case "/repos/owner/repo", "/api/v3/repos/owner/repo":
 					// Return 404 for all installations
 					w.WriteHeader(http.StatusNotFound)
+					_, _ = fmt.Fprint(w, `{"message": "Not Found"}`)
+				case "/app", "/user", "/api/v3/app", "/api/v3/user":
+					// These endpoints are called during authentication
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = fmt.Fprint(w, `{}`)
 				default:
+					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
 					_, _ = fmt.Fprint(w, `{}`)
 				}
@@ -980,7 +1006,7 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 			repoFullName: "owner/repo",
 			apiBase:      "",
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/app/installations" {
+				if r.URL.Path == "/app/installations" || r.URL.Path == "/api/v3/app/installations" {
 					w.WriteHeader(http.StatusInternalServerError)
 					_, _ = fmt.Fprint(w, `{"message": "Internal server error"}`)
 				} else {
