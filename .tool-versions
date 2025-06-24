@@ -1,1 +1,3 @@
-golang latest
+golang        latest
+golangci-lint latest
+helm          latest
