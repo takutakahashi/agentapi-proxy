@@ -142,7 +142,8 @@ func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
 
 	// Setup repository
 	if err := setupRepository(repoURL, token, cloneDir); err != nil {
-		return fmt.Errorf("failed to setup repository: %w", err)
+		fmt.Fprintf(os.Stderr, "failed to setup repository: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Setup MCP integration
