@@ -45,6 +45,31 @@ spec:
           env:
             - name: HOME
               value: "/home/agentapi"
+            {{- if .Values.githubEnterprise.enabled }}
+            {{- if .Values.githubEnterprise.baseUrl }}
+            - name: GITHUB_URL
+              value: {{ .Values.githubEnterprise.baseUrl | quote }}
+            {{- end }}
+            {{- if .Values.githubEnterprise.apiUrl }}
+            - name: GITHUB_API
+              value: {{ .Values.githubEnterprise.apiUrl | quote }}
+            {{- end }}
+            {{- if .Values.githubEnterprise.app.id }}
+            - name: GITHUB_APP_ID
+              value: {{ .Values.githubEnterprise.app.id | quote }}
+            {{- end }}
+            {{- if .Values.githubEnterprise.app.installationId }}
+            - name: GITHUB_INSTALLATION_ID
+              value: {{ .Values.githubEnterprise.app.installationId | quote }}
+            {{- end }}
+            {{- if and .Values.githubEnterprise.app.privateKeySecretName .Values.githubEnterprise.app.privateKeySecretKey }}
+            - name: GITHUB_APP_PEM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.githubEnterprise.app.privateKeySecretName }}
+                  key: {{ .Values.githubEnterprise.app.privateKeySecretKey }}
+            {{- end }}
+            {{- end }}
             {{- range .Values.env }}
             - name: {{ .name }}
               value: {{ .value | quote }}

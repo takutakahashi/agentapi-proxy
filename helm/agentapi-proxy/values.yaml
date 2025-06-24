@@ -73,12 +73,37 @@ persistence:
   accessMode: ReadWriteOnce
   size: 10Gi
 
+# GitHub Enterprise Server configuration
+githubEnterprise:
+  enabled: false
+  # GitHub Enterprise Server のベース URL
+  # 例: https://github.company.com
+  baseUrl: ""
+  # GitHub Enterprise Server API の URL
+  # 例: https://github.company.com/api/v3
+  apiUrl: ""
+  # GitHub App 認証設定
+  app:
+    # GitHub App ID
+    id: ""
+    # GitHub App Installation ID
+    installationId: ""
+    # GitHub App の秘密鍵（PEM形式）を含む Secret 名
+    privateKeySecretName: ""
+    # Secret 内の秘密鍵のキー名
+    privateKeySecretKey: "github-app-private-key"
+
 # Environment variables
 env: []
   # - name: GITHUB_TOKEN
   #   value: "your-token"
   # - name: CLAUDE_ARGS
   #   value: "--dangerously-skip-permissions"
+  # GitHub Enterprise Server を使用する場合の環境変数例
+  # - name: GITHUB_URL
+  #   value: "https://github.company.com"
+  # - name: GITHUB_API
+  #   value: "https://github.company.com/api/v3"
 
 # Environment variables from ConfigMaps and Secrets
 envFrom: []
