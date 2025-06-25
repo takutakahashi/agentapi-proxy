@@ -1,0 +1,8 @@
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440001",
+  "message": "Session created successfully with profile",
+  "profile_id": "profile-uuid-here",
+  "port": 9001,
+  "started_at": "2024-01-01T12:05:00Z",
+  "status": "active"
+}

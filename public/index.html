@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentAPI Proxy - Mock API</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fafafa;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #007acc;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+        .endpoint {
+            background: #f8f9fa;
+            border-left: 4px solid #007acc;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .method {
+            font-weight: bold;
+            color: #007acc;
+        }
+        .url {
+            font-family: 'Monaco', 'Consolas', monospace;
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        .description {
+            margin-top: 8px;
+            color: #666;
+        }
+        a {
+            color: #007acc;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .note {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 AgentAPI Proxy - Mock API Server</h1>
+        
+        <div class="note">
+            <strong>注意:</strong> これはモックAPIサーバーです。実際のagentapi-proxyの動作をシミュレートしています。
+        </div>
+
+        <h2>📝 利用可能なエンドポイント</h2>
+
+        <h3>セッション管理</h3>
+        
+        <div class="endpoint">
+            <div class="method">POST</div>
+            <div class="url"><a href="./api/start.json">/start</a></div>
+            <div class="description">新しいセッションを作成します</div>
+        </div>
+
+        <div class="endpoint">
+            <div class="method">POST</div>
+            <div class="url"><a href="./api/start-with-profile.json">/start-with-profile</a></div>
+            <div class="description">プロファイルを使用して新しいセッションを作成します</div>
+        </div>
+
+        <div class="endpoint">
+            <div class="method">GET</div>
+            <div class="url"><a href="./api/search.json">/search</a></div>
+            <div class="description">既存のセッション一覧を検索・取得します</div>
+        </div>
+
+        <h3>プロファイル管理</h3>
+
+        <div class="endpoint">
+            <div class="method">POST</div>
+            <div class="url"><a href="./api/profiles/create.json">/profiles</a></div>
+            <div class="description">新しいプロファイルを作成します</div>
+        </div>
+
+        <div class="endpoint">
+            <div class="method">GET</div>
+            <div class="url"><a href="./api/profiles/list.json">/profiles</a></div>
+            <div class="description">プロファイル一覧を取得します</div>
+        </div>
+
+        <div class="endpoint">
+            <div class="method">GET</div>
+            <div class="url"><a href="./api/profiles/detail.json">/profiles/:profileId</a></div>
+            <div class="description">特定のプロファイルの詳細を取得します</div>
+        </div>
+
+        <div class="endpoint">
+            <div class="method">PUT</div>
+            <div class="url"><a href="./api/profiles/update.json">/profiles/:profileId</a></div>
+            <div class="description">既存のプロファイルを更新します</div>
+        </div>
+
+        <div class="endpoint">
+            <div class="method">DELETE</div>
+            <div class="url"><a href="./api/profiles/delete.json">/profiles/:profileId</a></div>
+            <div class="description">プロファイルを削除します</div>
+        </div>
+
+        <div class="endpoint">
+            <div class="method">POST</div>
+            <div class="url"><a href="./api/profiles/add-repository.json">/profiles/:profileId/repositories</a></div>
+            <div class="description">プロファイルにリポジトリエントリを追加します</div>
+        </div>
+
+        <div class="endpoint">
+            <div class="method">POST</div>
+            <div class="url"><a href="./api/profiles/add-template.json">/profiles/:profileId/templates</a></div>
+            <div class="description">プロファイルにメッセージテンプレートを追加します</div>
+        </div>
+
+        <h2>📚 ドキュメント</h2>
+        <p>詳細なAPI仕様については、<a href="https://github.com/takutakahashi/agentapi-proxy/blob/main/docs/api.md">API仕様書</a>をご参照ください。</p>
+
+        <h2>🔗 関連リンク</h2>
+        <ul>
+            <li><a href="https://github.com/takutakahashi/agentapi-proxy">GitHub Repository</a></li>
+            <li><a href="https://github.com/coder/agentapi">AgentAPI (Backend)</a></li>
+        </ul>
+    </div>
+</body>
+</html>
