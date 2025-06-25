@@ -1,4 +1,6 @@
 [build]
+  # No build command needed for static files and functions
+  command = ""
   publish = "public"
   functions = "netlify/functions"
 
