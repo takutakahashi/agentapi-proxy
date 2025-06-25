@@ -1,0 +1,7 @@
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "active",
+  "agentapi_url": "http://localhost:9000",
+  "message": "This endpoint would normally proxy to the actual agentapi server",
+  "note": "In a real implementation, this would forward requests to the agentapi server running on the specified port"
+}
