@@ -32,7 +32,7 @@
 
 1. このリポジトリをNetlifyにデプロイ
 2. Build settingsで以下を設定:
-   - Build command: `npm run build` (または空欄)
+   - Build command: (空欄のまま)
    - Publish directory: `public`
    - Functions directory: `netlify/functions`
 
