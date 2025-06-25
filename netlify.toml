@@ -1,0 +1,36 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Headers for all responses
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization, X-API-Key"
+
+# Specific headers for API responses
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Content-Type = "application/json"
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Content-Type = "application/json"
+    X-Content-Type-Options = "nosniff"
+
+# Handle SPA routing if needed
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  conditions = {Role = ["admin", "user"]}
+  force = false
