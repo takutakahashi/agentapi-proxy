@@ -1,0 +1,11 @@
+# API redirects - all API calls go to the Netlify Function
+/start                      /.netlify/functions/api/start                      200
+/start-with-profile         /.netlify/functions/api/start-with-profile         200
+/search                     /.netlify/functions/api/search                     200
+/profiles                   /.netlify/functions/api/profiles                   200
+/profiles/*                 /.netlify/functions/api/profiles/:splat            200
+/sessions/*                 /.netlify/functions/api/sessions/:splat            200
+/:sessionId/*               /.netlify/functions/api/sessions/:sessionId/:splat 200
+
+# Fallback for any other API-like paths
+/api/*                      /.netlify/functions/api/:splat                     200
