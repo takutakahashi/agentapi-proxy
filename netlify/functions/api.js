@@ -203,6 +203,66 @@ const handleProfileEndpoint = (path, method) => {
 // Handle session-specific endpoints
 const handleSessionEndpoint = (path, method) => {
   const sessionMatch = path.match(/^\/sessions?\/([^\/]+)/);
+  const messagesMatch = path.match(/^\/([^\/]+)\/messages$/);
+  
+  if (messagesMatch && method === 'GET') {
+    const sessionId = messagesMatch[1];
+    return {
+      session_id: sessionId,
+      messages: [
+        {
+          id: "msg-550e8400-e29b-41d4-a716-446655440000",
+          session_id: sessionId,
+          role: "user",
+          content: "こんにちは、今日のタスクについて相談したいです。",
+          timestamp: "2024-01-01T12:00:00Z",
+          metadata: {
+            type: "text",
+            source: "web"
+          }
+        },
+        {
+          id: "msg-550e8400-e29b-41d4-a716-446655440001",
+          session_id: sessionId,
+          role: "assistant",
+          content: "こんにちは！喜んでお手伝いします。どのようなタスクについてご相談でしょうか？",
+          timestamp: "2024-01-01T12:00:30Z",
+          metadata: {
+            type: "text",
+            model: "claude-3.5-sonnet"
+          }
+        },
+        {
+          id: "msg-550e8400-e29b-41d4-a716-446655440002",
+          session_id: sessionId,
+          role: "user",
+          content: "プロジェクトのコードレビューをお願いします。",
+          timestamp: "2024-01-01T12:01:00Z",
+          metadata: {
+            type: "text",
+            source: "web"
+          }
+        },
+        {
+          id: "msg-550e8400-e29b-41d4-a716-446655440003",
+          session_id: sessionId,
+          role: "assistant",
+          content: "承知しました。コードレビューを実施いたします。対象のファイルを共有していただけますか？",
+          timestamp: "2024-01-01T12:01:15Z",
+          metadata: {
+            type: "text",
+            model: "claude-3.5-sonnet",
+            tools_used: ["code_analysis"]
+          }
+        }
+      ],
+      total: 4,
+      page: 1,
+      per_page: 50,
+      has_more: false
+    };
+  }
+  
   if (sessionMatch) {
     const sessionId = sessionMatch[1];
     return {
