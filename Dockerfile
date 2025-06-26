@@ -42,29 +42,17 @@ RUN set -ex && \
 FROM debian:bookworm-slim
 
 # Install ca-certificates, curl, and bash for mise installation, plus GitHub CLI and make
-# Also install dependencies for Chromium browser
-RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc make procps \
-    # Chromium and its dependencies
-    chromium \
-    chromium-driver \
-    # Additional dependencies for headless browser operation
-    libnss3 \
-    libatk-bridge2.0-0 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libatspi2.0-0 \
-    libxshmfence1 && \
+RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc make procps && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
     apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
+
+# Install Lightpanda Browser
+RUN curl -L -o /usr/local/bin/lightpanda https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux && \
+    chmod +x /usr/local/bin/lightpanda
 
 # Create non-root user
 RUN groupadd -g 1001 agentapi && \
@@ -99,9 +87,8 @@ RUN mise exec -- npm install -g @anthropic-ai/claude-code
 # Install Playwright MCP server
 RUN mise exec -- npm install -g @modelcontextprotocol/server-playwright
 
-# Setup Chromium for Playwright
-ENV CHROME_BIN=/usr/bin/chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+# Setup Lightpanda Browser
+ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Copy CLAUDE.md to temporary location for entrypoint script
