@@ -80,7 +80,7 @@ RUN mise global node@latest
 RUN mise exec -- npm install -g @anthropic-ai/claude-code
 
 # Install Playwright MCP server
-RUN mise exec -- npm install -g @modelcontextprotocol/server-playwright
+RUN mise exec -- npm install -g @playwright/mcp@latest
 
 # Setup Lightpanda Browser
 ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
