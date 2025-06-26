@@ -74,7 +74,7 @@
         </div>
         
         <div class="note" style="background: #d4edda; border-color: #c3e6cb;">
-            <strong>使用方法:</strong> 以下のエンドポイントに直接HTTPリクエストを送信できます。例: <code>POST /start</code>, <code>GET /profiles</code>
+            <strong>使用方法:</strong> 以下のエンドポイントに直接HTTPリクエストを送信できます。例: <code>POST /start</code>, <code>GET /search</code>
         </div>
 
         <h2>📝 利用可能なエンドポイント</h2>
@@ -87,11 +87,6 @@
             <div class="description">新しいセッションを作成します</div>
         </div>
 
-        <div class="endpoint">
-            <div class="method">POST</div>
-            <div class="url">/start-with-profile</div>
-            <div class="description">プロファイルを使用して新しいセッションを作成します</div>
-        </div>
 
         <div class="endpoint">
             <div class="method">GET</div>
@@ -99,49 +94,6 @@
             <div class="description">既存のセッション一覧を検索・取得します</div>
         </div>
 
-        <h3>プロファイル管理</h3>
-
-        <div class="endpoint">
-            <div class="method">POST</div>
-            <div class="url">/profiles</div>
-            <div class="description">新しいプロファイルを作成します</div>
-        </div>
-
-        <div class="endpoint">
-            <div class="method">GET</div>
-            <div class="url">/profiles</div>
-            <div class="description">プロファイル一覧を取得します</div>
-        </div>
-
-        <div class="endpoint">
-            <div class="method">GET</div>
-            <div class="url">/profiles/:profileId</div>
-            <div class="description">特定のプロファイルの詳細を取得します</div>
-        </div>
-
-        <div class="endpoint">
-            <div class="method">PUT</div>
-            <div class="url">/profiles/:profileId</div>
-            <div class="description">既存のプロファイルを更新します</div>
-        </div>
-
-        <div class="endpoint">
-            <div class="method">DELETE</div>
-            <div class="url">/profiles/:profileId</div>
-            <div class="description">プロファイルを削除します</div>
-        </div>
-
-        <div class="endpoint">
-            <div class="method">POST</div>
-            <div class="url">/profiles/:profileId/repositories</div>
-            <div class="description">プロファイルにリポジトリエントリを追加します</div>
-        </div>
-
-        <div class="endpoint">
-            <div class="method">POST</div>
-            <div class="url">/profiles/:profileId/templates</div>
-            <div class="description">プロファイルにメッセージテンプレートを追加します</div>
-        </div>
 
         <h2>🚀 使用例</h2>
         <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -150,8 +102,6 @@
   -H "Content-Type: application/json" \
   -d '{"user_id": "test-user", "tags": {"env": "test"}}'</code></pre>
             
-            <h4>プロファイル一覧取得:</h4>
-            <pre style="background: #e9ecef; padding: 10px; border-radius: 4px; overflow-x: auto;"><code>curl https://your-netlify-domain.netlify.app/profiles</code></pre>
         </div>
 
         <h2>📚 ドキュメント</h2>

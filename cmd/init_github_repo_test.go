@@ -521,7 +521,7 @@ exit 0`
 			setupMock: func(t *testing.T, tmpDir string) {
 				// Create .git directory to simulate existing repo
 				_ = os.MkdirAll(tmpDir+"/.git", 0755)
-				
+
 				// Create mock git executable
 				mockGit := `#!/bin/bash
 if [ "$1" = "pull" ]; then
@@ -901,14 +901,14 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 	defer func() { _ = os.Remove(pemFile) }()
 
 	tests := []struct {
-		name           string
-		appID          int64
-		repoFullName   string
-		apiBase        string
-		serverHandler  http.HandlerFunc
-		expectedID     int64
-		expectError    bool
-		errorContains  string
+		name          string
+		appID         int64
+		repoFullName  string
+		apiBase       string
+		serverHandler http.HandlerFunc
+		expectedID    int64
+		expectError   bool
+		errorContains string
 	}{
 		{
 			name:         "Found installation with access",
@@ -918,7 +918,7 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				// Log the request for debugging
 				t.Logf("Request: %s %s", r.Method, r.URL.Path)
-				
+
 				switch r.URL.Path {
 				case "/app/installations", "/api/v3/app/installations":
 					w.Header().Set("Content-Type", "application/json")
@@ -960,7 +960,7 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				// Log the request for debugging
 				t.Logf("Request: %s %s", r.Method, r.URL.Path)
-				
+
 				switch r.URL.Path {
 				case "/app/installations", "/api/v3/app/installations":
 					w.Header().Set("Content-Type", "application/json")

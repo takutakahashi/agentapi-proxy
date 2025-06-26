@@ -10,21 +10,11 @@
 
 ### セッション管理
 - `POST /api/start.json` - セッション作成
-- `POST /api/start-with-profile.json` - プロファイル使用セッション作成
 - `GET /api/search.json` - セッション検索
 
-### プロファイル管理
-- `POST /api/profiles/create.json` - プロファイル作成
-- `GET /api/profiles/list.json` - プロファイル一覧
-- `GET /api/profiles/detail.json` - プロファイル詳細
-- `PUT /api/profiles/update.json` - プロファイル更新
-- `DELETE /api/profiles/delete.json` - プロファイル削除
-- `POST /api/profiles/add-repository.json` - リポジトリ追加
-- `POST /api/profiles/add-template.json` - テンプレート追加
 
 ### その他
 - `GET /api/sessions/example-session.json` - セッション例
-- `GET /api/error-examples.json` - エラーレスポンス例
 
 ## デプロイ方法
 
@@ -48,12 +38,6 @@
 curl -X POST https://your-app.netlify.app/start \
   -H "Content-Type: application/json" \
   -d '{"user_id": "test-user", "environment": {"DEBUG": "true"}}'
-
-# プロファイル一覧取得
-curl https://your-app.netlify.app/profiles
-
-# 特定のプロファイル取得
-curl https://your-app.netlify.app/profiles/profile-123
 
 # セッション検索
 curl https://your-app.netlify.app/search
