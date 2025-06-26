@@ -7,8 +7,6 @@ A session-based proxy server for [coder/agentapi](https://github.com/coder/agent
 - **Session Management**: Create and manage multiple agentapi server instances with unique session IDs
 - **Process Provisioning**: Dynamically spawn agentapi servers on available ports
 - **Environment Configuration**: Pass custom environment variables to agentapi server instances
-- **Profile Management**: Create and manage user profiles with environment variables, repository history, system prompts, and message templates
-- **Profile-based Sessions**: Start sessions using predefined profiles for consistent development environments
 - **Script Support**: Execute custom startup scripts (with GitHub integration support)
 - **Session Search**: Query and filter active sessions by user ID and status
 - **Request Routing**: Proxy requests to appropriate agentapi server instances based on session ID
@@ -22,12 +20,10 @@ A session-based proxy server for [coder/agentapi](https://github.com/coder/agent
 The proxy acts as a reverse proxy and process manager:
 
 1. **Session Creation**: `/start` endpoint creates new agentapi server instances
-2. **Profile Management**: `/profiles/*` endpoints manage user profiles and configurations
-3. **Profile-based Sessions**: `/start-with-profile` creates sessions using profile configurations
-4. **Request Routing**: `/:sessionId/*` routes requests to the appropriate backend server
-5. **Session Discovery**: `/search` endpoint lists and filters active sessions
+2. **Request Routing**: `/:sessionId/*` routes requests to the appropriate backend server
+3. **Session Discovery**: `/search` endpoint lists and filters active sessions
 
-Each session runs an independent agentapi server process on a unique port, allowing isolated workspaces for different users or projects. Profiles provide a way to standardize and reuse configurations across sessions.
+Each session runs an independent agentapi server process on a unique port, allowing isolated workspaces for different users or projects.
 
 ## Installation
 
@@ -115,33 +111,6 @@ curl -X POST http://localhost:8080/start \
 }
 ```
 
-#### Create Session with Profile
-
-**POST** `/start-with-profile`
-
-Create a new agentapi server instance using a predefined profile.
-
-```bash
-curl -X POST http://localhost:8080/start-with-profile \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d '{
-    "profile_id": "profile-uuid-here",
-    "environment": {
-      "OVERRIDE_VAR": "session_value"
-    },
-    "tags": {
-      "session_type": "development"
-    }
-  }'
-```
-
-**Response:**
-```json
-{
-  "session_id": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
 
 #### Search Sessions
 
@@ -186,88 +155,7 @@ Route requests to the agentapi server instance for the given session.
 curl http://localhost:8080/550e8400-e29b-41d4-a716-446655440000/api/workspaces
 ```
 
-### Profile Management
-
-#### Create Profile
-
-**POST** `/profiles`
-
-Create a new user profile with environment variables, system prompts, and templates.
-
-```bash
-curl -X POST http://localhost:8080/profiles \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d '{
-    "name": "Development Environment",
-    "description": "Settings for development work",
-    "environment": {
-      "NODE_ENV": "development",
-      "DEBUG": "true"
-    },
-    "system_prompt": "You are a development assistant. Help with code review and debugging.",
-    "message_templates": [
-      {
-        "name": "Code Review",
-        "content": "Please review this code: {{code}}",
-        "variables": ["code"],
-        "category": "review"
-      }
-    ]
-  }'
-```
-
-#### List Profiles
-
-**GET** `/profiles`
-
-List all profiles for the authenticated user.
-
-```bash
-curl -H "X-API-Key: your-api-key" http://localhost:8080/profiles
-```
-
-#### Get Profile
-
-**GET** `/profiles/:profileId`
-
-Get details of a specific profile.
-
-```bash
-curl -H "X-API-Key: your-api-key" http://localhost:8080/profiles/profile-uuid-here
-```
-
-#### Update Profile
-
-**PUT** `/profiles/:profileId`
-
-Update an existing profile. Supports partial updates.
-
-```bash
-curl -X PUT http://localhost:8080/profiles/profile-uuid-here \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d '{
-    "name": "Updated Development Environment",
-    "environment": {
-      "NODE_ENV": "development",
-      "DEBUG": "true",
-      "NEW_VAR": "new_value"
-    }
-  }'
-```
-
-#### Delete Profile
-
-**DELETE** `/profiles/:profileId`
-
-Delete a profile.
-
-```bash
-curl -X DELETE -H "X-API-Key: your-api-key" http://localhost:8080/profiles/profile-uuid-here
-```
-
-For detailed API documentation, see [docs/api.md](docs/api.md) and [docs/profile-api.md](docs/profile-api.md).
+For detailed API documentation, see [docs/api.md](docs/api.md).
 
 ## Client Library
 
