@@ -37,22 +37,9 @@ jobs:
 
     - name: Install Claude Code CLI
       run: |
-        # Install Claude Code CLI using npm (if available)
-        if command -v npm &> /dev/null; then
-          echo "Installing Claude Code CLI via npm..."
-          npm install -g @anthropic-ai/claude
-          claude --version && exit 0
-        fi
-        
-        # Fallback: Download and install Claude Code CLI from GitHub releases
-        echo "Installing Claude Code CLI from GitHub releases..."
-        CLAUDE_VERSION=$(curl -s https://api.github.com/repos/anthropics/claude-code/releases/latest | grep '"tag_name"' | jq -r '.tag_name' 2>/dev/null || echo "v0.6.0")
-        echo "Claude Code version: $CLAUDE_VERSION"
-        
-        # Download the binary
-        curl -L -o claude "https://github.com/anthropics/claude-code/releases/download/${CLAUDE_VERSION}/claude-linux-amd64"
-        chmod +x claude
-        sudo mv claude /usr/local/bin/
+        # Install Claude Code CLI using npm
+        echo "Installing Claude Code CLI via npm..."
+        npm install -g @anthropic-ai/claude-code
         
         # Verify installation
         claude --version
