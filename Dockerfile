@@ -41,8 +41,8 @@ RUN set -ex && \
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install ca-certificates, curl, and bash for mise installation, plus GitHub CLI, make, tmux, and Node.js
-RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc make procps tmux && \
+# Install ca-certificates, curl, and bash for mise installation, plus GitHub CLI, make, tmux, sudo, and Node.js
+RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc make procps tmux sudo && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
@@ -56,8 +56,11 @@ RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 g
 RUN curl -L -o /usr/local/bin/lightpanda https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux && \
     chmod +x /usr/local/bin/lightpanda
 
-# Create home directory for mise
-RUN mkdir -p /root
+# Create a non-root user
+RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -s /bin/bash appuser && \
+    mkdir -p /home/appuser && \
+    chown -R appuser:appuser /home/appuser && \
+    echo 'appuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 # Set working directory
 WORKDIR /app
@@ -68,14 +71,15 @@ COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
 # Copy agentapi binary from builder stage
 COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 
-# Stay as root user
+# Switch to non-root user
+USER appuser
 
 # Install mise
 RUN curl https://mise.run | sh
-ENV PATH="/root/.local/bin:$PATH"
+ENV PATH="/home/appuser/.local/bin:$PATH"
 
 # Install claude code and Playwright MCP server via npm (Node.js is now installed directly)
-RUN npm install -g @anthropic-ai/claude-code @playwright/mcp@latest
+RUN sudo npm install -g @anthropic-ai/claude-code @playwright/mcp@latest
 
 # Setup Lightpanda Browser
 ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
@@ -86,7 +90,7 @@ COPY config/CLAUDE.md /tmp/config/CLAUDE.md
 
 # Copy entrypoint script
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN sudo chmod +x /usr/local/bin/entrypoint.sh
 
 # Expose port
 EXPOSE 8080
