@@ -2,7 +2,7 @@ name: E2E Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/e2e-claude-code-integration ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -37,28 +37,17 @@ jobs:
 
     - name: Install Claude Code CLI
       run: |
-        # Install Claude Code CLI using the official installer
-        curl -fsSL https://raw.githubusercontent.com/anthropics/claude-code/main/install.sh | bash
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-    - name: Verify Claude Code installation
-      run: |
-        claude --version || echo "Claude Code not found in PATH"
-        which claude || echo "Claude command not found"
-
-    - name: Download and install Claude Code manually if needed
-      run: |
-        if ! command -v claude &> /dev/null; then
-          echo "Installing Claude Code manually..."
-          # Download latest release
-          CLAUDE_VERSION=$(curl -s https://api.github.com/repos/anthropics/claude-code/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
-          wget -O claude "https://github.com/anthropics/claude-code/releases/download/${CLAUDE_VERSION}/claude-linux-amd64"
-          chmod +x claude
-          sudo mv claude /usr/local/bin/
-        fi
-
-    - name: Verify Claude Code is available
-      run: |
+        # Download and install Claude Code CLI from GitHub releases
+        echo "Installing Claude Code CLI..."
+        CLAUDE_VERSION=$(curl -s https://api.github.com/repos/anthropics/claude-code/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\([^"]*\)".*/\1/')
+        echo "Latest Claude Code version: $CLAUDE_VERSION"
+        
+        # Download the binary
+        curl -L -o claude "https://github.com/anthropics/claude-code/releases/download/${CLAUDE_VERSION}/claude-linux-amd64"
+        chmod +x claude
+        sudo mv claude /usr/local/bin/
+        
+        # Verify installation
         claude --version
 
     - name: Install golangci-lint
@@ -79,7 +68,8 @@ jobs:
 
     - name: Run E2E tests
       env:
-        CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY || 'test-key-for-ci' }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        CLAUDE_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         GO_TEST_TIMEOUT: 60s
       run: |
         mise exec go -- make e2e

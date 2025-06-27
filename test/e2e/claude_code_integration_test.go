@@ -30,6 +30,20 @@ func TestClaudeCodeIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Check if ANTHROPIC_API_KEY is available for real testing
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("CLAUDE_API_KEY")
+	}
+	if apiKey == "" || apiKey == "test-key-for-local-testing" {
+		t.Skip("Skipping e2e test: ANTHROPIC_API_KEY not available")
+	}
+
+	// Verify Claude Code CLI is available
+	if err := exec.Command("claude", "--version").Run(); err != nil {
+		t.Skip("Skipping e2e test: Claude Code CLI not available")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
 
@@ -148,6 +162,20 @@ func TestClaudeCodeWithMultipleSessions(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	// Check if ANTHROPIC_API_KEY is available for real testing
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("CLAUDE_API_KEY")
+	}
+	if apiKey == "" || apiKey == "test-key-for-local-testing" {
+		t.Skip("Skipping e2e test: ANTHROPIC_API_KEY not available")
+	}
+
+	// Verify Claude Code CLI is available
+	if err := exec.Command("claude", "--version").Run(); err != nil {
+		t.Skip("Skipping e2e test: Claude Code CLI not available")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout*2)
 	defer cancel()
 
@@ -235,9 +263,19 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 	cmd := exec.Command(binaryPath, "server", "--port", proxyPort, "--auth-disabled")
 
 	// Set environment for the proxy
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("CLAUDE_API_KEY")
+	}
+	if apiKey == "" {
+		apiKey = "test-key-for-local-testing"
+	}
+	
 	cmd.Env = append(os.Environ(),
-		"CLAUDE_API_KEY=test-key", // Use a test key for e2e
+		"ANTHROPIC_API_KEY="+apiKey,
+		"CLAUDE_API_KEY="+apiKey,
 		"LOG_LEVEL=debug",
+		"PATH="+os.Getenv("PATH"),
 	)
 
 	// Capture output for debugging
@@ -340,6 +378,20 @@ func sendMessageThroughProxy(ctx context.Context, proxyURL, sessionID, message s
 func TestClaudeCodeToolUsage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Check if ANTHROPIC_API_KEY is available for real testing
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("CLAUDE_API_KEY")
+	}
+	if apiKey == "" || apiKey == "test-key-for-local-testing" {
+		t.Skip("Skipping e2e test: ANTHROPIC_API_KEY not available")
+	}
+
+	// Verify Claude Code CLI is available
+	if err := exec.Command("claude", "--version").Run(); err != nil {
+		t.Skip("Skipping e2e test: Claude Code CLI not available")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout*2)
