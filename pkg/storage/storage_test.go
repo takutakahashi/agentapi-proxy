@@ -22,7 +22,7 @@ func TestFileStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file storage: %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	testStorageInterface(t, storage)
 }
@@ -36,7 +36,7 @@ func TestFileStorageWithEncryption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file storage with encryption: %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	// Test with sensitive environment variables
 	sessionData := &SessionData{
@@ -109,14 +109,14 @@ func TestFileStoragePersistence(t *testing.T) {
 		t.Fatalf("Failed to save session: %v", err)
 	}
 
-	storage1.Close()
+	_ = storage1.Close()
 
 	// Create second storage instance and verify data exists
 	storage2, err := NewFileStorage(tmpFile, 0, false)
 	if err != nil {
 		t.Fatalf("Failed to create second storage instance: %v", err)
 	}
-	defer storage2.Close()
+	defer func() { _ = storage2.Close() }()
 
 	loaded, err := storage2.Load(sessionData.ID)
 	if err != nil {
@@ -271,7 +271,7 @@ func TestStorageFactory(t *testing.T) {
 	if _, ok := fileStorage.(*FileStorage); !ok {
 		t.Errorf("Expected FileStorage, got %T", fileStorage)
 	}
-	fileStorage.Close()
+	_ = fileStorage.Close()
 
 	// Test unknown storage type
 	unknownConfig := &StorageConfig{Type: "unknown"}
@@ -290,7 +290,7 @@ func TestEncryptionDecryption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file storage: %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	// Test that encryption/decryption works by saving and loading sensitive data
 	sessionData := &SessionData{

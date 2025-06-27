@@ -105,12 +105,12 @@ func TestRunProxyWithInvalidConfig(t *testing.T) {
 	// Create a temporary invalid config file
 	tmpFile, err := os.CreateTemp("", "invalid-config-*.json")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Write invalid JSON
 	_, err = tmpFile.WriteString("{ invalid json }")
 	require.NoError(t, err)
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Set the config flag to the invalid file
 	cfg = tmpFile.Name()

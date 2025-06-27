@@ -177,7 +177,7 @@ func TestRunSendWithArgument(t *testing.T) {
 	runSend(&cobra.Command{}, []string{"test message"})
 
 	// Restore stdout and read output
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
@@ -234,7 +234,7 @@ func TestRunHistoryWithMockServer(t *testing.T) {
 	runHistory(&cobra.Command{}, []string{})
 
 	// Restore stdout and read output
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
@@ -283,7 +283,7 @@ func TestRunStatusWithMockServer(t *testing.T) {
 	runStatus(&cobra.Command{}, []string{})
 
 	// Restore stdout and read output
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
@@ -313,10 +313,10 @@ func TestRunEventsWithMockServer(t *testing.T) {
 		w.Header().Set("Connection", "keep-alive")
 
 		// Send a few test events
-		fmt.Fprintf(w, "data: {\"type\":\"message\",\"content\":\"Test event 1\"}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"type\":\"message\",\"content\":\"Test event 1\"}\n\n")
 		w.(http.Flusher).Flush()
 
-		fmt.Fprintf(w, "data: {\"type\":\"status\",\"content\":\"Agent is thinking\"}\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"type\":\"status\",\"content\":\"Agent is thinking\"}\n\n")
 		w.(http.Flusher).Flush()
 
 		// Close connection after a short delay
@@ -349,7 +349,7 @@ func TestRunEventsWithMockServer(t *testing.T) {
 	}
 
 	// Restore stdout and read output
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
@@ -435,7 +435,7 @@ func TestRunSendInteractiveMode(t *testing.T) {
 	// Write test input and close
 	go func() {
 		_, _ = w.WriteString("interactive test message\n")
-		w.Close()
+		_ = w.Close()
 	}()
 
 	// Capture output
@@ -448,7 +448,7 @@ func TestRunSendInteractiveMode(t *testing.T) {
 
 	// Restore stdin and stdout
 	os.Stdin = oldStdin
-	outW.Close()
+	_ = outW.Close()
 	os.Stdout = oldStdout
 
 	// Read output
