@@ -12,12 +12,12 @@ func TestLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Set LOG_DIR environment variable
 	originalLogDir := os.Getenv("LOG_DIR")
-	os.Setenv("LOG_DIR", tmpDir)
-	defer os.Setenv("LOG_DIR", originalLogDir)
+	_ = os.Setenv("LOG_DIR", tmpDir)
+	defer func() { _ = os.Setenv("LOG_DIR", originalLogDir) }()
 
 	logger := NewLogger()
 

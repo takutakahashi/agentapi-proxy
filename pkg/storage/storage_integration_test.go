@@ -53,7 +53,7 @@ func TestFileStorageErrorHandling(t *testing.T) {
 		// Try to create storage in read-only directory
 		storage, err := NewFileStorage(tmpFile, 0, false)
 		if err == nil {
-			defer storage.Close()
+			defer func() { _ = storage.Close() }()
 
 			// Try to save session (should fail)
 			session := &SessionData{
@@ -80,7 +80,7 @@ func TestEncryptionErrorHandling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file storage: %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	t.Run("EmptySensitiveValue", func(t *testing.T) {
 		session := &SessionData{
@@ -153,7 +153,7 @@ func TestStorageConcurrency(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create file storage: %v", err)
 		}
-		defer storage.Close()
+		defer func() { _ = storage.Close() }()
 
 		testConcurrentAccess(t, storage)
 	})
@@ -256,7 +256,7 @@ func TestStorageEdgeCases(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create file storage: %v", err)
 		}
-		defer storage.Close()
+		defer func() { _ = storage.Close() }()
 
 		// Create session with large environment data
 		largeValue := strings.Repeat("a", 100000) // 100KB string
@@ -384,7 +384,7 @@ func TestFileStoragePeriodicSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file storage: %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	session := &SessionData{
 		ID:     "sync-test",
@@ -455,7 +455,7 @@ func TestStorageConfigValidation(t *testing.T) {
 			t.Errorf("Failed to create storage with empty file path: %v", err)
 		}
 		if storage != nil {
-			storage.Close()
+			_ = storage.Close()
 		}
 	})
 
@@ -472,7 +472,7 @@ func TestStorageConfigValidation(t *testing.T) {
 			t.Errorf("Failed to create storage with zero sync interval: %v", err)
 		}
 		if storage != nil {
-			storage.Close()
+			_ = storage.Close()
 		}
 	})
 }

@@ -227,7 +227,7 @@ func (p *Proxy) sessionToStorage(session *AgentSession) *storage.SessionData {
 		Tags:        session.Tags,
 		ProcessID:   processID,
 		Command:     command,
-		WorkingDir:  "", // Add working directory if needed
+		WorkingDir:  session.ID, // Session working directory is the session ID
 	}
 }
 
@@ -776,6 +776,9 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	if repoInfo != nil {
 		templateData.RepoFullName = repoInfo.FullName
 		templateData.CloneDir = repoInfo.CloneDir
+	} else {
+		// Always set CloneDir to session ID, even when no repository is specified
+		templateData.CloneDir = session.ID
 	}
 
 	if scriptName != "" {

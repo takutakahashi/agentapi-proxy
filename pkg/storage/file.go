@@ -167,7 +167,7 @@ func (fs *FileStorage) syncToFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Encode sessions
 	encoder := json.NewEncoder(file)
@@ -186,19 +186,19 @@ func (fs *FileStorage) syncToFile() error {
 	}
 
 	if err := encoder.Encode(&data); err != nil {
-		os.Remove(tempFile)
+		_ = os.Remove(tempFile)
 		return fmt.Errorf("failed to encode sessions: %w", err)
 	}
 
 	// Sync to disk
 	if err := file.Sync(); err != nil {
-		os.Remove(tempFile)
+		_ = os.Remove(tempFile)
 		return fmt.Errorf("failed to sync file: %w", err)
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempFile, fs.filePath); err != nil {
-		os.Remove(tempFile)
+		_ = os.Remove(tempFile)
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
@@ -211,7 +211,7 @@ func (fs *FileStorage) loadFromFile() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var data struct {
 		Sessions []*SessionData `json:"sessions"`

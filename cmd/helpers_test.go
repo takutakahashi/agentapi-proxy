@@ -60,7 +60,7 @@ func TestGenerateTokenValidInputs(t *testing.T) {
 	// Create a temporary directory for testing
 	tmpDir, err := os.MkdirTemp("", "helpers-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	outputFile := filepath.Join(tmpDir, "test_api_keys.json")
 
@@ -111,7 +111,7 @@ func TestGenerateTokenMergeExisting(t *testing.T) {
 	// Create a temporary directory for testing
 	tmpDir, err := os.MkdirTemp("", "helpers-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	outputFile := filepath.Join(tmpDir, "existing_api_keys.json")
 
@@ -159,9 +159,10 @@ func TestGenerateTokenMergeExisting(t *testing.T) {
 	var existingKey, newKey map[string]interface{}
 	for _, k := range keys {
 		key := k.(map[string]interface{})
-		if key["user_id"] == "existing-user" {
+		switch key["user_id"] {
+		case "existing-user":
 			existingKey = key
-		} else if key["user_id"] == "new-user" {
+		case "new-user":
 			newKey = key
 		}
 	}
@@ -271,14 +272,14 @@ func TestRunSetupClaudeCodeNoCLAUDEDIR(t *testing.T) {
 	originalCLAUDEDIR := os.Getenv("CLAUDE_DIR")
 	defer func() {
 		if originalCLAUDEDIR != "" {
-			os.Setenv("CLAUDE_DIR", originalCLAUDEDIR)
+			_ = os.Setenv("CLAUDE_DIR", originalCLAUDEDIR)
 		} else {
-			os.Unsetenv("CLAUDE_DIR")
+			_ = os.Unsetenv("CLAUDE_DIR")
 		}
 	}()
 
 	// Unset CLAUDE_DIR
-	os.Unsetenv("CLAUDE_DIR")
+	_ = os.Unsetenv("CLAUDE_DIR")
 
 	// This test verifies the function handles missing CLAUDE_DIR
 	// We can't easily test os.Exit(1), but we can verify the error path is taken

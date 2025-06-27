@@ -125,7 +125,7 @@ func runSend(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -154,7 +154,7 @@ func runHistory(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error getting history: %v\n", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -186,7 +186,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error getting status: %v\n", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -215,7 +215,7 @@ func runEvents(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error connecting to events: %v\n", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

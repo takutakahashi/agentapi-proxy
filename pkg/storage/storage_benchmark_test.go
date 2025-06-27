@@ -124,7 +124,7 @@ func BenchmarkFileStorage(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create file storage: %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	// Create test sessions
 	sessions := make([]*SessionData, 100) // Smaller set for file operations
@@ -200,7 +200,7 @@ func BenchmarkFileStorageWithEncryption(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create encrypted file storage: %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	// Create test sessions with sensitive data
 	sessions := make([]*SessionData, 50) // Smaller set for encryption operations

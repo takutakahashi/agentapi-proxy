@@ -23,7 +23,7 @@ func TestProxySessionPersistence(t *testing.T) {
 		proxy := NewProxy(cfg, false)
 		defer func() {
 			if proxy.storage != nil {
-				proxy.storage.Close()
+				_ = proxy.storage.Close()
 			}
 		}()
 
@@ -75,7 +75,7 @@ func TestProxySessionPersistence(t *testing.T) {
 		proxy := NewProxy(cfg, false)
 		defer func() {
 			if proxy.storage != nil {
-				proxy.storage.Close()
+				_ = proxy.storage.Close()
 			}
 		}()
 
@@ -120,7 +120,7 @@ func TestProxySessionPersistence(t *testing.T) {
 		proxy := NewProxy(cfg, false)
 		defer func() {
 			if proxy.storage != nil {
-				proxy.storage.Close()
+				_ = proxy.storage.Close()
 			}
 		}()
 
@@ -198,7 +198,7 @@ func TestProxySessionRecovery(t *testing.T) {
 				t.Fatalf("Failed to save test session: %v", err)
 			}
 		}
-		initialStorage.Close()
+		_ = initialStorage.Close()
 
 		// Create proxy with persistence (should recover sessions)
 		cfg := createTestConfigWithPersistence(tmpDir)
@@ -207,7 +207,7 @@ func TestProxySessionRecovery(t *testing.T) {
 		proxy := NewProxy(cfg, false)
 		defer func() {
 			if proxy.storage != nil {
-				proxy.storage.Close()
+				_ = proxy.storage.Close()
 			}
 		}()
 
@@ -278,7 +278,7 @@ func TestProxyPersistenceConfiguration(t *testing.T) {
 		proxy := NewProxy(cfg, false)
 		defer func() {
 			if proxy.storage != nil {
-				proxy.storage.Close()
+				_ = proxy.storage.Close()
 			}
 		}()
 
@@ -297,7 +297,7 @@ func TestProxyPersistenceConfiguration(t *testing.T) {
 		proxy := NewProxy(cfg, false)
 		defer func() {
 			if proxy.storage != nil {
-				proxy.storage.Close()
+				_ = proxy.storage.Close()
 			}
 		}()
 
@@ -339,7 +339,7 @@ func TestProxyPersistenceAPI(t *testing.T) {
 		proxy := NewProxy(cfg, false)
 		defer func() {
 			if proxy.storage != nil {
-				proxy.storage.Close()
+				_ = proxy.storage.Close()
 			}
 		}()
 

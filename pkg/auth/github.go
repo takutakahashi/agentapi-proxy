@@ -102,7 +102,7 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
@@ -155,7 +155,7 @@ func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token str
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
@@ -185,7 +185,7 @@ func (p *GitHubAuthProvider) getUserTeamsInOrg(ctx context.Context, token, org, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d for org %s", resp.StatusCode, org)
@@ -232,7 +232,7 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 	if err != nil {
 		return false, ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return false, ""
