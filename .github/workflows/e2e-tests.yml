@@ -37,10 +37,17 @@ jobs:
 
     - name: Install Claude Code CLI
       run: |
-        # Download and install Claude Code CLI from GitHub releases
-        echo "Installing Claude Code CLI..."
-        CLAUDE_VERSION=$(curl -s https://api.github.com/repos/anthropics/claude-code/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\([^"]*\)".*/\1/')
-        echo "Latest Claude Code version: $CLAUDE_VERSION"
+        # Install Claude Code CLI using npm (if available)
+        if command -v npm &> /dev/null; then
+          echo "Installing Claude Code CLI via npm..."
+          npm install -g @anthropic-ai/claude
+          claude --version && exit 0
+        fi
+        
+        # Fallback: Download and install Claude Code CLI from GitHub releases
+        echo "Installing Claude Code CLI from GitHub releases..."
+        CLAUDE_VERSION=$(curl -s https://api.github.com/repos/anthropics/claude-code/releases/latest | grep '"tag_name"' | jq -r '.tag_name' 2>/dev/null || echo "v0.6.0")
+        echo "Claude Code version: $CLAUDE_VERSION"
         
         # Download the binary
         curl -L -o claude "https://github.com/anthropics/claude-code/releases/download/${CLAUDE_VERSION}/claude-linux-amd64"
@@ -75,7 +82,7 @@ jobs:
         mise exec go -- make e2e
 
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: test-results
