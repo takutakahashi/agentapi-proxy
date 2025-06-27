@@ -252,10 +252,25 @@ func TestClaudeCodeWithMultipleSessions(t *testing.T) {
 }
 
 func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
-	// Use pre-built binary
-	binaryPath := "./bin/agentapi-proxy"
-	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
-		return nil, nil, fmt.Errorf("agentapi-proxy binary not found at %s. Please run 'make build' first", binaryPath)
+	// Try multiple possible binary locations
+	possiblePaths := []string{
+		"./bin/agentapi-proxy",
+		"bin/agentapi-proxy",
+		"../bin/agentapi-proxy",
+	}
+	
+	var binaryPath string
+	for _, path := range possiblePaths {
+		if _, err := os.Stat(path); err == nil {
+			binaryPath = path
+			break
+		}
+	}
+	
+	if binaryPath == "" {
+		// Get current working directory for debugging
+		wd, _ := os.Getwd()
+		return nil, nil, fmt.Errorf("agentapi-proxy binary not found in any of %v. Current working directory: %s", possiblePaths, wd)
 	}
 
 	// Start the proxy server

@@ -15,9 +15,26 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
-# Check if binary exists
-if [ ! -f "./bin/agentapi-proxy" ]; then
-    echo "Error: agentapi-proxy binary not found. Please run 'make build' first."
+# Debug: Show current directory and file listing
+echo "Current working directory: $(pwd)"
+echo "Contents of current directory:"
+ls -la
+echo "Contents of bin directory:"
+ls -la bin/ || echo "bin directory not found"
+
+# Check if binary exists in possible locations
+BINARY_FOUND=false
+for path in "./bin/agentapi-proxy" "bin/agentapi-proxy" "../bin/agentapi-proxy"; do
+    if [ -f "$path" ]; then
+        echo "Found binary at: $path"
+        BINARY_FOUND=true
+        break
+    fi
+done
+
+if [ "$BINARY_FOUND" = false ]; then
+    echo "Error: agentapi-proxy binary not found in any of: ./bin/agentapi-proxy, bin/agentapi-proxy, ../bin/agentapi-proxy"
+    echo "Please run 'make build' first."
     exit 1
 fi
 
