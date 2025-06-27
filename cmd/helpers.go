@@ -136,35 +136,34 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 		"dontCrawlDirectory":            "true",
 	}
 
-	// Check if mise is available first, then try claude command
-	if _, err := exec.LookPath("mise"); err == nil {
-		// Use mise exec to run claude commands
-		for key, value := range claudeSettingsMap {
-			claudeCmd := exec.Command("mise", "exec", "--", "claude", "config", "set", key, value)
-			if err := claudeCmd.Run(); err != nil {
-				fmt.Printf("Error setting Claude config for key '%s' via mise: %v\n", key, err)
-				log.Printf("Error setting Claude config for key '%s' via mise: %v", key, err)
-				// Continue with other settings instead of exiting
-				continue
-			}
-		}
-		fmt.Printf("Successfully configured Claude CLI settings via mise\n")
-	} else if _, err := exec.LookPath("claude"); err == nil {
-		// Fallback to direct claude command
+	// Check if claude command is directly available first
+	if _, err := exec.LookPath("claude"); err == nil {
+		// Use direct claude command
 		for key, value := range claudeSettingsMap {
 			claudeCmd := exec.Command("claude", "config", "set", key, value)
 			if err := claudeCmd.Run(); err != nil {
 				fmt.Printf("Error setting Claude config for key '%s': %v\n", key, err)
-				log.Printf("Error setting Claude config for key '%s': %v", key, err)
-				// Continue with other settings instead of exiting
-				continue
+				log.Printf("Fatal error setting Claude config for key '%s': %v", key, err)
+				os.Exit(1)
 			}
 		}
 		fmt.Printf("Successfully configured Claude CLI settings\n")
+	} else if _, err := exec.LookPath("mise"); err == nil {
+		// Claude not found directly, try via mise
+		for key, value := range claudeSettingsMap {
+			claudeCmd := exec.Command("mise", "exec", "--", "claude", "config", "set", key, value)
+			if err := claudeCmd.Run(); err != nil {
+				fmt.Printf("Error setting Claude config for key '%s' via mise: %v\n", key, err)
+				log.Printf("Fatal error setting Claude config for key '%s' via mise: %v", key, err)
+				os.Exit(1)
+			}
+		}
+		fmt.Printf("Successfully configured Claude CLI settings via mise\n")
 	} else {
-		fmt.Printf("Warning: Neither 'mise' nor 'claude' command found in PATH, skipping Claude config setup\n")
-		fmt.Printf("Please install Claude CLI or mise with claude to use Claude-specific configuration features\n")
-		log.Printf("Warning: Neither 'mise' nor 'claude' command found in PATH")
+		fmt.Printf("Error: Neither 'claude' nor 'mise' command found in PATH\n")
+		fmt.Printf("Please install Claude CLI or mise with claude to use this feature\n")
+		log.Printf("Fatal error: Neither 'claude' nor 'mise' command found in PATH")
+		os.Exit(1)
 	}
 
 	fmt.Printf("Successfully created Claude Code configuration at %s\n", settingsPath)
