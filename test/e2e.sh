@@ -24,9 +24,8 @@ echo "Building agentapi-proxy..."
 make build
 
 echo "Running e2e tests..."
-cd test/e2e
 
 # Run the e2e tests with verbose output
-go test -v -timeout=60s ./... -tags=e2e
+go test -v -timeout=60s ./test/... -tags=e2e
 
 echo "E2E tests completed successfully!"
