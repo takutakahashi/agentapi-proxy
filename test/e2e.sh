@@ -15,13 +15,11 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
-# Set up test environment
-export CGO_ENABLED=0
-export GOOS=linux
-export GOARCH=amd64
-
-echo "Building agentapi-proxy..."
-make build
+# Check if binary exists
+if [ ! -f "./bin/agentapi-proxy" ]; then
+    echo "Error: agentapi-proxy binary not found. Please run 'make build' first."
+    exit 1
+fi
 
 echo "Running e2e tests..."
 
