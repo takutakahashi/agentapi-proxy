@@ -26,6 +26,13 @@ if [[ -n "$GITHUB_REPO_FULLNAME" && -n "$GITHUB_CLONE_DIR" ]]; then
     cd "$GITHUB_CLONE_DIR"
 else
     echo "GitHub parameters not provided, skipping repository setup"
+    # Create session directory even when no repository is cloned
+    if [[ -n "$GITHUB_CLONE_DIR" ]]; then
+        echo "Creating session directory: $GITHUB_CLONE_DIR"
+        mkdir -p "$GITHUB_CLONE_DIR"
+        echo "Changing directory to $GITHUB_CLONE_DIR"
+        cd "$GITHUB_CLONE_DIR"
+    fi
 fi
 
 CLAUDE_DIR=. agentapi-proxy helpers setup-claude-code
