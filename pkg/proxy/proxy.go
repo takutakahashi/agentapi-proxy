@@ -197,6 +197,11 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 
 // determineClaudeCommand determines the appropriate claude command to use
 func (p *Proxy) determineClaudeCommand() string {
+	// If CLAUDE_CMD environment variable is set, use it directly
+	if claudeCmd := os.Getenv("CLAUDE_CMD"); claudeCmd != "" {
+		return claudeCmd
+	}
+
 	// Check if claude command is directly available first
 	if _, err := exec.LookPath("claude"); err == nil {
 		return "claude"
