@@ -67,7 +67,7 @@ e2e:
 		bash test/e2e.sh; \
 	else \
 		echo "Running e2e tests directly..."; \
-		cd test/e2e && go test -v -timeout=60s ./... -tags=e2e; \
+		go test -v -timeout=60s ./test/... -tags=e2e; \
 	fi
 
 ci: lint test build
