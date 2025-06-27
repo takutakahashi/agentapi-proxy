@@ -57,10 +57,10 @@ RUN curl -L -o /usr/local/bin/lightpanda https://github.com/lightpanda-io/browse
     chmod +x /usr/local/bin/lightpanda
 
 # Create a non-root user
-RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -s /bin/bash appuser && \
-    mkdir -p /home/appuser && \
-    chown -R appuser:appuser /home/appuser && \
-    echo 'appuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+RUN groupadd -r agentapi && useradd -r -g agentapi -d /home/agentapi -s /bin/bash agentapi && \
+    mkdir -p /home/agentapi && \
+    chown -R agentapi:agentapi /home/agentapi && \
+    echo 'agentapi ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 # Set working directory
 WORKDIR /app
@@ -72,11 +72,11 @@ COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
 COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 
 # Switch to non-root user
-USER appuser
+USER agentapi
 
 # Install mise
 RUN curl https://mise.run | sh
-ENV PATH="/home/appuser/.local/bin:$PATH"
+ENV PATH="/home/agentapi/.local/bin:$PATH"
 
 # Install claude code and Playwright MCP server via npm (Node.js is now installed directly)
 RUN sudo npm install -g @anthropic-ai/claude-code @playwright/mcp@latest
