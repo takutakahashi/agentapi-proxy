@@ -150,7 +150,7 @@ func TestClaudeCodeIntegration(t *testing.T) {
 
 	// Stop proxy gracefully if possible
 	if proxyProcess != nil && proxyProcess.Process != nil {
-		proxyProcess.Process.Signal(os.Interrupt)
+		_ = proxyProcess.Process.Signal(os.Interrupt)
 		time.Sleep(1 * time.Second)
 	}
 }
@@ -287,8 +287,8 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 
 	cleanup := func() {
 		if cmd.Process != nil {
-			cmd.Process.Kill()
-			cmd.Wait()
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
 		}
 		t.Logf("Proxy stdout: %s", stdout.String())
 		t.Logf("Proxy stderr: %s", stderr.String())
