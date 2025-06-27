@@ -309,7 +309,7 @@ func waitForProxyReady(ctx context.Context, url string) error {
 
 		resp, err := client.Get(url + "/search")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -345,7 +345,9 @@ func sendMessageThroughProxy(ctx context.Context, proxyURL, sessionID, message s
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
