@@ -250,14 +250,16 @@ func TestClaudeCodeWithMultipleSessions(t *testing.T) {
 }
 
 func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
-	// Build the proxy binary first
-	buildCmd := exec.Command("make", "build")
-	if err := buildCmd.Run(); err != nil {
-		return nil, nil, fmt.Errorf("failed to build proxy: %v", err)
+	// Check if proxy binary exists, build if not
+	binaryPath := "./bin/agentapi-proxy"
+	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+		buildCmd := exec.Command("make", "build")
+		if err := buildCmd.Run(); err != nil {
+			return nil, nil, fmt.Errorf("failed to build proxy: %v", err)
+		}
 	}
 
 	// Start the proxy server
-	binaryPath := "./bin/agentapi-proxy"
 	cmd := exec.Command(binaryPath, "server", "--port", proxyPort, "--auth-disabled")
 
 	// Set environment for the proxy
