@@ -29,4 +29,4 @@ else
 fi
 
 CLAUDE_DIR=. agentapi-proxy helpers setup-claude-code
-exec agentapi server --port "$PORT" {{.AgentAPIArgs}} -- claude {{.ClaudeArgs}}
+exec agentapi server --port "$PORT" {{.AgentAPIArgs}} -- {{.ClaudeCmd}} {{.ClaudeArgs}}

@@ -46,6 +46,7 @@ const (
 type ScriptTemplateData struct {
 	AgentAPIArgs              string
 	ClaudeArgs                string
+	ClaudeCmd                 string
 	GitHubToken               string
 	GitHubAppID               string
 	GitHubInstallationID      string
@@ -192,6 +193,24 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	}
 
 	return p
+}
+
+// determineClaudeCommand determines the appropriate claude command to use
+func (p *Proxy) determineClaudeCommand() string {
+	// Check if claude command is directly available first
+	if _, err := exec.LookPath("claude"); err == nil {
+		return "claude"
+	}
+
+	// Claude not found directly, try via mise
+	if _, err := exec.LookPath("mise"); err == nil {
+		return "mise exec -- claude"
+	}
+
+	// Neither claude nor mise found - this will cause an error in the script
+	// Log the error and return claude as fallback (script will handle the error)
+	log.Printf("Error: Neither 'claude' nor 'mise' command found in PATH")
+	return "claude"
 }
 
 // loggingMiddleware returns Echo middleware for request logging
@@ -760,10 +779,14 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	var cmd *exec.Cmd
 
+	// Determine the appropriate claude command to use
+	claudeCmd := p.determineClaudeCommand()
+
 	// Prepare template data with environment variables and repository info
 	templateData := &ScriptTemplateData{
 		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
 		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
+		ClaudeCmd:                 claudeCmd,
 		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
 		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
 		GitHubInstallationID:      os.Getenv("GITHUB_INSTALLATION_ID"),
