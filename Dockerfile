@@ -41,13 +41,15 @@ RUN set -ex && \
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install ca-certificates, curl, and bash for mise installation, plus GitHub CLI, make, and tmux
+# Install ca-certificates, curl, and bash for mise installation, plus GitHub CLI, make, tmux, and Node.js
 RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc make procps tmux && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
     apt-get install -y gh && \
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+    apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Lightpanda Browser
@@ -72,15 +74,8 @@ COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 RUN curl https://mise.run | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Install Node.js via mise
-RUN mise install node@latest
-RUN mise global node@latest
-
-# Install claude code via npm
-RUN mise exec -- npm install -g @anthropic-ai/claude-code
-
-# Install Playwright MCP server
-RUN mise exec -- npm install -g @playwright/mcp@latest
+# Install claude code and Playwright MCP server via npm (Node.js is now installed directly)
+RUN npm install -g @anthropic-ai/claude-code @playwright/mcp@latest
 
 # Setup Lightpanda Browser
 ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
