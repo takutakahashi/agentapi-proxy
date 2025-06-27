@@ -40,6 +40,12 @@ jobs:
       run: |
         make build
 
+    - name: Verify binary exists
+      run: |
+        ls -la bin/
+        ls -la ./bin/agentapi-proxy || echo "Binary not found"
+        file ./bin/agentapi-proxy || echo "File command failed"
+
     - name: Run E2E tests
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
