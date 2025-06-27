@@ -136,12 +136,21 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 		"dontCrawlDirectory":            "true",
 	}
 
-	// Check if claude command is available
-	if _, err := exec.LookPath("claude"); err != nil {
-		fmt.Printf("Warning: 'claude' command not found in PATH, skipping Claude config setup\n")
-		fmt.Printf("Please install Claude CLI if you want to use Claude-specific configuration features\n")
-		log.Printf("Warning: 'claude' command not found in PATH: %v", err)
-	} else {
+	// Check if mise is available first, then try claude command
+	if _, err := exec.LookPath("mise"); err == nil {
+		// Use mise exec to run claude commands
+		for key, value := range claudeSettingsMap {
+			claudeCmd := exec.Command("mise", "exec", "--", "claude", "config", "set", key, value)
+			if err := claudeCmd.Run(); err != nil {
+				fmt.Printf("Error setting Claude config for key '%s' via mise: %v\n", key, err)
+				log.Printf("Error setting Claude config for key '%s' via mise: %v", key, err)
+				// Continue with other settings instead of exiting
+				continue
+			}
+		}
+		fmt.Printf("Successfully configured Claude CLI settings via mise\n")
+	} else if _, err := exec.LookPath("claude"); err == nil {
+		// Fallback to direct claude command
 		for key, value := range claudeSettingsMap {
 			claudeCmd := exec.Command("claude", "config", "set", key, value)
 			if err := claudeCmd.Run(); err != nil {
@@ -152,6 +161,10 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 			}
 		}
 		fmt.Printf("Successfully configured Claude CLI settings\n")
+	} else {
+		fmt.Printf("Warning: Neither 'mise' nor 'claude' command found in PATH, skipping Claude config setup\n")
+		fmt.Printf("Please install Claude CLI or mise with claude to use Claude-specific configuration features\n")
+		log.Printf("Warning: Neither 'mise' nor 'claude' command found in PATH")
 	}
 
 	fmt.Printf("Successfully created Claude Code configuration at %s\n", settingsPath)
