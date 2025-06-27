@@ -142,7 +142,9 @@ func (p *GitHubOAuthProvider) exchangeCodeForToken(ctx context.Context, code, re
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("token exchange failed with status %d", resp.StatusCode)
@@ -204,7 +206,9 @@ func (p *GitHubOAuthProvider) RevokeToken(ctx context.Context, token string) err
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("failed to revoke token: status %d", resp.StatusCode)
