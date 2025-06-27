@@ -1,0 +1,43 @@
+{
+  "start_port": 9000,
+  "auth": {
+    "enabled": true,
+    "github": {
+      "enabled": true,
+      "base_url": "https://api.github.com",
+      "token_header": "Authorization",
+      "oauth": {
+        "client_id": "${GITHUB_CLIENT_ID}",
+        "client_secret": "${GITHUB_CLIENT_SECRET}",
+        "scope": "read:user read:org",
+        "base_url": "https://github.com"
+      },
+      "user_mapping": {
+        "default_role": "user",
+        "default_permissions": ["read", "session:create", "session:list"],
+        "team_role_mapping": {
+          "myorg/admins": {
+            "role": "admin",
+            "permissions": ["*"]
+          },
+          "myorg/developers": {
+            "role": "developer",
+            "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"]
+          },
+          "myorg/viewers": {
+            "role": "viewer",
+            "permissions": ["read", "session:list"]
+          }
+        }
+      }
+    }
+  },
+  "persistence": {
+    "enabled": true,
+    "backend": "file",
+    "file_path": "./sessions.json",
+    "sync_interval_seconds": 30,
+    "encrypt_sensitive_data": true,
+    "session_recovery_max_age_hours": 24
+  }
+}

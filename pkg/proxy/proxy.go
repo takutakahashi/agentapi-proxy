@@ -94,6 +94,8 @@ type Proxy struct {
 	portMutex     sync.Mutex
 	logger        *logger.Logger
 	storage       storage.Storage
+	oauthProvider *auth.GitHubOAuthProvider
+	oauthSessions sync.Map // sessionID -> OAuthSession
 }
 
 // NewProxy creates a new proxy instance
@@ -183,6 +185,13 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 
 	// Add authentication middleware
 	e.Use(auth.AuthMiddleware(cfg))
+
+	// Initialize OAuth provider if configured
+	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil {
+		p.oauthProvider = auth.NewGitHubOAuthProvider(cfg.Auth.GitHub.OAuth, cfg.Auth.GitHub)
+		// Start cleanup goroutine for expired OAuth sessions
+		go p.cleanupExpiredOAuthSessions()
+	}
 
 	p.setupRoutes()
 
@@ -324,6 +333,15 @@ func (p *Proxy) setupRoutes() {
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission("session:create"))
 	p.echo.GET("/search", p.searchSessions, auth.RequirePermission("session:list"))
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
+
+	// Add OAuth routes if OAuth is configured
+	if p.oauthProvider != nil {
+		// OAuth endpoints don't require existing authentication
+		p.echo.POST("/oauth/authorize", p.handleOAuthLogin)
+		p.echo.GET("/oauth/callback", p.handleOAuthCallback)
+		p.echo.POST("/oauth/logout", p.handleOAuthLogout)
+		p.echo.POST("/oauth/refresh", p.handleOAuthRefresh)
+	}
 
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
 	p.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
