@@ -1,4 +1,4 @@
-package main
+package test
 
 import (
 	"bytes"
@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/client"
-	"github.com/takutakahashi/agentapi-proxy/pkg/config"
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
 
 const (
