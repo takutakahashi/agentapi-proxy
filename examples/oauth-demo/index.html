@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentAPI Proxy - GitHub OAuth デモ</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        button {
+            background-color: #0366d6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0256c7;
+        }
+        button:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+        .error {
+            color: #dc2626;
+            background-color: #fee;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .success {
+            color: #059669;
+            background-color: #d1fae5;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .info {
+            background-color: #e0e7ff;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .code {
+            font-family: 'Consolas', 'Monaco', monospace;
+            background-color: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        .hidden {
+            display: none;
+        }
+        .session-info {
+            background: #f0f9ff;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+        }
+        pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        .flex {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .flex input {
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 AgentAPI Proxy - GitHub OAuth デモ</h1>
+        
+        <div class="info">
+            <strong>使い方:</strong>
+            <ol>
+                <li>プロキシサーバーのURLを設定（デフォルト: http://localhost:8080）</li>
+                <li>「GitHubでログイン」をクリック</li>
+                <li>GitHubで認証を承認</li>
+                <li>認証後、AgentAPIセッションを作成できます</li>
+            </ol>
+        </div>
+
+        <!-- 設定セクション -->
+        <div class="section">
+            <h2>⚙️ 設定</h2>
+            <label for="proxyUrl">プロキシサーバーURL:</label>
+            <input type="text" id="proxyUrl" value="http://localhost:8080" />
+            <label for="redirectUri">リダイレクトURI（このページのURL）:</label>
+            <input type="text" id="redirectUri" value="" />
+        </div>
+
+        <!-- 認証セクション -->
+        <div class="section">
+            <h2>🔑 認証状態</h2>
+            <div id="authStatus">
+                <p>未認証</p>
+                <button onclick="startOAuth()">GitHubでログイン</button>
+            </div>
+            <div id="userInfo" class="session-info hidden"></div>
+        </div>
+
+        <!-- セッション作成セクション -->
+        <div id="sessionSection" class="section hidden">
+            <h2>🚀 AgentAPIセッション</h2>
+            <div class="flex">
+                <input type="text" id="sessionTag" placeholder="タグ（例: project-name）" />
+                <button onclick="createSession()">新規セッション作成</button>
+            </div>
+            <button onclick="listSessions()">セッション一覧</button>
+            <div id="sessionList" class="session-info hidden"></div>
+        </div>
+
+        <!-- ログセクション -->
+        <div class="section">
+            <h2>📝 ログ</h2>
+            <pre id="logs">ログがここに表示されます...</pre>
+        </div>
+    </div>
+
+    <script>
+        // グローバル変数
+        let sessionId = null;
+        let userContext = null;
+
+        // ページ読み込み時の初期化
+        window.onload = function() {
+            // リダイレクトURIを自動設定
+            const redirectUri = window.location.origin + window.location.pathname;
+            document.getElementById('redirectUri').value = redirectUri;
+
+            // URLパラメータをチェック（OAuthコールバック）
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('code') && params.has('state')) {
+                handleOAuthCallback(params.get('code'), params.get('state'));
+            } else {
+                // 保存されたセッションをチェック
+                checkExistingSession();
+            }
+        };
+
+        // ログ出力
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#ef4444' : type === 'success' ? '#10b981' : '#6b7280';
+            logs.innerHTML += `<span style="color: ${color}">[${timestamp}] ${message}</span>\n`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // OAuth認証開始
+        async function startOAuth() {
+            const proxyUrl = document.getElementById('proxyUrl').value;
+            const redirectUri = document.getElementById('redirectUri').value;
+
+            log('OAuth認証を開始します...');
+
+            try {
+                const response = await fetch(`${proxyUrl}/oauth/authorize`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ redirect_uri: redirectUri })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                log('認証URLを取得しました', 'success');
+                log(`State: ${data.state}`);
+
+                // stateを保存
+                sessionStorage.setItem('oauth_state', data.state);
+
+                // GitHubにリダイレクト
+                log('GitHubにリダイレクトします...');
+                window.location.href = data.auth_url;
+
+            } catch (error) {
+                log(`エラー: ${error.message}`, 'error');
+            }
+        }
+
+        // OAuthコールバック処理
+        async function handleOAuthCallback(code, state) {
+            log('OAuthコールバックを処理中...');
+
+            // state検証
+            const savedState = sessionStorage.getItem('oauth_state');
+            if (state !== savedState) {
+                log('セキュリティエラー: stateパラメータが一致しません', 'error');
+                return;
+            }
+
+            const proxyUrl = document.getElementById('proxyUrl').value;
+
+            try {
+                const response = await fetch(`${proxyUrl}/oauth/callback?code=${code}&state=${state}`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                log('認証成功！', 'success');
+                log(`セッションID: ${data.session_id}`);
+                log(`ユーザー: ${data.user.user_id} (${data.user.role})`);
+
+                // セッション情報を保存
+                sessionId = data.session_id;
+                userContext = data.user;
+                localStorage.setItem('agentapi_session_id', sessionId);
+                localStorage.setItem('agentapi_user', JSON.stringify(userContext));
+
+                // UIを更新
+                updateAuthUI(true);
+
+                // URLパラメータをクリア
+                window.history.replaceState({}, document.title, window.location.pathname);
+                sessionStorage.removeItem('oauth_state');
+
+            } catch (error) {
+                log(`認証エラー: ${error.message}`, 'error');
+            }
+        }
+
+        // 既存セッションをチェック
+        async function checkExistingSession() {
+            const savedSessionId = localStorage.getItem('agentapi_session_id');
+            const savedUser = localStorage.getItem('agentapi_user');
+
+            if (savedSessionId && savedUser) {
+                sessionId = savedSessionId;
+                userContext = JSON.parse(savedUser);
+
+                log('保存されたセッションを確認中...');
+
+                // セッションの有効性を確認
+                const proxyUrl = document.getElementById('proxyUrl').value;
+                try {
+                    const response = await fetch(`${proxyUrl}/search`, {
+                        headers: { 'X-Session-ID': sessionId }
+                    });
+
+                    if (response.ok) {
+                        log('セッションは有効です', 'success');
+                        updateAuthUI(true);
+                    } else {
+                        log('セッションが無効です', 'error');
+                        clearSession();
+                    }
+                } catch (error) {
+                    log(`セッション確認エラー: ${error.message}`, 'error');
+                    clearSession();
+                }
+            }
+        }
+
+        // UI更新
+        function updateAuthUI(authenticated) {
+            const authStatus = document.getElementById('authStatus');
+            const userInfo = document.getElementById('userInfo');
+            const sessionSection = document.getElementById('sessionSection');
+
+            if (authenticated && userContext) {
+                authStatus.innerHTML = `
+                    <p>✅ 認証済み</p>
+                    <button onclick="logout()">ログアウト</button>
+                    <button onclick="refreshSession()">セッション更新</button>
+                `;
+
+                userInfo.innerHTML = `
+                    <h3>ユーザー情報</h3>
+                    <p><strong>ユーザーID:</strong> ${userContext.user_id}</p>
+                    <p><strong>ロール:</strong> ${userContext.role}</p>
+                    <p><strong>権限:</strong> ${userContext.permissions.join(', ')}</p>
+                    <p><strong>セッションID:</strong> <span class="code">${sessionId}</span></p>
+                `;
+                userInfo.classList.remove('hidden');
+                sessionSection.classList.remove('hidden');
+            } else {
+                authStatus.innerHTML = `
+                    <p>未認証</p>
+                    <button onclick="startOAuth()">GitHubでログイン</button>
+                `;
+                userInfo.classList.add('hidden');
+                sessionSection.classList.add('hidden');
+            }
+        }
+
+        // ログアウト
+        async function logout() {
+            const proxyUrl = document.getElementById('proxyUrl').value;
+
+            log('ログアウト中...');
+
+            try {
+                await fetch(`${proxyUrl}/oauth/logout`, {
+                    method: 'POST',
+                    headers: { 'X-Session-ID': sessionId }
+                });
+                log('ログアウトしました', 'success');
+            } catch (error) {
+                log(`ログアウトエラー: ${error.message}`, 'error');
+            }
+
+            clearSession();
+        }
+
+        // セッション更新
+        async function refreshSession() {
+            const proxyUrl = document.getElementById('proxyUrl').value;
+
+            log('セッションを更新中...');
+
+            try {
+                const response = await fetch(`${proxyUrl}/oauth/refresh`, {
+                    method: 'POST',
+                    headers: { 'X-Session-ID': sessionId }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                log('セッションを更新しました', 'success');
+                log(`有効期限: ${new Date(data.expires_at).toLocaleString()}`);
+
+            } catch (error) {
+                log(`セッション更新エラー: ${error.message}`, 'error');
+            }
+        }
+
+        // セッションクリア
+        function clearSession() {
+            sessionId = null;
+            userContext = null;
+            localStorage.removeItem('agentapi_session_id');
+            localStorage.removeItem('agentapi_user');
+            updateAuthUI(false);
+        }
+
+        // AgentAPIセッション作成
+        async function createSession() {
+            const proxyUrl = document.getElementById('proxyUrl').value;
+            const tag = document.getElementById('sessionTag').value;
+
+            log('AgentAPIセッションを作成中...');
+
+            try {
+                const response = await fetch(`${proxyUrl}/start`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Session-ID': sessionId,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        tags: tag ? { name: tag } : {},
+                        environment: { DEBUG: 'true' }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                log('AgentAPIセッションを作成しました', 'success');
+                log(`セッションID: ${data.session_id}`);
+
+                // タグフィールドをクリア
+                document.getElementById('sessionTag').value = '';
+
+                // セッション一覧を更新
+                await listSessions();
+
+            } catch (error) {
+                log(`セッション作成エラー: ${error.message}`, 'error');
+            }
+        }
+
+        // セッション一覧取得
+        async function listSessions() {
+            const proxyUrl = document.getElementById('proxyUrl').value;
+
+            log('セッション一覧を取得中...');
+
+            try {
+                const response = await fetch(`${proxyUrl}/search`, {
+                    headers: { 'X-Session-ID': sessionId }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                log(`${data.sessions.length}個のセッションが見つかりました`, 'success');
+
+                // セッション一覧を表示
+                const sessionList = document.getElementById('sessionList');
+                if (data.sessions.length > 0) {
+                    sessionList.innerHTML = '<h3>アクティブなセッション</h3>';
+                    data.sessions.forEach(session => {
+                        const startTime = new Date(session.started_at).toLocaleString();
+                        const tags = session.tags ? Object.entries(session.tags).map(([k, v]) => `${k}=${v}`).join(', ') : '';
+                        sessionList.innerHTML += `
+                            <div style="margin-bottom: 10px; padding: 10px; background: #f9fafb; border-radius: 4px;">
+                                <p><strong>ID:</strong> <span class="code">${session.session_id}</span></p>
+                                <p><strong>ステータス:</strong> ${session.status}</p>
+                                <p><strong>開始時刻:</strong> ${startTime}</p>
+                                <p><strong>ポート:</strong> ${session.port}</p>
+                                ${tags ? `<p><strong>タグ:</strong> ${tags}</p>` : ''}
+                            </div>
+                        `;
+                    });
+                    sessionList.classList.remove('hidden');
+                } else {
+                    sessionList.innerHTML = '<p>アクティブなセッションはありません</p>';
+                    sessionList.classList.remove('hidden');
+                }
+
+            } catch (error) {
+                log(`セッション一覧取得エラー: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html>

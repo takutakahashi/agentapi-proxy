@@ -209,7 +209,11 @@ agentapi-proxy supports flexible authentication mechanisms:
 For detailed setup instructions:
 - [GitHub Token Authentication](docs/github-authentication.md)
 - [GitHub OAuth Flow](docs/github-oauth.md)
+- [GitHub OAuth Quick Start](docs/github-oauth-quickstart.md)
 - [RBAC Configuration](docs/rbac.md)
+
+### Try the OAuth Demo
+Check out the [OAuth Demo Application](examples/oauth-demo/) to see GitHub OAuth in action.
 
 ## Client Library
 
