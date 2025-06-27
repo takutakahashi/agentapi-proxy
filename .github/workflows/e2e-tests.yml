@@ -36,18 +36,6 @@ jobs:
         # Verify installation
         claude --version
 
-    - name: Install golangci-lint
-      run: |
-        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
-
-    - name: Run lint
-      run: |
-        make lint
-
-    - name: Run unit tests
-      run: |
-        make test
-
     - name: Build binary
       run: |
         make build
