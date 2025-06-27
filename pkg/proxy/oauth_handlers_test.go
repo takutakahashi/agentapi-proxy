@@ -21,15 +21,15 @@ func setupTestProxyWithOAuth(t *testing.T) (*Proxy, *httptest.Server) {
 		case "/login/oauth/access_token":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer","scope":"read:user,read:org"}`))
+			_, _ = w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer","scope":"read:user,read:org"}`))
 		case "/user":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"login":"testuser","id":123456,"email":"test@example.com","name":"Test User"}`))
+			_, _ = w.Write([]byte(`{"login":"testuser","id":123456,"email":"test@example.com","name":"Test User"}`))
 		case "/user/orgs":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`[{"login":"test-org","id":789}]`))
+			_, _ = w.Write([]byte(`[{"login":"test-org","id":789}]`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

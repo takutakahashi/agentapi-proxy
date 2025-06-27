@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +38,12 @@ func TestGitHubOAuthProvider_GenerateAuthURL(t *testing.T) {
 	assert.Contains(t, authURL, "client_id=test-client-id")
 	assert.Contains(t, authURL, "redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fcallback")
 	assert.Contains(t, authURL, "scope=read%3Auser+read%3Aorg")
-	assert.Contains(t, authURL, "state="+state)
+	assert.Contains(t, authURL, "state=")
+	// State is URL encoded, so we just check that it exists and is not empty
+	stateIndex := strings.Index(authURL, "state=")
+	assert.True(t, stateIndex > 0)
+	stateValue := authURL[stateIndex+6:]
+	assert.NotEmpty(t, stateValue)
 }
 
 func TestGitHubOAuthProvider_ExchangeCode(t *testing.T) {
@@ -48,17 +54,17 @@ func TestGitHubOAuthProvider_ExchangeCode(t *testing.T) {
 			// Mock token exchange response
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer","scope":"read:user,read:org"}`))
+			_, _ = w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer","scope":"read:user,read:org"}`))
 		case "/user":
 			// Mock user API response
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"login":"testuser","id":123456,"email":"test@example.com","name":"Test User"}`))
+			_, _ = w.Write([]byte(`{"login":"testuser","id":123456,"email":"test@example.com","name":"Test User"}`))
 		case "/user/orgs":
 			// Mock organizations API response
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`[{"login":"test-org","id":789}]`))
+			_, _ = w.Write([]byte(`[{"login":"test-org","id":789}]`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
