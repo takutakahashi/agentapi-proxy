@@ -24,10 +24,19 @@ type StaticAuthConfig struct {
 
 // GitHubAuthConfig represents GitHub OAuth authentication
 type GitHubAuthConfig struct {
-	Enabled     bool              `json:"enabled" mapstructure:"enabled"`
-	BaseURL     string            `json:"base_url" mapstructure:"base_url"`
-	TokenHeader string            `json:"token_header" mapstructure:"token_header"`
-	UserMapping GitHubUserMapping `json:"user_mapping" mapstructure:"user_mapping"`
+	Enabled     bool               `json:"enabled" mapstructure:"enabled"`
+	BaseURL     string             `json:"base_url" mapstructure:"base_url"`
+	TokenHeader string             `json:"token_header" mapstructure:"token_header"`
+	UserMapping GitHubUserMapping  `json:"user_mapping" mapstructure:"user_mapping"`
+	OAuth       *GitHubOAuthConfig `json:"oauth,omitempty" mapstructure:"oauth"`
+}
+
+// GitHubOAuthConfig represents GitHub OAuth2 configuration
+type GitHubOAuthConfig struct {
+	ClientID     string `json:"client_id" mapstructure:"client_id"`
+	ClientSecret string `json:"client_secret" mapstructure:"client_secret"`
+	Scope        string `json:"scope" mapstructure:"scope"`
+	BaseURL      string `json:"base_url,omitempty" mapstructure:"base_url"`
 }
 
 // GitHubUserMapping represents user role mapping configuration
@@ -120,6 +129,14 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 	if config.Auth.GitHub != nil && config.Auth.GitHub.TokenHeader == "" {
 		config.Auth.GitHub.TokenHeader = "Authorization"
+	}
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
+		if config.Auth.GitHub.OAuth.BaseURL == "" {
+			config.Auth.GitHub.OAuth.BaseURL = config.Auth.GitHub.BaseURL
+		}
+		if config.Auth.GitHub.OAuth.Scope == "" {
+			config.Auth.GitHub.OAuth.Scope = "read:user read:org"
+		}
 	}
 
 	// Load API keys from external file if specified

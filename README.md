@@ -157,6 +157,60 @@ curl http://localhost:8080/550e8400-e29b-41d4-a716-446655440000/api/workspaces
 
 For detailed API documentation, see [docs/api.md](docs/api.md).
 
+## Authentication
+
+agentapi-proxy supports flexible authentication mechanisms:
+
+- **Static API Keys**: Pre-configured API keys with role-based permissions
+- **GitHub Token Authentication**: Authenticate users via GitHub personal access tokens
+- **GitHub OAuth Flow**: Full OAuth2 flow for web applications
+- **Hybrid Mode**: Combine multiple authentication methods
+
+### Quick Start
+
+#### Static API Keys
+```json
+{
+  "auth": {
+    "enabled": true,
+    "static": {
+      "enabled": true,
+      "header_name": "X-API-Key",
+      "api_keys": [
+        {
+          "key": "your-api-key",
+          "user_id": "alice",
+          "role": "admin",
+          "permissions": ["*"]
+        }
+      ]
+    }
+  }
+}
+```
+
+#### GitHub OAuth Setup
+```json
+{
+  "auth": {
+    "enabled": true,
+    "github": {
+      "enabled": true,
+      "oauth": {
+        "client_id": "${GITHUB_CLIENT_ID}",
+        "client_secret": "${GITHUB_CLIENT_SECRET}",
+        "scope": "read:user read:org"
+      }
+    }
+  }
+}
+```
+
+For detailed setup instructions:
+- [GitHub Token Authentication](docs/github-authentication.md)
+- [GitHub OAuth Flow](docs/github-oauth.md)
+- [RBAC Configuration](docs/rbac.md)
+
 ## Client Library
 
 Use the Go client library for programmatic access:
