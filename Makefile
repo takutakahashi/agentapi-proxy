@@ -38,7 +38,7 @@ build:
 
 gofmt:
 	@echo "Formatting Go code..."
-	gofmt -s -w $(GO_FILES)
+	go fmt ./...
 
 test: gofmt
 	@echo "Running tests..."
