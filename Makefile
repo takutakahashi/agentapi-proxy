@@ -66,7 +66,8 @@ e2e:
 	@if [ -f "test/e2e.sh" ]; then \
 		bash test/e2e.sh; \
 	else \
-		echo "No e2e tests found. Create test/e2e.sh to run e2e tests."; \
+		echo "Running e2e tests directly..."; \
+		cd test/e2e && go test -v -timeout=60s ./... -tags=e2e; \
 	fi
 
 ci: lint test build
