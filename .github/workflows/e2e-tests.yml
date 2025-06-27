@@ -22,18 +22,10 @@ jobs:
         go-version: '1.23'
         cache: true
 
-    - name: Install mise
-      uses: jdx/mise-action@v2
-      with:
-        version: latest
-
-    - name: Install tools with mise
+    - name: Verify Go installation
       run: |
-        mise install
-
-    - name: Verify mise tools
-      run: |
-        mise list
+        go version
+        which go
 
     - name: Install Claude Code CLI
       run: |
@@ -50,15 +42,15 @@ jobs:
 
     - name: Run lint
       run: |
-        mise exec go -- make lint
+        make lint
 
     - name: Run unit tests
       run: |
-        mise exec go -- make test
+        make test
 
     - name: Build binary
       run: |
-        mise exec go -- make build
+        make build
 
     - name: Run E2E tests
       env:
@@ -66,7 +58,7 @@ jobs:
         CLAUDE_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         GO_TEST_TIMEOUT: 60s
       run: |
-        mise exec go -- make e2e
+        make e2e
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
