@@ -270,7 +270,7 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 	if apiKey == "" {
 		apiKey = "test-key-for-local-testing"
 	}
-	
+
 	cmd.Env = append(os.Environ(),
 		"ANTHROPIC_API_KEY="+apiKey,
 		"CLAUDE_API_KEY="+apiKey,
