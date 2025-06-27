@@ -136,13 +136,22 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 		"dontCrawlDirectory":            "true",
 	}
 
-	for key, value := range claudeSettingsMap {
-		claudeCmd := exec.Command("claude", "config", "set", key, value)
-		if err := claudeCmd.Run(); err != nil {
-			fmt.Printf("Error setting Claude config: %v\n", err)
-			log.Printf("Fatal error setting Claude config for key '%s': %v", key, err)
-			os.Exit(1)
+	// Check if claude command is available
+	if _, err := exec.LookPath("claude"); err != nil {
+		fmt.Printf("Warning: 'claude' command not found in PATH, skipping Claude config setup\n")
+		fmt.Printf("Please install Claude CLI if you want to use Claude-specific configuration features\n")
+		log.Printf("Warning: 'claude' command not found in PATH: %v", err)
+	} else {
+		for key, value := range claudeSettingsMap {
+			claudeCmd := exec.Command("claude", "config", "set", key, value)
+			if err := claudeCmd.Run(); err != nil {
+				fmt.Printf("Error setting Claude config for key '%s': %v\n", key, err)
+				log.Printf("Error setting Claude config for key '%s': %v", key, err)
+				// Continue with other settings instead of exiting
+				continue
+			}
 		}
+		fmt.Printf("Successfully configured Claude CLI settings\n")
 	}
 
 	fmt.Printf("Successfully created Claude Code configuration at %s\n", settingsPath)
