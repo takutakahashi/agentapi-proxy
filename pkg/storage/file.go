@@ -1,14 +1,8 @@
 package storage
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,7 +13,6 @@ import (
 type FileStorage struct {
 	filePath       string
 	encryptSecrets bool
-	encryptionKey  []byte
 	sessions       map[string]*SessionData
 	mu             sync.RWMutex
 	syncInterval   time.Duration
@@ -34,13 +27,6 @@ func NewFileStorage(filePath string, syncInterval int, encryptSecrets bool) (*Fi
 		sessions:       make(map[string]*SessionData),
 		syncInterval:   time.Duration(syncInterval) * time.Second,
 		stopSync:       make(chan struct{}),
-	}
-
-	if encryptSecrets {
-		// Generate encryption key from a fixed string for now
-		// In production, this should come from a secure key management system
-		hash := sha256.Sum256([]byte("agentapi-session-encryption-key"))
-		fs.encryptionKey = hash[:]
 	}
 
 	// Create directory if it doesn't exist
@@ -73,7 +59,11 @@ func (fs *FileStorage) Save(session *SessionData) error {
 
 	// Encrypt sensitive data if enabled
 	if fs.encryptSecrets {
-		session = fs.encryptSensitiveData(session)
+		if encrypted, err := encryptSessionSecrets(session); err != nil {
+			// Log warning but continue with unencrypted session
+		} else {
+			session = encrypted
+		}
 	}
 
 	fs.sessions[session.ID] = session
@@ -92,7 +82,11 @@ func (fs *FileStorage) Load(sessionID string) (*SessionData, error) {
 
 	// Decrypt sensitive data if needed
 	if fs.encryptSecrets {
-		session = fs.decryptSensitiveData(session)
+		if decrypted, err := decryptSessionSecrets(session); err != nil {
+			// Log warning but return session as-is
+		} else {
+			session = decrypted
+		}
 	}
 
 	return session, nil
@@ -107,7 +101,11 @@ func (fs *FileStorage) LoadAll() ([]*SessionData, error) {
 	for _, session := range fs.sessions {
 		// Decrypt sensitive data if needed
 		if fs.encryptSecrets {
-			session = fs.decryptSensitiveData(session)
+			if decrypted, err := decryptSessionSecrets(session); err != nil {
+				// Log warning but continue with encrypted session
+			} else {
+				session = decrypted
+			}
 		}
 		sessions = append(sessions, session)
 	}
@@ -228,130 +226,4 @@ func (fs *FileStorage) loadFromFile() error {
 	}
 
 	return nil
-}
-
-// encryptSensitiveData encrypts sensitive fields in session data
-func (fs *FileStorage) encryptSensitiveData(session *SessionData) *SessionData {
-	// Create a copy to avoid modifying the original
-	encrypted := *session
-	encrypted.Environment = make(map[string]string)
-
-	// List of sensitive environment variable patterns
-	sensitivePatterns := []string{
-		"TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL",
-	}
-
-	for key, value := range session.Environment {
-		isSensitive := false
-		for _, pattern := range sensitivePatterns {
-			if containsIgnoreCase(key, pattern) {
-				isSensitive = true
-				break
-			}
-		}
-
-		if isSensitive {
-			encryptedValue, err := fs.encrypt(value)
-			if err == nil {
-				encrypted.Environment[key] = "ENC:" + encryptedValue
-			} else {
-				// If encryption fails, store empty value
-				encrypted.Environment[key] = "ENC:ERROR"
-			}
-		} else {
-			encrypted.Environment[key] = value
-		}
-	}
-
-	return &encrypted
-}
-
-// decryptSensitiveData decrypts sensitive fields in session data
-func (fs *FileStorage) decryptSensitiveData(session *SessionData) *SessionData {
-	// Create a copy to avoid modifying the original
-	decrypted := *session
-	decrypted.Environment = make(map[string]string)
-
-	for key, value := range session.Environment {
-		if len(value) > 4 && value[:4] == "ENC:" {
-			decryptedValue, err := fs.decrypt(value[4:])
-			if err == nil {
-				decrypted.Environment[key] = decryptedValue
-			} else {
-				// If decryption fails, keep the encrypted value
-				decrypted.Environment[key] = value
-			}
-		} else {
-			decrypted.Environment[key] = value
-		}
-	}
-
-	return &decrypted
-}
-
-// encrypt encrypts a string using AES
-func (fs *FileStorage) encrypt(text string) (string, error) {
-	block, err := aes.NewCipher(fs.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	plaintext := []byte(text)
-	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
-	iv := ciphertext[:aes.BlockSize]
-
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return "", err
-	}
-
-	stream := cipher.NewCFBEncrypter(block, iv)
-	stream.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
-
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
-}
-
-// decrypt decrypts a string using AES
-func (fs *FileStorage) decrypt(cryptoText string) (string, error) {
-	ciphertext, err := base64.StdEncoding.DecodeString(cryptoText)
-	if err != nil {
-		return "", err
-	}
-
-	block, err := aes.NewCipher(fs.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	if len(ciphertext) < aes.BlockSize {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-
-	iv := ciphertext[:aes.BlockSize]
-	ciphertext = ciphertext[aes.BlockSize:]
-
-	stream := cipher.NewCFBDecrypter(block, iv)
-	stream.XORKeyStream(ciphertext, ciphertext)
-
-	return string(ciphertext), nil
-}
-
-// containsIgnoreCase checks if a string contains another string (case-insensitive)
-func containsIgnoreCase(s, substr string) bool {
-	s = string([]rune(s))
-	substr = string([]rune(substr))
-
-	for i := 0; i <= len(s)-len(substr); i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] && s[i+j] != substr[j]+32 && s[i+j] != substr[j]-32 {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-
-	return false
 }

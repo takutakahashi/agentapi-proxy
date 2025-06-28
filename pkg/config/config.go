@@ -91,11 +91,19 @@ type APIKey struct {
 // PersistenceConfig represents session persistence configuration
 type PersistenceConfig struct {
 	Enabled               bool   `json:"enabled" mapstructure:"enabled"`
-	Backend               string `json:"backend" mapstructure:"backend"` // "file", "sqlite", "postgres"
+	Backend               string `json:"backend" mapstructure:"backend"` // "file", "sqlite", "postgres", "s3"
 	FilePath              string `json:"file_path" mapstructure:"file_path"`
 	SyncInterval          int    `json:"sync_interval_seconds" mapstructure:"sync_interval_seconds"`
 	EncryptSecrets        bool   `json:"encrypt_sensitive_data" mapstructure:"encrypt_sensitive_data"`
 	SessionRecoveryMaxAge int    `json:"session_recovery_max_age_hours" mapstructure:"session_recovery_max_age_hours"` // Max age in hours for session recovery
+
+	// S3-specific configuration
+	S3Bucket    string `json:"s3_bucket" mapstructure:"s3_bucket"`
+	S3Region    string `json:"s3_region" mapstructure:"s3_region"`
+	S3Prefix    string `json:"s3_prefix" mapstructure:"s3_prefix"`
+	S3Endpoint  string `json:"s3_endpoint" mapstructure:"s3_endpoint"` // For custom S3-compatible services
+	S3AccessKey string `json:"s3_access_key" mapstructure:"s3_access_key"`
+	S3SecretKey string `json:"s3_secret_key" mapstructure:"s3_secret_key"`
 }
 
 // Config represents the proxy configuration
@@ -170,6 +178,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("persistence.sync_interval_seconds", 30)
 	v.SetDefault("persistence.encrypt_sensitive_data", true)
 	v.SetDefault("persistence.session_recovery_max_age_hours", 24)
+
+	// S3 persistence defaults
+	v.SetDefault("persistence.s3_region", "us-east-1")
+	v.SetDefault("persistence.s3_prefix", "sessions/")
 
 	// Auth defaults
 	v.SetDefault("auth.enabled", false)
