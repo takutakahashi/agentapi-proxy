@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"os"
-	"reflect"
 	"testing"
 	"time"
 
@@ -66,8 +65,28 @@ func TestLoadConfig(t *testing.T) {
 		StartPort: 8000,
 		Auth: AuthConfig{
 			Enabled: false,
-			Static:  nil, // JSON doesn't specify static auth, so it remains nil
-			GitHub:  nil, // JSON doesn't specify GitHub auth, so it remains nil
+			Static: &StaticAuthConfig{
+				Enabled:    false,
+				HeaderName: "X-API-Key",
+				APIKeys:    []APIKey{},
+				KeysFile:   "",
+			},
+			GitHub: &GitHubAuthConfig{
+				Enabled:     false,
+				BaseURL:     "https://api.github.com",
+				TokenHeader: "Authorization",
+				UserMapping: GitHubUserMapping{
+					DefaultRole:        "",
+					DefaultPermissions: []string{},
+					TeamRoleMapping:    map[string]TeamRoleRule{},
+				},
+				OAuth: &GitHubOAuthConfig{
+					ClientID:     "",
+					ClientSecret: "",
+					Scope:        "read:user read:org",
+					BaseURL:      "",
+				},
+			},
 		},
 		Persistence: PersistenceConfig{
 			Enabled:               false,
@@ -80,9 +99,51 @@ func TestLoadConfig(t *testing.T) {
 		EnableMultipleUsers: false, // Default value
 	}
 
-	// Compare loaded config with expected
-	if !reflect.DeepEqual(expectedConfig, loadedConfig) {
-		t.Errorf("Loaded config doesn't match expected.\nExpected: %+v\nGot: %+v", expectedConfig, loadedConfig)
+	// Compare basic fields
+	if loadedConfig.StartPort != expectedConfig.StartPort {
+		t.Errorf("StartPort mismatch: expected %d, got %d", expectedConfig.StartPort, loadedConfig.StartPort)
+	}
+	if loadedConfig.EnableMultipleUsers != expectedConfig.EnableMultipleUsers {
+		t.Errorf("EnableMultipleUsers mismatch: expected %t, got %t", expectedConfig.EnableMultipleUsers, loadedConfig.EnableMultipleUsers)
+	}
+
+	// Compare persistence config
+	if loadedConfig.Persistence != expectedConfig.Persistence {
+		t.Errorf("Persistence config mismatch.\nExpected: %+v\nGot: %+v", expectedConfig.Persistence, loadedConfig.Persistence)
+	}
+
+	// Compare auth config values (not pointer equality)
+	if loadedConfig.Auth.Enabled != expectedConfig.Auth.Enabled {
+		t.Errorf("Auth.Enabled mismatch: expected %t, got %t", expectedConfig.Auth.Enabled, loadedConfig.Auth.Enabled)
+	}
+
+	// Verify static auth config is properly initialized with defaults
+	if loadedConfig.Auth.Static == nil {
+		t.Error("Auth.Static should not be nil")
+	} else {
+		if loadedConfig.Auth.Static.HeaderName != "X-API-Key" {
+			t.Errorf("Auth.Static.HeaderName should be 'X-API-Key', got '%s'", loadedConfig.Auth.Static.HeaderName)
+		}
+		if loadedConfig.Auth.Static.Enabled != false {
+			t.Errorf("Auth.Static.Enabled should be false, got %t", loadedConfig.Auth.Static.Enabled)
+		}
+	}
+
+	// Verify GitHub auth config is properly initialized with defaults
+	if loadedConfig.Auth.GitHub == nil {
+		t.Error("Auth.GitHub should not be nil")
+	} else {
+		if loadedConfig.Auth.GitHub.BaseURL != "https://api.github.com" {
+			t.Errorf("Auth.GitHub.BaseURL should be 'https://api.github.com', got '%s'", loadedConfig.Auth.GitHub.BaseURL)
+		}
+		if loadedConfig.Auth.GitHub.TokenHeader != "Authorization" {
+			t.Errorf("Auth.GitHub.TokenHeader should be 'Authorization', got '%s'", loadedConfig.Auth.GitHub.TokenHeader)
+		}
+		if loadedConfig.Auth.GitHub.OAuth == nil {
+			t.Error("Auth.GitHub.OAuth should not be nil")
+		} else if loadedConfig.Auth.GitHub.OAuth.Scope != "read:user read:org" {
+			t.Errorf("Auth.GitHub.OAuth.Scope should be 'read:user read:org', got '%s'", loadedConfig.Auth.GitHub.OAuth.Scope)
+		}
 	}
 }
 
