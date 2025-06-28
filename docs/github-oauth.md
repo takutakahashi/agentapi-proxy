@@ -55,7 +55,7 @@
       "oauth": {
         "client_id": "${GITHUB_CLIENT_ID}",
         "client_secret": "${GITHUB_CLIENT_SECRET}",
-        "scope": "read:user read:org",
+        "scope": "repo workflow read:org admin:repo_hook notifications user:email",
         "base_url": "https://github.com"
       },
       "user_mapping": {
@@ -337,6 +337,65 @@ await client.handleCallback();
 const sessions = await client.makeAuthenticatedRequest('/search');
 ```
 
+## GitHub OAuthスコープの選択
+
+### 開発用途別のスコープ設定
+
+#### 1. 基本的な開発（推奨）
+```json
+"scope": "repo workflow read:org admin:repo_hook notifications user:email"
+```
+- **repo**: プライベート・パブリックリポジトリの読み書き、プルリクエスト、イシュー管理
+- **workflow**: GitHub Actionsワークフローファイルの作成・編集
+- **read:org**: Organization メンバーシップの確認
+- **admin:repo_hook**: リポジトリWebhookの管理
+- **notifications**: 通知の管理
+- **user:email**: ユーザーのメールアドレス取得
+
+#### 2. パブリックリポジトリのみ
+```json
+"scope": "public_repo workflow read:org notifications user:email"
+```
+- **public_repo**: パブリックリポジトリのみの読み書き
+- プライベートリポジトリへのアクセスが不要な場合
+
+#### 3. エンタープライズ環境（フル権限）
+```json
+"scope": "repo workflow admin:org admin:repo_hook admin:org_hook notifications user:email delete_repo"
+```
+- **admin:org**: Organization設定の完全管理
+- **admin:org_hook**: Organization レベルのWebhook管理
+- **delete_repo**: リポジトリ削除権限
+
+#### 4. 読み取り専用（最小権限）
+```json
+"scope": "read:user read:org"
+```
+- ユーザー情報とOrganization情報の読み取りのみ
+
+### スコープ詳細説明
+
+| スコープ | 説明 | 用途 |
+|---------|------|------|
+| `repo` | プライベート・パブリックリポジトリのフル権限 | 基本的な開発作業 |
+| `public_repo` | パブリックリポジトリのみの読み書き | オープンソース開発 |
+| `workflow` | GitHub Actionsワークフローの管理 | CI/CD設定 |
+| `admin:org` | Organization の完全管理 | 管理者権限 |
+| `admin:repo_hook` | リポジトリWebhookの管理 | 統合・自動化 |
+| `admin:org_hook` | OrganizationWebhookの管理 | エンタープライズ統合 |
+| `notifications` | 通知の読み書き | 通知管理 |
+| `user:email` | ユーザーメールアドレス | 識別・連絡用 |
+| `delete_repo` | リポジトリ削除 | 管理作業 |
+
+### 設定例ファイル
+
+複数のサンプル設定ファイルが利用可能です：
+
+- **config.oauth.example.json**: 基本的な開発用設定
+- **config.oauth.development.example.json**: 開発チーム向け詳細設定
+- **config.oauth.public-only.example.json**: パブリックリポジトリ専用
+- **config.oauth.enterprise.example.json**: エンタープライズ環境向け
+
 ## セキュリティのベストプラクティス
 
 ### 1. HTTPS の使用
@@ -354,7 +413,8 @@ const sessions = await client.makeAuthenticatedRequest('/search');
 
 ### 4. スコープの最小化
 - 必要最小限のGitHubスコープのみを要求
-- `read:user`と`read:org`で十分な場合が多い
+- 開発要件に応じて適切なスコープセットを選択
+- 定期的にスコープの見直しを実施
 
 ### 5. セッション管理
 - セッションには適切な有効期限を設定（デフォルト24時間）
