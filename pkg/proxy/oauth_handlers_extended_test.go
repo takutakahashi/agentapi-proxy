@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -221,7 +220,7 @@ func TestOAuthSessionManagement(t *testing.T) {
 				}
 
 				var resp OAuthSessionResponse
-				json.Unmarshal(rec.Body.Bytes(), &resp)
+				_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 				sessionIDs[idx] = resp.SessionID
 			}(i)
 		}
@@ -373,7 +372,7 @@ func TestOAuthProviderErrors(t *testing.T) {
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/login/oauth/access_token" {
 				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte(`{"error":"server_error"}`))
+				_, _ = w.Write([]byte(`{"error":"server_error"}`))
 			}
 		}))
 		defer mockServer.Close()
@@ -414,10 +413,10 @@ func TestOAuthProviderErrors(t *testing.T) {
 			case "/login/oauth/access_token":
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer"}`))
+				_, _ = w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer"}`))
 			case "/user":
 				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(`{"message":"Bad credentials"}`))
+				_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
 			}
 		}))
 		defer mockServer.Close()
@@ -498,33 +497,7 @@ func generateExpiredOAuthState(t *testing.T) string {
 	return "expired.jwt.state"
 }
 
-// Mock OAuth provider for testing
-type mockOAuthProvider struct {
-	generateAuthURLFunc func(redirectURI string) (string, string, error)
-	exchangeCodeFunc    func(ctx context.Context, code string) (string, error)
-	validateStateFunc   func(state string) error
-}
-
-func (m *mockOAuthProvider) GenerateAuthURL(redirectURI string) (string, string, error) {
-	if m.generateAuthURLFunc != nil {
-		return m.generateAuthURLFunc(redirectURI)
-	}
-	return "http://mock.oauth/authorize", "mock-state", nil
-}
-
-func (m *mockOAuthProvider) ExchangeCode(ctx context.Context, code string) (string, error) {
-	if m.exchangeCodeFunc != nil {
-		return m.exchangeCodeFunc(ctx, code)
-	}
-	return "mock-access-token", nil
-}
-
-func (m *mockOAuthProvider) ValidateState(state string) error {
-	if m.validateStateFunc != nil {
-		return m.validateStateFunc(state)
-	}
-	return nil
-}
+// Removed unused mockOAuthProvider to fix lint issues
 
 func TestOAuthProviderIntegration(t *testing.T) {
 	t.Run("complete OAuth flow", func(t *testing.T) {
@@ -547,7 +520,7 @@ func TestOAuthProviderIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		var loginResp OAuthLoginResponse
-		json.Unmarshal(rec1.Body.Bytes(), &loginResp)
+		_ = json.Unmarshal(rec1.Body.Bytes(), &loginResp)
 		require.NotEmpty(t, loginResp.State)
 		require.NotEmpty(t, loginResp.AuthURL)
 
@@ -560,7 +533,7 @@ func TestOAuthProviderIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		var callbackResp OAuthSessionResponse
-		json.Unmarshal(rec2.Body.Bytes(), &callbackResp)
+		_ = json.Unmarshal(rec2.Body.Bytes(), &callbackResp)
 		require.NotEmpty(t, callbackResp.SessionID)
 		require.NotEmpty(t, callbackResp.AccessToken)
 

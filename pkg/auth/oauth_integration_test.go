@@ -37,7 +37,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 
 		case "/login/oauth/access_token":
 			// Token exchange endpoint
-			r.ParseForm()
+			_ = r.ParseForm()
 			code := r.Form.Get("code")
 			clientID := r.Form.Get("client_id")
 			clientSecret := r.Form.Get("client_secret")
@@ -49,10 +49,10 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 					"scope":        "read:user,read:org",
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(response)
+				_ = json.NewEncoder(w).Encode(response)
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"error": "bad_verification_code"})
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "bad_verification_code"})
 			}
 
 		case "/user":
@@ -64,7 +64,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 					"email": "integration@test.com",
 					"name":  "Integration Test User",
 				}
-				json.NewEncoder(w).Encode(user)
+				_ = json.NewEncoder(w).Encode(user)
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
@@ -78,7 +78,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 						"id":    12345,
 					},
 				}
-				json.NewEncoder(w).Encode(orgs)
+				_ = json.NewEncoder(w).Encode(orgs)
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
@@ -96,7 +96,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 						"name": "Administrators",
 					},
 				}
-				json.NewEncoder(w).Encode(teams)
+				_ = json.NewEncoder(w).Encode(teams)
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
@@ -108,7 +108,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 					"state": "active",
 					"role":  "member",
 				}
-				json.NewEncoder(w).Encode(membership)
+				_ = json.NewEncoder(w).Encode(membership)
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
@@ -120,7 +120,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 					"state": "active",
 					"role":  "maintainer",
 				}
-				json.NewEncoder(w).Encode(membership)
+				_ = json.NewEncoder(w).Encode(membership)
 			} else {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
@@ -281,7 +281,7 @@ func TestGitHubOAuthEdgeCases(t *testing.T) {
 				w.Header().Set("X-RateLimit-Remaining", "0")
 				w.Header().Set("X-RateLimit-Reset", "1234567890")
 				w.WriteHeader(http.StatusForbidden)
-				json.NewEncoder(w).Encode(map[string]string{
+				_ = json.NewEncoder(w).Encode(map[string]string{
 					"message": "API rate limit exceeded",
 				})
 			},
@@ -292,7 +292,7 @@ func TestGitHubOAuthEdgeCases(t *testing.T) {
 			name: "Invalid JSON response",
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{invalid json`))
+				_, _ = w.Write([]byte(`{invalid json`))
 			},
 			expectError:   true,
 			errorContains: "parse",
@@ -301,7 +301,7 @@ func TestGitHubOAuthEdgeCases(t *testing.T) {
 			name: "Empty access token response",
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/login/oauth/access_token" {
-					json.NewEncoder(w).Encode(map[string]string{
+					_ = json.NewEncoder(w).Encode(map[string]string{
 						"access_token": "",
 					})
 				}
@@ -353,11 +353,11 @@ func BenchmarkGitHubOAuth(b *testing.B) {
 		switch r.URL.Path {
 		case "/login/oauth/access_token":
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"access_token":"bench_token","token_type":"bearer"}`))
+			_, _ = w.Write([]byte(`{"access_token":"bench_token","token_type":"bearer"}`))
 		case "/user":
-			w.Write([]byte(`{"login":"benchuser","id":123}`))
+			_, _ = w.Write([]byte(`{"login":"benchuser","id":123}`))
 		case "/user/orgs":
-			w.Write([]byte(`[]`))
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

@@ -105,11 +105,11 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 					assert.Equal(t, "token "+tt.token, r.Header.Get("Authorization"))
 					w.WriteHeader(tt.mockStatus)
 					if tt.mockResponse != nil {
-						json.NewEncoder(w).Encode(tt.mockResponse)
+						_ = json.NewEncoder(w).Encode(tt.mockResponse)
 					}
 				case "/user/orgs":
 					w.WriteHeader(http.StatusOK)
-					json.NewEncoder(w).Encode([]GitHubOrganization{})
+					_ = json.NewEncoder(w).Encode([]GitHubOrganization{})
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
@@ -183,7 +183,7 @@ func TestGitHubAuthProvider_GetUser(t *testing.T) {
 
 				w.WriteHeader(tt.mockStatus)
 				if tt.mockResponse != nil {
-					json.NewEncoder(w).Encode(tt.mockResponse)
+					_ = json.NewEncoder(w).Encode(tt.mockResponse)
 				}
 			}))
 			defer mockServer.Close()
@@ -258,7 +258,7 @@ func TestGitHubAuthProvider_GetUserOrganizations(t *testing.T) {
 
 				w.WriteHeader(tt.mockStatus)
 				if tt.mockOrgs != nil {
-					json.NewEncoder(w).Encode(tt.mockOrgs)
+					_ = json.NewEncoder(w).Encode(tt.mockOrgs)
 				}
 			}))
 			defer mockServer.Close()
@@ -438,13 +438,13 @@ func TestGitHubAuthProvider_Integration(t *testing.T) {
 				Email: "integration@test.com",
 				Name:  "Integration Test User",
 			}
-			json.NewEncoder(w).Encode(user)
+			_ = json.NewEncoder(w).Encode(user)
 
 		case "/user/orgs":
 			orgs := []GitHubOrganization{
 				{Login: "test-org", ID: 12345},
 			}
-			json.NewEncoder(w).Encode(orgs)
+			_ = json.NewEncoder(w).Encode(orgs)
 
 		case "/orgs/test-org/teams":
 			teams := []struct {
@@ -453,7 +453,7 @@ func TestGitHubAuthProvider_Integration(t *testing.T) {
 			}{
 				{Slug: "developers", Name: "Developers"},
 			}
-			json.NewEncoder(w).Encode(teams)
+			_ = json.NewEncoder(w).Encode(teams)
 
 		case "/orgs/test-org/teams/developers/memberships/integration-user":
 			membership := struct {
@@ -463,7 +463,7 @@ func TestGitHubAuthProvider_Integration(t *testing.T) {
 				State: "active",
 				Role:  "member",
 			}
-			json.NewEncoder(w).Encode(membership)
+			_ = json.NewEncoder(w).Encode(membership)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
