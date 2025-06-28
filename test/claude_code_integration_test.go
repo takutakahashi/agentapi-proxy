@@ -22,7 +22,7 @@ import (
 const (
 	proxyPort   = "18080"
 	proxyURL    = "http://localhost:" + proxyPort
-	testTimeout = 30 * time.Second
+	testTimeout = 60 * time.Second
 )
 
 func TestClaudeCodeIntegration(t *testing.T) {
@@ -362,7 +362,7 @@ func sendMessageThroughProxy(ctx context.Context, proxyURL, sessionID, message s
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %v", err)

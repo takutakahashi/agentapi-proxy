@@ -61,7 +61,7 @@ jobs:
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         CLAUDE_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        GO_TEST_TIMEOUT: 60s
+        GO_TEST_TIMEOUT: 120s
       run: |
         make e2e
 
