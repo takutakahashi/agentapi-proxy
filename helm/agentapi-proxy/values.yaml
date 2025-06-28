@@ -60,11 +60,11 @@ ingress:
 
 resources:
   requests:
-    memory: "512Mi"
-    cpu: "500m"
+    memory: "256Mi"
+    cpu: "100m"
   limits:
-    memory: "2Gi"
-    cpu: "2000m"
+    memory: "1Gi"
+    cpu: "1000m"
 
 # Persistent Volume for session data
 persistence:
@@ -126,12 +126,27 @@ livenessProbe:
   timeoutSeconds: 5
   failureThreshold: 3
 
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
 autoscaling:
   enabled: false
   minReplicas: 1
-  maxReplicas: 3
-  targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
 
 # Additional volumes on the output Deployment definition.
 volumes: []
