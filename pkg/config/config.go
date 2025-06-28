@@ -175,9 +175,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.enabled", false)
 	v.SetDefault("auth.static.enabled", false)
 	v.SetDefault("auth.static.header_name", "X-API-Key")
+	v.SetDefault("auth.github.enabled", false)
 	v.SetDefault("auth.github.base_url", "https://api.github.com")
 	v.SetDefault("auth.github.token_header", "Authorization")
+	v.SetDefault("auth.github.oauth.client_id", "")
+	v.SetDefault("auth.github.oauth.client_secret", "")
 	v.SetDefault("auth.github.oauth.scope", "read:user read:org")
+	v.SetDefault("auth.github.oauth.base_url", "")
 
 	// Multiple users default
 	v.SetDefault("enable_multiple_users", false)
@@ -226,12 +230,14 @@ func postProcessConfig(config *Config) error {
 		}
 	}
 
-	// Expand environment variables in OAuth configuration
+	// Expand environment variables in OAuth configuration (for ${VAR_NAME} syntax in config files)
 	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
 		config.Auth.GitHub.OAuth.ClientID = expandEnvVars(config.Auth.GitHub.OAuth.ClientID)
 		config.Auth.GitHub.OAuth.ClientSecret = expandEnvVars(config.Auth.GitHub.OAuth.ClientSecret)
+	}
 
-		// Log OAuth configuration status (without exposing secrets)
+	// Log OAuth configuration status (after expansion)
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
 		log.Printf("[CONFIG] OAuth ClientID configured: %v", config.Auth.GitHub.OAuth.ClientID != "")
 		log.Printf("[CONFIG] OAuth ClientSecret configured: %v", config.Auth.GitHub.OAuth.ClientSecret != "")
 
