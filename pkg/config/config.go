@@ -1,3 +1,25 @@
+// Package config provides configuration management for agentapi-proxy using viper.
+//
+// Configuration can be loaded from:
+//   - JSON files (backward compatibility)
+//   - YAML files
+//   - Environment variables with AGENTAPI_ prefix
+//
+// Environment variable examples:
+//
+//	AGENTAPI_START_PORT=8080
+//	AGENTAPI_AUTH_ENABLED=true
+//	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID=your_client_id
+//	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
+//	AGENTAPI_PERSISTENCE_ENABLED=true
+//	AGENTAPI_PERSISTENCE_BACKEND=file
+//
+// Configuration file search paths:
+//   - Current directory
+//   - $HOME/.agentapi/
+//   - /etc/agentapi/
+//
+// Configuration file names: config.json, config.yaml, config.yml
 package config
 
 import (
@@ -7,6 +29,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 // AuthConfig represents authentication configuration
@@ -86,8 +110,155 @@ type Config struct {
 	EnableMultipleUsers bool `json:"enable_multiple_users" mapstructure:"enable_multiple_users"`
 }
 
-// LoadConfig loads configuration from a JSON file
+// LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
 func LoadConfig(filename string) (*Config, error) {
+	v := viper.New()
+
+	// Set up configuration file
+	if filename != "" {
+		v.SetConfigFile(filename)
+	} else {
+		v.SetConfigName("config")
+		v.AddConfigPath(".")
+		v.AddConfigPath("$HOME/.agentapi")
+		v.AddConfigPath("/etc/agentapi/")
+	}
+
+	// Enable environment variable support
+	v.AutomaticEnv()
+	v.SetEnvPrefix("AGENTAPI")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// Set defaults
+	setDefaults(v)
+
+	// Read config file
+	if err := v.ReadInConfig(); err != nil {
+		// If no config file is found, use defaults
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, err
+		}
+		log.Printf("[CONFIG] No config file found, using defaults and environment variables")
+	} else {
+		log.Printf("[CONFIG] Using config file: %s", v.ConfigFileUsed())
+	}
+
+	var config Config
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, err
+	}
+
+	// Apply defaults for any fields that weren't set in config file
+	applyConfigDefaults(&config)
+
+	// Apply post-processing
+	if err := postProcessConfig(&config); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+// setDefaults sets default values for viper configuration
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("start_port", 9000)
+
+	// Persistence defaults
+	v.SetDefault("persistence.enabled", false)
+	v.SetDefault("persistence.backend", "file")
+	v.SetDefault("persistence.file_path", "./sessions.json")
+	v.SetDefault("persistence.sync_interval_seconds", 30)
+	v.SetDefault("persistence.encrypt_sensitive_data", true)
+	v.SetDefault("persistence.session_recovery_max_age_hours", 24)
+
+	// Auth defaults
+	v.SetDefault("auth.enabled", false)
+	v.SetDefault("auth.static.enabled", false)
+	v.SetDefault("auth.static.header_name", "X-API-Key")
+	v.SetDefault("auth.github.enabled", false)
+	v.SetDefault("auth.github.base_url", "https://api.github.com")
+	v.SetDefault("auth.github.token_header", "Authorization")
+	v.SetDefault("auth.github.oauth.client_id", "")
+	v.SetDefault("auth.github.oauth.client_secret", "")
+	v.SetDefault("auth.github.oauth.scope", "read:user read:org")
+	v.SetDefault("auth.github.oauth.base_url", "")
+
+	// Multiple users default
+	v.SetDefault("enable_multiple_users", false)
+}
+
+// applyConfigDefaults applies default values to any unset configuration fields
+func applyConfigDefaults(config *Config) {
+	// Apply defaults for persistence if the entire struct is uninitialized
+	if config.Persistence.Backend == "" {
+		config.Persistence.Backend = "file"
+	}
+	if config.Persistence.FilePath == "" {
+		config.Persistence.FilePath = "./sessions.json"
+	}
+	if config.Persistence.SyncInterval == 0 {
+		config.Persistence.SyncInterval = 30
+	}
+	if !config.Persistence.Enabled {
+		config.Persistence.EncryptSecrets = true
+		config.Persistence.SessionRecoveryMaxAge = 24
+	}
+
+	// Apply auth defaults
+	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
+		config.Auth.Static.HeaderName = "X-API-Key"
+	}
+	if config.Auth.GitHub != nil {
+		if config.Auth.GitHub.BaseURL == "" {
+			config.Auth.GitHub.BaseURL = "https://api.github.com"
+		}
+		if config.Auth.GitHub.TokenHeader == "" {
+			config.Auth.GitHub.TokenHeader = "Authorization"
+		}
+		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
+			config.Auth.GitHub.OAuth.Scope = "read:user read:org"
+		}
+	}
+}
+
+// postProcessConfig applies post-processing logic to the configuration
+func postProcessConfig(config *Config) error {
+	// Set default auth configuration
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
+		if config.Auth.GitHub.OAuth.BaseURL == "" {
+			config.Auth.GitHub.OAuth.BaseURL = config.Auth.GitHub.BaseURL
+		}
+	}
+
+	// Expand environment variables in OAuth configuration (for ${VAR_NAME} syntax in config files)
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
+		config.Auth.GitHub.OAuth.ClientID = expandEnvVars(config.Auth.GitHub.OAuth.ClientID)
+		config.Auth.GitHub.OAuth.ClientSecret = expandEnvVars(config.Auth.GitHub.OAuth.ClientSecret)
+	}
+
+	// Log OAuth configuration status (after expansion)
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
+		log.Printf("[CONFIG] OAuth ClientID configured: %v", config.Auth.GitHub.OAuth.ClientID != "")
+		log.Printf("[CONFIG] OAuth ClientSecret configured: %v", config.Auth.GitHub.OAuth.ClientSecret != "")
+
+		// Warn if OAuth is configured but credentials are missing
+		if config.Auth.GitHub.OAuth.ClientID == "" || config.Auth.GitHub.OAuth.ClientSecret == "" {
+			log.Printf("[CONFIG] Warning: OAuth is configured but Client ID or Client Secret is missing")
+		}
+	}
+
+	// Load API keys from external file if specified
+	if config.Auth.Enabled && config.Auth.Static != nil && config.Auth.Static.KeysFile != "" {
+		if err := config.loadAPIKeysFromFile(); err != nil {
+			log.Printf("Warning: Failed to load API keys from %s: %v", config.Auth.Static.KeysFile, err)
+		}
+	}
+
+	return nil
+}
+
+// LoadConfigLegacy loads configuration from a JSON file (legacy method)
+func LoadConfigLegacy(filename string) (*Config, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -124,45 +295,9 @@ func LoadConfig(filename string) (*Config, error) {
 		config.Persistence.SessionRecoveryMaxAge = 24
 	}
 
-	// Set default auth configuration
-	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
-		config.Auth.Static.HeaderName = "X-API-Key"
-	}
-	if config.Auth.GitHub != nil && config.Auth.GitHub.BaseURL == "" {
-		config.Auth.GitHub.BaseURL = "https://api.github.com"
-	}
-	if config.Auth.GitHub != nil && config.Auth.GitHub.TokenHeader == "" {
-		config.Auth.GitHub.TokenHeader = "Authorization"
-	}
-	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
-		if config.Auth.GitHub.OAuth.BaseURL == "" {
-			config.Auth.GitHub.OAuth.BaseURL = config.Auth.GitHub.BaseURL
-		}
-		if config.Auth.GitHub.OAuth.Scope == "" {
-			config.Auth.GitHub.OAuth.Scope = "read:user read:org"
-		}
-	}
-
-	// Expand environment variables in OAuth configuration
-	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
-		config.Auth.GitHub.OAuth.ClientID = expandEnvVars(config.Auth.GitHub.OAuth.ClientID)
-		config.Auth.GitHub.OAuth.ClientSecret = expandEnvVars(config.Auth.GitHub.OAuth.ClientSecret)
-
-		// Log OAuth configuration status (without exposing secrets)
-		log.Printf("[CONFIG] OAuth ClientID configured: %v", config.Auth.GitHub.OAuth.ClientID != "")
-		log.Printf("[CONFIG] OAuth ClientSecret configured: %v", config.Auth.GitHub.OAuth.ClientSecret != "")
-
-		// Warn if OAuth is configured but credentials are missing
-		if config.Auth.GitHub.OAuth.ClientID == "" || config.Auth.GitHub.OAuth.ClientSecret == "" {
-			log.Printf("[CONFIG] Warning: OAuth is configured but Client ID or Client Secret is missing")
-		}
-	}
-
-	// Load API keys from external file if specified
-	if config.Auth.Enabled && config.Auth.Static != nil && config.Auth.Static.KeysFile != "" {
-		if err := config.loadAPIKeysFromFile(); err != nil {
-			log.Printf("Warning: Failed to load API keys from %s: %v", config.Auth.Static.KeysFile, err)
-		}
+	// Apply post-processing
+	if err := postProcessConfig(&config); err != nil {
+		return nil, err
 	}
 
 	return &config, nil

@@ -1,0 +1,49 @@
+# Example configuration file for agentapi-proxy
+# This file demonstrates all available configuration options
+# Values can be overridden by environment variables with AGENTAPI_ prefix
+# Example: AGENTAPI_START_PORT=8080
+
+# Starting port for agentapi servers
+start_port: 9000
+
+# Authentication configuration
+auth:
+  enabled: false
+  
+  # Static API key authentication
+  static:
+    enabled: false
+    header_name: "X-API-Key"
+    keys_file: ""  # Path to external API keys file
+    api_keys: []
+  
+  # GitHub OAuth authentication
+  github:
+    enabled: false
+    base_url: "https://api.github.com"
+    token_header: "Authorization"
+    
+    # User role mapping
+    user_mapping:
+      default_role: "user"
+      default_permissions: ["session:create"]
+      team_role_mapping: {}
+    
+    # OAuth configuration
+    oauth:
+      client_id: "${AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID}"
+      client_secret: "${AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET}"
+      scope: "read:user read:org"
+      base_url: ""  # Defaults to auth.github.base_url
+
+# Session persistence configuration
+persistence:
+  enabled: false
+  backend: "file"  # Options: file, sqlite, postgres
+  file_path: "./sessions.json"
+  sync_interval_seconds: 30
+  encrypt_sensitive_data: true
+  session_recovery_max_age_hours: 24
+
+# Enable user-specific directory isolation
+enable_multiple_users: false
