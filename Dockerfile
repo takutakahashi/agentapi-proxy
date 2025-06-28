@@ -76,7 +76,7 @@ USER agentapi
 
 # Install mise
 RUN curl https://mise.run | sh
-ENV PATH="/home/agentapi/.local/bin:$PATH"
+ENV PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/installs/docker/latest/bin:$PATH"
 
 # Install claude code and Playwright MCP server via npm (Node.js is now installed directly)
 RUN sudo npm install -g @anthropic-ai/claude-code @playwright/mcp@latest
