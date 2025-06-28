@@ -205,14 +205,18 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			log.Printf("[OAUTH_INIT] OAuth ClientSecret configured: %v", cfg.Auth.GitHub.OAuth.ClientSecret != "")
 		}
 	}
-	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil {
+	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil && 
+		cfg.Auth.GitHub.OAuth.ClientID != "" && cfg.Auth.GitHub.OAuth.ClientSecret != "" {
 		log.Printf("[OAUTH_INIT] Initializing GitHub OAuth provider...")
 		p.oauthProvider = auth.NewGitHubOAuthProvider(cfg.Auth.GitHub.OAuth, cfg.Auth.GitHub)
 		log.Printf("[OAUTH_INIT] OAuth provider initialized successfully")
 		// Start cleanup goroutine for expired OAuth sessions
 		go p.cleanupExpiredOAuthSessions()
 	} else {
-		log.Printf("[OAUTH_INIT] OAuth provider not initialized - configuration missing")
+		log.Printf("[OAUTH_INIT] OAuth provider not initialized - configuration missing or incomplete")
+		if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil {
+			log.Printf("[OAUTH_INIT] OAuth configuration found but credentials are empty")
+		}
 	}
 
 	p.setupRoutes()
