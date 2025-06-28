@@ -9,26 +9,26 @@
       "oauth": {
         "client_id": "${GITHUB_CLIENT_ID}",
         "client_secret": "${GITHUB_CLIENT_SECRET}",
-        "scope": "repo workflow read:org admin:repo_hook notifications user:email",
+        "scope": "public_repo workflow read:org notifications user:email",
         "base_url": "https://github.com",
         "authorize_url": "https://github.com/login/oauth/authorize",
         "token_url": "https://github.com/login/oauth/access_token"
       },
       "user_mapping": {
-        "default_role": "user",
-        "default_permissions": ["read", "session:create", "session:list"],
+        "default_role": "contributor",
+        "default_permissions": ["read", "write", "session:create", "session:list"],
         "team_role_mapping": {
-          "myorg/admins": {
-            "role": "admin",
-            "permissions": ["*"]
-          },
-          "myorg/developers": {
-            "role": "developer",
+          "myorg/maintainers": {
+            "role": "maintainer",
             "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"]
           },
-          "myorg/viewers": {
-            "role": "viewer",
-            "permissions": ["read", "session:list"]
+          "myorg/contributors": {
+            "role": "contributor",
+            "permissions": ["read", "write", "session:create", "session:list", "session:access"]
+          },
+          "myorg/external-contributors": {
+            "role": "external-contributor",
+            "permissions": ["read", "session:create", "session:list"]
           }
         }
       }

@@ -1,0 +1,61 @@
+{
+  "start_port": 9000,
+  "auth": {
+    "enabled": true,
+    "github": {
+      "enabled": true,
+      "base_url": "https://api.github.com",
+      "token_header": "Authorization",
+      "oauth": {
+        "client_id": "${GITHUB_CLIENT_ID}",
+        "client_secret": "${GITHUB_CLIENT_SECRET}",
+        "scope": "repo workflow admin:org admin:repo_hook admin:org_hook notifications user:email delete_repo",
+        "base_url": "https://github.com",
+        "authorize_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token"
+      },
+      "user_mapping": {
+        "default_role": "user",
+        "default_permissions": ["read", "session:create", "session:list"],
+        "team_role_mapping": {
+          "myorg/platform-admins": {
+            "role": "platform-admin",
+            "permissions": ["*"]
+          },
+          "myorg/engineering-leads": {
+            "role": "engineering-lead",
+            "permissions": ["read", "write", "execute", "debug", "admin", "session:create", "session:list", "session:delete", "session:access", "repo:admin", "org:admin"]
+          },
+          "myorg/senior-engineers": {
+            "role": "senior-engineer",
+            "permissions": ["read", "write", "execute", "debug", "session:create", "session:list", "session:delete", "session:access", "repo:admin"]
+          },
+          "myorg/engineers": {
+            "role": "engineer",
+            "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"]
+          },
+          "myorg/devops": {
+            "role": "devops",
+            "permissions": ["read", "write", "execute", "debug", "deploy", "session:create", "session:list", "session:delete", "session:access"]
+          },
+          "myorg/qa-engineers": {
+            "role": "qa-engineer",
+            "permissions": ["read", "execute", "session:create", "session:list", "session:access"]
+          },
+          "myorg/interns": {
+            "role": "intern",
+            "permissions": ["read", "session:create", "session:list"]
+          }
+        }
+      }
+    }
+  },
+  "persistence": {
+    "enabled": true,
+    "backend": "file",
+    "file_path": "./sessions.json",
+    "sync_interval_seconds": 30,
+    "encrypt_sensitive_data": true,
+    "session_recovery_max_age_hours": 24
+  }
+}
