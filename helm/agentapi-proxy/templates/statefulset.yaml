@@ -62,6 +62,34 @@ spec:
               value: {{ .Values.config.persistence.encryptSensitiveData | quote }}
             - name: AGENTAPI_PERSISTENCE_SESSION_RECOVERY_MAX_AGE_HOURS
               value: {{ .Values.config.persistence.sessionRecoveryMaxAgeHours | quote }}
+            {{- if .Values.config.persistence.s3.bucket }}
+            - name: AGENTAPI_PERSISTENCE_S3_BUCKET
+              value: {{ .Values.config.persistence.s3.bucket | quote }}
+            {{- end }}
+            {{- if .Values.config.persistence.s3.region }}
+            - name: AGENTAPI_PERSISTENCE_S3_REGION
+              value: {{ .Values.config.persistence.s3.region | quote }}
+            {{- end }}
+            {{- if .Values.config.persistence.s3.prefix }}
+            - name: AGENTAPI_PERSISTENCE_S3_PREFIX
+              value: {{ .Values.config.persistence.s3.prefix | quote }}
+            {{- end }}
+            {{- if .Values.config.persistence.s3.endpoint }}
+            - name: AGENTAPI_PERSISTENCE_S3_ENDPOINT
+              value: {{ .Values.config.persistence.s3.endpoint | quote }}
+            {{- end }}
+            {{- if and .Values.config.persistence.s3.accessKey .Values.config.persistence.s3.secretKey }}
+            - name: AGENTAPI_PERSISTENCE_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentapi-proxy.fullname" . }}-s3-credentials
+                  key: access-key
+            - name: AGENTAPI_PERSISTENCE_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentapi-proxy.fullname" . }}-s3-credentials
+                  key: secret-key
+            {{- end }}
             - name: AGENTAPI_AUTH_ENABLED
               value: {{ .Values.config.auth.enabled | quote }}
             - name: AGENTAPI_AUTH_STATIC_ENABLED

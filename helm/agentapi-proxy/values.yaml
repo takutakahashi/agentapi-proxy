@@ -19,6 +19,8 @@ serviceAccount:
   automount: true
   # Annotations to add to the service account
   annotations: {}
+    # AWS IAM Role for S3 access (EKS + IRSA)
+    # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT-ID:role/agentapi-s3-role
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
   name: ""
@@ -108,11 +110,20 @@ config:
   # 永続化設定
   persistence:
     enabled: false
-    backend: "file"
+    backend: "file"  # "file", "memory", "s3"
     filePath: "./sessions.json"
     syncIntervalSeconds: 30
     encryptSensitiveData: true
     sessionRecoveryMaxAgeHours: 24
+    # S3設定（backend: "s3" の場合に使用）
+    s3:
+      bucket: ""
+      region: "us-east-1"
+      prefix: "sessions/"
+      endpoint: ""  # カスタムS3エンドポイント（MinIOなど）
+      # 認証情報（環境変数またはIAMロールを推奨）
+      accessKey: ""
+      secretKey: ""
   
   # 認証設定
   auth:
