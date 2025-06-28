@@ -273,8 +273,8 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 		return nil, nil, fmt.Errorf("agentapi-proxy binary not found in any of %v. Current working directory: %s", possiblePaths, wd)
 	}
 
-	// Start the proxy server
-	cmd := exec.Command(binaryPath, "server", "--port", proxyPort, "--auth-disabled")
+	// Start the proxy server with config that disables auth
+	cmd := exec.Command(binaryPath, "server", "--port", proxyPort, "--verbose", "--config", "test/e2e-config.json")
 
 	// Set environment for the proxy
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
