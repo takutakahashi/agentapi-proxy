@@ -41,12 +41,20 @@ type Storage interface {
 
 // StorageConfig holds configuration for storage backends
 type StorageConfig struct {
-	Type string `json:"type"` // "memory", "file", "sqlite"
+	Type string `json:"type"` // "memory", "file", "sqlite", "s3"
 
 	// File storage config
 	FilePath       string `json:"file_path,omitempty"`
 	SyncInterval   int    `json:"sync_interval_seconds,omitempty"`
 	EncryptSecrets bool   `json:"encrypt_sensitive_data,omitempty"`
+
+	// S3 storage config
+	S3Bucket    string `json:"s3_bucket,omitempty"`
+	S3Region    string `json:"s3_region,omitempty"`
+	S3Prefix    string `json:"s3_prefix,omitempty"`
+	S3Endpoint  string `json:"s3_endpoint,omitempty"` // For custom S3-compatible services
+	S3AccessKey string `json:"s3_access_key,omitempty"`
+	S3SecretKey string `json:"s3_secret_key,omitempty"`
 
 	// Future: Database config
 	DatabaseURL string `json:"database_url,omitempty"`

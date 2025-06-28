@@ -173,6 +173,12 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			FilePath:       cfg.Persistence.FilePath,
 			SyncInterval:   cfg.Persistence.SyncInterval,
 			EncryptSecrets: cfg.Persistence.EncryptSecrets,
+			S3Bucket:       cfg.Persistence.S3Bucket,
+			S3Region:       cfg.Persistence.S3Region,
+			S3Prefix:       cfg.Persistence.S3Prefix,
+			S3Endpoint:     cfg.Persistence.S3Endpoint,
+			S3AccessKey:    cfg.Persistence.S3AccessKey,
+			S3SecretKey:    cfg.Persistence.S3SecretKey,
 		}
 
 		var err error
