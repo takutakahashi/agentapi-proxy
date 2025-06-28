@@ -41,6 +41,6 @@ fi
 echo "Running e2e tests..."
 
 # Run the e2e tests with verbose output
-go test -v -timeout=60s ./test/... -tags=e2e
+go test -v -timeout=${GO_TEST_TIMEOUT:-60s} ./test/... -tags=e2e
 
 echo "E2E tests completed successfully!"
