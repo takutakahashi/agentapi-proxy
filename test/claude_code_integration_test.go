@@ -75,6 +75,9 @@ func TestClaudeCodeIntegration(t *testing.T) {
 	sessionID := startResp.SessionID
 	t.Logf("Created session: %s", sessionID)
 
+	// Wait for agentapi server to start up for this session
+	time.Sleep(5 * time.Second)
+
 	// Step 3: Test Claude Code interaction through the proxy
 	testMessage := "Hello, Claude! This is an e2e test message."
 
@@ -213,6 +216,9 @@ func TestClaudeCodeWithMultipleSessions(t *testing.T) {
 		t.Logf("Created session %d: %s", i, sessionIDs[i])
 	}
 
+	// Wait for all agentapi servers to start up
+	time.Sleep(5 * time.Second)
+
 	// Send different messages to each session
 	for i, sessionID := range sessionIDs {
 		message := fmt.Sprintf("This is message from session %d", i)
@@ -314,7 +320,7 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 }
 
 func waitForProxyReady(ctx context.Context, url string) error {
-	client := &http.Client{Timeout: 1 * time.Second}
+	client := &http.Client{Timeout: 2 * time.Second}
 
 	for {
 		select {
@@ -331,7 +337,7 @@ func waitForProxyReady(ctx context.Context, url string) error {
 			}
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -442,6 +448,9 @@ func TestClaudeCodeToolUsage(t *testing.T) {
 
 	sessionID := startResp.SessionID
 	t.Logf("Created session with working directory: %s", sessionID)
+
+	// Wait for agentapi server to start up for this session
+	time.Sleep(5 * time.Second)
 
 	// Test file operations through Claude Code
 	toolMessage := "Create a file called test.txt with the content 'Hello from e2e test!' in the current directory"

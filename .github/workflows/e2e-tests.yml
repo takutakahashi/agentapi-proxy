@@ -36,6 +36,17 @@ jobs:
         # Verify installation
         claude --version
 
+    - name: Install AgentAPI
+      run: |
+        # Download and install agentapi binary
+        echo "Downloading AgentAPI binary..."
+        curl -L https://github.com/coder/agentapi/releases/latest/download/agentapi-linux-amd64 -o agentapi
+        chmod +x agentapi
+        sudo mv agentapi /usr/local/bin/
+        
+        # Verify installation
+        agentapi --version || echo "AgentAPI version check failed, but binary installed"
+
     - name: Build binary
       run: |
         make build
