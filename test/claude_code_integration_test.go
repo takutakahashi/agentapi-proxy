@@ -354,7 +354,7 @@ func sendMessageThroughProxy(ctx context.Context, proxyURL, sessionID, message s
 	}
 
 	// Send the message
-	url := fmt.Sprintf("%s/%s/messages", proxyURL, sessionID)
+	url := fmt.Sprintf("%s/%s/message", proxyURL, sessionID)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %v", err)
