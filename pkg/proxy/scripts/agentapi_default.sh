@@ -7,6 +7,9 @@
 PORT="${1:-8080}"
 GITHUB_REPO_FULLNAME="{{.RepoFullName}}"
 GITHUB_CLONE_DIR="{{.CloneDir}}"
+USER_ID="{{.UserID}}"
+ENABLE_MULTIPLE_USERS="{{.EnableMultipleUsers}}"
+USER_HOME_DIR="{{.UserHomeDir}}"
 
 # GitHub environment variables embedded from template
 export GITHUB_TOKEN="{{.GitHubToken}}"
@@ -15,6 +18,18 @@ export GITHUB_INSTALLATION_ID="{{.GitHubInstallationID}}"
 export GITHUB_APP_PEM_PATH="{{.GitHubAppPEMPath}}"
 export GITHUB_API="{{.GitHubAPI}}"
 export GITHUB_PERSONAL_ACCESS_TOKEN="{{.GitHubPersonalAccessToken}}"
+
+# Set user-specific HOME directory if multiple users is enabled
+if [[ "$ENABLE_MULTIPLE_USERS" == "true" && -n "$USER_HOME_DIR" ]]; then
+    echo "Setting HOME to user-specific directory: $USER_HOME_DIR"
+    export HOME="$USER_HOME_DIR"
+    
+    # Ensure the user home directory exists
+    if [[ ! -d "$USER_HOME_DIR" ]]; then
+        echo "Creating user home directory: $USER_HOME_DIR"
+        mkdir -p "$USER_HOME_DIR"
+    fi
+fi
 
 # Set up GitHub repository if parameters are provided
 if [[ -n "$GITHUB_REPO_FULLNAME" && -n "$GITHUB_CLONE_DIR" ]]; then

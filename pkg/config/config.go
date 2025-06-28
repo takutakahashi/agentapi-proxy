@@ -80,6 +80,8 @@ type Config struct {
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
 	// Persistence represents session persistence configuration
 	Persistence PersistenceConfig `json:"persistence" mapstructure:"persistence"`
+	// EnableMultipleUsers enables user-specific directory isolation
+	EnableMultipleUsers bool `json:"enable_multiple_users" mapstructure:"enable_multiple_users"`
 }
 
 // LoadConfig loads configuration from a JSON file
@@ -169,6 +171,7 @@ func DefaultConfig() *Config {
 			EncryptSecrets:        true,
 			SessionRecoveryMaxAge: 24, // Default 24 hours
 		},
+		EnableMultipleUsers: false,
 	}
 }
 
