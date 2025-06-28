@@ -29,6 +29,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
+	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
 
 //go:embed scripts/*
@@ -54,6 +55,9 @@ type ScriptTemplateData struct {
 	GitHubPersonalAccessToken string
 	RepoFullName              string
 	CloneDir                  string
+	UserID                    string
+	EnableMultipleUsers       string
+	UserHomeDir               string
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -96,6 +100,7 @@ type Proxy struct {
 	storage       storage.Storage
 	oauthProvider *auth.GitHubOAuthProvider
 	oauthSessions sync.Map // sessionID -> OAuthSession
+	userDirMgr    *userdir.Manager
 }
 
 // NewProxy creates a new proxy instance
@@ -147,6 +152,9 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	}
 	// --- ここまで ---
 
+	// Initialize user directory manager
+	userDirMgr := userdir.NewManager("./data", cfg.EnableMultipleUsers)
+
 	p := &Proxy{
 		config:        cfg,
 		echo:          e,
@@ -155,6 +163,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		sessionsMutex: sync.RWMutex{},
 		nextPort:      cfg.StartPort,
 		logger:        logger.NewLogger(),
+		userDirMgr:    userDirMgr,
 	}
 
 	// Initialize storage if persistence is enabled
@@ -778,6 +787,17 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	var cmd *exec.Cmd
 
+	// Get user home directory if multiple users is enabled
+	var userHomeDir string
+	if p.config.EnableMultipleUsers {
+		var err error
+		userHomeDir, err = p.userDirMgr.EnsureUserHomeDir(session.UserID)
+		if err != nil {
+			log.Printf("Failed to ensure user home directory for %s: %v", session.UserID, err)
+			return
+		}
+	}
+
 	// Prepare template data with environment variables and repository info
 	templateData := &ScriptTemplateData{
 		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
@@ -788,6 +808,9 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		GitHubAppPEMPath:          os.Getenv("GITHUB_APP_PEM_PATH"),
 		GitHubAPI:                 os.Getenv("GITHUB_API"),
 		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
+		UserID:                    session.UserID,
+		EnableMultipleUsers:       strconv.FormatBool(p.config.EnableMultipleUsers),
+		UserHomeDir:               userHomeDir,
 	}
 
 	// Add repository information to template data if available
@@ -847,17 +870,33 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	// Set environment variables for the process
 	// Start with the current environment from agentapi-proxy
-	cmd.Env = os.Environ()
+	baseEnv := os.Environ()
+
+	// Add custom environment variables from session
+	if len(session.Environment) > 0 {
+		for key, value := range session.Environment {
+			baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, value))
+		}
+	}
+
+	// Set user-specific environment if multiple users is enabled
+	var err error
+	cmd.Env, err = p.userDirMgr.GetUserEnvironment(session.UserID, baseEnv)
+	if err != nil {
+		log.Printf("Failed to get user environment for %s: %v", session.UserID, err)
+		return
+	}
 
 	// Log environment variable setup
 	log.Printf("Environment variables for session %s:", session.ID)
 	if len(session.Environment) > 0 {
 		log.Printf("  Custom environment variables:")
 		for key, value := range session.Environment {
-			// Add or override environment variable
-			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
 			log.Printf("    %s=%s", key, value)
 		}
+	}
+	if p.config.EnableMultipleUsers {
+		log.Printf("  User-specific HOME directory set for user: %s", session.UserID)
 	} else {
 		log.Printf("  Using default environment (no custom variables)")
 	}
@@ -907,7 +946,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	// Store the command in the session and start the process
 	session.processMutex.Lock()
 	session.Process = cmd
-	err := cmd.Start()
+	err = cmd.Start()
 	session.processMutex.Unlock()
 
 	if err != nil {

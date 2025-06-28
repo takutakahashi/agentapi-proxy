@@ -25,6 +25,11 @@ func TestDefaultConfig(t *testing.T) {
 	if config.StartPort != expectedStartPort {
 		t.Errorf("Expected StartPort to be %d, got %d", expectedStartPort, config.StartPort)
 	}
+
+	// Test default EnableMultipleUsers value
+	if config.EnableMultipleUsers != false {
+		t.Errorf("Expected EnableMultipleUsers to be false, got %t", config.EnableMultipleUsers)
+	}
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -72,6 +77,7 @@ func TestLoadConfig(t *testing.T) {
 			EncryptSecrets:        true,
 			SessionRecoveryMaxAge: 24,
 		},
+		EnableMultipleUsers: false, // Default value
 	}
 
 	// Compare loaded config with expected
@@ -206,4 +212,39 @@ func TestAPIKey_HasPermission_Wildcard(t *testing.T) {
 	assert.True(t, apiKey.HasPermission("session:create"))
 	assert.True(t, apiKey.HasPermission("session:delete"))
 	assert.True(t, apiKey.HasPermission("any:permission"))
+}
+
+func TestLoadConfig_EnableMultipleUsers(t *testing.T) {
+	// Test with EnableMultipleUsers enabled
+	tempConfig := &Config{
+		StartPort:           8000,
+		EnableMultipleUsers: true,
+	}
+
+	configData, err := json.Marshal(tempConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal config: %v", err)
+	}
+
+	// Write to temporary file
+	tmpfile, err := os.CreateTemp("", "config*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+
+	if _, err := tmpfile.Write(configData); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+	_ = tmpfile.Close()
+
+	// Load the config
+	loadedConfig, err := LoadConfig(tmpfile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if !loadedConfig.EnableMultipleUsers {
+		t.Errorf("Expected EnableMultipleUsers to be true, got %t", loadedConfig.EnableMultipleUsers)
+	}
 }
