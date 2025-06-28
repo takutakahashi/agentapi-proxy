@@ -196,10 +196,27 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	e.Use(auth.AuthMiddleware(cfg))
 
 	// Initialize OAuth provider if configured
-	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil {
+	log.Printf("[OAUTH_INIT] Checking OAuth configuration...")
+	log.Printf("[OAUTH_INIT] cfg.Auth.GitHub != nil: %v", cfg.Auth.GitHub != nil)
+	if cfg.Auth.GitHub != nil {
+		log.Printf("[OAUTH_INIT] cfg.Auth.GitHub.OAuth != nil: %v", cfg.Auth.GitHub.OAuth != nil)
+		if cfg.Auth.GitHub.OAuth != nil {
+			log.Printf("[OAUTH_INIT] OAuth ClientID configured: %v", cfg.Auth.GitHub.OAuth.ClientID != "")
+			log.Printf("[OAUTH_INIT] OAuth ClientSecret configured: %v", cfg.Auth.GitHub.OAuth.ClientSecret != "")
+		}
+	}
+	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil && 
+		cfg.Auth.GitHub.OAuth.ClientID != "" && cfg.Auth.GitHub.OAuth.ClientSecret != "" {
+		log.Printf("[OAUTH_INIT] Initializing GitHub OAuth provider...")
 		p.oauthProvider = auth.NewGitHubOAuthProvider(cfg.Auth.GitHub.OAuth, cfg.Auth.GitHub)
+		log.Printf("[OAUTH_INIT] OAuth provider initialized successfully")
 		// Start cleanup goroutine for expired OAuth sessions
 		go p.cleanupExpiredOAuthSessions()
+	} else {
+		log.Printf("[OAUTH_INIT] OAuth provider not initialized - configuration missing or incomplete")
+		if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil {
+			log.Printf("[OAUTH_INIT] OAuth configuration found but credentials are empty")
+		}
 	}
 
 	p.setupRoutes()
@@ -344,12 +361,17 @@ func (p *Proxy) setupRoutes() {
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
 
 	// Add OAuth routes if OAuth is configured
+	log.Printf("[ROUTES] OAuth provider configured: %v", p.oauthProvider != nil)
 	if p.oauthProvider != nil {
+		log.Printf("[ROUTES] Registering OAuth endpoints...")
 		// OAuth endpoints don't require existing authentication
 		p.echo.POST("/oauth/authorize", p.handleOAuthLogin)
 		p.echo.GET("/oauth/callback", p.handleOAuthCallback)
 		p.echo.POST("/oauth/logout", p.handleOAuthLogout)
 		p.echo.POST("/oauth/refresh", p.handleOAuthRefresh)
+		log.Printf("[ROUTES] OAuth endpoints registered: /oauth/authorize, /oauth/callback, /oauth/logout, /oauth/refresh")
+	} else {
+		log.Printf("[ROUTES] OAuth endpoints not registered - OAuth provider not configured")
 	}
 
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works

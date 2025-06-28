@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -38,6 +39,13 @@ func AuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 				return next(c)
 			}
 
+			// Skip auth for OAuth endpoints (they handle authentication themselves)
+			path := c.Request().URL.Path
+			if isOAuthEndpoint(path) {
+				log.Printf("Skipping auth for OAuth endpoint: %s", path)
+				return next(c)
+			}
+
 			var userCtx *UserContext
 			var err error
 
@@ -65,6 +73,23 @@ func AuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
 	}
+}
+
+// isOAuthEndpoint checks if the given path is an OAuth endpoint that should skip auth
+func isOAuthEndpoint(path string) bool {
+	oauthPaths := []string{
+		"/oauth/authorize",
+		"/oauth/callback",
+		"/oauth/logout",
+		"/oauth/refresh",
+	}
+	
+	for _, oauthPath := range oauthPaths {
+		if strings.HasPrefix(path, oauthPath) {
+			return true
+		}
+	}
+	return false
 }
 
 // RequirePermission creates permission-checking middleware
