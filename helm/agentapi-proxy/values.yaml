@@ -117,15 +117,15 @@ envFrom: []
   #     name: agentapi-secrets
 
 # Application configuration (non-sensitive)
-config: {}
-  # CLAUDE_ARGS: "--dangerously-skip-permissions"
-  # LOG_LEVEL: "info"
-  # SESSION_TIMEOUT: "3600"
-
-# Application secrets (sensitive data)
-secrets: {}
-  # GITHUB_TOKEN: "your-github-token"
-  # API_SECRET: "your-api-secret"
+config:
+  # agentapi-proxy specific configuration
+  LOG_LEVEL: "info"
+  SESSION_TIMEOUT: "3600"
+  MAX_SESSIONS: "10"
+  PROXY_TIMEOUT: "300"
+  HEALTH_CHECK_INTERVAL: "30"
+  # Claude specific args
+  CLAUDE_ARGS: "--dangerously-skip-permissions"
 
 # Liveness and readiness probes
 livenessProbe:
