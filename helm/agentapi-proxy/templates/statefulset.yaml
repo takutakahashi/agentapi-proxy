@@ -45,6 +45,43 @@ spec:
           env:
             - name: HOME
               value: "/home/agentapi"
+            # Application configuration via environment variables (AGENTAPI_ prefix)
+            - name: AGENTAPI_START_PORT
+              value: {{ .Values.config.startPort | quote }}
+            - name: AGENTAPI_ENABLE_MULTIPLE_USERS
+              value: {{ .Values.config.enableMultipleUsers | quote }}
+            - name: AGENTAPI_PERSISTENCE_ENABLED
+              value: {{ .Values.config.persistence.enabled | quote }}
+            - name: AGENTAPI_PERSISTENCE_BACKEND
+              value: {{ .Values.config.persistence.backend | quote }}
+            - name: AGENTAPI_PERSISTENCE_FILE_PATH
+              value: {{ .Values.config.persistence.filePath | quote }}
+            - name: AGENTAPI_PERSISTENCE_SYNC_INTERVAL_SECONDS
+              value: {{ .Values.config.persistence.syncIntervalSeconds | quote }}
+            - name: AGENTAPI_PERSISTENCE_ENCRYPT_SENSITIVE_DATA
+              value: {{ .Values.config.persistence.encryptSensitiveData | quote }}
+            - name: AGENTAPI_PERSISTENCE_SESSION_RECOVERY_MAX_AGE_HOURS
+              value: {{ .Values.config.persistence.sessionRecoveryMaxAgeHours | quote }}
+            - name: AGENTAPI_AUTH_ENABLED
+              value: {{ .Values.config.auth.enabled | quote }}
+            - name: AGENTAPI_AUTH_STATIC_ENABLED
+              value: {{ .Values.config.auth.static.enabled | quote }}
+            - name: AGENTAPI_AUTH_STATIC_HEADER_NAME
+              value: {{ .Values.config.auth.static.headerName | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_ENABLED
+              value: {{ .Values.config.auth.github.enabled | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_BASE_URL
+              value: {{ .Values.config.auth.github.baseUrl | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_TOKEN_HEADER
+              value: {{ .Values.config.auth.github.tokenHeader | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID
+              value: {{ .Values.config.auth.github.oauth.clientId | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET
+              value: {{ .Values.config.auth.github.oauth.clientSecret | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE
+              value: {{ .Values.config.auth.github.oauth.scope | quote }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL
+              value: {{ .Values.config.auth.github.oauth.baseUrl | quote }}
             {{- if .Values.github.enterprise.enabled }}
             {{- if .Values.github.enterprise.baseUrl }}
             - name: GITHUB_URL

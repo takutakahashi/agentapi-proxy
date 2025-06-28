@@ -97,6 +97,39 @@ github:
       # Secret 内のキー名
       key: "private-key"
 
+# Application Configuration
+config:
+  # サーバー設定
+  startPort: 9000
+  
+  # マルチユーザー設定
+  enableMultipleUsers: false
+  
+  # 永続化設定
+  persistence:
+    enabled: false
+    backend: "file"
+    filePath: "./sessions.json"
+    syncIntervalSeconds: 30
+    encryptSensitiveData: true
+    sessionRecoveryMaxAgeHours: 24
+  
+  # 認証設定
+  auth:
+    enabled: false
+    static:
+      enabled: false
+      headerName: "X-API-Key"
+    github:
+      enabled: false
+      baseUrl: "https://api.github.com"
+      tokenHeader: "Authorization"
+      oauth:
+        clientId: ""
+        clientSecret: ""
+        scope: "read:user read:org"
+        baseUrl: ""
+
 # Environment variables
 env: []
   # - name: GITHUB_TOKEN
