@@ -74,9 +74,19 @@ spec:
             - name: {{ .name }}
               value: {{ .value | quote }}
             {{- end }}
-          {{- with .Values.envFrom }}
+          {{- if or .Values.config .Values.secrets .Values.envFrom }}
           envFrom:
+            {{- if .Values.config }}
+            - configMapRef:
+                name: {{ include "agentapi-proxy.fullname" . }}-config
+            {{- end }}
+            {{- if .Values.secrets }}
+            - secretRef:
+                name: {{ include "agentapi-proxy.fullname" . }}-secrets
+            {{- end }}
+            {{- with .Values.envFrom }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           volumeMounts:
             {{- if .Values.persistence.enabled }}

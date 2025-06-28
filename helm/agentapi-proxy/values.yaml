@@ -116,6 +116,17 @@ envFrom: []
   # - secretRef:
   #     name: agentapi-secrets
 
+# Application configuration (non-sensitive)
+config: {}
+  # CLAUDE_ARGS: "--dangerously-skip-permissions"
+  # LOG_LEVEL: "info"
+  # SESSION_TIMEOUT: "3600"
+
+# Application secrets (sensitive data)
+secrets: {}
+  # GITHUB_TOKEN: "your-github-token"
+  # API_SECRET: "your-api-secret"
+
 # Liveness and readiness probes
 livenessProbe:
   httpGet:
