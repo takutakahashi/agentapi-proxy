@@ -83,7 +83,7 @@ func isOAuthEndpoint(path string) bool {
 		"/oauth/logout",
 		"/oauth/refresh",
 	}
-	
+
 	for _, oauthPath := range oauthPaths {
 		if strings.HasPrefix(path, oauthPath) {
 			return true

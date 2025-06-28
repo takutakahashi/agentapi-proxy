@@ -147,11 +147,11 @@ func LoadConfig(filename string) (*Config, error) {
 	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth != nil {
 		config.Auth.GitHub.OAuth.ClientID = expandEnvVars(config.Auth.GitHub.OAuth.ClientID)
 		config.Auth.GitHub.OAuth.ClientSecret = expandEnvVars(config.Auth.GitHub.OAuth.ClientSecret)
-		
+
 		// Log OAuth configuration status (without exposing secrets)
 		log.Printf("[CONFIG] OAuth ClientID configured: %v", config.Auth.GitHub.OAuth.ClientID != "")
 		log.Printf("[CONFIG] OAuth ClientSecret configured: %v", config.Auth.GitHub.OAuth.ClientSecret != "")
-		
+
 		// Warn if OAuth is configured but credentials are missing
 		if config.Auth.GitHub.OAuth.ClientID == "" || config.Auth.GitHub.OAuth.ClientSecret == "" {
 			log.Printf("[CONFIG] Warning: OAuth is configured but Client ID or Client Secret is missing")
@@ -173,18 +173,18 @@ func expandEnvVars(s string) string {
 	if s == "" {
 		return s
 	}
-	
+
 	// Match ${VAR_NAME} pattern
 	re := regexp.MustCompile(`\$\{([^}]+)\}`)
 	return re.ReplaceAllStringFunc(s, func(match string) string {
 		// Extract variable name (remove ${})
 		varName := strings.TrimPrefix(strings.TrimSuffix(match, "}"), "${")
-		
+
 		// Get environment variable value
 		if value := os.Getenv(varName); value != "" {
 			return value
 		}
-		
+
 		// Return original string if environment variable is not set
 		log.Printf("[CONFIG] Warning: Environment variable %s is not set", varName)
 		return match

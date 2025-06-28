@@ -205,7 +205,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			log.Printf("[OAUTH_INIT] OAuth ClientSecret configured: %v", cfg.Auth.GitHub.OAuth.ClientSecret != "")
 		}
 	}
-	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil && 
+	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil &&
 		cfg.Auth.GitHub.OAuth.ClientID != "" && cfg.Auth.GitHub.OAuth.ClientSecret != "" {
 		log.Printf("[OAUTH_INIT] Initializing GitHub OAuth provider...")
 		p.oauthProvider = auth.NewGitHubOAuthProvider(cfg.Auth.GitHub.OAuth, cfg.Auth.GitHub)
@@ -359,6 +359,11 @@ func (p *Proxy) setupRoutes() {
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission("session:create"))
 	p.echo.GET("/search", p.searchSessions, auth.RequirePermission("session:list"))
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
+
+	// Add authentication info routes
+	authInfoHandlers := NewAuthInfoHandlers(p.config)
+	p.echo.GET("/auth/types", authInfoHandlers.GetAuthTypes)
+	p.echo.GET("/auth/status", authInfoHandlers.GetAuthStatus)
 
 	// Add OAuth routes if OAuth is configured
 	log.Printf("[ROUTES] OAuth provider configured: %v", p.oauthProvider != nil)
