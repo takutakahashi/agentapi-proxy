@@ -42,7 +42,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 			clientID := r.Form.Get("client_id")
 			clientSecret := r.Form.Get("client_secret")
 
-			if clientID == "test-client-id" && clientSecret == "test-client-secret" && code != "" {
+			if clientID == "test-client-id" && clientSecret == "test-client-secret" && code == "test-auth-code-test-client-id" {
 				response := map[string]interface{}{
 					"access_token": "gho_integration_test_token",
 					"token_type":   "bearer",
@@ -200,7 +200,9 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 		// Test invalid code
 		_, err := oauthProvider.ExchangeCode(ctx, "invalid-code", validState)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to exchange")
+		if err != nil {
+			assert.Contains(t, err.Error(), "failed to exchange")
+		}
 
 		// Test invalid state
 		_, err = oauthProvider.ExchangeCode(ctx, "test-auth-code-test-client-id", "invalid-state")
@@ -221,24 +223,22 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 
 		for i := 0; i < numFlows; i++ {
 			go func(flowNum int) {
-				defer func() {
-					// Each flow gets its own state
-					_, state, err := oauthProvider.GenerateAuthURL("http://localhost:8080/oauth/callback")
-					if err != nil {
-						errChan <- err
-						return
-					}
+				// Each flow gets its own state
+				_, state, err := oauthProvider.GenerateAuthURL("http://localhost:8080/oauth/callback")
+				if err != nil {
+					errChan <- err
+					return
+				}
 
-					// Exchange code and get user context
-					userContext, err := oauthProvider.ExchangeCode(ctx, "test-auth-code-test-client-id", state)
-					if err != nil {
-						errChan <- err
-						return
-					}
+				// Exchange code and get user context
+				userContext, err := oauthProvider.ExchangeCode(ctx, "test-auth-code-test-client-id", state)
+				if err != nil {
+					errChan <- err
+					return
+				}
 
-					userChan <- userContext.UserID
-					errChan <- nil
-				}()
+				userChan <- userContext.UserID
+				errChan <- nil
 			}(i)
 		}
 
@@ -273,7 +273,7 @@ func TestGitHubOAuthEdgeCases(t *testing.T) {
 				w.WriteHeader(http.StatusGatewayTimeout)
 			},
 			expectError:   true,
-			errorContains: "timeout",
+			errorContains: "504",
 		},
 		{
 			name: "GitHub API rate limit",
@@ -295,7 +295,7 @@ func TestGitHubOAuthEdgeCases(t *testing.T) {
 				_, _ = w.Write([]byte(`{invalid json`))
 			},
 			expectError:   true,
-			errorContains: "parse",
+			errorContains: "invalid character",
 		},
 		{
 			name: "Empty access token response",

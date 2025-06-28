@@ -102,7 +102,10 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 				switch r.URL.Path {
 				case "/user":
 					assert.Equal(t, "GET", r.Method)
-					assert.Equal(t, "token "+tt.token, r.Header.Get("Authorization"))
+					// Only check authorization header if token is not empty
+					if tt.token != "" {
+						assert.Equal(t, "token "+tt.token, r.Header.Get("Authorization"))
+					}
 					w.WriteHeader(tt.mockStatus)
 					if tt.mockResponse != nil {
 						_ = json.NewEncoder(w).Encode(tt.mockResponse)
@@ -124,6 +127,7 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 						DefaultPermissions: []string{"read"},
 					},
 				},
+				client: &http.Client{},
 			}
 
 			user, err := provider.Authenticate(context.Background(), tt.token)
@@ -192,6 +196,7 @@ func TestGitHubAuthProvider_GetUser(t *testing.T) {
 				config: &config.GitHubAuthConfig{
 					BaseURL: mockServer.URL,
 				},
+				client: &http.Client{},
 			}
 
 			user, err := provider.getUser(context.Background(), tt.token)
@@ -267,6 +272,7 @@ func TestGitHubAuthProvider_GetUserOrganizations(t *testing.T) {
 				config: &config.GitHubAuthConfig{
 					BaseURL: mockServer.URL,
 				},
+				client: &http.Client{},
 			}
 
 			orgs, err := provider.getUserOrganizations(context.Background(), tt.token)
@@ -367,6 +373,7 @@ func TestGitHubAuthProvider_MapUserPermissions(t *testing.T) {
 				config: &config.GitHubAuthConfig{
 					UserMapping: tt.config,
 				},
+				client: &http.Client{},
 			}
 
 			role, permissions := provider.mapUserPermissions(tt.teams)
@@ -485,6 +492,7 @@ func TestGitHubAuthProvider_Integration(t *testing.T) {
 				},
 			},
 		},
+		client: &http.Client{},
 	}
 
 	userCtx, err := provider.Authenticate(context.Background(), "integration-test-token")

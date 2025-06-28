@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -33,7 +34,7 @@ type OAuthTokenResponse struct {
 type GitHubOAuthProvider struct {
 	config         *config.GitHubOAuthConfig
 	client         *http.Client
-	stateStore     map[string]*OAuthState // In production, use Redis or similar
+	stateStore     *sync.Map // Thread-safe map for concurrent access
 	githubProvider *GitHubAuthProvider
 }
 
@@ -44,7 +45,7 @@ func NewGitHubOAuthProvider(cfg *config.GitHubOAuthConfig, githubCfg *config.Git
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		stateStore:     make(map[string]*OAuthState),
+		stateStore:     &sync.Map{},
 		githubProvider: NewGitHubAuthProvider(githubCfg),
 	}
 }
@@ -58,11 +59,11 @@ func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, strin
 	}
 
 	// Store state with expiration (15 minutes)
-	p.stateStore[state] = &OAuthState{
+	p.stateStore.Store(state, &OAuthState{
 		State:       state,
 		RedirectURI: redirectURI,
 		CreatedAt:   time.Now(),
-	}
+	})
 
 	// Clean up expired states
 	p.cleanupExpiredStates()
@@ -85,19 +86,20 @@ func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, strin
 // ExchangeCode exchanges the authorization code for an access token
 func (p *GitHubOAuthProvider) ExchangeCode(ctx context.Context, code, state string) (*UserContext, error) {
 	// Verify state
-	oauthState, exists := p.stateStore[state]
+	stateValue, exists := p.stateStore.Load(state)
 	if !exists {
 		return nil, fmt.Errorf("invalid state parameter")
 	}
+	oauthState := stateValue.(*OAuthState)
 
 	// Check if state is expired (15 minutes)
 	if time.Since(oauthState.CreatedAt) > 15*time.Minute {
-		delete(p.stateStore, state)
+		p.stateStore.Delete(state)
 		return nil, fmt.Errorf("state expired")
 	}
 
 	// Remove state after use
-	delete(p.stateStore, state)
+	p.stateStore.Delete(state)
 
 	// Exchange code for token
 	token, err := p.exchangeCodeForToken(ctx, code, oauthState.RedirectURI)
@@ -174,10 +176,19 @@ func (p *GitHubOAuthProvider) generateState() (string, error) {
 // cleanupExpiredStates removes expired states from the store
 func (p *GitHubOAuthProvider) cleanupExpiredStates() {
 	now := time.Now()
-	for state, oauthState := range p.stateStore {
+	var toDelete []string
+
+	p.stateStore.Range(func(key, value interface{}) bool {
+		state := key.(string)
+		oauthState := value.(*OAuthState)
 		if now.Sub(oauthState.CreatedAt) > 15*time.Minute {
-			delete(p.stateStore, state)
+			toDelete = append(toDelete, state)
 		}
+		return true
+	})
+
+	for _, state := range toDelete {
+		p.stateStore.Delete(state)
 	}
 }
 

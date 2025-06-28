@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -150,11 +151,11 @@ func TestGitHubOAuthProvider_ExchangeCode_ExpiredState(t *testing.T) {
 
 	// Manually create an expired state
 	state := "expired-state"
-	provider.stateStore[state] = &OAuthState{
+	provider.stateStore.Store(state, &OAuthState{
 		State:       state,
 		RedirectURI: "http://localhost:3000/callback",
 		CreatedAt:   time.Now().Add(-20 * time.Minute), // 20 minutes ago
-	}
+	})
 
 	ctx := context.Background()
 	_, err := provider.ExchangeCode(ctx, "test-code", state)
@@ -178,29 +179,31 @@ func TestGitHubOAuthProvider_generateState(t *testing.T) {
 
 func TestGitHubOAuthProvider_cleanupExpiredStates(t *testing.T) {
 	provider := &GitHubOAuthProvider{
-		stateStore: make(map[string]*OAuthState),
+		stateStore: &sync.Map{},
 	}
 
 	// Add valid state
 	validState := "valid-state"
-	provider.stateStore[validState] = &OAuthState{
+	provider.stateStore.Store(validState, &OAuthState{
 		State:       validState,
 		RedirectURI: "http://localhost:3000/callback",
 		CreatedAt:   time.Now(),
-	}
+	})
 
 	// Add expired state
 	expiredState := "expired-state"
-	provider.stateStore[expiredState] = &OAuthState{
+	provider.stateStore.Store(expiredState, &OAuthState{
 		State:       expiredState,
 		RedirectURI: "http://localhost:3000/callback",
 		CreatedAt:   time.Now().Add(-20 * time.Minute),
-	}
+	})
 
 	// Clean up
 	provider.cleanupExpiredStates()
 
 	// Check results
-	assert.Contains(t, provider.stateStore, validState)
-	assert.NotContains(t, provider.stateStore, expiredState)
+	_, validExists := provider.stateStore.Load(validState)
+	_, expiredExists := provider.stateStore.Load(expiredState)
+	assert.True(t, validExists)
+	assert.False(t, expiredExists)
 }
