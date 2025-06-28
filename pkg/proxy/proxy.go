@@ -121,10 +121,10 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			path := c.Request().URL.Path
 			pathParts := strings.Split(path, "/")
 			// Skip CORS only for proxy routes that match /:sessionId/* pattern
-			// (at least 3 parts, not starting with "start", "search", or "sessions")
+			// (at least 3 parts, not starting with "start", "search", "sessions", or "oauth")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth"
 			}
 			return false
 		},
