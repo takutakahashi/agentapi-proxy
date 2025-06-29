@@ -122,7 +122,9 @@ APIキーは2つの方法で設定できます：
 
 ### APIキーを使用したリクエスト
 
-全てのAPIリクエストには、HTTPヘッダーでAPIキーを指定します：
+APIリクエストには、HTTPヘッダーでAPIキーを指定します。以下の2つの方法がサポートされています：
+
+#### 方法A: カスタムヘッダー（X-API-Key）
 
 ```bash
 # セッション作成（user権限必要）
@@ -135,19 +137,36 @@ curl -X POST http://localhost:8080/start \
       "GITHUB_TOKEN": "your-token"
     }
   }'
+```
+
+#### 方法B: Bearer トークン（Authorization ヘッダー）
+
+```bash
+# セッション作成（user権限必要）
+curl -X POST http://localhost:8080/start \
+  -H "Authorization: Bearer ap_user_alice_987654321fedcba" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "environment": {
+      "GITHUB_TOKEN": "your-token"
+    }
+  }'
 
 # セッション一覧表示（list権限必要）
 curl -X GET http://localhost:8080/search \
-  -H "X-API-Key: ap_user_alice_987654321fedcba"
+  -H "Authorization: Bearer ap_user_alice_987654321fedcba"
 
 # セッションアクセス（access権限必要）
 curl -X GET http://localhost:8080/550e8400-e29b-41d4-a716-446655440000/api/workspaces \
-  -H "X-API-Key: ap_user_alice_987654321fedcba"
+  -H "Authorization: Bearer ap_user_alice_987654321fedcba"
 
 # セッション削除（delete権限必要）
 curl -X DELETE http://localhost:8080/sessions/550e8400-e29b-41d4-a716-446655440000 \
-  -H "X-API-Key: ap_user_alice_987654321fedcba"
+  -H "Authorization: Bearer ap_user_alice_987654321fedcba"
 ```
+
+**注意**: 認証は優先順位として、まずカスタムヘッダー（X-API-Key）をチェックし、見つからない場合に Authorization ヘッダーの Bearer トークンをチェックします。
 
 ### セッション所有権制御
 
