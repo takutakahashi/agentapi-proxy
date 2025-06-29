@@ -168,7 +168,19 @@ func tryGitHubAuth(c echo.Context, cfg *config.GitHubAuthConfig) (*UserContext, 
 
 // tryStaticAuth attempts static API key authentication
 func tryStaticAuth(c echo.Context, staticCfg *config.StaticAuthConfig, cfg *config.Config) (*UserContext, error) {
-	apiKey := c.Request().Header.Get(staticCfg.HeaderName)
+	var apiKey string
+
+	// First, try to get API key from the configured custom header
+	apiKey = c.Request().Header.Get(staticCfg.HeaderName)
+	
+	// If not found in custom header, try to extract from Authorization header (Bearer token)
+	if apiKey == "" {
+		authHeader := c.Request().Header.Get("Authorization")
+		if authHeader != "" {
+			apiKey = extractAPIKeyFromAuthHeader(authHeader)
+		}
+	}
+
 	if apiKey == "" {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "API key required")
 	}
@@ -185,6 +197,21 @@ func tryStaticAuth(c echo.Context, staticCfg *config.StaticAuthConfig, cfg *conf
 		APIKey:      apiKey,
 		AuthType:    "api_key",
 	}, nil
+}
+
+// extractAPIKeyFromAuthHeader extracts API key from Authorization header
+func extractAPIKeyFromAuthHeader(header string) string {
+	if header == "" {
+		return ""
+	}
+
+	// Handle "Bearer <token>" format
+	if strings.HasPrefix(header, "Bearer ") {
+		return strings.TrimPrefix(header, "Bearer ")
+	}
+
+	// Handle raw token
+	return header
 }
 
 // hasPermission checks if user has a specific permission
