@@ -172,7 +172,7 @@ func tryStaticAuth(c echo.Context, staticCfg *config.StaticAuthConfig, cfg *conf
 
 	// First, try to get API key from the configured custom header
 	apiKey = c.Request().Header.Get(staticCfg.HeaderName)
-	
+
 	// If not found in custom header, try to extract from Authorization header (Bearer token)
 	if apiKey == "" {
 		authHeader := c.Request().Header.Get("Authorization")

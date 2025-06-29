@@ -74,6 +74,10 @@ COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 # Switch to non-root user
 USER agentapi
 
+# Configure global gitignore for .claude directory
+RUN git config --global core.excludesfile ~/.gitignore_global && \
+    echo ".claude/" > ~/.gitignore_global
+
 # Install mise
 RUN curl https://mise.run | sh && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
