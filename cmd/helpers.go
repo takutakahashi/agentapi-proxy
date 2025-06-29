@@ -145,6 +145,14 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// Check for MCP configs in environment variable
+	if mcpConfigsStr := os.Getenv("MCP_CONFIGS"); mcpConfigsStr != "" {
+		if err := setupMCPServers(mcpConfigsStr); err != nil {
+			fmt.Printf("Warning: Failed to setup MCP servers: %v\n", err)
+			// Don't exit on error, just warn
+		}
+	}
+
 	fmt.Printf("Successfully created Claude Code configuration at %s\n", settingsPath)
 }
 
@@ -304,4 +312,72 @@ func generateAPIKey(userID, prefix string) (string, error) {
 	apiKey := fmt.Sprintf("%s_%s_%s", prefix, userID, randomString)
 
 	return apiKey, nil
+}
+
+// MCPServerConfig represents a single MCP server configuration following Claude Code schema
+type MCPServerConfig struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
+// MCPConfig represents the root MCP configuration following Claude Code schema
+type MCPConfig struct {
+	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
+}
+
+// setupMCPServers parses MCP configs from JSON string and adds them using claude mcp add
+func setupMCPServers(mcpConfigsJSON string) error {
+	var config MCPConfig
+	if err := json.Unmarshal([]byte(mcpConfigsJSON), &config); err != nil {
+		return fmt.Errorf("failed to parse MCP configs JSON: %w", err)
+	}
+
+	for serverName, serverConfig := range config.MCPServers {
+		if err := addMCPServer(serverName, serverConfig); err != nil {
+			fmt.Printf("Warning: Failed to add MCP server %s: %v\n", serverName, err)
+			// Continue with other servers even if one fails
+		}
+	}
+
+	return nil
+}
+
+// addMCPServer adds a single MCP server using claude mcp add command
+func addMCPServer(serverName string, config MCPServerConfig) error {
+	if serverName == "" {
+		return fmt.Errorf("MCP server name is required")
+	}
+
+	if config.Command == "" {
+		return fmt.Errorf("command is required for MCP server %s", serverName)
+	}
+
+	// Build command arguments
+	args := []string{"mcp", "add"}
+
+	// Add environment variables
+	for key, value := range config.Env {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", key, value))
+	}
+
+	// Add server name
+	args = append(args, serverName)
+
+	// Add separator before command if there are args
+	if len(config.Args) > 0 {
+		args = append(args, "--")
+	}
+	args = append(args, config.Command)
+	args = append(args, config.Args...)
+
+	// Execute claude mcp add command
+	cmd := exec.Command("claude", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to execute claude mcp add: %w, output: %s", err, string(output))
+	}
+
+	fmt.Printf("Successfully added MCP server: %s\n", serverName)
+	return nil
 }

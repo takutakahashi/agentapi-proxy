@@ -50,5 +50,5 @@ else
     fi
 fi
 
-CLAUDE_DIR=. agentapi-proxy helpers setup-claude-code
+CLAUDE_DIR=. MCP_CONFIGS='{{.MCPConfigs}}' agentapi-proxy helpers setup-claude-code
 exec agentapi server --port "$PORT" {{.AgentAPIArgs}} -- claude {{.ClaudeArgs}}

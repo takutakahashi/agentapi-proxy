@@ -58,6 +58,7 @@ type ScriptTemplateData struct {
 	UserID                    string
 	EnableMultipleUsers       string
 	UserHomeDir               string
+	MCPConfigs                string
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -831,6 +832,14 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		}
 	}
 
+	// Extract MCP configs from tags
+	var mcpConfigs string
+	if session.Tags != nil {
+		if mcpConfigsStr, exists := session.Tags["claude.mcp_configs"]; exists {
+			mcpConfigs = mcpConfigsStr
+		}
+	}
+
 	// Prepare template data with environment variables and repository info
 	templateData := &ScriptTemplateData{
 		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
@@ -844,6 +853,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		UserID:                    session.UserID,
 		EnableMultipleUsers:       strconv.FormatBool(p.config.EnableMultipleUsers),
 		UserHomeDir:               userHomeDir,
+		MCPConfigs:                mcpConfigs,
 	}
 
 	// Add repository information to template data if available
