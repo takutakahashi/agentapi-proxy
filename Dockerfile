@@ -75,7 +75,8 @@ COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 USER agentapi
 
 # Install mise
-RUN curl https://mise.run | sh
+RUN curl https://mise.run | sh && \
+    echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
 ENV PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
 # Install claude code and Playwright MCP server via npm (Node.js is now installed directly)
