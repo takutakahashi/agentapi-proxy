@@ -314,28 +314,28 @@ func generateAPIKey(userID, prefix string) (string, error) {
 	return apiKey, nil
 }
 
-// MCPConfig represents a single MCP server configuration
+// MCPServerConfig represents a single MCP server configuration following Claude Code schema
+type MCPServerConfig struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
+// MCPConfig represents the root MCP configuration following Claude Code schema
 type MCPConfig struct {
-	Name      string            `json:"name"`
-	Command   string            `json:"command,omitempty"`
-	Args      []string          `json:"args,omitempty"`
-	URL       string            `json:"url,omitempty"`
-	Transport string            `json:"transport,omitempty"` // stdio, sse, http
-	Env       map[string]string `json:"env,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Scope     string            `json:"scope,omitempty"` // local, project, user
+	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
 }
 
 // setupMCPServers parses MCP configs from JSON string and adds them using claude mcp add
 func setupMCPServers(mcpConfigsJSON string) error {
-	var configs []MCPConfig
-	if err := json.Unmarshal([]byte(mcpConfigsJSON), &configs); err != nil {
+	var config MCPConfig
+	if err := json.Unmarshal([]byte(mcpConfigsJSON), &config); err != nil {
 		return fmt.Errorf("failed to parse MCP configs JSON: %w", err)
 	}
 
-	for _, config := range configs {
-		if err := addMCPServer(config); err != nil {
-			fmt.Printf("Warning: Failed to add MCP server %s: %v\n", config.Name, err)
+	for serverName, serverConfig := range config.MCPServers {
+		if err := addMCPServer(serverName, serverConfig); err != nil {
+			fmt.Printf("Warning: Failed to add MCP server %s: %v\n", serverName, err)
 			// Continue with other servers even if one fails
 		}
 	}
@@ -344,55 +344,32 @@ func setupMCPServers(mcpConfigsJSON string) error {
 }
 
 // addMCPServer adds a single MCP server using claude mcp add command
-func addMCPServer(config MCPConfig) error {
-	if config.Name == "" {
+func addMCPServer(serverName string, config MCPServerConfig) error {
+	if serverName == "" {
 		return fmt.Errorf("MCP server name is required")
+	}
+
+	if config.Command == "" {
+		return fmt.Errorf("command is required for MCP server %s", serverName)
 	}
 
 	// Build command arguments
 	args := []string{"mcp", "add"}
-
-	// Add transport flag if specified
-	if config.Transport != "" && config.Transport != "stdio" {
-		args = append(args, "--transport", config.Transport)
-	}
-
-	// Add scope flag if specified
-	if config.Scope != "" {
-		args = append(args, "--scope", config.Scope)
-	}
 
 	// Add environment variables
 	for key, value := range config.Env {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", key, value))
 	}
 
-	// Add headers for HTTP/SSE transports
-	for key, value := range config.Headers {
-		args = append(args, "--header", fmt.Sprintf("%s: %s", key, value))
-	}
-
 	// Add server name
-	args = append(args, config.Name)
+	args = append(args, serverName)
 
-	// Add command/URL based on transport
-	switch config.Transport {
-	case "sse", "http":
-		if config.URL == "" {
-			return fmt.Errorf("URL is required for %s transport", config.Transport)
-		}
-		args = append(args, config.URL)
-	default: // stdio or empty (defaults to stdio)
-		if config.Command == "" {
-			return fmt.Errorf("command is required for stdio transport")
-		}
-		// Add separator before command if there are args
-		if len(config.Args) > 0 {
-			args = append(args, "--")
-		}
-		args = append(args, config.Command)
-		args = append(args, config.Args...)
+	// Add separator before command if there are args
+	if len(config.Args) > 0 {
+		args = append(args, "--")
 	}
+	args = append(args, config.Command)
+	args = append(args, config.Args...)
 
 	// Execute claude mcp add command
 	cmd := exec.Command("claude", args...)
@@ -401,6 +378,6 @@ func addMCPServer(config MCPConfig) error {
 		return fmt.Errorf("failed to execute claude mcp add: %w, output: %s", err, string(output))
 	}
 
-	fmt.Printf("Successfully added MCP server: %s\n", config.Name)
+	fmt.Printf("Successfully added MCP server: %s\n", serverName)
 	return nil
 }
