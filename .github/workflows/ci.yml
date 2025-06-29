@@ -12,6 +12,22 @@ env:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    
+    services:
+      minio:
+        image: minio/minio:latest
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/ready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        command: server /data
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -87,3 +103,8 @@ jobs:
 
     - name: Run CI pipeline
       run: make test
+      env:
+        INTEGRATION_TEST: "true"
+        MINIO_ENDPOINT: "http://localhost:9000"
+        MINIO_ACCESS_KEY: "minioadmin"
+        MINIO_SECRET_KEY: "minioadmin"
