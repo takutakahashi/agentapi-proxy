@@ -86,12 +86,18 @@ ENV PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH
 # Install claude code and Playwright MCP server via npm (Node.js is now installed directly)
 RUN sudo npm install -g @anthropic-ai/claude-code @playwright/mcp@latest
 
+# Install Playwright dependencies (without downloading browsers, using Lightpanda instead)
+RUN sudo npx playwright install-deps
+
 # Setup Lightpanda Browser
 ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
+
+# Copy Claude Code MCP configuration
+COPY config/claude_code_config.json /tmp/config/claude_code_config.json
 
 # Copy entrypoint script
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
