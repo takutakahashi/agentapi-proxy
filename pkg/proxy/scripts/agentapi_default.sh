@@ -19,15 +19,17 @@ export GITHUB_APP_PEM_PATH="{{.GitHubAppPEMPath}}"
 export GITHUB_API="{{.GitHubAPI}}"
 export GITHUB_PERSONAL_ACCESS_TOKEN="{{.GitHubPersonalAccessToken}}"
 
-# Set user-specific HOME directory if multiple users is enabled
+# Set user-specific CLAUDE_DIR if multiple users is enabled
 if [[ "$ENABLE_MULTIPLE_USERS" == "true" && -n "$USER_HOME_DIR" ]]; then
-    echo "Setting HOME to user-specific directory: $USER_HOME_DIR"
-    export HOME="$USER_HOME_DIR"
+    # Set CLAUDE_DIR to ~/.claude/[username] pattern
+    USER_NAME=$(basename "$USER_HOME_DIR")
+    export CLAUDE_DIR="${HOME}/.claude/${USER_NAME}"
+    echo "Setting CLAUDE_DIR to user-specific directory: $CLAUDE_DIR"
     
-    # Ensure the user home directory exists
-    if [[ ! -d "$USER_HOME_DIR" ]]; then
-        echo "Creating user home directory: $USER_HOME_DIR"
-        mkdir -p "$USER_HOME_DIR"
+    # Ensure the Claude directory exists
+    if [[ ! -d "$CLAUDE_DIR" ]]; then
+        echo "Creating Claude user directory: $CLAUDE_DIR"
+        mkdir -p "$CLAUDE_DIR"
     fi
 fi
 
@@ -50,5 +52,9 @@ else
     fi
 fi
 
-CLAUDE_DIR=. agentapi-proxy helpers setup-claude-code
+# Use the CLAUDE_DIR if set, otherwise use current directory
+if [[ -z "$CLAUDE_DIR" ]]; then
+    CLAUDE_DIR=.
+fi
+CLAUDE_DIR="$CLAUDE_DIR" agentapi-proxy helpers setup-claude-code
 exec agentapi server --port "$PORT" {{.AgentAPIArgs}} -- claude {{.ClaudeArgs}}
