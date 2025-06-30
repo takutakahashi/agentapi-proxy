@@ -11,14 +11,13 @@ if [ ! -f /home/agentapi/.claude/CLAUDE.md ] || [ /tmp/config/CLAUDE.md -nt /hom
     echo "CLAUDE.md copied successfully"
 fi
 
-# Setup Claude Code configuration with MCP servers
-if [ -f /tmp/config/claude_code_config.json ]; then
-    echo "Setting up Claude Code MCP configuration..."
-    # Ensure claude-code config directory exists
-    mkdir -p /home/agentapi/.config/claude-code
-    cp /tmp/config/claude_code_config.json /home/agentapi/.config/claude-code/config.json
-    echo "Claude Code MCP configuration copied successfully"
-fi
+# Setup Playwright MCP server
+echo "Setting up Playwright MCP server..."
+# Add Playwright MCP using claude mcp add command
+# Using --scope user to make it available across all projects
+claude mcp add playwright npx -- @playwright/mcp@latest --scope user || {
+    echo "Warning: Failed to add Playwright MCP server. This is normal if it's already installed."
+}
 
 # Execute the original command
 exec "$@"

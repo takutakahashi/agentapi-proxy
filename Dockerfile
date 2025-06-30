@@ -96,9 +96,6 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
 
-# Copy Claude Code MCP configuration
-COPY config/claude_code_config.json /tmp/config/claude_code_config.json
-
 # Copy entrypoint script
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sudo chmod +x /usr/local/bin/entrypoint.sh
