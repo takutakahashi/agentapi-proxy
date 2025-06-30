@@ -174,26 +174,31 @@ func TestGetUserEnvironment_EnabledMode(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Check that HOME was replaced with user-specific directory
-	expectedHome := filepath.Join(tmpDir, "users", "bob")
+	// Check that CLAUDE_DIR was added with user-specific directory
+	expectedClaudeDir := filepath.Join("/home/alice", ".claude", "bob")
+	claudeDirFound := false
 	homeFound := false
 
 	for _, envVar := range env {
-		if strings.HasPrefix(envVar, "HOME=") {
-			if envVar != "HOME="+expectedHome {
-				t.Errorf("Expected HOME=%s, got %s", expectedHome, envVar)
+		if strings.HasPrefix(envVar, "CLAUDE_DIR=") {
+			if envVar != "CLAUDE_DIR="+expectedClaudeDir {
+				t.Errorf("Expected CLAUDE_DIR=%s, got %s", expectedClaudeDir, envVar)
+			}
+			claudeDirFound = true
+		} else if strings.HasPrefix(envVar, "HOME=") {
+			// HOME should remain unchanged
+			if envVar != "HOME=/home/alice" {
+				t.Errorf("Expected HOME=/home/alice, got %s", envVar)
 			}
 			homeFound = true
 		}
 	}
 
+	if !claudeDirFound {
+		t.Error("CLAUDE_DIR environment variable not found")
+	}
 	if !homeFound {
 		t.Error("HOME environment variable not found")
-	}
-
-	// Check that directory was created
-	if _, err := os.Stat(expectedHome); os.IsNotExist(err) {
-		t.Errorf("Directory %s was not created", expectedHome)
 	}
 }
 
@@ -208,21 +213,22 @@ func TestGetUserEnvironment_NoHomeInBase(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Check that HOME was added
-	expectedHome := filepath.Join(tmpDir, "users", "bob")
-	homeFound := false
+	// Check that CLAUDE_DIR was added with default HOME
+	claudeDirFound := false
 
 	for _, envVar := range env {
-		if strings.HasPrefix(envVar, "HOME=") {
-			if envVar != "HOME="+expectedHome {
-				t.Errorf("Expected HOME=%s, got %s", expectedHome, envVar)
+		if strings.HasPrefix(envVar, "CLAUDE_DIR=") {
+			// When HOME is not set, it should use os.Getenv("HOME") or fallback to /home/agentapi
+			// The exact value depends on the test environment
+			if !strings.Contains(envVar, ".claude/bob") {
+				t.Errorf("Expected CLAUDE_DIR to contain '.claude/bob', got %s", envVar)
 			}
-			homeFound = true
+			claudeDirFound = true
 		}
 	}
 
-	if !homeFound {
-		t.Error("HOME environment variable not found")
+	if !claudeDirFound {
+		t.Error("CLAUDE_DIR environment variable not found")
 	}
 }
 
@@ -235,5 +241,64 @@ func TestGetUserHomeDir_InvalidUserID(t *testing.T) {
 		if err == nil {
 			t.Errorf("Expected error for invalid user ID: %q", userID)
 		}
+	}
+}
+
+func TestGetUserClaudeDir_DisabledMode(t *testing.T) {
+	manager := NewManager("/tmp/test", false)
+
+	// In disabled mode, GetUserClaudeDir should return the default .claude directory
+	claudeDir, err := manager.GetUserClaudeDir("alice")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Should return ~/.claude
+	if !strings.HasSuffix(claudeDir, ".claude") {
+		t.Errorf("Expected path to end with '.claude', got %s", claudeDir)
+	}
+}
+
+func TestGetUserClaudeDir_EnabledMode(t *testing.T) {
+	// Set HOME for consistent testing
+	os.Setenv("HOME", "/home/test")
+	defer os.Unsetenv("HOME")
+
+	tmpDir := t.TempDir()
+	manager := NewManager(tmpDir, true)
+
+	claudeDir, err := manager.GetUserClaudeDir("alice")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	expected := filepath.Join("/home/test", ".claude", "alice")
+	if claudeDir != expected {
+		t.Errorf("Expected %s, got %s", expected, claudeDir)
+	}
+}
+
+func TestEnsureUserClaudeDir_EnabledMode(t *testing.T) {
+	// Set HOME for consistent testing
+	testHome := t.TempDir()
+	os.Setenv("HOME", testHome)
+	defer os.Unsetenv("HOME")
+
+	tmpDir := t.TempDir()
+	manager := NewManager(tmpDir, true)
+
+	claudeDir, err := manager.EnsureUserClaudeDir("alice")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	expected := filepath.Join(testHome, ".claude", "alice")
+	if claudeDir != expected {
+		t.Errorf("Expected %s, got %s", expected, claudeDir)
+	}
+
+	// Check that directory was actually created
+	if _, err := os.Stat(claudeDir); os.IsNotExist(err) {
+		t.Errorf("Directory %s was not created", claudeDir)
 	}
 }
