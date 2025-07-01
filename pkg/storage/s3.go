@@ -153,7 +153,12 @@ func (s *S3Storage) Load(sessionID string) (*SessionData, error) {
 		}
 		return nil, fmt.Errorf("failed to load session from S3: %w", err)
 	}
-	defer result.Body.Close()
+	defer func() {
+		if closeErr := result.Body.Close(); closeErr != nil {
+			// Log the error or handle it appropriately
+			_ = closeErr
+		}
+	}()
 
 	// Read response body
 	data, err := io.ReadAll(result.Body)

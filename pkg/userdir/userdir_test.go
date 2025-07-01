@@ -261,8 +261,8 @@ func TestGetUserClaudeDir_DisabledMode(t *testing.T) {
 
 func TestGetUserClaudeDir_EnabledMode(t *testing.T) {
 	// Set HOME for consistent testing
-	os.Setenv("HOME", "/home/test")
-	defer os.Unsetenv("HOME")
+	_ = os.Setenv("HOME", "/home/test")
+	defer func() { _ = os.Unsetenv("HOME") }()
 
 	tmpDir := t.TempDir()
 	manager := NewManager(tmpDir, true)
@@ -281,8 +281,8 @@ func TestGetUserClaudeDir_EnabledMode(t *testing.T) {
 func TestEnsureUserClaudeDir_EnabledMode(t *testing.T) {
 	// Set HOME for consistent testing
 	testHome := t.TempDir()
-	os.Setenv("HOME", testHome)
-	defer os.Unsetenv("HOME")
+	_ = os.Setenv("HOME", testHome)
+	defer func() { _ = os.Unsetenv("HOME") }()
 
 	tmpDir := t.TempDir()
 	manager := NewManager(tmpDir, true)
