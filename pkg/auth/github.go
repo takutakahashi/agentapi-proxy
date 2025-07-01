@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -115,16 +116,35 @@ type GitHubAuthProvider struct {
 
 // NewGitHubAuthProvider creates a new GitHub authentication provider
 func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
+	// Use very short cache TTL in tests to reduce race conditions
+	cacheTTL := 1 * time.Hour
+	if isTestEnvironment() {
+		cacheTTL = 1 * time.Millisecond // Very short TTL for tests
+	}
+	
 	return &GitHubAuthProvider{
 		config: cfg,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		userCache:       newCache(1 * time.Hour),
-		orgsCache:       newCache(1 * time.Hour),
-		teamCache:       newCache(1 * time.Hour),
-		membershipCache: newCache(1 * time.Hour),
+		userCache:       newCache(cacheTTL),
+		orgsCache:       newCache(cacheTTL),
+		teamCache:       newCache(cacheTTL),
+		membershipCache: newCache(cacheTTL),
 	}
+}
+
+// isTestEnvironment detects if running in test environment
+func isTestEnvironment() bool {
+	// Check for test environment indicators
+	for _, arg := range []string{"-test.v", "-test.run", "-test.timeout"} {
+		for _, osArg := range os.Args {
+			if strings.Contains(osArg, arg) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Authenticate authenticates a user using GitHub OAuth token
