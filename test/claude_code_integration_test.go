@@ -221,26 +221,32 @@ func TestClaudeCodeProxyMultipleSessions(t *testing.T) {
 }
 
 func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
-	// Try multiple possible binary locations
-	possiblePaths := []string{
-		"./bin/agentapi-proxy",
-		"bin/agentapi-proxy",
-		"../bin/agentapi-proxy",
-	}
+	// Check environment variable first
+	binaryPath := os.Getenv("AGENTAPI_PROXY_BINARY")
 	
-	var binaryPath string
-	for _, path := range possiblePaths {
-		if _, err := os.Stat(path); err == nil {
-			binaryPath = path
-			break
+	if binaryPath == "" {
+		// Try multiple possible binary locations
+		possiblePaths := []string{
+			"./bin/agentapi-proxy",
+			"bin/agentapi-proxy",
+			"../bin/agentapi-proxy",
+		}
+		
+		for _, path := range possiblePaths {
+			if _, err := os.Stat(path); err == nil {
+				binaryPath = path
+				break
+			}
 		}
 	}
 	
 	if binaryPath == "" {
 		// Get current working directory for debugging
 		wd, _ := os.Getwd()
-		return nil, nil, fmt.Errorf("agentapi-proxy binary not found in any of %v. Current working directory: %s", possiblePaths, wd)
+		return nil, nil, fmt.Errorf("agentapi-proxy binary not found. Current working directory: %s", wd)
 	}
+	
+	t.Logf("Using proxy binary at: %s", binaryPath)
 
 	// Start the proxy server with config that disables auth
 	cmd := exec.Command(binaryPath, "server", "--port", proxyPort, "--verbose", "--config", "test/e2e-config.json")

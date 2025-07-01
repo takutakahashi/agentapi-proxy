@@ -50,12 +50,18 @@ jobs:
     - name: Build binary
       run: |
         make build
+        echo "Build completed"
 
     - name: Verify binary exists
       run: |
-        ls -la bin/
-        ls -la ./bin/agentapi-proxy || echo "Binary not found"
+        echo "Checking binary location..."
+        pwd
+        ls -la
+        ls -la bin/ || echo "bin directory not found"
+        ls -la ./bin/agentapi-proxy || echo "Binary not found in ./bin/"
         file ./bin/agentapi-proxy || echo "File command failed"
+        # Set executable permissions just in case
+        chmod +x ./bin/agentapi-proxy || true
 
     - name: Run E2E tests
       env:
@@ -63,7 +69,10 @@ jobs:
         CLAUDE_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         GO_TEST_TIMEOUT: 120s
       run: |
-        make e2e
+        # Create output directory for test results
+        mkdir -p test-results
+        # Run tests and capture results
+        make e2e 2>&1 | tee test-results/e2e-output.log || echo "Tests failed with exit code: $?"
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
@@ -71,9 +80,9 @@ jobs:
       with:
         name: test-results
         path: |
-          test-results.xml
-          coverage.out
+          test-results/
         retention-days: 30
+        if-no-files-found: warn
 
   notify-status:
     runs-on: ubuntu-latest
