@@ -63,7 +63,7 @@ RUN groupadd -r agentapi && useradd -r -g agentapi -d /home/agentapi -s /bin/bas
     echo 'agentapi ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 # Set working directory
-WORKDIR /app
+WORKDIR /home/agentapi/workdir
 
 # Copy binary from builder stage (agentapi-proxy binary only)
 COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
