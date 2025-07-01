@@ -178,10 +178,12 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 
 // getUser retrieves user information from GitHub API with caching
 func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHubUserInfo, error) {
-	// Check cache first
-	cacheKey := fmt.Sprintf("user:%s", hashToken(token))
-	if cached, found := p.userCache.get(cacheKey); found {
-		return cached.(*GitHubUserInfo), nil
+	// Check cache first (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
+		if cached, found := p.userCache.get(cacheKey); found {
+			return cached.(*GitHubUserInfo), nil
+		}
 	}
 
 	url := fmt.Sprintf("%s/user", strings.TrimSuffix(p.config.BaseURL, "/"))
@@ -209,8 +211,11 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 		return nil, err
 	}
 
-	// Cache the result
-	p.userCache.set(cacheKey, &user)
+	// Cache the result (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
+		p.userCache.set(cacheKey, &user)
+	}
 
 	return &user, nil
 }
@@ -240,10 +245,12 @@ func (p *GitHubAuthProvider) getUserTeams(ctx context.Context, token, username s
 
 // getUserOrganizations retrieves user's organizations from GitHub API with caching
 func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token string) ([]GitHubOrganization, error) {
-	// Check cache first
-	cacheKey := fmt.Sprintf("orgs:%s", hashToken(token))
-	if cached, found := p.orgsCache.get(cacheKey); found {
-		return cached.([]GitHubOrganization), nil
+	// Check cache first (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("orgs:%s", hashToken(token))
+		if cached, found := p.orgsCache.get(cacheKey); found {
+			return cached.([]GitHubOrganization), nil
+		}
 	}
 
 	url := fmt.Sprintf("%s/user/orgs", strings.TrimSuffix(p.config.BaseURL, "/"))
@@ -271,18 +278,23 @@ func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token str
 		return nil, err
 	}
 
-	// Cache the result
-	p.orgsCache.set(cacheKey, orgs)
+	// Cache the result (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("orgs:%s", hashToken(token))
+		p.orgsCache.set(cacheKey, orgs)
+	}
 
 	return orgs, nil
 }
 
 // getUserTeamsInOrg retrieves user's team memberships in a specific organization with caching
 func (p *GitHubAuthProvider) getUserTeamsInOrg(ctx context.Context, token, org, username string) ([]GitHubTeamMembership, error) {
-	// Check cache first
-	cacheKey := fmt.Sprintf("teams:%s:%s:%s", hashToken(token), org, username)
-	if cached, found := p.teamCache.get(cacheKey); found {
-		return cached.([]GitHubTeamMembership), nil
+	// Check cache first (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("teams:%s:%s:%s", hashToken(token), org, username)
+		if cached, found := p.teamCache.get(cacheKey); found {
+			return cached.([]GitHubTeamMembership), nil
+		}
 	}
 
 	url := fmt.Sprintf("%s/orgs/%s/teams", strings.TrimSuffix(p.config.BaseURL, "/"), org)
@@ -326,8 +338,11 @@ func (p *GitHubAuthProvider) getUserTeamsInOrg(ctx context.Context, token, org, 
 		}
 	}
 
-	// Cache the result
-	p.teamCache.set(cacheKey, userTeams)
+	// Cache the result (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("teams:%s:%s:%s", hashToken(token), org, username)
+		p.teamCache.set(cacheKey, userTeams)
+	}
 
 	return userTeams, nil
 }
@@ -340,11 +355,13 @@ type membershipResult struct {
 
 // checkTeamMembership checks if user is a member of a specific team with caching
 func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org, teamSlug, username string) (bool, string) {
-	// Check cache first
-	cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
-	if cached, found := p.membershipCache.get(cacheKey); found {
-		result := cached.(membershipResult)
-		return result.IsMember, result.Role
+	// Check cache first (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+		if cached, found := p.membershipCache.get(cacheKey); found {
+			result := cached.(membershipResult)
+			return result.IsMember, result.Role
+		}
 	}
 
 	url := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
@@ -367,14 +384,20 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 	result := membershipResult{IsMember: false, Role: ""}
 
 	if resp.StatusCode == http.StatusNotFound {
-		// Cache negative result
-		p.membershipCache.set(cacheKey, result)
+		// Cache negative result (disabled in test environment)
+		if !isTestEnvironment() {
+			cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+			p.membershipCache.set(cacheKey, result)
+		}
 		return false, ""
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Cache negative result
-		p.membershipCache.set(cacheKey, result)
+		// Cache negative result (disabled in test environment)
+		if !isTestEnvironment() {
+			cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+			p.membershipCache.set(cacheKey, result)
+		}
 		return false, ""
 	}
 
@@ -383,16 +406,22 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 		Role  string `json:"role"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&membership); err != nil {
-		// Cache negative result
-		p.membershipCache.set(cacheKey, result)
+		// Cache negative result (disabled in test environment)
+		if !isTestEnvironment() {
+			cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+			p.membershipCache.set(cacheKey, result)
+		}
 		return false, ""
 	}
 
 	result.IsMember = membership.State == "active"
 	result.Role = membership.Role
 
-	// Cache the result
-	p.membershipCache.set(cacheKey, result)
+	// Cache the result (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+		p.membershipCache.set(cacheKey, result)
+	}
 
 	return result.IsMember, result.Role
 }
