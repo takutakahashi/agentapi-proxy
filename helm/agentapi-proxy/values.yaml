@@ -191,3 +191,35 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
+
+# Auth configuration (stored in ConfigMap and mounted to the container)
+# This allows complex authorization rules that cannot be easily expressed as environment variables
+authConfig:
+  # Example configuration structure:
+  # github:
+  #   user_mapping:
+  #     default_role: "user"
+  #     default_permissions:
+  #       - "read"
+  #       - "session:create"
+  #       - "session:list"
+  #     team_role_mapping:
+  #       "myorg/admins":
+  #         role: "admin"
+  #         permissions:
+  #           - "*"
+  #       "myorg/developers":
+  #         role: "developer"
+  #         permissions:
+  #           - "read"
+  #           - "write"
+  #           - "execute"
+  #           - "session:create"
+  #           - "session:list"
+  #           - "session:delete"
+  #           - "session:access"
+  #       "myorg/viewers":
+  #         role: "viewer"
+  #         permissions:
+  #           - "read"
+  #           - "session:list"
