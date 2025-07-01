@@ -301,42 +301,45 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 // bindEnvVars explicitly binds environment variables to configuration keys
 func bindEnvVars(v *viper.Viper) {
 	// Bind nested configuration keys to environment variables
+	// Note: BindEnv errors are generally not critical and can be ignored
+	// as they typically occur only when the key is already bound
+	
 	// Auth configuration
-	v.BindEnv("auth.enabled")
-	v.BindEnv("auth.static.enabled")
-	v.BindEnv("auth.static.header_name")
-	v.BindEnv("auth.static.keys_file")
+	_ = v.BindEnv("auth.enabled")
+	_ = v.BindEnv("auth.static.enabled")
+	_ = v.BindEnv("auth.static.header_name")
+	_ = v.BindEnv("auth.static.keys_file")
 
 	// GitHub auth configuration
-	v.BindEnv("auth.github.enabled")
-	v.BindEnv("auth.github.base_url")
-	v.BindEnv("auth.github.token_header")
-	v.BindEnv("auth.github.user_mapping.default_role")
-	v.BindEnv("auth.github.user_mapping.default_permissions")
+	_ = v.BindEnv("auth.github.enabled")
+	_ = v.BindEnv("auth.github.base_url")
+	_ = v.BindEnv("auth.github.token_header")
+	_ = v.BindEnv("auth.github.user_mapping.default_role")
+	_ = v.BindEnv("auth.github.user_mapping.default_permissions")
 
 	// GitHub OAuth configuration
-	v.BindEnv("auth.github.oauth.client_id")
-	v.BindEnv("auth.github.oauth.client_secret")
-	v.BindEnv("auth.github.oauth.scope")
-	v.BindEnv("auth.github.oauth.base_url")
+	_ = v.BindEnv("auth.github.oauth.client_id")
+	_ = v.BindEnv("auth.github.oauth.client_secret")
+	_ = v.BindEnv("auth.github.oauth.scope")
+	_ = v.BindEnv("auth.github.oauth.base_url")
 
 	// Persistence configuration
-	v.BindEnv("persistence.enabled")
-	v.BindEnv("persistence.backend")
-	v.BindEnv("persistence.file_path")
-	v.BindEnv("persistence.sync_interval_seconds")
-	v.BindEnv("persistence.encrypt_sensitive_data")
-	v.BindEnv("persistence.session_recovery_max_age_hours")
-	v.BindEnv("persistence.s3_bucket")
-	v.BindEnv("persistence.s3_region")
-	v.BindEnv("persistence.s3_prefix")
-	v.BindEnv("persistence.s3_endpoint")
-	v.BindEnv("persistence.s3_access_key")
-	v.BindEnv("persistence.s3_secret_key")
+	_ = v.BindEnv("persistence.enabled")
+	_ = v.BindEnv("persistence.backend")
+	_ = v.BindEnv("persistence.file_path")
+	_ = v.BindEnv("persistence.sync_interval_seconds")
+	_ = v.BindEnv("persistence.encrypt_sensitive_data")
+	_ = v.BindEnv("persistence.session_recovery_max_age_hours")
+	_ = v.BindEnv("persistence.s3_bucket")
+	_ = v.BindEnv("persistence.s3_region")
+	_ = v.BindEnv("persistence.s3_prefix")
+	_ = v.BindEnv("persistence.s3_endpoint")
+	_ = v.BindEnv("persistence.s3_access_key")
+	_ = v.BindEnv("persistence.s3_secret_key")
 
 	// Other configuration
-	v.BindEnv("start_port")
-	v.BindEnv("enable_multiple_users")
+	_ = v.BindEnv("start_port")
+	_ = v.BindEnv("enable_multiple_users")
 }
 
 // setDefaults sets default values for viper configuration
