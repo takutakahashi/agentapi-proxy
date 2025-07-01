@@ -28,11 +28,7 @@ serviceAccount:
 podAnnotations: {}
 podLabels: {}
 
-podSecurityContext:
-  fsGroup: 1001
-  # runAsUser: 1001
-  # runAsGroup: 1001
-  # runAsNonRoot: true
+podSecurityContext: {}
 
 securityContext: {}
 
@@ -71,7 +67,7 @@ resources:
 # Persistent Volume for session data
 persistence:
   enabled: true
-  storageClassName: "standard"
+  storageClassName: ""
   accessMode: ReadWriteOnce
   size: 10Gi
 
