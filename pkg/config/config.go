@@ -149,6 +149,9 @@ func LoadConfig(filename string) (*Config, error) {
 	v.SetEnvPrefix("AGENTAPI")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
+	// Explicitly bind environment variables for nested configuration
+	bindEnvVars(v)
+
 	// Set defaults
 	setDefaults(v)
 
@@ -220,14 +223,22 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	}
 
 	// Initialize Auth.GitHub.OAuth if environment variables are set
-	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth == nil && (v.GetString("auth.github.oauth.client_id") != "" || v.GetString("auth.github.oauth.client_secret") != "") {
-		config.Auth.GitHub.OAuth = &GitHubOAuthConfig{
-			ClientID:     v.GetString("auth.github.oauth.client_id"),
-			ClientSecret: v.GetString("auth.github.oauth.client_secret"),
-			Scope:        v.GetString("auth.github.oauth.scope"),
-			BaseURL:      v.GetString("auth.github.oauth.base_url"),
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth == nil {
+		// Check if OAuth environment variables are set
+		clientID := v.GetString("auth.github.oauth.client_id")
+		clientSecret := v.GetString("auth.github.oauth.client_secret")
+
+		if clientID != "" || clientSecret != "" {
+			config.Auth.GitHub.OAuth = &GitHubOAuthConfig{
+				ClientID:     clientID,
+				ClientSecret: clientSecret,
+				Scope:        v.GetString("auth.github.oauth.scope"),
+				BaseURL:      v.GetString("auth.github.oauth.base_url"),
+			}
+			log.Printf("[CONFIG] Initialized GitHub OAuth config from environment variables")
+			log.Printf("[CONFIG] OAuth ClientID from env: %v", clientID != "")
+			log.Printf("[CONFIG] OAuth ClientSecret from env: %v", clientSecret != "")
 		}
-		log.Printf("[CONFIG] Initialized GitHub OAuth config from environment variables")
 	}
 
 	// Override fields if environment variables are set (even if structures already exist)
@@ -243,6 +254,22 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		}
 		if v.IsSet("auth.github.user_mapping.default_permissions") {
 			config.Auth.GitHub.UserMapping.DefaultPermissions = v.GetStringSlice("auth.github.user_mapping.default_permissions")
+		}
+
+		// Override OAuth settings if already exists
+		if config.Auth.GitHub.OAuth != nil {
+			if clientID := v.GetString("auth.github.oauth.client_id"); clientID != "" {
+				config.Auth.GitHub.OAuth.ClientID = clientID
+			}
+			if clientSecret := v.GetString("auth.github.oauth.client_secret"); clientSecret != "" {
+				config.Auth.GitHub.OAuth.ClientSecret = clientSecret
+			}
+			if scope := v.GetString("auth.github.oauth.scope"); scope != "" {
+				config.Auth.GitHub.OAuth.Scope = scope
+			}
+			if baseURL := v.GetString("auth.github.oauth.base_url"); baseURL != "" {
+				config.Auth.GitHub.OAuth.BaseURL = baseURL
+			}
 		}
 	}
 
@@ -269,6 +296,47 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		config.Persistence.S3SecretKey = v.GetString("persistence.s3_secret_key")
 		log.Printf("[CONFIG] Initialized S3 persistence config from environment variables")
 	}
+}
+
+// bindEnvVars explicitly binds environment variables to configuration keys
+func bindEnvVars(v *viper.Viper) {
+	// Bind nested configuration keys to environment variables
+	// Auth configuration
+	v.BindEnv("auth.enabled")
+	v.BindEnv("auth.static.enabled")
+	v.BindEnv("auth.static.header_name")
+	v.BindEnv("auth.static.keys_file")
+
+	// GitHub auth configuration
+	v.BindEnv("auth.github.enabled")
+	v.BindEnv("auth.github.base_url")
+	v.BindEnv("auth.github.token_header")
+	v.BindEnv("auth.github.user_mapping.default_role")
+	v.BindEnv("auth.github.user_mapping.default_permissions")
+
+	// GitHub OAuth configuration
+	v.BindEnv("auth.github.oauth.client_id")
+	v.BindEnv("auth.github.oauth.client_secret")
+	v.BindEnv("auth.github.oauth.scope")
+	v.BindEnv("auth.github.oauth.base_url")
+
+	// Persistence configuration
+	v.BindEnv("persistence.enabled")
+	v.BindEnv("persistence.backend")
+	v.BindEnv("persistence.file_path")
+	v.BindEnv("persistence.sync_interval_seconds")
+	v.BindEnv("persistence.encrypt_sensitive_data")
+	v.BindEnv("persistence.session_recovery_max_age_hours")
+	v.BindEnv("persistence.s3_bucket")
+	v.BindEnv("persistence.s3_region")
+	v.BindEnv("persistence.s3_prefix")
+	v.BindEnv("persistence.s3_endpoint")
+	v.BindEnv("persistence.s3_access_key")
+	v.BindEnv("persistence.s3_secret_key")
+
+	// Other configuration
+	v.BindEnv("start_port")
+	v.BindEnv("enable_multiple_users")
 }
 
 // setDefaults sets default values for viper configuration
