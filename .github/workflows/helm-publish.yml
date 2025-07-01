@@ -21,10 +21,9 @@ jobs:
         id: version
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          # Remove 'v' prefix if present
-          VERSION=${TAG#v}
-          # Remove 'helm-v' prefix if present
-          VERSION=${VERSION#helm-v}
+          VERSION=${TAG}
+          # Remove 'helm-' prefix if present
+          VERSION=${VERSION#helm-}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION from tag: $TAG"
