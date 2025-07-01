@@ -14,7 +14,7 @@ fullnameOverride: ""
 
 serviceAccount:
   # Specifies whether a service account should be created
-  create: false
+  create: true
   # Automatically mount a ServiceAccount's API credentials?
   automount: true
   # Annotations to add to the service account
@@ -23,8 +23,7 @@ serviceAccount:
     # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT-ID:role/agentapi-s3-role
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
-  # If specified, it will use the existing service account instead of creating a new one
-  name: "default"
+  name: ""
 
 podAnnotations: {}
 podLabels: {}
@@ -68,7 +67,7 @@ resources:
 # Persistent Volume for session data
 persistence:
   enabled: true
-  storageClassName: "standard"
+  storageClassName: ""
   accessMode: ReadWriteOnce
   size: 10Gi
 
