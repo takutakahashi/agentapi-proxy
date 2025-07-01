@@ -159,9 +159,25 @@ func LoadConfig(filename string) (*Config, error) {
 	// Apply defaults for any fields that weren't set in config file
 	applyConfigDefaults(&config)
 
+	// Ensure GitHub config struct is initialized if environment variables are set
+	if config.Auth.GitHub == nil && v.GetBool("auth.github.enabled") {
+		config.Auth.GitHub = &GitHubAuthConfig{
+			Enabled:     v.GetBool("auth.github.enabled"),
+			BaseURL:     v.GetString("auth.github.base_url"),
+			TokenHeader: v.GetString("auth.github.token_header"),
+		}
+		log.Printf("[CONFIG] Initialized GitHub auth config from environment variables")
+	}
+
 	// Apply post-processing
 	if err := postProcessConfig(&config); err != nil {
 		return nil, err
+	}
+
+	// Debug: Log GitHub auth configuration
+	log.Printf("[CONFIG] GitHub auth enabled: %v", config.Auth.GitHub != nil && config.Auth.GitHub.Enabled)
+	if config.Auth.GitHub != nil {
+		log.Printf("[CONFIG] GitHub auth config: enabled=%v, base_url=%s", config.Auth.GitHub.Enabled, config.Auth.GitHub.BaseURL)
 	}
 
 	return &config, nil
