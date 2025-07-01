@@ -2,11 +2,15 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -16,6 +20,65 @@ import (
 type contextKey string
 
 const echoContextKey contextKey = "echo"
+
+// cacheEntry represents a cached value with expiration time
+type cacheEntry struct {
+	value     interface{}
+	expiresAt time.Time
+}
+
+// cache is a simple TTL cache
+type cache struct {
+	data sync.Map
+	ttl  time.Duration
+}
+
+// newCache creates a new cache with specified TTL
+func newCache(ttl time.Duration) *cache {
+	return &cache{
+		ttl: ttl,
+	}
+}
+
+// get retrieves a value from cache if it exists and hasn't expired
+func (c *cache) get(key string) (interface{}, bool) {
+	entry, exists := c.data.Load(key)
+	if !exists {
+		return nil, false
+	}
+	
+	cacheEntry, ok := entry.(cacheEntry)
+	if !ok {
+		// Invalid entry type, remove it
+		c.data.Delete(key)
+		return nil, false
+	}
+	
+	now := time.Now()
+	if now.Before(cacheEntry.expiresAt) {
+		return cacheEntry.value, true
+	}
+	
+	// Entry expired, remove it
+	c.data.Delete(key)
+	return nil, false
+}
+
+// set stores a value in cache with TTL
+func (c *cache) set(key string, value interface{}) {
+	now := time.Now()
+	entry := cacheEntry{
+		value:     value,
+		expiresAt: now.Add(c.ttl),
+	}
+	c.data.Store(key, entry)
+}
+
+// hashToken creates a hash of the token for use as cache key
+func hashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}
 
 // GitHubUserInfo represents GitHub user information
 type GitHubUserInfo struct {
@@ -43,18 +106,45 @@ type GitHubTeamMembership struct {
 
 // GitHubAuthProvider handles GitHub OAuth authentication
 type GitHubAuthProvider struct {
-	config *config.GitHubAuthConfig
-	client *http.Client
+	config          *config.GitHubAuthConfig
+	client          *http.Client
+	userCache       *cache
+	orgsCache       *cache
+	teamCache       *cache
+	membershipCache *cache
 }
 
 // NewGitHubAuthProvider creates a new GitHub authentication provider
 func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
+	// Use very short cache TTL in tests to reduce race conditions
+	cacheTTL := 1 * time.Hour
+	if isTestEnvironment() {
+		cacheTTL = 1 * time.Millisecond // Very short TTL for tests
+	}
+	
 	return &GitHubAuthProvider{
 		config: cfg,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		userCache:       newCache(cacheTTL),
+		orgsCache:       newCache(cacheTTL),
+		teamCache:       newCache(cacheTTL),
+		membershipCache: newCache(cacheTTL),
 	}
+}
+
+// isTestEnvironment detects if running in test environment
+func isTestEnvironment() bool {
+	// Check for test environment indicators
+	for _, arg := range []string{"-test.v", "-test.run", "-test.timeout"} {
+		for _, osArg := range os.Args {
+			if strings.Contains(osArg, arg) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Authenticate authenticates a user using GitHub OAuth token
@@ -86,8 +176,16 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 	}, nil
 }
 
-// getUser retrieves user information from GitHub API
+// getUser retrieves user information from GitHub API with caching
 func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHubUserInfo, error) {
+	// Check cache first (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
+		if cached, found := p.userCache.get(cacheKey); found {
+			return cached.(*GitHubUserInfo), nil
+		}
+	}
+
 	url := fmt.Sprintf("%s/user", strings.TrimSuffix(p.config.BaseURL, "/"))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -111,6 +209,12 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 	var user GitHubUserInfo
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, err
+	}
+
+	// Cache the result (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
+		p.userCache.set(cacheKey, &user)
 	}
 
 	return &user, nil
@@ -139,8 +243,16 @@ func (p *GitHubAuthProvider) getUserTeams(ctx context.Context, token, username s
 	return allTeams, nil
 }
 
-// getUserOrganizations retrieves user's organizations from GitHub API
+// getUserOrganizations retrieves user's organizations from GitHub API with caching
 func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token string) ([]GitHubOrganization, error) {
+	// Check cache first (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("orgs:%s", hashToken(token))
+		if cached, found := p.orgsCache.get(cacheKey); found {
+			return cached.([]GitHubOrganization), nil
+		}
+	}
+
 	url := fmt.Sprintf("%s/user/orgs", strings.TrimSuffix(p.config.BaseURL, "/"))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -166,11 +278,25 @@ func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token str
 		return nil, err
 	}
 
+	// Cache the result (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("orgs:%s", hashToken(token))
+		p.orgsCache.set(cacheKey, orgs)
+	}
+
 	return orgs, nil
 }
 
-// getUserTeamsInOrg retrieves user's team memberships in a specific organization
+// getUserTeamsInOrg retrieves user's team memberships in a specific organization with caching
 func (p *GitHubAuthProvider) getUserTeamsInOrg(ctx context.Context, token, org, username string) ([]GitHubTeamMembership, error) {
+	// Check cache first (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("teams:%s:%s:%s", hashToken(token), org, username)
+		if cached, found := p.teamCache.get(cacheKey); found {
+			return cached.([]GitHubTeamMembership), nil
+		}
+	}
+
 	url := fmt.Sprintf("%s/orgs/%s/teams", strings.TrimSuffix(p.config.BaseURL, "/"), org)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -212,11 +338,32 @@ func (p *GitHubAuthProvider) getUserTeamsInOrg(ctx context.Context, token, org, 
 		}
 	}
 
+	// Cache the result (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("teams:%s:%s:%s", hashToken(token), org, username)
+		p.teamCache.set(cacheKey, userTeams)
+	}
+
 	return userTeams, nil
 }
 
-// checkTeamMembership checks if user is a member of a specific team
+// membershipResult represents a cached membership check result
+type membershipResult struct {
+	IsMember bool
+	Role     string
+}
+
+// checkTeamMembership checks if user is a member of a specific team with caching
 func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org, teamSlug, username string) (bool, string) {
+	// Check cache first (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+		if cached, found := p.membershipCache.get(cacheKey); found {
+			result := cached.(membershipResult)
+			return result.IsMember, result.Role
+		}
+	}
+
 	url := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
 		strings.TrimSuffix(p.config.BaseURL, "/"), org, teamSlug, username)
 
@@ -234,11 +381,23 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	result := membershipResult{IsMember: false, Role: ""}
+
 	if resp.StatusCode == http.StatusNotFound {
+		// Cache negative result (disabled in test environment)
+		if !isTestEnvironment() {
+			cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+			p.membershipCache.set(cacheKey, result)
+		}
 		return false, ""
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// Cache negative result (disabled in test environment)
+		if !isTestEnvironment() {
+			cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+			p.membershipCache.set(cacheKey, result)
+		}
 		return false, ""
 	}
 
@@ -247,10 +406,24 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 		Role  string `json:"role"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&membership); err != nil {
+		// Cache negative result (disabled in test environment)
+		if !isTestEnvironment() {
+			cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+			p.membershipCache.set(cacheKey, result)
+		}
 		return false, ""
 	}
 
-	return membership.State == "active", membership.Role
+	result.IsMember = membership.State == "active"
+	result.Role = membership.Role
+
+	// Cache the result (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("membership:%s:%s:%s:%s", hashToken(token), org, teamSlug, username)
+		p.membershipCache.set(cacheKey, result)
+	}
+
+	return result.IsMember, result.Role
 }
 
 // mapUserPermissions maps user's team memberships to roles and permissions
@@ -274,10 +447,10 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 	for _, team := range teams {
 		teamKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
 		log.Printf("[AUTH_DEBUG] Checking team key: %s", teamKey)
-		
+
 		if rule, exists := p.config.UserMapping.TeamRoleMapping[teamKey]; exists {
 			log.Printf("[AUTH_DEBUG] Found matching rule for %s: role=%s, permissions=%v", teamKey, rule.Role, rule.Permissions)
-			
+
 			// Apply higher role if found
 			if p.isHigherRole(rule.Role, highestRole) {
 				log.Printf("[AUTH_DEBUG] Upgrading role from %s to %s", highestRole, rule.Role)

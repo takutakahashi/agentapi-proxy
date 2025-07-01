@@ -119,16 +119,13 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 			}))
 			defer mockServer.Close()
 
-			provider := &GitHubAuthProvider{
-				config: &config.GitHubAuthConfig{
-					BaseURL: mockServer.URL,
-					UserMapping: config.GitHubUserMapping{
-						DefaultRole:        "user",
-						DefaultPermissions: []string{"read"},
-					},
+			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+				BaseURL: mockServer.URL,
+				UserMapping: config.GitHubUserMapping{
+					DefaultRole:        "user",
+					DefaultPermissions: []string{"read"},
 				},
-				client: &http.Client{},
-			}
+			})
 
 			user, err := provider.Authenticate(context.Background(), tt.token)
 			if tt.wantErr {
@@ -192,12 +189,9 @@ func TestGitHubAuthProvider_GetUser(t *testing.T) {
 			}))
 			defer mockServer.Close()
 
-			provider := &GitHubAuthProvider{
-				config: &config.GitHubAuthConfig{
-					BaseURL: mockServer.URL,
-				},
-				client: &http.Client{},
-			}
+			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+				BaseURL: mockServer.URL,
+			})
 
 			user, err := provider.getUser(context.Background(), tt.token)
 			if tt.wantErr {
@@ -268,12 +262,9 @@ func TestGitHubAuthProvider_GetUserOrganizations(t *testing.T) {
 			}))
 			defer mockServer.Close()
 
-			provider := &GitHubAuthProvider{
-				config: &config.GitHubAuthConfig{
-					BaseURL: mockServer.URL,
-				},
-				client: &http.Client{},
-			}
+			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+				BaseURL: mockServer.URL,
+			})
 
 			orgs, err := provider.getUserOrganizations(context.Background(), tt.token)
 			if tt.wantErr {
@@ -369,12 +360,9 @@ func TestGitHubAuthProvider_MapUserPermissions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := &GitHubAuthProvider{
-				config: &config.GitHubAuthConfig{
-					UserMapping: tt.config,
-				},
-				client: &http.Client{},
-			}
+			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+				UserMapping: tt.config,
+			})
 
 			role, permissions := provider.mapUserPermissions(tt.teams)
 			assert.Equal(t, tt.expectedRole, role)
@@ -478,22 +466,19 @@ func TestGitHubAuthProvider_Integration(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	provider := &GitHubAuthProvider{
-		config: &config.GitHubAuthConfig{
-			BaseURL: mockServer.URL,
-			UserMapping: config.GitHubUserMapping{
-				DefaultRole:        "user",
-				DefaultPermissions: []string{"read"},
-				TeamRoleMapping: map[string]config.TeamRoleRule{
-					"test-org/developers": {
-						Role:        "developer",
-						Permissions: []string{"write", "read"},
-					},
+	provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+		BaseURL: mockServer.URL,
+		UserMapping: config.GitHubUserMapping{
+			DefaultRole:        "user",
+			DefaultPermissions: []string{"read"},
+			TeamRoleMapping: map[string]config.TeamRoleRule{
+				"test-org/developers": {
+					Role:        "developer",
+					Permissions: []string{"write", "read"},
 				},
 			},
 		},
-		client: &http.Client{},
-	}
+	})
 
 	userCtx, err := provider.Authenticate(context.Background(), "integration-test-token")
 	require.NoError(t, err)
