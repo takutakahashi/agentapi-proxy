@@ -105,3 +105,33 @@ func TestExtractRepoFullNameFromURLFixed(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthEndpointWithoutAuth(t *testing.T) {
+	// Test with authentication enabled
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	cfg.Auth.Static = &config.StaticAuthConfig{
+		Enabled:    true,
+		HeaderName: "X-API-Key",
+		APIKeys: []config.APIKey{
+			{
+				Key:         "test-key",
+				UserID:      "test-user",
+				Role:        "user",
+				Permissions: []string{"session:access"},
+			},
+		},
+	}
+	proxy := NewProxy(cfg, false)
+
+	// Request to health endpoint without authentication
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+
+	proxy.GetEcho().ServeHTTP(w, req)
+
+	// Health endpoint should return 200 even without authentication
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status %d for /health endpoint without auth, got %d", http.StatusOK, w.Code)
+	}
+}
