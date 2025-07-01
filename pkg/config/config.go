@@ -230,6 +230,22 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		log.Printf("[CONFIG] Initialized GitHub OAuth config from environment variables")
 	}
 
+	// Override fields if environment variables are set (even if structures already exist)
+	if config.Auth.Static != nil {
+		if v.IsSet("auth.static.keys_file") {
+			config.Auth.Static.KeysFile = v.GetString("auth.static.keys_file")
+		}
+	}
+
+	if config.Auth.GitHub != nil {
+		if v.IsSet("auth.github.user_mapping.default_role") {
+			config.Auth.GitHub.UserMapping.DefaultRole = v.GetString("auth.github.user_mapping.default_role")
+		}
+		if v.IsSet("auth.github.user_mapping.default_permissions") {
+			config.Auth.GitHub.UserMapping.DefaultPermissions = v.GetStringSlice("auth.github.user_mapping.default_permissions")
+		}
+	}
+
 	// Initialize Persistence config if environment variables are set
 	if !config.Persistence.Enabled && v.GetBool("persistence.enabled") {
 		config.Persistence.Enabled = true
