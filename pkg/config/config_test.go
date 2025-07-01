@@ -545,3 +545,323 @@ func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 		t.Errorf("Expected ClientSecret to be 'env_client_secret', got '%s'", loadedConfig.Auth.GitHub.OAuth.ClientSecret)
 	}
 }
+
+func TestInitializeConfigStructsFromEnv_StaticAuth(t *testing.T) {
+	// Set up test environment variables for static auth
+	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_AUTH_STATIC_HEADER_NAME", "X-Custom-Key")
+	_ = os.Setenv("AGENTAPI_AUTH_STATIC_KEYS_FILE", "/path/to/keys.json")
+
+	defer func() {
+		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_ENABLED")
+		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_HEADER_NAME")
+		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_KEYS_FILE")
+	}()
+
+	// Load config without file (should initialize from env vars)
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify Static auth config was initialized from environment variables
+	if loadedConfig.Auth.Static == nil {
+		t.Fatal("Auth.Static should not be nil when environment variables are set")
+	}
+
+	assert.True(t, loadedConfig.Auth.Static.Enabled)
+	assert.Equal(t, "X-Custom-Key", loadedConfig.Auth.Static.HeaderName)
+	assert.Equal(t, "/path/to/keys.json", loadedConfig.Auth.Static.KeysFile)
+	assert.Empty(t, loadedConfig.Auth.Static.APIKeys) // Should be empty initially
+}
+
+func TestInitializeConfigStructsFromEnv_GitHubAuth(t *testing.T) {
+	// Set up test environment variables for GitHub auth
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_BASE_URL", "https://github.company.com/api/v3")
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_TOKEN_HEADER", "X-GitHub-Token")
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE", "developer")
+
+	defer func() {
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_ENABLED")
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_BASE_URL")
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_TOKEN_HEADER")
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE")
+	}()
+
+	// Load config without file (should initialize from env vars)
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify GitHub auth config was initialized from environment variables
+	if loadedConfig.Auth.GitHub == nil {
+		t.Fatal("Auth.GitHub should not be nil when environment variables are set")
+	}
+
+	assert.True(t, loadedConfig.Auth.GitHub.Enabled)
+	assert.Equal(t, "https://github.company.com/api/v3", loadedConfig.Auth.GitHub.BaseURL)
+	assert.Equal(t, "X-GitHub-Token", loadedConfig.Auth.GitHub.TokenHeader)
+	assert.Equal(t, "developer", loadedConfig.Auth.GitHub.UserMapping.DefaultRole)
+}
+
+func TestInitializeConfigStructsFromEnv_GitHubOAuth(t *testing.T) {
+	// First set up GitHub auth to exist
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID", "oauth_client_123")
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET", "oauth_secret_456")
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE", "read:user read:org repo")
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL", "https://github.company.com")
+
+	defer func() {
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_ENABLED")
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID")
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET")
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE")
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL")
+	}()
+
+	// Load config without file (should initialize from env vars)
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify GitHub OAuth config was initialized from environment variables
+	if loadedConfig.Auth.GitHub == nil {
+		t.Fatal("Auth.GitHub should not be nil")
+	}
+	if loadedConfig.Auth.GitHub.OAuth == nil {
+		t.Fatal("Auth.GitHub.OAuth should not be nil when environment variables are set")
+	}
+
+	assert.Equal(t, "oauth_client_123", loadedConfig.Auth.GitHub.OAuth.ClientID)
+	assert.Equal(t, "oauth_secret_456", loadedConfig.Auth.GitHub.OAuth.ClientSecret)
+	assert.Equal(t, "read:user read:org repo", loadedConfig.Auth.GitHub.OAuth.Scope)
+	assert.Equal(t, "https://github.company.com", loadedConfig.Auth.GitHub.OAuth.BaseURL)
+}
+
+func TestInitializeConfigStructsFromEnv_Persistence(t *testing.T) {
+	// Set up test environment variables for persistence
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_BACKEND", "postgres")
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_FILE_PATH", "/custom/path/sessions.json")
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_SYNC_INTERVAL_SECONDS", "60")
+
+	defer func() {
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_ENABLED")
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_BACKEND")
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_FILE_PATH")
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_SYNC_INTERVAL_SECONDS")
+	}()
+
+	// Load config without file (should initialize from env vars)
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify Persistence config was initialized from environment variables
+	assert.True(t, loadedConfig.Persistence.Enabled)
+	assert.Equal(t, "postgres", loadedConfig.Persistence.Backend)
+	assert.Equal(t, "/custom/path/sessions.json", loadedConfig.Persistence.FilePath)
+	assert.Equal(t, 60, loadedConfig.Persistence.SyncInterval)
+}
+
+func TestInitializeConfigStructsFromEnv_S3Persistence(t *testing.T) {
+	// Set up test environment variables for S3 persistence
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_BUCKET", "my-test-bucket")
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_REGION", "us-west-2")
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_PREFIX", "agentapi/sessions/")
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_ENDPOINT", "https://s3.amazonaws.com")
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_ACCESS_KEY", "test_access_key")
+	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_SECRET_KEY", "test_secret_key")
+
+	defer func() {
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_BUCKET")
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_REGION")
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_PREFIX")
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_ENDPOINT")
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_ACCESS_KEY")
+		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_SECRET_KEY")
+	}()
+
+	// Load config without file (should initialize from env vars)
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify S3 Persistence config was initialized from environment variables
+	assert.Equal(t, "my-test-bucket", loadedConfig.Persistence.S3Bucket)
+	assert.Equal(t, "us-west-2", loadedConfig.Persistence.S3Region)
+	assert.Equal(t, "agentapi/sessions/", loadedConfig.Persistence.S3Prefix)
+	assert.Equal(t, "https://s3.amazonaws.com", loadedConfig.Persistence.S3Endpoint)
+	assert.Equal(t, "test_access_key", loadedConfig.Persistence.S3AccessKey)
+	assert.Equal(t, "test_secret_key", loadedConfig.Persistence.S3SecretKey)
+}
+
+func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *testing.T) {
+	// Set up environment variables
+	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_ENABLED", "true")
+
+	defer func() {
+		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_ENABLED")
+		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_ENABLED")
+	}()
+
+	// Create config with existing auth structures
+	configJSON := `{
+		"start_port": 8000,
+		"auth": {
+			"enabled": false,
+			"static": {
+				"enabled": false,
+				"header_name": "X-Existing-Key"
+			},
+			"github": {
+				"enabled": false,
+				"base_url": "https://existing.github.com"
+			}
+		}
+	}`
+
+	// Write to temporary file
+	tmpfile, err := os.CreateTemp("", "config*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+
+	if _, err := tmpfile.WriteString(configJSON); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+	_ = tmpfile.Close()
+
+	// Load the config
+	loadedConfig, err := LoadConfig(tmpfile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify existing config structures were NOT overwritten by environment variables
+	// But environment variables still affect enabled flags due to viper's automatic env handling
+	assert.True(t, loadedConfig.Auth.Static.Enabled)                                 // Environment variable takes precedence
+	assert.Equal(t, "X-Existing-Key", loadedConfig.Auth.Static.HeaderName)           // Should remain as configured
+	assert.True(t, loadedConfig.Auth.GitHub.Enabled)                                 // Environment variable takes precedence
+	assert.Equal(t, "https://existing.github.com", loadedConfig.Auth.GitHub.BaseURL) // Should remain as configured
+}
+
+func TestInitializeConfigStructsFromEnv_PartialEnvironmentVariables(t *testing.T) {
+	// Set up only some environment variables
+	_ = os.Setenv("AGENTAPI_AUTH_STATIC_HEADER_NAME", "X-Partial-Key")
+	// Note: Not setting AGENTAPI_AUTH_STATIC_ENABLED
+
+	defer func() {
+		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_HEADER_NAME")
+	}()
+
+	// Load config without file (should initialize from env vars)
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify Static auth config was still initialized due to header_name being set
+	if loadedConfig.Auth.Static == nil {
+		t.Fatal("Auth.Static should not be nil when any environment variable is set")
+	}
+
+	assert.False(t, loadedConfig.Auth.Static.Enabled)                     // Should be false (default)
+	assert.Equal(t, "X-Partial-Key", loadedConfig.Auth.Static.HeaderName) // Should be from env var
+}
+
+func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T) {
+	// Set up comprehensive environment variables
+	envVars := map[string]string{
+		"AGENTAPI_START_PORT":                            "7777",
+		"AGENTAPI_AUTH_ENABLED":                          "true",
+		"AGENTAPI_AUTH_STATIC_ENABLED":                   "true",
+		"AGENTAPI_AUTH_STATIC_HEADER_NAME":               "X-Full-Test-Key",
+		"AGENTAPI_AUTH_STATIC_KEYS_FILE":                 "/full/test/keys.json",
+		"AGENTAPI_AUTH_GITHUB_ENABLED":                   "true",
+		"AGENTAPI_AUTH_GITHUB_BASE_URL":                  "https://full.test.github.com/api/v3",
+		"AGENTAPI_AUTH_GITHUB_TOKEN_HEADER":              "X-Full-GitHub-Token",
+		"AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE": "full-tester",
+		"AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID":           "full_client_123",
+		"AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET":       "full_secret_456",
+		"AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE":               "read:user read:org admin:repo",
+		"AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL":            "https://full.test.github.com",
+		"AGENTAPI_PERSISTENCE_ENABLED":                   "true",
+		"AGENTAPI_PERSISTENCE_BACKEND":                   "s3",
+		"AGENTAPI_PERSISTENCE_FILE_PATH":                 "/full/test/sessions.json",
+		"AGENTAPI_PERSISTENCE_SYNC_INTERVAL_SECONDS":     "120",
+		"AGENTAPI_PERSISTENCE_S3_BUCKET":                 "full-test-bucket",
+		"AGENTAPI_PERSISTENCE_S3_REGION":                 "eu-central-1",
+		"AGENTAPI_PERSISTENCE_S3_PREFIX":                 "full-test/sessions/",
+		"AGENTAPI_PERSISTENCE_S3_ENDPOINT":               "https://full.test.s3.endpoint.com",
+		"AGENTAPI_PERSISTENCE_S3_ACCESS_KEY":             "full_test_access",
+		"AGENTAPI_PERSISTENCE_S3_SECRET_KEY":             "full_test_secret",
+		"AGENTAPI_ENABLE_MULTIPLE_USERS":                 "true",
+	}
+
+	// Set all environment variables
+	for key, value := range envVars {
+		_ = os.Setenv(key, value)
+	}
+
+	// Clean up environment variables
+	defer func() {
+		for key := range envVars {
+			_ = os.Unsetenv(key)
+		}
+	}()
+
+	// Load config without file (should initialize everything from env vars)
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify all settings were loaded from environment variables
+	assert.Equal(t, 7777, loadedConfig.StartPort)
+	assert.True(t, loadedConfig.Auth.Enabled)
+	assert.True(t, loadedConfig.EnableMultipleUsers)
+
+	// Static auth verification
+	if assert.NotNil(t, loadedConfig.Auth.Static) {
+		assert.True(t, loadedConfig.Auth.Static.Enabled)
+		assert.Equal(t, "X-Full-Test-Key", loadedConfig.Auth.Static.HeaderName)
+		assert.Equal(t, "/full/test/keys.json", loadedConfig.Auth.Static.KeysFile)
+	}
+
+	// GitHub auth verification
+	if assert.NotNil(t, loadedConfig.Auth.GitHub) {
+		assert.True(t, loadedConfig.Auth.GitHub.Enabled)
+		assert.Equal(t, "https://full.test.github.com/api/v3", loadedConfig.Auth.GitHub.BaseURL)
+		assert.Equal(t, "X-Full-GitHub-Token", loadedConfig.Auth.GitHub.TokenHeader)
+		assert.Equal(t, "full-tester", loadedConfig.Auth.GitHub.UserMapping.DefaultRole)
+
+		// GitHub OAuth verification
+		if assert.NotNil(t, loadedConfig.Auth.GitHub.OAuth) {
+			assert.Equal(t, "full_client_123", loadedConfig.Auth.GitHub.OAuth.ClientID)
+			assert.Equal(t, "full_secret_456", loadedConfig.Auth.GitHub.OAuth.ClientSecret)
+			assert.Equal(t, "read:user read:org admin:repo", loadedConfig.Auth.GitHub.OAuth.Scope)
+			assert.Equal(t, "https://full.test.github.com", loadedConfig.Auth.GitHub.OAuth.BaseURL)
+		}
+	}
+
+	// Persistence verification
+	assert.True(t, loadedConfig.Persistence.Enabled)
+	assert.Equal(t, "s3", loadedConfig.Persistence.Backend)
+	assert.Equal(t, "/full/test/sessions.json", loadedConfig.Persistence.FilePath)
+	assert.Equal(t, 120, loadedConfig.Persistence.SyncInterval)
+	assert.Equal(t, "full-test-bucket", loadedConfig.Persistence.S3Bucket)
+	assert.Equal(t, "eu-central-1", loadedConfig.Persistence.S3Region)
+	assert.Equal(t, "full-test/sessions/", loadedConfig.Persistence.S3Prefix)
+	assert.Equal(t, "https://full.test.s3.endpoint.com", loadedConfig.Persistence.S3Endpoint)
+	assert.Equal(t, "full_test_access", loadedConfig.Persistence.S3AccessKey)
+	assert.Equal(t, "full_test_secret", loadedConfig.Persistence.S3SecretKey)
+}

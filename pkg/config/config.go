@@ -9,10 +9,22 @@
 //
 //	AGENTAPI_START_PORT=8080
 //	AGENTAPI_AUTH_ENABLED=true
+//	AGENTAPI_AUTH_STATIC_ENABLED=true
+//	AGENTAPI_AUTH_STATIC_HEADER_NAME=X-API-Key
+//	AGENTAPI_AUTH_STATIC_KEYS_FILE=/path/to/keys.json
+//	AGENTAPI_AUTH_GITHUB_ENABLED=true
+//	AGENTAPI_AUTH_GITHUB_BASE_URL=https://api.github.com
+//	AGENTAPI_AUTH_GITHUB_TOKEN_HEADER=Authorization
 //	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID=your_client_id
 //	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
+//	AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE=read:user read:org
+//	AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE=user
 //	AGENTAPI_PERSISTENCE_ENABLED=true
 //	AGENTAPI_PERSISTENCE_BACKEND=file
+//	AGENTAPI_PERSISTENCE_FILE_PATH=./sessions.json
+//	AGENTAPI_PERSISTENCE_S3_BUCKET=my-bucket
+//	AGENTAPI_PERSISTENCE_S3_REGION=us-east-1
+//	AGENTAPI_ENABLE_MULTIPLE_USERS=true
 //
 // Configuration file search paths:
 //   - Current directory
@@ -159,12 +171,104 @@ func LoadConfig(filename string) (*Config, error) {
 	// Apply defaults for any fields that weren't set in config file
 	applyConfigDefaults(&config)
 
+	// Initialize config structs from environment variables if they don't exist
+	initializeConfigStructsFromEnv(&config, v)
+
 	// Apply post-processing
 	if err := postProcessConfig(&config); err != nil {
 		return nil, err
 	}
 
+	// Debug: Log configuration summary
+	log.Printf("[CONFIG] Auth enabled: %v", config.Auth.Enabled)
+	log.Printf("[CONFIG] Static auth enabled: %v", config.Auth.Static != nil && config.Auth.Static.Enabled)
+	log.Printf("[CONFIG] GitHub auth enabled: %v", config.Auth.GitHub != nil && config.Auth.GitHub.Enabled)
+	if config.Auth.GitHub != nil {
+		log.Printf("[CONFIG] GitHub OAuth configured: %v", config.Auth.GitHub.OAuth != nil)
+	}
+	log.Printf("[CONFIG] Persistence enabled: %v (backend: %s)", config.Persistence.Enabled, config.Persistence.Backend)
+	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
+
 	return &config, nil
+}
+
+// initializeConfigStructsFromEnv initializes config structs from environment variables
+func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
+	// Initialize Auth.Static if environment variables are set
+	if config.Auth.Static == nil && (v.GetBool("auth.static.enabled") || v.GetString("auth.static.header_name") != "" || v.GetString("auth.static.keys_file") != "") {
+		config.Auth.Static = &StaticAuthConfig{
+			Enabled:    v.GetBool("auth.static.enabled"),
+			HeaderName: v.GetString("auth.static.header_name"),
+			KeysFile:   v.GetString("auth.static.keys_file"),
+			APIKeys:    []APIKey{},
+		}
+		log.Printf("[CONFIG] Initialized Static auth config from environment variables")
+	}
+
+	// Initialize Auth.GitHub if environment variables are set
+	if config.Auth.GitHub == nil && (v.GetBool("auth.github.enabled") || v.GetString("auth.github.base_url") != "" || v.GetString("auth.github.token_header") != "") {
+		config.Auth.GitHub = &GitHubAuthConfig{
+			Enabled:     v.GetBool("auth.github.enabled"),
+			BaseURL:     v.GetString("auth.github.base_url"),
+			TokenHeader: v.GetString("auth.github.token_header"),
+			UserMapping: GitHubUserMapping{
+				DefaultRole:        v.GetString("auth.github.user_mapping.default_role"),
+				DefaultPermissions: v.GetStringSlice("auth.github.user_mapping.default_permissions"),
+			},
+		}
+		log.Printf("[CONFIG] Initialized GitHub auth config from environment variables")
+	}
+
+	// Initialize Auth.GitHub.OAuth if environment variables are set
+	if config.Auth.GitHub != nil && config.Auth.GitHub.OAuth == nil && (v.GetString("auth.github.oauth.client_id") != "" || v.GetString("auth.github.oauth.client_secret") != "") {
+		config.Auth.GitHub.OAuth = &GitHubOAuthConfig{
+			ClientID:     v.GetString("auth.github.oauth.client_id"),
+			ClientSecret: v.GetString("auth.github.oauth.client_secret"),
+			Scope:        v.GetString("auth.github.oauth.scope"),
+			BaseURL:      v.GetString("auth.github.oauth.base_url"),
+		}
+		log.Printf("[CONFIG] Initialized GitHub OAuth config from environment variables")
+	}
+
+	// Override fields if environment variables are set (even if structures already exist)
+	if config.Auth.Static != nil {
+		if v.IsSet("auth.static.keys_file") {
+			config.Auth.Static.KeysFile = v.GetString("auth.static.keys_file")
+		}
+	}
+
+	if config.Auth.GitHub != nil {
+		if v.IsSet("auth.github.user_mapping.default_role") {
+			config.Auth.GitHub.UserMapping.DefaultRole = v.GetString("auth.github.user_mapping.default_role")
+		}
+		if v.IsSet("auth.github.user_mapping.default_permissions") {
+			config.Auth.GitHub.UserMapping.DefaultPermissions = v.GetStringSlice("auth.github.user_mapping.default_permissions")
+		}
+	}
+
+	// Initialize Persistence config if environment variables are set
+	if !config.Persistence.Enabled && v.GetBool("persistence.enabled") {
+		config.Persistence.Enabled = true
+		log.Printf("[CONFIG] Enabled persistence from environment variables")
+	}
+	if config.Persistence.Backend == "" && v.GetString("persistence.backend") != "" {
+		config.Persistence.Backend = v.GetString("persistence.backend")
+	}
+	if config.Persistence.FilePath == "" && v.GetString("persistence.file_path") != "" {
+		config.Persistence.FilePath = v.GetString("persistence.file_path")
+	}
+	if config.Persistence.SyncInterval == 0 && v.GetInt("persistence.sync_interval_seconds") != 0 {
+		config.Persistence.SyncInterval = v.GetInt("persistence.sync_interval_seconds")
+	}
+	if config.Persistence.S3Bucket == "" && v.GetString("persistence.s3_bucket") != "" {
+		config.Persistence.S3Bucket = v.GetString("persistence.s3_bucket")
+		config.Persistence.S3Region = v.GetString("persistence.s3_region")
+		config.Persistence.S3Prefix = v.GetString("persistence.s3_prefix")
+		config.Persistence.S3Endpoint = v.GetString("persistence.s3_endpoint")
+		config.Persistence.S3AccessKey = v.GetString("persistence.s3_access_key")
+		config.Persistence.S3SecretKey = v.GetString("persistence.s3_secret_key")
+		log.Printf("[CONFIG] Initialized S3 persistence config from environment variables")
+	}
 }
 
 // setDefaults sets default values for viper configuration
