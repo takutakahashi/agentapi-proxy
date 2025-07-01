@@ -3,7 +3,7 @@ name: agentapi-proxy
 description: A Helm chart for AgentAPI Proxy - a reverse proxy and process manager for agentapi server instances
 type: application
 version: 0.2.0
-appVersion: "1.23.0"
+appVersion: "1.26.0"
 home: https://github.com/takutakahashi/agentapi-proxy
 sources:
   - https://github.com/takutakahashi/agentapi-proxy
