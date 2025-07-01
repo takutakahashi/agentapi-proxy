@@ -336,7 +336,7 @@ func init() {
 func runAddMcpServers(cmd *cobra.Command, args []string) {
 	configFlag, _ := cmd.Flags().GetString("config")
 	claudeDirFlag, _ := cmd.Flags().GetString("claude-dir")
-	
+
 	// Get Claude directory
 	claudeDir := claudeDirFlag
 	if claudeDir == "" {
@@ -345,25 +345,25 @@ func runAddMcpServers(cmd *cobra.Command, args []string) {
 	if claudeDir == "" {
 		claudeDir = "."
 	}
-	
+
 	if configFlag == "" {
 		log.Fatalf("config flag is required")
 	}
-	
+
 	// Decode base64 configuration
 	configJson, err := decodeBase64(configFlag)
 	if err != nil {
 		log.Fatalf("failed to decode base64 config: %v", err)
 	}
-	
+
 	// Parse MCP server configurations
 	var mcpConfigs []MCPServerConfig
 	if err := json.Unmarshal([]byte(configJson), &mcpConfigs); err != nil {
 		log.Fatalf("failed to parse MCP configuration: %v", err)
 	}
-	
+
 	log.Printf("Adding %d MCP servers to Claude configuration", len(mcpConfigs))
-	
+
 	// Add each MCP server using claude command
 	for _, mcpConfig := range mcpConfigs {
 		if err := addMcpServer(claudeDir, mcpConfig); err != nil {
@@ -381,7 +381,7 @@ func decodeBase64(encoded string) (string, error) {
 	if err == nil {
 		return string(decodedBase64), nil
 	}
-	
+
 	// Try hex decoding if base64 fails
 	decoded, err2 := hex.DecodeString(encoded)
 	if err2 != nil {
@@ -393,7 +393,7 @@ func decodeBase64(encoded string) (string, error) {
 func addMcpServer(claudeDir string, mcpConfig MCPServerConfig) error {
 	// Build claude mcp add command
 	args := []string{"mcp", "add", mcpConfig.Name}
-	
+
 	// Add command and args for stdio transport
 	if mcpConfig.Transport == "stdio" && mcpConfig.Command != "" {
 		args = append(args, mcpConfig.Command)
@@ -401,28 +401,28 @@ func addMcpServer(claudeDir string, mcpConfig MCPServerConfig) error {
 			args = append(args, mcpConfig.Args...)
 		}
 	}
-	
+
 	// Set environment variables
 	env := os.Environ()
 	if claudeDir != "" {
 		env = append(env, fmt.Sprintf("CLAUDE_DIR=%s", claudeDir))
 	}
-	
+
 	// Add custom environment variables from MCP config
 	for key, value := range mcpConfig.Env {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
-	
+
 	// Execute claude command
 	claudeCmd := exec.Command("claude", args...)
 	claudeCmd.Env = env
 	claudeCmd.Dir = claudeDir
-	
+
 	output, err := claudeCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("claude command failed: %w, output: %s", err, string(output))
 	}
-	
+
 	log.Printf("Claude mcp add output for %s: %s", mcpConfig.Name, string(output))
 	return nil
 }
