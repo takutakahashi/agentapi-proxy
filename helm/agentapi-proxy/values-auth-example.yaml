@@ -1,0 +1,69 @@
+# Example values file showing auth configuration with ConfigMap
+# This demonstrates how to configure GitHub OAuth with team-based permissions
+
+replicaCount: 1
+
+config:
+  auth:
+    enabled: true
+    github:
+      enabled: true
+      oauth:
+        clientId: "your-github-client-id"
+        clientSecret: "your-github-client-secret"
+        scope: "repo workflow read:org admin:repo_hook notifications user:email"
+
+# Auth configuration - stored in ConfigMap and mounted to container
+# This allows complex authorization rules that cannot be expressed as environment variables
+authConfig:
+  github:
+    user_mapping:
+      default_role: "user"
+      default_permissions:
+        - "read"
+        - "session:create"
+        - "session:list"
+      team_role_mapping:
+        "myorg/admins":
+          role: "admin"
+          permissions:
+            - "*"
+        "myorg/developers":
+          role: "developer"
+          permissions:
+            - "read"
+            - "write"
+            - "execute"
+            - "session:create"
+            - "session:list"
+            - "session:delete"
+            - "session:access"
+        "myorg/qa-team":
+          role: "tester"
+          permissions:
+            - "read"
+            - "session:create"
+            - "session:list"
+            - "session:access"
+        "myorg/viewers":
+          role: "viewer"
+          permissions:
+            - "read"
+            - "session:list"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: agentapi.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: agentapi-proxy-tls
+      hosts:
+        - agentapi.example.com
+
+persistence:
+  enabled: true
+  size: 50Gi

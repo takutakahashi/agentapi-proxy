@@ -1,0 +1,40 @@
+{{- if .Values.authConfig }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-auth-config
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+data:
+  auth-config.yaml: |
+    {{- if .Values.authConfig.github }}
+    github:
+      {{- if .Values.authConfig.github.user_mapping }}
+      user_mapping:
+        {{- if .Values.authConfig.github.user_mapping.default_role }}
+        default_role: {{ .Values.authConfig.github.user_mapping.default_role | quote }}
+        {{- end }}
+        {{- if .Values.authConfig.github.user_mapping.default_permissions }}
+        default_permissions:
+        {{- range .Values.authConfig.github.user_mapping.default_permissions }}
+          - {{ . | quote }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.authConfig.github.user_mapping.team_role_mapping }}
+        team_role_mapping:
+        {{- range $teamKey, $teamRule := .Values.authConfig.github.user_mapping.team_role_mapping }}
+          {{ $teamKey | quote }}:
+            {{- if $teamRule.role }}
+            role: {{ $teamRule.role | quote }}
+            {{- end }}
+            {{- if $teamRule.permissions }}
+            permissions:
+            {{- range $teamRule.permissions }}
+              - {{ . | quote }}
+            {{- end }}
+            {{- end }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+{{- end }}

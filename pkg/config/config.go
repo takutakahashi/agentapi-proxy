@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v2"
 )
 
 // AuthConfig represents authentication configuration
@@ -79,15 +80,15 @@ type GitHubOAuthConfig struct {
 
 // GitHubUserMapping represents user role mapping configuration
 type GitHubUserMapping struct {
-	DefaultRole        string                  `json:"default_role" mapstructure:"default_role"`
-	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions"`
-	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping"`
+	DefaultRole        string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
+	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
+	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
 }
 
 // TeamRoleRule represents a team-based role rule
 type TeamRoleRule struct {
-	Role        string   `json:"role" mapstructure:"role"`
-	Permissions []string `json:"permissions" mapstructure:"permissions"`
+	Role        string   `json:"role" mapstructure:"role" yaml:"role"`
+	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
 }
 
 // APIKey represents an API key configuration
@@ -128,6 +129,8 @@ type Config struct {
 	Persistence PersistenceConfig `json:"persistence" mapstructure:"persistence"`
 	// EnableMultipleUsers enables user-specific directory isolation
 	EnableMultipleUsers bool `json:"enable_multiple_users" mapstructure:"enable_multiple_users"`
+	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
+	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -176,6 +179,15 @@ func LoadConfig(filename string) (*Config, error) {
 
 	// Initialize config structs from environment variables if they don't exist
 	initializeConfigStructsFromEnv(&config, v)
+
+	// Load external auth configuration if specified
+	if config.AuthConfigFile != "" {
+		if err := loadAuthConfigFromFile(&config, config.AuthConfigFile); err != nil {
+			log.Printf("[CONFIG] Warning: Failed to load auth config from %s: %v", config.AuthConfigFile, err)
+		} else {
+			log.Printf("[CONFIG] Loaded auth config from: %s", config.AuthConfigFile)
+		}
+	}
 
 	// Apply post-processing
 	if err := postProcessConfig(&config); err != nil {
@@ -340,6 +352,7 @@ func bindEnvVars(v *viper.Viper) {
 	// Other configuration
 	_ = v.BindEnv("start_port")
 	_ = v.BindEnv("enable_multiple_users")
+	_ = v.BindEnv("auth_config_file")
 }
 
 // setDefaults sets default values for viper configuration
@@ -610,4 +623,65 @@ func (apiKey *APIKey) HasPermission(permission string) bool {
 		}
 	}
 	return false
+}
+
+// AuthConfigOverride represents auth configuration overrides from external file
+type AuthConfigOverride struct {
+	GitHub *GitHubAuthConfigOverride `json:"github,omitempty" yaml:"github,omitempty"`
+}
+
+// GitHubAuthConfigOverride represents GitHub auth configuration overrides
+type GitHubAuthConfigOverride struct {
+	UserMapping *GitHubUserMapping `json:"user_mapping,omitempty" yaml:"user_mapping,omitempty"`
+}
+
+// LoadAuthConfigFromFile loads auth configuration from an external file (e.g., ConfigMap)
+func LoadAuthConfigFromFile(config *Config, filename string) error {
+	return loadAuthConfigFromFile(config, filename)
+}
+
+// loadAuthConfigFromFile loads auth configuration from an external file (e.g., ConfigMap)
+func loadAuthConfigFromFile(config *Config, filename string) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Failed to close auth config file: %v", err)
+		}
+	}()
+
+	var authOverride AuthConfigOverride
+
+	// Determine file format based on extension
+	if strings.HasSuffix(filename, ".yaml") || strings.HasSuffix(filename, ".yml") {
+		// Use yaml package directly for YAML files
+		decoder := yaml.NewDecoder(file)
+		if err := decoder.Decode(&authOverride); err != nil {
+			return err
+		}
+	} else {
+		// Default to JSON
+		decoder := json.NewDecoder(file)
+		if err := decoder.Decode(&authOverride); err != nil {
+			return err
+		}
+	}
+
+	// Apply overrides to the main config
+	if authOverride.GitHub != nil {
+		// Initialize GitHub config if it doesn't exist
+		if config.Auth.GitHub == nil {
+			config.Auth.GitHub = &GitHubAuthConfig{}
+		}
+
+		// Override user mapping if provided
+		if authOverride.GitHub.UserMapping != nil {
+			config.Auth.GitHub.UserMapping = *authOverride.GitHub.UserMapping
+			log.Printf("[CONFIG] Applied GitHub user mapping from external config")
+		}
+	}
+
+	return nil
 }
