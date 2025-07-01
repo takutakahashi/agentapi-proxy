@@ -255,26 +255,45 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 
 // mapUserPermissions maps user's team memberships to roles and permissions
 func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (string, []string) {
+	log.Printf("[AUTH_DEBUG] Starting mapUserPermissions")
+	log.Printf("[AUTH_DEBUG] Default role: %s", p.config.UserMapping.DefaultRole)
+	log.Printf("[AUTH_DEBUG] Default permissions: %v", p.config.UserMapping.DefaultPermissions)
+	log.Printf("[AUTH_DEBUG] Team role mappings: %+v", p.config.UserMapping.TeamRoleMapping)
+	log.Printf("[AUTH_DEBUG] User teams: %+v", teams)
+
 	highestRole := p.config.UserMapping.DefaultRole
 	allPermissions := make(map[string]bool)
 
 	// Add default permissions
 	for _, perm := range p.config.UserMapping.DefaultPermissions {
 		allPermissions[perm] = true
+		log.Printf("[AUTH_DEBUG] Added default permission: %s", perm)
 	}
 
 	// Check each team membership against configured rules
 	for _, team := range teams {
 		teamKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+		log.Printf("[AUTH_DEBUG] Checking team key: %s", teamKey)
+		
 		if rule, exists := p.config.UserMapping.TeamRoleMapping[teamKey]; exists {
+			log.Printf("[AUTH_DEBUG] Found matching rule for %s: role=%s, permissions=%v", teamKey, rule.Role, rule.Permissions)
+			
 			// Apply higher role if found
 			if p.isHigherRole(rule.Role, highestRole) {
+				log.Printf("[AUTH_DEBUG] Upgrading role from %s to %s", highestRole, rule.Role)
 				highestRole = rule.Role
 			}
 
 			// Add permissions from this rule
 			for _, perm := range rule.Permissions {
 				allPermissions[perm] = true
+				log.Printf("[AUTH_DEBUG] Added team permission: %s", perm)
+			}
+		} else {
+			log.Printf("[AUTH_DEBUG] No rule found for team key: %s", teamKey)
+			log.Printf("[AUTH_DEBUG] Available team mappings:")
+			for availableKey := range p.config.UserMapping.TeamRoleMapping {
+				log.Printf("[AUTH_DEBUG]   - %s", availableKey)
 			}
 		}
 	}
@@ -285,6 +304,7 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 		permissions = append(permissions, perm)
 	}
 
+	log.Printf("[AUTH_DEBUG] Final role: %s, permissions: %v", highestRole, permissions)
 	return highestRole, permissions
 }
 

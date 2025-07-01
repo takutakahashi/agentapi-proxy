@@ -678,9 +678,21 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 
 		// Override user mapping if provided
 		if authOverride.GitHub.UserMapping != nil {
+			log.Printf("[CONFIG] Applying GitHub user mapping from external config:")
+			log.Printf("[CONFIG]   Default role: %s", authOverride.GitHub.UserMapping.DefaultRole)
+			log.Printf("[CONFIG]   Default permissions: %v", authOverride.GitHub.UserMapping.DefaultPermissions)
+			log.Printf("[CONFIG]   Team role mappings: %+v", authOverride.GitHub.UserMapping.TeamRoleMapping)
+			
 			config.Auth.GitHub.UserMapping = *authOverride.GitHub.UserMapping
 			log.Printf("[CONFIG] Applied GitHub user mapping from external config")
+			
+			// Verify the configuration was applied
+			log.Printf("[CONFIG] After applying - Default role: %s", config.Auth.GitHub.UserMapping.DefaultRole)
+			log.Printf("[CONFIG] After applying - Default permissions: %v", config.Auth.GitHub.UserMapping.DefaultPermissions)
+			log.Printf("[CONFIG] After applying - Team role mappings: %+v", config.Auth.GitHub.UserMapping.TeamRoleMapping)
 		}
+	} else {
+		log.Printf("[CONFIG] No GitHub config found in auth override file")
 	}
 
 	return nil
