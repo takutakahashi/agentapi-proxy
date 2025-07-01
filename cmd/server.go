@@ -52,8 +52,14 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	configData, err := config.LoadConfig(cfg)
 	if err != nil {
-		log.Printf("Failed to load config from %s, using defaults: %v", cfg, err)
-		configData = config.DefaultConfig()
+		log.Printf("Failed to load config from %s, trying to load from environment variables: %v", cfg, err)
+		// Try to load configuration from environment variables
+		var envErr error
+		configData, envErr = config.LoadConfig("")
+		if envErr != nil {
+			log.Printf("Failed to load config from environment variables, using defaults: %v", envErr)
+			configData = config.DefaultConfig()
+		}
 	}
 
 	proxyServer := proxy.NewProxy(configData, verbose)
