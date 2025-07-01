@@ -41,22 +41,34 @@ func newCache(ttl time.Duration) *cache {
 
 // get retrieves a value from cache if it exists and hasn't expired
 func (c *cache) get(key string) (interface{}, bool) {
-	if entry, exists := c.data.Load(key); exists {
-		cacheEntry := entry.(cacheEntry)
-		if time.Now().Before(cacheEntry.expiresAt) {
-			return cacheEntry.value, true
-		}
-		// Entry expired, remove it
-		c.data.Delete(key)
+	entry, exists := c.data.Load(key)
+	if !exists {
+		return nil, false
 	}
+	
+	cacheEntry, ok := entry.(cacheEntry)
+	if !ok {
+		// Invalid entry type, remove it
+		c.data.Delete(key)
+		return nil, false
+	}
+	
+	now := time.Now()
+	if now.Before(cacheEntry.expiresAt) {
+		return cacheEntry.value, true
+	}
+	
+	// Entry expired, remove it
+	c.data.Delete(key)
 	return nil, false
 }
 
 // set stores a value in cache with TTL
 func (c *cache) set(key string, value interface{}) {
+	now := time.Now()
 	entry := cacheEntry{
 		value:     value,
-		expiresAt: time.Now().Add(c.ttl),
+		expiresAt: now.Add(c.ttl),
 	}
 	c.data.Store(key, entry)
 }
