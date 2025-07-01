@@ -3,6 +3,7 @@ package cmd
 import (
 	"crypto/rand"
 	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -304,4 +305,124 @@ func generateAPIKey(userID, prefix string) (string, error) {
 	apiKey := fmt.Sprintf("%s_%s_%s", prefix, userID, randomString)
 
 	return apiKey, nil
+}
+
+// MCP Server configuration structure
+type MCPServerConfig struct {
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Endpoint  string            `json:"endpoint"`
+	Enabled   bool              `json:"enabled"`
+	Transport string            `json:"transport"`
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	Timeout   int               `json:"timeout,omitempty"`
+}
+
+var addMcpServersCmd = &cobra.Command{
+	Use:   "add-mcp-servers",
+	Short: "Add MCP servers to Claude configuration",
+	Long:  "Add Model Context Protocol servers to Claude configuration from provided JSON configuration",
+	Run:   runAddMcpServers,
+}
+
+func init() {
+	addMcpServersCmd.Flags().String("config", "", "Base64 encoded JSON configuration for MCP servers")
+	addMcpServersCmd.Flags().String("claude-dir", "", "Claude configuration directory (overrides CLAUDE_DIR env var)")
+	HelpersCmd.AddCommand(addMcpServersCmd)
+}
+
+func runAddMcpServers(cmd *cobra.Command, args []string) {
+	configFlag, _ := cmd.Flags().GetString("config")
+	claudeDirFlag, _ := cmd.Flags().GetString("claude-dir")
+	
+	// Get Claude directory
+	claudeDir := claudeDirFlag
+	if claudeDir == "" {
+		claudeDir = os.Getenv("CLAUDE_DIR")
+	}
+	if claudeDir == "" {
+		claudeDir = "."
+	}
+	
+	if configFlag == "" {
+		log.Fatalf("config flag is required")
+	}
+	
+	// Decode base64 configuration
+	configJson, err := decodeBase64(configFlag)
+	if err != nil {
+		log.Fatalf("failed to decode base64 config: %v", err)
+	}
+	
+	// Parse MCP server configurations
+	var mcpConfigs []MCPServerConfig
+	if err := json.Unmarshal([]byte(configJson), &mcpConfigs); err != nil {
+		log.Fatalf("failed to parse MCP configuration: %v", err)
+	}
+	
+	log.Printf("Adding %d MCP servers to Claude configuration", len(mcpConfigs))
+	
+	// Add each MCP server using claude command
+	for _, mcpConfig := range mcpConfigs {
+		if err := addMcpServer(claudeDir, mcpConfig); err != nil {
+			log.Printf("Failed to add MCP server %s: %v", mcpConfig.Name, err)
+			// Continue with other servers even if one fails
+		} else {
+			log.Printf("Successfully added MCP server: %s", mcpConfig.Name)
+		}
+	}
+}
+
+func decodeBase64(encoded string) (string, error) {
+	// Try base64 decoding first
+	decodedBase64, err := base64.StdEncoding.DecodeString(encoded)
+	if err == nil {
+		return string(decodedBase64), nil
+	}
+	
+	// Try hex decoding if base64 fails
+	decoded, err2 := hex.DecodeString(encoded)
+	if err2 != nil {
+		return "", fmt.Errorf("failed to decode as both base64 and hex: base64 error: %v, hex error: %v", err, err2)
+	}
+	return string(decoded), nil
+}
+
+func addMcpServer(claudeDir string, mcpConfig MCPServerConfig) error {
+	// Build claude mcp add command
+	args := []string{"mcp", "add", mcpConfig.Name}
+	
+	// Add command and args for stdio transport
+	if mcpConfig.Transport == "stdio" && mcpConfig.Command != "" {
+		args = append(args, mcpConfig.Command)
+		if len(mcpConfig.Args) > 0 {
+			args = append(args, mcpConfig.Args...)
+		}
+	}
+	
+	// Set environment variables
+	env := os.Environ()
+	if claudeDir != "" {
+		env = append(env, fmt.Sprintf("CLAUDE_DIR=%s", claudeDir))
+	}
+	
+	// Add custom environment variables from MCP config
+	for key, value := range mcpConfig.Env {
+		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	}
+	
+	// Execute claude command
+	claudeCmd := exec.Command("claude", args...)
+	claudeCmd.Env = env
+	claudeCmd.Dir = claudeDir
+	
+	output, err := claudeCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("claude command failed: %w, output: %s", err, string(output))
+	}
+	
+	log.Printf("Claude mcp add output for %s: %s", mcpConfig.Name, string(output))
+	return nil
 }

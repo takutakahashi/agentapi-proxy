@@ -57,4 +57,16 @@ if [[ -z "$CLAUDE_DIR" ]]; then
     CLAUDE_DIR=.
 fi
 CLAUDE_DIR="$CLAUDE_DIR" agentapi-proxy helpers setup-claude-code
+
+# Add MCP servers if configuration is provided
+MCP_CONFIGS="{{.MCPConfigs}}"
+if [[ -n "$MCP_CONFIGS" ]]; then
+    echo "Setting up MCP servers from configuration"
+    if ! CLAUDE_DIR="$CLAUDE_DIR" agentapi-proxy helpers add-mcp-servers --config "$MCP_CONFIGS"; then
+        echo "Warning: Failed to add MCP servers, continuing with session startup" >&2
+    else
+        echo "Successfully configured MCP servers"
+    fi
+fi
+
 exec agentapi server --port "$PORT" {{.AgentAPIArgs}} -- claude {{.ClaudeArgs}}
