@@ -46,19 +46,19 @@ func (c *cache) get(key string) (interface{}, bool) {
 	if !exists {
 		return nil, false
 	}
-	
+
 	cacheEntry, ok := entry.(cacheEntry)
 	if !ok {
 		// Invalid entry type, remove it
 		c.data.Delete(key)
 		return nil, false
 	}
-	
+
 	now := time.Now()
 	if now.Before(cacheEntry.expiresAt) {
 		return cacheEntry.value, true
 	}
-	
+
 	// Entry expired, remove it
 	c.data.Delete(key)
 	return nil, false
@@ -121,7 +121,7 @@ func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
 	if isTestEnvironment() {
 		cacheTTL = 1 * time.Millisecond // Very short TTL for tests
 	}
-	
+
 	return &GitHubAuthProvider{
 		config: cfg,
 		client: &http.Client{
@@ -155,8 +155,8 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
 
-	// Get user's team memberships
-	teams, err := p.getUserTeams(ctx, token, user.Login)
+	// Get user's team memberships - optimized to check only configured teams
+	teams, err := p.getUserTeamsOptimized(ctx, token, user.Login)
 	if err != nil {
 		log.Printf("Warning: Failed to get user teams for %s: %v", user.Login, err)
 		teams = []GitHubTeamMembership{}
@@ -220,27 +220,82 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 	return &user, nil
 }
 
-// getUserTeams retrieves user's team memberships from GitHub API
-func (p *GitHubAuthProvider) getUserTeams(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
-	// First, get user's organizations
-	orgs, err := p.getUserOrganizations(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-
-	var allTeams []GitHubTeamMembership
-
-	// For each organization, get user's team memberships
-	for _, org := range orgs {
-		teams, err := p.getUserTeamsInOrg(ctx, token, org.Login, username)
-		if err != nil {
-			log.Printf("Warning: Failed to get teams for org %s: %v", org.Login, err)
-			continue
+// getUserTeamsOptimized retrieves only configured team memberships from GitHub API
+func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
+	// Extract unique organizations from configured team mappings
+	configuredOrgs := make(map[string][]string) // org -> []teamSlugs
+	for teamKey := range p.config.UserMapping.TeamRoleMapping {
+		parts := strings.Split(teamKey, "/")
+		if len(parts) == 2 {
+			org, teamSlug := parts[0], parts[1]
+			configuredOrgs[org] = append(configuredOrgs[org], teamSlug)
 		}
-		allTeams = append(allTeams, teams...)
 	}
 
-	return allTeams, nil
+	if len(configuredOrgs) == 0 {
+		log.Printf("[AUTH_DEBUG] No configured team mappings found, returning empty teams")
+		return []GitHubTeamMembership{}, nil
+	}
+
+	log.Printf("[AUTH_DEBUG] Checking %d configured organizations: %v", len(configuredOrgs), configuredOrgs)
+
+	// Use buffered channel to limit concurrent requests
+	maxConcurrent := 3
+	semaphore := make(chan struct{}, maxConcurrent)
+
+	type teamResult struct {
+		team GitHubTeamMembership
+		err  error
+	}
+
+	var wg sync.WaitGroup
+	resultChan := make(chan teamResult, 100) // Large buffer for potential teams
+
+	// Check membership for each configured team concurrently
+	for org, teamSlugs := range configuredOrgs {
+		for _, teamSlug := range teamSlugs {
+			wg.Add(1)
+			go func(orgName, slug string) {
+				defer wg.Done()
+
+				// Acquire semaphore
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+
+				if isMember, role := p.checkTeamMembership(ctx, token, orgName, slug, username); isMember {
+					// Get team name (can be optimized further with batch API if needed)
+					teamName := slug // Default to slug if name retrieval fails
+
+					resultChan <- teamResult{
+						team: GitHubTeamMembership{
+							Organization: orgName,
+							TeamSlug:     slug,
+							TeamName:     teamName,
+							Role:         role,
+						},
+						err: nil,
+					}
+				}
+			}(org, teamSlug)
+		}
+	}
+
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	var userTeams []GitHubTeamMembership
+	for result := range resultChan {
+		if result.err == nil {
+			userTeams = append(userTeams, result.team)
+		}
+	}
+
+	log.Printf("[AUTH_DEBUG] Found %d matching teams for user %s", len(userTeams), username)
+	return userTeams, nil
 }
 
 // getUserOrganizations retrieves user's organizations from GitHub API with caching
@@ -285,66 +340,6 @@ func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token str
 	}
 
 	return orgs, nil
-}
-
-// getUserTeamsInOrg retrieves user's team memberships in a specific organization with caching
-func (p *GitHubAuthProvider) getUserTeamsInOrg(ctx context.Context, token, org, username string) ([]GitHubTeamMembership, error) {
-	// Check cache first (disabled in test environment)
-	if !isTestEnvironment() {
-		cacheKey := fmt.Sprintf("teams:%s:%s:%s", hashToken(token), org, username)
-		if cached, found := p.teamCache.get(cacheKey); found {
-			return cached.([]GitHubTeamMembership), nil
-		}
-	}
-
-	url := fmt.Sprintf("%s/orgs/%s/teams", strings.TrimSuffix(p.config.BaseURL, "/"), org)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d for org %s", resp.StatusCode, org)
-	}
-
-	var teams []struct {
-		Slug string `json:"slug"`
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
-		return nil, err
-	}
-
-	var userTeams []GitHubTeamMembership
-	for _, team := range teams {
-		// Check if user is a member of this team
-		if isMember, role := p.checkTeamMembership(ctx, token, org, team.Slug, username); isMember {
-			userTeams = append(userTeams, GitHubTeamMembership{
-				Organization: org,
-				TeamSlug:     team.Slug,
-				TeamName:     team.Name,
-				Role:         role,
-			})
-		}
-	}
-
-	// Cache the result (disabled in test environment)
-	if !isTestEnvironment() {
-		cacheKey := fmt.Sprintf("teams:%s:%s:%s", hashToken(token), org, username)
-		p.teamCache.set(cacheKey, userTeams)
-	}
-
-	return userTeams, nil
 }
 
 // membershipResult represents a cached membership check result
