@@ -46,6 +46,12 @@ func AuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 				return next(c)
 			}
 
+			// Skip auth for health endpoint
+			if path == "/health" {
+				log.Printf("Skipping auth for health endpoint")
+				return next(c)
+			}
+
 			var userCtx *UserContext
 			var err error
 

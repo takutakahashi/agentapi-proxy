@@ -303,7 +303,7 @@ func bindEnvVars(v *viper.Viper) {
 	// Bind nested configuration keys to environment variables
 	// Note: BindEnv errors are generally not critical and can be ignored
 	// as they typically occur only when the key is already bound
-	
+
 	// Auth configuration
 	_ = v.BindEnv("auth.enabled")
 	_ = v.BindEnv("auth.static.enabled")
