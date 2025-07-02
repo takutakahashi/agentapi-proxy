@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
@@ -278,8 +279,59 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 
 	cleanup := func() {
 		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			// Ensure cmd.Wait() is always called to prevent zombie processes
+			defer func() {
+				if cmd.ProcessState == nil {
+					// Process hasn't been waited on yet, ensure we wait
+					done := make(chan error, 1)
+					go func() {
+						done <- cmd.Wait()
+					}()
+					select {
+					case <-done:
+						// Wait completed
+					case <-time.After(1 * time.Second):
+						t.Logf("Warning: Final wait for process timed out")
+					}
+				}
+			}()
+			
+			// Try graceful shutdown first
+			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Logf("Failed to send SIGTERM: %v", err)
+			}
+			
+			// Wait for graceful shutdown with timeout
+			done := make(chan error, 1)
+			go func() {
+				done <- cmd.Wait()
+			}()
+			
+			select {
+			case waitErr := <-done:
+				if waitErr != nil {
+					t.Logf("Process exited with error: %v", waitErr)
+				}
+			case <-time.After(5 * time.Second):
+				// Force kill if graceful shutdown failed
+				t.Logf("Force killing process")
+				if killErr := cmd.Process.Kill(); killErr != nil {
+					t.Logf("Failed to kill process: %v", killErr)
+				}
+				// Wait for the process to actually exit to prevent zombie
+				select {
+				case waitErr := <-done:
+					if waitErr != nil {
+						t.Logf("Process exited after kill with error: %v", waitErr)
+					}
+				case <-time.After(2 * time.Second):
+					t.Logf("Warning: Process may not have exited cleanly")
+					// Even if timed out, try to consume from done channel
+					go func() {
+						<-done // Consume the value when available
+					}()
+				}
+			}
 		}
 		t.Logf("Proxy stdout: %s", stdout.String())
 		t.Logf("Proxy stderr: %s", stderr.String())
