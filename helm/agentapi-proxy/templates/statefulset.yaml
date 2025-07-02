@@ -154,7 +154,7 @@ spec:
             {{- end }}
             {{- if .Values.myclaudesPersistence.enabled }}
             - name: myclaudes-data
-              mountPath: /home/agentapi/.claude/myclaudes
+              mountPath: /home/agentapi/.agentapi-proxy/myclaudes
             {{- end }}
             {{- if .Values.authConfig }}
             - name: auth-config
