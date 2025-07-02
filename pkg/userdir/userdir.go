@@ -105,25 +105,6 @@ func (m *Manager) EnsureUserClaudeDir(userID string) (string, error) {
 	return claudeDir, nil
 }
 
-// GetUserEnvironment returns environment variables for user-specific directory setup
-func (m *Manager) GetUserEnvironment(userID string, baseEnv []string) ([]string, error) {
-	if !m.enabled {
-		return baseEnv, nil
-	}
-
-	// Sanitize user ID for use in directory path
-	sanitizedUserID := sanitizeUserID(userID)
-	if sanitizedUserID == "" {
-		return nil, fmt.Errorf("invalid user ID: %s", userID)
-	}
-
-	// Create a copy of the base environment
-	env := make([]string, 0, len(baseEnv))
-	env = append(env, baseEnv...)
-
-	return env, nil
-}
-
 // sanitizeUserID removes potentially dangerous characters from user ID
 func sanitizeUserID(userID string) string {
 	// Replace dangerous characters
@@ -142,6 +123,46 @@ func sanitizeUserID(userID string) string {
 	}
 
 	return sanitized
+}
+
+// SetupUserHome creates user-specific home directory and returns environment variables
+func SetupUserHome(userID string) (map[string]string, error) {
+	// If userID is empty, return current HOME environment variable
+	if userID == "" {
+		return map[string]string{
+			"HOME": os.Getenv("HOME"),
+		}, nil
+	}
+
+	// Sanitize user ID to prevent directory traversal
+	sanitizedUserID := sanitizeUserID(userID)
+	if sanitizedUserID == "" {
+		return nil, fmt.Errorf("invalid user ID: %s", userID)
+	}
+
+	// Get base directory from USERHOME_BASEDIR environment variable
+	// Default to $HOME/.agentapi-proxy if not set
+	baseDir := os.Getenv("USERHOME_BASEDIR")
+	if baseDir == "" {
+		homeDir := os.Getenv("HOME")
+		if homeDir == "" {
+			homeDir = "/home/agentapi"
+		}
+		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
+	}
+
+	// Create user-specific home directory path
+	userHomeDir := filepath.Join(baseDir, "myclaudes", sanitizedUserID)
+
+	// Create directory with appropriate permissions if it doesn't exist
+	if err := os.MkdirAll(userHomeDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create user home directory %s: %w", userHomeDir, err)
+	}
+
+	// Return environment variables map
+	return map[string]string{
+		"HOME": userHomeDir,
+	}, nil
 }
 
 // IsEnabled returns whether multiple users mode is enabled
