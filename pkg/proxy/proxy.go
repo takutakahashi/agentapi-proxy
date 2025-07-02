@@ -90,18 +90,19 @@ type AgentSession struct {
 
 // Proxy represents the HTTP proxy server
 type Proxy struct {
-	config        *config.Config
-	echo          *echo.Echo
-	verbose       bool
-	sessions      map[string]*AgentSession
-	sessionsMutex sync.RWMutex
-	nextPort      int
-	portMutex     sync.Mutex
-	logger        *logger.Logger
-	storage       storage.Storage
-	oauthProvider *auth.GitHubOAuthProvider
-	oauthSessions sync.Map // sessionID -> OAuthSession
-	userDirMgr    *userdir.Manager
+	config             *config.Config
+	echo               *echo.Echo
+	verbose            bool
+	sessions           map[string]*AgentSession
+	sessionsMutex      sync.RWMutex
+	nextPort           int
+	portMutex          sync.Mutex
+	logger             *logger.Logger
+	storage            storage.Storage
+	oauthProvider      *auth.GitHubOAuthProvider
+	githubAuthProvider *auth.GitHubAuthProvider
+	oauthSessions      sync.Map // sessionID -> OAuthSession
+	userDirMgr         *userdir.Manager
 }
 
 // NewProxy creates a new proxy instance
@@ -199,8 +200,15 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		e.Use(p.loggingMiddleware())
 	}
 
-	// Add authentication middleware
-	e.Use(auth.AuthMiddleware(cfg))
+	// Initialize GitHub auth provider if configured
+	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
+		log.Printf("[AUTH_INIT] Initializing GitHub auth provider...")
+		p.githubAuthProvider = auth.NewGitHubAuthProvider(cfg.Auth.GitHub)
+		log.Printf("[AUTH_INIT] GitHub auth provider initialized successfully")
+	}
+
+	// Add authentication middleware with provider
+	e.Use(auth.AuthMiddleware(cfg, p.githubAuthProvider))
 
 	// Initialize OAuth provider if configured
 	log.Printf("[OAUTH_INIT] Checking OAuth configuration...")

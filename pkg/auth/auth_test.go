@@ -23,7 +23,7 @@ func TestAuthMiddleware_Disabled(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	middleware := AuthMiddleware(cfg)
+	middleware := AuthMiddleware(cfg, nil)
 	handler := func(c echo.Context) error {
 		return c.String(http.StatusOK, "success")
 	}
@@ -50,7 +50,7 @@ func TestAuthMiddleware_MissingAPIKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	middleware := AuthMiddleware(cfg)
+	middleware := AuthMiddleware(cfg, nil)
 	handler := func(c echo.Context) error {
 		return c.String(http.StatusOK, "success")
 	}
@@ -88,7 +88,7 @@ func TestAuthMiddleware_InvalidAPIKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	middleware := AuthMiddleware(cfg)
+	middleware := AuthMiddleware(cfg, nil)
 	handler := func(c echo.Context) error {
 		return c.String(http.StatusOK, "success")
 	}
@@ -126,7 +126,7 @@ func TestAuthMiddleware_ValidAPIKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	middleware := AuthMiddleware(cfg)
+	middleware := AuthMiddleware(cfg, nil)
 	handler := func(c echo.Context) error {
 		user := GetUserFromContext(c)
 		assert.NotNil(t, user)
