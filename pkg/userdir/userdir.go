@@ -129,9 +129,7 @@ func sanitizeUserID(userID string) string {
 func SetupUserHome(userID string) (map[string]string, error) {
 	// If userID is empty, return current HOME environment variable
 	if userID == "" {
-		return map[string]string{
-			"HOME": os.Getenv("HOME"),
-		}, nil
+		return map[string]string{}, nil
 	}
 
 	// Sanitize user ID to prevent directory traversal

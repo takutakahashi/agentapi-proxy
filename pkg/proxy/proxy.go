@@ -951,18 +951,22 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		return
 	}
 
-	// 環境変数をマージ（既存の環境変数を優先）
+	// 環境変数をマージ（userEnvを優先）
 	for key, value := range userEnv {
+		// 既存の環境変数を置き換える（userEnvを優先）
 		found := false
-		for _, env := range baseEnv {
+		for i, env := range baseEnv {
 			if strings.HasPrefix(env, key+"=") {
-				// 既存の環境変数があれば置き換えない（優先度を保つ）
+				// 既存の環境変数をuserEnvの値で置き換え
+				baseEnv[i] = fmt.Sprintf("%s=%s", key, value)
+				log.Printf("  Overwrote environment variable: %s=%s", key, value)
 				found = true
 				break
 			}
 		}
 		if !found {
 			baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, value))
+			log.Printf("  Added environment variable: %s=%s", key, value)
 		}
 	}
 
