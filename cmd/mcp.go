@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/client"
+	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
 
 var (
@@ -110,6 +111,19 @@ func (s *AgentAPIServer) handleStartSession(ctx context.Context, request mcp.Cal
 			if strVal, ok := v.(string); ok {
 				environment[k] = strVal
 			}
+		}
+	}
+
+	// ユーザー固有のHOME環境変数を設定
+	userEnv, err := userdir.SetupUserHome(userID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to setup user home: %v", err)), nil
+	}
+
+	// 環境変数をマージ（ユーザー指定の環境変数を優先）
+	for k, v := range userEnv {
+		if _, exists := environment[k]; !exists {
+			environment[k] = v
 		}
 	}
 

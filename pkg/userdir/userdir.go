@@ -144,6 +144,32 @@ func sanitizeUserID(userID string) string {
 	return sanitized
 }
 
+// SetupUserHome creates user-specific home directory and returns environment variables
+func SetupUserHome(userID string) (map[string]string, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("user ID cannot be empty")
+	}
+
+	// Sanitize user ID to prevent directory traversal
+	sanitizedUserID := sanitizeUserID(userID)
+	if sanitizedUserID == "" {
+		return nil, fmt.Errorf("invalid user ID: %s", userID)
+	}
+
+	// Create user-specific home directory path
+	userHomeDir := filepath.Join("/home/agentapi/myclaudes", sanitizedUserID)
+
+	// Create directory with appropriate permissions if it doesn't exist
+	if err := os.MkdirAll(userHomeDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create user home directory %s: %w", userHomeDir, err)
+	}
+
+	// Return environment variables map
+	return map[string]string{
+		"HOME": userHomeDir,
+	}, nil
+}
+
 // IsEnabled returns whether multiple users mode is enabled
 func (m *Manager) IsEnabled() bool {
 	return m.enabled

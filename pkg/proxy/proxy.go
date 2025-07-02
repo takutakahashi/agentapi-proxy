@@ -949,8 +949,29 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		}
 	}
 
-	// Set user-specific environment if multiple users is enabled
-	var err error
+	// ユーザー固有のHOME環境変数を設定
+	userEnv, err := userdir.SetupUserHome(session.UserID)
+	if err != nil {
+		log.Printf("Failed to setup user home for %s: %v", session.UserID, err)
+		return
+	}
+
+	// 環境変数をマージ（既存の環境変数を優先）
+	for key, value := range userEnv {
+		found := false
+		for _, env := range baseEnv {
+			if strings.HasPrefix(env, key+"=") {
+				// 既存の環境変数があれば置き換えない（優先度を保つ）
+				found = true
+				break
+			}
+		}
+		if !found {
+			baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, value))
+		}
+	}
+
+	// Set user-specific environment if multiple users is enabled (既存のロジックも保持)
 	cmd.Env, err = p.userDirMgr.GetUserEnvironment(session.UserID, baseEnv)
 	if err != nil {
 		log.Printf("Failed to get user environment for %s: %v", session.UserID, err)
