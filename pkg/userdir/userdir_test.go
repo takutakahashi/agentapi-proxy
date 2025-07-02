@@ -311,15 +311,23 @@ func TestSetupUserHome(t *testing.T) {
 				return
 			}
 
-			if len(result) != 1 {
-				t.Errorf("Expected 1 environment variable, got %d", len(result))
-				return
-			}
+			// For empty userID, expect empty result (uses current HOME)
+			if tt.userID == "" {
+				if len(result) != 0 {
+					t.Errorf("Expected 0 environment variables for empty userID, got %d", len(result))
+					return
+				}
+			} else {
+				if len(result) != 1 {
+					t.Errorf("Expected 1 environment variable, got %d", len(result))
+					return
+				}
 
-			if homeValue, exists := result["HOME"]; !exists {
-				t.Errorf("Expected HOME environment variable not found")
-			} else if homeValue != tt.expectedHomePattern {
-				t.Errorf("Expected HOME=%s, got HOME=%s", tt.expectedHomePattern, homeValue)
+				if homeValue, exists := result["HOME"]; !exists {
+					t.Errorf("Expected HOME environment variable not found")
+				} else if homeValue != tt.expectedHomePattern {
+					t.Errorf("Expected HOME=%s, got HOME=%s", tt.expectedHomePattern, homeValue)
+				}
 			}
 
 			// For non-empty userID, verify directory was actually created
