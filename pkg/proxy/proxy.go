@@ -626,6 +626,14 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	// Start agentapi server in goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Set GITHUB_TOKEN to current process environment if provided
+	if startReq.Environment != nil {
+		if githubToken, exists := startReq.Environment["GITHUB_TOKEN"]; exists && githubToken != "" {
+			os.Setenv("GITHUB_TOKEN", githubToken)
+			log.Printf("[SESSION_%s] GITHUB_TOKEN set in current process environment", sessionID)
+		}
+	}
+
 	session := &AgentSession{
 		ID:          sessionID,
 		Port:        port,
