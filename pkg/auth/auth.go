@@ -22,7 +22,7 @@ type UserContext struct {
 }
 
 // AuthMiddleware creates authentication middleware
-func AuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
+func AuthMiddleware(cfg *config.Config, githubProvider *GitHubAuthProvider) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Store config in context for permission checks
@@ -56,8 +56,8 @@ func AuthMiddleware(cfg *config.Config) echo.MiddlewareFunc {
 			var err error
 
 			// Try GitHub authentication first
-			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
-				if userCtx, err = tryGitHubAuth(c, cfg.Auth.GitHub); err == nil {
+			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled && githubProvider != nil {
+				if userCtx, err = tryGitHubAuth(c, cfg.Auth.GitHub, githubProvider); err == nil {
 					c.Set("user", userCtx)
 					log.Printf("GitHub authentication successful: user %s (role: %s) from %s", userCtx.UserID, userCtx.Role, c.RealIP())
 					return next(c)
@@ -150,7 +150,7 @@ func GetConfigFromContext(c echo.Context) *config.Config {
 }
 
 // tryGitHubAuth attempts GitHub OAuth authentication
-func tryGitHubAuth(c echo.Context, cfg *config.GitHubAuthConfig) (*UserContext, error) {
+func tryGitHubAuth(c echo.Context, cfg *config.GitHubAuthConfig, provider *GitHubAuthProvider) (*UserContext, error) {
 	tokenHeader := c.Request().Header.Get(cfg.TokenHeader)
 	if tokenHeader == "" {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub token required")
@@ -161,7 +161,6 @@ func tryGitHubAuth(c echo.Context, cfg *config.GitHubAuthConfig) (*UserContext, 
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid GitHub token format")
 	}
 
-	provider := NewGitHubAuthProvider(cfg)
 	ctx := context.WithValue(c.Request().Context(), echoContextKey, c)
 
 	userCtx, err := provider.Authenticate(ctx, token)
