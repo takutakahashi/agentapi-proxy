@@ -8,8 +8,6 @@ PORT="${1:-8080}"
 GITHUB_REPO_FULLNAME="{{.RepoFullName}}"
 GITHUB_CLONE_DIR="{{.CloneDir}}"
 USER_ID="{{.UserID}}"
-ENABLE_MULTIPLE_USERS="{{.EnableMultipleUsers}}"
-USER_HOME_DIR="{{.UserHomeDir}}"
 
 # GitHub environment variables embedded from template
 export GITHUB_TOKEN="{{.GitHubToken}}"
@@ -18,20 +16,6 @@ export GITHUB_INSTALLATION_ID="{{.GitHubInstallationID}}"
 export GITHUB_APP_PEM_PATH="{{.GitHubAppPEMPath}}"
 export GITHUB_API="{{.GitHubAPI}}"
 export GITHUB_PERSONAL_ACCESS_TOKEN="{{.GitHubPersonalAccessToken}}"
-
-# Set user-specific .claude directory if multiple users is enabled
-if [[ "$ENABLE_MULTIPLE_USERS" == "true" && -n "$USER_HOME_DIR" ]]; then
-    # Set up user-specific .claude directory pattern
-    USER_NAME=$(basename "$USER_HOME_DIR")
-    USER_CLAUDE_DIR="${HOME}/.claude/${USER_NAME}"
-    echo "Setting up user-specific Claude directory: $USER_CLAUDE_DIR"
-    
-    # Ensure the Claude directory exists
-    if [[ ! -d "$USER_CLAUDE_DIR" ]]; then
-        echo "Creating Claude user directory: $USER_CLAUDE_DIR"
-        mkdir -p "$USER_CLAUDE_DIR"
-    fi
-fi
 
 # Set up GitHub repository if parameters are provided
 if [[ -n "$GITHUB_REPO_FULLNAME" && -n "$GITHUB_CLONE_DIR" ]]; then

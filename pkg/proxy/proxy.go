@@ -56,8 +56,6 @@ type ScriptTemplateData struct {
 	RepoFullName              string
 	CloneDir                  string
 	UserID                    string
-	EnableMultipleUsers       string
-	UserHomeDir               string
 	MCPConfigs                string
 }
 
@@ -850,16 +848,15 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 	var cmd *exec.Cmd
 
-	// Get user home directory if multiple users is enabled
-	var userHomeDir string
-	if p.config.EnableMultipleUsers {
-		var err error
-		userHomeDir, err = p.userDirMgr.EnsureUserHomeDir(session.UserID)
-		if err != nil {
-			log.Printf("Failed to ensure user home directory for %s: %v", session.UserID, err)
-			return
-		}
-	}
+	// Note: User home directory setup is now handled by userdir.SetupUserHome in the environment section below
+	// The following code block is kept for reference but is currently unused:
+	// if p.config.EnableMultipleUsers {
+	//     userHomeDir, err := p.userDirMgr.EnsureUserHomeDir(session.UserID)
+	//     if err != nil {
+	//         log.Printf("Failed to ensure user home directory for %s: %v", session.UserID, err)
+	//         return
+	//     }
+	// }
 
 	// Prepare template data with environment variables and repository info
 	templateData := &ScriptTemplateData{
@@ -872,8 +869,6 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		GitHubAPI:                 os.Getenv("GITHUB_API"),
 		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
 		UserID:                    session.UserID,
-		EnableMultipleUsers:       strconv.FormatBool(p.config.EnableMultipleUsers),
-		UserHomeDir:               userHomeDir,
 	}
 
 	// Add repository information to template data if available
