@@ -11,7 +11,7 @@ if [ ! -f /home/agentapi/.claude/CLAUDE.md ] || [ /tmp/config/CLAUDE.md -nt /hom
     echo "CLAUDE.md copied successfully"
 fi
 
-# Fix permissions for persistent volume directory
+# Fix permissions for persistent volume directories
 if [ -d "$HOME/.agentapi-proxy" ]; then
     echo "Fixing permissions for $HOME/.agentapi-proxy..."
     # Change ownership to current user
@@ -23,7 +23,16 @@ if [ -d "$HOME/.agentapi-proxy" ]; then
     # Set proper permissions for myclaudes directory
     chmod 755 "$HOME/.agentapi-proxy/myclaudes"
     
-    echo "Permissions fixed successfully"
+    echo "Permissions fixed for $HOME/.agentapi-proxy"
+fi
+
+# Fix permissions for workdir
+if [ -d "$HOME/workdir" ]; then
+    echo "Fixing permissions for $HOME/workdir..."
+    # Change ownership to current user
+    sudo chown -R $(id -u):$(id -g) "$HOME/workdir" || chown -R $(id -u):$(id -g) "$HOME/workdir" 2>/dev/null || true
+    
+    echo "Permissions fixed for $HOME/workdir"
 fi
 
 # Execute the original command
