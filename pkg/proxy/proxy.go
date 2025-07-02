@@ -1058,6 +1058,21 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		done <- cmd.Wait()
 	}()
 
+	// Ensure the process is cleaned up to prevent zombie processes
+	defer func() {
+		// This defer ensures cmd.Wait() is called if it hasn't been called yet
+		if cmd.Process != nil && cmd.ProcessState == nil {
+			// Process is still running, wait for it to prevent zombie
+			select {
+			case <-done:
+				// Wait completed in the main logic
+			case <-time.After(1 * time.Second):
+				// Wait timed out, but this is just a safety net
+				log.Printf("Warning: Process %d cleanup timed out", cmd.Process.Pid)
+			}
+		}
+	}()
+
 	select {
 	case <-ctx.Done():
 		// Context cancelled, terminate the process
@@ -1065,27 +1080,48 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 			log.Printf("Terminating agentapi process for session %s", session.ID)
 		}
 
-		// Try graceful shutdown first (SIGTERM)
-		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-			log.Printf("Failed to send SIGTERM to process %d: %v", cmd.Process.Pid, err)
+		// Try graceful shutdown first (SIGTERM to process group)
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+			// If process group signal fails, try individual process
+			if termErr := cmd.Process.Signal(syscall.SIGTERM); termErr != nil {
+				log.Printf("Failed to send SIGTERM to process %d: %v", cmd.Process.Pid, termErr)
+			}
 		}
 
 		// Wait for graceful shutdown with timeout
 		gracefulTimeout := time.After(5 * time.Second)
 		select {
-		case <-done:
+		case waitErr := <-done:
 			if p.verbose {
 				log.Printf("AgentAPI process for session %s terminated gracefully", session.ID)
+			}
+			if waitErr != nil && p.verbose {
+				log.Printf("Process wait error for session %s: %v", session.ID, waitErr)
 			}
 		case <-gracefulTimeout:
 			// Force kill if graceful shutdown failed
 			if p.verbose {
 				log.Printf("Force killing agentapi process for session %s", session.ID)
 			}
-			if err := cmd.Process.Kill(); err != nil {
-				log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, err)
-			} else {
-				<-done // Wait for the process to actually exit
+			// Kill entire process group
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+				// If process group kill fails, try individual process
+				if killErr := cmd.Process.Kill(); killErr != nil {
+					log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, killErr)
+				}
+			}
+			// Always wait for the process to prevent zombie
+			select {
+			case waitErr := <-done:
+				if waitErr != nil && p.verbose {
+					log.Printf("Process wait error after kill for session %s: %v", session.ID, waitErr)
+				}
+			case <-time.After(2 * time.Second):
+				log.Printf("Warning: Process %d may not have exited cleanly", cmd.Process.Pid)
+				// Even if timed out, try to consume from done channel to prevent goroutine leak
+				go func() {
+					<-done // Consume the value when available
+				}()
 			}
 		}
 
