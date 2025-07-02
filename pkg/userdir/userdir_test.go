@@ -174,18 +174,11 @@ func TestGetUserEnvironment_EnabledMode(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Check that CLAUDE_DIR was added with user-specific directory
-	expectedClaudeDir := filepath.Join("/home/alice", ".claude", "bob")
-	claudeDirFound := false
+	// Check that environment variables are properly handled
 	homeFound := false
 
 	for _, envVar := range env {
-		if strings.HasPrefix(envVar, "CLAUDE_DIR=") {
-			if envVar != "CLAUDE_DIR="+expectedClaudeDir {
-				t.Errorf("Expected CLAUDE_DIR=%s, got %s", expectedClaudeDir, envVar)
-			}
-			claudeDirFound = true
-		} else if strings.HasPrefix(envVar, "HOME=") {
+		if strings.HasPrefix(envVar, "HOME=") {
 			// HOME should remain unchanged
 			if envVar != "HOME=/home/alice" {
 				t.Errorf("Expected HOME=/home/alice, got %s", envVar)
@@ -194,9 +187,6 @@ func TestGetUserEnvironment_EnabledMode(t *testing.T) {
 		}
 	}
 
-	if !claudeDirFound {
-		t.Error("CLAUDE_DIR environment variable not found")
-	}
 	if !homeFound {
 		t.Error("HOME environment variable not found")
 	}
@@ -213,22 +203,10 @@ func TestGetUserEnvironment_NoHomeInBase(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Check that CLAUDE_DIR was added with default HOME
-	claudeDirFound := false
-
-	for _, envVar := range env {
-		if strings.HasPrefix(envVar, "CLAUDE_DIR=") {
-			// When HOME is not set, it should use os.Getenv("HOME") or fallback to /home/agentapi
-			// The exact value depends on the test environment
-			if !strings.Contains(envVar, ".claude/bob") {
-				t.Errorf("Expected CLAUDE_DIR to contain '.claude/bob', got %s", envVar)
-			}
-			claudeDirFound = true
-		}
-	}
-
-	if !claudeDirFound {
-		t.Error("CLAUDE_DIR environment variable not found")
+	// Verify environment variables are handled properly
+	// The function should return the base environment when multiple users is enabled
+	if len(env) != len(baseEnv) {
+		t.Errorf("Expected env length to match base env length %d, got %d", len(baseEnv), len(env))
 	}
 }
 
