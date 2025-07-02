@@ -157,6 +157,20 @@ func SetupUserHome(userID string) (map[string]string, error) {
 		return nil, fmt.Errorf("failed to create user home directory %s: %w", userHomeDir, err)
 	}
 
+	// Create .bashrc with mise activation
+	bashrcPath := filepath.Join(userHomeDir, ".bashrc")
+	bashrcContent := `# Auto-generated .bashrc for agentapi user home
+# Activate mise (development tools version manager)
+eval "$(/home/agentapi/.local/bin/mise activate bash)"
+`
+
+	// Write .bashrc file if it doesn't exist
+	if _, err := os.Stat(bashrcPath); os.IsNotExist(err) {
+		if err := os.WriteFile(bashrcPath, []byte(bashrcContent), 0644); err != nil {
+			return nil, fmt.Errorf("failed to create .bashrc in user home directory %s: %w", userHomeDir, err)
+		}
+	}
+
 	// Return environment variables map
 	return map[string]string{
 		"HOME": userHomeDir,
