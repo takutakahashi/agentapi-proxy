@@ -31,7 +31,7 @@ if [ -d "$HOME/workdir" ]; then
     echo "Fixing permissions for $HOME/workdir..."
     # Change ownership to current user
     sudo chown -R $(id -u):$(id -g) "$HOME/workdir" || chown -R $(id -u):$(id -g) "$HOME/workdir" 2>/dev/null || true
-    chmod 755 "$HOME/workdir
+    chmod 755 $HOME/workdir
     echo "Permissions fixed for $HOME/workdir"
 fi
 
