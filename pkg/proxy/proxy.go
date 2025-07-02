@@ -971,12 +971,8 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		}
 	}
 
-	// Set user-specific environment if multiple users is enabled (既存のロジックも保持)
-	cmd.Env, err = p.userDirMgr.GetUserEnvironment(session.UserID, baseEnv)
-	if err != nil {
-		log.Printf("Failed to get user environment for %s: %v", session.UserID, err)
-		return
-	}
+	// Set the final environment variables
+	cmd.Env = baseEnv
 
 	// Log environment variable setup
 	log.Printf("Environment variables for session %s:", session.ID)

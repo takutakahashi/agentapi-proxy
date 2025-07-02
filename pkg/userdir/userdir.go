@@ -105,25 +105,6 @@ func (m *Manager) EnsureUserClaudeDir(userID string) (string, error) {
 	return claudeDir, nil
 }
 
-// GetUserEnvironment returns environment variables for user-specific directory setup
-func (m *Manager) GetUserEnvironment(userID string, baseEnv []string) ([]string, error) {
-	if !m.enabled {
-		return baseEnv, nil
-	}
-
-	// Sanitize user ID for use in directory path
-	sanitizedUserID := sanitizeUserID(userID)
-	if sanitizedUserID == "" {
-		return nil, fmt.Errorf("invalid user ID: %s", userID)
-	}
-
-	// Create a copy of the base environment
-	env := make([]string, 0, len(baseEnv))
-	env = append(env, baseEnv...)
-
-	return env, nil
-}
-
 // sanitizeUserID removes potentially dangerous characters from user ID
 func sanitizeUserID(userID string) string {
 	// Replace dangerous characters
