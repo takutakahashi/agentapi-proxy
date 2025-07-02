@@ -152,6 +152,10 @@ spec:
             - name: data
               mountPath: /home/agentapi/workdir
             {{- end }}
+            {{- if .Values.myclaudesPersistence.enabled }}
+            - name: myclaudes-data
+              mountPath: /home/agentapi/.claude/myclaudes
+            {{- end }}
             {{- if .Values.authConfig }}
             - name: auth-config
               mountPath: /etc/auth-config
@@ -187,8 +191,8 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- if .Values.persistence.enabled }}
   volumeClaimTemplates:
+    {{- if .Values.persistence.enabled }}
     - metadata:
         name: data
       spec:
@@ -200,4 +204,17 @@ spec:
         {{- if .Values.persistence.storageClassName }}
         storageClassName: {{ .Values.persistence.storageClassName }}
         {{- end }}
-  {{- end }}
+    {{- end }}
+    {{- if .Values.myclaudesPersistence.enabled }}
+    - metadata:
+        name: myclaudes-data
+      spec:
+        accessModes:
+          - {{ .Values.myclaudesPersistence.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.myclaudesPersistence.size }}
+        {{- if .Values.myclaudesPersistence.storageClassName }}
+        storageClassName: {{ .Values.myclaudesPersistence.storageClassName }}
+        {{- end }}
+    {{- end }}

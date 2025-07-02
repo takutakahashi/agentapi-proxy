@@ -71,6 +71,13 @@ persistence:
   accessMode: ReadWriteOnce
   size: 10Gi
 
+# Persistent Volume for myclaudes directory
+myclaudesPersistence:
+  enabled: true
+  storageClassName: ""
+  accessMode: ReadWriteOnce
+  size: 3Gi
+
 # GitHub configuration
 github:
   # GitHub Enterprise Server を使用する場合は true に設定
