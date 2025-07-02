@@ -789,6 +789,17 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 	return nil
 }
 
+// getEnvFromSession retrieves an environment variable from the session environment,
+// falling back to the default value if not found
+func getEnvFromSession(session *AgentSession, key string, defaultValue string) string {
+	if session.Environment != nil {
+		if value, exists := session.Environment[key]; exists && value != "" {
+			return value
+		}
+	}
+	return defaultValue
+}
+
 // getAvailablePort finds an available port starting from nextPort
 func (p *Proxy) getAvailablePort() (int, error) {
 	p.portMutex.Lock()
@@ -854,7 +865,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	templateData := &ScriptTemplateData{
 		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
 		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
-		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
+		GitHubToken:               getEnvFromSession(session, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
 		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
 		GitHubInstallationID:      os.Getenv("GITHUB_INSTALLATION_ID"),
 		GitHubAppPEMPath:          os.Getenv("GITHUB_APP_PEM_PATH"),
