@@ -146,8 +146,11 @@ func sanitizeUserID(userID string) string {
 
 // SetupUserHome creates user-specific home directory and returns environment variables
 func SetupUserHome(userID string) (map[string]string, error) {
+	// If userID is empty, return current HOME environment variable
 	if userID == "" {
-		return nil, fmt.Errorf("user ID cannot be empty")
+		return map[string]string{
+			"HOME": os.Getenv("HOME"),
+		}, nil
 	}
 
 	// Sanitize user ID to prevent directory traversal
@@ -156,8 +159,19 @@ func SetupUserHome(userID string) (map[string]string, error) {
 		return nil, fmt.Errorf("invalid user ID: %s", userID)
 	}
 
+	// Get base directory from USERHOME_BASEDIR environment variable
+	// Default to $HOME/.agentapi-proxy if not set
+	baseDir := os.Getenv("USERHOME_BASEDIR")
+	if baseDir == "" {
+		homeDir := os.Getenv("HOME")
+		if homeDir == "" {
+			homeDir = "/home/agentapi"
+		}
+		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
+	}
+
 	// Create user-specific home directory path
-	userHomeDir := filepath.Join("/home/agentapi/myclaudes", sanitizedUserID)
+	userHomeDir := filepath.Join(baseDir, "myclaudes", sanitizedUserID)
 
 	// Create directory with appropriate permissions if it doesn't exist
 	if err := os.MkdirAll(userHomeDir, 0755); err != nil {

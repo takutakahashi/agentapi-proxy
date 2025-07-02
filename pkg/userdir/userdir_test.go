@@ -282,39 +282,90 @@ func TestEnsureUserClaudeDir_EnabledMode(t *testing.T) {
 }
 
 func TestSetupUserHome(t *testing.T) {
+	// Save original environment
+	originalHome := os.Getenv("HOME")
+	originalUserHomeBaseDir := os.Getenv("USERHOME_BASEDIR")
+
+	// Ensure cleanup
+	defer func() {
+		if originalHome != "" {
+			os.Setenv("HOME", originalHome)
+		} else {
+			os.Unsetenv("HOME")
+		}
+		if originalUserHomeBaseDir != "" {
+			os.Setenv("USERHOME_BASEDIR", originalUserHomeBaseDir)
+		} else {
+			os.Unsetenv("USERHOME_BASEDIR")
+		}
+	}()
+
+	// Create temporary directories for testing
+	tempHomeDir := t.TempDir()
+	tempCustomBaseDir := t.TempDir()
+
 	tests := []struct {
-		name           string
-		userID         string
-		expectError    bool
-		expectedResult map[string]string
+		name                string
+		userID              string
+		homeEnv             string
+		userHomeBaseDirEnv  string
+		expectError         bool
+		expectedHomePattern string // Use pattern for path validation
 	}{
 		{
-			name:           "Valid user ID",
-			userID:         "testuser",
-			expectError:    false,
-			expectedResult: map[string]string{"HOME": "/home/agentapi/myclaudes/testuser"},
+			name:                "Empty user ID returns current HOME",
+			userID:              "",
+			homeEnv:             tempHomeDir,
+			expectError:         false,
+			expectedHomePattern: tempHomeDir,
 		},
 		{
-			name:        "Empty user ID",
-			userID:      "",
+			name:                "Valid user ID with default base dir",
+			userID:              "testuser",
+			homeEnv:             tempHomeDir,
+			expectError:         false,
+			expectedHomePattern: filepath.Join(tempHomeDir, ".agentapi-proxy", "myclaudes", "testuser"),
+		},
+		{
+			name:                "Valid user ID with custom USERHOME_BASEDIR",
+			userID:              "testuser",
+			homeEnv:             tempHomeDir,
+			userHomeBaseDirEnv:  tempCustomBaseDir,
+			expectError:         false,
+			expectedHomePattern: filepath.Join(tempCustomBaseDir, "myclaudes", "testuser"),
+		},
+		{
+			name:                "User ID with dangerous characters",
+			userID:              "test/../user",
+			homeEnv:             tempHomeDir,
+			expectError:         false,
+			expectedHomePattern: filepath.Join(tempHomeDir, ".agentapi-proxy", "myclaudes", "test____user"),
+		},
+		{
+			name:                "GitHub username format",
+			userID:              "github-user123",
+			homeEnv:             tempHomeDir,
+			expectError:         false,
+			expectedHomePattern: filepath.Join(tempHomeDir, ".agentapi-proxy", "myclaudes", "github-user123"),
+		},
+		{
+			name:        "Invalid user ID (only dangerous characters)",
+			userID:      "../..",
+			homeEnv:     tempHomeDir,
 			expectError: true,
-		},
-		{
-			name:           "User ID with dangerous characters",
-			userID:         "test/../user",
-			expectError:    false,
-			expectedResult: map[string]string{"HOME": "/home/agentapi/myclaudes/test____user"},
-		},
-		{
-			name:           "GitHub username format",
-			userID:         "github-user123",
-			expectError:    false,
-			expectedResult: map[string]string{"HOME": "/home/agentapi/myclaudes/github-user123"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Set up environment
+			os.Setenv("HOME", tt.homeEnv)
+			if tt.userHomeBaseDirEnv != "" {
+				os.Setenv("USERHOME_BASEDIR", tt.userHomeBaseDirEnv)
+			} else {
+				os.Unsetenv("USERHOME_BASEDIR")
+			}
+
 			result, err := SetupUserHome(tt.userID)
 
 			if tt.expectError {
@@ -329,30 +380,23 @@ func TestSetupUserHome(t *testing.T) {
 				return
 			}
 
-			if len(result) != len(tt.expectedResult) {
-				t.Errorf("Expected %d environment variables, got %d", len(tt.expectedResult), len(result))
+			if len(result) != 1 {
+				t.Errorf("Expected 1 environment variable, got %d", len(result))
 				return
 			}
 
-			for key, expectedValue := range tt.expectedResult {
-				if value, exists := result[key]; !exists {
-					t.Errorf("Expected environment variable %s not found", key)
-				} else if value != expectedValue {
-					t.Errorf("Expected %s=%s, got %s=%s", key, expectedValue, key, value)
-				}
+			if homeValue, exists := result["HOME"]; !exists {
+				t.Errorf("Expected HOME environment variable not found")
+			} else if homeValue != tt.expectedHomePattern {
+				t.Errorf("Expected HOME=%s, got HOME=%s", tt.expectedHomePattern, homeValue)
 			}
 
-			// Verify directory was created (use a temporary directory for tests)
-			if !tt.expectError && tt.userID != "" {
-				sanitizedUserID := sanitizeUserID(tt.userID)
-				expectedDir := filepath.Join("/home/agentapi/myclaudes", sanitizedUserID)
-				if _, err := os.Stat(expectedDir); os.IsNotExist(err) {
-					// For tests, we don't actually create the directory in /home/agentapi/myclaudes
-					// since it may not have permissions. The function logic is tested separately.
-					t.Logf("Directory creation test skipped due to permissions: %s", expectedDir)
+			// For non-empty userID, verify directory was actually created
+			if tt.userID != "" && !tt.expectError {
+				if _, err := os.Stat(result["HOME"]); os.IsNotExist(err) {
+					t.Errorf("Expected directory %s was not created", result["HOME"])
 				} else {
-					// Clean up test directory if it was actually created
-					os.RemoveAll(expectedDir)
+					t.Logf("Directory successfully created: %s", result["HOME"])
 				}
 			}
 		})
