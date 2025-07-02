@@ -63,7 +63,7 @@ func (m *Manager) EnsureUserHomeDir(userID string) (string, error) {
 // GetUserClaudeDir returns the Claude directory for a specific user
 func (m *Manager) GetUserClaudeDir(userID string) (string, error) {
 	if !m.enabled {
-		// Return default CLAUDE_DIR location
+		// Return default .claude location
 		homeDir := os.Getenv("HOME")
 		if homeDir == "" {
 			homeDir = "/home/agentapi"
@@ -105,7 +105,7 @@ func (m *Manager) EnsureUserClaudeDir(userID string) (string, error) {
 	return claudeDir, nil
 }
 
-// GetUserEnvironment returns environment variables with user-specific CLAUDE_DIR set
+// GetUserEnvironment returns environment variables for user-specific directory setup
 func (m *Manager) GetUserEnvironment(userID string, baseEnv []string) ([]string, error) {
 	if !m.enabled {
 		return baseEnv, nil
@@ -118,32 +118,8 @@ func (m *Manager) GetUserEnvironment(userID string, baseEnv []string) ([]string,
 	}
 
 	// Create a copy of the base environment
-	env := make([]string, 0, len(baseEnv)+1)
-	homeDir := ""
-
-	// Copy existing environment variables, looking for HOME and CLAUDE_DIR
-	for _, envVar := range baseEnv {
-		if strings.HasPrefix(envVar, "CLAUDE_DIR=") {
-			// Skip the existing CLAUDE_DIR, we'll set our own
-		} else if strings.HasPrefix(envVar, "HOME=") {
-			homeDir = strings.TrimPrefix(envVar, "HOME=")
-			env = append(env, envVar)
-		} else {
-			env = append(env, envVar)
-		}
-	}
-
-	// If HOME wasn't set, use the system default
-	if homeDir == "" {
-		homeDir = os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = "/home/agentapi" // fallback
-		}
-	}
-
-	// Set CLAUDE_DIR to ~/.claude/[username]
-	claudeDir := filepath.Join(homeDir, ".claude", sanitizedUserID)
-	env = append(env, fmt.Sprintf("CLAUDE_DIR=%s", claudeDir))
+	env := make([]string, 0, len(baseEnv))
+	env = append(env, baseEnv...)
 
 	return env, nil
 }

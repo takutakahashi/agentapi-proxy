@@ -36,14 +36,14 @@ var HelpersCmd = &cobra.Command{
 var setupClaudeCodeCmd = &cobra.Command{
 	Use:   "setup-claude-code",
 	Short: "Setup Claude Code configuration",
-	Long:  "Creates Claude Code configuration directory and settings file at $CLAUDE_DIR/.claude/settings.json",
+	Long:  "Creates Claude Code configuration directory and settings file at ~/.claude/settings.json",
 	Run:   runSetupClaudeCode,
 }
 
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize Claude configuration (alias for setup-claude-code)",
-	Long:  "Creates Claude Code configuration directory and settings file at $CLAUDE_DIR/.claude/settings.json, and merges config/claude.json into ~/.claude.json",
+	Long:  "Creates Claude Code configuration directory and settings file at ~/.claude/settings.json, and merges config/claude.json into ~/.claude.json",
 	Run:   runSetupClaudeCode,
 }
 
@@ -94,15 +94,16 @@ func init() {
 }
 
 func runSetupClaudeCode(cmd *cobra.Command, args []string) {
-	claudeDir := os.Getenv("CLAUDE_DIR")
-	if claudeDir == "" {
-		fmt.Println("Error: CLAUDE_DIR environment variable is not set")
-		log.Printf("Fatal error: CLAUDE_DIR environment variable is not set")
+	// Get home directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("Error getting home directory: %v\n", err)
+		log.Printf("Fatal error getting home directory: %v", err)
 		os.Exit(1)
 	}
 
 	// Create .claude directory
-	claudeConfigDir := filepath.Join(claudeDir, ".claude")
+	claudeConfigDir := filepath.Join(homeDir, ".claude")
 	if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
 		fmt.Printf("Error creating directory %s: %v\n", claudeConfigDir, err)
 		log.Printf("Fatal error creating directory %s: %v", claudeConfigDir, err)
@@ -329,7 +330,7 @@ var addMcpServersCmd = &cobra.Command{
 
 func init() {
 	addMcpServersCmd.Flags().String("config", "", "Base64 encoded JSON configuration for MCP servers")
-	addMcpServersCmd.Flags().String("claude-dir", "", "Claude configuration directory (overrides CLAUDE_DIR env var)")
+	addMcpServersCmd.Flags().String("claude-dir", "", "Claude configuration directory (defaults to ~/.claude)")
 	HelpersCmd.AddCommand(addMcpServersCmd)
 }
 
@@ -340,10 +341,11 @@ func runAddMcpServers(cmd *cobra.Command, args []string) {
 	// Get Claude directory
 	claudeDir := claudeDirFlag
 	if claudeDir == "" {
-		claudeDir = os.Getenv("CLAUDE_DIR")
-	}
-	if claudeDir == "" {
-		claudeDir = "."
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatalf("failed to get home directory: %v", err)
+		}
+		claudeDir = filepath.Join(homeDir, ".claude")
 	}
 
 	if configFlag == "" {
@@ -404,9 +406,6 @@ func addMcpServer(claudeDir string, mcpConfig MCPServerConfig) error {
 
 	// Set environment variables
 	env := os.Environ()
-	if claudeDir != "" {
-		env = append(env, fmt.Sprintf("CLAUDE_DIR=%s", claudeDir))
-	}
 
 	// Add custom environment variables from MCP config
 	for key, value := range mcpConfig.Env {

@@ -19,17 +19,17 @@ export GITHUB_APP_PEM_PATH="{{.GitHubAppPEMPath}}"
 export GITHUB_API="{{.GitHubAPI}}"
 export GITHUB_PERSONAL_ACCESS_TOKEN="{{.GitHubPersonalAccessToken}}"
 
-# Set user-specific CLAUDE_DIR if multiple users is enabled
+# Set user-specific .claude directory if multiple users is enabled
 if [[ "$ENABLE_MULTIPLE_USERS" == "true" && -n "$USER_HOME_DIR" ]]; then
-    # Set CLAUDE_DIR to ~/.claude/[username] pattern
+    # Set up user-specific .claude directory pattern
     USER_NAME=$(basename "$USER_HOME_DIR")
-    export CLAUDE_DIR="${HOME}/.claude/${USER_NAME}"
-    echo "Setting CLAUDE_DIR to user-specific directory: $CLAUDE_DIR"
+    USER_CLAUDE_DIR="${HOME}/.claude/${USER_NAME}"
+    echo "Setting up user-specific Claude directory: $USER_CLAUDE_DIR"
     
     # Ensure the Claude directory exists
-    if [[ ! -d "$CLAUDE_DIR" ]]; then
-        echo "Creating Claude user directory: $CLAUDE_DIR"
-        mkdir -p "$CLAUDE_DIR"
+    if [[ ! -d "$USER_CLAUDE_DIR" ]]; then
+        echo "Creating Claude user directory: $USER_CLAUDE_DIR"
+        mkdir -p "$USER_CLAUDE_DIR"
     fi
 fi
 
@@ -52,17 +52,14 @@ else
     fi
 fi
 
-# Use the CLAUDE_DIR if set, otherwise use current directory
-if [[ -z "$CLAUDE_DIR" ]]; then
-    CLAUDE_DIR=.
-fi
-CLAUDE_DIR="$CLAUDE_DIR" agentapi-proxy helpers setup-claude-code
+# Setup Claude configuration
+agentapi-proxy helpers setup-claude-code
 
 # Add MCP servers if configuration is provided
 MCP_CONFIGS="{{.MCPConfigs}}"
 if [[ -n "$MCP_CONFIGS" ]]; then
     echo "Setting up MCP servers from configuration"
-    if ! CLAUDE_DIR="$CLAUDE_DIR" agentapi-proxy helpers add-mcp-servers --config "$MCP_CONFIGS"; then
+    if ! agentapi-proxy helpers add-mcp-servers --config "$MCP_CONFIGS"; then
         echo "Warning: Failed to add MCP servers, continuing with session startup" >&2
     else
         echo "Successfully configured MCP servers"

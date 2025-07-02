@@ -267,25 +267,12 @@ func TestInitCmdStructure(t *testing.T) {
 	assert.NotNil(t, initCmd.Run)
 }
 
-func TestRunSetupClaudeCodeNoCLAUDEDIR(t *testing.T) {
-	// Save original CLAUDE_DIR
-	originalCLAUDEDIR := os.Getenv("CLAUDE_DIR")
-	defer func() {
-		if originalCLAUDEDIR != "" {
-			_ = os.Setenv("CLAUDE_DIR", originalCLAUDEDIR)
-		} else {
-			_ = os.Unsetenv("CLAUDE_DIR")
-		}
-	}()
-
-	// Unset CLAUDE_DIR
-	_ = os.Unsetenv("CLAUDE_DIR")
-
-	// This test verifies the function handles missing CLAUDE_DIR
-	// We can't easily test os.Exit(1), but we can verify the error path is taken
-	// by checking that the function would exit early
-	claudeDir := os.Getenv("CLAUDE_DIR")
-	assert.Empty(t, claudeDir)
+func TestRunSetupClaudeCodeHomeDir(t *testing.T) {
+	// Test that the function can get the home directory
+	// We can't easily test the full function since it creates files,
+	// but we can verify the function exists and has the right structure
+	assert.NotNil(t, setupClaudeCodeCmd.Run)
+	assert.NotNil(t, initCmd.Run)
 }
 
 func TestClaudeCodeSettingsEmbedded(t *testing.T) {
