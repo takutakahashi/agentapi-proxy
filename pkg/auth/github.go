@@ -104,17 +104,18 @@ type GitHubTeamMembership struct {
 	Role         string `json:"role"`
 }
 
-// UserRoleCache represents cached user role and permissions
-type UserRoleCache struct {
+// UserCache represents cached user information, role and permissions
+type UserCache struct {
+	User        *GitHubUserInfo
 	Role        string
 	Permissions []string
 }
 
 // GitHubAuthProvider handles GitHub OAuth authentication
 type GitHubAuthProvider struct {
-	config        *config.GitHubAuthConfig
-	client        *http.Client
-	userRoleCache *cache
+	config    *config.GitHubAuthConfig
+	client    *http.Client
+	userCache *cache
 }
 
 // NewGitHubAuthProvider creates a new GitHub authentication provider
@@ -130,7 +131,7 @@ func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		userRoleCache: newCache(cacheTTL),
+		userCache: newCache(cacheTTL),
 	}
 }
 
@@ -149,13 +150,22 @@ func isTestEnvironment() bool {
 
 // Authenticate authenticates a user using GitHub OAuth token
 func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*UserContext, error) {
-	// Check if user role and permissions are cached (disabled in test environment)
-	var cachedRole *UserRoleCache
-	var userLogin string
+	// Check if user information is cached (disabled in test environment)
+	var cachedUser *UserCache
 	if !isTestEnvironment() {
-		cacheKey := fmt.Sprintf("user_role:%s", hashToken(token))
-		if cached, found := p.userRoleCache.get(cacheKey); found {
-			cachedRole = cached.(*UserRoleCache)
+		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
+		if cached, found := p.userCache.get(cacheKey); found {
+			cachedUser = cached.(*UserCache)
+			log.Printf("[AUTH_DEBUG] Using cached user info for %s: role=%s, permissions=%v",
+				cachedUser.User.Login, cachedUser.Role, cachedUser.Permissions)
+
+			return &UserContext{
+				UserID:      cachedUser.User.Login,
+				Role:        cachedUser.Role,
+				Permissions: cachedUser.Permissions,
+				AuthType:    "github_oauth",
+				GitHubUser:  cachedUser.User,
+			}, nil
 		}
 	}
 
@@ -164,38 +174,28 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
-	userLogin = user.Login
 
-	var role string
-	var permissions []string
+	// Get user's team memberships - optimized to check only configured teams
+	teams, err := p.getUserTeamsOptimized(ctx, token, user.Login)
+	if err != nil {
+		log.Printf("Warning: Failed to get user teams for %s: %v", user.Login, err)
+		teams = []GitHubTeamMembership{}
+	}
 
-	if cachedRole != nil {
-		// Use cached role and permissions
-		role = cachedRole.Role
-		permissions = cachedRole.Permissions
-		log.Printf("[AUTH_DEBUG] Using cached role for user %s: role=%s, permissions=%v", userLogin, role, permissions)
-	} else {
-		// Get user's team memberships - optimized to check only configured teams
-		teams, err := p.getUserTeamsOptimized(ctx, token, user.Login)
-		if err != nil {
-			log.Printf("Warning: Failed to get user teams for %s: %v", user.Login, err)
-			teams = []GitHubTeamMembership{}
-		}
+	user.Teams = teams
 
-		user.Teams = teams
+	// Map user permissions based on team memberships
+	role, permissions := p.mapUserPermissions(teams)
 
-		// Map user permissions based on team memberships
-		role, permissions = p.mapUserPermissions(teams)
-
-		// Cache the result (disabled in test environment)
-		if !isTestEnvironment() {
-			cacheKey := fmt.Sprintf("user_role:%s", hashToken(token))
-			p.userRoleCache.set(cacheKey, &UserRoleCache{
-				Role:        role,
-				Permissions: permissions,
-			})
-			log.Printf("[AUTH_DEBUG] Cached role for user %s: role=%s, permissions=%v", userLogin, role, permissions)
-		}
+	// Cache the complete user information (disabled in test environment)
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
+		p.userCache.set(cacheKey, &UserCache{
+			User:        user,
+			Role:        role,
+			Permissions: permissions,
+		})
+		log.Printf("[AUTH_DEBUG] Cached user info for %s: role=%s, permissions=%v", user.Login, role, permissions)
 	}
 
 	return &UserContext{
