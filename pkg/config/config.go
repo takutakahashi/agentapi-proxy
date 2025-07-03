@@ -119,6 +119,13 @@ type PersistenceConfig struct {
 	S3SecretKey string `json:"s3_secret_key" mapstructure:"s3_secret_key"`
 }
 
+// EncryptionConfig represents encryption configuration
+type EncryptionConfig struct {
+	Enabled  bool   `json:"enabled" mapstructure:"enabled"`
+	KMSKeyID string `json:"kms_key_id" mapstructure:"kms_key_id"`
+	Region   string `json:"region" mapstructure:"region"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
 	// StartPort is the starting port for agentapi servers
@@ -131,6 +138,8 @@ type Config struct {
 	EnableMultipleUsers bool `json:"enable_multiple_users" mapstructure:"enable_multiple_users"`
 	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
 	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
+	// Encryption represents encryption configuration
+	Encryption EncryptionConfig `json:"encryption" mapstructure:"encryption"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -203,6 +212,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 	log.Printf("[CONFIG] Persistence enabled: %v (backend: %s)", config.Persistence.Enabled, config.Persistence.Backend)
 	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
+	log.Printf("[CONFIG] Encryption enabled: %v", config.Encryption.Enabled)
 
 	return &config, nil
 }
@@ -349,6 +359,11 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("persistence.s3_access_key")
 	_ = v.BindEnv("persistence.s3_secret_key")
 
+	// Encryption configuration
+	_ = v.BindEnv("encryption.enabled")
+	_ = v.BindEnv("encryption.kms_key_id")
+	_ = v.BindEnv("encryption.region")
+
 	// Other configuration
 	_ = v.BindEnv("start_port")
 	_ = v.BindEnv("enable_multiple_users")
@@ -385,6 +400,10 @@ func setDefaults(v *viper.Viper) {
 
 	// Multiple users default
 	v.SetDefault("enable_multiple_users", false)
+
+	// Encryption defaults
+	v.SetDefault("encryption.enabled", false)
+	v.SetDefault("encryption.region", "us-east-1")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
@@ -547,6 +566,10 @@ func DefaultConfig() *Config {
 			SessionRecoveryMaxAge: 24, // Default 24 hours
 		},
 		EnableMultipleUsers: false,
+		Encryption: EncryptionConfig{
+			Enabled: false,
+			Region:  "us-east-1",
+		},
 	}
 }
 

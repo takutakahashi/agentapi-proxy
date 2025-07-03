@@ -27,6 +27,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/crypto"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
@@ -101,6 +102,7 @@ type Proxy struct {
 	githubAuthProvider *auth.GitHubAuthProvider
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	userDirMgr         *userdir.Manager
+	encryptionHandlers *EncryptionHandlers
 }
 
 // NewProxy creates a new proxy instance
@@ -155,15 +157,19 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Initialize user directory manager
 	userDirMgr := userdir.NewManager("./data", cfg.EnableMultipleUsers)
 
+	// Initialize encryption handlers
+	encryptionHandlers := NewEncryptionHandlers(cfg.Encryption.Enabled)
+
 	p := &Proxy{
-		config:        cfg,
-		echo:          e,
-		verbose:       verbose,
-		sessions:      make(map[string]*AgentSession),
-		sessionsMutex: sync.RWMutex{},
-		nextPort:      cfg.StartPort,
-		logger:        logger.NewLogger(),
-		userDirMgr:    userDirMgr,
+		config:             cfg,
+		echo:               e,
+		verbose:            verbose,
+		sessions:           make(map[string]*AgentSession),
+		sessionsMutex:      sync.RWMutex{},
+		nextPort:           cfg.StartPort,
+		logger:             logger.NewLogger(),
+		userDirMgr:         userDirMgr,
+		encryptionHandlers: encryptionHandlers,
 	}
 
 	// Initialize storage if persistence is enabled
@@ -380,6 +386,9 @@ func (p *Proxy) setupRoutes() {
 	authInfoHandlers := NewAuthInfoHandlers(p.config)
 	p.echo.GET("/auth/types", authInfoHandlers.GetAuthTypes)
 	p.echo.GET("/auth/status", authInfoHandlers.GetAuthStatus)
+
+	// Add encryption endpoint
+	p.echo.GET("/encryption.pub", p.encryptionHandlers.GetPublicKey)
 
 	// Add OAuth routes if OAuth is configured
 	log.Printf("[ROUTES] OAuth provider configured: %v", p.oauthProvider != nil)
@@ -937,10 +946,27 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	// Start with the current environment from agentapi-proxy
 	baseEnv := os.Environ()
 
-	// Add custom environment variables from session
+	// Add custom environment variables from session with decryption
 	if len(session.Environment) > 0 {
 		for key, value := range session.Environment {
-			baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, value))
+			// Decrypt value if it's encrypted
+			decryptedValue := value
+			if crypto.IsEncrypted(value) {
+				if p.encryptionHandlers.IsEnabled() {
+					var err error
+					decryptedValue, err = p.encryptionHandlers.DecryptValue(crypto.GetEncryptedValue(value))
+					if err != nil {
+						log.Printf("Failed to decrypt environment variable %s for session %s: %v", key, session.ID, err)
+						// Use original encrypted value as fallback
+						decryptedValue = value
+					} else {
+						log.Printf("Successfully decrypted environment variable %s for session %s", key, session.ID)
+					}
+				} else {
+					log.Printf("Encrypted environment variable %s found but encryption is not enabled", key)
+				}
+			}
+			baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, decryptedValue))
 		}
 	}
 
