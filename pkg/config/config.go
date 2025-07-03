@@ -46,6 +46,14 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// getEnvWithDefault returns the value of environment variable or default value
+func getEnvWithDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
 // AuthConfig represents authentication configuration
 type AuthConfig struct {
 	Enabled bool              `json:"enabled" mapstructure:"enabled"`
@@ -376,12 +384,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.static.enabled", false)
 	v.SetDefault("auth.static.header_name", "X-API-Key")
 	v.SetDefault("auth.github.enabled", false)
-	v.SetDefault("auth.github.base_url", "https://api.github.com")
+	v.SetDefault("auth.github.base_url", getEnvWithDefault("GITHUB_API", "https://api.github.com"))
 	v.SetDefault("auth.github.token_header", "Authorization")
 	v.SetDefault("auth.github.oauth.client_id", "")
 	v.SetDefault("auth.github.oauth.client_secret", "")
 	v.SetDefault("auth.github.oauth.scope", "read:user read:org")
-	v.SetDefault("auth.github.oauth.base_url", "")
+	v.SetDefault("auth.github.oauth.base_url", getEnvWithDefault("GITHUB_URL", "https://github.com"))
 
 	// Multiple users default
 	v.SetDefault("enable_multiple_users", false)
@@ -410,7 +418,7 @@ func applyConfigDefaults(config *Config) {
 	}
 	if config.Auth.GitHub != nil {
 		if config.Auth.GitHub.BaseURL == "" {
-			config.Auth.GitHub.BaseURL = "https://api.github.com"
+			config.Auth.GitHub.BaseURL = getEnvWithDefault("GITHUB_API", "https://api.github.com")
 		}
 		if config.Auth.GitHub.TokenHeader == "" {
 			config.Auth.GitHub.TokenHeader = "Authorization"
