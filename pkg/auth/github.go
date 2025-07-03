@@ -219,12 +219,15 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
+	logVerbose("Making GitHub API request: GET %s", url)
 	resp, err := p.client.Do(req)
 	if err != nil {
+		logVerbose("GitHub API request failed: %v", err)
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
@@ -327,12 +330,15 @@ func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token str
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
+	logVerbose("Making GitHub API request: GET %s", url)
 	resp, err := p.client.Do(req)
 	if err != nil {
+		logVerbose("GitHub API request failed: %v", err)
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
@@ -358,12 +364,15 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
+	logVerbose("Making GitHub API request: GET %s", url)
 	resp, err := p.client.Do(req)
 	if err != nil {
+		logVerbose("GitHub API request failed: %v", err)
 		return false, ""
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode == http.StatusNotFound {
 		return false, ""
 	}

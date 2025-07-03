@@ -7,14 +7,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
+
+// isVerboseLoggingEnabled checks if verbose OAuth logging is enabled via environment variable
+func isVerboseLoggingEnabled() bool {
+	return strings.ToLower(os.Getenv("AGENTAPI_OAUTH_VERBOSE_LOGGING")) == "true" ||
+		strings.ToLower(os.Getenv("AGENTAPI_VERBOSE_LOGGING")) == "true"
+}
+
+// logVerbose logs a message if verbose logging is enabled
+func logVerbose(format string, args ...interface{}) {
+	if isVerboseLoggingEnabled() {
+		log.Printf("[OAUTH_VERBOSE] "+format, args...)
+	}
+}
 
 // OAuthState represents a pending OAuth authentication state
 type OAuthState struct {
@@ -80,6 +95,7 @@ func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, strin
 		strings.TrimSuffix(p.config.BaseURL, "/"),
 		params.Encode())
 
+	logVerbose("Generated authorization URL: %s", authURL)
 	return authURL, state, nil
 }
 
@@ -140,14 +156,17 @@ func (p *GitHubOAuthProvider) exchangeCodeForToken(ctx context.Context, code, re
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
+	logVerbose("Making token exchange request: POST %s", tokenURL)
 	resp, err := p.client.Do(req)
 	if err != nil {
+		logVerbose("Token exchange request failed: %v", err)
 		return nil, err
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
+	logVerbose("Token exchange response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("token exchange failed with status %d", resp.StatusCode)
 	}
@@ -213,14 +232,17 @@ func (p *GitHubOAuthProvider) RevokeToken(ctx context.Context, token string) err
 	req.Body = io.NopCloser(strings.NewReader(body))
 	req.ContentLength = int64(len(body))
 
+	logVerbose("Making token revocation request: DELETE %s", revokeURL)
 	resp, err := p.client.Do(req)
 	if err != nil {
+		logVerbose("Token revocation request failed: %v", err)
 		return err
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
+	logVerbose("Token revocation response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("failed to revoke token: status %d", resp.StatusCode)
 	}
