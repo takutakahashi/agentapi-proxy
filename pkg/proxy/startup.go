@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
 
@@ -96,57 +97,55 @@ func (sm *StartupManager) StartAgentAPISession(ctx context.Context, cfg *Startup
 
 // initGitHubRepository initializes the GitHub repository
 func (sm *StartupManager) initGitHubRepository(cfg *StartupConfig) error {
-	args := []string{
-		"helpers", "init-github-repository",
-		"--ignore-missing-config",
-		"--repo-fullname", cfg.RepoFullName,
-		"--clone-dir", cfg.CloneDir,
+	// Set environment variables for the GitHub repository initialization
+	originalEnv := make(map[string]string)
+
+	// Store original environment and set new ones
+	envVars := map[string]string{
+		"GITHUB_TOKEN":                 cfg.GitHubToken,
+		"GITHUB_APP_ID":                cfg.GitHubAppID,
+		"GITHUB_INSTALLATION_ID":       cfg.GitHubInstallationID,
+		"GITHUB_APP_PEM_PATH":          cfg.GitHubAppPEMPath,
+		"GITHUB_API":                   cfg.GitHubAPI,
+		"GITHUB_PERSONAL_ACCESS_TOKEN": cfg.GitHubPersonalAccessToken,
 	}
 
-	cmd := exec.Command("agentapi-proxy", args...)
+	for key, value := range envVars {
+		if value != "" {
+			originalEnv[key] = os.Getenv(key)
+			os.Setenv(key, value)
+		}
+	}
 
-	// Set environment variables
-	env := os.Environ()
-	if cfg.GitHubToken != "" {
-		env = append(env, fmt.Sprintf("GITHUB_TOKEN=%s", cfg.GitHubToken))
-	}
-	if cfg.GitHubAppID != "" {
-		env = append(env, fmt.Sprintf("GITHUB_APP_ID=%s", cfg.GitHubAppID))
-	}
-	if cfg.GitHubInstallationID != "" {
-		env = append(env, fmt.Sprintf("GITHUB_INSTALLATION_ID=%s", cfg.GitHubInstallationID))
-	}
-	if cfg.GitHubAppPEMPath != "" {
-		env = append(env, fmt.Sprintf("GITHUB_APP_PEM_PATH=%s", cfg.GitHubAppPEMPath))
-	}
-	if cfg.GitHubAPI != "" {
-		env = append(env, fmt.Sprintf("GITHUB_API=%s", cfg.GitHubAPI))
-	}
-	if cfg.GitHubPersonalAccessToken != "" {
-		env = append(env, fmt.Sprintf("GITHUB_PERSONAL_ACCESS_TOKEN=%s", cfg.GitHubPersonalAccessToken))
-	}
-	cmd.Env = env
+	// Restore environment after function completes
+	defer func() {
+		for key, originalValue := range originalEnv {
+			if originalValue == "" {
+				os.Unsetenv(key)
+			} else {
+				os.Setenv(key, originalValue)
+			}
+		}
+	}()
 
 	if sm.verbose {
 		log.Printf("Initializing GitHub repository: %s", cfg.RepoFullName)
 	}
 
-	return cmd.Run()
+	return startup.InitGitHubRepo(cfg.RepoFullName, cfg.CloneDir, true)
 }
 
 // setupClaudeCode sets up Claude Code configuration
 func (sm *StartupManager) setupClaudeCode() error {
-	cmd := exec.Command("agentapi-proxy", "helpers", "setup-claude-code")
-	return cmd.Run()
+	return startup.SetupClaudeCode()
 }
 
 // setupMCPServers sets up MCP servers
 func (sm *StartupManager) setupMCPServers(mcpConfigs string) error {
-	cmd := exec.Command("agentapi-proxy", "helpers", "add-mcp-servers", "--config", mcpConfigs)
 	if sm.verbose {
 		log.Printf("Setting up MCP servers from configuration")
 	}
-	return cmd.Run()
+	return startup.SetupMCPServers(mcpConfigs)
 }
 
 // createAgentAPICommand creates the agentapi server command
