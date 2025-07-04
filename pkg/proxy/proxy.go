@@ -541,18 +541,37 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 		log.Printf("Warning: session %s had no cancel function", sessionID)
 	}
 
-	// Wait briefly to allow cleanup to begin
-	time.Sleep(100 * time.Millisecond)
+	// Wait for session cleanup with timeout
+	maxWaitTime := 5 * time.Second
+	waitInterval := 50 * time.Millisecond
+	startTime := time.Now()
 
-	// Check if session was actually cleaned up
-	p.sessionsMutex.RLock()
-	_, stillExists := p.sessions[sessionID]
-	p.sessionsMutex.RUnlock()
+	for {
+		// Check if session was actually cleaned up
+		p.sessionsMutex.RLock()
+		_, stillExists := p.sessions[sessionID]
+		p.sessionsMutex.RUnlock()
 
-	if stillExists {
-		log.Printf("Warning: session %s still exists after cancellation, cleanup may be in progress", sessionID)
-	} else {
-		log.Printf("Session %s successfully removed from active sessions", sessionID)
+		if !stillExists {
+			log.Printf("Session %s successfully removed from active sessions", sessionID)
+			break
+		}
+
+		// Check if we've exceeded the maximum wait time
+		if time.Since(startTime) >= maxWaitTime {
+			log.Printf("Warning: session %s still exists after %v, forcing removal", sessionID, maxWaitTime)
+
+			// Force remove the session from the map
+			p.sessionsMutex.Lock()
+			delete(p.sessions, sessionID)
+			p.sessionsMutex.Unlock()
+
+			// Also remove from persistent storage
+			p.deleteSessionFromStorage(sessionID)
+			break
+		}
+
+		time.Sleep(waitInterval)
 	}
 
 	log.Printf("Session %s deletion completed successfully", sessionID)
@@ -820,14 +839,20 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	defer func() {
 		// Clean up session when server stops
 		p.sessionsMutex.Lock()
-		delete(p.sessions, session.ID)
+		// Check if session still exists (might have been removed by deleteSession)
+		_, sessionExists := p.sessions[session.ID]
+		if sessionExists {
+			delete(p.sessions, session.ID)
+		}
 		p.sessionsMutex.Unlock()
 
-		// Remove session from persistent storage
-		p.deleteSessionFromStorage(session.ID)
-		// Log session end when process terminates naturally
-		if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
-			log.Printf("Failed to log session end for %s: %v", session.ID, err)
+		// Remove session from persistent storage only if it still existed in the map
+		if sessionExists {
+			p.deleteSessionFromStorage(session.ID)
+			// Log session end when process terminates naturally (not via deleteSession)
+			if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
+				log.Printf("Failed to log session end for %s: %v", session.ID, err)
+			}
 		}
 
 		if p.verbose {
