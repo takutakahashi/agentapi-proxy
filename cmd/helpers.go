@@ -93,43 +93,48 @@ func init() {
 	HelpersCmd.AddCommand(generateTokenCmd)
 }
 
+// RunSetupClaudeCode is exported for use in other packages
+func RunSetupClaudeCode() error {
+	return setupClaudeCodeInternal()
+}
+
 func runSetupClaudeCode(cmd *cobra.Command, args []string) {
+	if err := setupClaudeCodeInternal(); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		log.Printf("Fatal error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func setupClaudeCodeInternal() error {
 	// Get home directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Printf("Error getting home directory: %v\n", err)
-		log.Printf("Fatal error getting home directory: %v", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
 	// Create .claude directory
 	claudeConfigDir := filepath.Join(homeDir, ".claude")
 	if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
-		fmt.Printf("Error creating directory %s: %v\n", claudeConfigDir, err)
-		log.Printf("Fatal error creating directory %s: %v", claudeConfigDir, err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create directory %s: %w", claudeConfigDir, err)
 	}
 
 	// Validate that the embedded JSON is valid
 	var tempSettings interface{}
 	if err := json.Unmarshal([]byte(claudeCodeSettings), &tempSettings); err != nil {
-		fmt.Printf("Error: Invalid embedded settings JSON: %v\n", err)
-		log.Printf("Fatal error: Invalid embedded settings JSON: %v", err)
-		os.Exit(1)
+		return fmt.Errorf("invalid embedded settings JSON: %w", err)
 	}
 
 	// Write settings.json file
 	settingsPath := filepath.Join(claudeConfigDir, "settings.json")
 	if err := os.WriteFile(settingsPath, []byte(claudeCodeSettings), 0644); err != nil {
-		fmt.Printf("Error writing settings file %s: %v\n", settingsPath, err)
-		log.Printf("Fatal error writing settings file %s: %v", settingsPath, err)
-		os.Exit(1)
+		return fmt.Errorf("failed to write settings file %s: %w", settingsPath, err)
 	}
 
 	// Merge config/claude.json into ~/.claude.json
 	if err := mergeClaudeConfig(); err != nil {
-		fmt.Printf("Warning: Failed to merge claude config: %v\n", err)
-		// Don't exit on error, just warn
+		log.Printf("Warning: Failed to merge claude config: %v", err)
+		// Don't return error, just warn
 	}
 
 	claudeSettingsMap := map[string]string{
@@ -141,13 +146,13 @@ func runSetupClaudeCode(cmd *cobra.Command, args []string) {
 	for key, value := range claudeSettingsMap {
 		claudeCmd := exec.Command("claude", "config", "set", key, value)
 		if err := claudeCmd.Run(); err != nil {
-			fmt.Printf("Error setting Claude config: %v\n", err)
-			log.Printf("Fatal error setting Claude config for key '%s': %v", key, err)
-			os.Exit(1)
+			log.Printf("Warning: Failed to set Claude config for key '%s': %v", key, err)
+			// Don't return error for claude config, just warn
 		}
 	}
 
-	fmt.Printf("Successfully created Claude Code configuration at %s\n", settingsPath)
+	log.Printf("Successfully created Claude Code configuration at %s", settingsPath)
+	return nil
 }
 
 func mergeClaudeConfig() error {
@@ -334,34 +339,45 @@ func init() {
 	HelpersCmd.AddCommand(addMcpServersCmd)
 }
 
+// RunAddMcpServers is exported for use in other packages
+func RunAddMcpServers(configFlag string) error {
+	return addMcpServersInternal(configFlag, "")
+}
+
 func runAddMcpServers(cmd *cobra.Command, args []string) {
 	configFlag, _ := cmd.Flags().GetString("config")
 	claudeDirFlag, _ := cmd.Flags().GetString("claude-dir")
 
+	if err := addMcpServersInternal(configFlag, claudeDirFlag); err != nil {
+		log.Fatalf("failed to add MCP servers: %v", err)
+	}
+}
+
+func addMcpServersInternal(configFlag, claudeDirFlag string) error {
 	// Get Claude directory
 	claudeDir := claudeDirFlag
 	if claudeDir == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			log.Fatalf("failed to get home directory: %v", err)
+			return fmt.Errorf("failed to get home directory: %w", err)
 		}
 		claudeDir = filepath.Join(homeDir, ".claude")
 	}
 
 	if configFlag == "" {
-		log.Fatalf("config flag is required")
+		return fmt.Errorf("config flag is required")
 	}
 
 	// Decode base64 configuration
 	configJson, err := decodeBase64(configFlag)
 	if err != nil {
-		log.Fatalf("failed to decode base64 config: %v", err)
+		return fmt.Errorf("failed to decode base64 config: %w", err)
 	}
 
 	// Parse MCP server configurations
 	var mcpConfigs []MCPServerConfig
 	if err := json.Unmarshal([]byte(configJson), &mcpConfigs); err != nil {
-		log.Fatalf("failed to parse MCP configuration: %v", err)
+		return fmt.Errorf("failed to parse MCP configuration: %w", err)
 	}
 
 	log.Printf("Adding %d MCP servers to Claude configuration", len(mcpConfigs))
@@ -369,12 +385,14 @@ func runAddMcpServers(cmd *cobra.Command, args []string) {
 	// Add each MCP server using claude command
 	for _, mcpConfig := range mcpConfigs {
 		if err := addMcpServer(claudeDir, mcpConfig); err != nil {
-			log.Printf("Failed to add MCP server %s: %v", mcpConfig.Name, err)
+			log.Printf("Warning: Failed to add MCP server %s: %v", mcpConfig.Name, err)
 			// Continue with other servers even if one fails
 		} else {
 			log.Printf("Successfully added MCP server: %s", mcpConfig.Name)
 		}
 	}
+
+	return nil
 }
 
 func decodeBase64(encoded string) (string, error) {

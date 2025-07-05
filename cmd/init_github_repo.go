@@ -54,7 +54,23 @@ var ignoreMissingConfig bool
 var repoFullName string
 var cloneDir string
 
+// RunInitGitHubRepo is exported for use in other packages
+func RunInitGitHubRepo(repoFullName, cloneDir string, ignoreMissingConfig bool) error {
+	return initGitHubRepoInternal(repoFullName, cloneDir, ignoreMissingConfig)
+}
+
 func runInitGitHubRepo(cmd *cobra.Command, args []string) error {
+	repoFullName, _ := cmd.Flags().GetString("repo-fullname")
+	cloneDir, _ := cmd.Flags().GetString("clone-dir")
+	ignoreMissingConfig, _ := cmd.Flags().GetBool("ignore-missing-config")
+
+	return initGitHubRepoInternal(repoFullName, cloneDir, ignoreMissingConfig)
+}
+
+func initGitHubRepoInternal(repoFullNameParam, cloneDirParam string, ignoreMissingConfigParam bool) error {
+	repoFullName := repoFullNameParam
+	cloneDir := cloneDirParam
+	ignoreMissingConfig := ignoreMissingConfigParam
 	// Get repository fullname from flag or environment variable
 	if repoFullName == "" {
 		repoFullName = os.Getenv("GITHUB_REPO_FULLNAME")
