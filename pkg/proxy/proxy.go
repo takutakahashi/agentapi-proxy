@@ -565,6 +565,22 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 		log.Printf("Failed to log session end for %s: %v", sessionID, err)
 	}
 
+	// Clean up session working directory only on explicit deletion
+	// Safety check: ensure sessionID is not empty
+	if sessionID != "" {
+		workDir := fmt.Sprintf("/home/agentapi/workdir/%s", sessionID)
+		if _, err := os.Stat(workDir); err == nil {
+			log.Printf("Removing session working directory: %s", workDir)
+			if err := os.RemoveAll(workDir); err != nil {
+				log.Printf("Failed to remove session working directory %s: %v", workDir, err)
+			} else {
+				log.Printf("Successfully removed session working directory: %s", workDir)
+			}
+		}
+	} else {
+		log.Printf("WARNING: Attempted to delete working directory with empty session ID - operation skipped")
+	}
+
 	// Return success response
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
@@ -840,6 +856,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
 			log.Printf("Failed to log session end for %s: %v", session.ID, err)
 		}
+
 
 		if p.verbose {
 			log.Printf("Cleaned up session %s", session.ID)
