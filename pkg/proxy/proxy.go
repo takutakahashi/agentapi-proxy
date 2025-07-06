@@ -15,11 +15,9 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
-	"text/template"
 	"time"
 
 	"github.com/google/uuid"
@@ -546,18 +544,37 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 		log.Printf("Warning: session %s had no cancel function", sessionID)
 	}
 
-	// Wait briefly to allow cleanup to begin
-	time.Sleep(100 * time.Millisecond)
+	// Wait for session cleanup with timeout
+	maxWaitTime := 5 * time.Second
+	waitInterval := 50 * time.Millisecond
+	startTime := time.Now()
 
-	// Check if session was actually cleaned up
-	p.sessionsMutex.RLock()
-	_, stillExists := p.sessions[sessionID]
-	p.sessionsMutex.RUnlock()
+	for {
+		// Check if session was actually cleaned up
+		p.sessionsMutex.RLock()
+		_, stillExists := p.sessions[sessionID]
+		p.sessionsMutex.RUnlock()
 
-	if stillExists {
-		log.Printf("Warning: session %s still exists after cancellation, cleanup may be in progress", sessionID)
-	} else {
-		log.Printf("Session %s successfully removed from active sessions", sessionID)
+		if !stillExists {
+			log.Printf("Session %s successfully removed from active sessions", sessionID)
+			break
+		}
+
+		// Check if we've exceeded the maximum wait time
+		if time.Since(startTime) >= maxWaitTime {
+			log.Printf("Warning: session %s still exists after %v, forcing removal", sessionID, maxWaitTime)
+
+			// Force remove the session from the map
+			p.sessionsMutex.Lock()
+			delete(p.sessions, sessionID)
+			p.sessionsMutex.Unlock()
+
+			// Also remove from persistent storage
+			p.deleteSessionFromStorage(sessionID)
+			break
+		}
+
+		time.Sleep(waitInterval)
 	}
 
 	log.Printf("Session %s deletion completed successfully", sessionID)
@@ -836,28 +853,25 @@ func (p *Proxy) getAvailablePort() (int, error) {
 	return 0, fmt.Errorf("no available ports in range %d-%d", startPort, startPort+1000)
 }
 
-// runAgentAPIServer runs an agentapi server instance using exec.Command or scripts
+// runAgentAPIServer runs an agentapi server instance using Go functions instead of scripts
 func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
-	var tmpScriptPath string
-
 	defer func() {
-		// Clean up temporary script file if it was created
-		if tmpScriptPath != "" {
-			if err := os.Remove(tmpScriptPath); err != nil && p.verbose {
-				log.Printf("Failed to remove temporary script file %s: %v", tmpScriptPath, err)
-			}
-		}
-
 		// Clean up session when server stops
 		p.sessionsMutex.Lock()
-		delete(p.sessions, session.ID)
+		// Check if session still exists (might have been removed by deleteSession)
+		_, sessionExists := p.sessions[session.ID]
+		if sessionExists {
+			delete(p.sessions, session.ID)
+		}
 		p.sessionsMutex.Unlock()
 
-		// Remove session from persistent storage
-		p.deleteSessionFromStorage(session.ID)
-		// Log session end when process terminates naturally
-		if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
-			log.Printf("Failed to log session end for %s: %v", session.ID, err)
+		// Remove session from persistent storage only if it still existed in the map
+		if sessionExists {
+			p.deleteSessionFromStorage(session.ID)
+			// Log session end when process terminates naturally (not via deleteSession)
+			if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
+				log.Printf("Failed to log session end for %s: %v", session.ID, err)
+			}
 		}
 
 		if p.verbose {
@@ -865,188 +879,69 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		}
 	}()
 
-	var cmd *exec.Cmd
+	// Create startup manager
+	startupManager := NewStartupManager(p.config, p.verbose)
 
-	// Note: User home directory setup is now handled by userdir.SetupUserHome in the environment section below
-	// The following code block is kept for reference but is currently unused:
-	// if p.config.EnableMultipleUsers {
-	//     userHomeDir, err := p.userDirMgr.EnsureUserHomeDir(session.UserID)
-	//     if err != nil {
-	//         log.Printf("Failed to ensure user home directory for %s: %v", session.UserID, err)
-	//         return
-	//     }
-	// }
-
-	// Prepare template data with environment variables and repository info
-	templateData := &ScriptTemplateData{
-		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
-		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
+	// Prepare startup configuration
+	cfg := &StartupConfig{
+		Port:                      session.Port,
+		UserID:                    session.UserID,
 		GitHubToken:               getEnvFromSession(session, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
 		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
 		GitHubInstallationID:      os.Getenv("GITHUB_INSTALLATION_ID"),
 		GitHubAppPEMPath:          os.Getenv("GITHUB_APP_PEM_PATH"),
 		GitHubAPI:                 os.Getenv("GITHUB_API"),
 		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
-		UserID:                    session.UserID,
+		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
+		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
+		Environment:               session.Environment,
+		Config:                    p.config,
+		Verbose:                   p.verbose,
 	}
 
-	// Add repository information to template data if available
+	// Add repository information if available
 	if repoInfo != nil {
-		templateData.RepoFullName = repoInfo.FullName
-		templateData.CloneDir = repoInfo.CloneDir
+		cfg.RepoFullName = repoInfo.FullName
+		cfg.CloneDir = repoInfo.CloneDir
 	} else {
 		// Always set CloneDir to session ID, even when no repository is specified
-		templateData.CloneDir = session.ID
+		cfg.CloneDir = session.ID
 	}
 
 	// Extract MCP configurations from tags if available
 	if session.Tags != nil {
 		if mcpConfigs, exists := session.Tags["claude.mcp_configs"]; exists && mcpConfigs != "" {
-			templateData.MCPConfigs = mcpConfigs
+			cfg.MCPConfigs = mcpConfigs
 		}
 	}
 
-	if scriptName != "" {
-		// Extract script to temporary file
-		var err error
-		tmpScriptPath, err = p.extractScriptToTempFile(scriptName, templateData)
-		if err != nil {
-			log.Printf("Failed to extract script %s for session %s: %v", scriptName, session.ID, err)
-			return
-		}
-
-		// Execute script with port parameter (repository info is now embedded in template)
-		args := []string{tmpScriptPath, strconv.Itoa(session.Port)}
-		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
-
-		// Log script execution details
-		log.Printf("Starting agentapi process for session %s on %d using script %s", session.ID, session.Port, scriptName)
-		log.Printf("Script execution parameters:")
-		log.Printf("  Script: %s", scriptName)
-		log.Printf("  Port: %d", session.Port)
-		log.Printf("  Session ID: %s", session.ID)
-		if len(session.Tags) > 0 {
-			log.Printf("  Request tags:")
-			for key, value := range session.Tags {
-				log.Printf("    %s=%s", key, value)
-			}
-		}
-		log.Printf("  Full command: /bin/bash %s", strings.Join(args, " "))
-		if p.verbose {
-			log.Printf("[VERBOSE] Executing command: /bin/bash %s %s", tmpScriptPath, strconv.Itoa(session.Port))
-		}
-	} else {
-		// Use direct agentapi command (fallback)
-		cmd = exec.CommandContext(ctx, "agentapi", "server", "--port", strconv.Itoa(session.Port))
-
-		if p.verbose {
-			log.Printf("Starting agentapi process for session %s on %d using direct command", session.ID, session.Port)
-			log.Printf("[VERBOSE] Executing command: agentapi server --port %s", strconv.Itoa(session.Port))
-		}
+	// Start the AgentAPI session using Go functions
+	cmd, err := startupManager.StartAgentAPISession(ctx, cfg)
+	if err != nil {
+		log.Printf("Failed to start AgentAPI session for %s: %v", session.ID, err)
+		return
 	}
 
-	// Set process group ID for proper cleanup
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Log startup details
+	log.Printf("Starting agentapi process for session %s on %d using Go functions", session.ID, session.Port)
+	log.Printf("Session startup parameters:")
+	log.Printf("  Port: %d", session.Port)
+	log.Printf("  Session ID: %s", session.ID)
+	log.Printf("  User ID: %s", session.UserID)
+	if cfg.RepoFullName != "" {
+		log.Printf("  Repository: %s", cfg.RepoFullName)
+		log.Printf("  Clone dir: %s", cfg.CloneDir)
+	}
+	if len(session.Tags) > 0 {
+		log.Printf("  Request tags:")
+		for key, value := range session.Tags {
+			log.Printf("    %s=%s", key, value)
+		}
+	}
 
 	// Capture stderr output for logging on exit code 1
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
-
-	// Set environment variables for the process
-	// Start with the current environment from agentapi-proxy
-	baseEnv := os.Environ()
-
-	// Add custom environment variables from session
-	if len(session.Environment) > 0 {
-		for key, value := range session.Environment {
-			baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, value))
-		}
-	}
-
-	// ユーザー固有のHOME環境変数を設定
-	userEnv, err := userdir.SetupUserHome(session.UserID)
-	if err != nil {
-		log.Printf("Failed to setup user home for %s: %v", session.UserID, err)
-		return
-	}
-
-	// 環境変数をマージ（userEnvを優先）
-	for key, value := range userEnv {
-		// 既存の環境変数を置き換える（userEnvを優先）
-		found := false
-		for i, env := range baseEnv {
-			if strings.HasPrefix(env, key+"=") {
-				// 既存の環境変数をuserEnvの値で置き換え
-				baseEnv[i] = fmt.Sprintf("%s=%s", key, value)
-				log.Printf("  Overwrote environment variable: %s=%s", key, value)
-				found = true
-				break
-			}
-		}
-		if !found {
-			baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, value))
-			log.Printf("  Added environment variable: %s=%s", key, value)
-		}
-	}
-
-	// Set the final environment variables
-	cmd.Env = baseEnv
-
-	// Log environment variable setup
-	log.Printf("Environment variables for session %s:", session.ID)
-	if len(session.Environment) > 0 {
-		log.Printf("  Custom environment variables:")
-		for key, value := range session.Environment {
-			log.Printf("    %s=%s", key, value)
-		}
-	}
-	if p.config.EnableMultipleUsers {
-		log.Printf("  User-specific HOME directory set for user: %s", session.UserID)
-	} else {
-		log.Printf("  Using default environment (no custom variables)")
-	}
-
-	// Log template arguments that are embedded in the script
-	if scriptName != "" {
-		log.Printf("  Template arguments embedded in script:")
-		if templateData.AgentAPIArgs != "" {
-			log.Printf("    AgentAPIArgs=%s", templateData.AgentAPIArgs)
-		}
-		if templateData.ClaudeArgs != "" {
-			log.Printf("    ClaudeArgs=%s", templateData.ClaudeArgs)
-		}
-		if templateData.GitHubToken != "" {
-			log.Printf("    GitHubToken=%s", maskToken(templateData.GitHubToken))
-		}
-		if templateData.GitHubAppID != "" {
-			log.Printf("    GitHubAppID=%s", templateData.GitHubAppID)
-		}
-		if templateData.GitHubInstallationID != "" {
-			log.Printf("    GitHubInstallationID=%s", templateData.GitHubInstallationID)
-		}
-		if templateData.GitHubAppPEMPath != "" {
-			log.Printf("    GitHubAppPEMPath=%s", templateData.GitHubAppPEMPath)
-		}
-		if templateData.GitHubAPI != "" {
-			log.Printf("    GitHubAPI=%s", templateData.GitHubAPI)
-		}
-		if templateData.GitHubPersonalAccessToken != "" {
-			log.Printf("    GitHubPersonalAccessToken=%s", maskToken(templateData.GitHubPersonalAccessToken))
-		}
-		if templateData.RepoFullName != "" {
-			log.Printf("    RepoFullName=%s", templateData.RepoFullName)
-		}
-		if templateData.CloneDir != "" {
-			log.Printf("    CloneDir=%s", templateData.CloneDir)
-		}
-		if templateData.AgentAPIArgs == "" && templateData.ClaudeArgs == "" &&
-			templateData.GitHubToken == "" && templateData.GitHubAppID == "" &&
-			templateData.GitHubInstallationID == "" && templateData.GitHubAppPEMPath == "" &&
-			templateData.GitHubAPI == "" && templateData.GitHubPersonalAccessToken == "" &&
-			templateData.RepoFullName == "" && templateData.CloneDir == "" {
-			log.Printf("    No template arguments specified")
-		}
-	}
 
 	// Store the command in the session and start the process
 	session.processMutex.Lock()
@@ -1190,73 +1085,6 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
 	}
-}
-
-// extractScriptToTempFile extracts a script to a temporary file and returns the file path
-func (p *Proxy) extractScriptToTempFile(scriptName string, templateData *ScriptTemplateData) (string, error) {
-	// scriptCache からスクリプト内容を取得
-	content, ok := scriptCache[scriptName]
-	if !ok {
-		return "", fmt.Errorf("script %s not found in embedded cache", scriptName)
-	}
-
-	// Process content as a template if templateData is provided
-	var processedContent []byte
-	if templateData != nil {
-		tmpl, err := template.New(scriptName).Parse(string(content))
-		if err != nil {
-			return "", fmt.Errorf("failed to parse script template: %v", err)
-		}
-
-		var buf strings.Builder
-		if err := tmpl.Execute(&buf, templateData); err != nil {
-			return "", fmt.Errorf("failed to execute script template: %v", err)
-		}
-		processedContent = []byte(buf.String())
-	} else {
-		processedContent = content
-	}
-
-	// Log script content when verbose mode is enabled
-	if p.verbose {
-		log.Printf("[VERBOSE] Script content for %s:", scriptName)
-		log.Printf("--- Script Start ---")
-		log.Printf("%s", string(processedContent))
-		log.Printf("--- Script End ---")
-	}
-
-	// Create temporary file
-	tmpFile, err := os.CreateTemp("", "agentapi-script-*.sh")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temporary file: %v", err)
-	}
-
-	// Write script content to temporary file
-	if _, err := tmpFile.Write(processedContent); err != nil {
-		if closeErr := tmpFile.Close(); closeErr != nil {
-			log.Printf("Failed to close temp file: %v", closeErr)
-		}
-		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil {
-			log.Printf("Failed to remove temp file: %v", removeErr)
-		}
-		return "", fmt.Errorf("failed to write script content: %v", err)
-	}
-
-	// Make the file executable
-	if err := tmpFile.Chmod(0755); err != nil {
-		if closeErr := tmpFile.Close(); closeErr != nil {
-			log.Printf("Failed to close temp file: %v", closeErr)
-		}
-		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil {
-			log.Printf("Failed to remove temp file: %v", removeErr)
-		}
-		return "", fmt.Errorf("failed to make script executable: %v", err)
-	}
-
-	if err := tmpFile.Close(); err != nil {
-		log.Printf("Warning: failed to close temp file: %v", err)
-	}
-	return tmpFile.Name(), nil
 }
 
 // selectScript determines which script to use based on request parameters
@@ -1416,17 +1244,6 @@ func extractRepoFullNameFromURL(repoURL string) (string, error) {
 	}
 
 	return repoPath, nil
-}
-
-// maskToken masks sensitive tokens for logging
-func maskToken(token string) string {
-	if token == "" {
-		return ""
-	}
-	if len(token) <= 8 {
-		return "****"
-	}
-	return token[:4] + "****" + token[len(token)-4:]
 }
 
 // sendInitialMessage sends an initial message to the agentapi server after startup

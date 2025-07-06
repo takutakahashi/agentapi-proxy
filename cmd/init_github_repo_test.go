@@ -333,16 +333,13 @@ func TestRunInitGitHubRepoValidation(t *testing.T) {
 	_ = os.Unsetenv("GITHUB_INSTALLATION_ID")
 	_ = os.Unsetenv("GITHUB_APP_PEM_PATH")
 
-	err := runInitGitHubRepo(nil, nil)
-	if err == nil || !contains(err.Error(), "GITHUB_REPO_FULLNAME") {
-		t.Errorf("Expected error about missing GITHUB_REPO_FULLNAME, got: %v", err)
+	err := RunInitGitHubRepo("", "", false)
+	if err == nil || !contains(err.Error(), "repository fullname is required") {
+		t.Errorf("Expected error about missing repository fullname, got: %v", err)
 	}
 
 	// Test missing authentication
-	_ = os.Setenv("GITHUB_REPO_FULLNAME", "test/repo")
-	defer func() { _ = os.Unsetenv("GITHUB_REPO_FULLNAME") }()
-
-	err = runInitGitHubRepo(nil, nil)
+	err = RunInitGitHubRepo("test/repo", "", false)
 	if err == nil || !contains(err.Error(), "GITHUB_APP_ID") {
 		t.Errorf("Expected error about invalid GITHUB_APP_ID, got: %v", err)
 	}
