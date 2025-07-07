@@ -216,7 +216,7 @@ spec:
             items:
             - key: {{ .Values.github.app.privateKey.key }}
               path: private-key
-            defaultMode: 0400
+            defaultMode: 0600
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

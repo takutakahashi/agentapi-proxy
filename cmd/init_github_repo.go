@@ -193,10 +193,26 @@ func getGitHubURL() string {
 }
 
 func generateInstallationToken(config GitHubAppConfig) (string, error) {
-	// Read the private key
-	pemData, err := os.ReadFile(config.PEMPath)
+	// Read private key - try file first, then fallback to environment variable
+	var pemData []byte
+	var err error
+	
+	// Try to read from file first
+	pemData, err = os.ReadFile(config.PEMPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read PEM file: %w", err)
+		// If file read fails, try to get from environment variable
+		if pemContent := os.Getenv("GITHUB_APP_PEM"); pemContent != "" {
+			fmt.Printf("Failed to read PEM file %s, using GITHUB_APP_PEM environment variable\n", config.PEMPath)
+			pemData = []byte(pemContent)
+		} else {
+			// より詳細なエラー情報を提供
+			fileInfo, statErr := os.Stat(config.PEMPath)
+			if statErr != nil {
+				return "", fmt.Errorf("failed to read PEM file %s: file does not exist or is not accessible. Also checked GITHUB_APP_PEM environment variable: %w", config.PEMPath, err)
+			}
+			return "", fmt.Errorf("failed to read PEM file %s (size: %d bytes, mode: %s). Also checked GITHUB_APP_PEM environment variable: %w", 
+				config.PEMPath, fileInfo.Size(), fileInfo.Mode(), err)
+		}
 	}
 
 	// Create GitHub App transport

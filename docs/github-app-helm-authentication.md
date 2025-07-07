@@ -378,7 +378,50 @@ kubectl get configmap -n agentapi agentapi-proxy-auth-config -o yaml
 - Installation IDが正しいか確認
 - 秘密鍵のフォーマットが正しいか確認
 
-#### 4. ネットワーク接続エラー
+#### 4. Private Key Permission Denied エラー
+
+**症状**: `permission denied` エラーまたは `failed to read PEM file` エラー
+
+**原因と対処法**:
+```bash
+# Pod内でファイルの権限確認
+kubectl exec -n agentapi deployment/agentapi-proxy -- ls -la /etc/github-app/private-key
+
+# Pod のセキュリティコンテキスト確認
+kubectl get statefulset -n agentapi agentapi-proxy -o yaml | grep -A 10 securityContext
+
+# 秘密鍵の内容確認 (base64でエンコードされている)
+kubectl get secret -n agentapi github-app-private-key -o yaml | grep private-key
+```
+
+**修正方法**:
+1. values.yaml で適切な securityContext を設定:
+```yaml
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+```
+
+2. 環境変数による秘密鍵指定のフォールバック:
+```yaml
+env:
+  - name: GITHUB_APP_PEM
+    valueFrom:
+      secretKeyRef:
+        name: github-app-private-key
+        key: private-key
+```
+
+#### 5. ネットワーク接続エラー
 
 **症状**: GitHub APIへの接続失敗
 
