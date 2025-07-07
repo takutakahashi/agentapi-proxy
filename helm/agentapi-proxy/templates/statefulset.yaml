@@ -188,44 +188,18 @@ spec:
           configMap:
             name: {{ include "agentapi-proxy.fullname" . }}-auth-config
         {{- end }}
-        {{- if .Values.roleEnvFiles.enabled }}
+        {{- if and .Values.roleEnvFiles.enabled .Values.roleEnvFiles.files }}
         - name: role-env-files
           projected:
             sources:
-            {{- if .Values.roleEnvFiles.secretNames.default }}
+            {{- range $filename, $config := .Values.roleEnvFiles.files }}
+            {{- if and $config.secretName $config.key }}
             - secret:
-                name: {{ .Values.roleEnvFiles.secretNames.default }}
+                name: {{ $config.secretName }}
                 items:
-                - key: default.env
-                  path: default.env
+                - key: {{ $config.key }}
+                  path: {{ $filename }}
             {{- end }}
-            {{- if .Values.roleEnvFiles.secretNames.admin }}
-            - secret:
-                name: {{ .Values.roleEnvFiles.secretNames.admin }}
-                items:
-                - key: admin.env
-                  path: admin.env
-            {{- end }}
-            {{- if .Values.roleEnvFiles.secretNames.developer }}
-            - secret:
-                name: {{ .Values.roleEnvFiles.secretNames.developer }}
-                items:
-                - key: developer.env
-                  path: developer.env
-            {{- end }}
-            {{- if .Values.roleEnvFiles.secretNames.user }}
-            - secret:
-                name: {{ .Values.roleEnvFiles.secretNames.user }}
-                items:
-                - key: user.env
-                  path: user.env
-            {{- end }}
-            {{- if .Values.roleEnvFiles.secretNames.guest }}
-            - secret:
-                name: {{ .Values.roleEnvFiles.secretNames.guest }}
-                items:
-                - key: guest.env
-                  path: guest.env
             {{- end }}
         {{- end }}
         {{- with .Values.volumes }}

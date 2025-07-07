@@ -238,30 +238,40 @@ authConfig:
   #           - "session:list"
 
 # Role-based environment files configuration
-# This stores environment variables for each role in separate secrets
+# Map environment files to secrets - this creates the appropriate projected volume automatically
 roleEnvFiles:
   # Configuration for role-based environment variables
-  # 各ロール用の環境変数をSecretで管理するための設定
   enabled: false
   
-  # Secret names for each role
-  # Each secret should contain environment variables in KEY=VALUE format
-  # 各ロール用のSecret名を指定
-  secretNames:
-    default: ""    # Secret name for default environment variables (all roles)
-    admin: ""      # Secret name for admin role environment variables
-    developer: ""  # Secret name for developer role environment variables
-    user: ""       # Secret name for user role environment variables
-    guest: ""      # Secret name for guest role environment variables
+  # Simple mapping: filename -> secret configuration
+  # ファイル名とSecretの設定を直接マッピング
+  files:
+    # "default.env":
+    #   secretName: "agentapi-env-default"
+    #   key: "default.env"
+    # "admin.env":
+    #   secretName: "agentapi-env-admin" 
+    #   key: "admin.env"
+    # "developer.env":
+    #   secretName: "agentapi-env-developer"
+    #   key: "developer.env"
+    # "user.env":
+    #   secretName: "agentapi-env-user"
+    #   key: "user.env"
+    # "guest.env":
+    #   secretName: "agentapi-env-guest"
+    #   key: "guest.env"
   
-  # Example secret structure:
-  # apiVersion: v1
-  # kind: Secret
-  # metadata:
-  #   name: agentapi-env-admin
-  # type: Opaque
-  # data:
-  #   admin.env: |
-  #     LOG_LEVEL=debug
-  #     ADMIN_ACCESS=true
-  #     SECRET_KEY=admin-secret-123
+  # Example usage:
+  # roleEnvFiles:
+  #   enabled: true
+  #   files:
+  #     "default.env":
+  #       secretName: "common-env-vars"
+  #       key: "default.env"
+  #     "admin.env":
+  #       secretName: "admin-secrets"
+  #       key: "admin-config"
+  #     "developer.env":
+  #       secretName: "dev-config"
+  #       key: "development.env"
