@@ -145,6 +145,8 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.github.app.privateKey.secretName }}
                   key: {{ .Values.github.app.privateKey.key }}
+            - name: GITHUB_APP_PEM_PATH
+              value: "/etc/github-app/private-key"
             {{- end }}
             {{- range .Values.env }}
             - name: {{ .name }}
@@ -171,6 +173,11 @@ spec:
             {{- if .Values.roleEnvFiles.enabled }}
             - name: role-env-files
               mountPath: {{ .Values.config.roleEnvFiles.path }}
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
+            - name: github-app-private-key
+              mountPath: /etc/github-app
               readOnly: true
             {{- end }}
             {{- with .Values.volumeMounts }}
@@ -201,6 +208,15 @@ spec:
                   path: {{ $filename }}
             {{- end }}
             {{- end }}
+        {{- end }}
+        {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
+        - name: github-app-private-key
+          secret:
+            secretName: {{ .Values.github.app.privateKey.secretName }}
+            items:
+            - key: {{ .Values.github.app.privateKey.key }}
+              path: private-key
+            defaultMode: 0400
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

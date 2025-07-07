@@ -205,6 +205,30 @@ env:
       secretKeyRef:
         name: github-app-private-key
         key: private-key
+  - name: GITHUB_APP_PEM_PATH
+    value: "/etc/github-app/private-key"
+```
+
+### ファイルマウント
+
+GitHub App の秘密鍵は環境変数だけでなく、ファイルとしても自動的にマウントされます：
+
+```yaml
+# Volume Mount
+volumeMounts:
+  - name: github-app-private-key
+    mountPath: /etc/github-app
+    readOnly: true
+
+# Volume
+volumes:
+  - name: github-app-private-key
+    secret:
+      secretName: github-app-private-key
+      items:
+      - key: private-key
+        path: private-key
+      defaultMode: 0400  # セキュリティのため読み取り専用
 ```
 
 ### 認証フロー
