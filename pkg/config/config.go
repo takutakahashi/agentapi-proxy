@@ -91,6 +91,16 @@ type TeamRoleRule struct {
 	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
 }
 
+// RoleEnvFilesConfig represents role-based environment files configuration
+type RoleEnvFilesConfig struct {
+	// Enabled enables role-based environment file loading
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// Path is the directory path containing role-specific .env files
+	Path string `json:"path" mapstructure:"path"`
+	// LoadDefault loads default.env before role-specific env file
+	LoadDefault bool `json:"load_default" mapstructure:"load_default"`
+}
+
 // APIKey represents an API key configuration
 type APIKey struct {
 	Key         string   `json:"key" mapstructure:"key"`
@@ -131,6 +141,8 @@ type Config struct {
 	EnableMultipleUsers bool `json:"enable_multiple_users" mapstructure:"enable_multiple_users"`
 	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
 	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
+	// RoleEnvFiles is the configuration for role-based environment files
+	RoleEnvFiles RoleEnvFilesConfig `json:"role_env_files" mapstructure:"role_env_files"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -203,6 +215,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 	log.Printf("[CONFIG] Persistence enabled: %v (backend: %s)", config.Persistence.Enabled, config.Persistence.Backend)
 	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
+	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
 	return &config, nil
 }
@@ -353,6 +366,11 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("start_port")
 	_ = v.BindEnv("enable_multiple_users")
 	_ = v.BindEnv("auth_config_file")
+
+	// Role-based environment files configuration
+	_ = v.BindEnv("role_env_files.enabled")
+	_ = v.BindEnv("role_env_files.path")
+	_ = v.BindEnv("role_env_files.load_default")
 }
 
 // setDefaults sets default values for viper configuration
@@ -385,6 +403,11 @@ func setDefaults(v *viper.Viper) {
 
 	// Multiple users default
 	v.SetDefault("enable_multiple_users", false)
+
+	// Role-based environment files defaults
+	v.SetDefault("role_env_files.enabled", false)
+	v.SetDefault("role_env_files.path", "/etc/agentapi/env")
+	v.SetDefault("role_env_files.load_default", true)
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
@@ -445,6 +468,13 @@ func postProcessConfig(config *Config) error {
 		if config.Auth.GitHub.OAuth.ClientID == "" || config.Auth.GitHub.OAuth.ClientSecret == "" {
 			log.Printf("[CONFIG] Warning: OAuth is configured but Client ID or Client Secret is missing")
 		}
+	}
+
+	// Log role-based environment files configuration
+	if config.RoleEnvFiles.Enabled {
+		log.Printf("[CONFIG] Role-based environment files enabled")
+		log.Printf("[CONFIG] Environment files path: %s", config.RoleEnvFiles.Path)
+		log.Printf("[CONFIG] Load default.env: %v", config.RoleEnvFiles.LoadDefault)
 	}
 
 	// Load API keys from external file if specified

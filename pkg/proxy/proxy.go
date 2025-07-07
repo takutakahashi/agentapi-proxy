@@ -628,10 +628,33 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	// Get user_id from authenticated context
 	user := auth.GetUserFromContext(c)
 	var userID string
+	var userRole string
 	if user != nil {
 		userID = user.UserID
+		userRole = user.Role
 	} else {
 		userID = "anonymous"
+		userRole = "guest"
+	}
+
+	// Load role-based environment variables
+	if p.config.RoleEnvFiles.Enabled {
+		envVars, err := config.LoadRoleEnvVars(&p.config.RoleEnvFiles, userRole)
+		if err != nil {
+			log.Printf("[ENV] Failed to load role environment variables: %v", err)
+		} else if len(envVars) > 0 {
+			// Apply role-based environment variables to the request
+			if startReq.Environment == nil {
+				startReq.Environment = make(map[string]string)
+			}
+			for _, env := range envVars {
+				// Don't override environment variables explicitly set in the request
+				if _, exists := startReq.Environment[env.Key]; !exists {
+					startReq.Environment[env.Key] = env.Value
+				}
+			}
+			log.Printf("[ENV] Applied %d role-based environment variables for role '%s'", len(envVars), userRole)
+		}
 	}
 
 	// Find available port
