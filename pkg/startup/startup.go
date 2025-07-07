@@ -423,29 +423,6 @@ func extractRepoName(repoURL string) (string, error) {
 	return "", fmt.Errorf("unable to extract repository name from URL: %s", repoURL)
 }
 
-// createAuthenticatedURL creates an authenticated URL for git operations
-func createAuthenticatedURL(repoURL, token string) (string, error) {
-	githubURL := getGitHubURL()
-	githubHost := strings.TrimPrefix(githubURL, "https://")
-	githubHost = strings.TrimPrefix(githubHost, "http://")
-
-	// Parse the repository URL and insert the token
-	if strings.HasPrefix(repoURL, githubURL+"/") {
-		parts := strings.TrimPrefix(repoURL, githubURL+"/")
-		return fmt.Sprintf("https://%s@%s/%s", token, githubHost, parts), nil
-	} else if strings.HasPrefix(repoURL, "git@"+githubHost+":") {
-		parts := strings.TrimPrefix(repoURL, "git@"+githubHost+":")
-		parts = strings.TrimSuffix(parts, ".git")
-		return fmt.Sprintf("https://%s@%s/%s.git", token, githubHost, parts), nil
-	} else if strings.HasPrefix(repoURL, "https://github.com/") {
-		// Handle the case where repoURL starts with standard GitHub URL
-		// but we're using GitHub Enterprise
-		parts := strings.TrimPrefix(repoURL, "https://github.com/")
-		return fmt.Sprintf("https://%s@%s/%s", token, githubHost, parts), nil
-	}
-
-	return "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
-}
 
 // getGitHubURL returns the GitHub URL (supports enterprise)
 func getGitHubURL() string {
