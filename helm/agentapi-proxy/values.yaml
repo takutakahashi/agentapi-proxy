@@ -118,6 +118,14 @@ config:
     syncIntervalSeconds: 30
     encryptSensitiveData: true
     sessionRecoveryMaxAgeHours: 24
+    # 暗号化キーの設定
+    encryptionKey:
+      # 既存のシークレットから暗号化キーを参照する場合
+      existingSecret:
+        name: ""  # シークレット名
+        key: "encryption-key"  # シークレット内のキー名
+      # 直接値を指定する場合（推奨されません）
+      value: ""  # 32文字の暗号化キー
     # S3設定（backend: "s3" の場合に使用）
     s3:
       bucket: ""

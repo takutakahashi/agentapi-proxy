@@ -67,3 +67,9 @@ ingress:
 persistence:
   enabled: true
   size: 50Gi
+  encryptSensitiveData: true
+  # 暗号化キーは既存のシークレットから参照
+  encryptionKey:
+    existingSecret:
+      name: "agentapi-encryption-secret"  # シークレット名
+      key: "encryption-key"  # シークレット内のキー名

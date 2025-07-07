@@ -60,6 +60,16 @@ spec:
               value: {{ .Values.config.persistence.syncIntervalSeconds | quote }}
             - name: AGENTAPI_PERSISTENCE_ENCRYPT_SENSITIVE_DATA
               value: {{ .Values.config.persistence.encryptSensitiveData | quote }}
+            {{- if .Values.config.persistence.encryptionKey.existingSecret.name }}
+            - name: AGENTAPI_PERSISTENCE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.config.persistence.encryptionKey.existingSecret.name }}
+                  key: {{ .Values.config.persistence.encryptionKey.existingSecret.key | default "encryption-key" }}
+            {{- else if .Values.config.persistence.encryptionKey.value }}
+            - name: AGENTAPI_PERSISTENCE_ENCRYPTION_KEY
+              value: {{ .Values.config.persistence.encryptionKey.value | quote }}
+            {{- end }}
             - name: AGENTAPI_PERSISTENCE_SESSION_RECOVERY_MAX_AGE_HOURS
               value: {{ .Values.config.persistence.sessionRecoveryMaxAgeHours | quote }}
             {{- if .Values.config.persistence.s3.bucket }}
