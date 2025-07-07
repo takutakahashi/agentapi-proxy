@@ -91,15 +91,18 @@ github:
     apiUrl: ""
   # GitHub App 認証設定
   app:
-    # GitHub App ID
+    # GitHub App ID (必須)
+    # GitHub App設定画面の "App ID" に表示される数値
     id: ""
-    # GitHub App Installation ID
+    # GitHub App Installation ID (必須)
+    # 組織にインストール後のURLから取得: /settings/installations/12345678 -> 12345678
     installationId: ""
-    # GitHub App の秘密鍵（PEM形式）を含む Secret
+    # GitHub App の秘密鍵（PEM形式）を含む Secret (必須)
+    # kubectl create secret generic github-app-private-key --from-file=private-key=/path/to/app.private-key.pem
     privateKey:
       # Secret 名
       secretName: ""
-      # Secret 内のキー名
+      # Secret 内のキー名（通常は "private-key" のまま使用）
       key: "private-key"
 
 # Application Configuration
