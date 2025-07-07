@@ -245,8 +245,9 @@ func InitGitHubRepo(repoFullName, cloneDir string, ignoreMissingConfig bool) err
 		return fmt.Errorf("failed to get GitHub token: %w", err)
 	}
 
-	// Create repository URL
-	repoURL := fmt.Sprintf("https://github.com/%s", repoFullName)
+	// Create repository URL using the correct GitHub URL
+	githubURL := getGitHubURL()
+	repoURL := fmt.Sprintf("%s/%s", githubURL, repoFullName)
 
 	// Setup the repository with proper git clone
 	if err := setupRepository(repoURL, token, cloneDir); err != nil {
@@ -428,6 +429,11 @@ func createAuthenticatedURL(repoURL, token string) (string, error) {
 		parts := strings.TrimPrefix(repoURL, "git@"+githubHost+":")
 		parts = strings.TrimSuffix(parts, ".git")
 		return fmt.Sprintf("https://%s@%s/%s.git", token, githubHost, parts), nil
+	} else if strings.HasPrefix(repoURL, "https://github.com/") {
+		// Handle the case where repoURL starts with standard GitHub URL
+		// but we're using GitHub Enterprise
+		parts := strings.TrimPrefix(repoURL, "https://github.com/")
+		return fmt.Sprintf("https://%s@%s/%s", token, githubHost, parts), nil
 	}
 
 	return "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
