@@ -8,15 +8,33 @@ config:
     path: "/etc/role-env-files"
     loadDefault: true
 
-# Configure secrets for each role
+# Simple mapping: filename -> secret configuration
+# ファイル名とSecretの設定を直接マッピング
 roleEnvFiles:
   enabled: true
-  secretNames:
-    default: "agentapi-env-default"
-    admin: "agentapi-env-admin"
-    developer: "agentapi-env-developer"
-    user: "agentapi-env-user"
-    guest: "agentapi-env-guest"
+  files:
+    "default.env":
+      secretName: "agentapi-env-default"
+      key: "default.env"
+    "admin.env":
+      secretName: "agentapi-env-admin"
+      key: "admin.env"
+    "developer.env":
+      secretName: "agentapi-env-developer"
+      key: "developer.env"
+    "user.env":
+      secretName: "agentapi-env-user"
+      key: "user.env"
+    "guest.env":
+      secretName: "agentapi-env-guest"
+      key: "guest.env"
+    # You can also map files with different names:
+    # "special-config.env":
+    #   secretName: "custom-secret"
+    #   key: "special-key"
+    # "database.env":
+    #   secretName: "db-config"
+    #   key: "production.env"
 
 ---
 # Example secrets for role-based environment variables

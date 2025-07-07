@@ -255,14 +255,26 @@ config:
     path: "/etc/role-env-files"
     loadDefault: true
 
+# Simple mapping: filename -> secret configuration
 roleEnvFiles:
   enabled: true
-  secretNames:
-    default: "agentapi-env-default"
-    admin: "agentapi-env-admin"
-    developer: "agentapi-env-developer"
-    user: "agentapi-env-user"
-    guest: "agentapi-env-guest"
+  files:
+    "default.env":
+      secretName: "agentapi-env-default"
+      key: "default.env"
+    "admin.env":
+      secretName: "agentapi-env-admin"
+      key: "admin.env"
+    "developer.env":
+      secretName: "agentapi-env-developer"
+      key: "developer.env"
+    "user.env":
+      secretName: "agentapi-env-user"
+      key: "user.env"
+    # You can also map files with different names:
+    "database.env":
+      secretName: "db-config-secret"
+      key: "production.env"
 ```
 
 Create secrets for each role:
@@ -292,6 +304,41 @@ kubectl create secret generic agentapi-env-user \
 FEATURE_FLAGS=production
 API_RATE_LIMIT=100"
 ```
+
+#### Flexible File Mapping
+
+The new configuration format allows you to map any filename to any secret and key:
+
+```yaml
+roleEnvFiles:
+  enabled: true
+  files:
+    # Standard role files
+    "default.env":
+      secretName: "common-config"
+      key: "default.env"
+    "admin.env":
+      secretName: "admin-secrets"
+      key: "admin-config"
+    
+    # Custom files from different secrets
+    "database.env":
+      secretName: "db-config"
+      key: "production.env"
+    "api-keys.env":
+      secretName: "third-party-secrets"
+      key: "api-credentials"
+    "monitoring.env":
+      secretName: "observability-config"
+      key: "metrics.env"
+```
+
+This creates files in `/etc/role-env-files/`:
+- `default.env` (from `common-config` secret, key `default.env`)
+- `admin.env` (from `admin-secrets` secret, key `admin-config`)
+- `database.env` (from `db-config` secret, key `production.env`)
+- `api-keys.env` (from `third-party-secrets` secret, key `api-credentials`)
+- `monitoring.env` (from `observability-config` secret, key `metrics.env`)
 
 See [values-role-env-example.yaml](values-role-env-example.yaml) for a complete example with all secrets.
 
