@@ -1,0 +1,101 @@
+# Example configuration for role-based environment variables
+# ロールベース環境変数の設定例
+
+# Enable role-based environment files feature
+config:
+  roleEnvFiles:
+    enabled: true
+    path: "/etc/role-env-files"
+    loadDefault: true
+
+# Configure secrets for each role
+roleEnvFiles:
+  enabled: true
+  secretNames:
+    default: "agentapi-env-default"
+    admin: "agentapi-env-admin"
+    developer: "agentapi-env-developer"
+    user: "agentapi-env-user"
+    guest: "agentapi-env-guest"
+
+---
+# Example secrets for role-based environment variables
+# 各ロール用のSecret例
+
+# Default environment variables (applied to all roles)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentapi-env-default
+type: Opaque
+stringData:
+  default.env: |
+    # Default environment variables for all roles
+    LOG_LEVEL=info
+    DB_HOST=postgresql.default.svc.cluster.local
+    DB_PORT=5432
+    REDIS_HOST=redis.default.svc.cluster.local
+    REDIS_PORT=6379
+
+---
+# Admin role environment variables
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentapi-env-admin
+type: Opaque
+stringData:
+  admin.env: |
+    # Admin-specific environment variables
+    LOG_LEVEL=debug
+    ADMIN_ACCESS=true
+    SECRET_KEY=admin-secret-123
+    DEBUG_MODE=true
+    FEATURE_FLAGS=all
+
+---
+# Developer role environment variables
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentapi-env-developer
+type: Opaque
+stringData:
+  developer.env: |
+    # Developer-specific environment variables
+    LOG_LEVEL=debug
+    DEV_ACCESS=true
+    FEATURE_FLAGS=dev,staging
+    DEBUG_TOOLS=enabled
+    API_RATE_LIMIT=1000
+
+---
+# User role environment variables
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentapi-env-user
+type: Opaque
+stringData:
+  user.env: |
+    # User-specific environment variables
+    USER_ACCESS=true
+    FEATURE_FLAGS=production
+    API_RATE_LIMIT=100
+    SESSION_TIMEOUT=3600
+
+---
+# Guest role environment variables
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentapi-env-guest
+type: Opaque
+stringData:
+  guest.env: |
+    # Guest-specific environment variables
+    GUEST_ACCESS=true
+    FEATURE_FLAGS=basic
+    API_RATE_LIMIT=10
+    SESSION_TIMEOUT=1800
+    READ_ONLY=true
