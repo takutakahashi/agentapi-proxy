@@ -243,6 +243,58 @@ serviceAccount:
 helm install agentapi-proxy ./helm/agentapi-proxy -f values.yaml
 ```
 
+### With Role-based Environment Variables
+
+AgentAPI Proxy supports loading different environment variables based on the authenticated user's role. This allows for fine-grained configuration per user type.
+
+```yaml
+# values.yaml
+config:
+  roleEnvFiles:
+    enabled: true
+    path: "/etc/role-env-files"
+    loadDefault: true
+
+roleEnvFiles:
+  enabled: true
+  secretNames:
+    default: "agentapi-env-default"
+    admin: "agentapi-env-admin"
+    developer: "agentapi-env-developer"
+    user: "agentapi-env-user"
+    guest: "agentapi-env-guest"
+```
+
+Create secrets for each role:
+
+```bash
+# Default environment variables (applied to all roles)
+kubectl create secret generic agentapi-env-default \
+  --from-literal=default.env="LOG_LEVEL=info
+DB_HOST=postgresql.default.svc.cluster.local
+DB_PORT=5432"
+
+# Admin-specific environment variables
+kubectl create secret generic agentapi-env-admin \
+  --from-literal=admin.env="LOG_LEVEL=debug
+ADMIN_ACCESS=true
+SECRET_KEY=admin-secret-123"
+
+# Developer-specific environment variables
+kubectl create secret generic agentapi-env-developer \
+  --from-literal=developer.env="LOG_LEVEL=debug
+DEV_ACCESS=true
+FEATURE_FLAGS=dev,staging"
+
+# User-specific environment variables
+kubectl create secret generic agentapi-env-user \
+  --from-literal=user.env="USER_ACCESS=true
+FEATURE_FLAGS=production
+API_RATE_LIMIT=100"
+```
+
+See [values-role-env-example.yaml](values-role-env-example.yaml) for a complete example with all secrets.
+
 ### Create Required Secrets
 
 ```bash

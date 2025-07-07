@@ -114,6 +114,13 @@ spec:
             - name: AGENTAPI_AUTH_CONFIG_FILE
               value: "/etc/auth-config/auth-config.yaml"
             {{- end }}
+            # Role-based environment files configuration
+            - name: AGENTAPI_ROLE_ENV_FILES_ENABLED
+              value: {{ .Values.config.roleEnvFiles.enabled | quote }}
+            - name: AGENTAPI_ROLE_ENV_FILES_PATH
+              value: {{ .Values.config.roleEnvFiles.path | quote }}
+            - name: AGENTAPI_ROLE_ENV_FILES_LOAD_DEFAULT
+              value: {{ .Values.config.roleEnvFiles.loadDefault | quote }}
             {{- if .Values.github.enterprise.enabled }}
             {{- if .Values.github.enterprise.baseUrl }}
             - name: GITHUB_URL
@@ -161,6 +168,11 @@ spec:
               mountPath: /etc/auth-config
               readOnly: true
             {{- end }}
+            {{- if .Values.roleEnvFiles.enabled }}
+            - name: role-env-files
+              mountPath: {{ .Values.config.roleEnvFiles.path }}
+              readOnly: true
+            {{- end }}
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -175,6 +187,46 @@ spec:
         - name: auth-config
           configMap:
             name: {{ include "agentapi-proxy.fullname" . }}-auth-config
+        {{- end }}
+        {{- if .Values.roleEnvFiles.enabled }}
+        - name: role-env-files
+          projected:
+            sources:
+            {{- if .Values.roleEnvFiles.secretNames.default }}
+            - secret:
+                name: {{ .Values.roleEnvFiles.secretNames.default }}
+                items:
+                - key: default.env
+                  path: default.env
+            {{- end }}
+            {{- if .Values.roleEnvFiles.secretNames.admin }}
+            - secret:
+                name: {{ .Values.roleEnvFiles.secretNames.admin }}
+                items:
+                - key: admin.env
+                  path: admin.env
+            {{- end }}
+            {{- if .Values.roleEnvFiles.secretNames.developer }}
+            - secret:
+                name: {{ .Values.roleEnvFiles.secretNames.developer }}
+                items:
+                - key: developer.env
+                  path: developer.env
+            {{- end }}
+            {{- if .Values.roleEnvFiles.secretNames.user }}
+            - secret:
+                name: {{ .Values.roleEnvFiles.secretNames.user }}
+                items:
+                - key: user.env
+                  path: user.env
+            {{- end }}
+            {{- if .Values.roleEnvFiles.secretNames.guest }}
+            - secret:
+                name: {{ .Values.roleEnvFiles.secretNames.guest }}
+                items:
+                - key: guest.env
+                  path: guest.env
+            {{- end }}
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

@@ -143,6 +143,12 @@ config:
         clientSecret: ""
         scope: "read:user read:org"
         baseUrl: ""
+  
+  # ロールベース環境変数ファイル設定
+  roleEnvFiles:
+    enabled: false
+    path: "/etc/role-env-files"
+    loadDefault: true
 
 # Environment variables
 env: []
@@ -230,3 +236,32 @@ authConfig:
   #         permissions:
   #           - "read"
   #           - "session:list"
+
+# Role-based environment files configuration
+# This stores environment variables for each role in separate secrets
+roleEnvFiles:
+  # Configuration for role-based environment variables
+  # 各ロール用の環境変数をSecretで管理するための設定
+  enabled: false
+  
+  # Secret names for each role
+  # Each secret should contain environment variables in KEY=VALUE format
+  # 各ロール用のSecret名を指定
+  secretNames:
+    default: ""    # Secret name for default environment variables (all roles)
+    admin: ""      # Secret name for admin role environment variables
+    developer: ""  # Secret name for developer role environment variables
+    user: ""       # Secret name for user role environment variables
+    guest: ""      # Secret name for guest role environment variables
+  
+  # Example secret structure:
+  # apiVersion: v1
+  # kind: Secret
+  # metadata:
+  #   name: agentapi-env-admin
+  # type: Opaque
+  # data:
+  #   admin.env: |
+  #     LOG_LEVEL=debug
+  #     ADMIN_ACCESS=true
+  #     SECRET_KEY=admin-secret-123
