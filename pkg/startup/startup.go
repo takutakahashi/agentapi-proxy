@@ -339,7 +339,7 @@ func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 	return token.GetToken(), nil
 }
 
-// setupRepository sets up the git repository with proper cloning
+// setupRepository sets up the git repository using gh repo clone
 func setupRepository(repoURL, token, cloneDir string) error {
 	log.Printf("Setting up repository in: %s", cloneDir)
 
@@ -350,12 +350,6 @@ func setupRepository(repoURL, token, cloneDir string) error {
 		isGitRepo = true
 	}
 
-	// Create authenticated URL
-	authURL, err := createAuthenticatedURL(repoURL, token)
-	if err != nil {
-		return fmt.Errorf("failed to create authenticated URL: %w", err)
-	}
-
 	if isGitRepo {
 		log.Printf("Git repository detected, updating...")
 		cmd := exec.Command("git", "pull")
@@ -364,55 +358,69 @@ func setupRepository(repoURL, token, cloneDir string) error {
 			return fmt.Errorf("failed to pull updates: %w", err)
 		}
 	} else {
-		log.Printf("Initializing new git repository...")
+		log.Printf("Cloning repository using gh repo clone...")
 
-		// Create directory if it doesn't exist
-		if err := os.MkdirAll(cloneDir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
+		// Extract repository name from URL
+		repoName, err := extractRepoName(repoURL)
+		if err != nil {
+			return fmt.Errorf("failed to extract repository name: %w", err)
 		}
 
-		// Initialize git
-		cmd := exec.Command("git", "init")
-		cmd.Dir = cloneDir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to initialize git: %w", err)
+		// Set up environment for gh command
+		env := os.Environ()
+		env = append(env, fmt.Sprintf("GITHUB_TOKEN=%s", token))
+		
+		// Set GitHub Enterprise host if applicable
+		if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+			githubHost := strings.TrimPrefix(githubAPI, "https://")
+			githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
 		}
 
-		// Add remote
-		cmd = exec.Command("git", "remote", "add", "origin", authURL)
-		cmd.Dir = cloneDir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to add remote: %w", err)
+		// Create parent directory
+		parentDir := filepath.Dir(cloneDir)
+		if err := os.MkdirAll(parentDir, 0755); err != nil {
+			return fmt.Errorf("failed to create parent directory: %w", err)
 		}
 
-		// Fetch
-		cmd = exec.Command("git", "fetch")
-		cmd.Dir = cloneDir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to fetch: %w", err)
+		// Use gh repo clone command
+		cmd := exec.Command("gh", "repo", "clone", repoName, cloneDir)
+		cmd.Env = env
+		cmd.Dir = parentDir
+		
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to clone repository with gh: %w, output: %s", err, string(output))
 		}
-
-		// Try to checkout main, fall back to master
-		branches := []string{"main", "master"}
-		var checkoutErr error
-		for _, branch := range branches {
-			cmd = exec.Command("git", "checkout", branch)
-			cmd.Dir = cloneDir
-			if err := cmd.Run(); err != nil {
-				checkoutErr = err
-				continue
-			}
-			checkoutErr = nil
-			break
-		}
-
-		if checkoutErr != nil {
-			return fmt.Errorf("failed to checkout main or master branch: %w", checkoutErr)
-		}
+		
+		log.Printf("Successfully cloned repository using gh repo clone")
 	}
 
 	log.Printf("Repository setup completed")
 	return nil
+}
+
+// extractRepoName extracts owner/repo from various GitHub URL formats
+func extractRepoName(repoURL string) (string, error) {
+	// Handle various URL formats
+	if strings.HasPrefix(repoURL, "git@") {
+		// git@github.com:owner/repo.git or git@github.enterprise.com:owner/repo.git
+		parts := strings.Split(repoURL, ":")
+		if len(parts) >= 2 {
+			repoPath := parts[len(parts)-1]
+			return strings.TrimSuffix(repoPath, ".git"), nil
+		}
+	} else if strings.Contains(repoURL, "://") {
+		// https://github.com/owner/repo or https://github.enterprise.com/owner/repo
+		parts := strings.Split(repoURL, "/")
+		if len(parts) >= 2 {
+			owner := parts[len(parts)-2]
+			repo := strings.TrimSuffix(parts[len(parts)-1], ".git")
+			return fmt.Sprintf("%s/%s", owner, repo), nil
+		}
+	}
+	
+	return "", fmt.Errorf("unable to extract repository name from URL: %s", repoURL)
 }
 
 // createAuthenticatedURL creates an authenticated URL for git operations
