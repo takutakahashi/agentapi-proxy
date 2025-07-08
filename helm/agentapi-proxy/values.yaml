@@ -34,16 +34,6 @@ podSecurityContext:
   runAsGroup: 999
   fsGroup: 999
 
-securityContext:
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: false
-  runAsNonRoot: true
-  runAsUser: 999
-  runAsGroup: 999
-  capabilities:
-    drop:
-    - ALL
-
 service:
   type: ClusterIP
   port: 8080
