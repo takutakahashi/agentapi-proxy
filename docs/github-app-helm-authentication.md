@@ -395,6 +395,11 @@ kubectl get secret -n agentapi github-app-private-key -o yaml | grep private-key
 ```
 
 **修正方法**:
+
+この問題は agentapi-proxy v1.x.x 以降で自動的に解決されます（init container による権限修正が組み込まれています）。
+
+手動で対処する場合は以下の方法があります：
+
 1. values.yaml で適切な securityContext を設定:
 ```yaml
 podSecurityContext:
@@ -411,7 +416,29 @@ securityContext:
   runAsGroup: 1000
 ```
 
-2. 環境変数による秘密鍵指定のフォールバック:
+2. init container で権限を修正（自動で組み込まれています）:
+```yaml
+initContainers:
+  - name: fix-permissions
+    image: busybox:1.35
+    command:
+      - sh
+      - -c
+      - |
+        if [ -f /etc/github-app/private-key ]; then
+          echo "Fixing permissions for GitHub App private key..."
+          chown 1000:1000 /etc/github-app/private-key
+          chmod 600 /etc/github-app/private-key
+        fi
+    volumeMounts:
+      - name: github-app-private-key
+        mountPath: /etc/github-app
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
+```
+
+3. 環境変数による秘密鍵指定のフォールバック:
 ```yaml
 env:
   - name: GITHUB_APP_PEM
