@@ -264,3 +264,69 @@ func TestUserOwnsSession_OtherSession(t *testing.T) {
 	// User should not have access to other user's session
 	assert.False(t, UserOwnsSession(c, "user2"))
 }
+
+func TestUserOwnsSession_SessionAllRead(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:read permission
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:read"},
+	}
+	c.Set("user", userCtx)
+
+	// User with session_all:read should have access to any session
+	assert.True(t, UserOwnsSession(c, "user2"))
+}
+
+func TestRequirePermission_SessionAllCreate(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:create permission
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:create"},
+	}
+	c.Set("user", userCtx)
+
+	middleware := RequirePermission("session:create")
+	handler := func(c echo.Context) error {
+		return c.String(http.StatusOK, "success")
+	}
+
+	err := middleware(handler)(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestRequirePermission_SessionAllCreateWithoutSessionCreate(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:create permission (but not session:create)
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:create"},
+	}
+	c.Set("user", userCtx)
+
+	middleware := RequirePermission("session:create")
+	handler := func(c echo.Context) error {
+		return c.String(http.StatusOK, "success")
+	}
+
+	err := middleware(handler)(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
