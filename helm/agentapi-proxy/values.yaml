@@ -116,9 +116,6 @@ github:
       secretName: ""
       # Secret 内のキー名（通常は "private-key" のまま使用）
       key: "private-key"
-      # Init container で権限を自動修正するかどうか（デフォルト: true）
-      # GitHub App private key の permission denied エラーを防ぐため
-      fixPermissions: true
 
 # Application Configuration
 config:

@@ -396,49 +396,46 @@ kubectl get secret -n agentapi github-app-private-key -o yaml | grep private-key
 
 **修正方法**:
 
-この問題は agentapi-proxy v1.x.x 以降で自動的に解決されます（init container による権限修正が組み込まれています）。
+この問題は agentapi-proxy v1.x.x 以降で自動的に解決されます。EmptyDir を使用した init container による安全な権限設定が組み込まれています。
 
-手動で対処する場合は以下の方法があります：
+### 自動解決の仕組み
 
-1. values.yaml で適切な securityContext を設定:
-```yaml
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  runAsGroup: 1000
-  fsGroup: 1000
+1. **EmptyDir Volume の使用**: 
+   - 一時的な EmptyDir volume を作成
+   - init container で Secret から EmptyDir にファイルをコピー
+   - 適切な権限（600）とオーナー（1000:1000）を設定
 
-securityContext:
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: false
-  runAsNonRoot: true
-  runAsUser: 1000
-  runAsGroup: 1000
-```
-
-2. init container で権限を修正（自動で組み込まれています）:
+2. **Init Container の処理**:
 ```yaml
 initContainers:
-  - name: fix-permissions
+  - name: setup-github-app-key
     image: busybox:1.35
     command:
       - sh
       - -c
       - |
-        if [ -f /etc/github-app/private-key ]; then
-          echo "Fixing permissions for GitHub App private key..."
-          chown 1000:1000 /etc/github-app/private-key
-          chmod 600 /etc/github-app/private-key
-        fi
+        echo "Setting up GitHub App private key..."
+        cp /tmp/github-app-secret/private-key /etc/github-app/private-key
+        chown 1000:1000 /etc/github-app/private-key
+        chmod 600 /etc/github-app/private-key
     volumeMounts:
+      - name: github-app-private-key-secret
+        mountPath: /tmp/github-app-secret
+        readOnly: true
       - name: github-app-private-key
         mountPath: /etc/github-app
     securityContext:
-      runAsUser: 0
-      runAsGroup: 0
+      runAsUser: 0  # root で実行
 ```
 
-3. 環境変数による秘密鍵指定のフォールバック:
+3. **メインコンテナでの使用**:
+   - メインコンテナは EmptyDir をマウント
+   - 非 root ユーザー（1000）で実行
+   - 適切な権限でファイルを読み取り可能
+
+### 手動対処（緊急時）
+
+環境変数による秘密鍵指定のフォールバック:
 ```yaml
 env:
   - name: GITHUB_APP_PEM
