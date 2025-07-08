@@ -23,6 +23,14 @@ authConfig:
         - "read"
         - "session:create"
         - "session:list"
+      role_priority:
+        guest: 0
+        user: 1
+        viewer: 2
+        tester: 3
+        developer: 4
+        admin: 5
+        superadmin: 6
       team_role_mapping:
         "myorg/admins":
           role: "admin"
