@@ -142,3 +142,23 @@ func GetRoleFromContext(userID string, role string) string {
 	}
 	return role
 }
+
+// LoadTeamEnvVars loads environment variables from a specific file for a team
+func LoadTeamEnvVars(envFile string) ([]EnvVar, error) {
+	if envFile == "" {
+		return nil, nil
+	}
+
+	// Check if the file exists
+	if _, err := os.Stat(envFile); os.IsNotExist(err) {
+		return nil, fmt.Errorf("env file not found: %s", envFile)
+	}
+
+	vars, err := loadEnvFile(envFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load env file %s: %w", envFile, err)
+	}
+
+	log.Printf("[ENV] Loaded %d environment variables from team env file: %s", len(vars), envFile)
+	return vars, nil
+}

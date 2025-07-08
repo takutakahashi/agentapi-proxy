@@ -109,6 +109,7 @@ type UserCache struct {
 	User        *GitHubUserInfo
 	Role        string
 	Permissions []string
+	EnvFile     string
 }
 
 // GitHubAuthProvider handles GitHub OAuth authentication
@@ -156,8 +157,20 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
 		if cached, found := p.userCache.get(cacheKey); found {
 			cachedUser = cached.(*UserCache)
-			log.Printf("[AUTH_DEBUG] Using cached user info for %s: role=%s, permissions=%v",
-				cachedUser.User.Login, cachedUser.Role, cachedUser.Permissions)
+			log.Printf("[AUTH_DEBUG] Using cached user info for %s: role=%s, permissions=%v, envFile=%s",
+				cachedUser.User.Login, cachedUser.Role, cachedUser.Permissions, cachedUser.EnvFile)
+
+			// Re-apply environment variables from cached env file if specified
+			if cachedUser.EnvFile != "" {
+				envVars, err := config.LoadTeamEnvVars(cachedUser.EnvFile)
+				if err != nil {
+					log.Printf("[AUTH_DEBUG] Warning: Failed to load cached env file %s: %v", cachedUser.EnvFile, err)
+				} else {
+					// Apply environment variables
+					applied := config.ApplyEnvVars(envVars)
+					log.Printf("[AUTH_DEBUG] Applied %d environment variables from cached %s", len(applied), cachedUser.EnvFile)
+				}
+			}
 
 			return &UserContext{
 				UserID:      cachedUser.User.Login,
@@ -185,7 +198,19 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 	user.Teams = teams
 
 	// Map user permissions based on team memberships
-	role, permissions := p.mapUserPermissions(teams)
+	role, permissions, envFile := p.mapUserPermissions(teams)
+
+	// Load environment variables from team-specific env file if specified
+	if envFile != "" {
+		envVars, err := config.LoadTeamEnvVars(envFile)
+		if err != nil {
+			log.Printf("[AUTH_DEBUG] Warning: Failed to load env file %s: %v", envFile, err)
+		} else {
+			// Apply environment variables
+			applied := config.ApplyEnvVars(envVars)
+			log.Printf("[AUTH_DEBUG] Applied %d environment variables from %s", len(applied), envFile)
+		}
+	}
 
 	// Cache the complete user information (disabled in test environment)
 	if !isTestEnvironment() {
@@ -194,6 +219,7 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 			User:        user,
 			Role:        role,
 			Permissions: permissions,
+			EnvFile:     envFile,
 		})
 		log.Printf("[AUTH_DEBUG] Cached user info for %s: role=%s, permissions=%v", user.Login, role, permissions)
 	}
@@ -393,7 +419,8 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 }
 
 // mapUserPermissions maps user's team memberships to roles and permissions
-func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (string, []string) {
+// Returns: role, permissions, envFile
+func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (string, []string, string) {
 	log.Printf("[AUTH_DEBUG] Starting mapUserPermissions")
 	log.Printf("[AUTH_DEBUG] Default role: %s", p.config.UserMapping.DefaultRole)
 	log.Printf("[AUTH_DEBUG] Default permissions: %v", p.config.UserMapping.DefaultPermissions)
@@ -402,6 +429,7 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 
 	highestRole := p.config.UserMapping.DefaultRole
 	allPermissions := make(map[string]bool)
+	envFile := "" // Track the env file for the highest priority team
 
 	// Add default permissions
 	for _, perm := range p.config.UserMapping.DefaultPermissions {
@@ -421,6 +449,11 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 			if p.isHigherRole(rule.Role, highestRole) {
 				log.Printf("[AUTH_DEBUG] Upgrading role from %s to %s", highestRole, rule.Role)
 				highestRole = rule.Role
+				// Update env file to match the highest role's team
+				if rule.EnvFile != "" {
+					envFile = rule.EnvFile
+					log.Printf("[AUTH_DEBUG] Setting env file to: %s", envFile)
+				}
 			}
 
 			// Add permissions from this rule
@@ -443,8 +476,8 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 		permissions = append(permissions, perm)
 	}
 
-	log.Printf("[AUTH_DEBUG] Final role: %s, permissions: %v", highestRole, permissions)
-	return highestRole, permissions
+	log.Printf("[AUTH_DEBUG] Final role: %s, permissions: %v, envFile: %s", highestRole, permissions, envFile)
+	return highestRole, permissions, envFile
 }
 
 // isHigherRole checks if role1 has higher priority than role2

@@ -364,13 +364,114 @@ func TestGitHubAuthProvider_MapUserPermissions(t *testing.T) {
 				UserMapping: tt.config,
 			})
 
-			role, permissions := provider.mapUserPermissions(tt.teams)
+			role, permissions, _ := provider.mapUserPermissions(tt.teams)
 			assert.Equal(t, tt.expectedRole, role)
 			assert.Equal(t, tt.expectedPermCount, len(permissions))
 
 			for _, expectedPerm := range tt.expectedPermExists {
 				assert.Contains(t, permissions, expectedPerm)
 			}
+		})
+	}
+}
+
+func TestGitHubAuthProvider_MapUserPermissionsWithEnvFile(t *testing.T) {
+	tests := []struct {
+		name            string
+		teams           []GitHubTeamMembership
+		config          config.GitHubUserMapping
+		expectedRole    string
+		expectedEnvFile string
+	}{
+		{
+			name: "team with env file",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "test-org",
+					TeamSlug:     "dev-team",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"test-org/dev-team": {
+						Role:        "developer",
+						Permissions: []string{"write", "read"},
+						EnvFile:     "/etc/agentapi/envs/dev-team.env",
+					},
+				},
+			},
+			expectedRole:    "developer",
+			expectedEnvFile: "/etc/agentapi/envs/dev-team.env",
+		},
+		{
+			name: "multiple teams with env files - higher role wins",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "test-org",
+					TeamSlug:     "dev-team",
+					Role:         "member",
+				},
+				{
+					Organization: "test-org",
+					TeamSlug:     "admin-team",
+					Role:         "maintainer",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"test-org/dev-team": {
+						Role:        "developer",
+						Permissions: []string{"write", "read"},
+						EnvFile:     "/etc/agentapi/envs/dev-team.env",
+					},
+					"test-org/admin-team": {
+						Role:        "admin",
+						Permissions: []string{"admin", "write", "read"},
+						EnvFile:     "/etc/agentapi/envs/admin-team.env",
+					},
+				},
+			},
+			expectedRole:    "admin",
+			expectedEnvFile: "/etc/agentapi/envs/admin-team.env",
+		},
+		{
+			name: "team without env file",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "test-org",
+					TeamSlug:     "basic-team",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"test-org/basic-team": {
+						Role:        "member",
+						Permissions: []string{"read", "comment"},
+					},
+				},
+			},
+			expectedRole:    "member",
+			expectedEnvFile: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+				UserMapping: tt.config,
+			})
+
+			role, _, envFile := provider.mapUserPermissions(tt.teams)
+			assert.Equal(t, tt.expectedRole, role)
+			assert.Equal(t, tt.expectedEnvFile, envFile)
 		})
 	}
 }

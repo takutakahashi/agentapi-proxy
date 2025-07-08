@@ -89,6 +89,7 @@ type GitHubUserMapping struct {
 type TeamRoleRule struct {
 	Role        string   `json:"role" mapstructure:"role" yaml:"role"`
 	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
+	EnvFile     string   `json:"env_file,omitempty" mapstructure:"env_file" yaml:"env_file"`
 }
 
 // RoleEnvFilesConfig represents role-based environment files configuration
