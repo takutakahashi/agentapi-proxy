@@ -1,6 +1,7 @@
 package startup
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -388,8 +389,14 @@ func setupRepository(repoURL, token, cloneDir string) error {
 		// Set GitHub Enterprise host if applicable
 		if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
 			githubHost := strings.TrimPrefix(githubAPI, "https://")
+			githubHost = strings.TrimPrefix(githubHost, "http://")
 			githubHost = strings.TrimSuffix(githubHost, "/api/v3")
 			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+			
+			// Authenticate gh CLI for GitHub Enterprise Server
+			if err := authenticateGHCLI(githubHost, token, env); err != nil {
+				log.Printf("Warning: Failed to authenticate gh CLI for %s: %v", githubHost, err)
+			}
 		}
 
 		// Create parent directory
@@ -412,6 +419,32 @@ func setupRepository(repoURL, token, cloneDir string) error {
 	}
 
 	log.Printf("Repository setup completed")
+	return nil
+}
+
+// authenticateGHCLI authenticates gh CLI for GitHub Enterprise Server
+func authenticateGHCLI(githubHost, token string, env []string) error {
+	log.Printf("Authenticating gh CLI for Enterprise Server: %s", githubHost)
+
+	// Use gh auth login with token for Enterprise Server
+	cmd := exec.Command("gh", "auth", "login", "--hostname", githubHost, "--with-token")
+	cmd.Stdin = strings.NewReader(token)
+	
+	// Set environment variables to use user-specific home directory
+	if len(env) > 0 {
+		cmd.Env = env
+	} else {
+		cmd.Env = os.Environ()
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh auth login failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	log.Printf("Successfully authenticated gh CLI for %s", githubHost)
 	return nil
 }
 
