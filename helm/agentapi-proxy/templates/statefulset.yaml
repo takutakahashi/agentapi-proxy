@@ -39,7 +39,7 @@ spec:
             - |
               echo "Setting up GitHub App private key..."
               cp /tmp/github-app-secret/{{ .Values.github.app.privateKey.key }} /etc/github-app/private-key
-              chown 1000:1000 /etc/github-app/private-key
+              chown 999:999 /etc/github-app/private-key
               chmod 600 /etc/github-app/private-key
               echo "GitHub App private key setup completed"
               ls -la /etc/github-app/private-key
@@ -49,9 +49,6 @@ spec:
               readOnly: true
             - name: github-app-private-key
               mountPath: /etc/github-app
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
       {{- end }}
       containers:
         - name: {{ .Chart.Name }}
