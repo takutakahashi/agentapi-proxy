@@ -29,6 +29,30 @@ spec:
       serviceAccountName: {{ include "agentapi-proxy.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
+      initContainers:
+        - name: setup-github-app-key
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              echo "Setting up GitHub App private key..."
+              cp /tmp/github-app-secret/{{ .Values.github.app.privateKey.key }} /etc/github-app/private-key
+              chown 1000:1000 /etc/github-app/private-key
+              chmod 600 /etc/github-app/private-key
+              echo "GitHub App private key setup completed"
+              ls -la /etc/github-app/private-key
+          volumeMounts:
+            - name: github-app-private-key-secret
+              mountPath: /tmp/github-app-secret
+              readOnly: true
+            - name: github-app-private-key
+              mountPath: /etc/github-app
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -211,11 +235,10 @@ spec:
         {{- end }}
         {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
         - name: github-app-private-key
+          emptyDir: {}
+        - name: github-app-private-key-secret
           secret:
             secretName: {{ .Values.github.app.privateKey.secretName }}
-            items:
-            - key: {{ .Values.github.app.privateKey.key }}
-              path: private-key
             defaultMode: 0400
         {{- end }}
         {{- with .Values.volumes }}

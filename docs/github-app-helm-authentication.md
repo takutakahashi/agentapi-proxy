@@ -378,7 +378,74 @@ kubectl get configmap -n agentapi agentapi-proxy-auth-config -o yaml
 - Installation IDが正しいか確認
 - 秘密鍵のフォーマットが正しいか確認
 
-#### 4. ネットワーク接続エラー
+#### 4. Private Key Permission Denied エラー
+
+**症状**: `permission denied` エラーまたは `failed to read PEM file` エラー
+
+**原因と対処法**:
+```bash
+# Pod内でファイルの権限確認
+kubectl exec -n agentapi deployment/agentapi-proxy -- ls -la /etc/github-app/private-key
+
+# Pod のセキュリティコンテキスト確認
+kubectl get statefulset -n agentapi agentapi-proxy -o yaml | grep -A 10 securityContext
+
+# 秘密鍵の内容確認 (base64でエンコードされている)
+kubectl get secret -n agentapi github-app-private-key -o yaml | grep private-key
+```
+
+**修正方法**:
+
+この問題は agentapi-proxy v1.x.x 以降で自動的に解決されます。EmptyDir を使用した init container による安全な権限設定が組み込まれています。
+
+### 自動解決の仕組み
+
+1. **EmptyDir Volume の使用**: 
+   - 一時的な EmptyDir volume を作成
+   - init container で Secret から EmptyDir にファイルをコピー
+   - 適切な権限（600）とオーナー（1000:1000）を設定
+
+2. **Init Container の処理**:
+```yaml
+initContainers:
+  - name: setup-github-app-key
+    image: busybox:1.35
+    command:
+      - sh
+      - -c
+      - |
+        echo "Setting up GitHub App private key..."
+        cp /tmp/github-app-secret/private-key /etc/github-app/private-key
+        chown 1000:1000 /etc/github-app/private-key
+        chmod 600 /etc/github-app/private-key
+    volumeMounts:
+      - name: github-app-private-key-secret
+        mountPath: /tmp/github-app-secret
+        readOnly: true
+      - name: github-app-private-key
+        mountPath: /etc/github-app
+    securityContext:
+      runAsUser: 0  # root で実行
+```
+
+3. **メインコンテナでの使用**:
+   - メインコンテナは EmptyDir をマウント
+   - 非 root ユーザー（1000）で実行
+   - 適切な権限でファイルを読み取り可能
+
+### 手動対処（緊急時）
+
+環境変数による秘密鍵指定のフォールバック:
+```yaml
+env:
+  - name: GITHUB_APP_PEM
+    valueFrom:
+      secretKeyRef:
+        name: github-app-private-key
+        key: private-key
+```
+
+#### 5. ネットワーク接続エラー
 
 **症状**: GitHub APIへの接続失敗
 
