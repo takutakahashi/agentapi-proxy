@@ -379,7 +379,7 @@ func setupRepository(repoURL, token, cloneDir string) error {
 			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
 			
 			// Authenticate gh CLI for GitHub Enterprise Server
-			if err := authenticateGHCLI(githubHost, token); err != nil {
+			if err := authenticateGHCLI(githubHost, token, env); err != nil {
 				log.Printf("Warning: Failed to authenticate gh CLI for %s: %v", githubHost, err)
 			}
 		}
@@ -408,12 +408,19 @@ func setupRepository(repoURL, token, cloneDir string) error {
 }
 
 // authenticateGHCLI authenticates gh CLI for GitHub Enterprise Server
-func authenticateGHCLI(githubHost, token string) error {
+func authenticateGHCLI(githubHost, token string, env []string) error {
 	log.Printf("Authenticating gh CLI for Enterprise Server: %s", githubHost)
 
 	// Use gh auth login with token for Enterprise Server
 	cmd := exec.Command("gh", "auth", "login", "--hostname", githubHost, "--with-token")
 	cmd.Stdin = strings.NewReader(token)
+	
+	// Set environment variables to use user-specific home directory
+	if len(env) > 0 {
+		cmd.Env = env
+	} else {
+		cmd.Env = os.Environ()
+	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
