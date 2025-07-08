@@ -298,7 +298,6 @@ func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 
 	// Read private key - try file first, then fallback to environment variable
 	var pemData []byte
-	var err error
 	
 	// Try to read from file first
 	pemData, err = os.ReadFile(pemPath)

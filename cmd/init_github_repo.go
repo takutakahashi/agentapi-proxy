@@ -195,10 +195,9 @@ func getGitHubURL() string {
 func generateInstallationToken(config GitHubAppConfig) (string, error) {
 	// Read private key - try file first, then fallback to environment variable
 	var pemData []byte
-	var err error
 	
 	// Try to read from file first
-	pemData, err = os.ReadFile(config.PEMPath)
+	pemData, err := os.ReadFile(config.PEMPath)
 	if err != nil {
 		// If file read fails, try to get from environment variable
 		if pemContent := os.Getenv("GITHUB_APP_PEM"); pemContent != "" {
