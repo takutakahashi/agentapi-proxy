@@ -229,6 +229,18 @@ func hasPermission(permissions []string, required string) bool {
 		if required == "session:create" && perm == "session_all:create" {
 			return true
 		}
+		// session_all:list 権限でセッション一覧を許可
+		if required == "session:list" && perm == "session_all:list" {
+			return true
+		}
+		// session_all:delete 権限でセッション削除を許可
+		if required == "session:delete" && perm == "session_all:delete" {
+			return true
+		}
+		// session_all:access 権限でセッションアクセスを許可
+		if required == "session:access" && perm == "session_all:access" {
+			return true
+		}
 	}
 	return false
 }
@@ -256,8 +268,13 @@ func UserOwnsSession(c echo.Context, sessionUserID string) bool {
 		return true
 	}
 
-	// Users with session_all:read permission can access all sessions
-	if hasPermission(user.Permissions, "session_all:read") {
+	// Users with session_all:list permission can access all sessions
+	if hasPermission(user.Permissions, "session_all:list") {
+		return true
+	}
+
+	// Users with session_all:access permission can access all sessions
+	if hasPermission(user.Permissions, "session_all:access") {
 		return true
 	}
 
