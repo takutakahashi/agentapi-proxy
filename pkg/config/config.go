@@ -83,7 +83,6 @@ type GitHubUserMapping struct {
 	DefaultRole        string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
 	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
 	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
-	RolePriority       map[string]int          `json:"role_priority,omitempty" mapstructure:"role_priority" yaml:"role_priority"`
 }
 
 // TeamRoleRule represents a team-based role rule

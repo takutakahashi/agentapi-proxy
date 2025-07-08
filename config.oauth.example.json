@@ -17,15 +17,6 @@
       "user_mapping": {
         "default_role": "user",
         "default_permissions": ["read", "session:create", "session:list"],
-        "role_priority": {
-          "guest": 0,
-          "user": 1,
-          "viewer": 2,
-          "member": 3,
-          "developer": 4,
-          "admin": 5,
-          "superadmin": 6
-        },
         "team_role_mapping": {
           "myorg/admins": {
             "role": "admin",
@@ -40,11 +31,6 @@
           "myorg/viewers": {
             "role": "viewer",
             "permissions": ["read", "session:list"]
-          },
-          "myorg/superadmins": {
-            "role": "superadmin",
-            "permissions": ["*"],
-            "env_file": "/etc/agentapi/envs/superadmin.env"
           }
         }
       }

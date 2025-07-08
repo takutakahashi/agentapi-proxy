@@ -482,25 +482,17 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 
 // isHigherRole checks if role1 has higher priority than role2
 func (p *GitHubAuthProvider) isHigherRole(role1, role2 string) bool {
-	// Use configured role priority if available
-	var rolePriority map[string]int
-	if p.config.UserMapping.RolePriority != nil && len(p.config.UserMapping.RolePriority) > 0 {
-		rolePriority = p.config.UserMapping.RolePriority
-	} else {
-		// Default role priority for backward compatibility
-		rolePriority = map[string]int{
-			"guest":     0,
-			"user":      1,
-			"member":    2,
-			"developer": 3,
-			"admin":     4,
-		}
+	rolePriority := map[string]int{
+		"guest":     0,
+		"user":      1,
+		"member":    2,
+		"developer": 3,
+		"admin":     4,
 	}
 
 	priority1, exists1 := rolePriority[role1]
 	priority2, exists2 := rolePriority[role2]
 
-	// If either role is not in the priority map, treat as equal priority (don't upgrade)
 	if !exists1 || !exists2 {
 		return false
 	}
