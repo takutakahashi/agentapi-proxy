@@ -213,11 +213,22 @@ func copyClaudeMdToUserHome(userHomeDir string) error {
 	// Find the source CLAUDE.md file
 	sourcePath := ""
 
-	// First try to find CLAUDE.md in the working directory
-	if _, err := os.Stat(originalClaudeMdPath); err == nil {
-		sourcePath = originalClaudeMdPath
-	} else {
-		// If not found in working directory, try to find it in the agentapi working directory
+	// First try to find CLAUDE.md using environment variable
+	if claudeMdPath := os.Getenv("CLAUDE_MD_PATH"); claudeMdPath != "" {
+		if _, err := os.Stat(claudeMdPath); err == nil {
+			sourcePath = claudeMdPath
+		}
+	}
+
+	// If not found via environment variable, try the working directory
+	if sourcePath == "" {
+		if _, err := os.Stat(originalClaudeMdPath); err == nil {
+			sourcePath = originalClaudeMdPath
+		}
+	}
+
+	// If still not found, try the agentapi working directory
+	if sourcePath == "" {
 		agentapiWorkdir := os.Getenv("AGENTAPI_WORKDIR")
 		if agentapiWorkdir != "" {
 			agentapiClaudeMdPath := filepath.Join(agentapiWorkdir, "CLAUDE.md")
@@ -225,13 +236,13 @@ func copyClaudeMdToUserHome(userHomeDir string) error {
 				sourcePath = agentapiClaudeMdPath
 			}
 		}
+	}
 
-		// If still not found, try the default location
-		if sourcePath == "" {
-			defaultClaudeMdPath := "/home/agentapi/workdir/CLAUDE.md"
-			if _, err := os.Stat(defaultClaudeMdPath); err == nil {
-				sourcePath = defaultClaudeMdPath
-			}
+	// If still not found, try the default location
+	if sourcePath == "" {
+		defaultClaudeMdPath := "/home/agentapi/workdir/CLAUDE.md"
+		if _, err := os.Stat(defaultClaudeMdPath); err == nil {
+			sourcePath = defaultClaudeMdPath
 		}
 	}
 
