@@ -91,7 +91,7 @@ ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Set default CLAUDE_MD_PATH for Docker environment
-ENV CLAUDE_MD_PATH=/home/agentapi/.claude/CLAUDE.md
+ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md

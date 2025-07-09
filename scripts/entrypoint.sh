@@ -2,7 +2,7 @@
 set -e
 
 # Set default CLAUDE_MD_PATH for Docker environment if not already set
-export CLAUDE_MD_PATH="${CLAUDE_MD_PATH:-/home/agentapi/.claude/CLAUDE.md}"
+export CLAUDE_MD_PATH="${CLAUDE_MD_PATH:-/tmp/config/CLAUDE.md}"
 
 # Create .claude directory if it doesn't exist
 mkdir -p /home/agentapi/.claude
