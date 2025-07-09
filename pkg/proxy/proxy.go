@@ -637,25 +637,22 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		userRole = "guest"
 	}
 
-	// Load role-based environment variables
-	if p.config.RoleEnvFiles.Enabled {
-		envVars, err := config.LoadRoleEnvVars(&p.config.RoleEnvFiles, userRole)
-		if err != nil {
-			log.Printf("[ENV] Failed to load role environment variables: %v", err)
-		} else if len(envVars) > 0 {
-			// Apply role-based environment variables to the request
-			if startReq.Environment == nil {
-				startReq.Environment = make(map[string]string)
-			}
-			for _, env := range envVars {
-				// Don't override environment variables explicitly set in the request
-				if _, exists := startReq.Environment[env.Key]; !exists {
-					startReq.Environment[env.Key] = env.Value
-				}
-			}
-			log.Printf("[ENV] Applied %d role-based environment variables for role '%s'", len(envVars), userRole)
-		}
+	// Merge environment variables from multiple sources
+	envConfig := EnvMergeConfig{
+		RoleEnvFiles: &p.config.RoleEnvFiles,
+		UserRole:     userRole,
+		TeamEnvFile:  ExtractTeamEnvFile(startReq.Tags),
+		RequestEnv:   startReq.Environment,
 	}
+
+	mergedEnv, err := MergeEnvironmentVariables(envConfig)
+	if err != nil {
+		log.Printf("[ENV] Failed to merge environment variables: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to merge environment variables")
+	}
+
+	// Replace the request environment with merged values
+	startReq.Environment = mergedEnv
 
 	// Find available port
 	port, err := p.getAvailablePort()
