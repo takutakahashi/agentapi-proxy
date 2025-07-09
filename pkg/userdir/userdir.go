@@ -171,6 +171,12 @@ eval "$(/home/agentapi/.local/bin/mise activate bash)"
 		}
 	}
 
+	// Copy CLAUDE.md to user home directory if it doesn't exist
+	if err := copyClaudeMdToUserHome(userHomeDir); err != nil {
+		// Log the error but don't fail the setup
+		fmt.Printf("Warning: Failed to copy CLAUDE.md to user home directory: %v\n", err)
+	}
+
 	// Return environment variables map
 	return map[string]string{
 		"HOME": userHomeDir,
@@ -180,4 +186,70 @@ eval "$(/home/agentapi/.local/bin/mise activate bash)"
 // IsEnabled returns whether multiple users mode is enabled
 func (m *Manager) IsEnabled() bool {
 	return m.enabled
+}
+
+// copyClaudeMdToUserHome copies CLAUDE.md to the user's home directory
+func copyClaudeMdToUserHome(userHomeDir string) error {
+	// Path to the original CLAUDE.md file
+	originalClaudeMdPath := filepath.Join(userHomeDir, "CLAUDE.md")
+
+	// Path to the .claude directory
+	claudeDir := filepath.Join(userHomeDir, ".claude")
+
+	// Create .claude directory if it doesn't exist
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .claude directory %s: %w", claudeDir, err)
+	}
+
+	// Target path for CLAUDE.md in .claude directory
+	targetClaudeMdPath := filepath.Join(claudeDir, "CLAUDE.md")
+
+	// Check if CLAUDE.md already exists in the target location
+	if _, err := os.Stat(targetClaudeMdPath); err == nil {
+		// File already exists, no need to copy
+		return nil
+	}
+
+	// Find the source CLAUDE.md file
+	sourcePath := ""
+
+	// First try to find CLAUDE.md in the working directory
+	if _, err := os.Stat(originalClaudeMdPath); err == nil {
+		sourcePath = originalClaudeMdPath
+	} else {
+		// If not found in working directory, try to find it in the agentapi working directory
+		agentapiWorkdir := os.Getenv("AGENTAPI_WORKDIR")
+		if agentapiWorkdir != "" {
+			agentapiClaudeMdPath := filepath.Join(agentapiWorkdir, "CLAUDE.md")
+			if _, err := os.Stat(agentapiClaudeMdPath); err == nil {
+				sourcePath = agentapiClaudeMdPath
+			}
+		}
+
+		// If still not found, try the default location
+		if sourcePath == "" {
+			defaultClaudeMdPath := "/home/agentapi/workdir/CLAUDE.md"
+			if _, err := os.Stat(defaultClaudeMdPath); err == nil {
+				sourcePath = defaultClaudeMdPath
+			}
+		}
+	}
+
+	// If CLAUDE.md is not found, return without error
+	if sourcePath == "" {
+		return nil
+	}
+
+	// Read the source file
+	content, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return fmt.Errorf("failed to read source CLAUDE.md file %s: %w", sourcePath, err)
+	}
+
+	// Write to the target location
+	if err := os.WriteFile(targetClaudeMdPath, content, 0644); err != nil {
+		return fmt.Errorf("failed to write CLAUDE.md to %s: %w", targetClaudeMdPath, err)
+	}
+
+	return nil
 }
