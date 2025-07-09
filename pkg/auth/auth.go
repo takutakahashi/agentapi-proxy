@@ -19,6 +19,7 @@ type UserContext struct {
 	AuthType    string          // "api_key" or "github_oauth"
 	GitHubUser  *GitHubUserInfo // GitHub user info when using GitHub auth
 	AccessToken string          // OAuth access token (not serialized)
+	EnvFile     string          // Path to team-specific environment file
 }
 
 // AuthMiddleware creates authentication middleware

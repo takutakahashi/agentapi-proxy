@@ -178,6 +178,7 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 				Permissions: cachedUser.Permissions,
 				AuthType:    "github_oauth",
 				GitHubUser:  cachedUser.User,
+				EnvFile:     cachedUser.EnvFile,
 			}, nil
 		}
 	}
@@ -230,6 +231,7 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 		Permissions: permissions,
 		AuthType:    "github_oauth",
 		GitHubUser:  user,
+		EnvFile:     envFile,
 	}, nil
 }
 

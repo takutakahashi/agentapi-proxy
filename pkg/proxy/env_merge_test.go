@@ -96,14 +96,52 @@ OVERRIDE_VAR=team_override
 			wantErr: false,
 		},
 		{
-			name: "role + team + request (request has highest priority)",
+			name: "role + auth team environment variables (auth team overrides role)",
 			config: EnvMergeConfig{
 				RoleEnvFiles: &config.RoleEnvFilesConfig{
 					Enabled: true,
 					Path:    tempDir,
 				},
-				UserRole:    "test-role",
-				TeamEnvFile: teamEnvFile,
+				UserRole:        "test-role",
+				AuthTeamEnvFile: teamEnvFile,
+			},
+			expected: map[string]string{
+				"ROLE_VAR":     "role_value",
+				"TEAM_VAR":     "team_value",
+				"COMMON_VAR":   "team_common",  // auth team overrides role
+				"OVERRIDE_VAR": "team_override", // auth team overrides role
+			},
+			wantErr: false,
+		},
+		{
+			name: "role + auth team + team environment variables (team overrides auth team)",
+			config: EnvMergeConfig{
+				RoleEnvFiles: &config.RoleEnvFilesConfig{
+					Enabled: true,
+					Path:    tempDir,
+				},
+				UserRole:        "test-role",
+				AuthTeamEnvFile: teamEnvFile,
+				TeamEnvFile:     teamEnvFile, // Same file for simplicity
+			},
+			expected: map[string]string{
+				"ROLE_VAR":     "role_value",
+				"TEAM_VAR":     "team_value",
+				"COMMON_VAR":   "team_common",  // team overrides auth team
+				"OVERRIDE_VAR": "team_override", // team overrides auth team
+			},
+			wantErr: false,
+		},
+		{
+			name: "role + auth team + team + request (request has highest priority)",
+			config: EnvMergeConfig{
+				RoleEnvFiles: &config.RoleEnvFilesConfig{
+					Enabled: true,
+					Path:    tempDir,
+				},
+				UserRole:        "test-role",
+				AuthTeamEnvFile: teamEnvFile,
+				TeamEnvFile:     teamEnvFile,
 				RequestEnv: map[string]string{
 					"REQUEST_VAR":  "request_value",
 					"COMMON_VAR":   "request_common",
@@ -114,8 +152,8 @@ OVERRIDE_VAR=team_override
 				"ROLE_VAR":     "role_value",
 				"TEAM_VAR":     "team_value",
 				"REQUEST_VAR":  "request_value",
-				"COMMON_VAR":   "request_common",   // request overrides both
-				"OVERRIDE_VAR": "request_override", // request overrides both
+				"COMMON_VAR":   "request_common",   // request overrides all
+				"OVERRIDE_VAR": "request_override", // request overrides all
 			},
 			wantErr: false,
 		},
