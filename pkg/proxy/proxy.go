@@ -637,12 +637,20 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		userRole = "guest"
 	}
 
+	// Get auth team env file from user context if available
+	var authTeamEnvFile string
+	if user != nil && user.EnvFile != "" {
+		authTeamEnvFile = user.EnvFile
+		log.Printf("[ENV] Auth team env file from user context: %s", authTeamEnvFile)
+	}
+
 	// Merge environment variables from multiple sources
 	envConfig := EnvMergeConfig{
-		RoleEnvFiles: &p.config.RoleEnvFiles,
-		UserRole:     userRole,
-		TeamEnvFile:  ExtractTeamEnvFile(startReq.Tags),
-		RequestEnv:   startReq.Environment,
+		RoleEnvFiles:    &p.config.RoleEnvFiles,
+		UserRole:        userRole,
+		TeamEnvFile:     ExtractTeamEnvFile(startReq.Tags),
+		AuthTeamEnvFile: authTeamEnvFile,
+		RequestEnv:      startReq.Environment,
 	}
 
 	mergedEnv, err := MergeEnvironmentVariables(envConfig)
