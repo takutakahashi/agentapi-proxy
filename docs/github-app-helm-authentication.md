@@ -68,6 +68,7 @@ Webhook URL: https://your-agentapi.example.com/webhook (使用しない場合は
 2. 対象の組織を選択
 3. **All repositories** または **Selected repositories** を選択してインストール
 4. Installation IDをURLから取得（例：`/settings/installations/12345678` → `12345678`）
+   ※ Installation IDは省略可能で、指定しない場合は自動的に検出されます
 
 ## Helm設定
 
@@ -87,7 +88,7 @@ github:
   app:
     # GitHub App ID
     id: "123456"
-    # GitHub App Installation ID  
+    # GitHub App Installation ID (省略可能：指定しない場合は自動検出)
     installationId: "12345678"
     # GitHub App の秘密鍵を含むSecret
     privateKey:
@@ -173,7 +174,7 @@ github:
     apiUrl: "https://github.company.com/api/v3"
   app:
     id: "123456"
-    installationId: "12345678"
+    installationId: "12345678"  # 省略可能：指定しない場合は自動検出
     privateKey:
       secretName: "github-app-private-key"
       key: "private-key"
@@ -199,7 +200,7 @@ env:
   - name: GITHUB_APP_ID
     value: "123456"
   - name: GITHUB_INSTALLATION_ID  
-    value: "12345678"
+    value: "12345678"  # 省略可能：指定しない場合は自動検出
   - name: GITHUB_APP_PEM
     valueFrom:
       secretKeyRef:

@@ -39,9 +39,9 @@ Parameters:
 Authentication options (one required):
 - GITHUB_TOKEN: Personal access token or existing token
 - GitHub App credentials:
-  - GITHUB_APP_PEM_PATH: Path to private key file
+  - GITHUB_APP_PEM_PATH: Path to private key file (or use GITHUB_APP_PEM environment variable)
   - GITHUB_APP_ID: GitHub App ID
-  - GITHUB_INSTALLATION_ID: Installation ID (optional, will auto-detect if not provided)
+  - GITHUB_INSTALLATION_ID: Installation ID (optional, will auto-detect from repository if not provided)
 
 Optional:
 - GITHUB_API: GitHub API base URL (defaults to https://api.github.com)
@@ -402,10 +402,18 @@ func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase strin
 	}
 	owner, repo := parts[0], parts[1]
 
-	// Read the private key
+	// Read private key - try file first, then fallback to environment variable
+	var pemData []byte
+	
+	// Try to read from file first
 	pemData, err := os.ReadFile(pemPath)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read PEM file: %w", err)
+		// If file read fails, try to get from environment variable
+		if pemContent := os.Getenv("GITHUB_APP_PEM"); pemContent != "" {
+			pemData = []byte(pemContent)
+		} else {
+			return 0, fmt.Errorf("failed to read PEM file %s and GITHUB_APP_PEM environment variable not set: %w", pemPath, err)
+		}
 	}
 
 	// Create GitHub App transport
