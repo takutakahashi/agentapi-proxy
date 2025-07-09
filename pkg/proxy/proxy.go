@@ -653,6 +653,14 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 
 	// Replace the request environment with merged values
 	startReq.Environment = mergedEnv
+	
+	// Debug log merged environment variables
+	if len(mergedEnv) > 0 {
+		log.Printf("[ENV] Merged environment variables (%d):", len(mergedEnv))
+		for key, value := range mergedEnv {
+			log.Printf("[ENV]   %s=%s", key, value)
+		}
+	}
 
 	// Find available port
 	port, err := p.getAvailablePort()

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -174,17 +175,17 @@ func (sm *StartupManager) createAgentAPICommand(ctx context.Context, cfg *Startu
 
 // setupEnvironment sets up the environment for the command
 func (sm *StartupManager) setupEnvironment(cmd *exec.Cmd, cfg *StartupConfig) error {
-	// Start with the current environment
-	baseEnv := os.Environ()
+	// Create environment map to avoid duplicates
+	envMap := make(map[string]string)
 
-	// Add custom environment variables from session
-	if len(cfg.Environment) > 0 {
-		for key, value := range cfg.Environment {
-			baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, value))
+	// Start with the current environment
+	for _, env := range os.Environ() {
+		if parts := strings.SplitN(env, "=", 2); len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
 		}
 	}
 
-	// Set up user-specific HOME environment variable
+	// Set up user-specific HOME environment variable (lower priority)
 	userEnv, err := userdir.SetupUserHome(cfg.UserID)
 	if err != nil {
 		return fmt.Errorf("failed to setup user home: %w", err)
@@ -192,29 +193,53 @@ func (sm *StartupManager) setupEnvironment(cmd *exec.Cmd, cfg *StartupConfig) er
 
 	// Apply user environment variables
 	for key, value := range userEnv {
-		baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", key, value))
+		envMap[key] = value
 	}
 
-	// Add GitHub-related environment variables
+	// Add GitHub-related environment variables (medium priority)
 	if cfg.GitHubToken != "" {
-		baseEnv = append(baseEnv, fmt.Sprintf("GITHUB_TOKEN=%s", cfg.GitHubToken))
+		envMap["GITHUB_TOKEN"] = cfg.GitHubToken
 	}
 	if cfg.GitHubAppID != "" {
-		baseEnv = append(baseEnv, fmt.Sprintf("GITHUB_APP_ID=%s", cfg.GitHubAppID))
+		envMap["GITHUB_APP_ID"] = cfg.GitHubAppID
 	}
 	if cfg.GitHubInstallationID != "" {
-		baseEnv = append(baseEnv, fmt.Sprintf("GITHUB_INSTALLATION_ID=%s", cfg.GitHubInstallationID))
+		envMap["GITHUB_INSTALLATION_ID"] = cfg.GitHubInstallationID
 	}
 	if cfg.GitHubAppPEMPath != "" {
-		baseEnv = append(baseEnv, fmt.Sprintf("GITHUB_APP_PEM_PATH=%s", cfg.GitHubAppPEMPath))
+		envMap["GITHUB_APP_PEM_PATH"] = cfg.GitHubAppPEMPath
 	}
 	if cfg.GitHubAPI != "" {
-		baseEnv = append(baseEnv, fmt.Sprintf("GITHUB_API=%s", cfg.GitHubAPI))
+		envMap["GITHUB_API"] = cfg.GitHubAPI
 	}
 	if cfg.GitHubPersonalAccessToken != "" {
-		baseEnv = append(baseEnv, fmt.Sprintf("GITHUB_PERSONAL_ACCESS_TOKEN=%s", cfg.GitHubPersonalAccessToken))
+		envMap["GITHUB_PERSONAL_ACCESS_TOKEN"] = cfg.GitHubPersonalAccessToken
 	}
 
-	cmd.Env = baseEnv
+	// Add custom environment variables from session (highest priority)
+	if len(cfg.Environment) > 0 {
+		log.Printf("[ENV] Adding %d session environment variables:", len(cfg.Environment))
+		for key, value := range cfg.Environment {
+			log.Printf("[ENV]   Setting %s=%s", key, value)
+			envMap[key] = value
+		}
+	}
+
+	// Convert map to slice
+	var envSlice []string
+	for key, value := range envMap {
+		envSlice = append(envSlice, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	if sm.verbose {
+		log.Printf("[ENV] Final environment variables for agentapi process (%d):", len(envSlice))
+		for _, env := range envSlice {
+			if strings.HasPrefix(env, "TEAM_") || strings.HasPrefix(env, "ROLE_") || strings.HasPrefix(env, "REQUEST_") {
+				log.Printf("[ENV]   %s", env)
+			}
+		}
+	}
+
+	cmd.Env = envSlice
 	return nil
 }
