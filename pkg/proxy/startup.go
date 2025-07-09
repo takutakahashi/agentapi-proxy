@@ -75,6 +75,11 @@ func (sm *StartupManager) StartAgentAPISession(ctx context.Context, cfg *Startup
 		}
 	}
 
+	// Start re-authentication service
+	if err := sm.startReauthService(cfg); err != nil {
+		log.Printf("Warning: Failed to start re-authentication service: %v", err)
+	}
+
 	// Start agentapi server
 	cmd := sm.createAgentAPICommand(ctx, cfg)
 
@@ -242,4 +247,44 @@ func (sm *StartupManager) setupEnvironment(cmd *exec.Cmd, cfg *StartupConfig) er
 
 	cmd.Env = envSlice
 	return nil
+}
+
+// startReauthService starts the re-authentication service
+func (sm *StartupManager) startReauthService(cfg *StartupConfig) error {
+	// Set environment variables for re-authentication service
+	originalEnv := make(map[string]string)
+	
+	// Store original environment and set new ones
+	envVars := map[string]string{
+		"GITHUB_TOKEN":                 cfg.GitHubToken,
+		"GITHUB_APP_ID":                cfg.GitHubAppID,
+		"GITHUB_INSTALLATION_ID":       cfg.GitHubInstallationID,
+		"GITHUB_APP_PEM_PATH":          cfg.GitHubAppPEMPath,
+		"GITHUB_API":                   cfg.GitHubAPI,
+		"GITHUB_PERSONAL_ACCESS_TOKEN": cfg.GitHubPersonalAccessToken,
+	}
+
+	for key, value := range envVars {
+		if value != "" {
+			originalEnv[key] = os.Getenv(key)
+			os.Setenv(key, value)
+		}
+	}
+
+	// Restore environment after function completes
+	defer func() {
+		for key, originalValue := range originalEnv {
+			if originalValue == "" {
+				os.Unsetenv(key)
+			} else {
+				os.Setenv(key, originalValue)
+			}
+		}
+	}()
+
+	if sm.verbose {
+		log.Printf("Starting re-authentication service for GitHub tokens")
+	}
+
+	return startup.StartReauthService()
 }

@@ -13,10 +13,28 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v57/github"
 )
+
+// Global re-authentication service instance
+var globalReauthService *ReauthService
+
+// ReauthService manages periodic re-authentication for GitHub tokens
+type ReauthService struct {
+	mu              sync.RWMutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	ticker          *time.Ticker
+	interval        time.Duration
+	currentToken    string
+	running         bool
+	tokenUpdateChan chan string
+	errorChan       chan error
+}
 
 // SetupClaudeCode sets up Claude Code configuration
 func SetupClaudeCode() error {
@@ -272,7 +290,7 @@ func getGitHubToken() (string, error) {
 	pemPath := os.Getenv("GITHUB_APP_PEM_PATH")
 
 	if appID != "" && installationID != "" && pemPath != "" {
-		return generateGitHubAppToken(appID, installationID, pemPath)
+		return GenerateGitHubAppToken(appID, installationID, pemPath)
 	}
 
 	// Check for GITHUB_PERSONAL_ACCESS_TOKEN as fallback
@@ -283,8 +301,8 @@ func getGitHubToken() (string, error) {
 	return "", fmt.Errorf("no GitHub authentication found: GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, or GitHub App credentials (GITHUB_APP_ID, GITHUB_INSTALLATION_ID, GITHUB_APP_PEM_PATH) are required")
 }
 
-// generateGitHubAppToken generates a GitHub App installation token
-func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string, error) {
+// GenerateGitHubAppToken generates a GitHub App installation token
+func GenerateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string, error) {
 	// Parse app ID
 	appID, err := strconv.ParseInt(appIDStr, 10, 64)
 	if err != nil {
@@ -482,4 +500,293 @@ func getGitHubURL() string {
 		return githubAPI
 	}
 	return "https://github.com"
+}
+
+// StartReauthService starts the global re-authentication service
+func StartReauthService() error {
+	// Only start if GitHub App credentials are available
+	appID := os.Getenv("GITHUB_APP_ID")
+	installationID := os.Getenv("GITHUB_INSTALLATION_ID")
+	pemPath := os.Getenv("GITHUB_APP_PEM_PATH")
+	
+	if appID == "" || installationID == "" || pemPath == "" {
+		log.Printf("GitHub App credentials not found, skipping re-authentication service")
+		return nil
+	}
+
+	// Create and start the service with 4-hour interval
+	service := NewReauthService(4 * time.Hour)
+	if err := service.Start(); err != nil {
+		return fmt.Errorf("failed to start re-authentication service: %w", err)
+	}
+
+	// Store globally for later cleanup
+	globalReauthService = service
+
+	// Start monitoring for errors
+	go func() {
+		for err := range service.Errors() {
+			log.Printf("Re-authentication service error: %v", err)
+		}
+	}()
+
+	return nil
+}
+
+// StopReauthService stops the global re-authentication service
+func StopReauthService() {
+	if globalReauthService != nil {
+		globalReauthService.Stop()
+		globalReauthService = nil
+	}
+}
+
+// NewReauthService creates a new re-authentication service
+func NewReauthService(interval time.Duration) *ReauthService {
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	return &ReauthService{
+		ctx:             ctx,
+		cancel:          cancel,
+		interval:        interval,
+		tokenUpdateChan: make(chan string, 1),
+		errorChan:       make(chan error, 1),
+	}
+}
+
+// Start begins the periodic re-authentication process
+func (rs *ReauthService) Start() error {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+
+	if rs.running {
+		return fmt.Errorf("re-authentication service is already running")
+	}
+
+	// Perform initial authentication
+	token, err := rs.authenticate()
+	if err != nil {
+		return fmt.Errorf("initial authentication failed: %w", err)
+	}
+
+	rs.currentToken = token
+	rs.running = true
+	rs.ticker = time.NewTicker(rs.interval)
+
+	// Start the background goroutine
+	go rs.run()
+
+	log.Printf("Re-authentication service started with interval: %v", rs.interval)
+	return nil
+}
+
+// Stop terminates the re-authentication service
+func (rs *ReauthService) Stop() {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+
+	if !rs.running {
+		return
+	}
+
+	rs.running = false
+	rs.cancel()
+	
+	if rs.ticker != nil {
+		rs.ticker.Stop()
+	}
+
+	log.Printf("Re-authentication service stopped")
+}
+
+// GetCurrentToken returns the current authentication token
+func (rs *ReauthService) GetCurrentToken() string {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	return rs.currentToken
+}
+
+// Errors returns a channel that receives authentication errors
+func (rs *ReauthService) Errors() <-chan error {
+	return rs.errorChan
+}
+
+// run is the main loop for the re-authentication service
+func (rs *ReauthService) run() {
+	for {
+		select {
+		case <-rs.ctx.Done():
+			return
+		case <-rs.ticker.C:
+			rs.performReauth()
+		}
+	}
+}
+
+// performReauth performs the re-authentication process
+func (rs *ReauthService) performReauth() {
+	log.Printf("Starting re-authentication process...")
+
+	token, err := rs.authenticate()
+	if err != nil {
+		log.Printf("Re-authentication failed: %v", err)
+		select {
+		case rs.errorChan <- err:
+		default:
+		}
+		return
+	}
+
+	rs.mu.Lock()
+	rs.currentToken = token
+	rs.mu.Unlock()
+
+	// Update gh CLI and git remote
+	if err := rs.updateGHCLI(token); err != nil {
+		log.Printf("Failed to update gh CLI: %v", err)
+		select {
+		case rs.errorChan <- fmt.Errorf("failed to update gh CLI: %w", err):
+		default:
+		}
+	}
+
+	if err := rs.updateGitRemote(token); err != nil {
+		log.Printf("Failed to update git remote: %v", err)
+		select {
+		case rs.errorChan <- fmt.Errorf("failed to update git remote: %w", err):
+		default:
+		}
+	}
+
+	// Notify about token update
+	select {
+	case rs.tokenUpdateChan <- token:
+	default:
+	}
+
+	log.Printf("Re-authentication completed successfully")
+}
+
+// authenticate generates a new GitHub token
+func (rs *ReauthService) authenticate() (string, error) {
+	// Check for personal access token first
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		return token, nil
+	}
+
+	// Try GitHub App authentication
+	appID := os.Getenv("GITHUB_APP_ID")
+	installationID := os.Getenv("GITHUB_INSTALLATION_ID")
+	pemPath := os.Getenv("GITHUB_APP_PEM_PATH")
+
+	if appID != "" && installationID != "" && pemPath != "" {
+		return GenerateGitHubAppToken(appID, installationID, pemPath)
+	}
+
+	// Check for personal access token as fallback
+	if token := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"); token != "" {
+		return token, nil
+	}
+
+	return "", fmt.Errorf("no GitHub authentication found: GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, or GitHub App credentials are required")
+}
+
+// updateGHCLI updates the GitHub CLI authentication
+func (rs *ReauthService) updateGHCLI(token string) error {
+	// Set environment
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GITHUB_TOKEN=%s", token))
+
+	// Handle GitHub Enterprise
+	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+		githubHost := strings.TrimPrefix(githubAPI, "https://")
+		githubHost = strings.TrimPrefix(githubHost, "http://")
+		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+		
+		log.Printf("Updating gh CLI authentication for Enterprise Server: %s", githubHost)
+		
+		// Use gh auth login with token for Enterprise Server
+		cmd := exec.Command("gh", "auth", "login", "--hostname", githubHost, "--with-token")
+		cmd.Stdin = strings.NewReader(token)
+		cmd.Env = env
+		
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("gh auth login failed for %s: %w", githubHost, err)
+		}
+		
+		log.Printf("Successfully updated gh CLI authentication for %s", githubHost)
+	} else {
+		// For regular GitHub.com, gh will use GITHUB_TOKEN environment variable
+		log.Printf("Updated gh CLI authentication for github.com")
+	}
+
+	return nil
+}
+
+// updateGitRemote updates the git remote URL with the new token
+func (rs *ReauthService) updateGitRemote(token string) error {
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current working directory: %w", err)
+	}
+
+	// Check if we're in a git repository
+	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	cmd.Dir = cwd
+	if err := cmd.Run(); err != nil {
+		log.Printf("Not in a git repository, skipping git remote update")
+		return nil
+	}
+
+	// Get current remote URL
+	cmd = exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = cwd
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get remote URL: %w", err)
+	}
+
+	currentURL := strings.TrimSpace(string(output))
+	
+	// Update remote URL with new token
+	newURL, err := rs.updateURLWithToken(currentURL, token)
+	if err != nil {
+		return fmt.Errorf("failed to update URL with token: %w", err)
+	}
+
+	// Set new remote URL
+	cmd = exec.Command("git", "remote", "set-url", "origin", newURL)
+	cmd.Dir = cwd
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to set remote URL: %w", err)
+	}
+
+	log.Printf("Successfully updated git remote URL")
+	return nil
+}
+
+// updateURLWithToken updates a git URL with a new token
+func (rs *ReauthService) updateURLWithToken(currentURL, token string) (string, error) {
+	// Skip SSH URLs
+	if strings.HasPrefix(currentURL, "git@") {
+		return currentURL, nil
+	}
+
+	// Handle HTTPS URLs
+	if strings.HasPrefix(currentURL, "https://") {
+		// Remove existing token if present
+		if strings.Contains(currentURL, "@") {
+			parts := strings.Split(currentURL, "@")
+			if len(parts) >= 2 {
+				currentURL = "https://" + parts[1]
+			}
+		}
+
+		// Insert new token
+		newURL := strings.Replace(currentURL, "https://", fmt.Sprintf("https://%s@", token), 1)
+		return newURL, nil
+	}
+
+	return currentURL, nil
 }
