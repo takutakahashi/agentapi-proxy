@@ -271,8 +271,32 @@ func getGitHubToken() (string, error) {
 	installationID := os.Getenv("GITHUB_INSTALLATION_ID")
 	pemPath := os.Getenv("GITHUB_APP_PEM_PATH")
 
-	if appID != "" && installationID != "" && pemPath != "" {
-		return generateGitHubAppToken(appID, installationID, pemPath)
+	// GitHub App authentication requires App ID and PEM path
+	if appID != "" && pemPath != "" {
+		// If Installation ID is not provided, try auto-discovery
+		if installationID == "" {
+			// Auto-discovery requires repository fullname
+			repoFullName := os.Getenv("GITHUB_REPO_FULLNAME")
+			if repoFullName == "" {
+				log.Println("GITHUB_INSTALLATION_ID not provided and GITHUB_REPO_FULLNAME not set for auto-discovery")
+				// Fall through to next authentication method
+			} else {
+				log.Printf("GITHUB_INSTALLATION_ID not provided, attempting auto-discovery for repository: %s", repoFullName)
+				discoveredID, err := autoDiscoverInstallationID(appID, pemPath, repoFullName)
+				if err != nil {
+					log.Printf("Failed to auto-discover installation ID: %v", err)
+					// Fall through to next authentication method
+				} else {
+					installationID = discoveredID
+					log.Printf("Auto-discovered installation ID: %s", installationID)
+				}
+			}
+		}
+		
+		// If we have installation ID (manual or auto-discovered), proceed with token generation
+		if installationID != "" {
+			return generateGitHubAppToken(appID, installationID, pemPath)
+		}
 	}
 
 	// Check for GITHUB_PERSONAL_ACCESS_TOKEN as fallback
@@ -280,7 +304,7 @@ func getGitHubToken() (string, error) {
 		return token, nil
 	}
 
-	return "", fmt.Errorf("no GitHub authentication found: GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, or GitHub App credentials (GITHUB_APP_ID, GITHUB_INSTALLATION_ID, GITHUB_APP_PEM_PATH) are required")
+	return "", fmt.Errorf("no GitHub authentication found: GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, or GitHub App credentials (GITHUB_APP_ID, GITHUB_APP_PEM_PATH) are required. GITHUB_INSTALLATION_ID is optional and will be auto-discovered if GITHUB_REPO_FULLNAME is set")
 }
 
 // generateGitHubAppToken generates a GitHub App installation token
@@ -353,6 +377,98 @@ func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 	}
 
 	return token.GetToken(), nil
+}
+
+// autoDiscoverInstallationID discovers the installation ID for a given repository
+func autoDiscoverInstallationID(appIDStr, pemPath, repoFullName string) (string, error) {
+	// Parse repository owner and name from fullname
+	parts := strings.Split(repoFullName, "/")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid repository fullname format, expected 'owner/repo': %s", repoFullName)
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Parse app ID
+	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
+	}
+
+	// Read private key - try file first, then fallback to environment variable
+	var pemData []byte
+	
+	// Try to read from file first
+	pemData, err = os.ReadFile(pemPath)
+	if err != nil {
+		// If file read fails, try to get from environment variable
+		if pemContent := os.Getenv("GITHUB_APP_PEM"); pemContent != "" {
+			pemData = []byte(pemContent)
+		} else {
+			return "", fmt.Errorf("failed to read PEM file %s and GITHUB_APP_PEM environment variable not set: %w", pemPath, err)
+		}
+	}
+
+	// Create GitHub App transport
+	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, appID, pemData)
+	if err != nil {
+		return "", fmt.Errorf("failed to create GitHub App transport: %w", err)
+	}
+
+	// Get API base URL
+	apiBase := os.Getenv("GITHUB_API")
+	if apiBase == "" {
+		apiBase = "https://api.github.com"
+	}
+
+	// Set base URL if specified (for GitHub Enterprise)
+	if apiBase != "" && apiBase != "https://api.github.com" {
+		transport.BaseURL = apiBase
+	}
+
+	// Create GitHub client
+	var client *github.Client
+	if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
+		client = github.NewClient(&http.Client{Transport: transport})
+	} else {
+		client, err = github.NewClient(&http.Client{Transport: transport}).WithEnterpriseURLs(apiBase, apiBase)
+		if err != nil {
+			return "", fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
+		}
+	}
+
+	ctx := context.Background()
+
+	// List installations for the app
+	installations, _, err := client.Apps.ListInstallations(ctx, &github.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list installations: %w", err)
+	}
+
+	// Check each installation for repository access
+	for _, installation := range installations {
+		installationID := installation.GetID()
+
+		// Create installation client to check repository access
+		installationTransport := ghinstallation.NewFromAppsTransport(transport, installationID)
+		var installationClient *github.Client
+		if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
+			installationClient = github.NewClient(&http.Client{Transport: installationTransport})
+		} else {
+			installationClient, err = github.NewClient(&http.Client{Transport: installationTransport}).WithEnterpriseURLs(apiBase, apiBase)
+			if err != nil {
+				continue // Skip this installation if we can't create a client
+			}
+		}
+
+		// Try to access the repository with this installation
+		_, _, err := installationClient.Repositories.Get(ctx, owner, repo)
+		if err == nil {
+			// Successfully accessed the repository with this installation
+			return strconv.FormatInt(installationID, 10), nil
+		}
+	}
+
+	return "", fmt.Errorf("no installation found with access to repository %s/%s", owner, repo)
 }
 
 // setupRepository sets up the git repository using gh repo clone
