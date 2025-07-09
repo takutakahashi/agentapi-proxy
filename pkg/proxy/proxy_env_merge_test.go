@@ -50,16 +50,16 @@ OVERRIDE_VAR=team_override`
 		expected map[string]string
 	}{
 		{
-			name: "Only role-based env vars",
+			name: "Only request env vars",
 			request: StartRequest{
-				Tags: map[string]string{
-					"user_role": "test-role",
+				Environment: map[string]string{
+					"REQUEST_VAR1": "value1",
+					"REQUEST_VAR2": "value2",
 				},
 			},
 			expected: map[string]string{
-				"ROLE_VAR":     "role_value",
-				"COMMON_VAR":   "role_common",
-				"OVERRIDE_VAR": "role_override",
+				"REQUEST_VAR1": "value1",
+				"REQUEST_VAR2": "value2",
 			},
 		},
 		{

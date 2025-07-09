@@ -637,46 +637,20 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		userRole = "guest"
 	}
 
-	// Load environment variables from multiple sources
-	// Priority order (highest to lowest): request env > team env file > role env file
-	mergedEnv := make(map[string]string)
-
-	// 1. Load role-based environment variables (lowest priority)
-	if p.config.RoleEnvFiles.Enabled {
-		envVars, err := config.LoadRoleEnvVars(&p.config.RoleEnvFiles, userRole)
-		if err != nil {
-			log.Printf("[ENV] Failed to load role environment variables: %v", err)
-		} else if len(envVars) > 0 {
-			for _, env := range envVars {
-				mergedEnv[env.Key] = env.Value
-			}
-			log.Printf("[ENV] Loaded %d role-based environment variables for role '%s'", len(envVars), userRole)
-		}
+	// Merge environment variables from multiple sources
+	envConfig := EnvMergeConfig{
+		RoleEnvFiles: &p.config.RoleEnvFiles,
+		UserRole:     userRole,
+		TeamEnvFile:  ExtractTeamEnvFile(startReq.Tags),
+		RequestEnv:   startReq.Environment,
 	}
 
-	// 2. Load team/organization specific environment file if specified (medium priority)
-	if startReq.Tags != nil {
-		if envFile, exists := startReq.Tags["env_file"]; exists && envFile != "" {
-			teamEnvVars, err := config.LoadTeamEnvVars(envFile)
-			if err != nil {
-				log.Printf("[ENV] Failed to load team environment file %s: %v", envFile, err)
-			} else if len(teamEnvVars) > 0 {
-				for _, env := range teamEnvVars {
-					mergedEnv[env.Key] = env.Value
-				}
-				log.Printf("[ENV] Loaded %d environment variables from team file: %s", len(teamEnvVars), envFile)
-			}
-		}
+	mergedEnv, err := MergeEnvironmentVariables(envConfig)
+	if err != nil {
+		log.Printf("[ENV] Failed to merge environment variables: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to merge environment variables")
 	}
 
-	// 3. Override with request environment variables (highest priority)
-	if startReq.Environment != nil {
-		for key, value := range startReq.Environment {
-			mergedEnv[key] = value
-		}
-		log.Printf("[ENV] Applied %d environment variables from request", len(startReq.Environment))
-	}
-	
 	// Replace the request environment with merged values
 	startReq.Environment = mergedEnv
 
