@@ -27,6 +27,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
@@ -1136,6 +1137,9 @@ func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte, tags
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (p *Proxy) Shutdown(timeout time.Duration) error {
 	log.Printf("Shutting down proxy, terminating %d active sessions...", len(p.sessions))
+	
+	// Stop the re-authentication service
+	startup.StopReauthService()
 
 	// Get all session cancel functions
 	p.sessionsMutex.RLock()
