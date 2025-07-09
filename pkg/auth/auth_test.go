@@ -264,3 +264,159 @@ func TestUserOwnsSession_OtherSession(t *testing.T) {
 	// User should not have access to other user's session
 	assert.False(t, UserOwnsSession(c, "user2"))
 }
+
+func TestUserOwnsSession_SessionAllList(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:list permission
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:list"},
+	}
+	c.Set("user", userCtx)
+
+	// User with session_all:list should have access to any session
+	assert.True(t, UserOwnsSession(c, "user2"))
+}
+
+func TestUserOwnsSession_SessionAllAccess(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:access permission
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:access"},
+	}
+	c.Set("user", userCtx)
+
+	// User with session_all:access should have access to any session
+	assert.True(t, UserOwnsSession(c, "user2"))
+}
+
+func TestRequirePermission_SessionAllCreate(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:create permission
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:create"},
+	}
+	c.Set("user", userCtx)
+
+	middleware := RequirePermission("session:create")
+	handler := func(c echo.Context) error {
+		return c.String(http.StatusOK, "success")
+	}
+
+	err := middleware(handler)(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestRequirePermission_SessionAllCreateWithoutSessionCreate(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:create permission (but not session:create)
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:create"},
+	}
+	c.Set("user", userCtx)
+
+	middleware := RequirePermission("session:create")
+	handler := func(c echo.Context) error {
+		return c.String(http.StatusOK, "success")
+	}
+
+	err := middleware(handler)(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestRequirePermission_SessionAllList(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:list permission
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:list"},
+	}
+	c.Set("user", userCtx)
+
+	middleware := RequirePermission("session:list")
+	handler := func(c echo.Context) error {
+		return c.String(http.StatusOK, "success")
+	}
+
+	err := middleware(handler)(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestRequirePermission_SessionAllDelete(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:delete permission
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:delete"},
+	}
+	c.Set("user", userCtx)
+
+	middleware := RequirePermission("session:delete")
+	handler := func(c echo.Context) error {
+		return c.String(http.StatusOK, "success")
+	}
+
+	err := middleware(handler)(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestRequirePermission_SessionAllAccess(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// Set user context with session_all:access permission
+	userCtx := &UserContext{
+		UserID:      "user1",
+		Role:        "user",
+		Permissions: []string{"session_all:access"},
+	}
+	c.Set("user", userCtx)
+
+	middleware := RequirePermission("session:access")
+	handler := func(c echo.Context) error {
+		return c.String(http.StatusOK, "success")
+	}
+
+	err := middleware(handler)(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
