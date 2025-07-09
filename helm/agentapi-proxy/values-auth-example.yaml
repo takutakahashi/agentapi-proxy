@@ -28,6 +28,7 @@ authConfig:
           role: "admin"
           permissions:
             - "*"
+          env_file: "/etc/agentapi/envs/admin.env"
         "myorg/developers":
           role: "developer"
           permissions:
@@ -38,6 +39,7 @@ authConfig:
             - "session:list"
             - "session:delete"
             - "session:access"
+          env_file: "/etc/agentapi/envs/developer.env"
         "myorg/qa-team":
           role: "tester"
           permissions:
@@ -45,6 +47,7 @@ authConfig:
             - "session:create"
             - "session:list"
             - "session:access"
+          env_file: "/etc/agentapi/envs/qa.env"
         "myorg/viewers":
           role: "viewer"
           permissions:

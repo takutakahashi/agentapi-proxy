@@ -20,11 +20,13 @@
         "team_role_mapping": {
           "myorg/admins": {
             "role": "admin",
-            "permissions": ["*"]
+            "permissions": ["*"],
+            "env_file": "/etc/agentapi/envs/admin.env"
           },
           "myorg/developers": {
             "role": "developer",
-            "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"]
+            "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"],
+            "env_file": "/etc/agentapi/envs/developer.env"
           },
           "myorg/viewers": {
             "role": "viewer",
