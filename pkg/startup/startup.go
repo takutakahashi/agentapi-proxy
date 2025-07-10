@@ -241,7 +241,7 @@ func InitGitHubRepo(repoFullName, cloneDir string, ignoreMissingConfig bool) err
 	}
 
 	// Get GitHub token for authentication
-	token, err := getGitHubToken()
+	token, err := getGitHubToken(repoFullName)
 	if err != nil {
 		return fmt.Errorf("failed to get GitHub token: %w", err)
 	}
@@ -260,7 +260,7 @@ func InitGitHubRepo(repoFullName, cloneDir string, ignoreMissingConfig bool) err
 }
 
 // getGitHubToken retrieves the GitHub token for authentication
-func getGitHubToken() (string, error) {
+func getGitHubToken(repoFullName string) (string, error) {
 	// Check for personal access token first
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		return token, nil
@@ -276,9 +276,12 @@ func getGitHubToken() (string, error) {
 		// If Installation ID is not provided, try auto-discovery
 		if installationID == "" {
 			// Auto-discovery requires repository fullname
-			repoFullName := os.Getenv("GITHUB_REPO_FULLNAME")
 			if repoFullName == "" {
-				log.Println("GITHUB_INSTALLATION_ID not provided and GITHUB_REPO_FULLNAME not set for auto-discovery")
+				// Fall back to environment variable if not provided
+				repoFullName = os.Getenv("GITHUB_REPO_FULLNAME")
+			}
+			if repoFullName == "" {
+				log.Println("GITHUB_INSTALLATION_ID not provided and repoFullName not available for auto-discovery")
 				// Fall through to next authentication method
 			} else {
 				log.Printf("GITHUB_INSTALLATION_ID not provided, attempting auto-discovery for repository: %s", repoFullName)
@@ -292,7 +295,7 @@ func getGitHubToken() (string, error) {
 				}
 			}
 		}
-		
+
 		// If we have installation ID (manual or auto-discovered), proceed with token generation
 		if installationID != "" {
 			return generateGitHubAppToken(appID, installationID, pemPath)
@@ -323,7 +326,7 @@ func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 
 	// Read private key - try file first, then fallback to environment variable
 	var pemData []byte
-	
+
 	// Try to read from file first
 	pemData, err = os.ReadFile(pemPath)
 	if err != nil {
@@ -337,7 +340,7 @@ func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 			if statErr != nil {
 				return "", fmt.Errorf("failed to read PEM file %s: file does not exist or is not accessible. Also checked GITHUB_APP_PEM environment variable: %w", pemPath, err)
 			}
-			return "", fmt.Errorf("failed to read PEM file %s (size: %d bytes, mode: %s). Also checked GITHUB_APP_PEM environment variable: %w", 
+			return "", fmt.Errorf("failed to read PEM file %s (size: %d bytes, mode: %s). Also checked GITHUB_APP_PEM environment variable: %w",
 				pemPath, fileInfo.Size(), fileInfo.Mode(), err)
 		}
 	}
@@ -396,7 +399,7 @@ func autoDiscoverInstallationID(appIDStr, pemPath, repoFullName string) (string,
 
 	// Read private key - try file first, then fallback to environment variable
 	var pemData []byte
-	
+
 	// Try to read from file first
 	pemData, err = os.ReadFile(pemPath)
 	if err != nil {
@@ -501,14 +504,14 @@ func setupRepository(repoURL, token, cloneDir string) error {
 		// Set up environment for gh command
 		env := os.Environ()
 		env = append(env, fmt.Sprintf("GITHUB_TOKEN=%s", token))
-		
+
 		// Set GitHub Enterprise host if applicable
 		if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
 			githubHost := strings.TrimPrefix(githubAPI, "https://")
 			githubHost = strings.TrimPrefix(githubHost, "http://")
 			githubHost = strings.TrimSuffix(githubHost, "/api/v3")
 			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
-			
+
 			// Authenticate gh CLI for GitHub Enterprise Server
 			if err := authenticateGHCLI(githubHost, token, env); err != nil {
 				log.Printf("Warning: Failed to authenticate gh CLI for %s: %v", githubHost, err)
@@ -525,12 +528,12 @@ func setupRepository(repoURL, token, cloneDir string) error {
 		cmd := exec.Command("gh", "repo", "clone", repoName, cloneDir)
 		cmd.Env = env
 		cmd.Dir = parentDir
-		
+
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to clone repository with gh: %w, output: %s", err, string(output))
 		}
-		
+
 		log.Printf("Successfully cloned repository using gh repo clone")
 	}
 
@@ -545,7 +548,7 @@ func authenticateGHCLI(githubHost, token string, env []string) error {
 	// Use gh auth login with token for Enterprise Server
 	cmd := exec.Command("gh", "auth", "login", "--hostname", githubHost, "--with-token")
 	cmd.Stdin = strings.NewReader(token)
-	
+
 	// Set environment variables to use user-specific home directory
 	if len(env) > 0 {
 		cmd.Env = env
@@ -583,10 +586,9 @@ func extractRepoName(repoURL string) (string, error) {
 			return fmt.Sprintf("%s/%s", owner, repo), nil
 		}
 	}
-	
+
 	return "", fmt.Errorf("unable to extract repository name from URL: %s", repoURL)
 }
-
 
 // getGitHubURL returns the GitHub URL (supports enterprise)
 func getGitHubURL() string {

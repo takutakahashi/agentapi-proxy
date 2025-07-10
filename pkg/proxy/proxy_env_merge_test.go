@@ -167,7 +167,7 @@ OVERRIDE_VAR=team_override`
 func TestEnvironmentVariableMergingWithNonexistentFiles(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Auth.Enabled = false
-	
+
 	proxy := NewProxy(cfg, false)
 
 	// Request with non-existent env_file

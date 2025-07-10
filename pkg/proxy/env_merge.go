@@ -8,11 +8,11 @@ import (
 
 // EnvMergeConfig contains configuration for environment variable merging
 type EnvMergeConfig struct {
-	RoleEnvFiles     *config.RoleEnvFilesConfig
-	UserRole         string
-	TeamEnvFile      string // From tags["env_file"]
-	AuthTeamEnvFile  string // From team_role_mapping
-	RequestEnv       map[string]string
+	RoleEnvFiles    *config.RoleEnvFilesConfig
+	UserRole        string
+	TeamEnvFile     string // From tags["env_file"]
+	AuthTeamEnvFile string // From team_role_mapping
+	RequestEnv      map[string]string
 }
 
 // MergeEnvironmentVariables merges environment variables from multiple sources
