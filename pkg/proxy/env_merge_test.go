@@ -42,10 +42,10 @@ OVERRIDE_VAR=team_override
 		wantErr  bool
 	}{
 		{
-			name: "empty config returns empty map",
-			config: EnvMergeConfig{},
+			name:     "empty config returns empty map",
+			config:   EnvMergeConfig{},
 			expected: map[string]string{},
-			wantErr: false,
+			wantErr:  false,
 		},
 		{
 			name: "only request environment variables",
@@ -90,7 +90,7 @@ OVERRIDE_VAR=team_override
 			expected: map[string]string{
 				"ROLE_VAR":     "role_value",
 				"TEAM_VAR":     "team_value",
-				"COMMON_VAR":   "team_common",  // team overrides role
+				"COMMON_VAR":   "team_common",   // team overrides role
 				"OVERRIDE_VAR": "team_override", // team overrides role
 			},
 			wantErr: false,
@@ -108,7 +108,7 @@ OVERRIDE_VAR=team_override
 			expected: map[string]string{
 				"ROLE_VAR":     "role_value",
 				"TEAM_VAR":     "team_value",
-				"COMMON_VAR":   "team_common",  // auth team overrides role
+				"COMMON_VAR":   "team_common",   // auth team overrides role
 				"OVERRIDE_VAR": "team_override", // auth team overrides role
 			},
 			wantErr: false,
@@ -127,7 +127,7 @@ OVERRIDE_VAR=team_override
 			expected: map[string]string{
 				"ROLE_VAR":     "role_value",
 				"TEAM_VAR":     "team_value",
-				"COMMON_VAR":   "team_common",  // team overrides auth team
+				"COMMON_VAR":   "team_common",   // team overrides auth team
 				"OVERRIDE_VAR": "team_override", // team overrides auth team
 			},
 			wantErr: false,
@@ -206,12 +206,12 @@ OVERRIDE_VAR=team_override
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := MergeEnvironmentVariables(tt.config)
-			
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("MergeEnvironmentVariables() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !reflect.DeepEqual(got, tt.expected) {
 				t.Errorf("MergeEnvironmentVariables() = %v, want %v", got, tt.expected)
 			}

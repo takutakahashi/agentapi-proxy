@@ -195,7 +195,7 @@ func getGitHubURL() string {
 func generateInstallationToken(config GitHubAppConfig) (string, error) {
 	// Read private key - try file first, then fallback to environment variable
 	var pemData []byte
-	
+
 	// Try to read from file first
 	pemData, err := os.ReadFile(config.PEMPath)
 	if err != nil {
@@ -209,7 +209,7 @@ func generateInstallationToken(config GitHubAppConfig) (string, error) {
 			if statErr != nil {
 				return "", fmt.Errorf("failed to read PEM file %s: file does not exist or is not accessible. Also checked GITHUB_APP_PEM environment variable: %w", config.PEMPath, err)
 			}
-			return "", fmt.Errorf("failed to read PEM file %s (size: %d bytes, mode: %s). Also checked GITHUB_APP_PEM environment variable: %w", 
+			return "", fmt.Errorf("failed to read PEM file %s (size: %d bytes, mode: %s). Also checked GITHUB_APP_PEM environment variable: %w",
 				config.PEMPath, fileInfo.Size(), fileInfo.Mode(), err)
 		}
 	}
@@ -404,7 +404,7 @@ func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase strin
 
 	// Read private key - try file first, then fallback to environment variable
 	var pemData []byte
-	
+
 	// Try to read from file first
 	pemData, err := os.ReadFile(pemPath)
 	if err != nil {
