@@ -506,16 +506,22 @@ func setupRepository(repoURL, token, cloneDir string) error {
 		env = append(env, fmt.Sprintf("GITHUB_TOKEN=%s", token))
 
 		// Set GitHub Enterprise host if applicable
+		githubHost := "github.com"
 		if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
-			githubHost := strings.TrimPrefix(githubAPI, "https://")
+			githubHost = strings.TrimPrefix(githubAPI, "https://")
 			githubHost = strings.TrimPrefix(githubHost, "http://")
 			githubHost = strings.TrimSuffix(githubHost, "/api/v3")
 			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+		}
 
-			// Authenticate gh CLI for GitHub Enterprise Server
-			if err := authenticateGHCLI(githubHost, token, env); err != nil {
-				log.Printf("Warning: Failed to authenticate gh CLI for %s: %v", githubHost, err)
-			}
+		// Authenticate gh CLI
+		if err := authenticateGHCLI(githubHost, token, env); err != nil {
+			log.Printf("Warning: Failed to authenticate gh CLI for %s: %v", githubHost, err)
+		}
+
+		// Setup git to use gh auth credentials
+		if err := setupGitAuth(env); err != nil {
+			log.Printf("Warning: Failed to setup git auth: %v", err)
 		}
 
 		// Create parent directory
@@ -564,6 +570,30 @@ func authenticateGHCLI(githubHost, token string, env []string) error {
 	}
 
 	log.Printf("Successfully authenticated gh CLI for %s", githubHost)
+	return nil
+}
+
+// setupGitAuth runs gh auth setup-git to configure git to use gh auth credentials
+func setupGitAuth(env []string) error {
+	log.Printf("Setting up git to use gh auth credentials...")
+
+	cmd := exec.Command("gh", "auth", "setup-git")
+
+	// Set environment variables
+	if len(env) > 0 {
+		cmd.Env = env
+	} else {
+		cmd.Env = os.Environ()
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh auth setup-git failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	log.Printf("Successfully configured git to use gh auth credentials")
 	return nil
 }
 

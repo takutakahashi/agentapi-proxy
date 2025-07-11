@@ -133,12 +133,15 @@ func initGitHubRepoInternal(repoFullNameParam, cloneDirParam string, ignoreMissi
 		fmt.Println("Successfully generated installation token")
 	}
 
-	// Authenticate gh CLI for Enterprise Server if GITHUB_URL is set
+	// Authenticate gh CLI (for both GitHub.com and Enterprise Server)
 	githubURL := getGitHubURL()
-	if githubURL != "https://github.com" {
-		if err := authenticateGHCLI(githubURL, token); err != nil {
-			return fmt.Errorf("failed to authenticate gh CLI for Enterprise Server: %w", err)
-		}
+	if err := authenticateGHCLI(githubURL, token); err != nil {
+		return fmt.Errorf("failed to authenticate gh CLI: %w", err)
+	}
+
+	// Setup git to use gh auth credentials
+	if err := setupGitAuth(); err != nil {
+		return fmt.Errorf("failed to setup git auth: %w", err)
 	}
 
 	// Get clone directory from flag or environment variable
@@ -474,9 +477,9 @@ func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase strin
 }
 
 func authenticateGHCLI(githubURL, token string) error {
-	fmt.Printf("Authenticating gh CLI for Enterprise Server: %s\n", githubURL)
+	fmt.Printf("Authenticating gh CLI for: %s\n", githubURL)
 
-	// Use gh auth login with token for Enterprise Server
+	// Use gh auth login with token
 	cmd := exec.Command("gh", "auth", "login", "--hostname", extractHostname(githubURL), "--with-token")
 	cmd.Stdin = strings.NewReader(token)
 
@@ -488,6 +491,22 @@ func authenticateGHCLI(githubURL, token string) error {
 	}
 
 	fmt.Printf("Successfully authenticated gh CLI for %s\n", githubURL)
+	return nil
+}
+
+func setupGitAuth() error {
+	fmt.Println("Setting up git to use gh auth credentials...")
+
+	cmd := exec.Command("gh", "auth", "setup-git")
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh auth setup-git failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	fmt.Println("Successfully configured git to use gh auth credentials")
 	return nil
 }
 
