@@ -220,14 +220,14 @@ func TestSetupUserHome(t *testing.T) {
 	// Ensure cleanup
 	defer func() {
 		if originalHome != "" {
-			os.Setenv("HOME", originalHome)
+			_ = os.Setenv("HOME", originalHome)
 		} else {
-			os.Unsetenv("HOME")
+			_ = os.Unsetenv("HOME")
 		}
 		if originalUserHomeBaseDir != "" {
-			os.Setenv("USERHOME_BASEDIR", originalUserHomeBaseDir)
+			_ = os.Setenv("USERHOME_BASEDIR", originalUserHomeBaseDir)
 		} else {
-			os.Unsetenv("USERHOME_BASEDIR")
+			_ = os.Unsetenv("USERHOME_BASEDIR")
 		}
 	}()
 
@@ -290,11 +290,11 @@ func TestSetupUserHome(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment
-			os.Setenv("HOME", tt.homeEnv)
+			_ = os.Setenv("HOME", tt.homeEnv)
 			if tt.userHomeBaseDirEnv != "" {
-				os.Setenv("USERHOME_BASEDIR", tt.userHomeBaseDirEnv)
+				_ = os.Setenv("USERHOME_BASEDIR", tt.userHomeBaseDirEnv)
 			} else {
-				os.Unsetenv("USERHOME_BASEDIR")
+				_ = os.Unsetenv("USERHOME_BASEDIR")
 			}
 
 			result, err := SetupUserHome(tt.userID)
@@ -339,5 +339,77 @@ func TestSetupUserHome(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestManagerEdgeCases tests edge cases for the Manager
+func TestManagerEdgeCases(t *testing.T) {
+	// Test with empty base directory
+	manager := NewManager("", true)
+	userDir, err := manager.GetUserHomeDir("testuser")
+	if err != nil {
+		t.Fatalf("Unexpected error with empty base dir: %v", err)
+	}
+	expectedPath := filepath.Join("", "users", "testuser")
+	if userDir != expectedPath {
+		t.Errorf("Expected %s, got %s", expectedPath, userDir)
+	}
+
+	// Test EnsureUserHomeDir with disabled mode
+	manager = NewManager("/tmp/test", false)
+	userDir, err = manager.EnsureUserHomeDir("testuser")
+	if err != nil {
+		t.Fatalf("Unexpected error in disabled mode: %v", err)
+	}
+	if userDir != os.Getenv("HOME") {
+		t.Errorf("Expected HOME env var %s, got %s", os.Getenv("HOME"), userDir)
+	}
+}
+
+// TestGetUserClaudeDir_EdgeCases tests edge cases for GetUserClaudeDir
+func TestGetUserClaudeDir_EdgeCases(t *testing.T) {
+	// Save original HOME
+	originalHome := os.Getenv("HOME")
+	defer func() { os.Setenv("HOME", originalHome) }()
+
+	// Test with empty HOME environment variable
+	os.Unsetenv("HOME")
+	manager := NewManager("/tmp/test", false)
+	claudeDir, err := manager.GetUserClaudeDir("testuser")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	expected := filepath.Join("/home/agentapi", ".claude")
+	if claudeDir != expected {
+		t.Errorf("Expected %s, got %s", expected, claudeDir)
+	}
+
+	// Test with custom HOME
+	os.Setenv("HOME", "/custom/home")
+	manager = NewManager("/tmp/test", true)
+	claudeDir, err = manager.GetUserClaudeDir("testuser")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	expected = filepath.Join("/custom/home", ".claude", "testuser")
+	if claudeDir != expected {
+		t.Errorf("Expected %s, got %s", expected, claudeDir)
+	}
+}
+
+// TestEnsureUserClaudeDir_ErrorHandling tests error handling for EnsureUserClaudeDir
+func TestEnsureUserClaudeDir_ErrorHandling(t *testing.T) {
+	manager := NewManager("/tmp/test", true)
+
+	// Test with empty user ID
+	_, err := manager.EnsureUserClaudeDir("")
+	if err == nil {
+		t.Error("Expected error for empty user ID")
+	}
+
+	// Test with invalid user ID that sanitizes to empty string
+	_, err = manager.EnsureUserClaudeDir("../../../")
+	if err == nil {
+		t.Error("Expected error for invalid user ID")
 	}
 }
