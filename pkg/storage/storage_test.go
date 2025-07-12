@@ -273,6 +273,23 @@ func TestStorageFactory(t *testing.T) {
 	}
 	_ = fileStorage.Close()
 
+	// Test S3 storage with missing bucket
+	s3Config := &StorageConfig{
+		Type: "s3",
+		// S3Bucket is empty, should fail
+	}
+	_, err = NewStorage(s3Config)
+	if err == nil {
+		t.Error("Expected error for S3 storage without bucket, got nil")
+	}
+
+	// Test SQLite storage (not implemented)
+	sqliteConfig := &StorageConfig{Type: "sqlite"}
+	_, err = NewStorage(sqliteConfig)
+	if err == nil {
+		t.Error("Expected error for SQLite storage (not implemented), got nil")
+	}
+
 	// Test unknown storage type
 	unknownConfig := &StorageConfig{Type: "unknown"}
 	_, err = NewStorage(unknownConfig)
