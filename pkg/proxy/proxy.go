@@ -1426,14 +1426,81 @@ func (p *Proxy) restoreSessionProcess(session *AgentSession, sessionData *storag
 	ctx, cancel := context.WithCancel(context.Background())
 	session.Cancel = cancel
 
-	// Start the agentapi process in a goroutine
-	go p.runAgentAPIServer(ctx, session, "", repoInfo, "")
+	// Start the agentapi process in a goroutine with restore flag
+	go p.runAgentAPIServerForRestore(ctx, session, repoInfo)
 
 	// Update session status to active after successful start
 	session.Status = "active"
 	p.updateSession(session)
 
 	return nil
+}
+
+// runAgentAPIServerForRestore runs an agentapi server instance for restored sessions
+func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentSession, repoInfo *RepositoryInfo) {
+	defer func() {
+		// Clean up session when server stops
+		p.sessionsMutex.Lock()
+		// Check if session still exists (might have been removed by deleteSession)
+		_, sessionExists := p.sessions[session.ID]
+		if sessionExists {
+			delete(p.sessions, session.ID)
+		}
+		p.sessionsMutex.Unlock()
+
+		// Remove session from persistent storage only if it still existed in the map
+		if sessionExists {
+			p.deleteSessionFromStorage(session.ID)
+			// Log session end when process terminates naturally (not via deleteSession)
+			if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
+				log.Printf("Failed to log session end for %s: %v", session.ID, err)
+			}
+		}
+
+		if p.verbose {
+			log.Printf("Cleaned up restored session %s", session.ID)
+		}
+	}()
+
+	// Create startup manager
+	startupManager := NewStartupManager(p.config, p.verbose)
+
+	// Prepare startup configuration for restored session
+	cfg := &StartupConfig{
+		Port:                      session.Port,
+		UserID:                    session.UserID,
+		GitHubToken:               getEnvFromSession(session, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
+		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
+		GitHubInstallationID:      os.Getenv("GITHUB_INSTALLATION_ID"),
+		GitHubAppPEMPath:          os.Getenv("GITHUB_APP_PEM_PATH"),
+		GitHubAPI:                 os.Getenv("GITHUB_API"),
+		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
+		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
+		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
+		Environment:               session.Environment,
+		Config:                    p.config,
+		Verbose:                   p.verbose,
+		IsRestore:                 true, // Mark as restore session for -c option
+	}
+
+	// Add repository information if available
+	if repoInfo != nil {
+		cfg.RepoFullName = repoInfo.FullName
+		cfg.CloneDir = repoInfo.CloneDir
+	}
+
+	// Start the AgentAPI session
+	err := startupManager.StartAgentAPISession(ctx, cfg)
+	if err != nil {
+		log.Printf("Failed to start restored AgentAPI session %s: %v", session.ID, err)
+		session.Status = "failed"
+		p.updateSession(session)
+		return
+	}
+
+	if p.verbose {
+		log.Printf("Successfully started restored AgentAPI session %s", session.ID)
+	}
 }
 
 // isPortAvailable checks if a port is available for use

@@ -33,6 +33,7 @@ type StartupConfig struct {
 	Environment               map[string]string
 	Config                    *config.Config
 	Verbose                   bool
+	IsRestore                 bool // Whether this is a restored session
 }
 
 // StartupManager manages the startup process
@@ -159,6 +160,11 @@ func (sm *StartupManager) createAgentAPICommand(ctx context.Context, cfg *Startu
 	}
 
 	args = append(args, "--", "claude")
+
+	// Add -c option for restored sessions to continue previous conversation
+	if cfg.IsRestore {
+		args = append(args, "-c")
+	}
 
 	if cfg.ClaudeArgs != "" {
 		// TODO: Parse ClaudeArgs properly
