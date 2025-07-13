@@ -120,6 +120,7 @@ type PersistenceConfig struct {
 	SyncInterval          int    `json:"sync_interval_seconds" mapstructure:"sync_interval_seconds"`
 	EncryptSecrets        bool   `json:"encrypt_sensitive_data" mapstructure:"encrypt_sensitive_data"`
 	SessionRecoveryMaxAge int    `json:"session_recovery_max_age_hours" mapstructure:"session_recovery_max_age_hours"` // Max age in hours for session recovery
+	RestoreProcesses      bool   `json:"restore_processes" mapstructure:"restore_processes"`                           // Whether to restore agentapi processes on recovery
 
 	// S3-specific configuration
 	S3Bucket    string `json:"s3_bucket" mapstructure:"s3_bucket"`
@@ -356,6 +357,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("persistence.sync_interval_seconds")
 	_ = v.BindEnv("persistence.encrypt_sensitive_data")
 	_ = v.BindEnv("persistence.session_recovery_max_age_hours")
+	_ = v.BindEnv("persistence.restore_processes")
 	_ = v.BindEnv("persistence.s3_bucket")
 	_ = v.BindEnv("persistence.s3_region")
 	_ = v.BindEnv("persistence.s3_prefix")
@@ -385,6 +387,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("persistence.sync_interval_seconds", 30)
 	v.SetDefault("persistence.encrypt_sensitive_data", true)
 	v.SetDefault("persistence.session_recovery_max_age_hours", 24)
+	v.SetDefault("persistence.restore_processes", true)
 
 	// S3 persistence defaults
 	v.SetDefault("persistence.s3_region", "us-east-1")

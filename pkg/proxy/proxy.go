@@ -360,6 +360,20 @@ func (p *Proxy) recoverSessions() {
 		}
 		p.sessionsMutex.Unlock()
 
+		// Restore the process for this session if enabled in config
+		if p.config.Persistence.RestoreProcesses {
+			if err := p.restoreSessionProcess(session, sessionData); err != nil {
+				log.Printf("Failed to restore process for session %s: %v", session.ID, err)
+				// Keep session metadata but mark as failed
+				session.Status = "failed"
+				p.updateSession(session)
+			} else {
+				log.Printf("Successfully restored session %s on port %d", session.ID, session.Port)
+			}
+		} else {
+			log.Printf("Process restoration disabled, session %s metadata only", session.ID)
+		}
+
 		recovered++
 	}
 
@@ -1396,4 +1410,110 @@ func (p *Proxy) cleanupDefunctProcessesOnce() {
 // GetEcho returns the Echo instance for external access
 func (p *Proxy) GetEcho() *echo.Echo {
 	return p.echo
+}
+
+// restoreSessionProcess restores the agentapi process for a recovered session
+func (p *Proxy) restoreSessionProcess(session *AgentSession, sessionData *storage.SessionData) error {
+	// Check if port is available
+	if !p.isPortAvailable(session.Port) {
+		return fmt.Errorf("port %d is not available", session.Port)
+	}
+
+	// Extract repository information from tags
+	repoInfo := p.extractRepositoryInfo(session.ID, session.Tags)
+
+	// Create context with cancellation for the restored process
+	ctx, cancel := context.WithCancel(context.Background())
+	session.Cancel = cancel
+
+	// Start the agentapi process in a goroutine with restore flag
+	go p.runAgentAPIServerForRestore(ctx, session, repoInfo)
+
+	// Update session status to active after successful start
+	session.Status = "active"
+	p.updateSession(session)
+
+	return nil
+}
+
+// runAgentAPIServerForRestore runs an agentapi server instance for restored sessions
+func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentSession, repoInfo *RepositoryInfo) {
+	defer func() {
+		// Clean up session when server stops
+		p.sessionsMutex.Lock()
+		// Check if session still exists (might have been removed by deleteSession)
+		_, sessionExists := p.sessions[session.ID]
+		if sessionExists {
+			delete(p.sessions, session.ID)
+		}
+		p.sessionsMutex.Unlock()
+
+		// Remove session from persistent storage only if it still existed in the map
+		if sessionExists {
+			p.deleteSessionFromStorage(session.ID)
+			// Log session end when process terminates naturally (not via deleteSession)
+			if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
+				log.Printf("Failed to log session end for %s: %v", session.ID, err)
+			}
+		}
+
+		if p.verbose {
+			log.Printf("Cleaned up restored session %s", session.ID)
+		}
+	}()
+
+	// Create startup manager
+	startupManager := NewStartupManager(p.config, p.verbose)
+
+	// Prepare startup configuration for restored session
+	cfg := &StartupConfig{
+		Port:                      session.Port,
+		UserID:                    session.UserID,
+		GitHubToken:               getEnvFromSession(session, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
+		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
+		GitHubInstallationID:      os.Getenv("GITHUB_INSTALLATION_ID"),
+		GitHubAppPEMPath:          os.Getenv("GITHUB_APP_PEM_PATH"),
+		GitHubAPI:                 os.Getenv("GITHUB_API"),
+		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
+		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
+		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
+		Environment:               session.Environment,
+		Config:                    p.config,
+		Verbose:                   p.verbose,
+		IsRestore:                 true, // Mark as restore session for -c option
+	}
+
+	// Add repository information if available
+	if repoInfo != nil {
+		cfg.RepoFullName = repoInfo.FullName
+		cfg.CloneDir = repoInfo.CloneDir
+	}
+
+	// Start the AgentAPI session
+	cmd, err := startupManager.StartAgentAPISession(ctx, cfg)
+	if err != nil {
+		log.Printf("Failed to start restored AgentAPI session %s: %v", session.ID, err)
+		session.Status = "failed"
+		p.updateSession(session)
+		return
+	}
+
+	// Store the command in the session for proper cleanup
+	session.processMutex.Lock()
+	session.Process = cmd
+	session.processMutex.Unlock()
+
+	if p.verbose {
+		log.Printf("Successfully started restored AgentAPI session %s", session.ID)
+	}
+}
+
+// isPortAvailable checks if a port is available for use
+func (p *Proxy) isPortAvailable(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
 }
