@@ -14,6 +14,7 @@ import (
 	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v57/github"
 	"github.com/spf13/cobra"
+	github_cache "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
 
 type GitHubAppConfig struct {
@@ -22,6 +23,9 @@ type GitHubAppConfig struct {
 	PEMPath        string
 	APIBase        string
 }
+
+// Global installation cache instance
+var installationCache = github_cache.NewInstallationCache()
 
 var initGitHubRepoCmd = &cobra.Command{
 	Use:   "init-github-repository",
@@ -104,9 +108,9 @@ func initGitHubRepoInternal(repoFullNameParam, cloneDirParam string, ignoreMissi
 				return fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
 			}
 		} else {
-			// Auto-detect installation ID
-			fmt.Println("No GITHUB_INSTALLATION_ID provided, attempting auto-detection...")
-			installationID, err = findInstallationIDForRepo(appID, os.Getenv("GITHUB_APP_PEM_PATH"), repoFullName, getAPIBase())
+			// Auto-detect installation ID using cache
+			fmt.Println("No GITHUB_INSTALLATION_ID provided, attempting auto-detection with cache...")
+			installationID, err = findInstallationIDForRepoWithCache(appID, os.Getenv("GITHUB_APP_PEM_PATH"), repoFullName, getAPIBase())
 			if err != nil {
 				return fmt.Errorf("failed to auto-detect installation ID: %w", err)
 			}
@@ -394,14 +398,8 @@ func parseInstallationID(installationIDStr string) (int64, error) {
 	return installationID, nil
 }
 
-func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase string) (int64, error) {
-	// Parse repository owner and name from fullname
-	parts := strings.Split(repoFullName, "/")
-	if len(parts) != 2 {
-		return 0, fmt.Errorf("invalid repository fullname format, expected 'owner/repo': %s", repoFullName)
-	}
-	owner, repo := parts[0], parts[1]
-
+// findInstallationIDForRepoWithCache uses the installation cache to find installation ID
+func findInstallationIDForRepoWithCache(appID int64, pemPath, repoFullName, apiBase string) (int64, error) {
 	// Read private key - try file first, then fallback to environment variable
 	var pemData []byte
 
@@ -416,61 +414,13 @@ func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase strin
 		}
 	}
 
-	// Create GitHub App transport
-	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, appID, pemData)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create GitHub App transport: %w", err)
-	}
-
-	// Set base URL if specified (for GitHub Enterprise)
-	if apiBase != "" && apiBase != "https://api.github.com" {
-		transport.BaseURL = apiBase
-	}
-
-	// Create GitHub client
-	var client *github.Client
-	if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
-		client = github.NewClient(&http.Client{Transport: transport})
-	} else {
-		client, err = github.NewClient(&http.Client{Transport: transport}).WithEnterpriseURLs(apiBase, apiBase)
-		if err != nil {
-			return 0, fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
-		}
-	}
-
 	ctx := context.Background()
+	return installationCache.GetInstallationID(ctx, appID, pemData, repoFullName, apiBase)
+}
 
-	// List installations for the app
-	installations, _, err := client.Apps.ListInstallations(ctx, &github.ListOptions{})
-	if err != nil {
-		return 0, fmt.Errorf("failed to list installations: %w", err)
-	}
-
-	// Check each installation for repository access
-	for _, installation := range installations {
-		installationID := installation.GetID()
-
-		// Create installation client to check repository access
-		installationTransport := ghinstallation.NewFromAppsTransport(transport, installationID)
-		var installationClient *github.Client
-		if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
-			installationClient = github.NewClient(&http.Client{Transport: installationTransport})
-		} else {
-			installationClient, err = github.NewClient(&http.Client{Transport: installationTransport}).WithEnterpriseURLs(apiBase, apiBase)
-			if err != nil {
-				continue // Skip this installation if we can't create a client
-			}
-		}
-
-		// Try to access the repository with this installation
-		_, _, err := installationClient.Repositories.Get(ctx, owner, repo)
-		if err == nil {
-			// Successfully accessed the repository with this installation
-			return installationID, nil
-		}
-	}
-
-	return 0, fmt.Errorf("no installation found with access to repository %s/%s", owner, repo)
+// Legacy function kept for backward compatibility
+func findInstallationIDForRepo(appID int64, pemPath, repoFullName, apiBase string) (int64, error) {
+	return findInstallationIDForRepoWithCache(appID, pemPath, repoFullName, apiBase)
 }
 
 func authenticateGHCLI(githubURL, token string) error {
