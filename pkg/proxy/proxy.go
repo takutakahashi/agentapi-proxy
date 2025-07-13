@@ -360,6 +360,20 @@ func (p *Proxy) recoverSessions() {
 		}
 		p.sessionsMutex.Unlock()
 
+		// Restore the process for this session if enabled in config
+		if p.config.Persistence.RestoreProcesses {
+			if err := p.restoreSessionProcess(session, sessionData); err != nil {
+				log.Printf("Failed to restore process for session %s: %v", session.ID, err)
+				// Keep session metadata but mark as failed
+				session.Status = "failed"
+				p.updateSession(session)
+			} else {
+				log.Printf("Successfully restored session %s on port %d", session.ID, session.Port)
+			}
+		} else {
+			log.Printf("Process restoration disabled, session %s metadata only", session.ID)
+		}
+
 		recovered++
 	}
 
@@ -1396,4 +1410,38 @@ func (p *Proxy) cleanupDefunctProcessesOnce() {
 // GetEcho returns the Echo instance for external access
 func (p *Proxy) GetEcho() *echo.Echo {
 	return p.echo
+}
+
+// restoreSessionProcess restores the agentapi process for a recovered session
+func (p *Proxy) restoreSessionProcess(session *AgentSession, sessionData *storage.SessionData) error {
+	// Check if port is available
+	if !p.isPortAvailable(session.Port) {
+		return fmt.Errorf("port %d is not available", session.Port)
+	}
+
+	// Extract repository information from tags
+	repoInfo := p.extractRepositoryInfo(session.ID, session.Tags)
+
+	// Create context with cancellation for the restored process
+	ctx, cancel := context.WithCancel(context.Background())
+	session.Cancel = cancel
+
+	// Start the agentapi process in a goroutine
+	go p.runAgentAPIServer(ctx, session, "", repoInfo, "")
+
+	// Update session status to active after successful start
+	session.Status = "active"
+	p.updateSession(session)
+
+	return nil
+}
+
+// isPortAvailable checks if a port is available for use
+func (p *Proxy) isPortAvailable(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
 }
