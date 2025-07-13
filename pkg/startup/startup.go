@@ -16,7 +16,11 @@ import (
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v57/github"
+	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
+
+// Global installation cache instance for startup package
+var installationCache = github_pkg.NewInstallationCache()
 
 // SetupClaudeCode sets up Claude Code configuration
 func SetupClaudeCode() error {
@@ -382,15 +386,8 @@ func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 	return token.GetToken(), nil
 }
 
-// autoDiscoverInstallationID discovers the installation ID for a given repository
+// autoDiscoverInstallationID discovers the installation ID for a given repository using cache
 func autoDiscoverInstallationID(appIDStr, pemPath, repoFullName string) (string, error) {
-	// Parse repository owner and name from fullname
-	parts := strings.Split(repoFullName, "/")
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid repository fullname format, expected 'owner/repo': %s", repoFullName)
-	}
-	owner, repo := parts[0], parts[1]
-
 	// Parse app ID
 	appID, err := strconv.ParseInt(appIDStr, 10, 64)
 	if err != nil {
@@ -411,67 +408,19 @@ func autoDiscoverInstallationID(appIDStr, pemPath, repoFullName string) (string,
 		}
 	}
 
-	// Create GitHub App transport
-	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, appID, pemData)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GitHub App transport: %w", err)
-	}
-
 	// Get API base URL
 	apiBase := os.Getenv("GITHUB_API")
 	if apiBase == "" {
 		apiBase = "https://api.github.com"
 	}
 
-	// Set base URL if specified (for GitHub Enterprise)
-	if apiBase != "" && apiBase != "https://api.github.com" {
-		transport.BaseURL = apiBase
-	}
-
-	// Create GitHub client
-	var client *github.Client
-	if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
-		client = github.NewClient(&http.Client{Transport: transport})
-	} else {
-		client, err = github.NewClient(&http.Client{Transport: transport}).WithEnterpriseURLs(apiBase, apiBase)
-		if err != nil {
-			return "", fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
-		}
-	}
-
 	ctx := context.Background()
-
-	// List installations for the app
-	installations, _, err := client.Apps.ListInstallations(ctx, &github.ListOptions{})
+	installationID, err := installationCache.GetInstallationID(ctx, appID, pemData, repoFullName, apiBase)
 	if err != nil {
-		return "", fmt.Errorf("failed to list installations: %w", err)
+		return "", err
 	}
 
-	// Check each installation for repository access
-	for _, installation := range installations {
-		installationID := installation.GetID()
-
-		// Create installation client to check repository access
-		installationTransport := ghinstallation.NewFromAppsTransport(transport, installationID)
-		var installationClient *github.Client
-		if apiBase == "" || strings.Contains(apiBase, "https://api.github.com") {
-			installationClient = github.NewClient(&http.Client{Transport: installationTransport})
-		} else {
-			installationClient, err = github.NewClient(&http.Client{Transport: installationTransport}).WithEnterpriseURLs(apiBase, apiBase)
-			if err != nil {
-				continue // Skip this installation if we can't create a client
-			}
-		}
-
-		// Try to access the repository with this installation
-		_, _, err := installationClient.Repositories.Get(ctx, owner, repo)
-		if err == nil {
-			// Successfully accessed the repository with this installation
-			return strconv.FormatInt(installationID, 10), nil
-		}
-	}
-
-	return "", fmt.Errorf("no installation found with access to repository %s/%s", owner, repo)
+	return strconv.FormatInt(installationID, 10), nil
 }
 
 // setupRepository sets up the git repository using gh repo clone

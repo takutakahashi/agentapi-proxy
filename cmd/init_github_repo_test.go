@@ -1018,6 +1018,9 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Clear cache before each test to ensure independence
+			installationCache.ClearCache()
+			
 			// Create test server
 			server := httptest.NewServer(tt.serverHandler)
 			defer server.Close()
