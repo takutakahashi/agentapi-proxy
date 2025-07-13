@@ -1490,13 +1490,18 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 	}
 
 	// Start the AgentAPI session
-	err := startupManager.StartAgentAPISession(ctx, cfg)
+	cmd, err := startupManager.StartAgentAPISession(ctx, cfg)
 	if err != nil {
 		log.Printf("Failed to start restored AgentAPI session %s: %v", session.ID, err)
 		session.Status = "failed"
 		p.updateSession(session)
 		return
 	}
+
+	// Store the command in the session for proper cleanup
+	session.processMutex.Lock()
+	session.Process = cmd
+	session.processMutex.Unlock()
 
 	if p.verbose {
 		log.Printf("Successfully started restored AgentAPI session %s", session.ID)
