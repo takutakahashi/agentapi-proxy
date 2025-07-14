@@ -279,13 +279,20 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 
 // getUserTeamsOptimized retrieves only configured team memberships from GitHub API
 func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
+	log.Printf("[AUTH_DEBUG] Starting getUserTeamsOptimized for user: %s", username)
+	log.Printf("[AUTH_DEBUG] Config UserMapping: %+v", p.config.UserMapping)
+
 	// Extract unique organizations from configured team mappings
 	configuredOrgs := make(map[string][]string) // org -> []teamSlugs
 	for teamKey := range p.config.UserMapping.TeamRoleMapping {
+		log.Printf("[AUTH_DEBUG] Processing team key: %s", teamKey)
 		parts := strings.Split(teamKey, "/")
 		if len(parts) == 2 {
 			org, teamSlug := parts[0], parts[1]
 			configuredOrgs[org] = append(configuredOrgs[org], teamSlug)
+			log.Printf("[AUTH_DEBUG] Added team: %s/%s", org, teamSlug)
+		} else {
+			log.Printf("[AUTH_DEBUG] Invalid team key format: %s (expected org/team)", teamKey)
 		}
 	}
 
@@ -357,6 +364,24 @@ func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, u
 	}
 
 	log.Printf("[AUTH_DEBUG] Found %d matching teams for user %s", len(userTeams), username)
+
+	// If no teams found, try organization membership as fallback
+	if len(userTeams) == 0 {
+		log.Printf("[AUTH_DEBUG] No teams found, checking organization memberships as fallback")
+		for org := range configuredOrgs {
+			if isOrgMember := p.checkOrganizationMembership(ctx, token, org, username); isOrgMember {
+				log.Printf("[AUTH_DEBUG] User %s is a member of organization %s", username, org)
+				// Create a synthetic team membership for the organization
+				userTeams = append(userTeams, GitHubTeamMembership{
+					Organization: org,
+					TeamSlug:     "member", // Synthetic team name
+					TeamName:     "Organization Member",
+					Role:         "member",
+				})
+			}
+		}
+	}
+
 	return userTeams, nil
 }
 
@@ -434,6 +459,44 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 	}
 
 	return membership.State == "active", membership.Role
+}
+
+// checkOrganizationMembership checks if user is a member of an organization
+func (p *GitHubAuthProvider) checkOrganizationMembership(ctx context.Context, token, org, username string) bool {
+	url := fmt.Sprintf("%s/orgs/%s/members/%s",
+		strings.TrimSuffix(p.config.BaseURL, "/"), org, username)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		log.Printf("[AUTH_DEBUG] Failed to create request for org membership check: %v", err)
+		return false
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	logVerbose("Making GitHub API request: GET %s", url)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		log.Printf("[AUTH_DEBUG] Organization membership check failed: %v", err)
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
+	if resp.StatusCode == http.StatusNoContent {
+		// 204 means user is a public member
+		log.Printf("[AUTH_DEBUG] User %s is a public member of organization %s", username, org)
+		return true
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		log.Printf("[AUTH_DEBUG] User %s is not a member of organization %s (or membership is private)", username, org)
+		return false
+	}
+
+	log.Printf("[AUTH_DEBUG] Organization membership check returned unexpected status %d for %s in %s", resp.StatusCode, username, org)
+	return false
 }
 
 // mapUserPermissions maps user's team memberships to roles and permissions

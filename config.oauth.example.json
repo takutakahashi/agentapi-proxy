@@ -18,6 +18,16 @@
         "default_role": "user",
         "default_permissions": ["read", "session:create", "session:list"],
         "team_role_mapping": {
+          "takutaka-lab/admin": {
+            "role": "admin",
+            "permissions": ["*"],
+            "env_file": "/etc/agentapi/envs/admin.env"
+          },
+          "takutaka-lab/member": {
+            "role": "developer",
+            "permissions": ["read", "write", "execute", "session:create", "session:list", "session:delete", "session:access"],
+            "env_file": "/etc/agentapi/envs/developer.env"
+          },
           "myorg/admins": {
             "role": "admin",
             "permissions": ["*"],
