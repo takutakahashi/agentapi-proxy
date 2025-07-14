@@ -49,7 +49,6 @@ func AuthMiddleware(cfg *config.Config, githubProvider *GitHubAuthProvider) echo
 
 			// Skip auth for health endpoint
 			if path == "/health" {
-				log.Printf("Skipping auth for health endpoint")
 				return next(c)
 			}
 
