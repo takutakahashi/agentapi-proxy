@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -282,6 +283,21 @@ func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, u
 	log.Printf("[AUTH_DEBUG] Starting getUserTeamsOptimized for user: %s", username)
 	log.Printf("[AUTH_DEBUG] Config UserMapping: %+v", p.config.UserMapping)
 
+	// Debug: List all teams in configured organizations
+	for org := range p.config.UserMapping.TeamRoleMapping {
+		parts := strings.Split(org, "/")
+		if len(parts) >= 1 {
+			orgName := parts[0]
+			log.Printf("[AUTH_DEBUG] Listing teams for organization: %s", orgName)
+			teams, err := p.listOrganizationTeams(ctx, token, orgName)
+			if err != nil {
+				log.Printf("[AUTH_DEBUG] Failed to list teams for %s: %v", orgName, err)
+			} else {
+				log.Printf("[AUTH_DEBUG] Available teams in %s: %+v", orgName, teams)
+			}
+		}
+	}
+
 	// Extract unique organizations from configured team mappings
 	configuredOrgs := make(map[string][]string) // org -> []teamSlugs
 	for teamKey := range p.config.UserMapping.TeamRoleMapping {
@@ -442,11 +458,17 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode == http.StatusNotFound {
 		log.Printf("[AUTH_DEBUG] Team membership not found (404) for %s in %s/%s", username, org, teamSlug)
+		// Read the response body for more details
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[AUTH_DEBUG] 404 Response body: %s", string(body))
 		return false, ""
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("[AUTH_DEBUG] Team membership check failed with status %d for %s in %s/%s", resp.StatusCode, username, org, teamSlug)
+		// Read the response body for more details
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[AUTH_DEBUG] Error response body: %s", string(body))
 		return false, ""
 	}
 
@@ -497,6 +519,38 @@ func (p *GitHubAuthProvider) checkOrganizationMembership(ctx context.Context, to
 
 	log.Printf("[AUTH_DEBUG] Organization membership check returned unexpected status %d for %s in %s", resp.StatusCode, username, org)
 	return false
+}
+
+// listOrganizationTeams lists all teams in an organization
+func (p *GitHubAuthProvider) listOrganizationTeams(ctx context.Context, token, org string) ([]map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/orgs/%s/teams", strings.TrimSuffix(p.config.BaseURL, "/"), org)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	logVerbose("Making GitHub API request: GET %s", url)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	var teams []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
+		return nil, err
+	}
+
+	return teams, nil
 }
 
 // mapUserPermissions maps user's team memberships to roles and permissions
