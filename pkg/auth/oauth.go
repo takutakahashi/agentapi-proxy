@@ -91,8 +91,10 @@ func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, strin
 		"state":        {state},
 	}
 
+	// Determine the OAuth host URL based on the base URL
+	oauthHost := p.getOAuthHost()
 	authURL := fmt.Sprintf("%s/login/oauth/authorize?%s",
-		strings.TrimSuffix(p.config.BaseURL, "/"),
+		strings.TrimSuffix(oauthHost, "/"),
 		params.Encode())
 
 	logVerbose("Generated authorization URL: %s", authURL)
@@ -138,8 +140,9 @@ func (p *GitHubOAuthProvider) ExchangeCode(ctx context.Context, code, state stri
 
 // exchangeCodeForToken exchanges authorization code for access token
 func (p *GitHubOAuthProvider) exchangeCodeForToken(ctx context.Context, code, redirectURI string) (*OAuthTokenResponse, error) {
+	oauthHost := p.getOAuthHost()
 	tokenURL := fmt.Sprintf("%s/login/oauth/access_token",
-		strings.TrimSuffix(p.config.BaseURL, "/"))
+		strings.TrimSuffix(oauthHost, "/"))
 
 	params := url.Values{
 		"client_id":     {p.config.ClientID},
@@ -211,10 +214,34 @@ func (p *GitHubOAuthProvider) cleanupExpiredStates() {
 	}
 }
 
+// getOAuthHost returns the appropriate OAuth host URL based on the configured base URL
+func (p *GitHubOAuthProvider) getOAuthHost() string {
+	baseURL := p.config.BaseURL
+	if baseURL == "" {
+		baseURL = "https://github.com"
+	}
+
+	// Convert API URLs to OAuth host URLs
+	if strings.Contains(baseURL, "api.github.com") {
+		return "https://github.com"
+	} else if strings.Contains(baseURL, "/api/v3") {
+		// GitHub Enterprise Server format: https://github.enterprise.com/api/v3
+		// Extract the host part before /api/v3
+		parts := strings.Split(baseURL, "/api/v3")
+		if len(parts) > 0 {
+			return parts[0]
+		}
+	}
+
+	// If it's already a GitHub host URL, use it as is
+	return baseURL
+}
+
 // RevokeToken revokes a GitHub access token
 func (p *GitHubOAuthProvider) RevokeToken(ctx context.Context, token string) error {
+	oauthHost := p.getOAuthHost()
 	revokeURL := fmt.Sprintf("%s/applications/%s/token",
-		strings.TrimSuffix(p.config.BaseURL, "/"),
+		strings.TrimSuffix(oauthHost, "/"),
 		p.config.ClientID)
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", revokeURL, nil)
