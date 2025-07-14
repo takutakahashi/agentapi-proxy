@@ -295,6 +295,7 @@ func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, u
 	}
 
 	log.Printf("[AUTH_DEBUG] Checking %d configured organizations: %v", len(configuredOrgs), configuredOrgs)
+	log.Printf("[AUTH_DEBUG] Full team role mapping: %+v", p.config.UserMapping.TeamRoleMapping)
 
 	// Use buffered channel to limit concurrent requests
 	maxConcurrent := 3
@@ -319,7 +320,9 @@ func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, u
 				semaphore <- struct{}{}
 				defer func() { <-semaphore }()
 
+				log.Printf("[AUTH_DEBUG] Checking team membership for user %s in %s/%s", username, orgName, slug)
 				if isMember, role := p.checkTeamMembership(ctx, token, orgName, slug, username); isMember {
+					log.Printf("[AUTH_DEBUG] User %s is a member of %s/%s with role %s", username, orgName, slug, role)
 					// Get team name (can be optimized further with batch API if needed)
 					teamName := slug // Default to slug if name retrieval fails
 
@@ -332,6 +335,8 @@ func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, u
 						},
 						err: nil,
 					}
+				} else {
+					log.Printf("[AUTH_DEBUG] User %s is NOT a member of %s/%s", username, orgName, slug)
 				}
 			}(org, teamSlug)
 		}
@@ -411,10 +416,12 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 
 	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode == http.StatusNotFound {
+		log.Printf("[AUTH_DEBUG] Team membership not found (404) for %s in %s/%s", username, org, teamSlug)
 		return false, ""
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[AUTH_DEBUG] Team membership check failed with status %d for %s in %s/%s", resp.StatusCode, username, org, teamSlug)
 		return false, ""
 	}
 
