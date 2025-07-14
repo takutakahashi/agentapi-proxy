@@ -29,8 +29,45 @@ spec:
       serviceAccountName: {{ include "agentapi-proxy.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
       initContainers:
+        {{- if or .Values.persistence.enabled .Values.myclaudesPersistence.enabled }}
+        - name: fix-permissions
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              echo "Fixing PVC permissions for uid:gid 999:999..."
+              {{- if .Values.persistence.enabled }}
+              if [ -d "/home/agentapi/workdir" ]; then
+                chown -R 999:999 /home/agentapi/workdir || echo "Warning: Failed to change ownership of workdir"
+                chmod -R 755 /home/agentapi/workdir || echo "Warning: Failed to change permissions of workdir"
+                echo "Fixed permissions for /home/agentapi/workdir"
+              fi
+              {{- end }}
+              {{- if .Values.myclaudesPersistence.enabled }}
+              if [ -d "/home/agentapi/.agentapi-proxy/myclaudes" ]; then
+                mkdir -p /home/agentapi/.agentapi-proxy
+                chown -R 999:999 /home/agentapi/.agentapi-proxy || echo "Warning: Failed to change ownership of myclaudes"
+                chmod -R 755 /home/agentapi/.agentapi-proxy || echo "Warning: Failed to change permissions of myclaudes"
+                echo "Fixed permissions for /home/agentapi/.agentapi-proxy/myclaudes"
+              fi
+              {{- end }}
+              echo "Permission fix completed"
+          volumeMounts:
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /home/agentapi/workdir
+            {{- end }}
+            {{- if .Values.myclaudesPersistence.enabled }}
+            - name: myclaudes-data
+              mountPath: /home/agentapi/.agentapi-proxy/myclaudes
+            {{- end }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+        {{- end }}
+        {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
         - name: setup-github-app-key
           image: busybox:1.35
           command:
