@@ -198,6 +198,15 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 
 	user.Teams = teams
 
+	// Get user's organizations
+	orgs, err := p.getUserOrganizations(ctx, token)
+	if err != nil {
+		log.Printf("Warning: Failed to get user organizations for %s: %v", user.Login, err)
+		orgs = []GitHubOrganization{}
+	}
+
+	user.Organizations = orgs
+
 	// Map user permissions based on team memberships
 	role, permissions, envFile := p.mapUserPermissions(teams)
 
