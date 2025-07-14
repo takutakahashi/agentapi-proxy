@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,18 +70,31 @@ func NewGitHubOAuthProvider(cfg *config.GitHubOAuthConfig, githubCfg *config.Git
 
 // GenerateAuthURL generates the GitHub OAuth authorization URL
 func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, string, error) {
-	// Generate secure random state
-	state, err := p.generateState()
+	logVerbose("GenerateAuthURL called with redirectURI: %s", redirectURI)
+
+	// Generate self-contained state (doesn't need storage)
+	state, err := p.generateSelfContainedState(redirectURI)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate state: %w", err)
 	}
 
-	// Store state with expiration (15 minutes)
-	p.stateStore.Store(state, &OAuthState{
-		State:       state,
+	logVerbose("Generated self-contained state: %s", state)
+
+	// Still keep the old state store for backwards compatibility
+	// but also store in the new system for transition
+	fallbackState, err := p.generateState()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate fallback state: %w", err)
+	}
+
+	oauthState := &OAuthState{
+		State:       state, // Store the self-contained state
 		RedirectURI: redirectURI,
 		CreatedAt:   time.Now(),
-	})
+	}
+	p.stateStore.Store(state, oauthState)
+	p.stateStore.Store(fallbackState, oauthState) // Also store with fallback key
+	logVerbose("Stored state in store: %s at %v", state, oauthState.CreatedAt)
 
 	// Clean up expired states
 	p.cleanupExpiredStates()
@@ -103,24 +119,49 @@ func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, strin
 
 // ExchangeCode exchanges the authorization code for an access token
 func (p *GitHubOAuthProvider) ExchangeCode(ctx context.Context, code, state string) (*UserContext, error) {
-	// Verify state
-	stateValue, exists := p.stateStore.Load(state)
-	if !exists {
-		return nil, fmt.Errorf("invalid state parameter")
-	}
-	oauthState := stateValue.(*OAuthState)
+	logVerbose("ExchangeCode called with code: %s, state: %s", code, state)
 
-	// Check if state is expired (15 minutes)
-	if time.Since(oauthState.CreatedAt) > 15*time.Minute {
+	var redirectURI string
+
+	// First try to validate as self-contained state
+	selfContainedRedirectURI, err := p.validateSelfContainedState(state)
+	if err == nil {
+		logVerbose("Successfully validated self-contained state")
+		redirectURI = selfContainedRedirectURI
+	} else {
+		logVerbose("Self-contained state validation failed: %v, falling back to store lookup", err)
+
+		// Debug: Log all stored states
+		logVerbose("Stored states:")
+		p.stateStore.Range(func(key, value interface{}) bool {
+			storedState := key.(string)
+			stateData := value.(*OAuthState)
+			logVerbose("  - State: %s, CreatedAt: %v", storedState, stateData.CreatedAt)
+			return true
+		})
+
+		// Fallback to old state store method
+		stateValue, exists := p.stateStore.Load(state)
+		if !exists {
+			logVerbose("State parameter not found in store: %s", state)
+			return nil, fmt.Errorf("invalid state parameter")
+		}
+		oauthState := stateValue.(*OAuthState)
+
+		// Check if state is expired (15 minutes)
+		if time.Since(oauthState.CreatedAt) > 15*time.Minute {
+			p.stateStore.Delete(state)
+			return nil, fmt.Errorf("state expired")
+		}
+
+		// Remove state after use
 		p.stateStore.Delete(state)
-		return nil, fmt.Errorf("state expired")
-	}
 
-	// Remove state after use
-	p.stateStore.Delete(state)
+		redirectURI = oauthState.RedirectURI
+	}
 
 	// Exchange code for token
-	token, err := p.exchangeCodeForToken(ctx, code, oauthState.RedirectURI)
+	token, err := p.exchangeCodeForToken(ctx, code, redirectURI)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code: %w", err)
 	}
@@ -193,6 +234,76 @@ func (p *GitHubOAuthProvider) generateState() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// generateSelfContainedState generates a self-contained state that includes timestamp and signature
+func (p *GitHubOAuthProvider) generateSelfContainedState(redirectURI string) (string, error) {
+	// Create state data with timestamp
+	timestamp := time.Now().Unix()
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	randomPart := base64.URLEncoding.EncodeToString(randomBytes)
+
+	// Create payload: timestamp:randomPart:redirectURI
+	payload := fmt.Sprintf("%d:%s:%s", timestamp, randomPart, redirectURI)
+
+	// Generate HMAC signature using client secret as key
+	h := hmac.New(sha256.New, []byte(p.config.ClientSecret))
+	h.Write([]byte(payload))
+	signature := base64.URLEncoding.EncodeToString(h.Sum(nil))
+
+	// Combine payload and signature
+	state := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", payload, signature)))
+
+	logVerbose("Generated self-contained state: %s", state)
+	return state, nil
+}
+
+// validateSelfContainedState validates a self-contained state parameter
+func (p *GitHubOAuthProvider) validateSelfContainedState(state string) (string, error) {
+	// Decode state
+	decoded, err := base64.URLEncoding.DecodeString(state)
+	if err != nil {
+		return "", fmt.Errorf("invalid state encoding: %w", err)
+	}
+
+	// Split into payload and signature
+	parts := strings.Split(string(decoded), ":")
+	if len(parts) < 4 {
+		return "", fmt.Errorf("invalid state format")
+	}
+
+	// Reconstruct payload and signature
+	payload := strings.Join(parts[:3], ":")
+	signature := parts[3]
+
+	// Verify signature
+	h := hmac.New(sha256.New, []byte(p.config.ClientSecret))
+	h.Write([]byte(payload))
+	expectedSignature := base64.URLEncoding.EncodeToString(h.Sum(nil))
+
+	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+		return "", fmt.Errorf("invalid state signature")
+	}
+
+	// Parse timestamp
+	timestampStr := parts[0]
+	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid timestamp in state: %w", err)
+	}
+
+	// Check if state is expired (15 minutes)
+	if time.Since(time.Unix(timestamp, 0)) > 15*time.Minute {
+		return "", fmt.Errorf("state expired")
+	}
+
+	// Return redirect URI
+	redirectURI := parts[2]
+	logVerbose("Validated self-contained state, redirectURI: %s", redirectURI)
+	return redirectURI, nil
 }
 
 // cleanupExpiredStates removes expired states from the store

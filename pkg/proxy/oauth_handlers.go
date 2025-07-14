@@ -79,22 +79,33 @@ func (p *Proxy) handleOAuthLogin(c echo.Context) error {
 
 // handleOAuthCallback handles the OAuth callback
 func (p *Proxy) handleOAuthCallback(c echo.Context) error {
+	log.Printf("[OAUTH_CALLBACK] Starting OAuth callback processing")
+	log.Printf("[OAUTH_CALLBACK] Request URL: %s", c.Request().URL.String())
+	log.Printf("[OAUTH_CALLBACK] Request Headers: %v", c.Request().Header)
+
 	var req OAuthCallbackRequest
 	if err := c.Bind(&req); err != nil {
+		log.Printf("[OAUTH_CALLBACK] Failed to bind request: %v", err)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid callback parameters")
 	}
 
+	log.Printf("[OAUTH_CALLBACK] Received callback with code: %s, state: %s", req.Code, req.State)
+
 	// Validate required parameters
 	if req.Code == "" || req.State == "" {
+		log.Printf("[OAUTH_CALLBACK] Missing required parameters - code: %s, state: %s", req.Code, req.State)
 		return echo.NewHTTPError(http.StatusBadRequest, "Missing code or state parameter")
 	}
 
 	// Exchange code for token
+	log.Printf("[OAUTH_CALLBACK] Attempting to exchange code for token")
 	userContext, err := p.oauthProvider.ExchangeCode(c.Request().Context(), req.Code, req.State)
 	if err != nil {
-		log.Printf("OAuth code exchange failed: %v", err)
+		log.Printf("[OAUTH_CALLBACK] OAuth code exchange failed: %v", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "OAuth authentication failed")
 	}
+
+	log.Printf("[OAUTH_CALLBACK] OAuth code exchange successful for user: %s", userContext.UserID)
 
 	// Create a new session for the authenticated user
 	sessionID := uuid.New().String()
