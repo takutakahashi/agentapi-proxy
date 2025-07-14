@@ -9,7 +9,7 @@
       "oauth": {
         "client_id": "${GITHUB_CLIENT_ID}",
         "client_secret": "${GITHUB_CLIENT_SECRET}",
-        "scope": "repo workflow read:org admin:repo_hook notifications user:email",
+        "scope": "repo workflow admin:org admin:repo_hook notifications user:email",
         "base_url": "https://github.com",
         "authorize_url": "https://github.com/login/oauth/authorize",
         "token_url": "https://github.com/login/oauth/access_token"
