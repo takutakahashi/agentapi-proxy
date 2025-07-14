@@ -37,23 +37,50 @@ spec:
             - sh
             - -c
             - |
-              echo "Fixing PVC permissions for uid:gid 999:999..."
+              echo "Checking PVC permissions for uid:gid 999:999..."
+              NEED_FIX=false
+              
               {{- if .Values.persistence.enabled }}
-              if [ -d "/home/agentapi/workdir" ]; then
-                chown -R 999:999 /home/agentapi/workdir || echo "Warning: Failed to change ownership of workdir"
-                chmod -R 755 /home/agentapi/workdir || echo "Warning: Failed to change permissions of workdir"
-                echo "Fixed permissions for /home/agentapi/workdir"
+              echo "Testing write access to /home/agentapi/workdir..."
+              if ! su -s /bin/sh -c "touch /home/agentapi/workdir/.write_test && rm -f /home/agentapi/workdir/.write_test" 999 2>/dev/null; then
+                echo "Write test failed for /home/agentapi/workdir, need to fix permissions"
+                NEED_FIX=true
+              else
+                echo "Write test passed for /home/agentapi/workdir"
               fi
               {{- end }}
+              
               {{- if .Values.myclaudesPersistence.enabled }}
-              if [ -d "/home/agentapi/.agentapi-proxy/myclaudes" ]; then
-                mkdir -p /home/agentapi/.agentapi-proxy
-                chown -R 999:999 /home/agentapi/.agentapi-proxy || echo "Warning: Failed to change ownership of myclaudes"
-                chmod -R 755 /home/agentapi/.agentapi-proxy || echo "Warning: Failed to change permissions of myclaudes"
-                echo "Fixed permissions for /home/agentapi/.agentapi-proxy/myclaudes"
+              echo "Testing write access to /home/agentapi/.agentapi-proxy/myclaudes..."
+              mkdir -p /home/agentapi/.agentapi-proxy/myclaudes
+              if ! su -s /bin/sh -c "touch /home/agentapi/.agentapi-proxy/myclaudes/.write_test && rm -f /home/agentapi/.agentapi-proxy/myclaudes/.write_test" 999 2>/dev/null; then
+                echo "Write test failed for /home/agentapi/.agentapi-proxy/myclaudes, need to fix permissions"
+                NEED_FIX=true
+              else
+                echo "Write test passed for /home/agentapi/.agentapi-proxy/myclaudes"
               fi
               {{- end }}
-              echo "Permission fix completed"
+              
+              if [ "$NEED_FIX" = "true" ]; then
+                echo "Fixing PVC permissions..."
+                {{- if .Values.persistence.enabled }}
+                if [ -d "/home/agentapi/workdir" ]; then
+                  chown -R 999:999 /home/agentapi/workdir || echo "Warning: Failed to change ownership of workdir"
+                  chmod -R 755 /home/agentapi/workdir || echo "Warning: Failed to change permissions of workdir"
+                  echo "Fixed permissions for /home/agentapi/workdir"
+                fi
+                {{- end }}
+                {{- if .Values.myclaudesPersistence.enabled }}
+                if [ -d "/home/agentapi/.agentapi-proxy/myclaudes" ]; then
+                  chown -R 999:999 /home/agentapi/.agentapi-proxy || echo "Warning: Failed to change ownership of myclaudes"
+                  chmod -R 755 /home/agentapi/.agentapi-proxy || echo "Warning: Failed to change permissions of myclaudes"
+                  echo "Fixed permissions for /home/agentapi/.agentapi-proxy/myclaudes"
+                fi
+                {{- end }}
+                echo "Permission fix completed"
+              else
+                echo "No permission fix needed"
+              fi
           volumeMounts:
             {{- if .Values.persistence.enabled }}
             - name: data
