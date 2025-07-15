@@ -49,6 +49,17 @@ const mockResponses = {
       }
     }
   },
+  '/validate': {
+    POST: {
+      error: "Invalid API",
+      code: "INVALID_API_ERROR",
+      message: "Invalid API key or authentication token provided",
+      details: {
+        reason: "The API key format is invalid or has been revoked",
+        suggestion: "Please check your API key and ensure it's properly configured"
+      }
+    }
+  },
 };
 
 
