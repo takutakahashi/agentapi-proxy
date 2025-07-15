@@ -19,8 +19,14 @@ func TestSetupClaudeCode(t *testing.T) {
 
 	// Mock home directory
 	originalHome := os.Getenv("HOME")
-	defer func() { os.Setenv("HOME", originalHome) }()
-	os.Setenv("HOME", tempDir)
+	defer func() {
+		if err := os.Setenv("HOME", originalHome); err != nil {
+			t.Logf("Failed to restore HOME: %v", err)
+		}
+	}()
+	if err := os.Setenv("HOME", tempDir); err != nil {
+		t.Fatalf("Failed to set HOME: %v", err)
+	}
 
 	// Mock userHomeDir function by creating a test that works with temp directory
 	err = SetupClaudeCode()
@@ -71,8 +77,14 @@ func TestMergeClaudeConfig(t *testing.T) {
 
 	// Mock home directory
 	originalHome := os.Getenv("HOME")
-	defer func() { os.Setenv("HOME", originalHome) }()
-	os.Setenv("HOME", tempDir)
+	defer func() {
+		if err := os.Setenv("HOME", originalHome); err != nil {
+			t.Logf("Failed to restore HOME: %v", err)
+		}
+	}()
+	if err := os.Setenv("HOME", tempDir); err != nil {
+		t.Fatalf("Failed to set HOME: %v", err)
+	}
 
 	// Test case 1: No existing .claude.json file
 	err = mergeClaudeConfig()
@@ -355,14 +367,20 @@ func TestGetGitHubURL(t *testing.T) {
 	originalAPI := os.Getenv("GITHUB_API")
 	defer func() {
 		if originalAPI != "" {
-			os.Setenv("GITHUB_API", originalAPI)
+			if err := os.Setenv("GITHUB_API", originalAPI); err != nil {
+				t.Logf("Failed to restore GITHUB_API: %v", err)
+			}
 		} else {
-			os.Unsetenv("GITHUB_API")
+			if err := os.Unsetenv("GITHUB_API"); err != nil {
+				t.Logf("Failed to unset GITHUB_API: %v", err)
+			}
 		}
 	}()
 
 	// Test case 1: No GITHUB_API environment variable
-	os.Unsetenv("GITHUB_API")
+	if err := os.Unsetenv("GITHUB_API"); err != nil {
+		t.Fatalf("Failed to unset GITHUB_API: %v", err)
+	}
 	result := getGitHubURL()
 	expected := "https://github.com"
 	if result != expected {
@@ -370,7 +388,9 @@ func TestGetGitHubURL(t *testing.T) {
 	}
 
 	// Test case 2: GITHUB_API with /api/v3 suffix
-	os.Setenv("GITHUB_API", "https://github.enterprise.com/api/v3")
+	if err := os.Setenv("GITHUB_API", "https://github.enterprise.com/api/v3"); err != nil {
+		t.Fatalf("Failed to set GITHUB_API: %v", err)
+	}
 	result = getGitHubURL()
 	expected = "https://github.enterprise.com"
 	if result != expected {
@@ -378,7 +398,9 @@ func TestGetGitHubURL(t *testing.T) {
 	}
 
 	// Test case 3: GITHUB_API without /api/v3 suffix
-	os.Setenv("GITHUB_API", "https://github.enterprise.com")
+	if err := os.Setenv("GITHUB_API", "https://github.enterprise.com"); err != nil {
+		t.Fatalf("Failed to set GITHUB_API: %v", err)
+	}
 	result = getGitHubURL()
 	expected = "https://github.enterprise.com"
 	if result != expected {

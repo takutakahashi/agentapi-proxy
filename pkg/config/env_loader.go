@@ -54,7 +54,11 @@ func loadEnvFile(filepath string) ([]EnvVar, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("[ENV] Warning: Failed to close file %s: %v", filepath, err)
+		}
+	}()
 
 	var envVars []EnvVar
 	scanner := bufio.NewScanner(file)

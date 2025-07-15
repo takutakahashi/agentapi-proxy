@@ -1544,6 +1544,8 @@ func (p *Proxy) isPortAvailable(port int) bool {
 	if err != nil {
 		return false
 	}
-	ln.Close()
+	if err := ln.Close(); err != nil {
+		log.Printf("Warning: Failed to close listener: %v", err)
+	}
 	return true
 }

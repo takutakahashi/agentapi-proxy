@@ -116,7 +116,9 @@ func (sm *StartupManager) initGitHubRepository(cfg *StartupConfig) error {
 	for key, value := range envVars {
 		if value != "" {
 			originalEnv[key] = os.Getenv(key)
-			os.Setenv(key, value)
+			if err := os.Setenv(key, value); err != nil {
+				log.Printf("Warning: Failed to set environment variable %s: %v", key, err)
+			}
 		}
 	}
 
@@ -124,9 +126,13 @@ func (sm *StartupManager) initGitHubRepository(cfg *StartupConfig) error {
 	defer func() {
 		for key, originalValue := range originalEnv {
 			if originalValue == "" {
-				os.Unsetenv(key)
+				if err := os.Unsetenv(key); err != nil {
+					log.Printf("Warning: Failed to unset environment variable %s: %v", key, err)
+				}
 			} else {
-				os.Setenv(key, originalValue)
+				if err := os.Setenv(key, originalValue); err != nil {
+					log.Printf("Warning: Failed to restore environment variable %s: %v", key, err)
+				}
 			}
 		}
 	}()
