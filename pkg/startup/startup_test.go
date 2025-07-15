@@ -19,8 +19,14 @@ func TestSetupClaudeCode(t *testing.T) {
 
 	// Mock home directory
 	originalHome := os.Getenv("HOME")
-	defer func() { os.Setenv("HOME", originalHome) }()
-	os.Setenv("HOME", tempDir)
+	defer func() {
+		if err := os.Setenv("HOME", originalHome); err != nil {
+			t.Logf("Failed to restore HOME: %v", err)
+		}
+	}()
+	if err := os.Setenv("HOME", tempDir); err != nil {
+		t.Fatalf("Failed to set HOME: %v", err)
+	}
 
 	// Mock userHomeDir function by creating a test that works with temp directory
 	err = SetupClaudeCode()
@@ -71,8 +77,14 @@ func TestMergeClaudeConfig(t *testing.T) {
 
 	// Mock home directory
 	originalHome := os.Getenv("HOME")
-	defer func() { os.Setenv("HOME", originalHome) }()
-	os.Setenv("HOME", tempDir)
+	defer func() {
+		if err := os.Setenv("HOME", originalHome); err != nil {
+			t.Logf("Failed to restore HOME: %v", err)
+		}
+	}()
+	if err := os.Setenv("HOME", tempDir); err != nil {
+		t.Fatalf("Failed to set HOME: %v", err)
+	}
 
 	// Test case 1: No existing .claude.json file
 	err = mergeClaudeConfig()
@@ -257,7 +269,7 @@ func TestAddMcpServer(t *testing.T) {
 		Args:      []string{"arg1", "arg2"},
 		Env:       map[string]string{"TEST_ENV": "test_value"},
 	}
-	
+
 	err := addMcpServer(tempDir, mcpConfig)
 	// This might succeed if claude command is available in the environment
 	if err != nil {
@@ -271,7 +283,7 @@ func TestAddMcpServer(t *testing.T) {
 		Transport: "http",
 		Endpoint:  "http://localhost:8080",
 	}
-	
+
 	err = addMcpServer(tempDir, mcpConfig2)
 	// This might succeed if claude command is available in the environment
 	if err != nil {
@@ -355,14 +367,20 @@ func TestGetGitHubURL(t *testing.T) {
 	originalAPI := os.Getenv("GITHUB_API")
 	defer func() {
 		if originalAPI != "" {
-			os.Setenv("GITHUB_API", originalAPI)
+			if err := os.Setenv("GITHUB_API", originalAPI); err != nil {
+				t.Logf("Failed to restore GITHUB_API: %v", err)
+			}
 		} else {
-			os.Unsetenv("GITHUB_API")
+			if err := os.Unsetenv("GITHUB_API"); err != nil {
+				t.Logf("Failed to unset GITHUB_API: %v", err)
+			}
 		}
 	}()
 
 	// Test case 1: No GITHUB_API environment variable
-	os.Unsetenv("GITHUB_API")
+	if err := os.Unsetenv("GITHUB_API"); err != nil {
+		t.Fatalf("Failed to unset GITHUB_API: %v", err)
+	}
 	result := getGitHubURL()
 	expected := "https://github.com"
 	if result != expected {
@@ -370,7 +388,9 @@ func TestGetGitHubURL(t *testing.T) {
 	}
 
 	// Test case 2: GITHUB_API with /api/v3 suffix
-	os.Setenv("GITHUB_API", "https://github.enterprise.com/api/v3")
+	if err := os.Setenv("GITHUB_API", "https://github.enterprise.com/api/v3"); err != nil {
+		t.Fatalf("Failed to set GITHUB_API: %v", err)
+	}
 	result = getGitHubURL()
 	expected = "https://github.enterprise.com"
 	if result != expected {
@@ -378,7 +398,9 @@ func TestGetGitHubURL(t *testing.T) {
 	}
 
 	// Test case 3: GITHUB_API without /api/v3 suffix
-	os.Setenv("GITHUB_API", "https://github.enterprise.com")
+	if err := os.Setenv("GITHUB_API", "https://github.enterprise.com"); err != nil {
+		t.Fatalf("Failed to set GITHUB_API: %v", err)
+	}
 	result = getGitHubURL()
 	expected = "https://github.enterprise.com"
 	if result != expected {
@@ -438,7 +460,7 @@ func TestGetGitHubToken(t *testing.T) {
 	_ = os.Unsetenv("GITHUB_PERSONAL_ACCESS_TOKEN")
 	_ = os.Setenv("GITHUB_APP_ID", "12345")
 	_ = os.Setenv("GITHUB_INSTALLATION_ID", "67890")
-	
+
 	// Create a dummy PEM file
 	tempDir := t.TempDir()
 	pemFile := filepath.Join(tempDir, "test.pem")
@@ -447,7 +469,7 @@ func TestGetGitHubToken(t *testing.T) {
 		t.Fatalf("Failed to create test PEM file: %v", err)
 	}
 	_ = os.Setenv("GITHUB_APP_PEM_PATH", pemFile)
-	
+
 	_, err = getGitHubToken("")
 	// This will fail because of invalid PEM, but tests the code path
 	if err == nil {
@@ -457,7 +479,7 @@ func TestGetGitHubToken(t *testing.T) {
 	// Test case 4: GitHub App auth with auto-discovery (no installation ID)
 	_ = os.Unsetenv("GITHUB_INSTALLATION_ID")
 	_ = os.Setenv("GITHUB_REPO_FULLNAME", "owner/repo")
-	
+
 	_, err = getGitHubToken("")
 	// This will fail because of invalid PEM, but tests the auto-discovery code path
 	if err == nil {
@@ -566,14 +588,14 @@ func TestGenerateGitHubAppToken(t *testing.T) {
 
 	// Test case 4: PEM file fallback to environment variable
 	originalPem := os.Getenv("GITHUB_APP_PEM")
-	defer func() { 
+	defer func() {
 		if originalPem != "" {
 			_ = os.Setenv("GITHUB_APP_PEM", originalPem)
 		} else {
 			_ = os.Unsetenv("GITHUB_APP_PEM")
 		}
 	}()
-	
+
 	// Set a dummy PEM content
 	_ = os.Setenv("GITHUB_APP_PEM", "dummy-pem-content")
 	_, err = generateGitHubAppToken("123", "456", nonExistentPem)
@@ -599,7 +621,7 @@ func TestAutoDiscoverInstallationID(t *testing.T) {
 	// Test case 3: Non-existent PEM file without env var
 	tempDir := t.TempDir()
 	nonExistentPem := filepath.Join(tempDir, "non-existent.pem")
-	
+
 	originalPem := os.Getenv("GITHUB_APP_PEM")
 	defer func() {
 		if originalPem != "" {
@@ -609,7 +631,7 @@ func TestAutoDiscoverInstallationID(t *testing.T) {
 		}
 	}()
 	_ = os.Unsetenv("GITHUB_APP_PEM")
-	
+
 	_, err = autoDiscoverInstallationID("123", nonExistentPem, "owner/repo")
 	if err == nil {
 		t.Error("Expected error for non-existent PEM file")
@@ -619,7 +641,7 @@ func TestAutoDiscoverInstallationID(t *testing.T) {
 func TestAuthenticateGHCLI(t *testing.T) {
 	// This function executes gh auth login command
 	// We can only test that it attempts to run the command
-	
+
 	// Test with mock environment
 	env := []string{"PATH=/usr/bin:/bin", "HOME=/tmp"}
 	err := authenticateGHCLI("github.enterprise.com", "test-token", env)
@@ -650,7 +672,7 @@ func TestSetupRepository(t *testing.T) {
 	if err := os.MkdirAll(gitDir, 0755); err != nil {
 		t.Fatalf("Failed to create .git directory: %v", err)
 	}
-	
+
 	// This will try to run git pull, which will fail in test environment
 	err = setupRepository("https://github.com/owner/repo", "test-token", tempDir)
 	if err == nil {

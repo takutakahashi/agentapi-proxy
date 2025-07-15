@@ -59,7 +59,7 @@ func AuthMiddleware(cfg *config.Config, githubProvider *GitHubAuthProvider) echo
 			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled && githubProvider != nil {
 				if userCtx, err = tryGitHubAuth(c, cfg.Auth.GitHub, githubProvider); err == nil {
 					c.Set("user", userCtx)
-					log.Printf("GitHub authentication successful: user %s (role: %s) from %s", userCtx.UserID, userCtx.Role, c.RealIP())
+					log.Printf("GitHub authentication successful: user %s (role: %s)", userCtx.UserID, userCtx.Role)
 					return next(c)
 				}
 				log.Printf("GitHub authentication failed: %v from %s", err, c.RealIP())
@@ -69,7 +69,7 @@ func AuthMiddleware(cfg *config.Config, githubProvider *GitHubAuthProvider) echo
 			if cfg.Auth.Static != nil && cfg.Auth.Static.Enabled {
 				if userCtx, err = tryStaticAuth(c, cfg.Auth.Static, cfg); err == nil {
 					c.Set("user", userCtx)
-					log.Printf("Static authentication successful: user %s (role: %s) from %s", userCtx.UserID, userCtx.Role, c.RealIP())
+					log.Printf("Static authentication successful: user %s (role: %s)", userCtx.UserID, userCtx.Role)
 					return next(c)
 				}
 				log.Printf("Static authentication failed: %v from %s", err, c.RealIP())
@@ -119,8 +119,8 @@ func RequirePermission(permission string) echo.MiddlewareFunc {
 			}
 
 			if !hasPermission(user.Permissions, permission) {
-				log.Printf("Authorization failed: user %s (role: %s) lacks permission %s, has permissions: %v, from %s",
-					user.UserID, user.Role, permission, user.Permissions, c.RealIP())
+				log.Printf("Authorization failed: user %s (role: %s) lacks permission %s",
+					user.UserID, user.Role, permission)
 				return echo.NewHTTPError(http.StatusForbidden, "Insufficient permissions")
 			}
 

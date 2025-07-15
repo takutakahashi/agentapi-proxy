@@ -753,34 +753,46 @@ func TestCORSHeaders(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name   string
-		method string
-		path   string
-		origin string
+		name          string
+		method        string
+		path          string
+		origin        string
+		expectAllowed bool // Whether the origin should be allowed
 	}{
 		{
-			name:   "OPTIONS for DELETE /sessions/:sessionId",
-			method: "OPTIONS",
-			path:   "/sessions/test-session-id",
-			origin: "http://localhost:3000",
+			name:          "OPTIONS for DELETE /sessions/:sessionId with localhost",
+			method:        "OPTIONS",
+			path:          "/sessions/test-session-id",
+			origin:        "http://localhost:3000",
+			expectAllowed: true,
 		},
 		{
-			name:   "DELETE /sessions/:sessionId with CORS",
-			method: "DELETE",
-			path:   "/sessions/non-existent",
-			origin: "http://localhost:3000",
+			name:          "DELETE /sessions/:sessionId with localhost CORS",
+			method:        "DELETE",
+			path:          "/sessions/non-existent",
+			origin:        "http://localhost:3000",
+			expectAllowed: true,
 		},
 		{
-			name:   "OPTIONS for POST /start",
-			method: "OPTIONS",
-			path:   "/start",
-			origin: "https://example.com",
+			name:          "OPTIONS for POST /start with disallowed origin",
+			method:        "OPTIONS",
+			path:          "/start",
+			origin:        "https://example.com",
+			expectAllowed: false,
 		},
 		{
-			name:   "OPTIONS for GET /search",
-			method: "OPTIONS",
-			path:   "/search",
-			origin: "https://app.example.com",
+			name:          "OPTIONS for GET /search with localhost",
+			method:        "OPTIONS",
+			path:          "/search",
+			origin:        "http://localhost:8080",
+			expectAllowed: true,
+		},
+		{
+			name:          "OPTIONS with 127.0.0.1",
+			method:        "OPTIONS",
+			path:          "/start",
+			origin:        "http://127.0.0.1:3000",
+			expectAllowed: true,
 		},
 	}
 
@@ -799,30 +811,43 @@ func TestCORSHeaders(t *testing.T) {
 			rec := httptest.NewRecorder()
 			proxyServer.GetEcho().ServeHTTP(rec, req)
 
-			// For OPTIONS requests, always check CORS headers and status
+			// For OPTIONS requests, check CORS headers and status
 			if tt.method == "OPTIONS" {
-				// Check CORS headers
-				if origin := rec.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
-					t.Errorf("Expected Access-Control-Allow-Origin to be *, got %s", origin)
-				}
+				// Check if origin is allowed based on our security configuration
+				allowOriginHeader := rec.Header().Get("Access-Control-Allow-Origin")
 
-				if methods := rec.Header().Get("Access-Control-Allow-Methods"); methods == "" {
-					t.Error("Access-Control-Allow-Methods header is missing")
-				} else if !strings.Contains(methods, "DELETE") || !strings.Contains(methods, "OPTIONS") {
-					t.Errorf("Expected Access-Control-Allow-Methods to include DELETE and OPTIONS, got %s", methods)
-				}
+				if tt.expectAllowed {
+					// For allowed origins, we should get the exact origin back
+					if allowOriginHeader != tt.origin {
+						t.Errorf("Expected Access-Control-Allow-Origin to be %s, got %s", tt.origin, allowOriginHeader)
+					}
 
-				if headers := rec.Header().Get("Access-Control-Allow-Headers"); headers == "" {
-					t.Error("Access-Control-Allow-Headers header is missing")
-				}
+					// Check other CORS headers for allowed origins
+					if methods := rec.Header().Get("Access-Control-Allow-Methods"); methods == "" {
+						t.Error("Access-Control-Allow-Methods header is missing")
+					} else if !strings.Contains(methods, "DELETE") || !strings.Contains(methods, "OPTIONS") {
+						t.Errorf("Expected Access-Control-Allow-Methods to include DELETE and OPTIONS, got %s", methods)
+					}
 
-				if credentials := rec.Header().Get("Access-Control-Allow-Credentials"); credentials != "true" {
-					t.Errorf("Expected Access-Control-Allow-Credentials to be true, got %s", credentials)
-				}
+					if headers := rec.Header().Get("Access-Control-Allow-Headers"); headers == "" {
+						t.Error("Access-Control-Allow-Headers header is missing")
+					}
 
-				// Expect 204 No Content
-				if rec.Code != http.StatusNoContent {
-					t.Errorf("Expected status %d for OPTIONS request, got %d", http.StatusNoContent, rec.Code)
+					if credentials := rec.Header().Get("Access-Control-Allow-Credentials"); credentials != "true" {
+						t.Errorf("Expected Access-Control-Allow-Credentials to be true, got %s", credentials)
+					}
+
+					// Expect 204 No Content
+					if rec.Code != http.StatusNoContent {
+						t.Errorf("Expected status %d for OPTIONS request, got %d", http.StatusNoContent, rec.Code)
+					}
+				} else {
+					// For disallowed origins, CORS middleware should not set the origin header
+					if allowOriginHeader == tt.origin {
+						t.Errorf("Expected origin %s to be rejected, but it was allowed", tt.origin)
+					}
+					// The request should still be processed, but without CORS headers
+					t.Logf("Disallowed origin %s correctly rejected (no CORS headers set)", tt.origin)
 				}
 			} else {
 				// For non-OPTIONS requests, just verify that the request was processed

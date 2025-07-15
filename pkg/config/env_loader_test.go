@@ -13,7 +13,11 @@ func TestLoadRoleEnvVars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	// Create test environment files
 	defaultEnvContent := `# Default environment variables
@@ -176,7 +180,11 @@ func TestLoadEnvFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	tests := []struct {
 		name         string
@@ -302,13 +310,17 @@ func TestApplyEnvVars(t *testing.T) {
 		os.Clearenv()
 		for _, env := range originalEnv {
 			if idx := strings.Index(env, "="); idx > 0 {
-				os.Setenv(env[:idx], env[idx+1:])
+				if err := os.Setenv(env[:idx], env[idx+1:]); err != nil {
+					t.Logf("Failed to restore env var %s: %v", env[:idx], err)
+				}
 			}
 		}
 	}()
 
 	// Set up test environment
-	os.Setenv("EXISTING_VAR", "original_value")
+	if err := os.Setenv("EXISTING_VAR", "original_value"); err != nil {
+		t.Fatalf("Failed to set EXISTING_VAR: %v", err)
+	}
 
 	envVars := []EnvVar{
 		{Key: "NEW_VAR", Value: "new_value"},

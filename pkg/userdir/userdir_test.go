@@ -84,17 +84,25 @@ func TestSanitizeUserID(t *testing.T) {
 		expected string
 	}{
 		{"alice", "alice"},
-		{"alice/bob", "alice_bob"},
-		{"alice\\bob", "alice_bob"},
-		{"alice..bob", "alice__bob"},
-		{"alice bob", "alice_bob"},
-		{".alice", "alice"},
-		{"alice.", "alice"},
-		{"-alice", "alice"},
-		{"alice-", "alice"},
+		{"ALICE", "alice"}, // converted to lowercase
+		{"alice123", "alice123"},
+		{"alice-bob", "alice-bob"},
+		{"alice_bob", "alice_bob"},
+		// These should be rejected by the new security validation
+		{"alice/bob", ""},
+		{"alice\\bob", ""},
+		{"alice..bob", ""},
+		{"alice bob", ""}, // spaces not allowed
+		{".alice", ""},    // leading dot not allowed
+		{"alice.", ""},    // trailing dot not allowed
+		{"-alice", "-alice"},
+		{"alice-", "alice-"},
 		{"", ""},
 		{"...", ""},
 		{"///", ""},
+		{"test@user", ""}, // @ symbol not allowed
+		{"test user", ""}, // space not allowed
+		{"very-long-username-that-exceeds-the-64-character-limit-set-by-security", ""}, // too long
 	}
 
 	for _, test := range tests {
@@ -220,14 +228,22 @@ func TestSetupUserHome(t *testing.T) {
 	// Ensure cleanup
 	defer func() {
 		if originalHome != "" {
-			_ = os.Setenv("HOME", originalHome)
+			if err := os.Setenv("HOME", originalHome); err != nil {
+				t.Logf("Failed to restore HOME: %v", err)
+			}
 		} else {
-			_ = os.Unsetenv("HOME")
+			if err := os.Unsetenv("HOME"); err != nil {
+				t.Logf("Failed to unset HOME: %v", err)
+			}
 		}
 		if originalUserHomeBaseDir != "" {
-			_ = os.Setenv("USERHOME_BASEDIR", originalUserHomeBaseDir)
+			if err := os.Setenv("USERHOME_BASEDIR", originalUserHomeBaseDir); err != nil {
+				t.Logf("Failed to restore USERHOME_BASEDIR: %v", err)
+			}
 		} else {
-			_ = os.Unsetenv("USERHOME_BASEDIR")
+			if err := os.Unsetenv("USERHOME_BASEDIR"); err != nil {
+				t.Logf("Failed to unset USERHOME_BASEDIR: %v", err)
+			}
 		}
 	}()
 
@@ -266,11 +282,10 @@ func TestSetupUserHome(t *testing.T) {
 			expectedHomePattern: filepath.Join(tempCustomBaseDir, "myclaudes", "testuser"),
 		},
 		{
-			name:                "User ID with dangerous characters",
-			userID:              "test/../user",
-			homeEnv:             tempHomeDir,
-			expectError:         false,
-			expectedHomePattern: filepath.Join(tempHomeDir, ".agentapi-proxy", "myclaudes", "test____user"),
+			name:        "User ID with dangerous characters",
+			userID:      "test/../user",
+			homeEnv:     tempHomeDir,
+			expectError: true, // Updated: now expects error due to stricter validation
 		},
 		{
 			name:                "GitHub username format",
@@ -290,11 +305,17 @@ func TestSetupUserHome(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment
-			_ = os.Setenv("HOME", tt.homeEnv)
+			if err := os.Setenv("HOME", tt.homeEnv); err != nil {
+				t.Fatalf("Failed to set HOME: %v", err)
+			}
 			if tt.userHomeBaseDirEnv != "" {
-				_ = os.Setenv("USERHOME_BASEDIR", tt.userHomeBaseDirEnv)
+				if err := os.Setenv("USERHOME_BASEDIR", tt.userHomeBaseDirEnv); err != nil {
+					t.Fatalf("Failed to set USERHOME_BASEDIR: %v", err)
+				}
 			} else {
-				_ = os.Unsetenv("USERHOME_BASEDIR")
+				if err := os.Unsetenv("USERHOME_BASEDIR"); err != nil {
+					t.Fatalf("Failed to unset USERHOME_BASEDIR: %v", err)
+				}
 			}
 
 			result, err := SetupUserHome(tt.userID)
@@ -370,10 +391,16 @@ func TestManagerEdgeCases(t *testing.T) {
 func TestGetUserClaudeDir_EdgeCases(t *testing.T) {
 	// Save original HOME
 	originalHome := os.Getenv("HOME")
-	defer func() { os.Setenv("HOME", originalHome) }()
+	defer func() {
+		if err := os.Setenv("HOME", originalHome); err != nil {
+			t.Logf("Failed to restore HOME: %v", err)
+		}
+	}()
 
 	// Test with empty HOME environment variable
-	os.Unsetenv("HOME")
+	if err := os.Unsetenv("HOME"); err != nil {
+		t.Fatalf("Failed to unset HOME: %v", err)
+	}
 	manager := NewManager("/tmp/test", false)
 	claudeDir, err := manager.GetUserClaudeDir("testuser")
 	if err != nil {
@@ -385,7 +412,9 @@ func TestGetUserClaudeDir_EdgeCases(t *testing.T) {
 	}
 
 	// Test with custom HOME
-	os.Setenv("HOME", "/custom/home")
+	if err := os.Setenv("HOME", "/custom/home"); err != nil {
+		t.Fatalf("Failed to set HOME: %v", err)
+	}
 	manager = NewManager("/tmp/test", true)
 	claudeDir, err = manager.GetUserClaudeDir("testuser")
 	if err != nil {
