@@ -49,17 +49,6 @@ const mockResponses = {
       }
     }
   },
-  '/validate': {
-    POST: {
-      error: "Invalid API",
-      code: "INVALID_API_ERROR",
-      message: "Invalid API key or authentication token provided",
-      details: {
-        reason: "The API key format is invalid or has been revoked",
-        suggestion: "Please check your API key and ensure it's properly configured"
-      }
-    }
-  },
 };
 
 
@@ -117,9 +106,20 @@ const handleSessionEndpoint = (path, method) => {
             model: "claude-3.5-sonnet",
             tools_used: ["code_analysis"]
           }
+        },
+        {
+          id: "msg-550e8400-e29b-41d4-a716-446655440004",
+          session_id: sessionId,
+          role: "system",
+          content: "Error: Invalid API key provided. Please check your authentication credentials.",
+          timestamp: "2024-01-01T12:01:30Z",
+          metadata: {
+            type: "error",
+            error_code: "INVALID_API_KEY"
+          }
         }
       ],
-      total: 4,
+      total: 5,
       page: 1,
       per_page: 50,
       has_more: false
