@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Manager handles user-specific directory operations
@@ -107,22 +109,48 @@ func (m *Manager) EnsureUserClaudeDir(userID string) (string, error) {
 
 // sanitizeUserID removes potentially dangerous characters from user ID
 func sanitizeUserID(userID string) string {
-	// Replace dangerous characters
-	sanitized := userID
-	sanitized = strings.ReplaceAll(sanitized, "/", "_")
-	sanitized = strings.ReplaceAll(sanitized, "\\", "_")
-	sanitized = strings.ReplaceAll(sanitized, "..", "__")
-	sanitized = strings.ReplaceAll(sanitized, " ", "_")
-
-	// Remove leading/trailing dots and dashes
-	sanitized = strings.Trim(sanitized, ".-")
-
-	// Special case: if the result is only underscores or empty, return empty
-	if sanitized == "" || strings.Trim(sanitized, "_") == "" {
+	// Check for null bytes
+	if strings.Contains(userID, "\x00") {
 		return ""
 	}
 
-	return sanitized
+	// Check maximum length
+	if len(userID) > 64 {
+		return ""
+	}
+
+	// Normalize Unicode to prevent bypasses
+	userID = strings.ToValidUTF8(userID, "_")
+
+	// Check for dangerous patterns
+	if strings.Contains(userID, "..") ||
+		strings.HasPrefix(userID, ".") ||
+		strings.HasSuffix(userID, ".") ||
+		strings.Contains(userID, "/") ||
+		strings.Contains(userID, "\\") {
+		return ""
+	}
+
+	// Validate using regex - only allow alphanumeric, dash, underscore
+	validPattern := regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`)
+	if !validPattern.MatchString(userID) {
+		return ""
+	}
+
+	// Additional check for control characters
+	for _, r := range userID {
+		if unicode.IsControl(r) {
+			return ""
+		}
+	}
+
+	// Special case: if the result is empty or only special chars, return empty
+	if userID == "" || strings.Trim(userID, "_-") == "" {
+		return ""
+	}
+
+	// Convert to lowercase for consistency
+	return strings.ToLower(userID)
 }
 
 // SetupUserHome creates user-specific home directory and returns environment variables

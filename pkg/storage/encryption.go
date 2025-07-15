@@ -8,14 +8,23 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
+	"os"
 	"strings"
 )
 
-// getEncryptionKey generates a consistent encryption key
+// getEncryptionKey generates a consistent encryption key from environment variable
 func getEncryptionKey() []byte {
-	// Generate encryption key from a fixed string
-	// In production, this should come from a secure key management system
-	hash := sha256.Sum256([]byte("agentapi-session-encryption-key"))
+	// Get encryption key from environment variable
+	key := os.Getenv("AGENTAPI_ENCRYPTION_KEY")
+	if key == "" {
+		// Fallback to default for development/testing
+		// This should never be used in production
+		log.Printf("WARNING: Using default encryption key. Set AGENTAPI_ENCRYPTION_KEY environment variable for production!")
+		key = "agentapi-session-encryption-key"
+	}
+
+	hash := sha256.Sum256([]byte(key))
 	return hash[:]
 }
 

@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +64,12 @@ func (p *Proxy) handleOAuthLogin(c echo.Context) error {
 	redirectURL, err := url.Parse(req.RedirectURI)
 	if err != nil || redirectURL.Scheme == "" || redirectURL.Host == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid redirect_uri format")
+	}
+
+	// Validate redirect URI against whitelist
+	if !isAllowedRedirectURI(req.RedirectURI) {
+		log.Printf("Blocked unauthorized redirect URI: %s", req.RedirectURI)
+		return echo.NewHTTPError(http.StatusBadRequest, "Unauthorized redirect_uri")
 	}
 
 	// Generate OAuth URL
@@ -191,6 +199,42 @@ type OAuthSession struct {
 	UserContext *auth.UserContext
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
+}
+
+// isAllowedRedirectURI validates if the redirect URI is in the allowed list
+func isAllowedRedirectURI(redirectURI string) bool {
+	// Get allowed redirect URIs from environment variable
+	allowedURIs := os.Getenv("OAUTH_ALLOWED_REDIRECT_URIS")
+	if allowedURIs == "" {
+		// Fallback to localhost for development
+		allowedDefaultURIs := []string{
+			"http://localhost",
+			"https://localhost",
+			"http://127.0.0.1",
+			"https://127.0.0.1",
+		}
+		for _, allowed := range allowedDefaultURIs {
+			if strings.HasPrefix(redirectURI, allowed) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Parse comma-separated allowed URIs
+	uris := strings.Split(allowedURIs, ",")
+	for _, allowed := range uris {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == redirectURI {
+			return true
+		}
+		// Also allow prefix match for same domain with different paths
+		if strings.HasPrefix(redirectURI, allowed) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // validateOAuthSession validates an OAuth session from the request

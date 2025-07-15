@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -155,8 +156,13 @@ func (sm *StartupManager) createAgentAPICommand(ctx context.Context, cfg *Startu
 	args := []string{"server", "--port", strconv.Itoa(cfg.Port)}
 
 	if cfg.AgentAPIArgs != "" {
-		// TODO: Parse AgentAPIArgs properly
-		args = append(args, cfg.AgentAPIArgs)
+		// Parse AgentAPIArgs safely to prevent command injection
+		parsedArgs, err := parseCommandArgs(cfg.AgentAPIArgs)
+		if err != nil {
+			log.Printf("Warning: Failed to parse AgentAPIArgs: %v", err)
+		} else {
+			args = append(args, parsedArgs...)
+		}
 	}
 
 	args = append(args, "--", "claude")
@@ -167,8 +173,13 @@ func (sm *StartupManager) createAgentAPICommand(ctx context.Context, cfg *Startu
 	}
 
 	if cfg.ClaudeArgs != "" {
-		// TODO: Parse ClaudeArgs properly
-		args = append(args, cfg.ClaudeArgs)
+		// Parse ClaudeArgs safely to prevent command injection
+		parsedArgs, err := parseCommandArgs(cfg.ClaudeArgs)
+		if err != nil {
+			log.Printf("Warning: Failed to parse ClaudeArgs: %v", err)
+		} else {
+			args = append(args, parsedArgs...)
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, "agentapi", args...)
@@ -177,6 +188,34 @@ func (sm *StartupManager) createAgentAPICommand(ctx context.Context, cfg *Startu
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	return cmd
+}
+
+// parseCommandArgs safely parses command line arguments to prevent injection
+func parseCommandArgs(argsStr string) ([]string, error) {
+	// Validate input to prevent command injection
+	if strings.ContainsAny(argsStr, "|&;()<>`$\\\"'") {
+		return nil, fmt.Errorf("invalid characters in command arguments")
+	}
+
+	// Simple space-based splitting for now
+	// This could be enhanced with proper shell-like parsing if needed
+	args := strings.Fields(argsStr)
+
+	// Validate each argument
+	for _, arg := range args {
+		if !isValidCommandArg(arg) {
+			return nil, fmt.Errorf("invalid argument: %s", arg)
+		}
+	}
+
+	return args, nil
+}
+
+// isValidCommandArg validates a single command argument
+func isValidCommandArg(arg string) bool {
+	// Allow alphanumeric, hyphens, dots, underscores, equals, and forward slashes
+	validPattern := regexp.MustCompile(`^[a-zA-Z0-9\-_./=]+$`)
+	return validPattern.MatchString(arg)
 }
 
 // setupEnvironment sets up the environment for the command

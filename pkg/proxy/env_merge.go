@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"log"
+	"regexp"
+	"strings"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
@@ -65,11 +67,15 @@ func MergeEnvironmentVariables(cfg EnvMergeConfig) (map[string]string, error) {
 
 	// 4. Override with request environment variables (highest priority)
 	if cfg.RequestEnv != nil {
-		for key, value := range cfg.RequestEnv {
+		validatedEnv := validateEnvironmentVariables(cfg.RequestEnv)
+		for key, value := range validatedEnv {
 			mergedEnv[key] = value
 		}
-		if len(cfg.RequestEnv) > 0 {
-			log.Printf("[ENV] Applied %d environment variables from request", len(cfg.RequestEnv))
+		if len(validatedEnv) > 0 {
+			log.Printf("[ENV] Applied %d validated environment variables from request", len(validatedEnv))
+		}
+		if len(validatedEnv) != len(cfg.RequestEnv) {
+			log.Printf("[ENV] Warning: %d environment variables were rejected due to validation", len(cfg.RequestEnv)-len(validatedEnv))
 		}
 	}
 
@@ -82,4 +88,55 @@ func ExtractTeamEnvFile(tags map[string]string) string {
 		return ""
 	}
 	return tags["env_file"]
+}
+
+// validateEnvironmentVariables validates user-provided environment variables
+func validateEnvironmentVariables(env map[string]string) map[string]string {
+	validatedEnv := make(map[string]string)
+
+	// Valid environment variable name pattern
+	validKeyPattern := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+	// Dangerous environment variables that should not be overridden
+	dangerousVars := map[string]bool{
+		"PATH":            true,
+		"LD_PRELOAD":      true,
+		"LD_LIBRARY_PATH": true,
+		"SHELL":           true,
+		"HOME":            true,
+		"USER":            true,
+		"SUDO_USER":       true,
+		"PWD":             true,
+		"OLDPWD":          true,
+	}
+
+	for key, value := range env {
+		// Validate key format
+		if !validKeyPattern.MatchString(key) {
+			log.Printf("[ENV] Rejected invalid environment variable name: %s", key)
+			continue
+		}
+
+		// Check if it's a dangerous variable
+		if dangerousVars[strings.ToUpper(key)] {
+			log.Printf("[ENV] Rejected dangerous environment variable: %s", key)
+			continue
+		}
+
+		// Validate value (basic checks)
+		if len(value) > 4096 {
+			log.Printf("[ENV] Rejected environment variable %s: value too long", key)
+			continue
+		}
+
+		// Check for potential shell metacharacters in value
+		if strings.ContainsAny(value, "|&;()<>`$\\") {
+			log.Printf("[ENV] Rejected environment variable %s: contains dangerous characters", key)
+			continue
+		}
+
+		validatedEnv[key] = value
+	}
+
+	return validatedEnv
 }

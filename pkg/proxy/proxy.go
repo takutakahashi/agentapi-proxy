@@ -112,7 +112,18 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Add recovery middleware
 	e.Use(middleware.Recover())
 
-	// Add CORS middleware with proper configuration (only for non-proxy routes)
+	// Add security headers middleware
+	e.Use(middleware.SecureWithConfig(middleware.SecureConfig{
+		XSSProtection:         "1; mode=block",
+		ContentTypeNosniff:    "nosniff",
+		XFrameOptions:         "DENY",
+		HSTSMaxAge:            31536000, // 1 year
+		HSTSExcludeSubdomains: false,
+		ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+		ReferrerPolicy:        "strict-origin-when-cross-origin",
+	}))
+
+	// Add CORS middleware with secure configuration (only for non-proxy routes)
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		Skipper: func(c echo.Context) bool {
 			// Skip CORS middleware only for proxy routes (/:sessionId/* pattern)
@@ -127,7 +138,26 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			}
 			return false
 		},
-		AllowOrigins:     []string{"*"},
+		AllowOriginFunc: func(origin string) (bool, error) {
+			// Get allowed origins from environment variable
+			allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+			if allowedOrigins == "" {
+				// Fallback to localhost for development
+				allowed := strings.HasPrefix(origin, "http://localhost") ||
+					strings.HasPrefix(origin, "https://localhost") ||
+					origin == "http://127.0.0.1" ||
+					origin == "https://127.0.0.1"
+				return allowed, nil
+			}
+			// Parse comma-separated allowed origins
+			origins := strings.Split(allowedOrigins, ",")
+			for _, allowed := range origins {
+				if strings.TrimSpace(allowed) == origin {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
 		AllowMethods:     []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodDelete, http.MethodOptions},
 		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Requested-With", "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host", "X-API-Key"},
 		AllowCredentials: true,
