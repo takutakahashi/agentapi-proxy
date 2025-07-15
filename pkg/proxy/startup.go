@@ -66,13 +66,13 @@ func (sm *StartupManager) StartAgentAPISession(ctx context.Context, cfg *Startup
 	}
 
 	// Setup Claude Code configuration
-	if err := sm.setupClaudeCode(); err != nil {
+	if err := sm.setupClaudeCode(cfg); err != nil {
 		return nil, fmt.Errorf("failed to setup Claude Code: %w", err)
 	}
 
 	// Setup MCP servers if needed
 	if cfg.MCPConfigs != "" {
-		if err := sm.setupMCPServers(cfg.MCPConfigs); err != nil {
+		if err := sm.setupMCPServers(cfg, cfg.MCPConfigs); err != nil {
 			log.Printf("Warning: Failed to setup MCP servers: %v", err)
 		}
 	}
@@ -145,16 +145,47 @@ func (sm *StartupManager) initGitHubRepository(cfg *StartupConfig) error {
 }
 
 // setupClaudeCode sets up Claude Code configuration
-func (sm *StartupManager) setupClaudeCode() error {
-	return startup.SetupClaudeCode()
+func (sm *StartupManager) setupClaudeCode(cfg *StartupConfig) error {
+	// Get user home directory using userdir
+	userEnv, err := userdir.SetupUserHome(cfg.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to setup user home: %w", err)
+	}
+
+	// Use HOME from userdir, fallback to current user home
+	homeDir := userEnv["HOME"]
+	if homeDir == "" {
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	return startup.SetupClaudeCode(homeDir)
 }
 
 // setupMCPServers sets up MCP servers
-func (sm *StartupManager) setupMCPServers(mcpConfigs string) error {
+func (sm *StartupManager) setupMCPServers(cfg *StartupConfig, mcpConfigs string) error {
 	if sm.verbose {
 		log.Printf("Setting up MCP servers from configuration")
 	}
-	return startup.SetupMCPServers(mcpConfigs)
+
+	// Get user home directory using userdir
+	userEnv, err := userdir.SetupUserHome(cfg.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to setup user home: %w", err)
+	}
+
+	// Use HOME from userdir, fallback to current user home
+	homeDir := userEnv["HOME"]
+	if homeDir == "" {
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	return startup.SetupMCPServers(homeDir, mcpConfigs)
 }
 
 // createAgentAPICommand creates the agentapi server command
