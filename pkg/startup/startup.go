@@ -23,11 +23,13 @@ import (
 var installationCache = github_pkg.NewInstallationCache()
 
 // SetupClaudeCode sets up Claude Code configuration
-func SetupClaudeCode() error {
-	// Get home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+func SetupClaudeCode(homeDir string) error {
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
 	}
 
 	// Create .claude directory
@@ -58,7 +60,7 @@ func SetupClaudeCode() error {
 	}
 
 	// Merge config into ~/.claude.json
-	if err := mergeClaudeConfig(); err != nil {
+	if err := mergeClaudeConfig(homeDir); err != nil {
 		log.Printf("Warning: Failed to merge claude config: %v", err)
 		// Don't return error, just warn
 	}
@@ -81,11 +83,13 @@ func SetupClaudeCode() error {
 	return nil
 }
 
-func mergeClaudeConfig() error {
-	// Get home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+func mergeClaudeConfig(homeDir string) error {
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
 	}
 
 	targetPath := filepath.Join(homeDir, ".claude.json")
@@ -144,11 +148,13 @@ type MCPServerConfig struct {
 }
 
 // SetupMCPServers sets up MCP servers from configuration
-func SetupMCPServers(configFlag string) error {
-	// Get Claude directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+func SetupMCPServers(homeDir, configFlag string) error {
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
 	}
 	claudeDir := filepath.Join(homeDir, ".claude")
 

@@ -29,7 +29,7 @@ func TestSetupClaudeCode(t *testing.T) {
 	}
 
 	// Mock userHomeDir function by creating a test that works with temp directory
-	err = SetupClaudeCode()
+	err = SetupClaudeCode(tempDir)
 	if err != nil {
 		t.Fatalf("SetupClaudeCode failed: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestMergeClaudeConfig(t *testing.T) {
 	}
 
 	// Test case 1: No existing .claude.json file
-	err = mergeClaudeConfig()
+	err = mergeClaudeConfig(tempDir)
 	if err != nil {
 		t.Fatalf("mergeClaudeConfig failed with no existing file: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestMergeClaudeConfig(t *testing.T) {
 	}
 
 	// Merge config again
-	err = mergeClaudeConfig()
+	err = mergeClaudeConfig(tempDir)
 	if err != nil {
 		t.Fatalf("mergeClaudeConfig failed with existing file: %v", err)
 	}
@@ -215,13 +215,13 @@ func TestSetupMCPServers(t *testing.T) {
 	_ = os.Setenv("HOME", tempDir)
 
 	// Test case 1: Empty config flag
-	err = SetupMCPServers("")
+	err = SetupMCPServers(tempDir, "")
 	if err == nil {
 		t.Error("Expected error for empty config flag")
 	}
 
 	// Test case 2: Invalid JSON
-	err = SetupMCPServers("invalid json")
+	err = SetupMCPServers(tempDir, "invalid json")
 	if err == nil {
 		t.Error("Expected error for invalid JSON")
 	}
@@ -248,13 +248,13 @@ func TestSetupMCPServers(t *testing.T) {
 
 	// Note: This test will fail because it tries to execute the claude command
 	// which is not available in the test environment. This is expected behavior.
-	_ = SetupMCPServers(string(configJson))
+	_ = SetupMCPServers(tempDir, string(configJson))
 	// We don't check for error here because the claude command will fail
 	// but we can verify that the config was parsed correctly
 
 	// Test case 4: Base64 encoded config
 	base64Config := base64.StdEncoding.EncodeToString(configJson)
-	_ = SetupMCPServers(base64Config)
+	_ = SetupMCPServers(tempDir, base64Config)
 }
 
 func TestAddMcpServer(t *testing.T) {
