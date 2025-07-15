@@ -145,8 +145,8 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 				// Fallback to localhost for development
 				allowed := strings.HasPrefix(origin, "http://localhost") ||
 					strings.HasPrefix(origin, "https://localhost") ||
-					origin == "http://127.0.0.1" ||
-					origin == "https://127.0.0.1"
+					strings.HasPrefix(origin, "http://127.0.0.1") ||
+					strings.HasPrefix(origin, "https://127.0.0.1")
 				return allowed, nil
 			}
 			// Parse comma-separated allowed origins
