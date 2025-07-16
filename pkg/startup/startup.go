@@ -251,7 +251,7 @@ func InitGitHubRepo(repoFullName, cloneDir string, ignoreMissingConfig bool) err
 	}
 
 	// Get GitHub token for authentication
-	token, err := getGitHubToken(repoFullName)
+	token, err := GetGitHubToken(repoFullName)
 	if err != nil {
 		return fmt.Errorf("failed to get GitHub token: %w", err)
 	}
@@ -269,8 +269,8 @@ func InitGitHubRepo(repoFullName, cloneDir string, ignoreMissingConfig bool) err
 	return nil
 }
 
-// getGitHubToken retrieves the GitHub token for authentication
-func getGitHubToken(repoFullName string) (string, error) {
+// GetGitHubToken retrieves the GitHub token for authentication
+func GetGitHubToken(repoFullName string) (string, error) {
 	// Check for personal access token first
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		return token, nil
@@ -295,7 +295,7 @@ func getGitHubToken(repoFullName string) (string, error) {
 				// Fall through to next authentication method
 			} else {
 				log.Printf("GITHUB_INSTALLATION_ID not provided, attempting auto-discovery for repository: %s", repoFullName)
-				discoveredID, err := autoDiscoverInstallationID(appID, pemPath, repoFullName)
+				discoveredID, err := AutoDiscoverInstallationID(appID, pemPath, repoFullName)
 				if err != nil {
 					log.Printf("Failed to auto-discover installation ID: %v", err)
 					// Fall through to next authentication method
@@ -308,7 +308,7 @@ func getGitHubToken(repoFullName string) (string, error) {
 
 		// If we have installation ID (manual or auto-discovered), proceed with token generation
 		if installationID != "" {
-			return generateGitHubAppToken(appID, installationID, pemPath)
+			return GenerateGitHubAppToken(appID, installationID, pemPath)
 		}
 	}
 
@@ -320,8 +320,8 @@ func getGitHubToken(repoFullName string) (string, error) {
 	return "", fmt.Errorf("no GitHub authentication found: GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, or GitHub App credentials (GITHUB_APP_ID, GITHUB_APP_PEM_PATH) are required. GITHUB_INSTALLATION_ID is optional and will be auto-discovered if GITHUB_REPO_FULLNAME is set")
 }
 
-// generateGitHubAppToken generates a GitHub App installation token
-func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string, error) {
+// GenerateGitHubAppToken generates a GitHub App installation token
+func GenerateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string, error) {
 	// Parse app ID
 	appID, err := strconv.ParseInt(appIDStr, 10, 64)
 	if err != nil {
@@ -392,8 +392,8 @@ func generateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 	return token.GetToken(), nil
 }
 
-// autoDiscoverInstallationID discovers the installation ID for a given repository using cache
-func autoDiscoverInstallationID(appIDStr, pemPath, repoFullName string) (string, error) {
+// AutoDiscoverInstallationID discovers the installation ID for a given repository using cache
+func AutoDiscoverInstallationID(appIDStr, pemPath, repoFullName string) (string, error) {
 	// Parse app ID
 	appID, err := strconv.ParseInt(appIDStr, 10, 64)
 	if err != nil {
@@ -468,7 +468,7 @@ func setupRepository(repoURL, token, cloneDir string) error {
 			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
 
 			// Authenticate gh CLI for GitHub Enterprise Server
-			if err := authenticateGHCLI(githubHost, token, env); err != nil {
+			if err := AuthenticateGHCLI(githubHost, token, env); err != nil {
 				log.Printf("Warning: Failed to authenticate gh CLI for %s: %v", githubHost, err)
 			}
 		}
@@ -496,8 +496,8 @@ func setupRepository(repoURL, token, cloneDir string) error {
 	return nil
 }
 
-// authenticateGHCLI authenticates gh CLI for GitHub Enterprise Server
-func authenticateGHCLI(githubHost, token string, env []string) error {
+// AuthenticateGHCLI authenticates gh CLI for GitHub Enterprise Server
+func AuthenticateGHCLI(githubHost, token string, env []string) error {
 	log.Printf("Authenticating gh CLI for Enterprise Server: %s", githubHost)
 
 	// Use gh auth login with token for Enterprise Server
@@ -555,4 +555,86 @@ func getGitHubURL() string {
 		return githubAPI
 	}
 	return "https://github.com"
+}
+
+// SetupGitHubAuth sets up GitHub authentication using gh CLI
+func SetupGitHubAuth(repoFullName string) error {
+	log.Printf("Setting up GitHub authentication for repository: %s", repoFullName)
+
+	// Get GitHub token for authentication
+	token, err := GetGitHubToken(repoFullName)
+	if err != nil {
+		return fmt.Errorf("failed to get GitHub token: %w", err)
+	}
+
+	// Set up environment
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GITHUB_TOKEN=%s", token))
+
+	// Determine GitHub host
+	githubHost := "github.com"
+	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+		githubHost = strings.TrimPrefix(githubAPI, "https://")
+		githubHost = strings.TrimPrefix(githubHost, "http://")
+		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+		env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+	}
+
+	// Authenticate gh CLI
+	if err := performGHAuthLogin(githubHost, token, env); err != nil {
+		return fmt.Errorf("failed to authenticate gh CLI: %w", err)
+	}
+
+	// Setup git authentication
+	if err := performGHAuthSetupGit(env); err != nil {
+		return fmt.Errorf("failed to setup git authentication: %w", err)
+	}
+
+	log.Printf("Successfully set up GitHub authentication")
+	return nil
+}
+
+// performGHAuthLogin performs gh auth login
+func performGHAuthLogin(githubHost, token string, env []string) error {
+	log.Printf("Performing gh auth login for host: %s", githubHost)
+
+	var cmd *exec.Cmd
+	if githubHost == "github.com" {
+		// For GitHub.com, use simple auth login
+		cmd = exec.Command("gh", "auth", "login", "--with-token")
+	} else {
+		// For GitHub Enterprise, specify hostname
+		cmd = exec.Command("gh", "auth", "login", "--hostname", githubHost, "--with-token")
+	}
+
+	cmd.Stdin = strings.NewReader(token)
+	cmd.Env = env
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh auth login failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	log.Printf("Successfully authenticated gh CLI for %s", githubHost)
+	return nil
+}
+
+// performGHAuthSetupGit performs gh auth setup-git
+func performGHAuthSetupGit(env []string) error {
+	log.Printf("Performing gh auth setup-git")
+
+	cmd := exec.Command("gh", "auth", "setup-git")
+	cmd.Env = env
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh auth setup-git failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	log.Printf("Successfully set up git authentication")
+	return nil
 }
