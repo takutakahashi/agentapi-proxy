@@ -36,8 +36,15 @@ func NewFileStorage(filePath string, syncInterval int, encryptSecrets bool) (*Fi
 	}
 
 	// Load existing sessions
-	if err := fs.loadFromFile(); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("failed to load existing sessions: %w", err)
+	if err := fs.loadFromFile(); err != nil {
+		if !os.IsNotExist(err) {
+			// Log the error but continue - file might be corrupted
+			fmt.Printf("[FileStorage] Warning: failed to load existing sessions: %v\n", err)
+		} else {
+			fmt.Printf("[FileStorage] No existing sessions file found at %s, starting fresh\n", filePath)
+		}
+	} else {
+		fmt.Printf("[FileStorage] Loaded %d sessions from %s\n", len(fs.sessions), filePath)
 	}
 
 	// Start periodic sync if interval is set
@@ -159,6 +166,12 @@ func (fs *FileStorage) periodicSync() {
 
 // syncToFile writes sessions to disk
 func (fs *FileStorage) syncToFile() error {
+	// Skip sync if no sessions to save
+	if len(fs.sessions) == 0 {
+		fmt.Printf("[FileStorage] No sessions to sync\n")
+		return nil
+	}
+
 	// Create temporary file
 	tempFile := fs.filePath + ".tmp"
 	file, err := os.Create(tempFile)
@@ -200,6 +213,7 @@ func (fs *FileStorage) syncToFile() error {
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
+	fmt.Printf("[FileStorage] Successfully synced %d sessions to %s\n", len(data.Sessions), fs.filePath)
 	return nil
 }
 

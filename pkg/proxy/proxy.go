@@ -363,15 +363,18 @@ func (p *Proxy) deleteSessionFromStorage(sessionID string) {
 // recoverSessions loads persisted sessions on startup
 func (p *Proxy) recoverSessions() {
 	if p.storage == nil {
+		log.Printf("[SESSION_RECOVERY] Storage is nil, skipping recovery")
 		return
 	}
 
+	log.Printf("[SESSION_RECOVERY] Starting session recovery...")
 	sessions, err := p.storage.LoadAll()
 	if err != nil {
-		log.Printf("Failed to load sessions from storage: %v", err)
+		log.Printf("[SESSION_RECOVERY] Failed to load sessions from storage: %v", err)
 		return
 	}
 
+	log.Printf("[SESSION_RECOVERY] Found %d sessions to recover", len(sessions))
 	recovered := 0
 	cleaned := 0
 
