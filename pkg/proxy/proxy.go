@@ -832,6 +832,11 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))
 	}
 
+	// Check if this is a POST to /message and capture the first message for description
+	if c.Request().Method == "POST" && strings.HasSuffix(c.Request().URL.Path, "/message") {
+		p.captureFirstMessage(c, session)
+	}
+
 	// Get request and response from Echo context
 	req := c.Request()
 	w := c.Response()
@@ -1729,4 +1734,45 @@ func (p *Proxy) isPortAvailable(port int) bool {
 		log.Printf("Warning: Failed to close listener: %v", err)
 	}
 	return true
+}
+
+// captureFirstMessage captures the first message content for description
+func (p *Proxy) captureFirstMessage(c echo.Context, session *AgentSession) {
+	// Check if description is already set
+	if session.Tags != nil {
+		if _, exists := session.Tags["description"]; exists {
+			return // Description already set
+		}
+	}
+
+	// Read the request body
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return // Best-effort operation
+	}
+
+	// Restore the request body for the proxy
+	c.Request().Body = io.NopCloser(bytes.NewBuffer(body))
+
+	// Parse the message request
+	var messageReq map[string]interface{}
+	if err := json.Unmarshal(body, &messageReq); err != nil {
+		return // Best-effort operation
+	}
+
+	// Check if this is a user message with content
+	if msgType, ok := messageReq["type"].(string); ok && msgType == "user" {
+		if content, ok := messageReq["content"].(string); ok && content != "" {
+			// Set description in session tags
+			p.sessionsMutex.Lock()
+			if session.Tags == nil {
+				session.Tags = make(map[string]string)
+			}
+			session.Tags["description"] = content
+			p.sessionsMutex.Unlock()
+
+			// Update the persisted session
+			p.updateSession(session)
+		}
+	}
 }
