@@ -27,6 +27,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
@@ -1520,6 +1521,12 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 	if repoInfo != nil {
 		cfg.RepoFullName = repoInfo.FullName
 		cfg.CloneDir = repoInfo.CloneDir
+
+		// Run setup-gh for restored sessions with repository information
+		if err := p.runSetupGHForRestore(repoInfo.FullName); err != nil {
+			log.Printf("Warning: Failed to run setup-gh for restored session %s: %v", session.ID, err)
+			// Continue without failing the restore process
+		}
 	}
 
 	// Start the AgentAPI session
@@ -1539,6 +1546,23 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 	if p.verbose {
 		log.Printf("Successfully started restored AgentAPI session %s", session.ID)
 	}
+}
+
+// runSetupGHForRestore runs setup-gh helper for restored sessions
+func (p *Proxy) runSetupGHForRestore(repoFullName string) error {
+	if repoFullName == "" {
+		return fmt.Errorf("repository full name is required")
+	}
+
+	log.Printf("Running setup-gh for restored session with repository: %s", repoFullName)
+
+	// Import the startup package function
+	if err := startup.SetupGitHubAuth(repoFullName); err != nil {
+		return fmt.Errorf("setup-gh failed: %w", err)
+	}
+
+	log.Printf("Successfully completed setup-gh for repository: %s", repoFullName)
+	return nil
 }
 
 // isPortAvailable checks if a port is available for use
