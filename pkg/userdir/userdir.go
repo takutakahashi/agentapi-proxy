@@ -3,7 +3,6 @@ package userdir
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -206,17 +205,10 @@ eval "$(/home/agentapi/.local/bin/mise activate bash)"
 		fmt.Printf("Warning: Failed to copy CLAUDE.md to user home directory: %v\n", err)
 	}
 
-	// Get Git repository information
-	env := map[string]string{
+	// Return environment variables map
+	return map[string]string{
 		"HOME": userHomeDir,
-	}
-
-	// Try to get GITHUB_REPO_FULLNAME from git remote
-	if repoFullName := getGitHubRepoFullName(); repoFullName != "" {
-		env["GITHUB_REPO_FULLNAME"] = repoFullName
-	}
-
-	return env, nil
+	}, nil
 }
 
 // IsEnabled returns whether multiple users mode is enabled
@@ -299,50 +291,4 @@ func copyClaudeMdToUserHome(userHomeDir string) error {
 	}
 
 	return nil
-}
-
-// getGitHubRepoFullName extracts repository full name from git remote
-func getGitHubRepoFullName() string {
-	// Try to get the current working directory first
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-
-	// Use git to get the remote origin URL
-	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = cwd
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	remoteURL := strings.TrimSpace(string(output))
-	return extractRepoFullNameFromURL(remoteURL)
-}
-
-// extractRepoFullNameFromURL extracts owner/repo from various Git URL formats
-func extractRepoFullNameFromURL(url string) string {
-	// Handle SSH URLs: git@github.com:owner/repo.git
-	if strings.HasPrefix(url, "git@github.com:") {
-		path := strings.TrimPrefix(url, "git@github.com:")
-		path = strings.TrimSuffix(path, ".git")
-		return path
-	}
-
-	// Handle HTTPS URLs: https://github.com/owner/repo.git
-	if strings.HasPrefix(url, "https://github.com/") {
-		path := strings.TrimPrefix(url, "https://github.com/")
-		path = strings.TrimSuffix(path, ".git")
-		return path
-	}
-
-	// Handle git protocol URLs: git://github.com/owner/repo.git
-	if strings.HasPrefix(url, "git://github.com/") {
-		path := strings.TrimPrefix(url, "git://github.com/")
-		path = strings.TrimSuffix(path, ".git")
-		return path
-	}
-
-	return ""
 }
