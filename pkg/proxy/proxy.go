@@ -1538,20 +1538,146 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 		return
 	}
 
-	// Store the command in the session for proper cleanup
+	// Capture stderr output for logging on exit code 1
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	// Store the command in the session and start the process
 	session.processMutex.Lock()
 	session.Process = cmd
+	err = cmd.Start()
 	session.processMutex.Unlock()
 
-	if p.verbose {
-		log.Printf("Successfully started restored AgentAPI session %s", session.ID)
+	if err != nil {
+		log.Printf("Failed to start restored agentapi process for session %s: %v", session.ID, err)
+		return
 	}
 
-	// Wait for the process to complete
-	if err := cmd.Wait(); err != nil {
-		log.Printf("Restored AgentAPI session %s process ended with error: %v", session.ID, err)
-	} else {
-		log.Printf("Restored AgentAPI session %s process ended normally", session.ID)
+	// Update session in storage after process is started
+	p.updateSession(session)
+
+	if p.verbose {
+		log.Printf("Restored AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
+	}
+
+	// Wait for the process to finish or context cancellation
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Recovered from panic in cmd.Wait() for restored session %s: %v", session.ID, r)
+				done <- fmt.Errorf("panic in cmd.Wait(): %v", r)
+			}
+		}()
+		done <- cmd.Wait()
+	}()
+
+	// Ensure the process is cleaned up to prevent zombie processes
+	defer func() {
+		// This defer ensures cmd.Wait() is called if it hasn't been called yet
+		if cmd.Process != nil && cmd.ProcessState == nil {
+			// Process is still running, wait for it to prevent zombie
+			select {
+			case <-done:
+				// Wait completed in the main logic
+			case <-time.After(10 * time.Second):
+				// Increased timeout to 10 seconds to allow proper cleanup
+				log.Printf("Warning: Process %d cleanup timed out after 10 seconds", cmd.Process.Pid)
+				// Force kill if still running
+				if cmd.Process != nil {
+					log.Printf("Force killing process %d to prevent zombie", cmd.Process.Pid)
+					if err := cmd.Process.Kill(); err != nil {
+						log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, err)
+					}
+					// Wait for the killed process to prevent zombie
+					go func() {
+						if waitErr := cmd.Wait(); waitErr != nil {
+							log.Printf("Wait error after force kill for process %d: %v", cmd.Process.Pid, waitErr)
+						}
+					}()
+				}
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Context cancelled, terminate the process
+		if p.verbose {
+			log.Printf("Terminating restored agentapi process for session %s", session.ID)
+		}
+
+		// Try graceful shutdown first (SIGTERM to process group)
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+			// If process group signal fails, try individual process
+			if termErr := cmd.Process.Signal(syscall.SIGTERM); termErr != nil {
+				log.Printf("Failed to send SIGTERM to process %d: %v", cmd.Process.Pid, termErr)
+			}
+		} else {
+			log.Printf("Sent SIGTERM to process group %d", cmd.Process.Pid)
+		}
+
+		// Wait for graceful shutdown with timeout
+		gracefulTimeout := time.After(5 * time.Second)
+		select {
+		case waitErr := <-done:
+			if p.verbose {
+				log.Printf("Restored AgentAPI process for session %s terminated gracefully", session.ID)
+			}
+			if waitErr != nil && p.verbose {
+				log.Printf("Process wait error for restored session %s: %v", session.ID, waitErr)
+			}
+		case <-gracefulTimeout:
+			// Force kill if graceful shutdown failed
+			if p.verbose {
+				log.Printf("Force killing restored agentapi process for session %s", session.ID)
+			}
+			// Kill entire process group
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+				log.Printf("Failed to kill process group %d: %v", cmd.Process.Pid, err)
+				// If process group kill fails, try individual process
+				if killErr := cmd.Process.Kill(); killErr != nil {
+					log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, killErr)
+				}
+			} else {
+				log.Printf("Sent SIGKILL to process group %d", cmd.Process.Pid)
+			}
+			// Always wait for the process to prevent zombie
+			select {
+			case waitErr := <-done:
+				if waitErr != nil && p.verbose {
+					log.Printf("Process wait error after kill for restored session %s: %v", session.ID, waitErr)
+				}
+			case <-time.After(2 * time.Second):
+				log.Printf("Warning: Process %d may not have exited cleanly", cmd.Process.Pid)
+				// Even if timed out, try to consume from done channel to prevent goroutine leak
+				go func() {
+					select {
+					case <-done: // Consume the value when available
+					case <-time.After(5 * time.Second):
+						// If we can't consume within 5 seconds, just exit the goroutine
+						log.Printf("Warning: Could not consume done channel for process %d", cmd.Process.Pid)
+					}
+				}()
+			}
+		}
+
+	case err := <-done:
+		// Process finished on its own
+		if err != nil {
+			// Check if error is exit code 1 and log stderr output if available
+			if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
+				log.Printf("Restored AgentAPI process for session %s exited with code 1: %v", session.ID, err)
+				// Log stderr output if available
+				if stderrOutput := stderrBuf.String(); stderrOutput != "" {
+					log.Printf("Stderr output for restored session %s: %s", session.ID, stderrOutput)
+				}
+			} else {
+				log.Printf("Restored AgentAPI process for session %s exited with error: %v", session.ID, err)
+			}
+		} else if p.verbose {
+			log.Printf("Restored AgentAPI process for session %s exited normally", session.ID)
+		}
 	}
 }
 
