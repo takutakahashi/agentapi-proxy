@@ -437,7 +437,7 @@ func TestGetGitHubToken(t *testing.T) {
 
 	// Test case 1: GITHUB_TOKEN environment variable
 	_ = os.Setenv("GITHUB_TOKEN", "test-token")
-	token, err := getGitHubToken("")
+	token, err := GetGitHubToken("")
 	if err != nil {
 		t.Errorf("Unexpected error with GITHUB_TOKEN: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestGetGitHubToken(t *testing.T) {
 	// Test case 2: GITHUB_PERSONAL_ACCESS_TOKEN fallback
 	_ = os.Unsetenv("GITHUB_TOKEN")
 	_ = os.Setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "personal-token")
-	token, err = getGitHubToken("")
+	token, err = GetGitHubToken("")
 	if err != nil {
 		t.Errorf("Unexpected error with GITHUB_PERSONAL_ACCESS_TOKEN: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestGetGitHubToken(t *testing.T) {
 	}
 	_ = os.Setenv("GITHUB_APP_PEM_PATH", pemFile)
 
-	_, err = getGitHubToken("")
+	_, err = GetGitHubToken("")
 	// This will fail because of invalid PEM, but tests the code path
 	if err == nil {
 		t.Error("Expected error with invalid PEM content")
@@ -480,7 +480,7 @@ func TestGetGitHubToken(t *testing.T) {
 	_ = os.Unsetenv("GITHUB_INSTALLATION_ID")
 	_ = os.Setenv("GITHUB_REPO_FULLNAME", "owner/repo")
 
-	_, err = getGitHubToken("")
+	_, err = GetGitHubToken("")
 	// This will fail because of invalid PEM, but tests the auto-discovery code path
 	if err == nil {
 		t.Error("Expected error with invalid PEM content in auto-discovery")
@@ -488,7 +488,7 @@ func TestGetGitHubToken(t *testing.T) {
 
 	// Test case 5: GitHub App auth with repoFullName parameter
 	_ = os.Unsetenv("GITHUB_REPO_FULLNAME")
-	_, err = getGitHubToken("owner/repo")
+	_, err = GetGitHubToken("owner/repo")
 	// This will fail because of invalid PEM, but tests the parameter path
 	if err == nil {
 		t.Error("Expected error with invalid PEM content with repoFullName parameter")
@@ -497,7 +497,7 @@ func TestGetGitHubToken(t *testing.T) {
 	// Test case 6: No authentication available
 	_ = os.Unsetenv("GITHUB_APP_ID")
 	_ = os.Unsetenv("GITHUB_APP_PEM_PATH")
-	_, err = getGitHubToken("")
+	_, err = GetGitHubToken("")
 	if err == nil {
 		t.Error("Expected error when no authentication is available")
 	}
@@ -567,13 +567,13 @@ func TestInitGitHubRepo(t *testing.T) {
 
 func TestGenerateGitHubAppToken(t *testing.T) {
 	// Test case 1: Invalid app ID
-	_, err := generateGitHubAppToken("invalid", "123", "/path/to/pem")
+	_, err := GenerateGitHubAppToken("invalid", "123", "/path/to/pem")
 	if err == nil {
 		t.Error("Expected error for invalid app ID")
 	}
 
 	// Test case 2: Invalid installation ID
-	_, err = generateGitHubAppToken("123", "invalid", "/path/to/pem")
+	_, err = GenerateGitHubAppToken("123", "invalid", "/path/to/pem")
 	if err == nil {
 		t.Error("Expected error for invalid installation ID")
 	}
@@ -581,7 +581,7 @@ func TestGenerateGitHubAppToken(t *testing.T) {
 	// Test case 3: Non-existent PEM file
 	tempDir := t.TempDir()
 	nonExistentPem := filepath.Join(tempDir, "non-existent.pem")
-	_, err = generateGitHubAppToken("123", "456", nonExistentPem)
+	_, err = GenerateGitHubAppToken("123", "456", nonExistentPem)
 	if err == nil {
 		t.Error("Expected error for non-existent PEM file")
 	}
@@ -598,7 +598,7 @@ func TestGenerateGitHubAppToken(t *testing.T) {
 
 	// Set a dummy PEM content
 	_ = os.Setenv("GITHUB_APP_PEM", "dummy-pem-content")
-	_, err = generateGitHubAppToken("123", "456", nonExistentPem)
+	_, err = GenerateGitHubAppToken("123", "456", nonExistentPem)
 	// This will still fail because it's not a valid PEM, but it tests the env var fallback path
 	if err == nil {
 		t.Error("Expected error for invalid PEM content")
@@ -607,13 +607,13 @@ func TestGenerateGitHubAppToken(t *testing.T) {
 
 func TestAutoDiscoverInstallationID(t *testing.T) {
 	// Test case 1: Invalid repository format
-	_, err := autoDiscoverInstallationID("123", "/path/to/pem", "invalid-repo-format")
+	_, err := AutoDiscoverInstallationID("123", "/path/to/pem", "invalid-repo-format")
 	if err == nil {
 		t.Error("Expected error for invalid repository format")
 	}
 
 	// Test case 2: Invalid app ID
-	_, err = autoDiscoverInstallationID("invalid", "/path/to/pem", "owner/repo")
+	_, err = AutoDiscoverInstallationID("invalid", "/path/to/pem", "owner/repo")
 	if err == nil {
 		t.Error("Expected error for invalid app ID")
 	}
@@ -632,7 +632,7 @@ func TestAutoDiscoverInstallationID(t *testing.T) {
 	}()
 	_ = os.Unsetenv("GITHUB_APP_PEM")
 
-	_, err = autoDiscoverInstallationID("123", nonExistentPem, "owner/repo")
+	_, err = AutoDiscoverInstallationID("123", nonExistentPem, "owner/repo")
 	if err == nil {
 		t.Error("Expected error for non-existent PEM file")
 	}
@@ -644,7 +644,7 @@ func TestAuthenticateGHCLI(t *testing.T) {
 
 	// Test with mock environment
 	env := []string{"PATH=/usr/bin:/bin", "HOME=/tmp"}
-	err := authenticateGHCLI("github.enterprise.com", "test-token", env)
+	err := AuthenticateGHCLI("github.enterprise.com", "test-token", env)
 	// This will fail because gh command might not be available in test environment
 	// but we're testing that the function attempts to execute it
 	if err == nil {

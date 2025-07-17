@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
 
 //go:embed claude_code_settings.json
@@ -29,6 +30,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  setup-claude-code - Setup Claude Code configuration")
 		fmt.Println("  generate-token - Generate API keys for agentapi-proxy authentication")
 		fmt.Println("  init - Initialize Claude configuration (alias for setup-claude-code)")
+		fmt.Println("  setup-gh - Setup GitHub authentication using gh CLI")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
 }
@@ -66,12 +68,48 @@ Usage:
 	RunE: runGenerateToken,
 }
 
+var setupGHCmd = &cobra.Command{
+	Use:   "setup-gh",
+	Short: "Setup GitHub authentication using gh CLI",
+	Long: `Setup GitHub authentication using gh CLI with comprehensive support.
+
+This command provides complete GitHub authentication setup including:
+- GitHub App installation token generation
+- Personal access token authentication  
+- GitHub Enterprise Server support
+- Automatic installation ID discovery
+- gh CLI authentication and git setup
+
+Environment variables supported:
+- GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN: Personal access token
+- GITHUB_APP_ID: GitHub App ID for app authentication
+- GITHUB_INSTALLATION_ID: Installation ID (optional, auto-discovered if not provided)
+- GITHUB_APP_PEM_PATH: Path to GitHub App private key file
+- GITHUB_APP_PEM: GitHub App private key content (alternative to file)
+- GITHUB_API: GitHub API URL for Enterprise Server (e.g., https://github.enterprise.com/api/v3)
+- GITHUB_REPO_FULLNAME: Repository full name for installation ID discovery
+
+Usage:
+  agentapi-proxy helpers setup-gh --repo-fullname owner/repo`,
+	RunE: runSetupGH,
+}
+
 var outputPath string
 var userID string
 var role string
 var permissions []string
 var expiryDays int
 var keyPrefix string
+
+// setup-gh command flags
+var setupGHRepoFullName string
+var githubAppID string
+var githubInstallationID string
+var githubAppPEMPath string
+var githubAppPEM string
+var githubAPI string
+var githubToken string
+var githubPersonalAccessToken string
 
 func init() {
 	generateTokenCmd.Flags().StringVar(&outputPath, "output-path", "", "Path to JSON file where API keys will be saved (required)")
@@ -88,9 +126,20 @@ func init() {
 		panic(err)
 	}
 
+	// setup-gh command flags
+	setupGHCmd.Flags().StringVar(&setupGHRepoFullName, "repo-fullname", "", "Repository full name (owner/repo) for installation ID discovery")
+	setupGHCmd.Flags().StringVar(&githubAppID, "github-app-id", "", "GitHub App ID (can also be set via GITHUB_APP_ID env var)")
+	setupGHCmd.Flags().StringVar(&githubInstallationID, "github-installation-id", "", "GitHub Installation ID (optional, auto-discovered if not provided)")
+	setupGHCmd.Flags().StringVar(&githubAppPEMPath, "github-app-pem-path", "", "Path to GitHub App private key file (can also be set via GITHUB_APP_PEM_PATH env var)")
+	setupGHCmd.Flags().StringVar(&githubAppPEM, "github-app-pem", "", "GitHub App private key content (can also be set via GITHUB_APP_PEM env var)")
+	setupGHCmd.Flags().StringVar(&githubAPI, "github-api", "", "GitHub API URL for Enterprise Server (can also be set via GITHUB_API env var)")
+	setupGHCmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub personal access token (can also be set via GITHUB_TOKEN env var)")
+	setupGHCmd.Flags().StringVar(&githubPersonalAccessToken, "github-personal-access-token", "", "GitHub personal access token (can also be set via GITHUB_PERSONAL_ACCESS_TOKEN env var)")
+
 	HelpersCmd.AddCommand(setupClaudeCodeCmd)
 	HelpersCmd.AddCommand(initCmd)
 	HelpersCmd.AddCommand(generateTokenCmd)
+	HelpersCmd.AddCommand(setupGHCmd)
 }
 
 // RunSetupClaudeCode is exported for use in other packages
@@ -441,5 +490,54 @@ func addMcpServer(claudeDir string, mcpConfig MCPServerConfig) error {
 	}
 
 	log.Printf("Claude mcp add output for %s: %s", mcpConfig.Name, string(output))
+	return nil
+}
+
+// runSetupGH runs the setup-gh command
+func runSetupGH(cmd *cobra.Command, args []string) error {
+	// Set environment variables from flags if provided
+	if err := setGitHubEnvFromFlags(); err != nil {
+		return fmt.Errorf("failed to set environment variables: %w", err)
+	}
+
+	// Use repo full name from flag or environment
+	repo := setupGHRepoFullName
+	if repo == "" {
+		repo = os.Getenv("GITHUB_REPO_FULLNAME")
+	}
+
+	// Call the startup package function
+	if err := startup.SetupGitHubAuth(repo); err != nil {
+		return fmt.Errorf("failed to setup GitHub authentication: %w", err)
+	}
+
+	fmt.Println("GitHub authentication setup completed successfully!")
+	return nil
+}
+
+// setGitHubEnvFromFlags sets environment variables from command line flags
+func setGitHubEnvFromFlags() error {
+	// Map of flag variables to environment variable names
+	envMappings := map[string]string{
+		githubAppID:               "GITHUB_APP_ID",
+		githubInstallationID:      "GITHUB_INSTALLATION_ID",
+		githubAppPEMPath:          "GITHUB_APP_PEM_PATH",
+		githubAppPEM:              "GITHUB_APP_PEM",
+		githubAPI:                 "GITHUB_API",
+		githubToken:               "GITHUB_TOKEN",
+		githubPersonalAccessToken: "GITHUB_PERSONAL_ACCESS_TOKEN",
+		setupGHRepoFullName:       "GITHUB_REPO_FULLNAME",
+	}
+
+	// Set environment variables from flags if provided
+	for flagValue, envName := range envMappings {
+		if flagValue != "" {
+			if err := os.Setenv(envName, flagValue); err != nil {
+				return fmt.Errorf("failed to set %s: %w", envName, err)
+			}
+			log.Printf("Set %s from flag", envName)
+		}
+	}
+
 	return nil
 }

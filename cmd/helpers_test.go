@@ -30,6 +30,7 @@ func TestHelpersInit(t *testing.T) {
 	assert.Contains(t, commandNames, "setup-claude-code")
 	assert.Contains(t, commandNames, "init")
 	assert.Contains(t, commandNames, "generate-token")
+	assert.Contains(t, commandNames, "setup-gh")
 }
 
 func TestGenerateTokenFlags(t *testing.T) {
@@ -290,4 +291,90 @@ func TestHelpersRun(t *testing.T) {
 	assert.NotPanics(t, func() {
 		HelpersCmd.Run(&cobra.Command{}, []string{})
 	})
+}
+
+func TestSetupGHCmdStructure(t *testing.T) {
+	assert.Equal(t, "setup-gh", setupGHCmd.Use)
+	assert.Equal(t, "Setup GitHub authentication using gh CLI", setupGHCmd.Short)
+	assert.NotNil(t, setupGHCmd.RunE)
+}
+
+func TestSetupGHFlags(t *testing.T) {
+	// Test that all expected flags are present
+	repoFlag := setupGHCmd.LocalFlags().Lookup("repo-fullname")
+	assert.NotNil(t, repoFlag)
+
+	appIDFlag := setupGHCmd.LocalFlags().Lookup("github-app-id")
+	assert.NotNil(t, appIDFlag)
+
+	installationIDFlag := setupGHCmd.LocalFlags().Lookup("github-installation-id")
+	assert.NotNil(t, installationIDFlag)
+
+	pemPathFlag := setupGHCmd.LocalFlags().Lookup("github-app-pem-path")
+	assert.NotNil(t, pemPathFlag)
+
+	pemFlag := setupGHCmd.LocalFlags().Lookup("github-app-pem")
+	assert.NotNil(t, pemFlag)
+
+	apiFlag := setupGHCmd.LocalFlags().Lookup("github-api")
+	assert.NotNil(t, apiFlag)
+
+	tokenFlag := setupGHCmd.LocalFlags().Lookup("github-token")
+	assert.NotNil(t, tokenFlag)
+
+	patFlag := setupGHCmd.LocalFlags().Lookup("github-personal-access-token")
+	assert.NotNil(t, patFlag)
+}
+
+func TestSetGitHubEnvFromFlags(t *testing.T) {
+	// Save original environment
+	originalEnv := make(map[string]string)
+	envVars := []string{
+		"GITHUB_APP_ID",
+		"GITHUB_INSTALLATION_ID",
+		"GITHUB_APP_PEM_PATH",
+		"GITHUB_APP_PEM",
+		"GITHUB_API",
+		"GITHUB_TOKEN",
+		"GITHUB_PERSONAL_ACCESS_TOKEN",
+		"GITHUB_REPO_FULLNAME",
+	}
+
+	for _, envVar := range envVars {
+		originalEnv[envVar] = os.Getenv(envVar)
+		_ = os.Unsetenv(envVar)
+	}
+
+	defer func() {
+		// Restore original environment
+		for _, envVar := range envVars {
+			if val, ok := originalEnv[envVar]; ok && val != "" {
+				_ = os.Setenv(envVar, val)
+			} else {
+				_ = os.Unsetenv(envVar)
+			}
+		}
+	}()
+
+	// Set flag variables
+	githubAppID = "test-app-id"
+	githubInstallationID = "test-installation-id"
+	githubToken = "test-token"
+	setupGHRepoFullName = "owner/repo"
+
+	// Run the function
+	err := setGitHubEnvFromFlags()
+	assert.NoError(t, err)
+
+	// Verify environment variables are set
+	assert.Equal(t, "test-app-id", os.Getenv("GITHUB_APP_ID"))
+	assert.Equal(t, "test-installation-id", os.Getenv("GITHUB_INSTALLATION_ID"))
+	assert.Equal(t, "test-token", os.Getenv("GITHUB_TOKEN"))
+	assert.Equal(t, "owner/repo", os.Getenv("GITHUB_REPO_FULLNAME"))
+
+	// Clean up flag variables
+	githubAppID = ""
+	githubInstallationID = ""
+	githubToken = ""
+	setupGHRepoFullName = ""
 }
