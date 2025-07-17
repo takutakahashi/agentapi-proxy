@@ -344,16 +344,6 @@ func (p *Proxy) updateSession(session *AgentSession) {
 		return
 	}
 
-	// Try to populate description if missing
-	if session.Tags == nil {
-		session.Tags = make(map[string]string)
-	}
-	if _, exists := session.Tags["description"]; !exists {
-		if firstMessage := p.fetchFirstUserMessage(session); firstMessage != "" {
-			session.Tags["description"] = firstMessage
-		}
-	}
-
 	sessionData := p.sessionToStorage(session)
 	if err := p.storage.Update(sessionData); err != nil {
 		log.Printf("Failed to update session %s: %v", session.ID, err)
@@ -840,6 +830,11 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))
+	}
+
+	// Check if this is a POST to /message and capture the first message for description
+	if c.Request().Method == "POST" && strings.HasSuffix(c.Request().URL.Path, "/message") {
+		p.captureFirstMessage(c, session)
 	}
 
 	// Get request and response from Echo context
@@ -1741,47 +1736,43 @@ func (p *Proxy) isPortAvailable(port int) bool {
 	return true
 }
 
-// fetchFirstUserMessage fetches the first user message from a session's messages
-func (p *Proxy) fetchFirstUserMessage(session *AgentSession) string {
-	// Only try to fetch if session status is active
-	if session.Status != "active" {
-		return ""
-	}
-
-	// Call the messages API to get the conversation history
-	url := fmt.Sprintf("http://localhost:%d/messages", session.Port)
-	resp, err := http.Get(url)
-	if err != nil {
-		// Don't log errors as this is a best-effort operation
-		return ""
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return ""
-	}
-
-	// Parse the messages response
-	var messages []map[string]interface{}
-	if err := json.Unmarshal(body, &messages); err != nil {
-		return ""
-	}
-
-	// Find the first user message
-	for _, msg := range messages {
-		if msgType, ok := msg["type"].(string); ok && msgType == "user" {
-			if content, ok := msg["content"].(string); ok && content != "" {
-				return content
-			}
+// captureFirstMessage captures the first message content for description
+func (p *Proxy) captureFirstMessage(c echo.Context, session *AgentSession) {
+	// Check if description is already set
+	if session.Tags != nil {
+		if _, exists := session.Tags["description"]; exists {
+			return // Description already set
 		}
 	}
 
-	return "" // No user message found
+	// Read the request body
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return // Best-effort operation
+	}
+
+	// Restore the request body for the proxy
+	c.Request().Body = io.NopCloser(bytes.NewBuffer(body))
+
+	// Parse the message request
+	var messageReq map[string]interface{}
+	if err := json.Unmarshal(body, &messageReq); err != nil {
+		return // Best-effort operation
+	}
+
+	// Check if this is a user message with content
+	if msgType, ok := messageReq["type"].(string); ok && msgType == "user" {
+		if content, ok := messageReq["content"].(string); ok && content != "" {
+			// Set description in session tags
+			p.sessionsMutex.Lock()
+			if session.Tags == nil {
+				session.Tags = make(map[string]string)
+			}
+			session.Tags["description"] = content
+			p.sessionsMutex.Unlock()
+
+			// Update the persisted session
+			p.updateSession(session)
+		}
+	}
 }
