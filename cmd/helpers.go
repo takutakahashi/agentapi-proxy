@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -506,6 +507,14 @@ func runSetupGH(cmd *cobra.Command, args []string) error {
 		repo = os.Getenv("GITHUB_REPO_FULLNAME")
 	}
 
+	// If no repo specified, try to auto-detect from git remote
+	if repo == "" {
+		if autoRepo := getGitHubRepoFullName(); autoRepo != "" {
+			repo = autoRepo
+			fmt.Printf("Auto-detected repository: %s\n", repo)
+		}
+	}
+
 	// Call the startup package function
 	if err := startup.SetupGitHubAuth(repo); err != nil {
 		return fmt.Errorf("failed to setup GitHub authentication: %w", err)
@@ -540,4 +549,50 @@ func setGitHubEnvFromFlags() error {
 	}
 
 	return nil
+}
+
+// getGitHubRepoFullName extracts repository full name from git remote
+func getGitHubRepoFullName() string {
+	// Try to get the current working directory first
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	// Use git to get the remote origin URL
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	cmd.Dir = cwd
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	remoteURL := strings.TrimSpace(string(output))
+	return extractRepoFullNameFromURL(remoteURL)
+}
+
+// extractRepoFullNameFromURL extracts owner/repo from various Git URL formats
+func extractRepoFullNameFromURL(url string) string {
+	// Handle SSH URLs: git@github.com:owner/repo.git
+	if strings.HasPrefix(url, "git@github.com:") {
+		path := strings.TrimPrefix(url, "git@github.com:")
+		path = strings.TrimSuffix(path, ".git")
+		return path
+	}
+
+	// Handle HTTPS URLs: https://github.com/owner/repo.git
+	if strings.HasPrefix(url, "https://github.com/") {
+		path := strings.TrimPrefix(url, "https://github.com/")
+		path = strings.TrimSuffix(path, ".git")
+		return path
+	}
+
+	// Handle git protocol URLs: git://github.com/owner/repo.git
+	if strings.HasPrefix(url, "git://github.com/") {
+		path := strings.TrimPrefix(url, "git://github.com/")
+		path = strings.TrimSuffix(path, ".git")
+		return path
+	}
+
+	return ""
 }
