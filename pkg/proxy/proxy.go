@@ -756,6 +756,14 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		Tags:        startReq.Tags,
 	}
 
+	// Save the initial message as tag.description
+	if initialMessage != "" {
+		if session.Tags == nil {
+			session.Tags = make(map[string]string)
+		}
+		session.Tags["description"] = initialMessage
+	}
+
 	// Store session
 	p.sessionsMutex.Lock()
 	p.sessions[sessionID] = session
@@ -1333,19 +1341,6 @@ func extractRepoFullNameFromURL(repoURL string) (string, error) {
 
 // sendInitialMessage sends an initial message to the agentapi server after startup
 func (p *Proxy) sendInitialMessage(session *AgentSession, message string) {
-	// Save the first message as tag.description
-	if message != "" {
-		p.sessionsMutex.Lock()
-		if session.Tags == nil {
-			session.Tags = make(map[string]string)
-		}
-		session.Tags["description"] = message
-		p.sessionsMutex.Unlock()
-
-		// Update the persisted session with the new tag
-		p.updateSession(session)
-	}
-
 	// Wait a bit for the server to start up
 	time.Sleep(2 * time.Second)
 
