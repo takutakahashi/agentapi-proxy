@@ -344,6 +344,16 @@ func (p *Proxy) updateSession(session *AgentSession) {
 		return
 	}
 
+	// Try to populate description if missing
+	if session.Tags == nil {
+		session.Tags = make(map[string]string)
+	}
+	if _, exists := session.Tags["description"]; !exists {
+		if firstMessage := p.fetchFirstUserMessage(session); firstMessage != "" {
+			session.Tags["description"] = firstMessage
+		}
+	}
+
 	sessionData := p.sessionToStorage(session)
 	if err := p.storage.Update(sessionData); err != nil {
 		log.Printf("Failed to update session %s: %v", session.ID, err)
@@ -754,14 +764,6 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		Status:      "active",
 		Environment: startReq.Environment,
 		Tags:        startReq.Tags,
-	}
-
-	// Save the initial message as tag.description
-	if initialMessage != "" {
-		if session.Tags == nil {
-			session.Tags = make(map[string]string)
-		}
-		session.Tags["description"] = initialMessage
 	}
 
 	// Store session
@@ -1737,4 +1739,49 @@ func (p *Proxy) isPortAvailable(port int) bool {
 		log.Printf("Warning: Failed to close listener: %v", err)
 	}
 	return true
+}
+
+// fetchFirstUserMessage fetches the first user message from a session's messages
+func (p *Proxy) fetchFirstUserMessage(session *AgentSession) string {
+	// Only try to fetch if session status is active
+	if session.Status != "active" {
+		return ""
+	}
+
+	// Call the messages API to get the conversation history
+	url := fmt.Sprintf("http://localhost:%d/messages", session.Port)
+	resp, err := http.Get(url)
+	if err != nil {
+		// Don't log errors as this is a best-effort operation
+		return ""
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+
+	// Parse the messages response
+	var messages []map[string]interface{}
+	if err := json.Unmarshal(body, &messages); err != nil {
+		return ""
+	}
+
+	// Find the first user message
+	for _, msg := range messages {
+		if msgType, ok := msg["type"].(string); ok && msgType == "user" {
+			if content, ok := msg["content"].(string); ok && content != "" {
+				return content
+			}
+		}
+	}
+
+	return "" // No user message found
 }
