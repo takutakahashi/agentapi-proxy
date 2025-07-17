@@ -27,6 +27,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
@@ -363,15 +364,18 @@ func (p *Proxy) deleteSessionFromStorage(sessionID string) {
 // recoverSessions loads persisted sessions on startup
 func (p *Proxy) recoverSessions() {
 	if p.storage == nil {
+		log.Printf("[SESSION_RECOVERY] Storage is nil, skipping recovery")
 		return
 	}
 
+	log.Printf("[SESSION_RECOVERY] Starting session recovery...")
 	sessions, err := p.storage.LoadAll()
 	if err != nil {
-		log.Printf("Failed to load sessions from storage: %v", err)
+		log.Printf("[SESSION_RECOVERY] Failed to load sessions from storage: %v", err)
 		return
 	}
 
+	log.Printf("[SESSION_RECOVERY] Found %d sessions to recover", len(sessions))
 	recovered := 0
 	cleaned := 0
 
@@ -1517,6 +1521,12 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 	if repoInfo != nil {
 		cfg.RepoFullName = repoInfo.FullName
 		cfg.CloneDir = repoInfo.CloneDir
+
+		// Run setup-gh for restored sessions with repository information
+		if err := p.runSetupGHForRestore(repoInfo.FullName, repoInfo.CloneDir); err != nil {
+			log.Printf("Warning: Failed to run setup-gh for restored session %s: %v", session.ID, err)
+			// Continue without failing the restore process
+		}
 	}
 
 	// Start the AgentAPI session
@@ -1528,14 +1538,185 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 		return
 	}
 
-	// Store the command in the session for proper cleanup
+	// Capture stderr output for logging on exit code 1
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	// Store the command in the session and start the process
 	session.processMutex.Lock()
 	session.Process = cmd
+	err = cmd.Start()
 	session.processMutex.Unlock()
 
-	if p.verbose {
-		log.Printf("Successfully started restored AgentAPI session %s", session.ID)
+	if err != nil {
+		log.Printf("Failed to start restored agentapi process for session %s: %v", session.ID, err)
+		return
 	}
+
+	// Update session in storage after process is started
+	p.updateSession(session)
+
+	if p.verbose {
+		log.Printf("Restored AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
+	}
+
+	// Wait for the process to finish or context cancellation
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Recovered from panic in cmd.Wait() for restored session %s: %v", session.ID, r)
+				done <- fmt.Errorf("panic in cmd.Wait(): %v", r)
+			}
+		}()
+		done <- cmd.Wait()
+	}()
+
+	// Ensure the process is cleaned up to prevent zombie processes
+	defer func() {
+		// This defer ensures cmd.Wait() is called if it hasn't been called yet
+		if cmd.Process != nil && cmd.ProcessState == nil {
+			// Process is still running, wait for it to prevent zombie
+			select {
+			case <-done:
+				// Wait completed in the main logic
+			case <-time.After(10 * time.Second):
+				// Increased timeout to 10 seconds to allow proper cleanup
+				log.Printf("Warning: Process %d cleanup timed out after 10 seconds", cmd.Process.Pid)
+				// Force kill if still running
+				if cmd.Process != nil {
+					log.Printf("Force killing process %d to prevent zombie", cmd.Process.Pid)
+					if err := cmd.Process.Kill(); err != nil {
+						log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, err)
+					}
+					// Wait for the killed process to prevent zombie
+					go func() {
+						if waitErr := cmd.Wait(); waitErr != nil {
+							log.Printf("Wait error after force kill for process %d: %v", cmd.Process.Pid, waitErr)
+						}
+					}()
+				}
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Context cancelled, terminate the process
+		if p.verbose {
+			log.Printf("Terminating restored agentapi process for session %s", session.ID)
+		}
+
+		// Try graceful shutdown first (SIGTERM to process group)
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+			// If process group signal fails, try individual process
+			if termErr := cmd.Process.Signal(syscall.SIGTERM); termErr != nil {
+				log.Printf("Failed to send SIGTERM to process %d: %v", cmd.Process.Pid, termErr)
+			}
+		} else {
+			log.Printf("Sent SIGTERM to process group %d", cmd.Process.Pid)
+		}
+
+		// Wait for graceful shutdown with timeout
+		gracefulTimeout := time.After(5 * time.Second)
+		select {
+		case waitErr := <-done:
+			if p.verbose {
+				log.Printf("Restored AgentAPI process for session %s terminated gracefully", session.ID)
+			}
+			if waitErr != nil && p.verbose {
+				log.Printf("Process wait error for restored session %s: %v", session.ID, waitErr)
+			}
+		case <-gracefulTimeout:
+			// Force kill if graceful shutdown failed
+			if p.verbose {
+				log.Printf("Force killing restored agentapi process for session %s", session.ID)
+			}
+			// Kill entire process group
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+				log.Printf("Failed to kill process group %d: %v", cmd.Process.Pid, err)
+				// If process group kill fails, try individual process
+				if killErr := cmd.Process.Kill(); killErr != nil {
+					log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, killErr)
+				}
+			} else {
+				log.Printf("Sent SIGKILL to process group %d", cmd.Process.Pid)
+			}
+			// Always wait for the process to prevent zombie
+			select {
+			case waitErr := <-done:
+				if waitErr != nil && p.verbose {
+					log.Printf("Process wait error after kill for restored session %s: %v", session.ID, waitErr)
+				}
+			case <-time.After(2 * time.Second):
+				log.Printf("Warning: Process %d may not have exited cleanly", cmd.Process.Pid)
+				// Even if timed out, try to consume from done channel to prevent goroutine leak
+				go func() {
+					select {
+					case <-done: // Consume the value when available
+					case <-time.After(5 * time.Second):
+						// If we can't consume within 5 seconds, just exit the goroutine
+						log.Printf("Warning: Could not consume done channel for process %d", cmd.Process.Pid)
+					}
+				}()
+			}
+		}
+
+	case err := <-done:
+		// Process finished on its own
+		if err != nil {
+			// Check if error is exit code 1 and log stderr output if available
+			if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
+				log.Printf("Restored AgentAPI process for session %s exited with code 1: %v", session.ID, err)
+				// Log stderr output if available
+				if stderrOutput := stderrBuf.String(); stderrOutput != "" {
+					log.Printf("Stderr output for restored session %s: %s", session.ID, stderrOutput)
+				}
+			} else {
+				log.Printf("Restored AgentAPI process for session %s exited with error: %v", session.ID, err)
+			}
+		} else if p.verbose {
+			log.Printf("Restored AgentAPI process for session %s exited normally", session.ID)
+		}
+	}
+}
+
+// runSetupGHForRestore runs setup-gh helper for restored sessions
+func (p *Proxy) runSetupGHForRestore(repoFullName, cloneDir string) error {
+	if repoFullName == "" {
+		return fmt.Errorf("repository full name is required")
+	}
+	if cloneDir == "" {
+		return fmt.Errorf("clone directory is required")
+	}
+
+	log.Printf("Running setup-gh for restored session with repository: %s in directory: %s", repoFullName, cloneDir)
+
+	// Change to the clone directory before running setup-gh
+	originalDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Change to clone directory
+	if err := os.Chdir(cloneDir); err != nil {
+		return fmt.Errorf("failed to change to clone directory %s: %w", cloneDir, err)
+	}
+
+	// Ensure we change back to original directory
+	defer func() {
+		if err := os.Chdir(originalDir); err != nil {
+			log.Printf("Warning: Failed to change back to original directory: %v", err)
+		}
+	}()
+
+	// Run setup-gh in the clone directory
+	if err := startup.SetupGitHubAuth(repoFullName); err != nil {
+		return fmt.Errorf("setup-gh failed: %w", err)
+	}
+
+	log.Printf("Successfully completed setup-gh for repository: %s", repoFullName)
+	return nil
 }
 
 // isPortAvailable checks if a port is available for use
