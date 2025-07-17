@@ -38,8 +38,8 @@ func NewFileStorage(filePath string, syncInterval int, encryptSecrets bool) (*Fi
 	// Load existing sessions
 	if err := fs.loadFromFile(); err != nil {
 		if !os.IsNotExist(err) {
-			// Log the error but continue - file might be corrupted
-			fmt.Printf("[FileStorage] Warning: failed to load existing sessions: %v\n", err)
+			// For corrupted files or other errors, return the error
+			return nil, fmt.Errorf("failed to load existing sessions: %w", err)
 		} else {
 			fmt.Printf("[FileStorage] No existing sessions file found at %s, starting fresh\n", filePath)
 		}
