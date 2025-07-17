@@ -1546,6 +1546,13 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 	if p.verbose {
 		log.Printf("Successfully started restored AgentAPI session %s", session.ID)
 	}
+
+	// Wait for the process to complete
+	if err := cmd.Wait(); err != nil {
+		log.Printf("Restored AgentAPI session %s process ended with error: %v", session.ID, err)
+	} else {
+		log.Printf("Restored AgentAPI session %s process ended normally", session.ID)
+	}
 }
 
 // runSetupGHForRestore runs setup-gh helper for restored sessions
