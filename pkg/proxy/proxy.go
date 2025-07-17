@@ -1523,7 +1523,7 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 		cfg.CloneDir = repoInfo.CloneDir
 
 		// Run setup-gh for restored sessions with repository information
-		if err := p.runSetupGHForRestore(repoInfo.FullName); err != nil {
+		if err := p.runSetupGHForRestore(repoInfo.FullName, repoInfo.CloneDir); err != nil {
 			log.Printf("Warning: Failed to run setup-gh for restored session %s: %v", session.ID, err)
 			// Continue without failing the restore process
 		}
@@ -1549,14 +1549,35 @@ func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentS
 }
 
 // runSetupGHForRestore runs setup-gh helper for restored sessions
-func (p *Proxy) runSetupGHForRestore(repoFullName string) error {
+func (p *Proxy) runSetupGHForRestore(repoFullName, cloneDir string) error {
 	if repoFullName == "" {
 		return fmt.Errorf("repository full name is required")
 	}
+	if cloneDir == "" {
+		return fmt.Errorf("clone directory is required")
+	}
 
-	log.Printf("Running setup-gh for restored session with repository: %s", repoFullName)
+	log.Printf("Running setup-gh for restored session with repository: %s in directory: %s", repoFullName, cloneDir)
 
-	// Import the startup package function
+	// Change to the clone directory before running setup-gh
+	originalDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Change to clone directory
+	if err := os.Chdir(cloneDir); err != nil {
+		return fmt.Errorf("failed to change to clone directory %s: %w", cloneDir, err)
+	}
+
+	// Ensure we change back to original directory
+	defer func() {
+		if err := os.Chdir(originalDir); err != nil {
+			log.Printf("Warning: Failed to change back to original directory: %v", err)
+		}
+	}()
+
+	// Run setup-gh in the clone directory
 	if err := startup.SetupGitHubAuth(repoFullName); err != nil {
 		return fmt.Errorf("setup-gh failed: %w", err)
 	}
