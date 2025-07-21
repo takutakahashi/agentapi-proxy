@@ -27,6 +27,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
@@ -101,6 +102,7 @@ type Proxy struct {
 	githubAuthProvider *auth.GitHubAuthProvider
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	userDirMgr         *userdir.Manager
+	notificationSvc    *notification.Service
 }
 
 // NewProxy creates a new proxy instance
@@ -132,10 +134,10 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			path := c.Request().URL.Path
 			pathParts := strings.Split(path, "/")
 			// Skip CORS only for proxy routes that match /:sessionId/* pattern
-			// (at least 3 parts, not starting with "start", "search", "sessions", or "oauth")
+			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications"
 			}
 			return false
 		},
@@ -260,6 +262,16 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil {
 			log.Printf("[OAUTH_INIT] OAuth configuration found but credentials are empty")
 		}
+	}
+
+	// Initialize notification service
+	baseDir := notification.GetBaseDir()
+	notificationSvc, err := notification.NewService(baseDir)
+	if err != nil {
+		log.Printf("Failed to initialize notification service: %v", err)
+	} else {
+		p.notificationSvc = notificationSvc
+		log.Printf("Notification service initialized successfully")
 	}
 
 	// Start cleanup goroutine for defunct processes
@@ -430,6 +442,19 @@ func (p *Proxy) setupRoutes() {
 	authInfoHandlers := NewAuthInfoHandlers(p.config)
 	p.echo.GET("/auth/types", authInfoHandlers.GetAuthTypes)
 	p.echo.GET("/auth/status", authInfoHandlers.GetAuthStatus)
+
+	// Add notification routes if service is available
+	if p.notificationSvc != nil {
+		notificationHandlers := NewNotificationHandlers(p.notificationSvc)
+		// UI-compatible routes (proxied from agentapi-ui)
+		p.echo.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission("notification:subscribe"))
+		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission("notification:subscribe"))
+		p.echo.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.RequirePermission("notification:subscribe"))
+
+		// Internal routes
+		p.echo.POST("/notifications/webhook", notificationHandlers.Webhook)
+		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission("notification:history"))
+	}
 
 	// Add OAuth routes if OAuth is configured
 	log.Printf("[ROUTES] OAuth provider configured: %v", p.oauthProvider != nil)
