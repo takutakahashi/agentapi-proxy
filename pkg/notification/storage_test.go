@@ -12,7 +12,11 @@ func TestJSONLStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	storage := NewJSONLStorage(tmpDir)
 
@@ -106,7 +110,7 @@ func TestJSONLStorage(t *testing.T) {
 
 	// Test filtering by session_id
 	filters := map[string]string{"session_id": "session1"}
-	notifications, total, err = storage.GetNotificationHistory("user123", 10, 0, filters)
+	notifications, _, err = storage.GetNotificationHistory("user123", 10, 0, filters)
 	if err != nil {
 		t.Errorf("GetNotificationHistory with filters failed: %v", err)
 	}
@@ -117,7 +121,7 @@ func TestJSONLStorage(t *testing.T) {
 
 	// Test filtering with non-matching session_id
 	filters = map[string]string{"session_id": "nonexistent"}
-	notifications, total, err = storage.GetNotificationHistory("user123", 10, 0, filters)
+	notifications, _, err = storage.GetNotificationHistory("user123", 10, 0, filters)
 	if err != nil {
 		t.Errorf("GetNotificationHistory with filters failed: %v", err)
 	}
@@ -133,7 +137,11 @@ func TestGetAllSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	storage := NewJSONLStorage(tmpDir)
 
@@ -199,7 +207,11 @@ func TestRotateNotificationHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	storage := NewJSONLStorage(tmpDir)
 	userID := "user123"
@@ -223,7 +235,8 @@ func TestRotateNotificationHistory(t *testing.T) {
 	}
 
 	// Verify we have 10 notifications
-	notifications, total, err := storage.GetNotificationHistory(userID, 20, 0, nil)
+	var notifications []NotificationHistory
+	_, total, err := storage.GetNotificationHistory(userID, 20, 0, nil)
 	if err != nil {
 		t.Errorf("GetNotificationHistory failed: %v", err)
 	}
