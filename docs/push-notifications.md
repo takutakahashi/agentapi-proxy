@@ -212,37 +212,328 @@ agentapiからのWebhookを受信して自動通知を送信します。
 
 ## 実装上の考慮事項
 
-### データベース設計
-```sql
--- 購読情報テーブル
-CREATE TABLE notification_subscriptions (
-  id UUID PRIMARY KEY,
-  user_id VARCHAR(255) NOT NULL,
-  endpoint TEXT NOT NULL,
-  p256dh_key TEXT NOT NULL,
-  auth_key TEXT NOT NULL,
-  session_ids JSONB,
-  notification_types JSONB,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  expires_at TIMESTAMP WITH TIME ZONE,
-  active BOOLEAN DEFAULT true
-);
+### JSONLベースのデータストア設計
 
--- 通知履歴テーブル
-CREATE TABLE notification_history (
-  id UUID PRIMARY KEY,
-  user_id VARCHAR(255) NOT NULL,
-  subscription_id UUID REFERENCES notification_subscriptions(id),
-  title VARCHAR(255) NOT NULL,
-  body TEXT,
-  type VARCHAR(50) NOT NULL,
-  session_id VARCHAR(255),
-  data JSONB,
-  sent_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  delivered BOOLEAN DEFAULT false,
-  clicked BOOLEAN DEFAULT false,
-  error_message TEXT
-);
+各ユーザーのホームディレクトリにJSONL（JSON Lines）ファイルを配置してデータを管理します。
+
+#### ディレクトリ構造
+```
+/home/agentapi/.agentapi-proxy/myclaudes/{user_id}/notifications/
+├── subscriptions.jsonl        # 購読情報
+├── history.jsonl             # 通知履歴
+└── .lock                     # ファイルロック用
+```
+
+#### データ形式
+
+**subscriptions.jsonl**
+```jsonl
+{"id":"sub_abc123","user_id":"user_123","endpoint":"https://fcm.googleapis.com/...","keys":{"p256dh":"BG3OGHrl...","auth":"I7Psnr6v..."},"session_ids":["abc123","def456"],"notification_types":["message","status_change"],"created_at":"2023-06-08T12:00:00Z","expires_at":"2023-07-08T12:00:00Z","active":true}
+{"id":"sub_def456","user_id":"user_123","endpoint":"https://fcm.googleapis.com/...","keys":{"p256dh":"CX4PGLsl...","auth":"J8Qtor7w..."},"session_ids":["xyz789"],"notification_types":["message"],"created_at":"2023-06-08T13:00:00Z","expires_at":"2023-07-08T13:00:00Z","active":true}
+```
+
+**history.jsonl**
+```jsonl
+{"id":"notif_123","user_id":"user_123","subscription_id":"sub_abc123","title":"新しいメッセージ","body":"Claude からの返答が到着しました","type":"message","session_id":"abc123","data":{"message_id":"msg_456","url":"/session/abc123"},"sent_at":"2023-06-08T12:00:00Z","delivered":true,"clicked":false,"error_message":null}
+{"id":"notif_124","user_id":"user_123","subscription_id":"sub_abc123","title":"ステータス変更","body":"エージェントが応答中です","type":"status_change","session_id":"abc123","data":{"status":"running"},"sent_at":"2023-06-08T12:01:00Z","delivered":true,"clicked":true,"error_message":null}
+```
+
+#### ファイル操作の実装
+
+**購読情報の管理**
+```go
+type NotificationSubscription struct {
+    ID                string                 `json:"id"`
+    UserID           string                 `json:"user_id"`
+    Endpoint         string                 `json:"endpoint"`
+    Keys             map[string]string      `json:"keys"`
+    SessionIDs       []string              `json:"session_ids"`
+    NotificationTypes []string              `json:"notification_types"`
+    CreatedAt        time.Time             `json:"created_at"`
+    ExpiresAt        *time.Time            `json:"expires_at"`
+    Active           bool                  `json:"active"`
+}
+
+func getNotificationsDir(userID string) string {
+    return filepath.Join("/home/agentapi/.agentapi-proxy/myclaudes", userID, "notifications")
+}
+
+func ensureNotificationsDir(userID string) error {
+    dir := getNotificationsDir(userID)
+    return os.MkdirAll(dir, 0755)
+}
+
+func addSubscription(userID string, sub NotificationSubscription) error {
+    if err := ensureNotificationsDir(userID); err != nil {
+        return err
+    }
+    
+    filePath := filepath.Join(getNotificationsDir(userID), "subscriptions.jsonl")
+    lockPath := filepath.Join(getNotificationsDir(userID), ".lock")
+    
+    // ファイルロック
+    lock, err := flock.New(lockPath)
+    if err != nil {
+        return err
+    }
+    defer lock.Close()
+    
+    if err := lock.Lock(); err != nil {
+        return err
+    }
+    defer lock.Unlock()
+    
+    file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    
+    encoder := json.NewEncoder(file)
+    return encoder.Encode(sub)
+}
+
+func getSubscriptions(userID string) ([]NotificationSubscription, error) {
+    filePath := filepath.Join(getNotificationsDir(userID), "subscriptions.jsonl")
+    
+    file, err := os.Open(filePath)
+    if err != nil {
+        if os.IsNotExist(err) {
+            return []NotificationSubscription{}, nil
+        }
+        return nil, err
+    }
+    defer file.Close()
+    
+    var subscriptions []NotificationSubscription
+    scanner := bufio.NewScanner(file)
+    
+    for scanner.Scan() {
+        var sub NotificationSubscription
+        if err := json.Unmarshal(scanner.Bytes(), &sub); err != nil {
+            continue // 破損したエントリをスキップ
+        }
+        // アクティブで有効期限内の購読のみを返す
+        if sub.Active && (sub.ExpiresAt == nil || sub.ExpiresAt.After(time.Now())) {
+            subscriptions = append(subscriptions, sub)
+        }
+    }
+    
+    return subscriptions, scanner.Err()
+}
+
+func updateSubscription(userID string, subscriptionID string, updates NotificationSubscription) error {
+    // 全購読を読み込み、該当するものを更新して書き戻し
+    subscriptions, err := getAllSubscriptions(userID) // 有効期限切れも含む全て
+    if err != nil {
+        return err
+    }
+    
+    filePath := filepath.Join(getNotificationsDir(userID), "subscriptions.jsonl")
+    lockPath := filepath.Join(getNotificationsDir(userID), ".lock")
+    
+    lock, err := flock.New(lockPath)
+    if err != nil {
+        return err
+    }
+    defer lock.Close()
+    
+    if err := lock.Lock(); err != nil {
+        return err
+    }
+    defer lock.Unlock()
+    
+    // ファイルを新しく作成
+    tempFile := filePath + ".tmp"
+    file, err := os.Create(tempFile)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    
+    encoder := json.NewEncoder(file)
+    updated := false
+    
+    for _, sub := range subscriptions {
+        if sub.ID == subscriptionID {
+            updated = true
+            updates.ID = subscriptionID
+            updates.UserID = userID
+            if err := encoder.Encode(updates); err != nil {
+                return err
+            }
+        } else {
+            if err := encoder.Encode(sub); err != nil {
+                return err
+            }
+        }
+    }
+    
+    if !updated {
+        os.Remove(tempFile)
+        return errors.New("subscription not found")
+    }
+    
+    return os.Rename(tempFile, filePath)
+}
+```
+
+**通知履歴の管理**
+```go
+type NotificationHistory struct {
+    ID             string                 `json:"id"`
+    UserID         string                 `json:"user_id"`
+    SubscriptionID string                 `json:"subscription_id"`
+    Title          string                 `json:"title"`
+    Body           string                 `json:"body"`
+    Type           string                 `json:"type"`
+    SessionID      string                 `json:"session_id"`
+    Data           map[string]interface{} `json:"data"`
+    SentAt         time.Time             `json:"sent_at"`
+    Delivered      bool                  `json:"delivered"`
+    Clicked        bool                  `json:"clicked"`
+    ErrorMessage   *string               `json:"error_message"`
+}
+
+func addNotificationHistory(userID string, notification NotificationHistory) error {
+    if err := ensureNotificationsDir(userID); err != nil {
+        return err
+    }
+    
+    filePath := filepath.Join(getNotificationsDir(userID), "history.jsonl")
+    lockPath := filepath.Join(getNotificationsDir(userID), ".lock")
+    
+    lock, err := flock.New(lockPath)
+    if err != nil {
+        return err
+    }
+    defer lock.Close()
+    
+    if err := lock.Lock(); err != nil {
+        return err
+    }
+    defer lock.Unlock()
+    
+    file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    
+    encoder := json.NewEncoder(file)
+    return encoder.Encode(notification)
+}
+
+func getNotificationHistory(userID string, limit, offset int, filters map[string]string) ([]NotificationHistory, int, error) {
+    filePath := filepath.Join(getNotificationsDir(userID), "history.jsonl")
+    
+    file, err := os.Open(filePath)
+    if err != nil {
+        if os.IsNotExist(err) {
+            return []NotificationHistory{}, 0, nil
+        }
+        return nil, 0, err
+    }
+    defer file.Close()
+    
+    var allNotifications []NotificationHistory
+    scanner := bufio.NewScanner(file)
+    
+    for scanner.Scan() {
+        var notification NotificationHistory
+        if err := json.Unmarshal(scanner.Bytes(), &notification); err != nil {
+            continue // 破損したエントリをスキップ
+        }
+        
+        // フィルタリング
+        if sessionID := filters["session_id"]; sessionID != "" && notification.SessionID != sessionID {
+            continue
+        }
+        if notificationType := filters["type"]; notificationType != "" && notification.Type != notificationType {
+            continue
+        }
+        
+        allNotifications = append(allNotifications, notification)
+    }
+    
+    if err := scanner.Err(); err != nil {
+        return nil, 0, err
+    }
+    
+    // 新しい順にソート
+    sort.Slice(allNotifications, func(i, j int) bool {
+        return allNotifications[i].SentAt.After(allNotifications[j].SentAt)
+    })
+    
+    total := len(allNotifications)
+    
+    // ページネーション
+    if offset >= total {
+        return []NotificationHistory{}, total, nil
+    }
+    
+    end := offset + limit
+    if end > total {
+        end = total
+    }
+    
+    return allNotifications[offset:end], total, nil
+}
+```
+
+#### ファイルロック
+
+複数のリクエストが同時にファイルにアクセスすることを防ぐため、各ユーザーディレクトリに `.lock` ファイルを作成してファイルロックを実装します。
+
+#### ファイルローテーション
+
+通知履歴が大きくなりすぎないよう、定期的に古いエントリを削除するローテーション機能を実装します。
+
+```go
+func rotateNotificationHistory(userID string, maxEntries int) error {
+    // 最新のN件のみを保持し、古いものを削除
+    notifications, _, err := getNotificationHistory(userID, maxEntries*2, 0, nil)
+    if err != nil {
+        return err
+    }
+    
+    if len(notifications) <= maxEntries {
+        return nil // ローテーション不要
+    }
+    
+    // 最新のmaxEntries件のみを保持
+    keepNotifications := notifications[:maxEntries]
+    
+    filePath := filepath.Join(getNotificationsDir(userID), "history.jsonl")
+    lockPath := filepath.Join(getNotificationsDir(userID), ".lock")
+    
+    lock, err := flock.New(lockPath)
+    if err != nil {
+        return err
+    }
+    defer lock.Close()
+    
+    if err := lock.Lock(); err != nil {
+        return err
+    }
+    defer lock.Unlock()
+    
+    tempFile := filePath + ".tmp"
+    file, err := os.Create(tempFile)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    
+    encoder := json.NewEncoder(file)
+    for _, notification := range keepNotifications {
+        if err := encoder.Encode(notification); err != nil {
+            return err
+        }
+    }
+    
+    return os.Rename(tempFile, filePath)
+}
 ```
 
 ### 設定例
