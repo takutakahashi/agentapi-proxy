@@ -779,7 +779,15 @@ func getMatchingSubscriptions() ([]NotificationSubscription, error) {
 	var allSubscriptions []NotificationSubscription
 
 	// Get base directory for user data
-	baseDir := "/home/agentapi/.agentapi-proxy/myclaudes"
+	baseDir := os.Getenv("USERHOME_BASEDIR")
+	if baseDir == "" {
+		homeDir := os.Getenv("HOME")
+		if homeDir == "" {
+			homeDir = "/home/agentapi"
+		}
+		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
+	}
+	baseDir = filepath.Join(baseDir, "myclaudes")
 
 	// Check if base directory exists
 	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
@@ -818,7 +826,17 @@ func getMatchingSubscriptions() ([]NotificationSubscription, error) {
 }
 
 func getSubscriptionsForUser(userID string) ([]NotificationSubscription, error) {
-	subscriptionsFile := filepath.Join("/home/agentapi/.agentapi-proxy/myclaudes", userID, "notifications", "subscriptions.jsonl")
+	// Get base directory for user data using same logic as SetupUserHome
+	baseDir := os.Getenv("USERHOME_BASEDIR")
+	if baseDir == "" {
+		homeDir := os.Getenv("HOME")
+		if homeDir == "" {
+			homeDir = "/home/agentapi"
+		}
+		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
+	}
+
+	subscriptionsFile := filepath.Join(baseDir, "myclaudes", userID, "notifications", "subscriptions.jsonl")
 
 	if _, err := os.Stat(subscriptionsFile); os.IsNotExist(err) {
 		return []NotificationSubscription{}, nil
@@ -965,7 +983,17 @@ func sendNotifications(subscriptions []NotificationSubscription, vapidPublicKey,
 }
 
 func saveNotificationHistory(sub NotificationSubscription, delivered bool, sendError error) error {
-	historyFile := filepath.Join("/home/agentapi/.agentapi-proxy/myclaudes", sub.UserID, "notifications", "history.jsonl")
+	// Get base directory for user data using same logic as SetupUserHome
+	baseDir := os.Getenv("USERHOME_BASEDIR")
+	if baseDir == "" {
+		homeDir := os.Getenv("HOME")
+		if homeDir == "" {
+			homeDir = "/home/agentapi"
+		}
+		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
+	}
+
+	historyFile := filepath.Join(baseDir, "myclaudes", sub.UserID, "notifications", "history.jsonl")
 
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(historyFile), 0755); err != nil {
