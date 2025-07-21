@@ -397,24 +397,14 @@ func (s *JSONLStorage) RotateNotificationHistory(userID string, maxEntries int) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Get all notifications
-	notifications, _, err := s.GetNotificationHistory(userID, maxEntries*2, 0, nil)
-	if err != nil {
-		return err
-	}
-
-	if len(notifications) <= maxEntries {
-		return nil // No rotation needed
-	}
-
-	// Keep only the most recent maxEntries
-	keepNotifications := notifications[:maxEntries]
-
+	// Get all notifications directly without using the method to avoid deadlock
 	filePath := filepath.Join(s.getNotificationsDir(userID), "history.jsonl")
-	tempFile := filePath + ".tmp"
 
-	file, err := os.Create(tempFile)
+	file, err := os.Open(filePath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // No file means no rotation needed
+		}
 		return err
 	}
 	defer func() {
@@ -423,7 +413,46 @@ func (s *JSONLStorage) RotateNotificationHistory(userID string, maxEntries int) 
 		}
 	}()
 
-	encoder := json.NewEncoder(file)
+	var allNotifications []NotificationHistory
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		var notification NotificationHistory
+		if err := json.Unmarshal(scanner.Bytes(), &notification); err != nil {
+			continue // Skip corrupted entries
+		}
+		allNotifications = append(allNotifications, notification)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	// Sort by newest first
+	sort.Slice(allNotifications, func(i, j int) bool {
+		return allNotifications[i].SentAt.After(allNotifications[j].SentAt)
+	})
+
+	if len(allNotifications) <= maxEntries {
+		return nil // No rotation needed
+	}
+
+	// Keep only the most recent maxEntries
+	keepNotifications := allNotifications[:maxEntries]
+
+	tempFile := filePath + ".tmp"
+
+	newFile, err := os.Create(tempFile)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := newFile.Close(); err != nil {
+			fmt.Printf("Warning: failed to close file: %v\n", err)
+		}
+	}()
+
+	encoder := json.NewEncoder(newFile)
 	for _, notification := range keepNotifications {
 		if err := encoder.Encode(notification); err != nil {
 			_ = os.Remove(tempFile)
