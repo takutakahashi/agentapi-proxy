@@ -5,10 +5,12 @@
 
 ## エンドポイント一覧
 
-### UI互換性を保つエンドポイント
+### プロキシ対応エンドポイント（UI用）
+
+agentapi-uiから以下のエンドポイントへのリクエストがagentapi-proxyにプロキシされます。
 
 #### POST /api/subscribe
-既存UIとの互換性を保つプッシュ通知購読エンドポイント。
+プッシュ通知購読エンドポイント（agentapi-uiからプロキシ）。
 
 ##### リクエストボディ
 ```json
@@ -30,7 +32,7 @@
 ```
 
 #### GET /api/subscribe
-現在のユーザーの購読一覧を取得します。
+現在のユーザーの購読一覧を取得します（agentapi-uiからプロキシ）。
 
 ##### レスポンス
 ```json
@@ -51,7 +53,7 @@
 ```
 
 #### DELETE /api/subscribe
-購読を削除します。
+購読を削除します（agentapi-uiからプロキシ）。
 
 ##### リクエストボディ
 ```json
@@ -60,33 +62,7 @@
 }
 ```
 
-#### POST /api/send-notification
-プッシュ通知を送信します。
-
-##### リクエストボディ
-```json
-{
-  "title": "新しいメッセージ",
-  "body": "Claude からの返答が到着しました",
-  "url": "/session/abc123",
-  "icon": "/icon-192x192.png",
-  "targetUserId": "user_123",
-  "targetUserType": "github"
-}
-```
-
-### 拡張エンドポイント（新機能用）
-
-#### POST /notifications/session-subscribe
-セッション単位での通知購読を設定（新機能）。
-
-##### リクエストボディ
-```json
-{
-  "session_ids": ["abc123", "def456"],
-  "notification_types": ["message", "status_change", "session_update"]
-}
-```
+### 内部エンドポイント（プロキシ用）
 
 #### POST /notifications/webhook
 agentapiからのWebhookを受信して自動通知を送信します。
@@ -107,7 +83,7 @@ agentapiからのWebhookを受信して自動通知を送信します。
 ```
 
 #### GET /notifications/history
-ユーザーの通知履歴を取得します（新機能）。
+ユーザーの通知履歴を取得します。
 
 ##### クエリパラメータ
 - `session_id`: セッションIDでフィルタ
@@ -522,6 +498,115 @@ PUSH_NOTIFICATION_TTL: 86400
 NOTIFICATION_RATE_LIMIT: 100
 ```
 
+## Helper コマンド
+
+### 通知送信コマンド
+
+agentapi-proxyのhelperサブコマンドとして、登録済みの購読に対してプッシュ通知を送信します。
+
+#### 基本的な使い方
+
+```bash
+# 特定ユーザーに通知送信
+agentapi-proxy helpers send-notification \
+  --user-id "user_123" \
+  --title "新しいメッセージ" \
+  --body "Claude からの返答が到着しました" \
+  --url "/session/abc123"
+
+# 特定セッションの全ユーザーに通知送信
+agentapi-proxy helpers send-notification \
+  --session-id "abc123" \
+  --title "セッション更新" \
+  --body "セッションのステータスが変更されました"
+
+# GitHubユーザーのみに通知送信
+agentapi-proxy helpers send-notification \
+  --user-type "github" \
+  --title "重要な通知" \
+  --body "システムメンテナンスのお知らせ"
+```
+
+#### コマンドオプション
+
+```bash
+agentapi-proxy helpers send-notification [OPTIONS]
+
+オプション:
+  --user-id string          特定のユーザーIDに送信
+  --user-type string        特定のユーザータイプに送信 (github, api_key)
+  --username string         特定のユーザー名に送信
+  --session-id string       特定のセッションIDに関連するユーザーに送信
+  --title string            通知のタイトル (必須)
+  --body string             通知の本文 (必須)
+  --url string              通知クリック時のURL
+  --icon string             通知アイコンのURL (デフォルト: /icon-192x192.png)
+  --badge string            バッジアイコンのURL
+  --ttl int                 通知の生存時間（秒）(デフォルト: 86400)
+  --urgency string          通知の緊急度 (low, normal, high) (デフォルト: normal)
+  --dry-run                 実際には送信せず、送信対象の購読のみ表示
+  --verbose, -v             詳細な実行ログを表示
+  --config string           設定ファイルのパス
+
+例:
+  # 単一ユーザーに送信
+  agentapi-proxy helpers send-notification \
+    --user-id "user_123" \
+    --title "新着メッセージ" \
+    --body "新しい返答があります" \
+    --url "/session/abc123"
+  
+  # セッション関連の全ユーザーに送信
+  agentapi-proxy helpers send-notification \
+    --session-id "session_456" \
+    --title "セッション完了" \
+    --body "処理が完了しました"
+  
+  # GitHub認証ユーザーのみに送信
+  agentapi-proxy helpers send-notification \
+    --user-type "github" \
+    --title "機能追加のお知らせ" \
+    --body "新機能がリリースされました"
+  
+  # 送信前の確認（dry-run）
+  agentapi-proxy helpers send-notification \
+    --user-id "user_123" \
+    --title "テスト通知" \
+    --body "これはテストです" \
+    --dry-run
+```
+
+#### 設定ファイル
+
+VAPID設定などは環境変数または設定ファイルで指定：
+
+```yaml
+# config.yaml
+vapid:
+  public_key: "BG3OGHrl3YJ5PHpl0GSqtALSDRZFj4Bcq..."
+  private_key: "your-private-key"
+  contact_email: "admin@example.com"
+
+notifications:
+  default_ttl: 86400
+  default_icon: "/icon-192x192.png"
+  rate_limit: 100
+```
+
+#### 戻り値
+
+```bash
+# 成功時
+Successfully sent notifications to 3 subscriptions
+- user_123 (github): delivered
+- user_456 (api_key): delivered  
+- user_789 (github): failed (invalid endpoint)
+
+# エラー時
+Error: No subscriptions found for the specified criteria
+Error: VAPID configuration not found
+```
+
 ## 統合例
 
 ### フロントエンドでの購読登録（UI互換）
@@ -553,20 +638,27 @@ await fetch('/api/subscribe', {
 });
 ```
 
-### セッション単位通知の設定（拡張機能）
-```javascript
-// 特定のセッションのみ通知を受け取りたい場合
-await fetch('/notifications/session-subscribe', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${accessToken}`
-  },
-  body: JSON.stringify({
-    session_ids: [currentSessionId],
-    notification_types: ['message', 'status_change']
-  })
-});
+### agentapi-proxyからの通知送信
+```bash
+# コマンドラインからの通知送信
+agentapi-proxy helpers send-notification \
+  --user-id "user_123" \
+  --title "新しいメッセージ" \
+  --body "Claude からの返答が到着しました" \
+  --url "/session/abc123"
+
+# スクリプトでの利用例
+#!/bin/bash
+SESSION_ID="abc123"
+USER_ID="user_123"
+MESSAGE="処理が完了しました"
+
+agentapi-proxy helpers send-notification \
+  --user-id "$USER_ID" \
+  --session-id "$SESSION_ID" \
+  --title "タスク完了通知" \
+  --body "$MESSAGE" \
+  --url "/session/$SESSION_ID"
 ```
 
 ### agentapiとの連携
