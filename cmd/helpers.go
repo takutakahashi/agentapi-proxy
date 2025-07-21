@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"crypto/rand"
 	_ "embed"
 	"encoding/base64"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SherClockHolmes/webpush-go"
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
@@ -32,6 +34,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  generate-token - Generate API keys for agentapi-proxy authentication")
 		fmt.Println("  init - Initialize Claude configuration (alias for setup-claude-code)")
 		fmt.Println("  setup-gh - Setup GitHub authentication using gh CLI")
+		fmt.Println("  send-notification - Send push notifications to registered subscriptions")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
 }
@@ -137,10 +140,34 @@ func init() {
 	setupGHCmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub personal access token (can also be set via GITHUB_TOKEN env var)")
 	setupGHCmd.Flags().StringVar(&githubPersonalAccessToken, "github-personal-access-token", "", "GitHub personal access token (can also be set via GITHUB_PERSONAL_ACCESS_TOKEN env var)")
 
+	// send-notification command flags
+	sendNotificationCmd.Flags().StringVar(&notifyUserID, "user-id", "", "Target specific user ID")
+	sendNotificationCmd.Flags().StringVar(&notifyUserType, "user-type", "", "Target specific user type (github, api_key)")
+	sendNotificationCmd.Flags().StringVar(&notifyUsername, "username", "", "Target specific username")
+	sendNotificationCmd.Flags().StringVar(&notifySessionID, "session-id", "", "Target users related to specific session ID")
+	sendNotificationCmd.Flags().StringVar(&notifyTitle, "title", "", "Notification title (required)")
+	sendNotificationCmd.Flags().StringVar(&notifyBody, "body", "", "Notification body (required)")
+	sendNotificationCmd.Flags().StringVar(&notifyURL, "url", "", "Notification click URL")
+	sendNotificationCmd.Flags().StringVar(&notifyIcon, "icon", "/icon-192x192.png", "Notification icon URL")
+	sendNotificationCmd.Flags().StringVar(&notifyBadge, "badge", "", "Notification badge URL")
+	sendNotificationCmd.Flags().IntVar(&notifyTTL, "ttl", 86400, "Notification TTL in seconds")
+	sendNotificationCmd.Flags().StringVar(&notifyUrgency, "urgency", "normal", "Notification urgency (low, normal, high)")
+	sendNotificationCmd.Flags().BoolVar(&notifyDryRun, "dry-run", false, "Show target subscriptions without sending")
+	sendNotificationCmd.Flags().BoolVarP(&notifyVerbose, "verbose", "v", false, "Verbose output")
+	sendNotificationCmd.Flags().StringVar(&notifyConfigPath, "config", "", "Configuration file path")
+
+	if err := sendNotificationCmd.MarkFlagRequired("title"); err != nil {
+		panic(err)
+	}
+	if err := sendNotificationCmd.MarkFlagRequired("body"); err != nil {
+		panic(err)
+	}
+
 	HelpersCmd.AddCommand(setupClaudeCodeCmd)
 	HelpersCmd.AddCommand(initCmd)
 	HelpersCmd.AddCommand(generateTokenCmd)
 	HelpersCmd.AddCommand(setupGHCmd)
+	HelpersCmd.AddCommand(sendNotificationCmd)
 }
 
 // RunSetupClaudeCode is exported for use in other packages
@@ -595,4 +622,402 @@ func extractRepoFullNameFromURL(url string) string {
 	}
 
 	return ""
+}
+
+var sendNotificationCmd = &cobra.Command{
+	Use:   "send-notification",
+	Short: "Send push notifications to registered subscriptions",
+	Long: `Send push notifications to registered subscriptions based on filtering criteria.
+
+This command allows you to send push notifications to users who have registered
+for push notifications through the subscription system. You can target specific
+users, user types, sessions, or use other filtering criteria.
+
+The command requires VAPID configuration to be set via environment variables:
+- VAPID_PUBLIC_KEY: VAPID public key for web push authentication
+- VAPID_PRIVATE_KEY: VAPID private key for web push authentication  
+- VAPID_CONTACT_EMAIL: Contact email for VAPID authentication
+
+Examples:
+  # Send to specific user
+  agentapi-proxy helpers send-notification --user-id "user123" --title "Hello" --body "Test message"
+  
+  # Send to all users in a session
+  agentapi-proxy helpers send-notification --session-id "session456" --title "Session Update" --body "Status changed"
+  
+  # Send to all GitHub users
+  agentapi-proxy helpers send-notification --user-type "github" --title "Announcement" --body "New feature available"
+  
+  # Dry run to see who would receive the notification
+  agentapi-proxy helpers send-notification --user-id "user123" --title "Test" --body "Test" --dry-run`,
+	RunE: runSendNotification,
+}
+
+// Send notification command flags
+var (
+	notifyUserID     string
+	notifyUserType   string
+	notifyUsername   string
+	notifySessionID  string
+	notifyTitle      string
+	notifyBody       string
+	notifyURL        string
+	notifyIcon       string
+	notifyBadge      string
+	notifyTTL        int
+	notifyUrgency    string
+	notifyDryRun     bool
+	notifyVerbose    bool
+	notifyConfigPath string
+)
+
+type NotificationSubscription struct {
+	ID                string            `json:"id"`
+	UserID            string            `json:"user_id"`
+	UserType          string            `json:"user_type"`
+	Username          string            `json:"username"`
+	Endpoint          string            `json:"endpoint"`
+	Keys              map[string]string `json:"keys"`
+	SessionIDs        []string          `json:"session_ids"`
+	NotificationTypes []string          `json:"notification_types"`
+	CreatedAt         time.Time         `json:"created_at"`
+	Active            bool              `json:"active"`
+}
+
+type NotificationHistory struct {
+	ID             string                 `json:"id"`
+	UserID         string                 `json:"user_id"`
+	SubscriptionID string                 `json:"subscription_id"`
+	Title          string                 `json:"title"`
+	Body           string                 `json:"body"`
+	Type           string                 `json:"type"`
+	SessionID      string                 `json:"session_id"`
+	Data           map[string]interface{} `json:"data"`
+	SentAt         time.Time              `json:"sent_at"`
+	Delivered      bool                   `json:"delivered"`
+	Clicked        bool                   `json:"clicked"`
+	ErrorMessage   *string                `json:"error_message"`
+}
+
+func runSendNotification(cmd *cobra.Command, args []string) error {
+	// Validate VAPID configuration
+	vapidPublicKey := os.Getenv("VAPID_PUBLIC_KEY")
+	vapidPrivateKey := os.Getenv("VAPID_PRIVATE_KEY")
+	vapidContactEmail := os.Getenv("VAPID_CONTACT_EMAIL")
+
+	if vapidPublicKey == "" || vapidPrivateKey == "" || vapidContactEmail == "" {
+		return fmt.Errorf("VAPID configuration required: set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_CONTACT_EMAIL environment variables")
+	}
+
+	// Validate urgency
+	if notifyUrgency != "low" && notifyUrgency != "normal" && notifyUrgency != "high" {
+		return fmt.Errorf("invalid urgency: %s. Must be one of: low, normal, high", notifyUrgency)
+	}
+
+	// Get all subscriptions that match the criteria
+	subscriptions, err := getMatchingSubscriptions()
+	if err != nil {
+		return fmt.Errorf("failed to get subscriptions: %w", err)
+	}
+
+	if len(subscriptions) == 0 {
+		fmt.Println("No subscriptions found matching the specified criteria")
+		return nil
+	}
+
+	if notifyVerbose {
+		fmt.Printf("Found %d matching subscriptions:\n", len(subscriptions))
+		for _, sub := range subscriptions {
+			fmt.Printf("- %s (%s): %s\n", sub.UserID, sub.UserType, sub.Username)
+		}
+		fmt.Println()
+	}
+
+	if notifyDryRun {
+		fmt.Printf("Would send notifications to %d subscriptions:\n", len(subscriptions))
+		for _, sub := range subscriptions {
+			fmt.Printf("- %s (%s): %s\n", sub.UserID, sub.UserType, sub.Username)
+		}
+		return nil
+	}
+
+	// Send notifications
+	results, err := sendNotifications(subscriptions, vapidPublicKey, vapidPrivateKey, vapidContactEmail)
+	if err != nil {
+		return fmt.Errorf("failed to send notifications: %w", err)
+	}
+
+	// Display results
+	successful := 0
+	failed := 0
+	for _, result := range results {
+		if result.Error == nil {
+			successful++
+			if notifyVerbose {
+				fmt.Printf("✓ %s (%s): delivered\n", result.Subscription.UserID, result.Subscription.UserType)
+			}
+		} else {
+			failed++
+			fmt.Printf("✗ %s (%s): failed - %v\n", result.Subscription.UserID, result.Subscription.UserType, result.Error)
+		}
+	}
+
+	fmt.Printf("\nSuccessfully sent notifications to %d subscriptions\n", successful)
+	if failed > 0 {
+		fmt.Printf("Failed to send to %d subscriptions\n", failed)
+	}
+
+	return nil
+}
+
+type NotificationResult struct {
+	Subscription NotificationSubscription
+	Error        error
+}
+
+func getMatchingSubscriptions() ([]NotificationSubscription, error) {
+	var allSubscriptions []NotificationSubscription
+
+	// Get base directory for user data
+	baseDir := "/home/agentapi/.agentapi-proxy/myclaudes"
+
+	// Check if base directory exists
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+		return allSubscriptions, nil
+	}
+
+	// Read all user directories
+	userDirs, err := os.ReadDir(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read user directories: %w", err)
+	}
+
+	for _, userDir := range userDirs {
+		if !userDir.IsDir() {
+			continue
+		}
+
+		userID := userDir.Name()
+		subscriptions, err := getSubscriptionsForUser(userID)
+		if err != nil {
+			if notifyVerbose {
+				fmt.Printf("Warning: failed to read subscriptions for user %s: %v\n", userID, err)
+			}
+			continue
+		}
+
+		// Filter subscriptions based on criteria
+		for _, sub := range subscriptions {
+			if matchesFilter(sub) {
+				allSubscriptions = append(allSubscriptions, sub)
+			}
+		}
+	}
+
+	return allSubscriptions, nil
+}
+
+func getSubscriptionsForUser(userID string) ([]NotificationSubscription, error) {
+	subscriptionsFile := filepath.Join("/home/agentapi/.agentapi-proxy/myclaudes", userID, "notifications", "subscriptions.jsonl")
+
+	if _, err := os.Stat(subscriptionsFile); os.IsNotExist(err) {
+		return []NotificationSubscription{}, nil
+	}
+
+	file, err := os.Open(subscriptionsFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open subscriptions file: %w", err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close file: %v\n", err)
+		}
+	}()
+
+	var subscriptions []NotificationSubscription
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		var sub NotificationSubscription
+		if err := json.Unmarshal(scanner.Bytes(), &sub); err != nil {
+			continue // Skip invalid entries
+		}
+
+		// Only include active subscriptions
+		if sub.Active {
+			subscriptions = append(subscriptions, sub)
+		}
+	}
+
+	return subscriptions, scanner.Err()
+}
+
+func matchesFilter(sub NotificationSubscription) bool {
+	// If user-id is specified, it must match
+	if notifyUserID != "" && sub.UserID != notifyUserID {
+		return false
+	}
+
+	// If user-type is specified, it must match
+	if notifyUserType != "" && sub.UserType != notifyUserType {
+		return false
+	}
+
+	// If username is specified, it must match
+	if notifyUsername != "" && sub.Username != notifyUsername {
+		return false
+	}
+
+	// If session-id is specified, user must be subscribed to that session
+	if notifySessionID != "" {
+		// Empty session_ids means subscribed to all sessions
+		if len(sub.SessionIDs) == 0 {
+			return true
+		}
+		// Check if the specified session is in the user's session list
+		for _, sessionID := range sub.SessionIDs {
+			if sessionID == notifySessionID {
+				return true
+			}
+		}
+		return false
+	}
+
+	return true
+}
+
+func sendNotifications(subscriptions []NotificationSubscription, vapidPublicKey, vapidPrivateKey, vapidContactEmail string) ([]NotificationResult, error) {
+	var results []NotificationResult
+
+	for _, sub := range subscriptions {
+		result := NotificationResult{Subscription: sub}
+
+		// Create notification payload
+		payload := map[string]interface{}{
+			"title": notifyTitle,
+			"body":  notifyBody,
+			"icon":  notifyIcon,
+			"data": map[string]interface{}{
+				"url": notifyURL,
+			},
+		}
+
+		if notifyBadge != "" {
+			payload["badge"] = notifyBadge
+		}
+
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			result.Error = fmt.Errorf("failed to marshal payload: %w", err)
+			results = append(results, result)
+			continue
+		}
+
+		// Create webpush subscription
+		webpushSub := &webpush.Subscription{
+			Endpoint: sub.Endpoint,
+			Keys: webpush.Keys{
+				P256dh: sub.Keys["p256dh"],
+				Auth:   sub.Keys["auth"],
+			},
+		}
+
+		// Create webpush options
+		options := &webpush.Options{
+			Subscriber:      vapidContactEmail,
+			VAPIDPublicKey:  vapidPublicKey,
+			VAPIDPrivateKey: vapidPrivateKey,
+			TTL:             notifyTTL,
+		}
+
+		switch notifyUrgency {
+		case "low":
+			options.Urgency = webpush.UrgencyLow
+		case "high":
+			options.Urgency = webpush.UrgencyHigh
+		default:
+			options.Urgency = webpush.UrgencyNormal
+		}
+
+		// Send notification
+		resp, err := webpush.SendNotification(payloadBytes, webpushSub, options)
+		if err != nil {
+			result.Error = fmt.Errorf("failed to send notification: %w", err)
+		} else if resp.StatusCode >= 400 {
+			result.Error = fmt.Errorf("notification rejected with status %d", resp.StatusCode)
+		}
+
+		if resp != nil {
+			if err := resp.Body.Close(); err != nil && notifyVerbose {
+				fmt.Printf("Warning: failed to close response body: %v\n", err)
+			}
+		}
+
+		results = append(results, result)
+
+		// Save to history
+		if err := saveNotificationHistory(sub, result.Error == nil, result.Error); err != nil && notifyVerbose {
+			fmt.Printf("Warning: failed to save notification history: %v\n", err)
+		}
+	}
+
+	return results, nil
+}
+
+func saveNotificationHistory(sub NotificationSubscription, delivered bool, sendError error) error {
+	historyFile := filepath.Join("/home/agentapi/.agentapi-proxy/myclaudes", sub.UserID, "notifications", "history.jsonl")
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(historyFile), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	history := NotificationHistory{
+		ID:             generateNotificationID(),
+		UserID:         sub.UserID,
+		SubscriptionID: sub.ID,
+		Title:          notifyTitle,
+		Body:           notifyBody,
+		Type:           "manual", // Sent via command line
+		SessionID:      notifySessionID,
+		Data: map[string]interface{}{
+			"url":     notifyURL,
+			"icon":    notifyIcon,
+			"badge":   notifyBadge,
+			"ttl":     notifyTTL,
+			"urgency": notifyUrgency,
+		},
+		SentAt:    time.Now(),
+		Delivered: delivered,
+		Clicked:   false, // Will be updated when clicked
+	}
+
+	if sendError != nil {
+		errorMsg := sendError.Error()
+		history.ErrorMessage = &errorMsg
+	}
+
+	// Append to history file
+	file, err := os.OpenFile(historyFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open history file: %w", err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close history file: %v\n", err)
+		}
+	}()
+
+	encoder := json.NewEncoder(file)
+	return encoder.Encode(history)
+}
+
+func generateNotificationID() string {
+	// Generate a simple notification ID based on timestamp and random bytes
+	randomBytes := make([]byte, 4)
+	if _, err := rand.Read(randomBytes); err != nil {
+		// Fallback to timestamp-only ID if random generation fails
+		return fmt.Sprintf("notif_%d", time.Now().Unix())
+	}
+	return fmt.Sprintf("notif_%d_%x", time.Now().Unix(), randomBytes)
 }
