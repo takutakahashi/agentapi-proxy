@@ -5,10 +5,10 @@
 
 ## エンドポイント一覧
 
-### 通知購読管理
+### UI互換性を保つエンドポイント
 
-#### POST /notifications/subscribe
-プッシュ通知の購読を開始します。
+#### POST /api/subscribe
+既存UIとの互換性を保つプッシュ通知購読エンドポイント。
 
 ##### リクエストボディ
 ```json
@@ -17,99 +17,76 @@
   "keys": {
     "p256dh": "BG3OGHrl3YJ5PHpl0GSqtALSDRZFj4Bcq3PF6BdJlHs...",
     "auth": "I7Psnr6vvdoYUsL3G6JXRM=="
-  },
-  "session_ids": ["abc123", "def456"],
-  "notification_types": ["message", "status_change", "session_update"]
+  }
 }
 ```
-
-##### フィールド説明
-- `endpoint`: WebPushのエンドポイントURL
-- `keys`: WebPush暗号化キー
-- `session_ids`: 通知を受け取りたいセッションIDの配列（省略時は全セッション）
-- `notification_types`: 受け取りたい通知タイプの配列
 
 ##### レスポンス
 ```json
 {
-  "subscription_id": "sub_abc123",
-  "created_at": "2023-06-08T12:00:00Z",
-  "expires_at": "2023-07-08T12:00:00Z"
+  "success": true,
+  "subscription_id": "sub_abc123"
 }
 ```
 
-#### GET /notifications/subscriptions
+#### GET /api/subscribe
 現在のユーザーの購読一覧を取得します。
 
 ##### レスポンス
 ```json
-{
-  "subscriptions": [
-    {
-      "subscription_id": "sub_abc123",
-      "session_ids": ["abc123", "def456"],
-      "notification_types": ["message", "status_change"],
-      "created_at": "2023-06-08T12:00:00Z",
-      "expires_at": "2023-07-08T12:00:00Z",
-      "active": true
-    }
-  ]
-}
+[
+  {
+    "id": "sub_abc123",
+    "endpoint": "https://fcm.googleapis.com/...",
+    "keys": {
+      "p256dh": "BG3OGHrl3YJ5PHpl0GSqtALSDRZFj4Bcq3PF6BdJlHs...",
+      "auth": "I7Psnr6vvdoYUsL3G6JXRM=="
+    },
+    "user_id": "user_123",
+    "user_type": "github",
+    "username": "takutakahashi",
+    "created_at": "2023-06-08T12:00:00Z"
+  }
+]
 ```
 
-#### PUT /notifications/subscriptions/{subscription_id}
-購読設定を更新します。
+#### DELETE /api/subscribe
+購読を削除します。
 
 ##### リクエストボディ
 ```json
 {
-  "session_ids": ["abc123", "xyz789"],
-  "notification_types": ["message", "session_update"]
+  "endpoint": "https://fcm.googleapis.com/fcm/send/..."
 }
 ```
 
-#### DELETE /notifications/subscriptions/{subscription_id}
-購読を削除します。
-
-### 通知送信
-
-#### POST /notifications/send
-管理者権限でプッシュ通知を送信します。
+#### POST /api/send-notification
+プッシュ通知を送信します。
 
 ##### リクエストボディ
 ```json
 {
   "title": "新しいメッセージ",
   "body": "Claude からの返答が到着しました",
-  "icon": "/icons/message.png",
-  "badge": "/icons/badge.png",
-  "data": {
-    "session_id": "abc123",
-    "message_id": "msg_456",
-    "type": "message",
-    "url": "/session/abc123"
-  },
-  "target": {
-    "user_ids": ["user_123"],
-    "session_ids": ["abc123"],
-    "notification_type": "message"
-  },
-  "ttl": 86400,
-  "urgency": "normal"
+  "url": "/session/abc123",
+  "icon": "/icon-192x192.png",
+  "targetUserId": "user_123",
+  "targetUserType": "github"
 }
 ```
 
-##### フィールド説明
-- `title`: 通知のタイトル
-- `body`: 通知の本文
-- `icon`: 通知アイコンのURL
-- `badge`: バッジアイコンのURL
-- `data`: 通知に付加するカスタムデータ
-- `target`: 送信対象の指定
-- `ttl`: 通知の生存時間（秒）
-- `urgency`: 通知の緊急度（low, normal, high）
+### 拡張エンドポイント（新機能用）
 
-### イベント連携
+#### POST /notifications/session-subscribe
+セッション単位での通知購読を設定（新機能）。
+
+##### リクエストボディ
+```json
+{
+  "session_ids": ["abc123", "def456"],
+  "notification_types": ["message", "status_change", "session_update"]
+}
+```
 
 #### POST /notifications/webhook
 agentapiからのWebhookを受信して自動通知を送信します。
@@ -129,10 +106,8 @@ agentapiからのWebhookを受信して自動通知を送信します。
 }
 ```
 
-### 通知履歴
-
 #### GET /notifications/history
-ユーザーの通知履歴を取得します。
+ユーザーの通知履歴を取得します（新機能）。
 
 ##### クエリパラメータ
 - `session_id`: セッションIDでフィルタ
@@ -228,8 +203,8 @@ agentapiからのWebhookを受信して自動通知を送信します。
 
 **subscriptions.jsonl**
 ```jsonl
-{"id":"sub_abc123","user_id":"user_123","endpoint":"https://fcm.googleapis.com/...","keys":{"p256dh":"BG3OGHrl...","auth":"I7Psnr6v..."},"session_ids":["abc123","def456"],"notification_types":["message","status_change"],"created_at":"2023-06-08T12:00:00Z","expires_at":"2023-07-08T12:00:00Z","active":true}
-{"id":"sub_def456","user_id":"user_123","endpoint":"https://fcm.googleapis.com/...","keys":{"p256dh":"CX4PGLsl...","auth":"J8Qtor7w..."},"session_ids":["xyz789"],"notification_types":["message"],"created_at":"2023-06-08T13:00:00Z","expires_at":"2023-07-08T13:00:00Z","active":true}
+{"id":"sub_abc123","user_id":"user_123","user_type":"github","username":"takutakahashi","endpoint":"https://fcm.googleapis.com/...","keys":{"p256dh":"BG3OGHrl...","auth":"I7Psnr6v..."},"session_ids":["abc123","def456"],"notification_types":["message","status_change"],"created_at":"2023-06-08T12:00:00Z","active":true}
+{"id":"sub_def456","user_id":"user_456","user_type":"api_key","username":"api_user","endpoint":"https://fcm.googleapis.com/...","keys":{"p256dh":"CX4PGLsl...","auth":"J8Qtor7w..."},"session_ids":[],"notification_types":["message"],"created_at":"2023-06-08T13:00:00Z","active":true}
 ```
 
 **history.jsonl**
@@ -245,12 +220,13 @@ agentapiからのWebhookを受信して自動通知を送信します。
 type NotificationSubscription struct {
     ID                string                 `json:"id"`
     UserID           string                 `json:"user_id"`
+    UserType         string                 `json:"user_type"`        // "github" or "api_key"
+    Username         string                 `json:"username"`
     Endpoint         string                 `json:"endpoint"`
     Keys             map[string]string      `json:"keys"`
-    SessionIDs       []string              `json:"session_ids"`
+    SessionIDs       []string              `json:"session_ids"`      // 空配列=全セッション
     NotificationTypes []string              `json:"notification_types"`
     CreatedAt        time.Time             `json:"created_at"`
-    ExpiresAt        *time.Time            `json:"expires_at"`
     Active           bool                  `json:"active"`
 }
 
@@ -548,7 +524,7 @@ NOTIFICATION_RATE_LIMIT: 100
 
 ## 統合例
 
-### フロントエンドでの購読登録
+### フロントエンドでの購読登録（UI互換）
 ```javascript
 // Service Worker登録
 navigator.serviceWorker.register('/sw.js');
@@ -560,8 +536,8 @@ const subscription = await registration.pushManager.subscribe({
   applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
 });
 
-// サーバーに購読情報を送信
-await fetch('/notifications/subscribe', {
+// 既存UIと互換性のあるエンドポイントを使用
+await fetch('/api/subscribe', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -572,7 +548,21 @@ await fetch('/notifications/subscribe', {
     keys: {
       p256dh: arrayBufferToBase64(subscription.getKey('p256dh')),
       auth: arrayBufferToBase64(subscription.getKey('auth'))
-    },
+    }
+  })
+});
+```
+
+### セッション単位通知の設定（拡張機能）
+```javascript
+// 特定のセッションのみ通知を受け取りたい場合
+await fetch('/notifications/session-subscribe', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${accessToken}`
+  },
+  body: JSON.stringify({
     session_ids: [currentSessionId],
     notification_types: ['message', 'status_change']
   })
