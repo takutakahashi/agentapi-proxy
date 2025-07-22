@@ -1,6 +1,7 @@
 package userdir
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -199,10 +200,10 @@ eval "$(/home/agentapi/.local/bin/mise activate bash)"
 		}
 	}
 
-	// Copy CLAUDE.md to user home directory if it doesn't exist
-	if err := copyClaudeMdToUserHome(userHomeDir); err != nil {
+	// Update CLAUDE.md in user home directory
+	if err := updateClaudeMdInUserHome(userHomeDir); err != nil {
 		// Log the error but don't fail the setup
-		fmt.Printf("Warning: Failed to copy CLAUDE.md to user home directory: %v\n", err)
+		fmt.Printf("Warning: Failed to update CLAUDE.md in user home directory: %v\n", err)
 	}
 
 	// Return environment variables map
@@ -217,10 +218,7 @@ func (m *Manager) IsEnabled() bool {
 }
 
 // copyClaudeMdToUserHome copies CLAUDE.md to the user's home directory
-func copyClaudeMdToUserHome(userHomeDir string) error {
-	// Path to the original CLAUDE.md file
-	originalClaudeMdPath := filepath.Join(userHomeDir, "CLAUDE.md")
-
+func updateClaudeMdInUserHome(userHomeDir string) error {
 	// Path to the .claude directory
 	claudeDir := filepath.Join(userHomeDir, ".claude")
 
@@ -232,30 +230,33 @@ func copyClaudeMdToUserHome(userHomeDir string) error {
 	// Target path for CLAUDE.md in .claude directory
 	targetClaudeMdPath := filepath.Join(claudeDir, "CLAUDE.md")
 
-	// Check if CLAUDE.md already exists in the target location
-	if _, err := os.Stat(targetClaudeMdPath); err == nil {
-		// File already exists, no need to copy
-		return nil
-	}
-
 	// Find the source CLAUDE.md file
 	sourcePath := ""
 
-	// First try to find CLAUDE.md using environment variable
-	if claudeMdPath := os.Getenv("CLAUDE_MD_PATH"); claudeMdPath != "" {
-		if _, err := os.Stat(claudeMdPath); err == nil {
-			sourcePath = claudeMdPath
+	// First priority: config/CLAUDE.md in the current working directory
+	configClaudeMdPath := "config/CLAUDE.md"
+	if _, err := os.Stat(configClaudeMdPath); err == nil {
+		sourcePath = configClaudeMdPath
+	}
+
+	// Second priority: environment variable
+	if sourcePath == "" {
+		if claudeMdPath := os.Getenv("CLAUDE_MD_PATH"); claudeMdPath != "" {
+			if _, err := os.Stat(claudeMdPath); err == nil {
+				sourcePath = claudeMdPath
+			}
 		}
 	}
 
-	// If not found via environment variable, try the working directory
+	// Third priority: user's home directory
 	if sourcePath == "" {
+		originalClaudeMdPath := filepath.Join(userHomeDir, "CLAUDE.md")
 		if _, err := os.Stat(originalClaudeMdPath); err == nil {
 			sourcePath = originalClaudeMdPath
 		}
 	}
 
-	// If still not found, try the agentapi working directory
+	// Fourth priority: agentapi working directory
 	if sourcePath == "" {
 		agentapiWorkdir := os.Getenv("AGENTAPI_WORKDIR")
 		if agentapiWorkdir != "" {
@@ -266,7 +267,7 @@ func copyClaudeMdToUserHome(userHomeDir string) error {
 		}
 	}
 
-	// If still not found, try the default location
+	// Fifth priority: default location
 	if sourcePath == "" {
 		defaultClaudeMdPath := "/home/agentapi/workdir/CLAUDE.md"
 		if _, err := os.Stat(defaultClaudeMdPath); err == nil {
@@ -280,13 +281,21 @@ func copyClaudeMdToUserHome(userHomeDir string) error {
 	}
 
 	// Read the source file
-	content, err := os.ReadFile(sourcePath)
+	sourceContent, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return fmt.Errorf("failed to read source CLAUDE.md file %s: %w", sourcePath, err)
 	}
 
+	// Check if target file exists and compare content
+	if targetContent, err := os.ReadFile(targetClaudeMdPath); err == nil {
+		// If content is the same, no need to update
+		if bytes.Equal(sourceContent, targetContent) {
+			return nil
+		}
+	}
+
 	// Write to the target location
-	if err := os.WriteFile(targetClaudeMdPath, content, 0644); err != nil {
+	if err := os.WriteFile(targetClaudeMdPath, sourceContent, 0644); err != nil {
 		return fmt.Errorf("failed to write CLAUDE.md to %s: %w", targetClaudeMdPath, err)
 	}
 

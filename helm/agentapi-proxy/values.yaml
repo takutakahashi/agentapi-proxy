@@ -103,6 +103,9 @@ github:
 
 # Application Configuration
 config:
+  # ホスト名設定 (例: agentapi.example.com)
+  hostname: ""
+  
   # サーバー設定
   startPort: 9000
   
@@ -148,6 +151,12 @@ config:
     enabled: false
     path: "/etc/role-env-files"
     loadDefault: true
+  
+  # 通知設定
+  notification:
+    # 通知ベースURL (例: https://example.com)
+    # 末尾のスラッシュは含めない
+    baseUrl: ""
 
 # Environment variables
 env: []

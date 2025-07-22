@@ -233,6 +233,13 @@ spec:
             - name: GITHUB_APP_PEM_PATH
               value: "/etc/github-app/private-key"
             {{- end }}
+            {{- if .Values.config.notification.baseUrl }}
+            - name: NOTIFICATION_BASE_URL
+              value: {{ .Values.config.notification.baseUrl | quote }}
+            {{- else if .Values.config.hostname }}
+            - name: NOTIFICATION_BASE_URL
+              value: {{ printf "https://%s" .Values.config.hostname | quote }}
+            {{- end }}
             {{- range .Values.env }}
             - name: {{ .name }}
               value: {{ .value | quote }}
