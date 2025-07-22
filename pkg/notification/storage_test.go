@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestJSONLStorage(t *testing.T) {
+func TestJSONStorage(t *testing.T) {
 	// Create temporary directory
 	tmpDir, err := os.MkdirTemp("", "notification_test")
 	if err != nil {
@@ -267,5 +267,113 @@ func TestRotateNotificationHistory(t *testing.T) {
 		if notifications[0].Title != "Notification 9" {
 			t.Errorf("Expected most recent notification 'Notification 9', got '%s'", notifications[0].Title)
 		}
+	}
+}
+
+func TestDuplicateSubscriptionPrevention(t *testing.T) {
+	// Create temporary directory
+	tmpDir, err := os.MkdirTemp("", "notification_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
+
+	storage := NewJSONLStorage(tmpDir)
+
+	// Add first subscription
+	sub1 := Subscription{
+		UserID:   "user123",
+		UserType: "github",
+		Username: "testuser",
+		Endpoint: "https://fcm.googleapis.com/test",
+		Keys: map[string]string{
+			"p256dh": "test_p256dh_old",
+			"auth":   "test_auth_old",
+		},
+		NotificationTypes: []string{"message"},
+	}
+
+	err = storage.AddSubscription("user123", sub1)
+	if err != nil {
+		t.Errorf("First AddSubscription failed: %v", err)
+	}
+
+	// Try to add duplicate subscription with same endpoint but different keys
+	sub2 := Subscription{
+		UserID:   "user123",
+		UserType: "github",
+		Username: "testuser",
+		Endpoint: "https://fcm.googleapis.com/test", // Same endpoint
+		Keys: map[string]string{
+			"p256dh": "test_p256dh_new",
+			"auth":   "test_auth_new",
+		},
+		NotificationTypes: []string{"message", "status_change"}, // More types
+	}
+
+	err = storage.AddSubscription("user123", sub2)
+	if err != nil {
+		t.Errorf("Second AddSubscription failed: %v", err)
+	}
+
+	// Should only have one subscription (updated, not duplicated)
+	subscriptions, err := storage.GetSubscriptions("user123")
+	if err != nil {
+		t.Errorf("GetSubscriptions failed: %v", err)
+	}
+
+	if len(subscriptions) != 1 {
+		t.Errorf("Expected 1 subscription (no duplicate), got %d", len(subscriptions))
+	}
+
+	// Should have updated keys and notification types
+	if subscriptions[0].Keys["p256dh"] != "test_p256dh_new" {
+		t.Errorf("Expected updated p256dh key, got %s", subscriptions[0].Keys["p256dh"])
+	}
+
+	if len(subscriptions[0].NotificationTypes) != 2 {
+		t.Errorf("Expected 2 notification types, got %d", len(subscriptions[0].NotificationTypes))
+	}
+
+	// Test adding subscription with different endpoint
+	sub3 := Subscription{
+		UserID:   "user123",
+		UserType: "github",
+		Username: "testuser",
+		Endpoint: "https://fcm.googleapis.com/test-different", // Different endpoint
+		Keys: map[string]string{
+			"p256dh": "test_p256dh_3",
+			"auth":   "test_auth_3",
+		},
+		NotificationTypes: []string{"error"},
+	}
+
+	err = storage.AddSubscription("user123", sub3)
+	if err != nil {
+		t.Errorf("Third AddSubscription failed: %v", err)
+	}
+
+	// Should now have two subscriptions (different endpoints)
+	subscriptions, err = storage.GetSubscriptions("user123")
+	if err != nil {
+		t.Errorf("GetSubscriptions failed: %v", err)
+	}
+
+	if len(subscriptions) != 2 {
+		t.Errorf("Expected 2 subscriptions (different endpoints), got %d", len(subscriptions))
+	}
+
+	// Verify endpoints are different
+	endpoints := make(map[string]bool)
+	for _, sub := range subscriptions {
+		endpoints[sub.Endpoint] = true
+	}
+
+	if len(endpoints) != 2 {
+		t.Errorf("Expected 2 different endpoints, got %d", len(endpoints))
 	}
 }
