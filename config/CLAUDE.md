@@ -17,3 +17,15 @@ mise コマンドを利用することができます。言語のインタプリ
 ### CI の確認
 
 可能な限り、CI の結果を確認してその後のアクションにつなげてください。
+
+### ユーザーへの通知
+
+作業の終了を通知するために `agentapi-proxy helpers send-notification` というヘルパーが使用できます。  
+以下は実行例です。  
+
+```
+agentapi-proxy helpers send-notification \
+  --title "作業が完了しました" \
+  --body "作業内容を確認してください" \
+  --url "$NOTIFICATION_BASE_URL"/agentapi?session={{ session ID }}"
+```
