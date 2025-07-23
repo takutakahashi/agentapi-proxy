@@ -1183,6 +1183,9 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 			}
 		}
 
+		// Send cancellation notification to the user
+		p.sendAgentCancellationNotification(session)
+
 	case err := <-done:
 		// Process finished on its own
 		if err != nil {
@@ -1199,6 +1202,87 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		} else if p.verbose {
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
+
+		// Send completion notification to the user
+		p.sendAgentCompletionNotification(session, err)
+	}
+}
+
+// sendAgentCompletionNotification sends a push notification when an agent task completes
+func (p *Proxy) sendAgentCompletionNotification(session *AgentSession, exitErr error) {
+	if p.notificationSvc == nil {
+		log.Printf("Notification service not available, skipping completion notification for session %s", session.ID)
+		return
+	}
+
+	// Determine completion status and message
+	var title, body string
+	notificationType := "session_update"
+	data := map[string]interface{}{
+		"session_id": session.ID,
+		"event":      "task_completed",
+	}
+
+	if exitErr != nil {
+		// Task failed
+		title = "エージェントタスクが失敗しました"
+		body = fmt.Sprintf("セッション %s のタスクがエラーで終了しました", session.ID)
+		data["status"] = "failed"
+		data["error"] = exitErr.Error()
+
+		// Check for specific exit codes
+		if exitError, ok := exitErr.(*exec.ExitError); ok {
+			data["exit_code"] = exitError.ExitCode()
+			body = fmt.Sprintf("セッション %s のタスクが終了コード %d で失敗しました", session.ID, exitError.ExitCode())
+		}
+	} else {
+		// Task completed successfully
+		title = "エージェントタスクが完了しました"
+		body = fmt.Sprintf("セッション %s のタスクが正常に完了しました", session.ID)
+		data["status"] = "completed"
+	}
+
+	// Add session tags if available
+	if len(session.Tags) > 0 {
+		data["tags"] = session.Tags
+	}
+
+	// Send notification to the user
+	err := p.notificationSvc.SendNotificationToUser(session.UserID, title, body, notificationType, data)
+	if err != nil {
+		log.Printf("Failed to send completion notification for session %s: %v", session.ID, err)
+	} else {
+		log.Printf("Sent completion notification for session %s to user %s", session.ID, session.UserID)
+	}
+}
+
+// sendAgentCancellationNotification sends a push notification when an agent task is cancelled
+func (p *Proxy) sendAgentCancellationNotification(session *AgentSession) {
+	if p.notificationSvc == nil {
+		log.Printf("Notification service not available, skipping cancellation notification for session %s", session.ID)
+		return
+	}
+
+	title := "エージェントタスクがキャンセルされました"
+	body := fmt.Sprintf("セッション %s のタスクがキャンセルされました", session.ID)
+	notificationType := "session_update"
+	data := map[string]interface{}{
+		"session_id": session.ID,
+		"event":      "task_cancelled",
+		"status":     "cancelled",
+	}
+
+	// Add session tags if available
+	if len(session.Tags) > 0 {
+		data["tags"] = session.Tags
+	}
+
+	// Send notification to the user
+	err := p.notificationSvc.SendNotificationToUser(session.UserID, title, body, notificationType, data)
+	if err != nil {
+		log.Printf("Failed to send cancellation notification for session %s: %v", session.ID, err)
+	} else {
+		log.Printf("Sent cancellation notification for session %s to user %s", session.ID, session.UserID)
 	}
 }
 
