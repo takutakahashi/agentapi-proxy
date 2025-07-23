@@ -29,7 +29,7 @@ mise コマンドを利用することができます。言語のインタプリ
 agentapi-proxy helpers send-notification \
   --title "作業が完了しました" \
   --body "作業内容を確認してください" \
-  --url "$NOTIFICATION_BASE_URL"/agentapi?session={{ session ID }}"
+  --url "$NOTIFICATION_BASE_URL/agentapi?session={{ session ID }}"
 ```
 
 **重要**: 全ての作業が完了した時点で、**必ず**上記コマンドを実行してユーザーに通知を送信してください。
