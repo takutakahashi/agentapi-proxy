@@ -103,6 +103,7 @@ type Proxy struct {
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
+	sessionMonitor     *SessionMonitor
 }
 
 // NewProxy creates a new proxy instance
@@ -276,6 +277,10 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 
 	// Start cleanup goroutine for defunct processes
 	go p.cleanupDefunctProcesses()
+
+	// Initialize and start session monitor
+	p.sessionMonitor = NewSessionMonitor(p, 3*time.Minute)
+	p.sessionMonitor.Start()
 
 	p.setupRoutes()
 
@@ -1213,6 +1218,11 @@ func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte, tags
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (p *Proxy) Shutdown(timeout time.Duration) error {
+	// Stop session monitor first
+	if p.sessionMonitor != nil {
+		p.sessionMonitor.Stop()
+	}
+
 	log.Printf("Shutting down proxy, terminating %d active sessions...", len(p.sessions))
 
 	// Get all session cancel functions
