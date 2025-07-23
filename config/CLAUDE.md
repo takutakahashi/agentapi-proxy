@@ -20,6 +20,8 @@ mise コマンドを利用することができます。言語のインタプリ
 
 ### ユーザーへの通知
 
+**作業完了後は必ずユーザーに通知を送信してください。**
+
 作業の終了を通知するために `agentapi-proxy helpers send-notification` というヘルパーが使用できます。  
 以下は実行例です。  
 
@@ -29,3 +31,5 @@ agentapi-proxy helpers send-notification \
   --body "作業内容を確認してください" \
   --url "$NOTIFICATION_BASE_URL"/agentapi?session={{ session ID }}"
 ```
+
+**重要**: 全ての作業が完了した時点で、**必ず**上記コマンドを実行してユーザーに通知を送信してください。
