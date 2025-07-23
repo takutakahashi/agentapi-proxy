@@ -278,9 +278,8 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Start cleanup goroutine for defunct processes
 	go p.cleanupDefunctProcesses()
 
-	// Initialize and start session monitor
+	// Initialize session monitor (will be started later if not in test mode)
 	p.sessionMonitor = NewSessionMonitor(p, 3*time.Minute)
-	p.sessionMonitor.Start()
 
 	p.setupRoutes()
 
@@ -290,6 +289,13 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	}
 
 	return p
+}
+
+// StartMonitoring starts the session monitoring (called after proxy is fully initialized)
+func (p *Proxy) StartMonitoring() {
+	if p.sessionMonitor != nil && os.Getenv("AGENTAPI_TEST_MODE") == "" {
+		p.sessionMonitor.Start()
+	}
 }
 
 // loggingMiddleware returns Echo middleware for request logging
@@ -1218,7 +1224,7 @@ func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte, tags
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (p *Proxy) Shutdown(timeout time.Duration) error {
-	// Stop session monitor first
+	// Stop session monitor first (if enabled)
 	if p.sessionMonitor != nil {
 		p.sessionMonitor.Stop()
 	}

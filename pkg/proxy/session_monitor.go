@@ -73,56 +73,48 @@ func (sm *SessionMonitor) monitorLoop() {
 
 // checkSessions checks all sessions for status changes
 func (sm *SessionMonitor) checkSessions() {
-	// Get current sessions from proxy
-	currentSessions := sm.getCurrentSessions()
-
-	// Map current sessions by ID for easy lookup
-	currentSessionMap := make(map[string]*AgentSession)
-	for _, session := range currentSessions {
-		currentSessionMap[session.ID] = session
-	}
+	// Get current session snapshots from proxy
+	currentSnapshots := sm.getCurrentSessionSnapshots()
 
 	sm.statusMutex.Lock()
 	defer sm.statusMutex.Unlock()
 
 	// Check for new or changed sessions
-	for _, session := range currentSessions {
-		previousStatus, exists := sm.sessionStatuses[session.ID]
-
-		// Check if process is alive
-		processAlive := sm.isProcessAlive(session)
+	for sessionID, snapshot := range currentSnapshots {
+		previousStatus, exists := sm.sessionStatuses[sessionID]
 
 		if !exists {
 			// New session detected
-			sm.sessionStatuses[session.ID] = &SessionStatus{
-				SessionID:    session.ID,
-				UserID:       session.UserID,
-				Status:       session.Status,
-				ProcessAlive: processAlive,
-				Tags:         session.Tags,
+			sm.sessionStatuses[sessionID] = &SessionStatus{
+				SessionID:    snapshot.ID,
+				UserID:       snapshot.UserID,
+				Status:       snapshot.Status,
+				ProcessAlive: snapshot.ProcessAlive,
+				Tags:         snapshot.Tags,
 				LastChecked:  time.Now(),
 			}
 			log.Printf("Session monitor: New session detected %s (user: %s, status: %s)",
-				session.ID, session.UserID, session.Status)
+				snapshot.ID, snapshot.UserID, snapshot.Status)
 		} else {
 			// Existing session - check for changes
-			statusChanged := previousStatus.Status != session.Status
-			processStateChanged := previousStatus.ProcessAlive != processAlive
+			statusChanged := previousStatus.Status != snapshot.Status
+			processStateChanged := previousStatus.ProcessAlive != snapshot.ProcessAlive
 
 			if statusChanged || processStateChanged {
 				log.Printf("Session monitor: Status change detected for session %s (user: %s) - status: %s->%s, process: %v->%v",
-					session.ID, session.UserID, previousStatus.Status, session.Status,
-					previousStatus.ProcessAlive, processAlive)
+					snapshot.ID, snapshot.UserID, previousStatus.Status, snapshot.Status,
+					previousStatus.ProcessAlive, snapshot.ProcessAlive)
 
 				// Send notification for status change
-				if processStateChanged && !processAlive && previousStatus.ProcessAlive {
+				if processStateChanged && !snapshot.ProcessAlive && previousStatus.ProcessAlive {
 					// Process died
-					sm.sendProcessTerminatedNotification(session, previousStatus)
+					sm.sendProcessTerminatedNotificationFromSnapshot(snapshot, previousStatus)
 				}
 
 				// Update stored status
-				previousStatus.Status = session.Status
-				previousStatus.ProcessAlive = processAlive
+				previousStatus.Status = snapshot.Status
+				previousStatus.ProcessAlive = snapshot.ProcessAlive
+				previousStatus.Tags = snapshot.Tags
 				previousStatus.LastChecked = time.Now()
 			}
 		}
@@ -130,7 +122,7 @@ func (sm *SessionMonitor) checkSessions() {
 
 	// Check for removed sessions (completed or terminated)
 	for sessionID, status := range sm.sessionStatuses {
-		if _, exists := currentSessionMap[sessionID]; !exists {
+		if _, exists := currentSnapshots[sessionID]; !exists {
 			// Session was removed - it completed or was terminated
 			log.Printf("Session monitor: Session removed %s (user: %s, was status: %s)",
 				sessionID, status.UserID, status.Status)
@@ -144,54 +136,67 @@ func (sm *SessionMonitor) checkSessions() {
 	}
 }
 
-// getCurrentSessions gets the current active sessions from the proxy
-func (sm *SessionMonitor) getCurrentSessions() []*AgentSession {
+// SessionSnapshot represents a snapshot of session data for monitoring
+type SessionSnapshot struct {
+	ID           string
+	UserID       string
+	Status       string
+	ProcessAlive bool
+	Tags         map[string]string
+}
+
+// getCurrentSessionSnapshots gets snapshots of current active sessions from the proxy
+func (sm *SessionMonitor) getCurrentSessionSnapshots() map[string]*SessionSnapshot {
 	sm.proxy.sessionsMutex.RLock()
 	defer sm.proxy.sessionsMutex.RUnlock()
 
-	sessions := make([]*AgentSession, 0, len(sm.proxy.sessions))
+	snapshots := make(map[string]*SessionSnapshot)
 	for _, session := range sm.proxy.sessions {
-		sessions = append(sessions, session)
+		// Create a snapshot with only necessary data
+		snapshot := &SessionSnapshot{
+			ID:     session.ID,
+			UserID: session.UserID,
+			Status: session.Status,
+			Tags:   make(map[string]string),
+		}
+
+		// Safely copy tags
+		for k, v := range session.Tags {
+			snapshot.Tags[k] = v
+		}
+
+		// Check process status with proper locking
+		session.processMutex.RLock()
+		snapshot.ProcessAlive = session.Process != nil && session.Process.ProcessState == nil
+		session.processMutex.RUnlock()
+
+		snapshots[session.ID] = snapshot
 	}
-	return sessions
+	return snapshots
 }
 
-// isProcessAlive checks if a session's process is still running
-func (sm *SessionMonitor) isProcessAlive(session *AgentSession) bool {
-	session.processMutex.RLock()
-	defer session.processMutex.RUnlock()
-
-	if session.Process == nil {
-		return false
-	}
-
-	// Check if process is still running
-	// Note: ProcessState is nil if the process hasn't exited yet
-	return session.Process.ProcessState == nil
-}
-
-// sendProcessTerminatedNotification sends a notification when a process terminates unexpectedly
-func (sm *SessionMonitor) sendProcessTerminatedNotification(session *AgentSession, previousStatus *SessionStatus) {
+// sendProcessTerminatedNotificationFromSnapshot sends a notification when a process terminates unexpectedly
+func (sm *SessionMonitor) sendProcessTerminatedNotificationFromSnapshot(snapshot *SessionSnapshot, previousStatus *SessionStatus) {
 	if sm.proxy.notificationSvc == nil {
 		return
 	}
 
 	title := "エージェントプロセスが予期せず終了しました"
-	body := "セッション " + session.ID + " のプロセスが終了しました"
+	body := "セッション " + snapshot.ID + " のプロセスが終了しました"
 	notificationType := "session_update"
 	data := map[string]interface{}{
-		"session_id": session.ID,
+		"session_id": snapshot.ID,
 		"event":      "process_terminated",
 		"status":     "process_died",
 	}
 
-	if len(session.Tags) > 0 {
-		data["tags"] = session.Tags
+	if len(snapshot.Tags) > 0 {
+		data["tags"] = snapshot.Tags
 	}
 
-	err := sm.proxy.notificationSvc.SendNotificationToUser(session.UserID, title, body, notificationType, data)
+	err := sm.proxy.notificationSvc.SendNotificationToUser(snapshot.UserID, title, body, notificationType, data)
 	if err != nil {
-		log.Printf("Failed to send process terminated notification for session %s: %v", session.ID, err)
+		log.Printf("Failed to send process terminated notification for session %s: %v", snapshot.ID, err)
 	}
 }
 
