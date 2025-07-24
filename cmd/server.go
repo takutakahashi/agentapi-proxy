@@ -64,6 +64,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	proxyServer := proxy.NewProxy(configData, verbose)
 
+	// Start session monitoring after proxy is initialized
+	proxyServer.StartMonitoring()
+
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Starting agentapi-proxy on port %s", port)
