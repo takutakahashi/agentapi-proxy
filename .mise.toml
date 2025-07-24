@@ -1,9 +1,0 @@
-[env]
-GOPATH = "/home/agentapi/go"
-GOMODCACHE = "/home/agentapi/go/pkg/mod"
-GOCACHE = "/home/agentapi/.cache/go-build"
-
-[tools]
-go = "latest"
-golangci-lint = "latest"
-helm = "latest"

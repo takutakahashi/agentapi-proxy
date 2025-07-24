@@ -78,6 +78,11 @@ USER agentapi
 RUN git config --global core.excludesfile ~/.gitignore_global && \
     echo ".claude/" > ~/.gitignore_global
 
+# Set Go environment variables to use /home/agentapi directory
+ENV GOPATH=/home/agentapi/go
+ENV GOMODCACHE=/home/agentapi/go/pkg/mod
+ENV GOCACHE=/home/agentapi/.cache/go-build
+
 # Install mise
 RUN curl https://mise.run | sh && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
