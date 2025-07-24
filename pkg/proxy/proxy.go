@@ -28,6 +28,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
+	"github.com/takutakahashi/agentapi-proxy/pkg/profile"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
@@ -103,6 +104,7 @@ type Proxy struct {
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
+	profileSvc         *profile.Service
 	sessionMonitor     *SessionMonitor
 }
 
@@ -273,6 +275,15 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	} else {
 		p.notificationSvc = notificationSvc
 		log.Printf("Notification service initialized successfully")
+	}
+
+	// Initialize profile service
+	profileStorage, err := profile.NewStorage(&cfg.Profile)
+	if err != nil {
+		log.Printf("Failed to initialize profile storage: %v", err)
+	} else {
+		p.profileSvc = profile.NewService(profileStorage)
+		log.Printf("Profile service initialized successfully with storage type: %s", cfg.Profile.Type)
 	}
 
 	// Start cleanup goroutine for defunct processes
@@ -463,6 +474,29 @@ func (p *Proxy) setupRoutes() {
 		// Internal routes
 		p.echo.POST("/notifications/webhook", notificationHandlers.Webhook)
 		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission("notification:history"))
+	}
+
+	// Add profile routes if service is available
+	if p.profileSvc != nil {
+		profileHandlers := NewProfileHandlers(p.profileSvc)
+		// User profile management routes
+		p.echo.GET("/profile", profileHandlers.GetProfile, auth.RequirePermission("profile:read"))
+		p.echo.POST("/profile", profileHandlers.CreateProfile, auth.RequirePermission("profile:write"))
+		p.echo.PUT("/profile", profileHandlers.UpdateProfile, auth.RequirePermission("profile:write"))
+		p.echo.DELETE("/profile", profileHandlers.DeleteProfile, auth.RequirePermission("profile:delete"))
+
+		// Preference management routes
+		p.echo.POST("/profile/preference", profileHandlers.SetPreference, auth.RequirePermission("profile:write"))
+		p.echo.GET("/profile/preference/:key", profileHandlers.GetPreference, auth.RequirePermission("profile:read"))
+
+		// Setting management routes
+		p.echo.POST("/profile/setting", profileHandlers.SetSetting, auth.RequirePermission("profile:write"))
+		p.echo.GET("/profile/setting/:key", profileHandlers.GetSetting, auth.RequirePermission("profile:read"))
+
+		// Admin routes
+		p.echo.GET("/profiles", profileHandlers.ListProfiles, auth.RequirePermission("profile:admin"))
+		p.echo.GET("/profiles/:userID", profileHandlers.GetUserProfile, auth.RequirePermission("profile:admin"))
+		p.echo.DELETE("/profiles/:userID", profileHandlers.DeleteUserProfile, auth.RequirePermission("profile:admin"))
 	}
 
 	// Add OAuth routes if OAuth is configured

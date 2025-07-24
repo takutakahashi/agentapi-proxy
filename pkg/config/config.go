@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/takutakahashi/agentapi-proxy/pkg/profile"
 	"gopkg.in/yaml.v2"
 )
 
@@ -145,6 +146,8 @@ type Config struct {
 	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
 	// RoleEnvFiles is the configuration for role-based environment files
 	RoleEnvFiles RoleEnvFilesConfig `json:"role_env_files" mapstructure:"role_env_files"`
+	// Profile represents profile persistence configuration
+	Profile profile.Config `json:"profile" mapstructure:"profile"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
