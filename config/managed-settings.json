@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "Start": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 開始\" --body=\"新しいセッションが開始されました\""
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -16,6 +26,16 @@
           {
             "type": "command",
             "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 通知\" --body=\"ツールの使用許可が必要です。確認をお願いします。\""
+          }
+        ]
+      }
+    ],
+    "MessageSent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 応答\" --body=\"Claudeからの応答が届きました\""
           }
         ]
       }

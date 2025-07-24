@@ -293,7 +293,9 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 
 // StartMonitoring starts the session monitoring (called after proxy is fully initialized)
 func (p *Proxy) StartMonitoring() {
-	// Session monitoring disabled - notifications handled by Claude Code hooks
+	if p.sessionMonitor != nil && os.Getenv("AGENTAPI_TEST_MODE") == "" {
+		p.sessionMonitor.Start()
+	}
 }
 
 // loggingMiddleware returns Echo middleware for request logging
