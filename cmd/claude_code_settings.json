@@ -1,4 +1,26 @@
 {
   "dontCrawlDirectory": true,
-  "hasTrustDialogAccepted": true
+  "hasTrustDialogAccepted": true,
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 完了\" --body=\"セッションが正常に完了しました。お疲れ様でした！\""
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 通知\" --body=\"ツールの使用許可が必要です。確認をお願いします。\""
+          }
+        ]
+      }
+    ]
+  }
 }

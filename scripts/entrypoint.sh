@@ -14,38 +14,6 @@ if [ ! -f /home/agentapi/.claude/CLAUDE.md ] || [ /tmp/config/CLAUDE.md -nt /hom
     echo "CLAUDE.md copied successfully"
 fi
 
-# Setup Claude Code hooks configuration
-echo "Setting up Claude Code hooks configuration..."
-cat > /home/agentapi/.claude/settings.json << 'EOF'
-{
-  "workspaceFolders": [],
-  "recentWorkspaces": [],
-  "settings": {},
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST http://localhost:8080/notifications/webhook -H 'Content-Type: application/json' -d '{\"session_id\":\"claude-code-session\",\"user_id\":\"anonymous\",\"event_type\":\"session_completed\",\"timestamp\":\"'$(date -Iseconds)'\",\"data\":{\"title\":\"Claude Code 完了\",\"body\":\"セッションが正常に完了しました。お疲れ様でした！\",\"type\":\"session_completed\"}}' || echo 'Claude Code セッションが完了しました。お疲れ様でした！'"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST http://localhost:8080/notifications/webhook -H 'Content-Type: application/json' -d '{\"session_id\":\"claude-code-session\",\"user_id\":\"anonymous\",\"event_type\":\"permission_request\",\"timestamp\":\"'$(date -Iseconds)'\",\"data\":{\"title\":\"Claude Code 通知\",\"body\":\"ツールの使用許可が必要です。確認をお願いします。\",\"type\":\"permission_request\"}}' || echo 'Claude Code から通知: ツールの使用許可が必要です。'"
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-echo "Claude Code hooks configuration setup completed"
 
 # Fix permissions for persistent volume directories only if needed
 if [ -d "$HOME/.agentapi-proxy" ]; then
