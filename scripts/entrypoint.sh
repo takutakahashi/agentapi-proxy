@@ -14,6 +14,39 @@ if [ ! -f /home/agentapi/.claude/CLAUDE.md ] || [ /tmp/config/CLAUDE.md -nt /hom
     echo "CLAUDE.md copied successfully"
 fi
 
+# Setup Claude Code hooks configuration
+echo "Setting up Claude Code hooks configuration..."
+cat > /home/agentapi/.claude/settings.json << 'EOF'
+{
+  "workspaceFolders": [],
+  "recentWorkspaces": [],
+  "settings": {},
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 完了\" --body=\"セッションが正常に完了しました。お疲れ様でした！\" --type=\"session_completed\""
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 通知\" --body=\"ツールの使用許可が必要です。確認をお願いします。\" --type=\"permission_request\""
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+echo "Claude Code hooks configuration setup completed"
+
 # Fix permissions for persistent volume directories only if needed
 if [ -d "$HOME/.agentapi-proxy" ]; then
     # Check if the directory ownership needs to be changed
