@@ -231,7 +231,9 @@ func (s *JSONStorage) GetSubscriptions(userID string) ([]Subscription, error) {
 				subscriptions[i].LastUsed = time.Now()
 			}
 		}
-		s.saveSubscriptions(userID, subscriptions)
+		if err := s.saveSubscriptions(userID, subscriptions); err != nil {
+			fmt.Printf("Warning: failed to update last used timestamps: %v\n", err)
+		}
 	}()
 
 	return activeSubscriptions, nil
