@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"crypto/rand"
 	_ "embed"
 	"encoding/base64"
@@ -819,7 +818,7 @@ func getSubscriptionsForUser(userID string) ([]NotificationSubscription, error) 
 		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
 	}
 
-	subscriptionsFile := filepath.Join(baseDir, "myclaudes", userID, "notifications", "subscriptions.jsonl")
+	subscriptionsFile := filepath.Join(baseDir, "myclaudes", userID, "notifications", "subscriptions.json")
 
 	if _, err := os.Stat(subscriptionsFile); os.IsNotExist(err) {
 		return []NotificationSubscription{}, nil
@@ -835,22 +834,22 @@ func getSubscriptionsForUser(userID string) ([]NotificationSubscription, error) 
 		}
 	}()
 
+	var allSubscriptions []NotificationSubscription
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&allSubscriptions); err != nil {
+		// If decode fails, return empty slice
+		return []NotificationSubscription{}, nil
+	}
+
+	// Filter active subscriptions
 	var subscriptions []NotificationSubscription
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		var sub NotificationSubscription
-		if err := json.Unmarshal(scanner.Bytes(), &sub); err != nil {
-			continue // Skip invalid entries
-		}
-
-		// Only include active subscriptions
+	for _, sub := range allSubscriptions {
 		if sub.Active {
 			subscriptions = append(subscriptions, sub)
 		}
 	}
 
-	return subscriptions, scanner.Err()
+	return subscriptions, nil
 }
 
 func matchesFilter(sub NotificationSubscription) bool {
