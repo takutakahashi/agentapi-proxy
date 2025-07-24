@@ -100,6 +100,7 @@ ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
+COPY config/managed-settings.json /etc/claude-code/managed-settings.json
 
 # Copy entrypoint script
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
