@@ -29,13 +29,14 @@ func NewService(baseDir string) (*Service, error) {
 }
 
 // Subscribe creates a new push notification subscription
-func (s *Service) Subscribe(user *auth.UserContext, endpoint string, keys map[string]string) (*Subscription, error) {
+func (s *Service) Subscribe(user *auth.UserContext, endpoint string, keys map[string]string, deviceInfo *DeviceInfo) (*Subscription, error) {
 	// Get username from GitHub user info if available, otherwise use UserID
 	username := user.UserID
 	if user.GitHubUser != nil && user.GitHubUser.Login != "" {
 		username = user.GitHubUser.Login
 	}
 
+	now := time.Now()
 	sub := Subscription{
 		UserID:            user.UserID,
 		UserType:          user.AuthType,
@@ -44,7 +45,10 @@ func (s *Service) Subscribe(user *auth.UserContext, endpoint string, keys map[st
 		Keys:              keys,
 		SessionIDs:        []string{}, // Empty means all sessions
 		NotificationTypes: []string{"message", "status_change", "session_update", "error"},
-		CreatedAt:         time.Now(),
+		DeviceInfo:        deviceInfo,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		LastUsed:          now,
 		Active:            true,
 	}
 

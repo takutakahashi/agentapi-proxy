@@ -41,8 +41,11 @@ func (h *NotificationHandlers) Subscribe(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Keys with p256dh and auth are required")
 	}
 
+	// Extract device information from request
+	deviceInfo := notification.ExtractDeviceInfo(c.Request())
+
 	// Create subscription
-	sub, err := h.service.Subscribe(user, req.Endpoint, req.Keys)
+	sub, err := h.service.Subscribe(user, req.Endpoint, req.Keys, deviceInfo)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create subscription")
 	}
