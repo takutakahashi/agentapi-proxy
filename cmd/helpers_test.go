@@ -276,16 +276,6 @@ func TestRunSetupClaudeCodeHomeDir(t *testing.T) {
 	assert.NotNil(t, initCmd.Run)
 }
 
-func TestClaudeCodeSettingsEmbedded(t *testing.T) {
-	// Test that the embedded settings string is not empty
-	assert.NotEmpty(t, claudeCodeSettings)
-
-	// Test that it's valid JSON
-	var settings interface{}
-	err := json.Unmarshal([]byte(claudeCodeSettings), &settings)
-	assert.NoError(t, err)
-}
-
 func TestHelpersRun(t *testing.T) {
 	// Test the main helpers command run function doesn't panic
 	assert.NotPanics(t, func() {

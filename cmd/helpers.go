@@ -21,9 +21,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
 
-//go:embed claude_code_settings.json
-var claudeCodeSettings string
-
 var HelpersCmd = &cobra.Command{
 	Use:   "helpers",
 	Short: "Helper utilities for agentapi-proxy",
@@ -196,18 +193,6 @@ func setupClaudeCodeInternal() error {
 		return fmt.Errorf("failed to create directory %s: %w", claudeConfigDir, err)
 	}
 
-	// Validate that the embedded JSON is valid
-	var tempSettings interface{}
-	if err := json.Unmarshal([]byte(claudeCodeSettings), &tempSettings); err != nil {
-		return fmt.Errorf("invalid embedded settings JSON: %w", err)
-	}
-
-	// Write settings.json file
-	settingsPath := filepath.Join(claudeConfigDir, "settings.json")
-	if err := os.WriteFile(settingsPath, []byte(claudeCodeSettings), 0644); err != nil {
-		return fmt.Errorf("failed to write settings file %s: %w", settingsPath, err)
-	}
-
 	// Merge config/claude.json into ~/.claude.json
 	if err := mergeClaudeConfig(); err != nil {
 		log.Printf("Warning: Failed to merge claude config: %v", err)
@@ -227,8 +212,6 @@ func setupClaudeCodeInternal() error {
 			// Don't return error for claude config, just warn
 		}
 	}
-
-	log.Printf("Successfully created Claude Code configuration at %s", settingsPath)
 	return nil
 }
 
