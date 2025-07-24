@@ -103,6 +103,7 @@ type Proxy struct {
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
+	sessionMonitor     *SessionMonitor
 }
 
 // NewProxy creates a new proxy instance
@@ -277,6 +278,9 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Start cleanup goroutine for defunct processes
 	go p.cleanupDefunctProcesses()
 
+	// Initialize session monitor (will be started later if not in test mode)
+	p.sessionMonitor = NewSessionMonitor(p, 3*time.Minute)
+
 	p.setupRoutes()
 
 	// Load existing sessions from storage if persistence is enabled
@@ -285,6 +289,13 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	}
 
 	return p
+}
+
+// StartMonitoring starts the session monitoring (called after proxy is fully initialized)
+func (p *Proxy) StartMonitoring() {
+	if p.sessionMonitor != nil && os.Getenv("AGENTAPI_TEST_MODE") == "" {
+		p.sessionMonitor.Start()
+	}
 }
 
 // loggingMiddleware returns Echo middleware for request logging
@@ -1213,6 +1224,11 @@ func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte, tags
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (p *Proxy) Shutdown(timeout time.Duration) error {
+	// Stop session monitor first (if enabled)
+	if p.sessionMonitor != nil {
+		p.sessionMonitor.Stop()
+	}
+
 	log.Printf("Shutting down proxy, terminating %d active sessions...", len(p.sessions))
 
 	// Get all session cancel functions
