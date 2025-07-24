@@ -14,6 +14,7 @@ if [ ! -f /home/agentapi/.claude/CLAUDE.md ] || [ /tmp/config/CLAUDE.md -nt /hom
     echo "CLAUDE.md copied successfully"
 fi
 
+
 # Fix permissions for persistent volume directories only if needed
 if [ -d "$HOME/.agentapi-proxy" ]; then
     # Check if the directory ownership needs to be changed
