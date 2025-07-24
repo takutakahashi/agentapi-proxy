@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 通知\" --body=\"ツールの使用許可が必要です。確認をお願いします。\""
+            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 通知\" --body=\"応答が必要です。確認をお願いします。\""
           }
         ]
       }
