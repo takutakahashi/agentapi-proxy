@@ -66,18 +66,18 @@ func (s *S3Storage) getObjectKey(userID string) string {
 	return fmt.Sprintf("%s/profile.json", safeUserID)
 }
 
-// Save stores a profile to S3
-func (s *S3Storage) Save(ctx context.Context, profile *Profile) error {
-	if profile == nil || profile.UserID == "" {
+// Save stores user profiles to S3
+func (s *S3Storage) Save(ctx context.Context, userProfiles *UserProfiles) error {
+	if userProfiles == nil || userProfiles.UserID == "" {
 		return ErrInvalidProfile
 	}
 
-	data, err := json.MarshalIndent(profile, "", "  ")
+	data, err := json.MarshalIndent(userProfiles, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal profile: %w", err)
+		return fmt.Errorf("failed to marshal user profiles: %w", err)
 	}
 
-	key := s.getObjectKey(profile.UserID)
+	key := s.getObjectKey(userProfiles.UserID)
 
 	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
@@ -87,14 +87,14 @@ func (s *S3Storage) Save(ctx context.Context, profile *Profile) error {
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to save profile to S3: %w", err)
+		return fmt.Errorf("failed to save user profiles to S3: %w", err)
 	}
 
 	return nil
 }
 
-// Load retrieves a profile from S3
-func (s *S3Storage) Load(ctx context.Context, userID string) (*Profile, error) {
+// Load retrieves user profiles from S3
+func (s *S3Storage) Load(ctx context.Context, userID string) (*UserProfiles, error) {
 	if userID == "" {
 		return nil, ErrInvalidProfile
 	}
@@ -110,39 +110,39 @@ func (s *S3Storage) Load(ctx context.Context, userID string) (*Profile, error) {
 		if strings.Contains(err.Error(), "NoSuchKey") || strings.Contains(err.Error(), "NotFound") {
 			return nil, ErrProfileNotFound
 		}
-		return nil, fmt.Errorf("failed to get profile from S3: %w", err)
+		return nil, fmt.Errorf("failed to get user profiles from S3: %w", err)
 	}
 	defer func() { _ = result.Body.Close() }()
 
-	var profile Profile
+	var userProfiles UserProfiles
 	decoder := json.NewDecoder(result.Body)
-	if err := decoder.Decode(&profile); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal profile: %w", err)
+	if err := decoder.Decode(&userProfiles); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal user profiles: %w", err)
 	}
 
-	return &profile, nil
+	return &userProfiles, nil
 }
 
-// Update updates an existing profile in S3
-func (s *S3Storage) Update(ctx context.Context, userID string, update *ProfileUpdate) error {
+// Update updates existing user profiles in S3
+func (s *S3Storage) Update(ctx context.Context, userID string, update *UserProfilesUpdate) error {
 	if userID == "" || update == nil {
 		return ErrInvalidProfile
 	}
 
-	// Load existing profile
-	profile, err := s.Load(ctx, userID)
+	// Load existing user profiles
+	userProfiles, err := s.Load(ctx, userID)
 	if err != nil {
 		return err
 	}
 
 	// Apply updates
-	profile.Update(update)
+	userProfiles.Update(update)
 
-	// Save updated profile
-	return s.Save(ctx, profile)
+	// Save updated user profiles
+	return s.Save(ctx, userProfiles)
 }
 
-// Delete removes a profile from S3
+// Delete removes user profiles from S3
 func (s *S3Storage) Delete(ctx context.Context, userID string) error {
 	if userID == "" {
 		return ErrInvalidProfile
@@ -156,13 +156,13 @@ func (s *S3Storage) Delete(ctx context.Context, userID string) error {
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to delete profile from S3: %w", err)
+		return fmt.Errorf("failed to delete user profiles from S3: %w", err)
 	}
 
 	return nil
 }
 
-// Exists checks if a profile exists in S3
+// Exists checks if user profiles exist in S3
 func (s *S3Storage) Exists(ctx context.Context, userID string) (bool, error) {
 	if userID == "" {
 		return false, ErrInvalidProfile
@@ -179,13 +179,13 @@ func (s *S3Storage) Exists(ctx context.Context, userID string) (bool, error) {
 		if strings.Contains(err.Error(), "NoSuchKey") || strings.Contains(err.Error(), "NotFound") {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to check profile existence: %w", err)
+		return false, fmt.Errorf("failed to check user profiles existence: %w", err)
 	}
 
 	return true, nil
 }
 
-// List returns all profile IDs in S3
+// List returns all user IDs in S3
 func (s *S3Storage) List(ctx context.Context) ([]string, error) {
 	var userIDs []string
 
@@ -205,7 +205,7 @@ func (s *S3Storage) List(ctx context.Context) ([]string, error) {
 			if strings.Contains(err.Error(), "NoSuchBucket") {
 				return []string{}, nil
 			}
-			return nil, fmt.Errorf("failed to list profiles: %w", err)
+			return nil, fmt.Errorf("failed to list user profiles: %w", err)
 		}
 
 		for _, obj := range page.Contents {

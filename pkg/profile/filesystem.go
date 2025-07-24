@@ -51,21 +51,21 @@ func (fs *FilesystemStorage) getProfilePath(userID string) string {
 	return filepath.Join(userDir, "profile.json")
 }
 
-// Save stores a profile to the filesystem
-func (fs *FilesystemStorage) Save(ctx context.Context, profile *Profile) error {
+// Save stores user profiles to the filesystem
+func (fs *FilesystemStorage) Save(ctx context.Context, userProfiles *UserProfiles) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	if profile == nil || profile.UserID == "" {
+	if userProfiles == nil || userProfiles.UserID == "" {
 		return ErrInvalidProfile
 	}
 
-	data, err := json.MarshalIndent(profile, "", "  ")
+	data, err := json.MarshalIndent(userProfiles, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal profile: %w", err)
+		return fmt.Errorf("failed to marshal user profiles: %w", err)
 	}
 
-	profilePath := fs.getProfilePath(profile.UserID)
+	profilePath := fs.getProfilePath(userProfiles.UserID)
 
 	// Write to temporary file first
 	tmpPath := profilePath + ".tmp"
@@ -82,8 +82,8 @@ func (fs *FilesystemStorage) Save(ctx context.Context, profile *Profile) error {
 	return nil
 }
 
-// Load retrieves a profile from the filesystem
-func (fs *FilesystemStorage) Load(ctx context.Context, userID string) (*Profile, error) {
+// Load retrieves user profiles from the filesystem
+func (fs *FilesystemStorage) Load(ctx context.Context, userID string) (*UserProfiles, error) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
@@ -107,16 +107,16 @@ func (fs *FilesystemStorage) Load(ctx context.Context, userID string) (*Profile,
 		return nil, fmt.Errorf("failed to read profile: %w", err)
 	}
 
-	var profile Profile
-	if err := json.Unmarshal(data, &profile); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal profile: %w", err)
+	var userProfiles UserProfiles
+	if err := json.Unmarshal(data, &userProfiles); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal user profiles: %w", err)
 	}
 
-	return &profile, nil
+	return &userProfiles, nil
 }
 
-// Update updates an existing profile
-func (fs *FilesystemStorage) Update(ctx context.Context, userID string, update *ProfileUpdate) error {
+// Update updates existing user profiles
+func (fs *FilesystemStorage) Update(ctx context.Context, userID string, update *UserProfilesUpdate) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
@@ -124,7 +124,7 @@ func (fs *FilesystemStorage) Update(ctx context.Context, userID string, update *
 		return ErrInvalidProfile
 	}
 
-	// Load existing profile
+	// Load existing user profiles
 	profilePath := fs.getProfilePath(userID)
 
 	file, err := os.Open(profilePath)
@@ -141,18 +141,18 @@ func (fs *FilesystemStorage) Update(ctx context.Context, userID string, update *
 		return fmt.Errorf("failed to read profile: %w", err)
 	}
 
-	var profile Profile
-	if err := json.Unmarshal(data, &profile); err != nil {
-		return fmt.Errorf("failed to unmarshal profile: %w", err)
+	var userProfiles UserProfiles
+	if err := json.Unmarshal(data, &userProfiles); err != nil {
+		return fmt.Errorf("failed to unmarshal user profiles: %w", err)
 	}
 
 	// Apply updates
-	profile.Update(update)
+	userProfiles.Update(update)
 
-	// Save updated profile
-	updatedData, err := json.MarshalIndent(&profile, "", "  ")
+	// Save updated user profiles
+	updatedData, err := json.MarshalIndent(&userProfiles, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal updated profile: %w", err)
+		return fmt.Errorf("failed to marshal updated user profiles: %w", err)
 	}
 
 	// Write to temporary file first

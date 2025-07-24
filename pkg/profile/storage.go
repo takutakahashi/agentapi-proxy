@@ -13,22 +13,22 @@ var (
 
 // Storage defines the interface for profile persistence
 type Storage interface {
-	// Save stores a profile
-	Save(ctx context.Context, profile *Profile) error
+	// Save stores user profiles
+	Save(ctx context.Context, userProfiles *UserProfiles) error
 
-	// Load retrieves a profile by user ID
-	Load(ctx context.Context, userID string) (*Profile, error)
+	// Load retrieves user profiles by user ID
+	Load(ctx context.Context, userID string) (*UserProfiles, error)
 
-	// Update updates an existing profile
-	Update(ctx context.Context, userID string, update *ProfileUpdate) error
+	// Update updates existing user profiles
+	Update(ctx context.Context, userID string, update *UserProfilesUpdate) error
 
-	// Delete removes a profile
+	// Delete removes user profiles
 	Delete(ctx context.Context, userID string) error
 
-	// Exists checks if a profile exists
+	// Exists checks if user profiles exist
 	Exists(ctx context.Context, userID string) (bool, error)
 
-	// List returns all profile IDs (optional, may return empty slice if not supported)
+	// List returns all user IDs (optional, may return empty slice if not supported)
 	List(ctx context.Context) ([]string, error)
 }
 

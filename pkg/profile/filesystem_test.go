@@ -39,13 +39,18 @@ func TestFilesystemStorageBasicOperations(t *testing.T) {
 		t.Errorf("Expected ErrProfileNotFound, got %v", err)
 	}
 
-	// Create and save a profile
-	profile := NewProfile(userID)
-	profile.Username = "testuser"
-	profile.Email = "test@example.com"
-	profile.Preferences["theme"] = "dark"
+	// Create and save user profiles with a default profile
+	userProfiles := NewUserProfiles(userID)
+	userProfiles.Username = "testuser"
+	userProfiles.Email = "test@example.com"
 
-	err = storage.Save(ctx, profile)
+	// Add a default profile
+	defaultProfile := NewProfileConfig("default")
+	defaultProfile.IsDefault = true
+	defaultProfile.Preferences["theme"] = "dark"
+	userProfiles.Profiles = append(userProfiles.Profiles, *defaultProfile)
+
+	err = storage.Save(ctx, userProfiles)
 	if err != nil {
 		t.Fatalf("Failed to save profile: %v", err)
 	}
@@ -59,34 +64,37 @@ func TestFilesystemStorageBasicOperations(t *testing.T) {
 		t.Error("Profile should exist after saving")
 	}
 
-	// Test Load - should return the profile
-	loadedProfile, err := storage.Load(ctx, userID)
+	// Test Load - should return the user profiles
+	loadedUserProfiles, err := storage.Load(ctx, userID)
 	if err != nil {
 		t.Fatalf("Failed to load profile: %v", err)
 	}
 
-	if loadedProfile.UserID != userID {
-		t.Errorf("Expected UserID %s, got %s", userID, loadedProfile.UserID)
+	if loadedUserProfiles.UserID != userID {
+		t.Errorf("Expected UserID %s, got %s", userID, loadedUserProfiles.UserID)
 	}
 
-	if loadedProfile.Username != "testuser" {
-		t.Errorf("Expected Username 'testuser', got %s", loadedProfile.Username)
+	if loadedUserProfiles.Username != "testuser" {
+		t.Errorf("Expected Username 'testuser', got %s", loadedUserProfiles.Username)
 	}
 
-	if loadedProfile.Email != "test@example.com" {
-		t.Errorf("Expected Email 'test@example.com', got %s", loadedProfile.Email)
+	if loadedUserProfiles.Email != "test@example.com" {
+		t.Errorf("Expected Email 'test@example.com', got %s", loadedUserProfiles.Email)
 	}
 
-	if loadedProfile.Preferences["theme"] != "dark" {
-		t.Errorf("Expected theme 'dark', got %v", loadedProfile.Preferences["theme"])
+	// Check default profile preferences
+	if len(loadedUserProfiles.Profiles) == 0 {
+		t.Error("Expected at least one profile")
+	} else {
+		defaultProf := loadedUserProfiles.Profiles[0]
+		if defaultProf.Preferences["theme"] != "dark" {
+			t.Errorf("Expected theme 'dark', got %v", defaultProf.Preferences["theme"])
+		}
 	}
 
 	// Test Update
-	update := &ProfileUpdate{
+	update := &UserProfilesUpdate{
 		DisplayName: "Test User",
-		Preferences: map[string]interface{}{
-			"lang": "en",
-		},
 	}
 
 	err = storage.Update(ctx, userID, update)
@@ -95,22 +103,23 @@ func TestFilesystemStorageBasicOperations(t *testing.T) {
 	}
 
 	// Load and verify update
-	updatedProfile, err := storage.Load(ctx, userID)
+	updatedUserProfiles, err := storage.Load(ctx, userID)
 	if err != nil {
-		t.Fatalf("Failed to load updated profile: %v", err)
+		t.Fatalf("Failed to load updated user profiles: %v", err)
 	}
 
-	if updatedProfile.DisplayName != "Test User" {
-		t.Errorf("Expected DisplayName 'Test User', got %s", updatedProfile.DisplayName)
+	if updatedUserProfiles.DisplayName != "Test User" {
+		t.Errorf("Expected DisplayName 'Test User', got %s", updatedUserProfiles.DisplayName)
 	}
 
-	if updatedProfile.Preferences["lang"] != "en" {
-		t.Errorf("Expected lang 'en', got %v", updatedProfile.Preferences["lang"])
-	}
-
-	// Original preference should still exist
-	if updatedProfile.Preferences["theme"] != "dark" {
-		t.Errorf("Expected theme 'dark' to be preserved, got %v", updatedProfile.Preferences["theme"])
+	// Original profile preferences should still exist
+	if len(updatedUserProfiles.Profiles) == 0 {
+		t.Error("Expected at least one profile")
+	} else {
+		defaultProf := updatedUserProfiles.Profiles[0]
+		if defaultProf.Preferences["theme"] != "dark" {
+			t.Errorf("Expected theme 'dark' to be preserved, got %v", defaultProf.Preferences["theme"])
+		}
 	}
 
 	// Test List
@@ -170,8 +179,8 @@ func TestFilesystemStorageInvalidInputs(t *testing.T) {
 	}
 
 	// Test Save with empty UserID
-	profile := &Profile{}
-	err = storage.Save(ctx, profile)
+	userProfiles := &UserProfiles{}
+	err = storage.Save(ctx, userProfiles)
 	if err != ErrInvalidProfile {
 		t.Errorf("Expected ErrInvalidProfile for empty UserID, got %v", err)
 	}
@@ -183,7 +192,7 @@ func TestFilesystemStorageInvalidInputs(t *testing.T) {
 	}
 
 	// Test Update with empty UserID
-	err = storage.Update(ctx, "", &ProfileUpdate{})
+	err = storage.Update(ctx, "", &UserProfilesUpdate{})
 	if err != ErrInvalidProfile {
 		t.Errorf("Expected ErrInvalidProfile for empty UserID, got %v", err)
 	}
@@ -243,11 +252,11 @@ func TestFilesystemStorageFileOperations(t *testing.T) {
 	ctx := context.Background()
 	userID := "test-user-123"
 
-	// Create and save profile
-	profile := NewProfile(userID)
-	profile.Username = "testuser"
+	// Create and save user profiles
+	userProfiles := NewUserProfiles(userID)
+	userProfiles.Username = "testuser"
 
-	err = storage.Save(ctx, profile)
+	err = storage.Save(ctx, userProfiles)
 	if err != nil {
 		t.Fatalf("Failed to save profile: %v", err)
 	}
