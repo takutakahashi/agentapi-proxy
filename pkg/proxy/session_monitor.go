@@ -2,7 +2,10 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -109,6 +112,9 @@ func (sm *SessionMonitor) checkSessions() {
 				if processStateChanged && !snapshot.ProcessAlive && previousStatus.ProcessAlive {
 					// Process died
 					sm.sendProcessTerminatedNotificationFromSnapshot(snapshot, previousStatus)
+				} else if statusChanged && previousStatus.Status == "running" && snapshot.Status == "stable" {
+					// Task completed (transitioned from running to stable)
+					sm.sendTaskCompletedNotification(snapshot)
 				}
 
 				// Update stored status
@@ -143,6 +149,12 @@ type SessionSnapshot struct {
 	Status       string
 	ProcessAlive bool
 	Tags         map[string]string
+	Port         int
+}
+
+// AgentAPIStatus represents the response from agentapi /status endpoint
+type AgentAPIStatus struct {
+	Status string `json:"status"` // "stable" or "running"
 }
 
 // getCurrentSessionSnapshots gets snapshots of current active sessions from the proxy
@@ -158,6 +170,7 @@ func (sm *SessionMonitor) getCurrentSessionSnapshots() map[string]*SessionSnapsh
 			UserID: session.UserID,
 			Status: session.Status,
 			Tags:   make(map[string]string),
+			Port:   session.Port,
 		}
 
 		// Safely copy tags
@@ -170,9 +183,43 @@ func (sm *SessionMonitor) getCurrentSessionSnapshots() map[string]*SessionSnapsh
 		snapshot.ProcessAlive = session.Process != nil && session.Process.ProcessState == nil
 		session.processMutex.RUnlock()
 
+		// Fetch status from agentapi endpoint
+		agentStatus := sm.fetchAgentAPIStatus(session.Port)
+		if agentStatus != nil {
+			snapshot.Status = agentStatus.Status
+		}
+
 		snapshots[session.ID] = snapshot
 	}
 	return snapshots
+}
+
+// fetchAgentAPIStatus fetches the status from an agentapi instance
+func (sm *SessionMonitor) fetchAgentAPIStatus(port int) *AgentAPIStatus {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	url := fmt.Sprintf("http://localhost:%d/status", port)
+	resp, err := client.Get(url)
+	if err != nil {
+		log.Printf("Failed to fetch status from port %d: %v", port, err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Non-OK status code from port %d: %d", port, resp.StatusCode)
+		return nil
+	}
+
+	var status AgentAPIStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		log.Printf("Failed to decode status response from port %d: %v", port, err)
+		return nil
+	}
+
+	return &status
 }
 
 // sendProcessTerminatedNotificationFromSnapshot sends a notification when a process terminates unexpectedly
@@ -233,5 +280,30 @@ func (sm *SessionMonitor) sendSessionCompletedNotification(status *SessionStatus
 	err := sm.proxy.notificationSvc.SendNotificationToUser(status.UserID, title, body, notificationType, data)
 	if err != nil {
 		log.Printf("Failed to send session completed notification for session %s: %v", status.SessionID, err)
+	}
+}
+
+// sendTaskCompletedNotification sends a notification when a task transitions from running to stable
+func (sm *SessionMonitor) sendTaskCompletedNotification(snapshot *SessionSnapshot) {
+	if sm.proxy.notificationSvc == nil {
+		return
+	}
+
+	title := "エージェントタスクが完了しました"
+	body := "セッション " + snapshot.ID + " のタスクが完了しました"
+	notificationType := "session_update"
+	data := map[string]interface{}{
+		"session_id": snapshot.ID,
+		"event":      "task_completed",
+		"status":     "stable",
+	}
+
+	if len(snapshot.Tags) > 0 {
+		data["tags"] = snapshot.Tags
+	}
+
+	err := sm.proxy.notificationSvc.SendNotificationToUser(snapshot.UserID, title, body, notificationType, data)
+	if err != nil {
+		log.Printf("Failed to send task completed notification for session %s: %v", snapshot.ID, err)
 	}
 }
