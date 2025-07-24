@@ -88,7 +88,7 @@ func (s *JSONStorage) saveSubscriptions(userID string, subscriptions []Subscript
 	return os.Rename(tempFile, filePath)
 }
 
-// AddSubscription adds a new subscription for a user with duplicate prevention
+// AddSubscription adds a new subscription for a user with improved duplicate prevention
 func (s *JSONStorage) AddSubscription(userID string, sub Subscription) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -102,16 +102,27 @@ func (s *JSONStorage) AddSubscription(userID string, sub Subscription) error {
 		return err
 	}
 
-	// Check for duplicates by endpoint
+	now := time.Now()
+
+	// Check for duplicates by endpoint and device info
 	for i, existing := range subscriptions {
 		if existing.Endpoint == sub.Endpoint && existing.Active {
-			// Update existing subscription instead of creating duplicate
-			sub.ID = existing.ID
-			sub.CreatedAt = existing.CreatedAt
-			sub.Active = true
-			sub.UserID = userID
-			subscriptions[i] = sub
-			return s.saveSubscriptions(userID, subscriptions)
+			// Check if it's the same device
+			if s.isSameDevice(existing.DeviceInfo, sub.DeviceInfo) {
+				// Update existing subscription with merged settings
+				sub.ID = existing.ID
+				sub.CreatedAt = existing.CreatedAt
+				sub.UpdatedAt = now
+				sub.LastUsed = now
+				sub.Active = true
+				sub.UserID = userID
+
+				// Merge notification types (union of both)
+				sub.NotificationTypes = s.mergeNotificationTypes(existing.NotificationTypes, sub.NotificationTypes)
+
+				subscriptions[i] = sub
+				return s.saveSubscriptions(userID, subscriptions)
+			}
 		}
 	}
 
@@ -122,8 +133,10 @@ func (s *JSONStorage) AddSubscription(userID string, sub Subscription) error {
 
 	// Set defaults
 	if sub.CreatedAt.IsZero() {
-		sub.CreatedAt = time.Now()
+		sub.CreatedAt = now
 	}
+	sub.UpdatedAt = now
+	sub.LastUsed = now
 	sub.Active = true
 	sub.UserID = userID
 
@@ -132,7 +145,56 @@ func (s *JSONStorage) AddSubscription(userID string, sub Subscription) error {
 	return s.saveSubscriptions(userID, subscriptions)
 }
 
-// GetSubscriptions returns all active subscriptions for a user with deduplication
+// isSameDevice checks if two DeviceInfo objects represent the same device
+func (s *JSONStorage) isSameDevice(device1, device2 *DeviceInfo) bool {
+	// If both are nil, consider them the same (legacy compatibility)
+	if device1 == nil && device2 == nil {
+		return true
+	}
+
+	// If one is nil and the other isn't, they're different
+	if device1 == nil || device2 == nil {
+		return false
+	}
+
+	// Compare device hash first (most reliable)
+	if device1.DeviceHash != "" && device2.DeviceHash != "" {
+		return device1.DeviceHash == device2.DeviceHash
+	}
+
+	// Fall back to User-Agent comparison
+	if device1.UserAgent != "" && device2.UserAgent != "" {
+		return device1.UserAgent == device2.UserAgent
+	}
+
+	// If no reliable identifiers, consider them different for safety
+	return false
+}
+
+// mergeNotificationTypes merges two notification type slices, removing duplicates
+func (s *JSONStorage) mergeNotificationTypes(existing, new []string) []string {
+	typeSet := make(map[string]bool)
+
+	// Add existing types
+	for _, t := range existing {
+		typeSet[t] = true
+	}
+
+	// Add new types
+	for _, t := range new {
+		typeSet[t] = true
+	}
+
+	// Convert back to slice
+	var merged []string
+	for t := range typeSet {
+		merged = append(merged, t)
+	}
+
+	return merged
+}
+
+// GetSubscriptions returns all active subscriptions for a user with improved deduplication
 func (s *JSONStorage) GetSubscriptions(userID string) ([]Subscription, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -142,16 +204,37 @@ func (s *JSONStorage) GetSubscriptions(userID string) ([]Subscription, error) {
 		return nil, err
 	}
 
-	// Filter and deduplicate by endpoint
+	// Sort by UpdatedAt descending to prioritize recently updated subscriptions
+	sort.Slice(subscriptions, func(i, j int) bool {
+		return subscriptions[i].UpdatedAt.After(subscriptions[j].UpdatedAt)
+	})
+
+	// Filter and deduplicate by endpoint, keeping the most recently updated
 	var activeSubscriptions []Subscription
 	seenEndpoints := make(map[string]bool)
 
 	for _, sub := range subscriptions {
 		if sub.Active && !seenEndpoints[sub.Endpoint] {
+			// Update LastUsed timestamp
+			sub.LastUsed = time.Now()
 			activeSubscriptions = append(activeSubscriptions, sub)
 			seenEndpoints[sub.Endpoint] = true
 		}
 	}
+
+	// Update the last used timestamps in storage (async to avoid blocking)
+	go func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for i, sub := range subscriptions {
+			if sub.Active && seenEndpoints[sub.Endpoint] {
+				subscriptions[i].LastUsed = time.Now()
+			}
+		}
+		if err := s.saveSubscriptions(userID, subscriptions); err != nil {
+			fmt.Printf("Warning: failed to update last used timestamps: %v\n", err)
+		}
+	}()
 
 	return activeSubscriptions, nil
 }

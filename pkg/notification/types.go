@@ -26,8 +26,20 @@ type Subscription struct {
 	Keys              map[string]string `json:"keys"`
 	SessionIDs        []string          `json:"session_ids"`
 	NotificationTypes []string          `json:"notification_types"`
+	DeviceInfo        *DeviceInfo       `json:"device_info,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+	LastUsed          time.Time         `json:"last_used,omitempty"`
 	Active            bool              `json:"active"`
+}
+
+// DeviceInfo represents device identification information
+type DeviceInfo struct {
+	UserAgent  string `json:"user_agent,omitempty"`
+	DeviceType string `json:"device_type,omitempty"` // "desktop", "mobile", "tablet"
+	Browser    string `json:"browser,omitempty"`     // "chrome", "firefox", "safari"
+	OS         string `json:"os,omitempty"`          // "windows", "macos", "linux", "android", "ios"
+	DeviceHash string `json:"device_hash,omitempty"` // Hash of device fingerprint
 }
 
 // WebhookRequest represents the webhook payload from agentapi
