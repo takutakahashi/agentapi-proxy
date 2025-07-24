@@ -206,7 +206,11 @@ func (sm *SessionMonitor) fetchAgentAPIStatus(port int) *AgentAPIStatus {
 		log.Printf("Failed to fetch status from port %d: %v", port, err)
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Failed to close response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Non-OK status code from port %d: %d", port, resp.StatusCode)
