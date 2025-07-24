@@ -36,10 +36,17 @@ func TestNotificationService(t *testing.T) {
 	}
 
 	// Test Subscribe
+	deviceInfo := &DeviceInfo{
+		UserAgent:  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		DeviceType: "desktop",
+		Browser:    "chrome",
+		OS:         "windows",
+		DeviceHash: "test_hash",
+	}
 	sub, err := service.Subscribe(user, "https://fcm.googleapis.com/test", map[string]string{
 		"p256dh": "test_p256dh",
 		"auth":   "test_auth",
-	})
+	}, deviceInfo)
 	if err != nil {
 		t.Errorf("Subscribe failed: %v", err)
 	}
