@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
@@ -10,21 +9,23 @@ import (
 )
 
 func TestCreateSessionUseCase_Execute(t *testing.T) {
-	// Create DI container for testing
-	container := di.NewContainer()
+	// Create repositories and services directly
+	sessionRepo := repositories.NewMemorySessionRepository()
+	userRepo := repositories.NewMemoryUserRepository()
+	agentService := services.NewLocalAgentService()
+	
+	// Create use case
+	createSessionUC := NewCreateSessionUseCase(sessionRepo, userRepo, agentService)
 
 	// Create test user
 	testUser := entities.NewUser(
 		entities.UserID("test_user"),
 		entities.UserTypeRegular,
 		"testuser",
-		nil,
-		nil,
-		nil,
 	)
 
 	// Save test user
-	err := container.UserRepo.Save(context.Background(), testUser)
+	err := userRepo.Save(context.Background(), testUser)
 	if err != nil {
 		t.Fatal("Failed to save test user:", err)
 	}
@@ -36,7 +37,7 @@ func TestCreateSessionUseCase_Execute(t *testing.T) {
 		Tags:        entities.Tags{"test": "session"},
 	}
 
-	response, err := container.CreateSessionUC.Execute(context.Background(), req)
+	response, err := createSessionUC.Execute(context.Background(), req)
 	if err != nil {
 		t.Fatal("Failed to create session:", err)
 	}
