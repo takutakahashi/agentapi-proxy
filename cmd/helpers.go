@@ -584,6 +584,7 @@ func getGitHubRepoFullName() string {
 	// Try to get the current working directory first
 	cwd, err := os.Getwd()
 	if err != nil {
+		log.Printf("Failed to get current working directory: %v", err)
 		return ""
 	}
 
@@ -592,34 +593,95 @@ func getGitHubRepoFullName() string {
 	cmd.Dir = cwd
 	output, err := cmd.Output()
 	if err != nil {
+		log.Printf("Failed to get git remote origin URL: %v", err)
 		return ""
 	}
 
 	remoteURL := strings.TrimSpace(string(output))
-	return extractRepoFullNameFromURL(remoteURL)
+	log.Printf("Git remote origin URL: %s", remoteURL)
+
+	repoFullName := extractRepoFullNameFromURL(remoteURL)
+	if repoFullName != "" {
+		log.Printf("Extracted repository full name: %s", repoFullName)
+	} else {
+		log.Printf("Failed to extract repository full name from URL: %s", remoteURL)
+	}
+
+	return repoFullName
 }
 
 // extractRepoFullNameFromURL extracts owner/repo from various Git URL formats
 func extractRepoFullNameFromURL(url string) string {
-	// Handle SSH URLs: git@github.com:owner/repo.git
-	if strings.HasPrefix(url, "git@github.com:") {
-		path := strings.TrimPrefix(url, "git@github.com:")
-		path = strings.TrimSuffix(path, ".git")
-		return path
+	// Handle SSH URLs: git@hostname:owner/repo.git
+	if strings.Contains(url, "@") && strings.Contains(url, ":") && !strings.Contains(url, "://") {
+		// SSH format: git@hostname:owner/repo.git
+		parts := strings.Split(url, ":")
+		if len(parts) >= 2 {
+			path := strings.Join(parts[1:], ":")
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
 	}
 
-	// Handle HTTPS URLs: https://github.com/owner/repo.git
-	if strings.HasPrefix(url, "https://github.com/") {
-		path := strings.TrimPrefix(url, "https://github.com/")
-		path = strings.TrimSuffix(path, ".git")
-		return path
+	// Handle HTTPS URLs: https://hostname/owner/repo.git
+	if strings.HasPrefix(url, "https://") {
+		// Remove https:// prefix
+		withoutProtocol := strings.TrimPrefix(url, "https://")
+
+		// Handle URLs with authentication token: token@hostname/owner/repo.git
+		if strings.Contains(withoutProtocol, "@") {
+			parts := strings.Split(withoutProtocol, "@")
+			if len(parts) >= 2 {
+				withoutProtocol = strings.Join(parts[1:], "@")
+			}
+		}
+
+		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
+		pathParts := strings.Split(withoutProtocol, "/")
+		if len(pathParts) >= 3 {
+			// Join owner/repo parts
+			path := strings.Join(pathParts[1:], "/")
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
 	}
 
-	// Handle git protocol URLs: git://github.com/owner/repo.git
-	if strings.HasPrefix(url, "git://github.com/") {
-		path := strings.TrimPrefix(url, "git://github.com/")
-		path = strings.TrimSuffix(path, ".git")
-		return path
+	// Handle HTTP URLs: http://hostname/owner/repo.git
+	if strings.HasPrefix(url, "http://") {
+		// Remove http:// prefix
+		withoutProtocol := strings.TrimPrefix(url, "http://")
+
+		// Handle URLs with authentication token: token@hostname/owner/repo.git
+		if strings.Contains(withoutProtocol, "@") {
+			parts := strings.Split(withoutProtocol, "@")
+			if len(parts) >= 2 {
+				withoutProtocol = strings.Join(parts[1:], "@")
+			}
+		}
+
+		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
+		pathParts := strings.Split(withoutProtocol, "/")
+		if len(pathParts) >= 3 {
+			// Join owner/repo parts
+			path := strings.Join(pathParts[1:], "/")
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
+	}
+
+	// Handle git protocol URLs: git://hostname/owner/repo.git
+	if strings.HasPrefix(url, "git://") {
+		// Remove git:// prefix
+		withoutProtocol := strings.TrimPrefix(url, "git://")
+
+		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
+		pathParts := strings.Split(withoutProtocol, "/")
+		if len(pathParts) >= 3 {
+			// Join owner/repo parts
+			path := strings.Join(pathParts[1:], "/")
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
 	}
 
 	return ""
