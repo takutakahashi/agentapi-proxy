@@ -247,7 +247,6 @@ func (c *Container) seedData() {
 	_ = c.UserRepo.Save(context.TODO(), testUser)
 }
 
-
 // SimpleProxyService is a simple implementation of ProxyService
 type SimpleProxyService struct{}
 

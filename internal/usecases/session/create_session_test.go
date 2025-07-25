@@ -34,10 +34,10 @@ func TestCreateSessionUseCase_Execute(t *testing.T) {
 	sessionRepo := repositories.NewMemorySessionRepository()
 	userRepo := repositories.NewMemoryUserRepository()
 	agentService := infra_services.NewLocalAgentService()
-	
+
 	// Create a simple proxy service for testing
 	proxyService := &SimpleProxyService{}
-	
+
 	// Create use case
 	createSessionUC := NewCreateSessionUseCase(sessionRepo, userRepo, agentService, proxyService)
 

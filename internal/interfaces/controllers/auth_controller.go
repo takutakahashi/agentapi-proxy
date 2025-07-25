@@ -212,7 +212,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			userIDKey      contextKey = "userID"
 			permissionsKey contextKey = "permissions"
 		)
-		
+
 		// Add user to context
 		ctx := context.WithValue(r.Context(), userKey, response.User)
 		ctx = context.WithValue(ctx, userIDKey, response.User.ID())
