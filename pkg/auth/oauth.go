@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // isVerboseLoggingEnabled checks if verbose OAuth logging is enabled via environment variable
@@ -56,10 +57,8 @@ type GitHubOAuthProvider struct {
 // NewGitHubOAuthProvider creates a new GitHub OAuth provider
 func NewGitHubOAuthProvider(cfg *config.GitHubOAuthConfig, githubCfg *config.GitHubAuthConfig) *GitHubOAuthProvider {
 	return &GitHubOAuthProvider{
-		config: cfg,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		config:         cfg,
+		client:         utils.NewDefaultHTTPClient(),
 		stateStore:     &sync.Map{},
 		githubProvider: NewGitHubAuthProvider(githubCfg),
 	}
@@ -165,13 +164,11 @@ func (p *GitHubOAuthProvider) exchangeCodeForToken(ctx context.Context, code, re
 		logVerbose("Token exchange request failed: %v", err)
 		return nil, err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer utils.SafeCloseResponse(resp)
 
 	logVerbose("Token exchange response: %d %s", resp.StatusCode, resp.Status)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token exchange failed with status %d", resp.StatusCode)
+	if err := utils.CheckHTTPResponse(resp, tokenURL); err != nil {
+		return nil, fmt.Errorf("token exchange failed: %w", err)
 	}
 
 	var tokenResp OAuthTokenResponse
@@ -265,9 +262,7 @@ func (p *GitHubOAuthProvider) RevokeToken(ctx context.Context, token string) err
 		logVerbose("Token revocation request failed: %v", err)
 		return err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer utils.SafeCloseResponse(resp)
 
 	logVerbose("Token revocation response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode != http.StatusNoContent {

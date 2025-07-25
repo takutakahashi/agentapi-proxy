@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // FileStorage implements file-based session persistence
@@ -172,18 +174,7 @@ func (fs *FileStorage) syncToFile() error {
 		return nil
 	}
 
-	// Create temporary file
-	tempFile := fs.filePath + ".tmp"
-	file, err := os.Create(tempFile)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-
-	// Encode sessions
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-
+	// Prepare data structure
 	data := struct {
 		Sessions  []*SessionData `json:"sessions"`
 		UpdatedAt time.Time      `json:"updated_at"`
@@ -196,21 +187,15 @@ func (fs *FileStorage) syncToFile() error {
 		data.Sessions = append(data.Sessions, session)
 	}
 
-	if err := encoder.Encode(&data); err != nil {
-		_ = os.Remove(tempFile)
-		return fmt.Errorf("failed to encode sessions: %w", err)
+	// Use atomic write with JSON formatting
+	jsonOptions := utils.JSONWriteOptions{
+		Indent:   "  ",
+		FileMode: 0644,
+		Atomic:   true,
 	}
 
-	// Sync to disk
-	if err := file.Sync(); err != nil {
-		_ = os.Remove(tempFile)
-		return fmt.Errorf("failed to sync file: %w", err)
-	}
-
-	// Atomic rename
-	if err := os.Rename(tempFile, fs.filePath); err != nil {
-		_ = os.Remove(tempFile)
-		return fmt.Errorf("failed to rename temp file: %w", err)
+	if err := utils.WriteJSONFile(fs.filePath, data, jsonOptions); err != nil {
+		return fmt.Errorf("failed to write sessions file: %w", err)
 	}
 
 	fmt.Printf("[FileStorage] Successfully synced %d sessions to %s\n", len(data.Sessions), fs.filePath)

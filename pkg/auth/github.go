@@ -14,65 +14,13 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // contextKey is used for context keys to avoid collisions
 type contextKey string
 
 const echoContextKey contextKey = "echo"
-
-// cacheEntry represents a cached value with expiration time
-type cacheEntry struct {
-	value     interface{}
-	expiresAt time.Time
-}
-
-// cache is a simple TTL cache
-type cache struct {
-	data sync.Map
-	ttl  time.Duration
-}
-
-// newCache creates a new cache with specified TTL
-func newCache(ttl time.Duration) *cache {
-	return &cache{
-		ttl: ttl,
-	}
-}
-
-// get retrieves a value from cache if it exists and hasn't expired
-func (c *cache) get(key string) (interface{}, bool) {
-	entry, exists := c.data.Load(key)
-	if !exists {
-		return nil, false
-	}
-
-	cacheEntry, ok := entry.(cacheEntry)
-	if !ok {
-		// Invalid entry type, remove it
-		c.data.Delete(key)
-		return nil, false
-	}
-
-	now := time.Now()
-	if now.Before(cacheEntry.expiresAt) {
-		return cacheEntry.value, true
-	}
-
-	// Entry expired, remove it
-	c.data.Delete(key)
-	return nil, false
-}
-
-// set stores a value in cache with TTL
-func (c *cache) set(key string, value interface{}) {
-	now := time.Now()
-	entry := cacheEntry{
-		value:     value,
-		expiresAt: now.Add(c.ttl),
-	}
-	c.data.Store(key, entry)
-}
 
 // hashToken creates a hash of the token for use as cache key
 func hashToken(token string) string {
@@ -116,7 +64,7 @@ type UserCache struct {
 type GitHubAuthProvider struct {
 	config    *config.GitHubAuthConfig
 	client    *http.Client
-	userCache *cache
+	userCache *utils.TTLCache
 }
 
 // NewGitHubAuthProvider creates a new GitHub authentication provider
@@ -128,11 +76,9 @@ func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
 	}
 
 	return &GitHubAuthProvider{
-		config: cfg,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		userCache: newCache(cacheTTL),
+		config:    cfg,
+		client:    utils.NewDefaultHTTPClient(),
+		userCache: utils.NewTTLCache(cacheTTL),
 	}
 }
 
@@ -155,7 +101,7 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 	var cachedUser *UserCache
 	if !isTestEnvironment() {
 		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
-		if cached, found := p.userCache.get(cacheKey); found {
+		if cached, found := p.userCache.Get(cacheKey); found {
 			cachedUser = cached.(*UserCache)
 			log.Printf("[AUTH_DEBUG] Using cached user info for %s: role=%s, permissions=%v, envFile=%s",
 				cachedUser.User.Login, cachedUser.Role, cachedUser.Permissions, cachedUser.EnvFile)
@@ -216,7 +162,7 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 	// Cache the complete user information (disabled in test environment)
 	if !isTestEnvironment() {
 		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
-		p.userCache.set(cacheKey, &UserCache{
+		p.userCache.Set(cacheKey, &UserCache{
 			User:        user,
 			Role:        role,
 			Permissions: permissions,
@@ -253,11 +199,11 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 		logVerbose("GitHub API request failed: %v", err)
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer utils.SafeCloseResponse(resp)
 
 	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	if err := utils.CheckHTTPResponse(resp, url); err != nil {
+		return nil, err
 	}
 
 	var user GitHubUserInfo
@@ -364,11 +310,11 @@ func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token str
 		logVerbose("GitHub API request failed: %v", err)
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer utils.SafeCloseResponse(resp)
 
 	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	if err := utils.CheckHTTPResponse(resp, url); err != nil {
+		return nil, err
 	}
 
 	var orgs []GitHubOrganization
@@ -398,14 +344,14 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 		logVerbose("GitHub API request failed: %v", err)
 		return false, ""
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer utils.SafeCloseResponse(resp)
 
 	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode == http.StatusNotFound {
 		return false, ""
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if err := utils.CheckHTTPResponse(resp, url); err != nil {
 		return false, ""
 	}
 

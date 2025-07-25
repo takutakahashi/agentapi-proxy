@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // JSONStorage implements Storage using JSON files (not JSONL)
@@ -66,26 +67,7 @@ func (s *JSONStorage) loadSubscriptions(userID string) ([]Subscription, error) {
 // saveSubscriptions saves all subscriptions to JSON file
 func (s *JSONStorage) saveSubscriptions(userID string, subscriptions []Subscription) error {
 	filePath := filepath.Join(s.getNotificationsDir(userID), "subscriptions.json")
-	tempFile := filePath + ".tmp"
-
-	file, err := os.Create(tempFile)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Printf("Warning: failed to close file: %v\n", err)
-		}
-	}()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(subscriptions); err != nil {
-		_ = os.Remove(tempFile)
-		return err
-	}
-
-	return os.Rename(tempFile, filePath)
+	return utils.WriteJSONFileDefault(filePath, subscriptions)
 }
 
 // AddSubscription adds a new subscription for a user with improved duplicate prevention
@@ -361,26 +343,7 @@ func (s *JSONStorage) loadNotificationHistory(userID string) ([]NotificationHist
 // saveNotificationHistory saves all notification history to JSON file
 func (s *JSONStorage) saveNotificationHistory(userID string, history []NotificationHistory) error {
 	filePath := filepath.Join(s.getNotificationsDir(userID), "history.json")
-	tempFile := filePath + ".tmp"
-
-	file, err := os.Create(tempFile)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Printf("Warning: failed to close file: %v\n", err)
-		}
-	}()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(history); err != nil {
-		_ = os.Remove(tempFile)
-		return err
-	}
-
-	return os.Rename(tempFile, filePath)
+	return utils.WriteJSONFileDefault(filePath, history)
 }
 
 // AddNotificationHistory adds a notification to the history
