@@ -278,7 +278,7 @@ func (s *Subscription) Validate() error {
 		return errors.New("endpoint cannot be empty")
 	}
 
-	if s.keys == nil || len(s.keys) == 0 {
+	if len(s.keys) == 0 {
 		return errors.New("keys cannot be empty")
 	}
 

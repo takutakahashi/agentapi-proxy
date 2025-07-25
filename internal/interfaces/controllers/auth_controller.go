@@ -205,10 +205,18 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
+		// Define context keys to avoid collisions
+		type contextKey string
+		const (
+			userKey        contextKey = "user"
+			userIDKey      contextKey = "userID"
+			permissionsKey contextKey = "permissions"
+		)
+		
 		// Add user to context
-		ctx := context.WithValue(r.Context(), "user", response.User)
-		ctx = context.WithValue(ctx, "userID", response.User.ID())
-		ctx = context.WithValue(ctx, "permissions", response.Permissions)
+		ctx := context.WithValue(r.Context(), userKey, response.User)
+		ctx = context.WithValue(ctx, userIDKey, response.User.ID())
+		ctx = context.WithValue(ctx, permissionsKey, response.Permissions)
 
 		// Call next handler
 		next.ServeHTTP(w, r.WithContext(ctx))

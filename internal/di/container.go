@@ -229,7 +229,7 @@ func (c *Container) seedData() {
 	}
 
 	// Save admin user to repository
-	_ = c.UserRepo.Save(nil, adminUser)
+	_ = c.UserRepo.Save(context.TODO(), adminUser)
 
 	// Create regular test user
 	testUser := entities.NewUser(
@@ -244,13 +244,9 @@ func (c *Container) seedData() {
 	}
 
 	// Save test user to repository
-	_ = c.UserRepo.Save(nil, testUser)
+	_ = c.UserRepo.Save(context.TODO(), testUser)
 }
 
-// stringPtr returns a pointer to a string value
-func stringPtr(s string) *string {
-	return &s
-}
 
 // SimpleProxyService is a simple implementation of ProxyService
 type SimpleProxyService struct{}

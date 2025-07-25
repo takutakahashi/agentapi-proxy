@@ -86,7 +86,10 @@ func (c *SessionController) CreateSession(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if req.Repository.Branch != "" {
-			repo.SetBranch(req.Repository.Branch)
+			if err := repo.SetBranch(req.Repository.Branch); err != nil {
+				c.sessionPresenter.PresentError(w, "invalid branch: "+err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		if req.Repository.Token != "" {
 			repo.SetAccessToken(req.Repository.Token)
