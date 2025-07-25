@@ -206,23 +206,25 @@ func TestRunHistoryWithMockServer(t *testing.T) {
 			return
 		}
 
-		messages := []client.Message{
-			{
-				ID:        "msg-1",
-				Role:      "user",
-				Content:   "Hello",
-				Timestamp: time.Now().Add(-5 * time.Minute),
-			},
-			{
-				ID:        "msg-2",
-				Role:      "assistant",
-				Content:   "Hi there!",
-				Timestamp: time.Now(),
+		response := client.MessagesResponse{
+			Messages: []client.Message{
+				{
+					ID:        "msg-1",
+					Role:      "user",
+					Content:   "Hello",
+					Timestamp: time.Now().Add(-5 * time.Minute),
+				},
+				{
+					ID:        "msg-2",
+					Role:      "assistant",
+					Content:   "Hi there!",
+					Timestamp: time.Now(),
+				},
 			},
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(messages)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
