@@ -14,7 +14,7 @@ import (
 	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v57/github"
 	"github.com/spf13/cobra"
-	github_cache "github.com/takutakahashi/agentapi-proxy/pkg/github"
+	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
 
 type GitHubAppConfig struct {
@@ -25,7 +25,7 @@ type GitHubAppConfig struct {
 }
 
 // Global installation cache instance
-var installationCache = github_cache.NewInstallationCache()
+var installationCache = github_pkg.NewInstallationCache()
 
 var initGitHubRepoCmd = &cobra.Command{
 	Use:   "init-github-repository",
@@ -181,19 +181,11 @@ func initGitHubRepoInternal(repoFullNameParam, cloneDirParam string, ignoreMissi
 }
 
 func getAPIBase() string {
-	apiBase := os.Getenv("GITHUB_API")
-	if apiBase == "" {
-		apiBase = "https://api.github.com"
-	}
-	return apiBase
+	return github_pkg.GetAPIBase()
 }
 
 func getGitHubURL() string {
-	githubURL := os.Getenv("GITHUB_URL")
-	if githubURL == "" {
-		githubURL = "https://github.com"
-	}
-	return githubURL
+	return github_pkg.GetGitHubURL()
 }
 
 func generateInstallationToken(config GitHubAppConfig) (string, error) {
@@ -265,7 +257,7 @@ func setupRepository(repoURL, token, cloneDir string) error {
 	}
 
 	// Create authenticated URL
-	authURL, err := createAuthenticatedURL(repoURL, token)
+	authURL, err := github_pkg.CreateAuthenticatedURL(repoURL, token)
 	if err != nil {
 		return fmt.Errorf("failed to create authenticated URL: %w", err)
 	}
@@ -327,24 +319,6 @@ func setupRepository(repoURL, token, cloneDir string) error {
 
 	fmt.Println("Repository setup completed")
 	return nil
-}
-
-func createAuthenticatedURL(repoURL, token string) (string, error) {
-	githubURL := getGitHubURL()
-	githubHost := strings.TrimPrefix(githubURL, "https://")
-	githubHost = strings.TrimPrefix(githubHost, "http://")
-
-	// Parse the repository URL and insert the token
-	if strings.HasPrefix(repoURL, githubURL+"/") {
-		parts := strings.TrimPrefix(repoURL, githubURL+"/")
-		return fmt.Sprintf("https://%s@%s/%s", token, githubHost, parts), nil
-	} else if strings.HasPrefix(repoURL, "git@"+githubHost+":") {
-		parts := strings.TrimPrefix(repoURL, "git@"+githubHost+":")
-		parts = strings.TrimSuffix(parts, ".git")
-		return fmt.Sprintf("https://%s@%s/%s.git", token, githubHost, parts), nil
-	}
-
-	return "", fmt.Errorf("unsupported repository URL format: %s", repoURL)
 }
 
 func setupMCPIntegration(token, cloneDir string) error {
@@ -442,16 +416,7 @@ func authenticateGHCLI(githubURL, token string) error {
 }
 
 func extractHostname(githubURL string) string {
-	// Remove protocol prefix
-	hostname := strings.TrimPrefix(githubURL, "https://")
-	hostname = strings.TrimPrefix(hostname, "http://")
-
-	// Remove any path components
-	if idx := strings.Index(hostname, "/"); idx != -1 {
-		hostname = hostname[:idx]
-	}
-
-	return hostname
+	return github_pkg.ExtractHostname(githubURL)
 }
 
 func init() {

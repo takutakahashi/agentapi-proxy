@@ -2,38 +2,20 @@ package cmd
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/pkg/client"
 )
 
 var (
 	endpoint  string
 	sessionID string
 )
-
-type Message struct {
-	Content string `json:"content"`
-	Type    string `json:"type"`
-}
-
-type MessageResponse struct {
-	ID        string    `json:"id"`
-	Role      string    `json:"role"`
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-type StatusResponse struct {
-	Status string `json:"status"`
-}
 
 var ClientCmd = &cobra.Command{
 	Use:   "client",
@@ -108,39 +90,18 @@ func runSend(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	msg := Message{
+	// Create client and send message
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
+
+	msg := &client.Message{
 		Content: message,
 		Type:    "user",
 	}
 
-	jsonData, err := json.Marshal(msg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling message: %v\n", err)
-		return
-	}
-
-	url := fmt.Sprintf("%s/%s/message", endpoint, sessionID)
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	msgResp, err := c.SendMessage(ctx, sessionID, msg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading response: %v\n", err)
-		return
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "HTTP error %d: %s\n", resp.StatusCode, string(body))
-		return
-	}
-
-	var msgResp MessageResponse
-	if err := json.Unmarshal(body, &msgResp); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 		return
 	}
 
@@ -148,92 +109,62 @@ func runSend(cmd *cobra.Command, args []string) {
 }
 
 func runHistory(cmd *cobra.Command, args []string) {
-	url := fmt.Sprintf("%s/%s/messages", endpoint, sessionID)
-	resp, err := http.Get(url)
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
+
+	messagesResp, err := c.GetMessages(ctx, sessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting history: %v\n", err)
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading response: %v\n", err)
-		return
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "HTTP error %d: %s\n", resp.StatusCode, string(body))
-		return
-	}
-
-	var messages []MessageResponse
-	if err := json.Unmarshal(body, &messages); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Conversation History (%d messages):\n", len(messages))
-	for _, msg := range messages {
+	fmt.Printf("Conversation History (%d messages):\n", len(messagesResp.Messages))
+	for _, msg := range messagesResp.Messages {
 		fmt.Printf("[%s] %s: %s\n", msg.Timestamp.Format("15:04:05"), msg.Role, msg.Content)
 	}
 }
 
 func runStatus(cmd *cobra.Command, args []string) {
-	url := fmt.Sprintf("%s/%s/status", endpoint, sessionID)
-	resp, err := http.Get(url)
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
+
+	statusResp, err := c.GetStatus(ctx, sessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting status: %v\n", err)
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading response: %v\n", err)
-		return
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "HTTP error %d: %s\n", resp.StatusCode, string(body))
-		return
-	}
-
-	var status StatusResponse
-	if err := json.Unmarshal(body, &status); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Agent Status: %s\n", status.Status)
+	fmt.Printf("Agent Status: %s\n", statusResp.Status)
 }
 
 func runEvents(cmd *cobra.Command, args []string) {
-	url := fmt.Sprintf("%s/%s/events", endpoint, sessionID)
-	resp, err := http.Get(url)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error connecting to events: %v\n", err)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Fprintf(os.Stderr, "HTTP error %d: %s\n", resp.StatusCode, string(body))
-		return
-	}
+	eventChan, errorChan := c.StreamEvents(ctx, sessionID)
 
 	fmt.Println("Monitoring events... (Press Ctrl+C to stop)")
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-			fmt.Printf("[EVENT] %s\n", data)
-		}
-	}
 
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading events: %v\n", err)
+	for {
+		select {
+		case event, ok := <-eventChan:
+			if !ok {
+				return
+			}
+			if strings.HasPrefix(event, "data: ") {
+				data := strings.TrimPrefix(event, "data: ")
+				fmt.Printf("[EVENT] %s\n", data)
+			}
+		case err, ok := <-errorChan:
+			if !ok {
+				return
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading events: %v\n", err)
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
 	}
 }

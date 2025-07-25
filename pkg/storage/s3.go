@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // S3Storage implements Storage interface using AWS S3
@@ -112,10 +113,11 @@ func (s *S3Storage) Save(session *SessionData) error {
 	}
 
 	// Marshal session to JSON
-	data, err := json.Marshal(sessionToSave)
+	jsonStr, err := utils.MarshalJSONString(sessionToSave)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session data: %w", err)
 	}
+	data := []byte(jsonStr)
 
 	// Create S3 key
 	key := s.prefix + session.ID + ".json"

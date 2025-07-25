@@ -3,20 +3,18 @@ package cmd
 import (
 	"crypto/rand"
 	_ "embed"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/SherClockHolmes/webpush-go"
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/github"
+	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
 
@@ -187,102 +185,15 @@ func init() {
 
 // RunSetupClaudeCode is exported for use in other packages
 func RunSetupClaudeCode() error {
-	return setupClaudeCodeInternal()
+	return startup.SetupClaudeCode("")
 }
 
 func runSetupClaudeCode(cmd *cobra.Command, args []string) {
-	if err := setupClaudeCodeInternal(); err != nil {
+	if err := startup.SetupClaudeCode(""); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		log.Printf("Fatal error: %v", err)
 		os.Exit(1)
 	}
-}
-
-func setupClaudeCodeInternal() error {
-	// Get home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	// Create .claude directory
-	claudeConfigDir := filepath.Join(homeDir, ".claude")
-	if err := os.MkdirAll(claudeConfigDir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", claudeConfigDir, err)
-	}
-
-	// Merge config/claude.json into ~/.claude.json
-	if err := mergeClaudeConfig(); err != nil {
-		log.Printf("Warning: Failed to merge claude config: %v", err)
-		// Don't return error, just warn
-	}
-
-	claudeSettingsMap := map[string]string{
-		"hasTrustDialogAccepted":        "true",
-		"hasCompletedProjectOnboarding": "true",
-		"dontCrawlDirectory":            "true",
-	}
-
-	for key, value := range claudeSettingsMap {
-		claudeCmd := exec.Command("claude", "config", "set", key, value)
-		if err := claudeCmd.Run(); err != nil {
-			log.Printf("Warning: Failed to set Claude config for key '%s': %v", key, err)
-			// Don't return error for claude config, just warn
-		}
-	}
-	return nil
-}
-
-func mergeClaudeConfig() error {
-	// Get home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	targetPath := filepath.Join(homeDir, ".claude.json")
-
-	// Define the configuration to merge as a map
-	configToMerge := map[string]interface{}{
-		"hasCompletedOnboarding":        true,
-		"bypassPermissionsModeAccepted": true,
-	}
-
-	fmt.Printf("Using hardcoded configuration map\n")
-
-	// Read existing ~/.claude.json if it exists
-	var targetJSON map[string]interface{}
-	targetData, err := os.ReadFile(targetPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to read ~/.claude.json: %w", err)
-		}
-		// File doesn't exist, we'll create it
-		targetJSON = make(map[string]interface{})
-	} else {
-		// Parse existing JSON
-		if err := json.Unmarshal(targetData, &targetJSON); err != nil {
-			return fmt.Errorf("failed to parse ~/.claude.json: %w", err)
-		}
-	}
-
-	// Merge configuration map into target (config values override existing values)
-	for key, value := range configToMerge {
-		targetJSON[key] = value
-	}
-
-	// Write merged JSON back
-	mergedData, err := json.MarshalIndent(targetJSON, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal merged JSON: %w", err)
-	}
-
-	if err := os.WriteFile(targetPath, mergedData, 0644); err != nil {
-		return fmt.Errorf("failed to write ~/.claude.json: %w", err)
-	}
-
-	fmt.Printf("Successfully merged claude config into %s\n", targetPath)
-	return nil
 }
 
 type APIKeysFile struct {
@@ -419,107 +330,25 @@ func init() {
 
 // RunAddMcpServers is exported for use in other packages
 func RunAddMcpServers(configFlag string) error {
-	return addMcpServersInternal(configFlag, "")
+	return startup.SetupMCPServers("", configFlag)
 }
 
 func runAddMcpServers(cmd *cobra.Command, args []string) {
 	configFlag, _ := cmd.Flags().GetString("config")
 	claudeDirFlag, _ := cmd.Flags().GetString("claude-dir")
 
-	if err := addMcpServersInternal(configFlag, claudeDirFlag); err != nil {
+	homeDir := claudeDirFlag
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			log.Fatalf("failed to get home directory: %v", err)
+		}
+	}
+
+	if err := startup.SetupMCPServers(homeDir, configFlag); err != nil {
 		log.Fatalf("failed to add MCP servers: %v", err)
 	}
-}
-
-func addMcpServersInternal(configFlag, claudeDirFlag string) error {
-	// Get Claude directory
-	claudeDir := claudeDirFlag
-	if claudeDir == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
-		}
-		claudeDir = filepath.Join(homeDir, ".claude")
-	}
-
-	if configFlag == "" {
-		return fmt.Errorf("config flag is required")
-	}
-
-	// Decode base64 configuration
-	configJson, err := decodeBase64(configFlag)
-	if err != nil {
-		return fmt.Errorf("failed to decode base64 config: %w", err)
-	}
-
-	// Parse MCP server configurations
-	var mcpConfigs []MCPServerConfig
-	if err := json.Unmarshal([]byte(configJson), &mcpConfigs); err != nil {
-		return fmt.Errorf("failed to parse MCP configuration: %w", err)
-	}
-
-	log.Printf("Adding %d MCP servers to Claude configuration", len(mcpConfigs))
-
-	// Add each MCP server using claude command
-	for _, mcpConfig := range mcpConfigs {
-		if err := addMcpServer(claudeDir, mcpConfig); err != nil {
-			log.Printf("Warning: Failed to add MCP server %s: %v", mcpConfig.Name, err)
-			// Continue with other servers even if one fails
-		} else {
-			log.Printf("Successfully added MCP server: %s", mcpConfig.Name)
-		}
-	}
-
-	return nil
-}
-
-func decodeBase64(encoded string) (string, error) {
-	// Try base64 decoding first
-	decodedBase64, err := base64.StdEncoding.DecodeString(encoded)
-	if err == nil {
-		return string(decodedBase64), nil
-	}
-
-	// Try hex decoding if base64 fails
-	decoded, err2 := hex.DecodeString(encoded)
-	if err2 != nil {
-		return "", fmt.Errorf("failed to decode as both base64 and hex: base64 error: %v, hex error: %v", err, err2)
-	}
-	return string(decoded), nil
-}
-
-func addMcpServer(claudeDir string, mcpConfig MCPServerConfig) error {
-	// Build claude mcp add command
-	args := []string{"mcp", "add", mcpConfig.Name}
-
-	// Add command and args for stdio transport
-	if mcpConfig.Transport == "stdio" && mcpConfig.Command != "" {
-		args = append(args, mcpConfig.Command)
-		if len(mcpConfig.Args) > 0 {
-			args = append(args, mcpConfig.Args...)
-		}
-	}
-
-	// Set environment variables
-	env := os.Environ()
-
-	// Add custom environment variables from MCP config
-	for key, value := range mcpConfig.Env {
-		env = append(env, fmt.Sprintf("%s=%s", key, value))
-	}
-
-	// Execute claude command
-	claudeCmd := exec.Command("claude", args...)
-	claudeCmd.Env = env
-	claudeCmd.Dir = claudeDir
-
-	output, err := claudeCmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("claude command failed: %w, output: %s", err, string(output))
-	}
-
-	log.Printf("Claude mcp add output for %s: %s", mcpConfig.Name, string(output))
-	return nil
 }
 
 // runSetupGH runs the setup-gh command
@@ -537,7 +366,7 @@ func runSetupGH(cmd *cobra.Command, args []string) error {
 
 	// If no repo specified, try to auto-detect from git remote
 	if repo == "" {
-		if autoRepo := getGitHubRepoFullName(); autoRepo != "" {
+		if autoRepo := github.GetRepositoryFromGitRemote(); autoRepo != "" {
 			repo = autoRepo
 			fmt.Printf("Auto-detected repository: %s\n", repo)
 		}
@@ -577,114 +406,6 @@ func setGitHubEnvFromFlags() error {
 	}
 
 	return nil
-}
-
-// getGitHubRepoFullName extracts repository full name from git remote
-func getGitHubRepoFullName() string {
-	// Try to get the current working directory first
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Printf("Failed to get current working directory: %v", err)
-		return ""
-	}
-
-	// Use git to get the remote origin URL
-	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = cwd
-	output, err := cmd.Output()
-	if err != nil {
-		log.Printf("Failed to get git remote origin URL: %v", err)
-		return ""
-	}
-
-	remoteURL := strings.TrimSpace(string(output))
-	log.Printf("Git remote origin URL: %s", remoteURL)
-
-	repoFullName := extractRepoFullNameFromURL(remoteURL)
-	if repoFullName != "" {
-		log.Printf("Extracted repository full name: %s", repoFullName)
-	} else {
-		log.Printf("Failed to extract repository full name from URL: %s", remoteURL)
-	}
-
-	return repoFullName
-}
-
-// extractRepoFullNameFromURL extracts owner/repo from various Git URL formats
-func extractRepoFullNameFromURL(url string) string {
-	// Handle SSH URLs: git@hostname:owner/repo.git
-	if strings.Contains(url, "@") && strings.Contains(url, ":") && !strings.Contains(url, "://") {
-		// SSH format: git@hostname:owner/repo.git
-		parts := strings.Split(url, ":")
-		if len(parts) >= 2 {
-			path := strings.Join(parts[1:], ":")
-			path = strings.TrimSuffix(path, ".git")
-			return path
-		}
-	}
-
-	// Handle HTTPS URLs: https://hostname/owner/repo.git
-	if strings.HasPrefix(url, "https://") {
-		// Remove https:// prefix
-		withoutProtocol := strings.TrimPrefix(url, "https://")
-
-		// Handle URLs with authentication token: token@hostname/owner/repo.git
-		if strings.Contains(withoutProtocol, "@") {
-			parts := strings.Split(withoutProtocol, "@")
-			if len(parts) >= 2 {
-				withoutProtocol = strings.Join(parts[1:], "@")
-			}
-		}
-
-		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
-		pathParts := strings.Split(withoutProtocol, "/")
-		if len(pathParts) >= 3 {
-			// Join owner/repo parts
-			path := strings.Join(pathParts[1:], "/")
-			path = strings.TrimSuffix(path, ".git")
-			return path
-		}
-	}
-
-	// Handle HTTP URLs: http://hostname/owner/repo.git
-	if strings.HasPrefix(url, "http://") {
-		// Remove http:// prefix
-		withoutProtocol := strings.TrimPrefix(url, "http://")
-
-		// Handle URLs with authentication token: token@hostname/owner/repo.git
-		if strings.Contains(withoutProtocol, "@") {
-			parts := strings.Split(withoutProtocol, "@")
-			if len(parts) >= 2 {
-				withoutProtocol = strings.Join(parts[1:], "@")
-			}
-		}
-
-		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
-		pathParts := strings.Split(withoutProtocol, "/")
-		if len(pathParts) >= 3 {
-			// Join owner/repo parts
-			path := strings.Join(pathParts[1:], "/")
-			path = strings.TrimSuffix(path, ".git")
-			return path
-		}
-	}
-
-	// Handle git protocol URLs: git://hostname/owner/repo.git
-	if strings.HasPrefix(url, "git://") {
-		// Remove git:// prefix
-		withoutProtocol := strings.TrimPrefix(url, "git://")
-
-		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
-		pathParts := strings.Split(withoutProtocol, "/")
-		if len(pathParts) >= 3 {
-			// Join owner/repo parts
-			path := strings.Join(pathParts[1:], "/")
-			path = strings.TrimSuffix(path, ".git")
-			return path
-		}
-	}
-
-	return ""
 }
 
 var sendNotificationCmd = &cobra.Command{
@@ -734,34 +455,6 @@ var (
 	notifyConfigPath string
 )
 
-type NotificationSubscription struct {
-	ID                string            `json:"id"`
-	UserID            string            `json:"user_id"`
-	UserType          string            `json:"user_type"`
-	Username          string            `json:"username"`
-	Endpoint          string            `json:"endpoint"`
-	Keys              map[string]string `json:"keys"`
-	SessionIDs        []string          `json:"session_ids"`
-	NotificationTypes []string          `json:"notification_types"`
-	CreatedAt         time.Time         `json:"created_at"`
-	Active            bool              `json:"active"`
-}
-
-type NotificationHistory struct {
-	ID             string                 `json:"id"`
-	UserID         string                 `json:"user_id"`
-	SubscriptionID string                 `json:"subscription_id"`
-	Title          string                 `json:"title"`
-	Body           string                 `json:"body"`
-	Type           string                 `json:"type"`
-	SessionID      string                 `json:"session_id"`
-	Data           map[string]interface{} `json:"data"`
-	SentAt         time.Time              `json:"sent_at"`
-	Delivered      bool                   `json:"delivered"`
-	Clicked        bool                   `json:"clicked"`
-	ErrorMessage   *string                `json:"error_message"`
-}
-
 func runSendNotification(cmd *cobra.Command, args []string) error {
 	// Validate VAPID configuration
 	vapidPublicKey := os.Getenv("VAPID_PUBLIC_KEY")
@@ -777,8 +470,11 @@ func runSendNotification(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid urgency: %s. Must be one of: low, normal, high", notifyUrgency)
 	}
 
+	// Create CLI utilities instance
+	cliUtils := notification.NewCLIUtils()
+
 	// Get all subscriptions that match the criteria
-	subscriptions, err := getMatchingSubscriptions()
+	subscriptions, err := cliUtils.GetMatchingSubscriptions(notifyUserID, notifyUserType, notifyUsername, notifySessionID, notifyVerbose)
 	if err != nil {
 		return fmt.Errorf("failed to get subscriptions: %w", err)
 	}
@@ -805,7 +501,7 @@ func runSendNotification(cmd *cobra.Command, args []string) error {
 	}
 
 	// Send notifications
-	results, err := sendNotifications(subscriptions, vapidPublicKey, vapidPrivateKey, vapidContactEmail)
+	results, err := cliUtils.SendNotifications(subscriptions, notifyTitle, notifyBody, notifyURL, notifyIcon, notifyBadge, notifyTTL, notifyUrgency, vapidPublicKey, vapidPrivateKey, vapidContactEmail)
 	if err != nil {
 		return fmt.Errorf("failed to send notifications: %w", err)
 	}
@@ -831,284 +527,4 @@ func runSendNotification(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-type NotificationResult struct {
-	Subscription NotificationSubscription
-	Error        error
-}
-
-func getMatchingSubscriptions() ([]NotificationSubscription, error) {
-	var allSubscriptions []NotificationSubscription
-
-	// Get base directory for user data
-	baseDir := os.Getenv("USERHOME_BASEDIR")
-	if baseDir == "" {
-		homeDir := os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = "/home/agentapi"
-		}
-		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
-	}
-	baseDir = filepath.Join(baseDir, "myclaudes")
-
-	// Check if base directory exists
-	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
-		return allSubscriptions, nil
-	}
-
-	// Read all user directories
-	userDirs, err := os.ReadDir(baseDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read user directories: %w", err)
-	}
-
-	for _, userDir := range userDirs {
-		if !userDir.IsDir() {
-			continue
-		}
-
-		userID := userDir.Name()
-		subscriptions, err := getSubscriptionsForUser(userID)
-		if err != nil {
-			if notifyVerbose {
-				fmt.Printf("Warning: failed to read subscriptions for user %s: %v\n", userID, err)
-			}
-			continue
-		}
-
-		// Filter subscriptions based on criteria
-		for _, sub := range subscriptions {
-			if matchesFilter(sub) {
-				allSubscriptions = append(allSubscriptions, sub)
-			}
-		}
-	}
-
-	return allSubscriptions, nil
-}
-
-func getSubscriptionsForUser(userID string) ([]NotificationSubscription, error) {
-	// Get base directory for user data using same logic as SetupUserHome
-	baseDir := os.Getenv("USERHOME_BASEDIR")
-	if baseDir == "" {
-		homeDir := os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = "/home/agentapi"
-		}
-		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
-	}
-
-	subscriptionsFile := filepath.Join(baseDir, "myclaudes", userID, "notifications", "subscriptions.json")
-
-	if _, err := os.Stat(subscriptionsFile); os.IsNotExist(err) {
-		return []NotificationSubscription{}, nil
-	}
-
-	file, err := os.Open(subscriptionsFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open subscriptions file: %w", err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Printf("Warning: failed to close file: %v\n", err)
-		}
-	}()
-
-	var allSubscriptions []NotificationSubscription
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&allSubscriptions); err != nil {
-		// If decode fails, return empty slice
-		return []NotificationSubscription{}, nil
-	}
-
-	// Filter active subscriptions
-	var subscriptions []NotificationSubscription
-	for _, sub := range allSubscriptions {
-		if sub.Active {
-			subscriptions = append(subscriptions, sub)
-		}
-	}
-
-	return subscriptions, nil
-}
-
-func matchesFilter(sub NotificationSubscription) bool {
-	// If user-id is specified, it must match
-	if notifyUserID != "" && sub.UserID != notifyUserID {
-		return false
-	}
-
-	// If user-type is specified, it must match
-	if notifyUserType != "" && sub.UserType != notifyUserType {
-		return false
-	}
-
-	// If username is specified, it must match
-	if notifyUsername != "" && sub.Username != notifyUsername {
-		return false
-	}
-
-	// If session-id is specified, user must be subscribed to that session
-	if notifySessionID != "" {
-		// Empty session_ids means subscribed to all sessions
-		if len(sub.SessionIDs) == 0 {
-			return true
-		}
-		// Check if the specified session is in the user's session list
-		for _, sessionID := range sub.SessionIDs {
-			if sessionID == notifySessionID {
-				return true
-			}
-		}
-		return false
-	}
-
-	return true
-}
-
-func sendNotifications(subscriptions []NotificationSubscription, vapidPublicKey, vapidPrivateKey, vapidContactEmail string) ([]NotificationResult, error) {
-	var results []NotificationResult
-
-	for _, sub := range subscriptions {
-		result := NotificationResult{Subscription: sub}
-
-		// Create notification payload
-		payload := map[string]interface{}{
-			"title": notifyTitle,
-			"body":  notifyBody,
-			"icon":  notifyIcon,
-			"data": map[string]interface{}{
-				"url": notifyURL,
-			},
-		}
-
-		if notifyBadge != "" {
-			payload["badge"] = notifyBadge
-		}
-
-		payloadBytes, err := json.Marshal(payload)
-		if err != nil {
-			result.Error = fmt.Errorf("failed to marshal payload: %w", err)
-			results = append(results, result)
-			continue
-		}
-
-		// Create webpush subscription
-		webpushSub := &webpush.Subscription{
-			Endpoint: sub.Endpoint,
-			Keys: webpush.Keys{
-				P256dh: sub.Keys["p256dh"],
-				Auth:   sub.Keys["auth"],
-			},
-		}
-
-		// Create webpush options
-		options := &webpush.Options{
-			Subscriber:      vapidContactEmail,
-			VAPIDPublicKey:  vapidPublicKey,
-			VAPIDPrivateKey: vapidPrivateKey,
-			TTL:             notifyTTL,
-		}
-
-		switch notifyUrgency {
-		case "low":
-			options.Urgency = webpush.UrgencyLow
-		case "high":
-			options.Urgency = webpush.UrgencyHigh
-		default:
-			options.Urgency = webpush.UrgencyNormal
-		}
-
-		// Send notification
-		resp, err := webpush.SendNotification(payloadBytes, webpushSub, options)
-		if err != nil {
-			result.Error = fmt.Errorf("failed to send notification: %w", err)
-		} else if resp.StatusCode >= 400 {
-			result.Error = fmt.Errorf("notification rejected with status %d", resp.StatusCode)
-		}
-
-		if resp != nil {
-			if err := resp.Body.Close(); err != nil && notifyVerbose {
-				fmt.Printf("Warning: failed to close response body: %v\n", err)
-			}
-		}
-
-		results = append(results, result)
-
-		// Save to history
-		if err := saveNotificationHistory(sub, result.Error == nil, result.Error); err != nil && notifyVerbose {
-			fmt.Printf("Warning: failed to save notification history: %v\n", err)
-		}
-	}
-
-	return results, nil
-}
-
-func saveNotificationHistory(sub NotificationSubscription, delivered bool, sendError error) error {
-	// Get base directory for user data using same logic as SetupUserHome
-	baseDir := os.Getenv("USERHOME_BASEDIR")
-	if baseDir == "" {
-		homeDir := os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = "/home/agentapi"
-		}
-		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
-	}
-
-	historyFile := filepath.Join(baseDir, "myclaudes", sub.UserID, "notifications", "history.jsonl")
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(historyFile), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	history := NotificationHistory{
-		ID:             generateNotificationID(),
-		UserID:         sub.UserID,
-		SubscriptionID: sub.ID,
-		Title:          notifyTitle,
-		Body:           notifyBody,
-		Type:           "manual", // Sent via command line
-		SessionID:      notifySessionID,
-		Data: map[string]interface{}{
-			"url":     notifyURL,
-			"icon":    notifyIcon,
-			"badge":   notifyBadge,
-			"ttl":     notifyTTL,
-			"urgency": notifyUrgency,
-		},
-		SentAt:    time.Now(),
-		Delivered: delivered,
-		Clicked:   false, // Will be updated when clicked
-	}
-
-	if sendError != nil {
-		errorMsg := sendError.Error()
-		history.ErrorMessage = &errorMsg
-	}
-
-	// Append to history file
-	file, err := os.OpenFile(historyFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open history file: %w", err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Printf("Warning: failed to close history file: %v\n", err)
-		}
-	}()
-
-	encoder := json.NewEncoder(file)
-	return encoder.Encode(history)
-}
-
-func generateNotificationID() string {
-	// Generate a simple notification ID based on timestamp and random bytes
-	randomBytes := make([]byte, 4)
-	if _, err := rand.Read(randomBytes); err != nil {
-		// Fallback to timestamp-only ID if random generation fails
-		return fmt.Sprintf("notif_%d", time.Now().Unix())
-	}
-	return fmt.Sprintf("notif_%d_%x", time.Now().Unix(), randomBytes)
 }

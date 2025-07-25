@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // Client represents an agentapi-proxy client
@@ -22,7 +24,7 @@ type Client struct {
 func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: utils.NewDefaultHTTPClient(),
 	}
 }
 

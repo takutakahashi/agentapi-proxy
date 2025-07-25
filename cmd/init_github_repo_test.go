@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/go-github/v57/github"
+	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
 
 func TestGenerateInstallationToken(t *testing.T) {
@@ -197,7 +198,7 @@ func TestCreateAuthenticatedURL(t *testing.T) {
 				_ = os.Unsetenv("GITHUB_URL")
 			}
 
-			result, err := createAuthenticatedURL(tt.repoURL, tt.token)
+			result, err := github_pkg.CreateAuthenticatedURL(tt.repoURL, tt.token)
 
 			if tt.expectError {
 				if err == nil {
