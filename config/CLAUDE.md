@@ -28,6 +28,43 @@ agentapi-proxy helpers setup-gh
 
 このコマンドは自動的に現在のリポジトリの情報を `git config --get remote.origin.url` から取得し、適切な GitHub 認証を設定します。
 
+#### 必要な環境変数
+
+setup-gh コマンドを実行するには、以下のいずれかの認証方法を設定する必要があります：
+
+**パターン1: GitHub Personal Access Token を使用**
+```bash
+export GITHUB_TOKEN=your_personal_access_token
+# または
+export GITHUB_PERSONAL_ACCESS_TOKEN=your_personal_access_token
+```
+
+**パターン2: GitHub App を使用**
+```bash
+export GITHUB_APP_ID=your_app_id
+export GITHUB_APP_PEM_PATH=/path/to/private-key.pem
+# または GITHUB_APP_PEM でキーの内容を直接指定
+export GITHUB_APP_PEM="-----BEGIN RSA PRIVATE KEY-----\n..."
+
+# Installation ID は自動検出されますが、手動指定も可能
+export GITHUB_INSTALLATION_ID=your_installation_id
+
+# GitHub Enterprise を使用する場合
+export GITHUB_API=https://your-github-enterprise.com/api/v3
+```
+
+**認証情報の確認**
+認証情報が正しく設定されているかは、以下のコマンドで確認できます：
+```bash
+# トークンが設定されているかチェック
+echo $GITHUB_TOKEN
+echo $GITHUB_PERSONAL_ACCESS_TOKEN
+
+# GitHub App の設定をチェック
+echo $GITHUB_APP_ID
+echo $GITHUB_APP_PEM_PATH
+```
+
 ### ユーザーへの通知
 
 **作業完了後は必ずユーザーに通知を送信してください。**

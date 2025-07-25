@@ -79,18 +79,37 @@ This command provides complete GitHub authentication setup including:
 - GitHub Enterprise Server support
 - Automatic installation ID discovery
 - gh CLI authentication and git setup
+- Automatic repository detection from git remote
 
-Environment variables supported:
-- GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN: Personal access token
-- GITHUB_APP_ID: GitHub App ID for app authentication
+AUTHENTICATION METHODS (one of the following is required):
+
+Method 1: Personal Access Token
+- GITHUB_TOKEN: GitHub personal access token
+- GITHUB_PERSONAL_ACCESS_TOKEN: Alternative env var for personal access token
+
+Method 2: GitHub App Authentication
+- GITHUB_APP_ID: GitHub App ID (required)
+- GITHUB_APP_PEM_PATH: Path to GitHub App private key file (required)
+- GITHUB_APP_PEM: GitHub App private key content (alternative to file path)
 - GITHUB_INSTALLATION_ID: Installation ID (optional, auto-discovered if not provided)
-- GITHUB_APP_PEM_PATH: Path to GitHub App private key file
-- GITHUB_APP_PEM: GitHub App private key content (alternative to file)
+
+Optional settings:
 - GITHUB_API: GitHub API URL for Enterprise Server (e.g., https://github.enterprise.com/api/v3)
-- GITHUB_REPO_FULLNAME: Repository full name for installation ID discovery
+- GITHUB_REPO_FULLNAME: Repository full name for installation ID discovery (auto-detected from git remote if not provided)
 
 Usage:
-  agentapi-proxy helpers setup-gh --repo-fullname owner/repo`,
+  agentapi-proxy helpers setup-gh                    # Auto-detect repository from git remote
+  agentapi-proxy helpers setup-gh --repo-fullname owner/repo
+  
+Examples:
+  # Using personal access token
+  export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+  agentapi-proxy helpers setup-gh
+  
+  # Using GitHub App
+  export GITHUB_APP_ID=123456
+  export GITHUB_APP_PEM_PATH=/path/to/private-key.pem
+  agentapi-proxy helpers setup-gh`,
 	RunE: runSetupGH,
 }
 
