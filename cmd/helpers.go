@@ -79,18 +79,37 @@ This command provides complete GitHub authentication setup including:
 - GitHub Enterprise Server support
 - Automatic installation ID discovery
 - gh CLI authentication and git setup
+- Automatic repository detection from git remote
 
-Environment variables supported:
-- GITHUB_TOKEN or GITHUB_PERSONAL_ACCESS_TOKEN: Personal access token
-- GITHUB_APP_ID: GitHub App ID for app authentication
+AUTHENTICATION METHODS (one of the following is required):
+
+Method 1: Personal Access Token
+- GITHUB_TOKEN: GitHub personal access token
+- GITHUB_PERSONAL_ACCESS_TOKEN: Alternative env var for personal access token
+
+Method 2: GitHub App Authentication
+- GITHUB_APP_ID: GitHub App ID (required)
+- GITHUB_APP_PEM_PATH: Path to GitHub App private key file (required)
+- GITHUB_APP_PEM: GitHub App private key content (alternative to file path)
 - GITHUB_INSTALLATION_ID: Installation ID (optional, auto-discovered if not provided)
-- GITHUB_APP_PEM_PATH: Path to GitHub App private key file
-- GITHUB_APP_PEM: GitHub App private key content (alternative to file)
+
+Optional settings:
 - GITHUB_API: GitHub API URL for Enterprise Server (e.g., https://github.enterprise.com/api/v3)
-- GITHUB_REPO_FULLNAME: Repository full name for installation ID discovery
+- GITHUB_REPO_FULLNAME: Repository full name for installation ID discovery (auto-detected from git remote if not provided)
 
 Usage:
-  agentapi-proxy helpers setup-gh --repo-fullname owner/repo`,
+  agentapi-proxy helpers setup-gh                    # Auto-detect repository from git remote
+  agentapi-proxy helpers setup-gh --repo-fullname owner/repo
+  
+Examples:
+  # Using personal access token
+  export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+  agentapi-proxy helpers setup-gh
+  
+  # Using GitHub App
+  export GITHUB_APP_ID=123456
+  export GITHUB_APP_PEM_PATH=/path/to/private-key.pem
+  agentapi-proxy helpers setup-gh`,
 	RunE: runSetupGH,
 }
 
@@ -565,6 +584,7 @@ func getGitHubRepoFullName() string {
 	// Try to get the current working directory first
 	cwd, err := os.Getwd()
 	if err != nil {
+		log.Printf("Failed to get current working directory: %v", err)
 		return ""
 	}
 
@@ -573,34 +593,95 @@ func getGitHubRepoFullName() string {
 	cmd.Dir = cwd
 	output, err := cmd.Output()
 	if err != nil {
+		log.Printf("Failed to get git remote origin URL: %v", err)
 		return ""
 	}
 
 	remoteURL := strings.TrimSpace(string(output))
-	return extractRepoFullNameFromURL(remoteURL)
+	log.Printf("Git remote origin URL: %s", remoteURL)
+
+	repoFullName := extractRepoFullNameFromURL(remoteURL)
+	if repoFullName != "" {
+		log.Printf("Extracted repository full name: %s", repoFullName)
+	} else {
+		log.Printf("Failed to extract repository full name from URL: %s", remoteURL)
+	}
+
+	return repoFullName
 }
 
 // extractRepoFullNameFromURL extracts owner/repo from various Git URL formats
 func extractRepoFullNameFromURL(url string) string {
-	// Handle SSH URLs: git@github.com:owner/repo.git
-	if strings.HasPrefix(url, "git@github.com:") {
-		path := strings.TrimPrefix(url, "git@github.com:")
-		path = strings.TrimSuffix(path, ".git")
-		return path
+	// Handle SSH URLs: git@hostname:owner/repo.git
+	if strings.Contains(url, "@") && strings.Contains(url, ":") && !strings.Contains(url, "://") {
+		// SSH format: git@hostname:owner/repo.git
+		parts := strings.Split(url, ":")
+		if len(parts) >= 2 {
+			path := strings.Join(parts[1:], ":")
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
 	}
 
-	// Handle HTTPS URLs: https://github.com/owner/repo.git
-	if strings.HasPrefix(url, "https://github.com/") {
-		path := strings.TrimPrefix(url, "https://github.com/")
-		path = strings.TrimSuffix(path, ".git")
-		return path
+	// Handle HTTPS URLs: https://hostname/owner/repo.git
+	if strings.HasPrefix(url, "https://") {
+		// Remove https:// prefix
+		withoutProtocol := strings.TrimPrefix(url, "https://")
+
+		// Handle URLs with authentication token: token@hostname/owner/repo.git
+		if strings.Contains(withoutProtocol, "@") {
+			parts := strings.Split(withoutProtocol, "@")
+			if len(parts) >= 2 {
+				withoutProtocol = strings.Join(parts[1:], "@")
+			}
+		}
+
+		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
+		pathParts := strings.Split(withoutProtocol, "/")
+		if len(pathParts) >= 3 {
+			// Join owner/repo parts
+			path := strings.Join(pathParts[1:], "/")
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
 	}
 
-	// Handle git protocol URLs: git://github.com/owner/repo.git
-	if strings.HasPrefix(url, "git://github.com/") {
-		path := strings.TrimPrefix(url, "git://github.com/")
-		path = strings.TrimSuffix(path, ".git")
-		return path
+	// Handle HTTP URLs: http://hostname/owner/repo.git
+	if strings.HasPrefix(url, "http://") {
+		// Remove http:// prefix
+		withoutProtocol := strings.TrimPrefix(url, "http://")
+
+		// Handle URLs with authentication token: token@hostname/owner/repo.git
+		if strings.Contains(withoutProtocol, "@") {
+			parts := strings.Split(withoutProtocol, "@")
+			if len(parts) >= 2 {
+				withoutProtocol = strings.Join(parts[1:], "@")
+			}
+		}
+
+		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
+		pathParts := strings.Split(withoutProtocol, "/")
+		if len(pathParts) >= 3 {
+			// Join owner/repo parts
+			path := strings.Join(pathParts[1:], "/")
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
+	}
+
+	// Handle git protocol URLs: git://hostname/owner/repo.git
+	if strings.HasPrefix(url, "git://") {
+		// Remove git:// prefix
+		withoutProtocol := strings.TrimPrefix(url, "git://")
+
+		// Extract path after hostname: hostname/owner/repo.git -> owner/repo.git
+		pathParts := strings.Split(withoutProtocol, "/")
+		if len(pathParts) >= 3 {
+			// Join owner/repo parts
+			path := strings.Join(pathParts[1:], "/")
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
 	}
 
 	return ""
