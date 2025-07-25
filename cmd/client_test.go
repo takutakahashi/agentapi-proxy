@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/takutakahashi/agentapi-proxy/pkg/client"
 )
 
 func TestClientCmd(t *testing.T) {
@@ -77,7 +78,7 @@ func TestEventsCmd(t *testing.T) {
 }
 
 func TestMessageStruct(t *testing.T) {
-	msg := Message{
+	msg := client.Message{
 		Content: "test message",
 		Type:    "text",
 	}
@@ -85,7 +86,7 @@ func TestMessageStruct(t *testing.T) {
 	data, err := json.Marshal(msg)
 	assert.NoError(t, err)
 
-	var unmarshaled Message
+	var unmarshaled client.Message
 	err = json.Unmarshal(data, &unmarshaled)
 	assert.NoError(t, err)
 
@@ -95,17 +96,19 @@ func TestMessageStruct(t *testing.T) {
 
 func TestMessageResponseStruct(t *testing.T) {
 	now := time.Now()
-	resp := MessageResponse{
-		ID:        "test-id",
-		Role:      "assistant",
-		Content:   "test response",
-		Timestamp: now,
+	resp := client.MessageResponse{
+		Message: client.Message{
+			ID:        "test-id",
+			Role:      "assistant",
+			Content:   "test response",
+			Timestamp: now,
+		},
 	}
 
 	data, err := json.Marshal(resp)
 	assert.NoError(t, err)
 
-	var unmarshaled MessageResponse
+	var unmarshaled client.MessageResponse
 	err = json.Unmarshal(data, &unmarshaled)
 	assert.NoError(t, err)
 
@@ -117,14 +120,14 @@ func TestMessageResponseStruct(t *testing.T) {
 }
 
 func TestStatusResponseStruct(t *testing.T) {
-	status := StatusResponse{
+	status := client.StatusResponse{
 		Status: "active",
 	}
 
 	data, err := json.Marshal(status)
 	assert.NoError(t, err)
 
-	var unmarshaled StatusResponse
+	var unmarshaled client.StatusResponse
 	err = json.Unmarshal(data, &unmarshaled)
 	assert.NoError(t, err)
 
@@ -144,7 +147,7 @@ func TestRunSendWithArgument(t *testing.T) {
 			return
 		}
 
-		var msg Message
+		var msg client.Message
 		err := json.NewDecoder(r.Body).Decode(&msg)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -152,11 +155,13 @@ func TestRunSendWithArgument(t *testing.T) {
 		}
 
 		// Return a mock response
-		response := MessageResponse{
-			ID:        "test-id",
-			Role:      "assistant",
-			Content:   fmt.Sprintf("Response to: %s", msg.Content),
-			Timestamp: time.Now(),
+		response := client.MessageResponse{
+			Message: client.Message{
+				ID:        "test-id",
+				Role:      "assistant",
+				Content:   fmt.Sprintf("Response to: %s", msg.Content),
+				Timestamp: time.Now(),
+			},
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -201,7 +206,7 @@ func TestRunHistoryWithMockServer(t *testing.T) {
 			return
 		}
 
-		messages := []MessageResponse{
+		messages := []client.Message{
 			{
 				ID:        "msg-1",
 				Role:      "user",
@@ -261,7 +266,7 @@ func TestRunStatusWithMockServer(t *testing.T) {
 			return
 		}
 
-		status := StatusResponse{
+		status := client.StatusResponse{
 			Status: "active",
 		}
 
@@ -412,11 +417,13 @@ func TestClientCommandsWithEmptySessionID(t *testing.T) {
 func TestRunSendInteractiveMode(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := MessageResponse{
-			ID:        "test-id",
-			Role:      "assistant",
-			Content:   "Interactive response",
-			Timestamp: time.Now(),
+		response := client.MessageResponse{
+			Message: client.Message{
+				ID:        "test-id",
+				Role:      "assistant",
+				Content:   "Interactive response",
+				Timestamp: time.Now(),
+			},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
