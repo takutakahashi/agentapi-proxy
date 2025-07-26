@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
@@ -75,7 +76,7 @@ func (h *AuthInfoHandlers) GetAuthTypes(c echo.Context) error {
 }
 
 func (h *AuthInfoHandlers) GetAuthStatus(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+	user := auth.GetInternalUserFromContext(c)
 
 	if user == nil {
 		return c.JSON(http.StatusOK, AuthStatusResponse{
@@ -83,16 +84,35 @@ func (h *AuthInfoHandlers) GetAuthStatus(c echo.Context) error {
 		})
 	}
 
-	response := AuthStatusResponse{
-		Authenticated: true,
-		AuthType:      user.AuthType,
-		UserID:        user.UserID,
-		Role:          user.Role,
-		Permissions:   user.Permissions,
+	// Convert roles and permissions to strings
+	var role string
+	if len(user.Roles()) > 0 {
+		role = string(user.Roles()[0])
+	} else {
+		role = "user"
 	}
 
-	if user.GitHubUser != nil {
-		response.GitHubUser = user.GitHubUser
+	permissions := make([]string, len(user.Permissions()))
+	for i, perm := range user.Permissions() {
+		permissions[i] = string(perm)
+	}
+
+	response := AuthStatusResponse{
+		Authenticated: true,
+		AuthType:      string(user.UserType()),
+		UserID:        string(user.ID()),
+		Role:          role,
+		Permissions:   permissions,
+	}
+
+	if user.UserType() == entities.UserTypeGitHub && user.GitHubInfo() != nil {
+		githubInfo := user.GitHubInfo()
+		response.GitHubUser = &auth.GitHubUserInfo{
+			Login: githubInfo.Login(),
+			ID:    githubInfo.ID(),
+			Name:  githubInfo.Name(),
+			Email: githubInfo.Email(),
+		}
 	}
 
 	return c.JSON(http.StatusOK, response)

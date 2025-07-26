@@ -23,7 +23,7 @@ func NewNotificationHandlers(service *notification.Service) *NotificationHandler
 
 // Subscribe handles POST /notification/subscribe
 func (h *NotificationHandlers) Subscribe(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+	user := auth.GetInternalUserFromContext(c)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
@@ -44,8 +44,11 @@ func (h *NotificationHandlers) Subscribe(c echo.Context) error {
 	// Extract device information from request
 	deviceInfo := notification.ExtractDeviceInfo(c.Request())
 
+	// Convert internal user to legacy format for notification service
+	legacyUser := auth.ConvertInternalUserToUserContext(user)
+
 	// Create subscription
-	sub, err := h.service.Subscribe(user, req.Endpoint, req.Keys, deviceInfo)
+	sub, err := h.service.Subscribe(legacyUser, req.Endpoint, req.Keys, deviceInfo)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create subscription")
 	}
@@ -58,12 +61,12 @@ func (h *NotificationHandlers) Subscribe(c echo.Context) error {
 
 // GetSubscriptions handles GET /notification/subscribe
 func (h *NotificationHandlers) GetSubscriptions(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+	user := auth.GetInternalUserFromContext(c)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	subscriptions, err := h.service.GetSubscriptions(user.UserID)
+	subscriptions, err := h.service.GetSubscriptions(string(user.ID()))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get subscriptions")
 	}
@@ -73,7 +76,7 @@ func (h *NotificationHandlers) GetSubscriptions(c echo.Context) error {
 
 // DeleteSubscription handles DELETE /notification/subscribe
 func (h *NotificationHandlers) DeleteSubscription(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+	user := auth.GetInternalUserFromContext(c)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
@@ -87,7 +90,7 @@ func (h *NotificationHandlers) DeleteSubscription(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Endpoint is required")
 	}
 
-	err := h.service.DeleteSubscription(user.UserID, req.Endpoint)
+	err := h.service.DeleteSubscription(string(user.ID()), req.Endpoint)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Subscription not found")
 	}
@@ -127,7 +130,7 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 
 // GetHistory handles GET /notifications/history
 func (h *NotificationHandlers) GetHistory(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+	user := auth.GetInternalUserFromContext(c)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
@@ -158,7 +161,7 @@ func (h *NotificationHandlers) GetHistory(c echo.Context) error {
 	}
 
 	// Get history
-	history, err := h.service.GetNotificationHistory(user.UserID, limit, offset, filters)
+	history, err := h.service.GetNotificationHistory(string(user.ID()), limit, offset, filters)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get notification history")
 	}
