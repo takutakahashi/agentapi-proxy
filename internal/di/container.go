@@ -194,25 +194,27 @@ func (c *Container) initControllers() {
 		c.SessionPresenter,
 	)
 
-	// TODO: Initialize controllers when all use cases are implemented
-	// c.AuthController = controllers.NewAuthController(
-	//	c.AuthenticateUserUC,
-	//	c.ValidateAPIKeyUC,
-	//	c.GitHubAuthenticateUC,
-	//	c.ValidatePermissionUC,
-	//	c.AuthPresenter,
-	// )
+	// Initialize AuthController with available use cases (others are nil for now)
+	c.AuthController = controllers.NewAuthController(
+		c.AuthenticateUserUC,
+		nil, // ValidateAPIKeyUC - TODO: implement when needed
+		nil, // GitHubAuthenticateUC - TODO: implement when needed
+		nil, // ValidatePermissionUC - TODO: implement when needed
+		c.AuthPresenter,
+	)
 
-	// c.NotificationController = controllers.NewNotificationController(
-	//	c.SendNotificationUC,
-	//	c.ManageSubscriptionUC,
-	//	c.NotificationPresenter,
-	// )
+	// Initialize NotificationController with available use cases
+	c.NotificationController = controllers.NewNotificationController(
+		c.SendNotificationUC,
+		c.ManageSubscriptionUC,
+		c.NotificationPresenter,
+	)
 
-	// c.AuthMiddleware = controllers.NewAuthMiddleware(
-	//	c.ValidateAPIKeyUC,
-	//	c.AuthPresenter,
-	// )
+	// Initialize AuthMiddleware with available use cases
+	c.AuthMiddleware = controllers.NewAuthMiddleware(
+		nil, // ValidateAPIKeyUC - TODO: implement when needed
+		c.AuthPresenter,
+	)
 }
 
 // seedData seeds initial data for development and testing
