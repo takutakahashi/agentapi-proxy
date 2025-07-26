@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -17,6 +18,7 @@ import (
 // LocalAgentService implements AgentService for local process management
 type LocalAgentService struct {
 	processes map[int]*LocalProcess
+	mu        sync.RWMutex // Mutex to protect against concurrent port allocation
 }
 
 // LocalProcess represents a local process
@@ -152,6 +154,10 @@ func (s *LocalAgentService) IsPortAvailable(ctx context.Context, port entities.P
 
 // GetAvailablePort finds an available port within a range
 func (s *LocalAgentService) GetAvailablePort(ctx context.Context, startPort, endPort entities.Port) (entities.Port, error) {
+	// Use a mutex to prevent race conditions in concurrent port allocation
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	for port := startPort; port <= endPort; port++ {
 		available, err := s.IsPortAvailable(ctx, port)
 		if err != nil {

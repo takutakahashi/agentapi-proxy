@@ -7,6 +7,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+	"time"
 )
 
 // CreateSessionUseCase handles the creation of new sessions
@@ -209,8 +210,7 @@ func (uc *CreateSessionUseCase) generateSessionID() entities.SessionID {
 	return entities.SessionID(fmt.Sprintf("session_%d", getCurrentTimestamp()))
 }
 
-// getCurrentTimestamp returns current timestamp in milliseconds
+// getCurrentTimestamp returns current timestamp in nanoseconds for unique IDs
 func getCurrentTimestamp() int64 {
-	// This is a placeholder - in real implementation use time.Now().UnixNano()
-	return 1640995200000 // 2022-01-01 00:00:00 UTC
+	return time.Now().UnixNano()
 }
