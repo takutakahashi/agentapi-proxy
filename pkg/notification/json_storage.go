@@ -179,9 +179,9 @@ func (s *JSONStorage) mergeNotificationTypes(existing, new []string) []string {
 // GetSubscriptions returns all active subscriptions for a user with improved deduplication
 func (s *JSONStorage) GetSubscriptions(userID string) ([]Subscription, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	subscriptions, err := s.loadSubscriptions(userID)
+	s.mu.RUnlock()
+	
 	if err != nil {
 		return nil, err
 	}
@@ -194,11 +194,12 @@ func (s *JSONStorage) GetSubscriptions(userID string) ([]Subscription, error) {
 	// Filter and deduplicate by endpoint, keeping the most recently updated
 	var activeSubscriptions []Subscription
 	seenEndpoints := make(map[string]bool)
+	now := time.Now()
 
 	for _, sub := range subscriptions {
 		if sub.Active && !seenEndpoints[sub.Endpoint] {
 			// Update LastUsed timestamp
-			sub.LastUsed = time.Now()
+			sub.LastUsed = now
 			activeSubscriptions = append(activeSubscriptions, sub)
 			seenEndpoints[sub.Endpoint] = true
 		}
@@ -208,12 +209,22 @@ func (s *JSONStorage) GetSubscriptions(userID string) ([]Subscription, error) {
 	go func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		for i, sub := range subscriptions {
-			if sub.Active && seenEndpoints[sub.Endpoint] {
-				subscriptions[i].LastUsed = time.Now()
+		
+		// Re-load subscriptions to avoid stale data
+		currentSubs, err := s.loadSubscriptions(userID)
+		if err != nil {
+			fmt.Printf("Warning: failed to load subscriptions for update: %v\n", err)
+			return
+		}
+		
+		// Update last used timestamps
+		for i := range currentSubs {
+			if currentSubs[i].Active && seenEndpoints[currentSubs[i].Endpoint] {
+				currentSubs[i].LastUsed = now
 			}
 		}
-		if err := s.saveSubscriptions(userID, subscriptions); err != nil {
+		
+		if err := s.saveSubscriptions(userID, currentSubs); err != nil {
 			fmt.Printf("Warning: failed to update last used timestamps: %v\n", err)
 		}
 	}()
@@ -223,9 +234,6 @@ func (s *JSONStorage) GetSubscriptions(userID string) ([]Subscription, error) {
 
 // GetAllSubscriptions returns all active subscriptions from all users
 func (s *JSONStorage) GetAllSubscriptions() ([]Subscription, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	var allSubscriptions []Subscription
 
 	baseDir := filepath.Join(s.baseDir, "myclaudes")
@@ -243,6 +251,7 @@ func (s *JSONStorage) GetAllSubscriptions() ([]Subscription, error) {
 		}
 
 		userID := userDir.Name()
+		// Call GetSubscriptions without holding a lock since GetSubscriptions manages its own locking
 		subscriptions, err := s.GetSubscriptions(userID)
 		if err != nil {
 			continue // Skip users with errors
