@@ -153,28 +153,6 @@ func GetConfigFromContext(c echo.Context) *config.Config {
 	return nil
 }
 
-// tryGitHubAuth attempts GitHub OAuth authentication
-func tryGitHubAuth(c echo.Context, cfg *config.GitHubAuthConfig, provider *GitHubAuthProvider) (*UserContext, error) {
-	tokenHeader := c.Request().Header.Get(cfg.TokenHeader)
-	if tokenHeader == "" {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub token required")
-	}
-
-	token := ExtractTokenFromHeader(tokenHeader)
-	if token == "" {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid GitHub token format")
-	}
-
-	ctx := context.WithValue(c.Request().Context(), echoContextKey, c)
-
-	userCtx, err := provider.Authenticate(ctx, token)
-	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub authentication failed")
-	}
-
-	return userCtx, nil
-}
-
 // tryGitHubAuthWithCleanArchitecture uses Clean Architecture for GitHub authentication
 func tryGitHubAuthWithCleanArchitecture(c echo.Context, cfg *config.GitHubAuthConfig, provider *GitHubAuthProvider, container *di.Container) (*UserContext, error) {
 	tokenHeader := c.Request().Header.Get(cfg.TokenHeader)
@@ -235,39 +213,6 @@ func tryStaticAuthWithCleanArchitecture(c echo.Context, staticCfg *config.Static
 	}
 
 	return userCtx, nil
-}
-
-// tryStaticAuth attempts static API key authentication
-func tryStaticAuth(c echo.Context, staticCfg *config.StaticAuthConfig, cfg *config.Config) (*UserContext, error) {
-	var apiKey string
-
-	// First, try to get API key from the configured custom header
-	apiKey = c.Request().Header.Get(staticCfg.HeaderName)
-
-	// If not found in custom header, try to extract from Authorization header (Bearer token)
-	if apiKey == "" {
-		authHeader := c.Request().Header.Get("Authorization")
-		if authHeader != "" {
-			apiKey = extractAPIKeyFromAuthHeader(authHeader)
-		}
-	}
-
-	if apiKey == "" {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "API key required")
-	}
-
-	keyInfo, valid := cfg.ValidateAPIKey(apiKey)
-	if !valid {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid API key")
-	}
-
-	return &UserContext{
-		UserID:      keyInfo.UserID,
-		Role:        keyInfo.Role,
-		Permissions: keyInfo.Permissions,
-		APIKey:      apiKey,
-		AuthType:    "api_key",
-	}, nil
 }
 
 // extractAPIKeyFromAuthHeader extracts API key from Authorization header

@@ -37,7 +37,7 @@ type Container struct {
 	MonitorSessionUC     *session.MonitorSessionUseCase
 	MonitorAllSessionsUC *session.MonitorAllSessionsUseCase
 
-	AuthenticateUserUC   *auth.AuthenticateUserUseCase
+	AuthenticateUserUC *auth.AuthenticateUserUseCase
 	// TODO: Add other auth use cases when implemented
 	// ValidateAPIKeyUC     *auth.ValidateAPIKeyUseCase
 	// GitHubAuthenticateUC *auth.GitHubAuthenticateUseCase
