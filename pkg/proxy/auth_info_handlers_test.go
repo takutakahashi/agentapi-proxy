@@ -155,7 +155,7 @@ func TestGetAuthStatus(t *testing.T) {
 					entities.UserTypeAPIKey,
 					"test-user",
 				)
-				user.SetRoles([]entities.Role{entities.RoleUser})
+				_ = user.SetRoles([]entities.Role{entities.RoleUser})
 				user.SetPermissions([]entities.Permission{entities.PermissionSessionCreate, entities.PermissionSessionRead})
 				return user
 			}(),
@@ -177,7 +177,7 @@ func TestGetAuthStatus(t *testing.T) {
 					"octocat@github.com",
 					githubInfo,
 				)
-				user.SetRoles([]entities.Role{entities.RoleAdmin})
+				_ = user.SetRoles([]entities.Role{entities.RoleAdmin})
 				user.SetPermissions([]entities.Permission{entities.PermissionAdmin})
 				return user
 			}(),
