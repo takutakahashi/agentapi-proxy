@@ -62,47 +62,6 @@ func (u *CLIUtils) GetMatchingSubscriptions(userID, userType, username, sessionI
 	return matchingSubscriptions, nil
 }
 
-// getSubscriptionsForUser is now deprecated as we use $HOME/notifications directly
-// This function is kept for backward compatibility but not used
-func (u *CLIUtils) getSubscriptionsForUser(userID string) ([]Subscription, error) {
-	// Simply use $HOME/notifications for current user
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
-		homeDir = "/home/agentapi"
-	}
-	subscriptionsFile := filepath.Join(homeDir, "notifications", "subscriptions.json")
-
-	if _, err := os.Stat(subscriptionsFile); os.IsNotExist(err) {
-		return []Subscription{}, nil
-	}
-
-	file, err := os.Open(subscriptionsFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open subscriptions file: %w", err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Printf("Warning: failed to close file: %v\n", err)
-		}
-	}()
-
-	var allSubscriptions []Subscription
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&allSubscriptions); err != nil {
-		// If decode fails, return empty slice
-		return []Subscription{}, nil
-	}
-
-	// Filter active subscriptions
-	var subscriptions []Subscription
-	for _, sub := range allSubscriptions {
-		if sub.Active {
-			subscriptions = append(subscriptions, sub)
-		}
-	}
-
-	return subscriptions, nil
-}
 
 // matchesFilter checks if a subscription matches the filter criteria
 func (u *CLIUtils) matchesFilter(sub Subscription, userID, userType, username, sessionID string) bool {
