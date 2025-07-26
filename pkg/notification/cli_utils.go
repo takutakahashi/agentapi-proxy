@@ -62,7 +62,6 @@ func (u *CLIUtils) GetMatchingSubscriptions(userID, userType, username, sessionI
 	return matchingSubscriptions, nil
 }
 
-
 // matchesFilter checks if a subscription matches the filter criteria
 func (u *CLIUtils) matchesFilter(sub Subscription, userID, userType, username, sessionID string) bool {
 	// If user-id is specified, it must match
