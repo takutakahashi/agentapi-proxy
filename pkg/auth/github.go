@@ -17,11 +17,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
-// contextKey is used for context keys to avoid collisions
-type contextKey string
-
-const echoContextKey contextKey = "echo"
-
 // hashToken creates a hash of the token for use as cache key
 func hashToken(token string) string {
 	h := sha256.Sum256([]byte(token))

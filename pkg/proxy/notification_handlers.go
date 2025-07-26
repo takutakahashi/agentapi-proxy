@@ -63,7 +63,7 @@ func (h *NotificationHandlers) GetSubscriptions(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	subscriptions, err := h.service.GetSubscriptions(user.UserID)
+	subscriptions, err := h.service.GetSubscriptions(string(user.ID()))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get subscriptions")
 	}
@@ -87,7 +87,7 @@ func (h *NotificationHandlers) DeleteSubscription(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Endpoint is required")
 	}
 
-	err := h.service.DeleteSubscription(user.UserID, req.Endpoint)
+	err := h.service.DeleteSubscription(string(user.ID()), req.Endpoint)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Subscription not found")
 	}
@@ -158,7 +158,7 @@ func (h *NotificationHandlers) GetHistory(c echo.Context) error {
 	}
 
 	// Get history
-	history, err := h.service.GetNotificationHistory(user.UserID, limit, offset, filters)
+	history, err := h.service.GetNotificationHistory(string(user.ID()), limit, offset, filters)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get notification history")
 	}
