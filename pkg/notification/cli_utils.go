@@ -21,73 +21,19 @@ func NewCLIUtils() *CLIUtils {
 
 // GetMatchingSubscriptions retrieves subscriptions matching filter criteria
 func (u *CLIUtils) GetMatchingSubscriptions(userID, userType, username, sessionID string, verbose bool) ([]Subscription, error) {
-	var allSubscriptions []Subscription
-
-	// Get base directory for user data
-	baseDir := os.Getenv("USERHOME_BASEDIR")
-	if baseDir == "" {
-		homeDir := os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = "/home/agentapi"
-		}
-		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
+	// Simply use $HOME/notifications for current user
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = "/home/agentapi"
 	}
-	baseDir = filepath.Join(baseDir, "myclaudes")
+	subscriptionsFile := filepath.Join(homeDir, "notifications", "subscriptions.json")
 
-	// Check if base directory exists
-	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
-		return allSubscriptions, nil
-	}
-
-	// Read all user directories
-	userDirs, err := os.ReadDir(baseDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read user directories: %w", err)
-	}
-
-	for _, userDir := range userDirs {
-		if !userDir.IsDir() {
-			continue
-		}
-
-		userDirID := userDir.Name()
-		subscriptions, err := u.getSubscriptionsForUser(userDirID)
-		if err != nil {
-			if verbose {
-				fmt.Printf("Warning: failed to read subscriptions for user %s: %v\n", userDirID, err)
-			}
-			continue
-		}
-
-		// Filter subscriptions based on criteria
-		for _, sub := range subscriptions {
-			if u.matchesFilter(sub, userID, userType, username, sessionID) {
-				allSubscriptions = append(allSubscriptions, sub)
-			}
-		}
-	}
-
-	return allSubscriptions, nil
-}
-
-// getSubscriptionsForUser retrieves subscriptions for a specific user
-func (u *CLIUtils) getSubscriptionsForUser(userID string) ([]Subscription, error) {
-	// Get base directory for user data
-	baseDir := os.Getenv("USERHOME_BASEDIR")
-	if baseDir == "" {
-		homeDir := os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = "/home/agentapi"
-		}
-		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
-	}
-
-	subscriptionsFile := filepath.Join(baseDir, "myclaudes", userID, "notifications", "subscriptions.json")
-
+	// Check if subscriptions file exists
 	if _, err := os.Stat(subscriptionsFile); os.IsNotExist(err) {
 		return []Subscription{}, nil
 	}
 
+	// Read subscriptions from file
 	file, err := os.Open(subscriptionsFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open subscriptions file: %w", err)
@@ -98,22 +44,22 @@ func (u *CLIUtils) getSubscriptionsForUser(userID string) ([]Subscription, error
 		}
 	}()
 
-	var allSubscriptions []Subscription
+	var subscriptions []Subscription
 	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&allSubscriptions); err != nil {
+	if err := decoder.Decode(&subscriptions); err != nil {
 		// If decode fails, return empty slice
 		return []Subscription{}, nil
 	}
 
-	// Filter active subscriptions
-	var subscriptions []Subscription
-	for _, sub := range allSubscriptions {
-		if sub.Active {
-			subscriptions = append(subscriptions, sub)
+	// Filter subscriptions based on criteria
+	var matchingSubscriptions []Subscription
+	for _, sub := range subscriptions {
+		if sub.Active && u.matchesFilter(sub, userID, userType, username, sessionID) {
+			matchingSubscriptions = append(matchingSubscriptions, sub)
 		}
 	}
 
-	return subscriptions, nil
+	return matchingSubscriptions, nil
 }
 
 // matchesFilter checks if a subscription matches the filter criteria
@@ -232,17 +178,12 @@ func (u *CLIUtils) SendNotifications(subscriptions []Subscription, title, body, 
 
 // saveNotificationHistory saves notification history to file
 func (u *CLIUtils) saveNotificationHistory(sub Subscription, title, body, url, icon, badge string, ttl int, urgency string, delivered bool, sendError error) error {
-	// Get base directory for user data
-	baseDir := os.Getenv("USERHOME_BASEDIR")
-	if baseDir == "" {
-		homeDir := os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = "/home/agentapi"
-		}
-		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
+	// Simply use $HOME/notifications for current user
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = "/home/agentapi"
 	}
-
-	historyFile := filepath.Join(baseDir, "myclaudes", sub.UserID, "notifications", "history.jsonl")
+	historyFile := filepath.Join(homeDir, "notifications", "history.jsonl")
 
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(historyFile), 0755); err != nil {
