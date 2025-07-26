@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
@@ -136,7 +137,7 @@ func TestGetAuthTypes(t *testing.T) {
 func TestGetAuthStatus(t *testing.T) {
 	tests := []struct {
 		name     string
-		user     *auth.UserContext
+		user     *entities.User
 		expected AuthStatusResponse
 	}{
 		{
@@ -148,39 +149,44 @@ func TestGetAuthStatus(t *testing.T) {
 		},
 		{
 			name: "authenticated with api key",
-			user: &auth.UserContext{
-				UserID:      "test-user",
-				Role:        "user",
-				Permissions: []string{"session:create", "session:list"},
-				AuthType:    "api_key",
-			},
+			user: func() *entities.User {
+				user := entities.NewUser(
+					entities.UserID("test-user"),
+					entities.UserTypeAPIKey,
+					"test-user",
+				)
+				user.SetRoles([]entities.Role{entities.RoleUser})
+				user.SetPermissions([]entities.Permission{entities.PermissionSessionCreate, entities.PermissionSessionRead})
+				return user
+			}(),
 			expected: AuthStatusResponse{
 				Authenticated: true,
 				AuthType:      "api_key",
 				UserID:        "test-user",
 				Role:          "user",
-				Permissions:   []string{"session:create", "session:list"},
+				Permissions:   []string{"session:create", "session:read"},
 			},
 		},
 		{
 			name: "authenticated with github oauth",
-			user: &auth.UserContext{
-				UserID:      "github-user",
-				Role:        "admin",
-				Permissions: []string{"*"},
-				AuthType:    "github_oauth",
-				GitHubUser: &auth.GitHubUserInfo{
-					Login: "octocat",
-					Name:  "The Octocat",
-					Email: "octocat@github.com",
-				},
-			},
+			user: func() *entities.User {
+				githubInfo := entities.NewGitHubUserInfo(0, "octocat", "The Octocat", "octocat@github.com", "", "", "")
+				user := entities.NewGitHubUser(
+					entities.UserID("github-user"),
+					"github-user",
+					"octocat@github.com",
+					githubInfo,
+				)
+				user.SetRoles([]entities.Role{entities.RoleAdmin})
+				user.SetPermissions([]entities.Permission{entities.PermissionAdmin})
+				return user
+			}(),
 			expected: AuthStatusResponse{
 				Authenticated: true,
-				AuthType:      "github_oauth",
+				AuthType:      "github",
 				UserID:        "github-user",
 				Role:          "admin",
-				Permissions:   []string{"*"},
+				Permissions:   []string{"admin"},
 				GitHubUser: &auth.GitHubUserInfo{
 					Login: "octocat",
 					Name:  "The Octocat",
@@ -198,7 +204,7 @@ func TestGetAuthStatus(t *testing.T) {
 			c := e.NewContext(req, rec)
 
 			if tt.user != nil {
-				c.Set("user", tt.user)
+				c.Set("internal_user", tt.user)
 			}
 
 			h := NewAuthInfoHandlers(&config.Config{})

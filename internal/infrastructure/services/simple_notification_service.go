@@ -157,7 +157,7 @@ func (s *SimpleNotificationService) sendWebhookNotification(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("failed to send webhook: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("webhook returned error status: %d", resp.StatusCode)
@@ -223,7 +223,7 @@ func (s *SimpleNotificationService) validateWebhookSubscription(subscription *en
 	if err != nil {
 		return fmt.Errorf("webhook endpoint unreachable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return nil
 }
