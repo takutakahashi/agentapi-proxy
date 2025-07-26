@@ -55,6 +55,7 @@ type Container struct {
 	AuthController         *controllers.AuthController
 	NotificationController *controllers.NotificationController
 	AuthMiddleware         *controllers.AuthMiddleware
+	HTTPServer             *controllers.HTTPServer
 }
 
 // NewContainer creates and configures a new dependency injection container
@@ -212,6 +213,13 @@ func (c *Container) initControllers() {
 		c.ValidateAPIKeyUC,
 		c.AuthPresenter,
 	)
+
+	c.HTTPServer = controllers.NewHTTPServer(
+		c.SessionController,
+		c.AuthController,
+		c.NotificationController,
+		c.AuthMiddleware,
+	)
 }
 
 // seedData seeds initial data for development and testing
@@ -315,4 +323,9 @@ func (s *SimpleGitHubAuthService) ExchangeCodeForToken(ctx context.Context, code
 
 func (s *SimpleGitHubAuthService) RevokeOAuthToken(ctx context.Context, token string) error {
 	return nil
+}
+
+// GetHTTPServer returns the configured HTTP server
+func (c *Container) GetHTTPServer() *controllers.HTTPServer {
+	return c.HTTPServer
 }

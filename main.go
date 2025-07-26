@@ -4,26 +4,21 @@ import (
 	"log"
 	"os"
 
-	"github.com/spf13/cobra"
-	"github.com/takutakahashi/agentapi-proxy/cmd"
+	"github.com/takutakahashi/agentapi-proxy/internal/di"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "agentapi-proxy",
-	Short: "AgentAPI Proxy Server",
-	Long:  "A reverse proxy server for AgentAPI that routes requests based on configuration",
-}
-
-func init() {
-	rootCmd.AddCommand(cmd.ServerCmd)
-	rootCmd.AddCommand(cmd.HelpersCmd)
-	rootCmd.AddCommand(cmd.ClientCmd)
-	rootCmd.AddCommand(cmd.MCPCmd)
-}
-
 func main() {
-	if err := rootCmd.Execute(); err != nil {
-		log.Printf("Fatal error executing command: %v", err)
+	container := di.NewContainer()
+	server := container.GetHTTPServer()
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("Starting server on port %s", port)
+	if err := server.Start(":" + port); err != nil {
+		log.Printf("Fatal error starting server: %v", err)
 		os.Exit(1)
 	}
 }
