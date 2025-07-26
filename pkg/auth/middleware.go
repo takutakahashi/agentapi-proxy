@@ -3,6 +3,7 @@ package auth
 import (
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -10,8 +11,20 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
-// InternalAuthMiddleware creates authentication middleware using internal auth service
-func InternalAuthMiddleware(cfg *config.Config, authService services.AuthService) echo.MiddlewareFunc {
+// UserContext represents the authenticated user context (for legacy compatibility)
+type UserContext struct {
+	UserID      string
+	Role        string
+	Permissions []string
+	APIKey      string
+	AuthType    string          // "api_key" or "github_oauth"
+	GitHubUser  *GitHubUserInfo // GitHub user info when using GitHub auth
+	AccessToken string          // OAuth access token (not serialized)
+	EnvFile     string          // Path to team-specific environment file
+}
+
+// AuthMiddleware creates authentication middleware using internal auth service
+func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Store config in context for permission checks
@@ -69,8 +82,8 @@ func InternalAuthMiddleware(cfg *config.Config, authService services.AuthService
 	}
 }
 
-// InternalRequirePermission creates permission-checking middleware using internal auth service
-func InternalRequirePermission(permission entities.Permission, authService services.AuthService) echo.MiddlewareFunc {
+// RequirePermission creates permission-checking middleware using internal auth service
+func RequirePermission(permission entities.Permission, authService services.AuthService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Check if auth is disabled by looking for config in context
@@ -83,7 +96,7 @@ func InternalRequirePermission(permission entities.Permission, authService servi
 				return next(c)
 			}
 
-			user := GetInternalUserFromContext(c)
+			user := GetUserFromContext(c)
 			if user == nil {
 				log.Printf("Authorization failed: authentication required for permission %s from %s", permission, c.RealIP())
 				return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
@@ -101,8 +114,8 @@ func InternalRequirePermission(permission entities.Permission, authService servi
 	}
 }
 
-// GetInternalUserFromContext retrieves internal user entity from Echo context
-func GetInternalUserFromContext(c echo.Context) *entities.User {
+// GetUserFromContext retrieves internal user entity from Echo context
+func GetUserFromContext(c echo.Context) *entities.User {
 	if user := c.Get("internal_user"); user != nil {
 		if userEntity, ok := user.(*entities.User); ok {
 			return userEntity
@@ -111,14 +124,14 @@ func GetInternalUserFromContext(c echo.Context) *entities.User {
 	return nil
 }
 
-// InternalUserOwnsSession checks if the current user owns the specified session using internal auth
-func InternalUserOwnsSession(c echo.Context, sessionUserID string) bool {
+// UserOwnsSession checks if the current user owns the specified session using internal auth
+func UserOwnsSession(c echo.Context, sessionUserID string) bool {
 	// If auth is disabled, allow access to all sessions
 	if cfg := GetConfigFromContext(c); cfg != nil && !cfg.Auth.Enabled {
 		return true
 	}
 
-	user := GetInternalUserFromContext(c)
+	user := GetUserFromContext(c)
 	if user == nil {
 		log.Printf("Session access denied: no authenticated user for session %s from %s", sessionUserID, c.RealIP())
 		return false
@@ -197,48 +210,44 @@ func tryInternalGitHubAuth(c echo.Context, cfg *config.Config, authService servi
 	return user, nil
 }
 
-// ConvertInternalUserToUserContext converts internal user entity to legacy UserContext for backward compatibility
-func ConvertInternalUserToUserContext(user *entities.User) *UserContext {
-	if user == nil {
-		return nil
-	}
-
-	// Convert permissions to string slice
-	permissions := make([]string, len(user.Permissions()))
-	for i, perm := range user.Permissions() {
-		permissions[i] = string(perm)
-	}
-
-	// Determine role (use first role or "user" as default)
-	role := "user"
-	if len(user.Roles()) > 0 {
-		role = string(user.Roles()[0])
-	}
-
-	userCtx := &UserContext{
-		UserID:      string(user.ID()),
-		Role:        role,
-		Permissions: permissions,
-		AuthType:    string(user.UserType()),
-		EnvFile:     user.EnvFile(),
-	}
-
-	// Add GitHub-specific information if available
-	if user.UserType() == entities.UserTypeGitHub && user.GitHubInfo() != nil {
-		githubInfo := user.GitHubInfo()
-		userCtx.GitHubUser = &GitHubUserInfo{
-			Login: githubInfo.Login(),
-			ID:    githubInfo.ID(),
-			Name:  githubInfo.Name(),
-			Email: githubInfo.Email(),
+// GetConfigFromContext retrieves config from Echo context
+func GetConfigFromContext(c echo.Context) *config.Config {
+	if cfg := c.Get("config"); cfg != nil {
+		if configObj, ok := cfg.(*config.Config); ok {
+			return configObj
 		}
 	}
-
-	return userCtx
+	return nil
 }
 
-// GetUserFromInternalContext retrieves UserContext from internal user for backward compatibility
-func GetUserFromInternalContext(c echo.Context) *UserContext {
-	user := GetInternalUserFromContext(c)
-	return ConvertInternalUserToUserContext(user)
+// isOAuthEndpoint checks if the given path is an OAuth endpoint that should skip auth
+func isOAuthEndpoint(path string) bool {
+	oauthPaths := []string{
+		"/oauth/authorize",
+		"/oauth/callback",
+		"/oauth/logout",
+		"/oauth/refresh",
+	}
+
+	for _, oauthPath := range oauthPaths {
+		if strings.HasPrefix(path, oauthPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractAPIKeyFromAuthHeader extracts API key from Authorization header
+func extractAPIKeyFromAuthHeader(header string) string {
+	if header == "" {
+		return ""
+	}
+
+	// Handle "Bearer <token>" format
+	if strings.HasPrefix(header, "Bearer ") {
+		return strings.TrimPrefix(header, "Bearer ")
+	}
+
+	// Handle raw token
+	return header
 }

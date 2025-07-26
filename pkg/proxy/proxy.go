@@ -246,7 +246,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	}
 
 	// Add authentication middleware using internal auth service
-	e.Use(auth.InternalAuthMiddleware(cfg, container.AuthService))
+	e.Use(auth.AuthMiddleware(cfg, container.AuthService))
 
 	// Initialize OAuth provider if configured
 	log.Printf("[OAUTH_INIT] Checking OAuth configuration...")
@@ -450,9 +450,9 @@ func (p *Proxy) setupRoutes() {
 	p.echo.GET("/health", p.healthCheck)
 
 	// Add session management routes according to API specification
-	p.echo.POST("/start", p.startAgentAPIServer, auth.InternalRequirePermission(entities.PermissionSessionCreate, p.container.AuthService))
-	p.echo.GET("/search", p.searchSessions, auth.InternalRequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.InternalRequirePermission(entities.PermissionSessionDelete, p.container.AuthService))
+	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService))
+	p.echo.GET("/search", p.searchSessions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService))
 
 	// Add authentication info routes
 	authInfoHandlers := NewAuthInfoHandlers(p.config)
@@ -463,13 +463,13 @@ func (p *Proxy) setupRoutes() {
 	if p.notificationSvc != nil {
 		notificationHandlers := NewNotificationHandlers(p.notificationSvc)
 		// UI-compatible routes (proxied from agentapi-ui)
-		p.echo.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.InternalRequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.InternalRequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-		p.echo.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.InternalRequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		p.echo.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		p.echo.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 
 		// Internal routes
 		p.echo.POST("/notifications/webhook", notificationHandlers.Webhook)
-		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.InternalRequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 	}
 
 	// Add OAuth routes if OAuth is configured
@@ -500,7 +500,7 @@ func (p *Proxy) setupRoutes() {
 		c.Response().Header().Set("Access-Control-Max-Age", "86400")
 		return c.NoContent(http.StatusNoContent)
 	})
-	p.echo.Any("/:sessionId/*", p.routeToSession, auth.InternalRequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 }
 
 // healthCheck handles GET /health requests to check server health
@@ -512,7 +512,7 @@ func (p *Proxy) healthCheck(c echo.Context) error {
 
 // searchSessions handles GET /search requests to list and filter sessions
 func (p *Proxy) searchSessions(c echo.Context) error {
-	user := auth.GetInternalUserFromContext(c)
+	user := auth.GetUserFromContext(c)
 	status := c.QueryParam("status")
 
 	// Determine userID for filtering based on authentication
@@ -618,7 +618,7 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 	}
 
 	// Check if user has access to this session
-	if !auth.InternalUserOwnsSession(c, session.UserID) {
+	if !auth.UserOwnsSession(c, session.UserID) {
 		log.Printf("Delete session failed: user does not own session %s (requested by %s)", sessionID, clientIP)
 		return echo.NewHTTPError(http.StatusForbidden, "You can only delete your own sessions")
 	}
@@ -715,7 +715,7 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	}
 
 	// Get user_id from authenticated context
-	user := auth.GetInternalUserFromContext(c)
+	user := auth.GetUserFromContext(c)
 	var userID string
 	var userRole string
 	if user != nil {
@@ -864,7 +864,7 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 		// Check if user has access to this session (only if auth is enabled)
 		cfg := auth.GetConfigFromContext(c)
 		if cfg != nil && cfg.Auth.Enabled {
-			if !auth.InternalUserOwnsSession(c, session.UserID) {
+			if !auth.UserOwnsSession(c, session.UserID) {
 				log.Printf("User does not have access to session %s", sessionID)
 				return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
 			}

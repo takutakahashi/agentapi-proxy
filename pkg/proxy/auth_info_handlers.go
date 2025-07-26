@@ -76,7 +76,7 @@ func (h *AuthInfoHandlers) GetAuthTypes(c echo.Context) error {
 }
 
 func (h *AuthInfoHandlers) GetAuthStatus(c echo.Context) error {
-	user := auth.GetInternalUserFromContext(c)
+	user := auth.GetUserFromContext(c)
 
 	if user == nil {
 		return c.JSON(http.StatusOK, AuthStatusResponse{

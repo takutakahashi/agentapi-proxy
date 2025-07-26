@@ -23,7 +23,7 @@ func NewNotificationHandlers(service *notification.Service) *NotificationHandler
 
 // Subscribe handles POST /notification/subscribe
 func (h *NotificationHandlers) Subscribe(c echo.Context) error {
-	user := auth.GetInternalUserFromContext(c)
+	user := auth.GetUserFromContext(c)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
@@ -44,11 +44,8 @@ func (h *NotificationHandlers) Subscribe(c echo.Context) error {
 	// Extract device information from request
 	deviceInfo := notification.ExtractDeviceInfo(c.Request())
 
-	// Convert internal user to legacy format for notification service
-	legacyUser := auth.ConvertInternalUserToUserContext(user)
-
 	// Create subscription
-	sub, err := h.service.Subscribe(legacyUser, req.Endpoint, req.Keys, deviceInfo)
+	sub, err := h.service.Subscribe(user, req.Endpoint, req.Keys, deviceInfo)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create subscription")
 	}
@@ -61,7 +58,7 @@ func (h *NotificationHandlers) Subscribe(c echo.Context) error {
 
 // GetSubscriptions handles GET /notification/subscribe
 func (h *NotificationHandlers) GetSubscriptions(c echo.Context) error {
-	user := auth.GetInternalUserFromContext(c)
+	user := auth.GetUserFromContext(c)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
@@ -76,7 +73,7 @@ func (h *NotificationHandlers) GetSubscriptions(c echo.Context) error {
 
 // DeleteSubscription handles DELETE /notification/subscribe
 func (h *NotificationHandlers) DeleteSubscription(c echo.Context) error {
-	user := auth.GetInternalUserFromContext(c)
+	user := auth.GetUserFromContext(c)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
@@ -130,7 +127,7 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 
 // GetHistory handles GET /notifications/history
 func (h *NotificationHandlers) GetHistory(c echo.Context) error {
-	user := auth.GetInternalUserFromContext(c)
+	user := auth.GetUserFromContext(c)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
