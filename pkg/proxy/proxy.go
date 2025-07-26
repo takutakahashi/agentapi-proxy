@@ -730,9 +730,53 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 
 // createSessionWithCleanArchitecture uses Clean Architecture to create a session
 func (p *Proxy) createSessionWithCleanArchitecture(c echo.Context, startReq StartRequest, userID, userRole string) error {
-	// TODO: Implement Clean Architecture session creation
-	// For now, fall back to original implementation to keep tests passing
-	return p.createSessionLegacy(c, startReq, userID, userRole)
+	ctx := context.Background()
+
+	// Convert pkg types to domain entities
+	userIDEntity := entities.UserID(userID)
+	envEntity := entities.Environment(startReq.Environment)
+	tagsEntity := entities.Tags(startReq.Tags)
+
+	// Create session request
+	sessionReq := &session.CreateSessionRequest{
+		UserID:      userIDEntity,
+		Environment: envEntity,
+		Tags:        tagsEntity,
+		Repository:  nil, // TODO: Extract from tags if needed
+		Port:        nil, // Let the use case auto-assign
+	}
+
+	// Use Clean Architecture to create session
+	resp, err := p.container.CreateSessionUC.Execute(ctx, sessionReq)
+	if err != nil {
+		log.Printf("Failed to create session: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")
+	}
+
+	// Convert domain entity back to pkg types for compatibility
+	legacySession := &AgentSession{
+		ID:          string(resp.Session.ID()),
+		Port:        int(resp.Session.Port()),
+		Cancel:      nil,        // TODO: Add context cancellation
+		StartedAt:   time.Now(), // TODO: Use resp.Session.CreatedAt() when available
+		UserID:      string(resp.Session.UserID()),
+		Status:      string(resp.Session.Status()),
+		Environment: map[string]string(resp.Session.Environment()),
+		Tags:        map[string]string(resp.Session.Tags()),
+	}
+
+	// Store in legacy map for backward compatibility
+	p.sessionsMutex.Lock()
+	p.sessions[legacySession.ID] = legacySession
+	p.sessionsMutex.Unlock()
+
+	log.Printf("[SESSION_CREATED] ID: %s, Port: %d, User: %s via Clean Architecture",
+		legacySession.ID, legacySession.Port, legacySession.UserID)
+
+	// Return session ID according to API specification
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"session_id": legacySession.ID,
+	})
 }
 
 // createSessionLegacy is the original session creation logic

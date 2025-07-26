@@ -171,7 +171,7 @@ func (h *NotificationHandlers) GetHistory(c echo.Context) error {
 
 // subscribeWithCleanArchitecture uses Clean Architecture for subscription creation
 func (h *NotificationHandlers) subscribeWithCleanArchitecture(user *auth.UserContext, endpoint string, keys map[string]string, deviceInfo *notification.DeviceInfo) (*notification.Subscription, error) {
-	// For now, fall back to the original service implementation
-	// TODO: Use Clean Architecture ManageSubscriptionUC
+	// TODO: Use Clean Architecture ManageSubscriptionUC when properly implemented
+	// For now, use the original service implementation
 	return h.service.Subscribe(user, endpoint, keys, deviceInfo)
 }

@@ -189,8 +189,8 @@ func tryGitHubAuthWithCleanArchitecture(c echo.Context, cfg *config.GitHubAuthCo
 
 	ctx := context.WithValue(c.Request().Context(), echoContextKey, c)
 
-	// Use Clean Architecture GitHubAuthenticateUC instead of direct provider call
-	// For now, fall back to original implementation until fully integrated
+	// TODO: Use Clean Architecture GitHubAuthenticateUC when implemented
+	// For now, use the original provider authentication
 	userCtx, err := provider.Authenticate(ctx, token)
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub authentication failed")
@@ -218,8 +218,8 @@ func tryStaticAuthWithCleanArchitecture(c echo.Context, staticCfg *config.Static
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "API key required")
 	}
 
-	// Use Clean Architecture ValidateAPIKeyUC instead of direct config validation
-	// For now, fall back to original implementation until fully integrated
+	// TODO: Use Clean Architecture ValidateAPIKeyUC when properly implemented
+	// For now, use the original config validation
 	keyInfo, valid := cfg.ValidateAPIKey(apiKey)
 	if !valid {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid API key")
@@ -231,7 +231,7 @@ func tryStaticAuthWithCleanArchitecture(c echo.Context, staticCfg *config.Static
 		Permissions: keyInfo.Permissions,
 		APIKey:      apiKey,
 		AuthType:    "api_key",
-		EnvFile:     "", // TODO: Add EnvFile support to APIKey struct
+		EnvFile:     "", // TODO: Add EnvFile support
 	}
 
 	return userCtx, nil

@@ -38,9 +38,10 @@ type Container struct {
 	MonitorAllSessionsUC *session.MonitorAllSessionsUseCase
 
 	AuthenticateUserUC   *auth.AuthenticateUserUseCase
-	ValidateAPIKeyUC     *auth.ValidateAPIKeyUseCase
-	GitHubAuthenticateUC *auth.GitHubAuthenticateUseCase
-	ValidatePermissionUC *auth.ValidatePermissionUseCase
+	// TODO: Add other auth use cases when implemented
+	// ValidateAPIKeyUC     *auth.ValidateAPIKeyUseCase
+	// GitHubAuthenticateUC *auth.GitHubAuthenticateUseCase
+	// ValidatePermissionUC *auth.ValidatePermissionUseCase
 
 	SendNotificationUC   *notification.SendNotificationUseCase
 	ManageSubscriptionUC *notification.ManageSubscriptionUseCase
@@ -147,20 +148,19 @@ func (c *Container) initUseCases() {
 		c.AuthService,
 	)
 
-	c.ValidateAPIKeyUC = auth.NewValidateAPIKeyUseCase(
-		c.UserRepo,
-		c.AuthService,
-	)
-
-	c.GitHubAuthenticateUC = auth.NewGitHubAuthenticateUseCase(
-		c.UserRepo,
-		c.AuthService,
-		c.GitHubAuthService,
-	)
-
-	c.ValidatePermissionUC = auth.NewValidatePermissionUseCase(
-		c.AuthService,
-	)
+	// TODO: Initialize other auth use cases when implemented
+	// c.ValidateAPIKeyUC = auth.NewValidateAPIKeyUseCase(
+	//	c.UserRepo,
+	//	c.AuthService,
+	// )
+	// c.GitHubAuthenticateUC = auth.NewGitHubAuthenticateUseCase(
+	//	c.UserRepo,
+	//	c.AuthService,
+	//	c.GitHubAuthService,
+	// )
+	// c.ValidatePermissionUC = auth.NewValidatePermissionUseCase(
+	//	c.AuthService,
+	// )
 
 	// Notification use cases
 	c.SendNotificationUC = notification.NewSendNotificationUseCase(
@@ -194,24 +194,25 @@ func (c *Container) initControllers() {
 		c.SessionPresenter,
 	)
 
-	c.AuthController = controllers.NewAuthController(
-		c.AuthenticateUserUC,
-		c.ValidateAPIKeyUC,
-		c.GitHubAuthenticateUC,
-		c.ValidatePermissionUC,
-		c.AuthPresenter,
-	)
+	// TODO: Initialize controllers when all use cases are implemented
+	// c.AuthController = controllers.NewAuthController(
+	//	c.AuthenticateUserUC,
+	//	c.ValidateAPIKeyUC,
+	//	c.GitHubAuthenticateUC,
+	//	c.ValidatePermissionUC,
+	//	c.AuthPresenter,
+	// )
 
-	c.NotificationController = controllers.NewNotificationController(
-		c.SendNotificationUC,
-		c.ManageSubscriptionUC,
-		c.NotificationPresenter,
-	)
+	// c.NotificationController = controllers.NewNotificationController(
+	//	c.SendNotificationUC,
+	//	c.ManageSubscriptionUC,
+	//	c.NotificationPresenter,
+	// )
 
-	c.AuthMiddleware = controllers.NewAuthMiddleware(
-		c.ValidateAPIKeyUC,
-		c.AuthPresenter,
-	)
+	// c.AuthMiddleware = controllers.NewAuthMiddleware(
+	//	c.ValidateAPIKeyUC,
+	//	c.AuthPresenter,
+	// )
 }
 
 // seedData seeds initial data for development and testing
@@ -245,6 +246,21 @@ func (c *Container) seedData() {
 
 	// Save test user to repository
 	_ = c.UserRepo.Save(context.TODO(), testUser)
+
+	// Create anonymous user for testing/default usage
+	anonymousUser := entities.NewUser(
+		entities.UserID("anonymous"),
+		entities.UserTypeRegular,
+		"anonymous",
+	)
+
+	// Add anonymous user to auth service
+	if simpleAuth, ok := c.AuthService.(*services.SimpleAuthService); ok {
+		simpleAuth.AddUser(anonymousUser)
+	}
+
+	// Save anonymous user to repository
+	_ = c.UserRepo.Save(context.TODO(), anonymousUser)
 }
 
 // SimpleProxyService is a simple implementation of ProxyService
