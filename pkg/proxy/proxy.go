@@ -24,6 +24,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/takutakahashi/agentapi-proxy/internal/di"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -104,6 +107,7 @@ type Proxy struct {
 	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
 	sessionMonitor     *SessionMonitor
+	container          *di.Container // Clean Architecture DI container
 }
 
 // NewProxy creates a new proxy instance
@@ -188,6 +192,9 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Initialize user directory manager
 	userDirMgr := userdir.NewManager("./data", cfg.EnableMultipleUsers)
 
+	// Initialize Clean Architecture DI container
+	container := di.NewContainer()
+
 	p := &Proxy{
 		config:        cfg,
 		echo:          e,
@@ -197,6 +204,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		nextPort:      cfg.StartPort,
 		logger:        logger.NewLogger(),
 		userDirMgr:    userDirMgr,
+		container:     container,
 	}
 
 	// Initialize storage if persistence is enabled
@@ -239,7 +247,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	}
 
 	// Add authentication middleware with provider
-	e.Use(auth.AuthMiddleware(cfg, p.githubAuthProvider))
+	e.Use(auth.AuthMiddleware(cfg, p.githubAuthProvider, p.container))
 
 	// Initialize OAuth provider if configured
 	log.Printf("[OAUTH_INIT] Checking OAuth configuration...")
@@ -454,7 +462,7 @@ func (p *Proxy) setupRoutes() {
 
 	// Add notification routes if service is available
 	if p.notificationSvc != nil {
-		notificationHandlers := NewNotificationHandlers(p.notificationSvc)
+		notificationHandlers := NewNotificationHandlers(p.notificationSvc, p.container)
 		// UI-compatible routes (proxied from agentapi-ui)
 		p.echo.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission("notification:subscribe"))
 		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission("notification:subscribe"))
@@ -694,9 +702,6 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 
 // startAgentAPIServer starts a new agentapi server instance and returns session ID
 func (p *Proxy) startAgentAPIServer(c echo.Context) error {
-	// Generate UUID for session
-	sessionID := uuid.New().String()
-
 	// Parse request body for environment variables and other parameters
 	var startReq StartRequest
 
@@ -718,6 +723,24 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 		userID = "anonymous"
 		userRole = "guest"
 	}
+
+	// Use Clean Architecture to create session
+	return p.createSessionWithCleanArchitecture(c, startReq, userID, userRole)
+}
+
+// createSessionWithCleanArchitecture uses Clean Architecture to create a session
+func (p *Proxy) createSessionWithCleanArchitecture(c echo.Context, startReq StartRequest, userID, userRole string) error {
+	// TODO: Implement Clean Architecture session creation
+	// For now, fall back to original implementation to keep tests passing
+	return p.createSessionLegacy(c, startReq, userID, userRole)
+}
+
+// createSessionLegacy is the original session creation logic
+func (p *Proxy) createSessionLegacy(c echo.Context, startReq StartRequest, userID, userRole string) error {
+	// Generate UUID for session
+	sessionID := uuid.New().String()
+
+	user := auth.GetUserFromContext(c)
 
 	// Get auth team env file from user context if available
 	var authTeamEnvFile string

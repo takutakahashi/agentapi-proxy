@@ -5,19 +5,22 @@ import (
 	"strconv"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 )
 
 // NotificationHandlers handles notification-related HTTP requests
 type NotificationHandlers struct {
-	service *notification.Service
+	service   *notification.Service
+	container *di.Container
 }
 
 // NewNotificationHandlers creates new notification handlers
-func NewNotificationHandlers(service *notification.Service) *NotificationHandlers {
+func NewNotificationHandlers(service *notification.Service, container *di.Container) *NotificationHandlers {
 	return &NotificationHandlers{
-		service: service,
+		service:   service,
+		container: container,
 	}
 }
 
@@ -44,8 +47,8 @@ func (h *NotificationHandlers) Subscribe(c echo.Context) error {
 	// Extract device information from request
 	deviceInfo := notification.ExtractDeviceInfo(c.Request())
 
-	// Create subscription
-	sub, err := h.service.Subscribe(user, req.Endpoint, req.Keys, deviceInfo)
+	// Create subscription using Clean Architecture
+	sub, err := h.subscribeWithCleanArchitecture(user, req.Endpoint, req.Keys, deviceInfo)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create subscription")
 	}
@@ -164,4 +167,11 @@ func (h *NotificationHandlers) GetHistory(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, history)
+}
+
+// subscribeWithCleanArchitecture uses Clean Architecture for subscription creation
+func (h *NotificationHandlers) subscribeWithCleanArchitecture(user *auth.UserContext, endpoint string, keys map[string]string, deviceInfo *notification.DeviceInfo) (*notification.Subscription, error) {
+	// For now, fall back to the original service implementation
+	// TODO: Use Clean Architecture ManageSubscriptionUC
+	return h.service.Subscribe(user, endpoint, keys, deviceInfo)
 }

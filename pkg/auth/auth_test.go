@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
+	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
@@ -23,7 +24,8 @@ func TestAuthMiddleware_Disabled(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	middleware := AuthMiddleware(cfg, nil)
+	container := di.NewContainer()
+	middleware := AuthMiddleware(cfg, nil, container)
 	handler := func(c echo.Context) error {
 		return c.String(http.StatusOK, "success")
 	}
@@ -50,7 +52,8 @@ func TestAuthMiddleware_MissingAPIKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	middleware := AuthMiddleware(cfg, nil)
+	container := di.NewContainer()
+	middleware := AuthMiddleware(cfg, nil, container)
 	handler := func(c echo.Context) error {
 		return c.String(http.StatusOK, "success")
 	}
@@ -88,7 +91,8 @@ func TestAuthMiddleware_InvalidAPIKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	middleware := AuthMiddleware(cfg, nil)
+	container := di.NewContainer()
+	middleware := AuthMiddleware(cfg, nil, container)
 	handler := func(c echo.Context) error {
 		return c.String(http.StatusOK, "success")
 	}
@@ -126,7 +130,8 @@ func TestAuthMiddleware_ValidAPIKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	middleware := AuthMiddleware(cfg, nil)
+	container := di.NewContainer()
+	middleware := AuthMiddleware(cfg, nil, container)
 	handler := func(c echo.Context) error {
 		user := GetUserFromContext(c)
 		assert.NotNil(t, user)
