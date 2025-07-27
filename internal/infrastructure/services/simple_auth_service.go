@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +17,12 @@ import (
 
 // SimpleAuthService implements AuthService with simple in-memory authentication
 type SimpleAuthService struct {
-	mu          sync.RWMutex
-	apiKeys     map[string]*services.APIKey
-	users       map[entities.UserID]*entities.User
-	keyToUserID map[string]entities.UserID
+	mu               sync.RWMutex
+	apiKeys          map[string]*services.APIKey
+	users            map[entities.UserID]*entities.User
+	keyToUserID      map[string]entities.UserID
+	githubProvider   *auth.GitHubAuthProvider
+	githubAuthConfig *config.GitHubAuthConfig
 }
 
 // NewSimpleAuthService creates a new SimpleAuthService
@@ -27,6 +31,16 @@ func NewSimpleAuthService() *SimpleAuthService {
 		apiKeys:     make(map[string]*services.APIKey),
 		users:       make(map[entities.UserID]*entities.User),
 		keyToUserID: make(map[string]entities.UserID),
+	}
+}
+
+// SetGitHubAuthConfig sets the GitHub authentication configuration
+func (s *SimpleAuthService) SetGitHubAuthConfig(cfg *config.GitHubAuthConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.githubAuthConfig = cfg
+	if cfg != nil && cfg.Enabled {
+		s.githubProvider = auth.NewGitHubAuthProvider(cfg)
 	}
 }
 
@@ -190,8 +204,56 @@ func (s *SimpleAuthService) authenticateWithPassword(username, password string) 
 
 // authenticateWithToken authenticates using a token
 func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User, error) {
+	// First try GitHub authentication if configured
+	s.mu.RLock()
+	githubProvider := s.githubProvider
+	s.mu.RUnlock()
+
+	if githubProvider != nil {
+		// Try to authenticate with GitHub
+		userContext, err := githubProvider.Authenticate(context.Background(), token)
+		if err == nil && userContext != nil {
+			// Convert GitHub user context to entity user
+			userID := entities.UserID(userContext.UserID)
+
+			// Check if user already exists
+			s.mu.RLock()
+			existingUser, exists := s.users[userID]
+			s.mu.RUnlock()
+
+			if exists {
+				return existingUser, nil
+			}
+
+			// Create new user from GitHub context
+			s.mu.Lock()
+			defer s.mu.Unlock()
+
+			// Map role to user type
+			userType := entities.UserTypeRegular
+			if userContext.Role == "admin" {
+				userType = entities.UserTypeAdmin
+			}
+
+			newUser := entities.NewUser(
+				userID,
+				userType,
+				userContext.UserID,
+			)
+
+			// Set permissions from GitHub context
+			for _, perm := range userContext.Permissions {
+				permission := entities.Permission(perm)
+				newUser.AddPermission(permission)
+			}
+
+			s.users[userID] = newUser
+			return newUser, nil
+		}
+		// If GitHub auth fails, continue with simple token auth
+	}
+
 	// Simple token authentication for demo
-	// In a real implementation, this would validate JWT tokens or similar
 	if strings.HasPrefix(token, "user_") {
 		userID := entities.UserID(token)
 

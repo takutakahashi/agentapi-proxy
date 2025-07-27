@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
 // Service provides notification functionality
@@ -29,17 +29,17 @@ func NewService(baseDir string) (*Service, error) {
 }
 
 // Subscribe creates a new push notification subscription
-func (s *Service) Subscribe(user *auth.UserContext, endpoint string, keys map[string]string, deviceInfo *DeviceInfo) (*Subscription, error) {
+func (s *Service) Subscribe(user *entities.User, endpoint string, keys map[string]string, deviceInfo *DeviceInfo) (*Subscription, error) {
 	// Get username from GitHub user info if available, otherwise use UserID
-	username := user.UserID
-	if user.GitHubUser != nil && user.GitHubUser.Login != "" {
-		username = user.GitHubUser.Login
+	username := string(user.ID())
+	if user.UserType() == entities.UserTypeGitHub && user.GitHubInfo() != nil {
+		username = user.GitHubInfo().Login()
 	}
 
 	now := time.Now()
 	sub := Subscription{
-		UserID:            user.UserID,
-		UserType:          user.AuthType,
+		UserID:            string(user.ID()),
+		UserType:          string(user.UserType()),
 		Username:          username,
 		Endpoint:          endpoint,
 		Keys:              keys,
@@ -52,7 +52,7 @@ func (s *Service) Subscribe(user *auth.UserContext, endpoint string, keys map[st
 		Active:            true,
 	}
 
-	err := s.storage.AddSubscription(user.UserID, sub)
+	err := s.storage.AddSubscription(string(user.ID()), sub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add subscription: %w", err)
 	}

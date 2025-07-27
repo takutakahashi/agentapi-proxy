@@ -24,6 +24,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/takutakahashi/agentapi-proxy/internal/di"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -104,6 +107,7 @@ type Proxy struct {
 	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
 	sessionMonitor     *SessionMonitor
+	container          *di.Container // Internal DI container
 }
 
 // NewProxy creates a new proxy instance
@@ -188,6 +192,9 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Initialize user directory manager
 	userDirMgr := userdir.NewManager("./data", cfg.EnableMultipleUsers)
 
+	// Initialize internal DI container
+	container := di.NewContainer()
+
 	p := &Proxy{
 		config:        cfg,
 		echo:          e,
@@ -197,6 +204,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		nextPort:      cfg.StartPort,
 		logger:        logger.NewLogger(),
 		userDirMgr:    userDirMgr,
+		container:     container,
 	}
 
 	// Initialize storage if persistence is enabled
@@ -236,10 +244,16 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		log.Printf("[AUTH_INIT] Initializing GitHub auth provider...")
 		p.githubAuthProvider = auth.NewGitHubAuthProvider(cfg.Auth.GitHub)
 		log.Printf("[AUTH_INIT] GitHub auth provider initialized successfully")
+
+		// Configure the internal auth service with GitHub settings
+		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			simpleAuth.SetGitHubAuthConfig(cfg.Auth.GitHub)
+			log.Printf("[AUTH_INIT] GitHub auth config set for internal auth service")
+		}
 	}
 
-	// Add authentication middleware with provider
-	e.Use(auth.AuthMiddleware(cfg, p.githubAuthProvider))
+	// Add authentication middleware using internal auth service
+	e.Use(auth.AuthMiddleware(cfg, container.AuthService))
 
 	// Initialize OAuth provider if configured
 	log.Printf("[OAUTH_INIT] Checking OAuth configuration...")
@@ -443,9 +457,9 @@ func (p *Proxy) setupRoutes() {
 	p.echo.GET("/health", p.healthCheck)
 
 	// Add session management routes according to API specification
-	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission("session:create"))
-	p.echo.GET("/search", p.searchSessions, auth.RequirePermission("session:list"))
-	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission("session:delete"))
+	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService))
+	p.echo.GET("/search", p.searchSessions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService))
 
 	// Add authentication info routes
 	authInfoHandlers := NewAuthInfoHandlers(p.config)
@@ -456,13 +470,13 @@ func (p *Proxy) setupRoutes() {
 	if p.notificationSvc != nil {
 		notificationHandlers := NewNotificationHandlers(p.notificationSvc)
 		// UI-compatible routes (proxied from agentapi-ui)
-		p.echo.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission("notification:subscribe"))
-		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission("notification:subscribe"))
-		p.echo.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.RequirePermission("notification:subscribe"))
+		p.echo.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		p.echo.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 
 		// Internal routes
 		p.echo.POST("/notifications/webhook", notificationHandlers.Webhook)
-		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission("notification:history"))
+		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 	}
 
 	// Add OAuth routes if OAuth is configured
@@ -493,7 +507,7 @@ func (p *Proxy) setupRoutes() {
 		c.Response().Header().Set("Access-Control-Max-Age", "86400")
 		return c.NoContent(http.StatusNoContent)
 	})
-	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission("session:access"))
+	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 }
 
 // healthCheck handles GET /health requests to check server health
@@ -510,9 +524,9 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 
 	// Determine userID for filtering based on authentication
 	var userID string
-	if user != nil && user.Role != "admin" {
+	if user != nil && !user.IsAdmin() {
 		// Non-admin users can only see their own sessions
-		userID = user.UserID
+		userID = string(user.ID())
 	}
 	// Admin users can see all sessions (userID remains empty for no filtering)
 
@@ -533,7 +547,7 @@ func (p *Proxy) searchSessions(c echo.Context) error {
 
 	for _, session := range p.sessions {
 		// Apply user filtering based on role
-		if user != nil && user.Role != "admin" && session.UserID != user.UserID {
+		if user != nil && !user.IsAdmin() && session.UserID != string(user.ID()) {
 			continue
 		}
 
@@ -712,8 +726,13 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	var userID string
 	var userRole string
 	if user != nil {
-		userID = user.UserID
-		userRole = user.Role
+		userID = string(user.ID())
+		// Get first role or default to "user"
+		if len(user.Roles()) > 0 {
+			userRole = string(user.Roles()[0])
+		} else {
+			userRole = "user"
+		}
 	} else {
 		userID = "anonymous"
 		userRole = "guest"
@@ -721,8 +740,8 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 
 	// Get auth team env file from user context if available
 	var authTeamEnvFile string
-	if user != nil && user.EnvFile != "" {
-		authTeamEnvFile = user.EnvFile
+	if user != nil && user.EnvFile() != "" {
+		authTeamEnvFile = user.EnvFile()
 		log.Printf("[ENV] Auth team env file from user context: %s", authTeamEnvFile)
 	}
 
