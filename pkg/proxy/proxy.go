@@ -26,6 +26,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -243,6 +244,12 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		log.Printf("[AUTH_INIT] Initializing GitHub auth provider...")
 		p.githubAuthProvider = auth.NewGitHubAuthProvider(cfg.Auth.GitHub)
 		log.Printf("[AUTH_INIT] GitHub auth provider initialized successfully")
+
+		// Configure the internal auth service with GitHub settings
+		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			simpleAuth.SetGitHubAuthConfig(cfg.Auth.GitHub)
+			log.Printf("[AUTH_INIT] GitHub auth config set for internal auth service")
+		}
 	}
 
 	// Add authentication middleware using internal auth service
