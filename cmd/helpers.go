@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -456,6 +457,18 @@ var (
 )
 
 func runSendNotification(cmd *cobra.Command, args []string) error {
+	// Extract session ID from working directory if not provided
+	if notifySessionID == "" {
+		cwd, err := os.Getwd()
+		if err == nil {
+			// Extract UUID pattern from path
+			uuidRegex := regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`)
+			if match := uuidRegex.FindString(cwd); match != "" {
+				notifySessionID = match
+			}
+		}
+	}
+
 	// Validate VAPID configuration
 	vapidPublicKey := os.Getenv("VAPID_PUBLIC_KEY")
 	vapidPrivateKey := os.Getenv("VAPID_PRIVATE_KEY")
@@ -501,7 +514,7 @@ func runSendNotification(cmd *cobra.Command, args []string) error {
 	}
 
 	// Send notifications
-	results, err := cliUtils.SendNotifications(subscriptions, notifyTitle, notifyBody, notifyURL, notifyIcon, notifyBadge, notifyTTL, notifyUrgency, vapidPublicKey, vapidPrivateKey, vapidContactEmail)
+	results, err := cliUtils.SendNotifications(subscriptions, notifyTitle, notifyBody, notifyURL, notifyIcon, notifyBadge, notifyTTL, notifyUrgency, notifySessionID, vapidPublicKey, vapidPrivateKey, vapidContactEmail)
 	if err != nil {
 		return fmt.Errorf("failed to send notifications: %w", err)
 	}

@@ -98,7 +98,18 @@ func (u *CLIUtils) matchesFilter(sub Subscription, userID, userType, username, s
 }
 
 // SendNotifications sends notifications to multiple subscriptions
-func (u *CLIUtils) SendNotifications(subscriptions []Subscription, title, body, url, icon, badge string, ttl int, urgency string, vapidPublicKey, vapidPrivateKey, vapidContactEmail string) ([]NotificationResult, error) {
+func (u *CLIUtils) SendNotifications(subscriptions []Subscription, title, body, url, icon, badge string, ttl int, urgency string, sessionID string, vapidPublicKey, vapidPrivateKey, vapidContactEmail string) ([]NotificationResult, error) {
+	// Check if notification was recently sent for this session
+	if sessionID != "" {
+		hasRecent, err := u.hasRecentNotificationForSession(sessionID, 3)
+		if err != nil {
+			// Log warning but continue
+			fmt.Printf("Warning: failed to check recent notifications: %v\n", err)
+		} else if hasRecent {
+			fmt.Printf("Notification already sent to session %s in the last 3 minutes. Skipping.\n", sessionID)
+			return []NotificationResult{}, nil
+		}
+	}
 	var results []NotificationResult
 
 	for _, sub := range subscriptions {
@@ -168,7 +179,7 @@ func (u *CLIUtils) SendNotifications(subscriptions []Subscription, title, body, 
 		results = append(results, result)
 
 		// Save to history
-		if err := u.saveNotificationHistory(sub, title, body, url, icon, badge, ttl, urgency, result.Error == nil, result.Error); err != nil {
+		if err := u.saveNotificationHistory(sub, title, body, url, icon, badge, ttl, urgency, sessionID, result.Error == nil, result.Error); err != nil {
 			fmt.Printf("Warning: failed to save notification history: %v\n", err)
 		}
 	}
@@ -177,7 +188,7 @@ func (u *CLIUtils) SendNotifications(subscriptions []Subscription, title, body, 
 }
 
 // saveNotificationHistory saves notification history to file
-func (u *CLIUtils) saveNotificationHistory(sub Subscription, title, body, url, icon, badge string, ttl int, urgency string, delivered bool, sendError error) error {
+func (u *CLIUtils) saveNotificationHistory(sub Subscription, title, body, url, icon, badge string, ttl int, urgency string, sessionID string, delivered bool, sendError error) error {
 	// Simply use $HOME/notifications for current user
 	homeDir := os.Getenv("HOME")
 	if homeDir == "" {
@@ -197,6 +208,7 @@ func (u *CLIUtils) saveNotificationHistory(sub Subscription, title, body, url, i
 		Title:          title,
 		Body:           body,
 		Type:           "manual", // Sent via command line
+		SessionID:      sessionID,
 		Data: map[string]interface{}{
 			"url":     url,
 			"icon":    icon,
@@ -241,6 +253,52 @@ func (u *CLIUtils) generateNotificationID() string {
 	// Convert to hex and combine with timestamp
 	randomHex := fmt.Sprintf("%x", randomBytes)
 	return fmt.Sprintf("notif_%d_%s", time.Now().Unix(), randomHex)
+}
+
+// hasRecentNotificationForSession checks if a notification was sent to this session in the last N minutes
+func (u *CLIUtils) hasRecentNotificationForSession(sessionID string, minutes int) (bool, error) {
+	if sessionID == "" {
+		return false, nil
+	}
+
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = "/home/agentapi"
+	}
+	historyFile := filepath.Join(homeDir, "notifications", "history.jsonl")
+
+	// If history file doesn't exist, no recent notifications
+	if _, err := os.Stat(historyFile); os.IsNotExist(err) {
+		return false, nil
+	}
+
+	file, err := os.Open(historyFile)
+	if err != nil {
+		return false, fmt.Errorf("failed to open history file: %w", err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close history file: %v\n", err)
+		}
+	}()
+
+	cutoffTime := time.Now().Add(-time.Duration(minutes) * time.Minute)
+	decoder := json.NewDecoder(file)
+
+	for {
+		var history NotificationHistory
+		if err := decoder.Decode(&history); err != nil {
+			// EOF is expected
+			break
+		}
+
+		// Check if this notification matches our criteria
+		if history.SessionID == sessionID && history.SentAt.After(cutoffTime) && history.Delivered {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // NotificationResult represents the result of sending a notification
