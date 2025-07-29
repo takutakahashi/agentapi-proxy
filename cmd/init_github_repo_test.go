@@ -923,8 +923,31 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 					// GitHub API returns array of Installation objects
 					response := []*github.Installation{
-						{ID: github.Int64(12345)},
-						{ID: github.Int64(67890)},
+						{ID: github.Int64(12345), Account: &github.User{Login: github.String("owner"), Type: github.String("Organization")}},
+						{ID: github.Int64(67890), Account: &github.User{Login: github.String("other"), Type: github.String("User")}},
+					}
+					_ = json.NewEncoder(w).Encode(response)
+				case "/installation/repositories", "/api/v3/installation/repositories":
+					// Return list of repositories with permissions for the installation
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					response := map[string]interface{}{
+						"total_count": 1,
+						"repositories": []map[string]interface{}{
+							{
+								"id":        123456,
+								"name":      "repo",
+								"full_name": "owner/repo",
+								"owner": map[string]interface{}{
+									"login": "owner",
+								},
+								"permissions": map[string]bool{
+									"admin": false,
+									"push":  true,
+									"pull":  true,
+								},
+							},
+						},
 					}
 					_ = json.NewEncoder(w).Encode(response)
 				case "/repos/owner/repo", "/api/v3/repos/owner/repo":
@@ -932,7 +955,15 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 					if r.Header.Get("Authorization") != "" {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusOK)
-						_, _ = fmt.Fprint(w, `{"id": 123456, "name": "repo", "owner": {"login": "owner"}}`)
+						response := map[string]interface{}{
+							"id":        123456,
+							"name":      "repo",
+							"full_name": "owner/repo",
+							"owner": map[string]interface{}{
+								"login": "owner",
+							},
+						}
+						_ = json.NewEncoder(w).Encode(response)
 					} else {
 						w.WriteHeader(http.StatusNotFound)
 					}
@@ -965,13 +996,108 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 					// GitHub API returns array of Installation objects
 					response := []*github.Installation{
-						{ID: github.Int64(12345)},
+						{ID: github.Int64(12345), Account: &github.User{Login: github.String("owner"), Type: github.String("Organization")}},
+					}
+					_ = json.NewEncoder(w).Encode(response)
+				case "/installation/repositories", "/api/v3/installation/repositories":
+					// Return empty list or read-only permissions
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					response := map[string]interface{}{
+						"total_count": 1,
+						"repositories": []map[string]interface{}{
+							{
+								"id":        123456,
+								"name":      "repo",
+								"full_name": "owner/repo",
+								"owner": map[string]interface{}{
+									"login": "owner",
+								},
+								"permissions": map[string]bool{
+									"admin": false,
+									"push":  false, // No write permission
+									"pull":  true,
+								},
+							},
+						},
 					}
 					_ = json.NewEncoder(w).Encode(response)
 				case "/repos/owner/repo", "/api/v3/repos/owner/repo":
 					// Return 404 for all installations
 					w.WriteHeader(http.StatusNotFound)
 					_, _ = fmt.Fprint(w, `{"message": "Not Found"}`)
+				case "/app", "/user", "/api/v3/app", "/api/v3/user":
+					// These endpoints are called during authentication
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = fmt.Fprint(w, `{}`)
+				default:
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = fmt.Fprint(w, `{}`)
+				}
+			},
+			expectError:   true,
+			errorContains: "no installation found with access",
+		},
+		{
+			name:         "Installation with read-only access",
+			appID:        123,
+			repoFullName: "owner/repo",
+			apiBase:      "",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				// Log the request for debugging
+				t.Logf("Request: %s %s", r.Method, r.URL.Path)
+
+				switch r.URL.Path {
+				case "/app/installations", "/api/v3/app/installations":
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					// GitHub API returns array of Installation objects
+					response := []*github.Installation{
+						{ID: github.Int64(12345), Account: &github.User{Login: github.String("owner"), Type: github.String("Organization")}},
+					}
+					_ = json.NewEncoder(w).Encode(response)
+				case "/installation/repositories", "/api/v3/installation/repositories":
+					// Return repository with read-only permissions
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					response := map[string]interface{}{
+						"total_count": 1,
+						"repositories": []map[string]interface{}{
+							{
+								"id":        123456,
+								"name":      "repo",
+								"full_name": "owner/repo",
+								"owner": map[string]interface{}{
+									"login": "owner",
+								},
+								"permissions": map[string]bool{
+									"admin": false,
+									"push":  false, // No write permission
+									"pull":  true,
+								},
+							},
+						},
+					}
+					_ = json.NewEncoder(w).Encode(response)
+				case "/repos/owner/repo", "/api/v3/repos/owner/repo":
+					// Return 200 - repository is accessible
+					if r.Header.Get("Authorization") != "" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusOK)
+						response := map[string]interface{}{
+							"id":        123456,
+							"name":      "repo",
+							"full_name": "owner/repo",
+							"owner": map[string]interface{}{
+								"login": "owner",
+							},
+						}
+						_ = json.NewEncoder(w).Encode(response)
+					} else {
+						w.WriteHeader(http.StatusNotFound)
+					}
 				case "/app", "/user", "/api/v3/app", "/api/v3/user":
 					// These endpoints are called during authentication
 					w.Header().Set("Content-Type", "application/json")

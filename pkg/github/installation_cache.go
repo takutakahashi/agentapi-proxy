@@ -145,6 +145,14 @@ func (c *InstallationCache) setOrgCache(key string, installationID int64) {
 	c.orgCache.Store(key, entry)
 }
 
+// installationCandidate represents a potential installation match with metadata
+type installationCandidate struct {
+	installationID int64
+	account        string
+	accountType    string
+	priority       int // Higher number = higher priority
+}
+
 // discoverInstallationID discovers installation ID by querying GitHub API
 func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID int64, pemData []byte, owner, repo, apiBase string) (int64, error) {
 	// Create GitHub App transport
@@ -177,9 +185,17 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 
 	log.Printf("[INSTALLATION_CACHE] Found %d installations, checking access to %s/%s", len(installations), owner, repo)
 
+	var candidates []installationCandidate
+
 	// Check each installation for repository access
 	for _, installation := range installations {
 		installationID := installation.GetID()
+		account := installation.GetAccount()
+		accountLogin := account.GetLogin()
+		accountType := account.GetType()
+
+		log.Printf("[INSTALLATION_CACHE] Checking installation %d (account: %s, type: %s)",
+			installationID, accountLogin, accountType)
 
 		// Create installation client to check repository access
 		installationTransport := ghinstallation.NewFromAppsTransport(transport, installationID)
@@ -195,15 +211,128 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 		}
 
 		// Try to access the repository with this installation
-		_, _, err := installationClient.Repositories.Get(ctx, owner, repo)
-		if err == nil {
-			log.Printf("[INSTALLATION_CACHE] Installation %d has access to %s/%s", installationID, owner, repo)
-			return installationID, nil
+		repoResponse, _, err := installationClient.Repositories.Get(ctx, owner, repo)
+		if err != nil {
+			log.Printf("[INSTALLATION_CACHE] Installation %d (%s) does not have access to %s/%s: %v",
+				installationID, accountLogin, owner, repo, err)
+			continue
 		}
-		log.Printf("[INSTALLATION_CACHE] Installation %d does not have access to %s/%s: %v", installationID, owner, repo, err)
+
+		// Check if installation has write permissions by trying to access refs
+		// This is a lightweight way to verify contents write permissions
+		hasWritePermission, writeErr := c.checkWritePermission(ctx, installationClient, owner, repo)
+		if !hasWritePermission {
+			log.Printf("[INSTALLATION_CACHE] Installation %d (%s) has READ-only access to %s/%s: %v",
+				installationID, accountLogin, owner, repo, writeErr)
+			continue
+		}
+
+		log.Printf("[INSTALLATION_CACHE] Installation %d (%s) has WRITE access to %s/%s",
+			installationID, accountLogin, owner, repo)
+
+		// Repository access confirmed - calculate priority
+		priority := 0
+
+		// Higher priority for exact account match
+		if strings.EqualFold(accountLogin, owner) {
+			priority += 100
+			log.Printf("[INSTALLATION_CACHE] Installation %d has EXACT match with repository owner %s",
+				installationID, owner)
+		}
+
+		// Higher priority for organization installations over user installations
+		if accountType == "Organization" {
+			priority += 50
+		}
+
+		// Verify repository ownership matches installation account
+		repoOwner := repoResponse.GetOwner()
+		if repoOwner != nil && strings.EqualFold(repoOwner.GetLogin(), accountLogin) {
+			priority += 200
+			log.Printf("[INSTALLATION_CACHE] Installation %d OWNS the repository %s/%s",
+				installationID, owner, repo)
+		}
+
+		candidate := installationCandidate{
+			installationID: installationID,
+			account:        accountLogin,
+			accountType:    accountType,
+			priority:       priority,
+		}
+
+		candidates = append(candidates, candidate)
+		log.Printf("[INSTALLATION_CACHE] Installation %d (%s, %s) has access to %s/%s with priority %d",
+			installationID, accountLogin, accountType, owner, repo, priority)
 	}
 
-	return 0, fmt.Errorf("no installation found with access to repository %s/%s", owner, repo)
+	if len(candidates) == 0 {
+		return 0, fmt.Errorf("no installation found with access to repository %s/%s", owner, repo)
+	}
+
+	// Sort candidates by priority (highest first)
+	bestCandidate := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.priority > bestCandidate.priority {
+			bestCandidate = candidate
+		}
+	}
+
+	// Log selection reasoning
+	if len(candidates) > 1 {
+		log.Printf("[INSTALLATION_CACHE] Multiple installations found (%d total), selected installation %d (%s, type: %s) with highest priority %d",
+			len(candidates), bestCandidate.installationID, bestCandidate.account, bestCandidate.accountType, bestCandidate.priority)
+
+		// Log other candidates for debugging
+		for _, candidate := range candidates {
+			if candidate.installationID != bestCandidate.installationID {
+				log.Printf("[INSTALLATION_CACHE] Alternative: installation %d (%s, type: %s) with priority %d",
+					candidate.installationID, candidate.account, candidate.accountType, candidate.priority)
+			}
+		}
+	} else {
+		log.Printf("[INSTALLATION_CACHE] Single installation %d (%s, type: %s) found for %s/%s",
+			bestCandidate.installationID, bestCandidate.account, bestCandidate.accountType, owner, repo)
+	}
+
+	return bestCandidate.installationID, nil
+}
+
+// checkWritePermission checks if the installation has write permission to the repository
+// by querying the installation repositories API to get permission information
+func (c *InstallationCache) checkWritePermission(ctx context.Context, client *github.Client, owner, repo string) (bool, error) {
+	// List repositories accessible to the installation to get permission information
+	// The response includes permissions hash with push/pull access for each repository
+	installationRepos, _, err := client.Apps.ListRepos(ctx, &github.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to list installation repositories: %w", err)
+	}
+
+	// Look for the specific repository in the installation's accessible repositories
+	targetRepoFullName := fmt.Sprintf("%s/%s", owner, repo)
+	for _, installationRepo := range installationRepos.Repositories {
+		repoFullName := installationRepo.GetFullName()
+		if strings.EqualFold(repoFullName, targetRepoFullName) {
+			permissions := installationRepo.GetPermissions()
+			if permissions == nil {
+				log.Printf("[INSTALLATION_CACHE] No permissions found for repository %s", targetRepoFullName)
+				return false, fmt.Errorf("no permissions information available for repository %s", targetRepoFullName)
+			}
+
+			// Check if the installation has push (write) permission
+			hasPushAccess := permissions["push"]
+			log.Printf("[INSTALLATION_CACHE] Repository %s permissions: push=%v, pull=%v, admin=%v",
+				targetRepoFullName, permissions["push"], permissions["pull"], permissions["admin"])
+
+			if !hasPushAccess {
+				return false, fmt.Errorf("installation has read-only access (push=false) to repository %s", targetRepoFullName)
+			}
+
+			log.Printf("[INSTALLATION_CACHE] Installation has WRITE access (push=true) to %s", targetRepoFullName)
+			return true, nil
+		}
+	}
+
+	return false, fmt.Errorf("repository %s not found in installation's accessible repositories", targetRepoFullName)
 }
 
 // ClearCache clears all cached entries
