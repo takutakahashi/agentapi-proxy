@@ -298,39 +298,41 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 }
 
 // checkWritePermission checks if the installation has write permission to the repository
-// by attempting to access repository refs and commits, which requires contents:read permission
+// by querying the installation repositories API to get permission information
 func (c *InstallationCache) checkWritePermission(ctx context.Context, client *github.Client, owner, repo string) (bool, error) {
-	// Try to get a reference to verify we have at least contents:read permission
-	// We'll try to get the default branch reference
-	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
+	// List repositories accessible to the installation to get permission information
+	// The response includes permissions hash with push/pull access for each repository
+	installationRepos, _, err := client.Apps.ListRepos(ctx, &github.ListOptions{})
 	if err != nil {
-		return false, fmt.Errorf("failed to get repository info: %w", err)
+		return false, fmt.Errorf("failed to list installation repositories: %w", err)
 	}
 
-	defaultBranch := repoInfo.GetDefaultBranch()
-	if defaultBranch == "" {
-		defaultBranch = "main" // fallback
+	// Look for the specific repository in the installation's accessible repositories
+	targetRepoFullName := fmt.Sprintf("%s/%s", owner, repo)
+	for _, installationRepo := range installationRepos.Repositories {
+		repoFullName := installationRepo.GetFullName()
+		if strings.EqualFold(repoFullName, targetRepoFullName) {
+			permissions := installationRepo.GetPermissions()
+			if permissions == nil {
+				log.Printf("[INSTALLATION_CACHE] No permissions found for repository %s", targetRepoFullName)
+				return false, fmt.Errorf("no permissions information available for repository %s", targetRepoFullName)
+			}
+
+			// Check if the installation has push (write) permission
+			hasPushAccess := permissions["push"]
+			log.Printf("[INSTALLATION_CACHE] Repository %s permissions: push=%v, pull=%v, admin=%v",
+				targetRepoFullName, permissions["push"], permissions["pull"], permissions["admin"])
+
+			if !hasPushAccess {
+				return false, fmt.Errorf("installation has read-only access (push=false) to repository %s", targetRepoFullName)
+			}
+
+			log.Printf("[INSTALLATION_CACHE] Installation has WRITE access (push=true) to %s", targetRepoFullName)
+			return true, nil
+		}
 	}
 
-	// Try to get the reference of the default branch
-	// This requires contents:read permission
-	refName := fmt.Sprintf("refs/heads/%s", defaultBranch)
-	_, _, err = client.Git.GetRef(ctx, owner, repo, refName)
-	if err != nil {
-		return false, fmt.Errorf("failed to get ref %s (no contents permission): %w", refName, err)
-	}
-
-	// Try to get the latest commit on the default branch
-	// This requires contents:read permission
-	_, _, err = client.Repositories.GetCommit(ctx, owner, repo, defaultBranch, &github.ListOptions{})
-	if err != nil {
-		return false, fmt.Errorf("failed to get commit (no contents:read permission): %w", err)
-	}
-
-	// If we can access repository contents, we consider this installation as having
-	// sufficient permissions for git operations
-	log.Printf("[INSTALLATION_CACHE] Installation has contents access to %s/%s", owner, repo)
-	return true, nil
+	return false, fmt.Errorf("repository %s not found in installation's accessible repositories", targetRepoFullName)
 }
 
 // ClearCache clears all cached entries
