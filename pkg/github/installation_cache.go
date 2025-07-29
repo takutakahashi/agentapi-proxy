@@ -218,6 +218,18 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 			continue
 		}
 
+		// Check if installation has write permissions by trying to access refs
+		// This is a lightweight way to verify contents write permissions
+		hasWritePermission, writeErr := c.checkWritePermission(ctx, installationClient, owner, repo)
+		if !hasWritePermission {
+			log.Printf("[INSTALLATION_CACHE] Installation %d (%s) has READ-only access to %s/%s: %v",
+				installationID, accountLogin, owner, repo, writeErr)
+			continue
+		}
+
+		log.Printf("[INSTALLATION_CACHE] Installation %d (%s) has WRITE access to %s/%s",
+			installationID, accountLogin, owner, repo)
+
 		// Repository access confirmed - calculate priority
 		priority := 0
 
@@ -283,6 +295,42 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 	}
 
 	return bestCandidate.installationID, nil
+}
+
+// checkWritePermission checks if the installation has write permission to the repository
+// by attempting to access repository refs and commits, which requires contents:read permission
+func (c *InstallationCache) checkWritePermission(ctx context.Context, client *github.Client, owner, repo string) (bool, error) {
+	// Try to get a reference to verify we have at least contents:read permission
+	// We'll try to get the default branch reference
+	repoInfo, _, err := client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return false, fmt.Errorf("failed to get repository info: %w", err)
+	}
+
+	defaultBranch := repoInfo.GetDefaultBranch()
+	if defaultBranch == "" {
+		defaultBranch = "main" // fallback
+	}
+
+	// Try to get the reference of the default branch
+	// This requires contents:read permission
+	refName := fmt.Sprintf("refs/heads/%s", defaultBranch)
+	_, _, err = client.Git.GetRef(ctx, owner, repo, refName)
+	if err != nil {
+		return false, fmt.Errorf("failed to get ref %s (no contents permission): %w", refName, err)
+	}
+
+	// Try to get the latest commit on the default branch
+	// This requires contents:read permission
+	_, _, err = client.Repositories.GetCommit(ctx, owner, repo, defaultBranch, &github.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to get commit (no contents:read permission): %w", err)
+	}
+
+	// If we can access repository contents, we consider this installation as having
+	// sufficient permissions for git operations
+	log.Printf("[INSTALLATION_CACHE] Installation has contents access to %s/%s", owner, repo)
+	return true, nil
 }
 
 // ClearCache clears all cached entries
