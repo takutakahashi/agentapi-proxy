@@ -86,10 +86,16 @@ ENV GOCACHE=/home/agentapi/.cache/go-build
 # Install mise
 RUN curl https://mise.run | sh && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
-ENV PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
 # Install claude code and Playwright MCP server via npm (Node.js is now installed directly)
 RUN sudo npm install -g @anthropic-ai/claude-code @playwright/mcp@latest
+
+# Install uv for Python package management (enables uvx)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc
+
+# Set combined PATH environment variable
+ENV PATH="/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
 # Setup Lightpanda Browser
 ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
