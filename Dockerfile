@@ -26,7 +26,7 @@ FROM golang:1.23-alpine AS agentapi-builder
 RUN apk add --no-cache git
 
 # Set the agentapi version
-ARG AGENTAPI_VERSION=v0.2.1
+ARG AGENTAPI_VERSION=v0.6.0
 
 # Clone and build agentapi from source
 WORKDIR /agentapi-src
