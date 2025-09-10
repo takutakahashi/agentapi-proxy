@@ -87,8 +87,11 @@ ENV GOCACHE=/home/agentapi/.cache/go-build
 RUN curl https://mise.run | sh && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
 
-# Install claude code and Playwright MCP server via npm (Node.js is now installed directly)
-RUN sudo npm install -g @anthropic-ai/claude-code @playwright/mcp@latest
+# Install claude code
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# Install Playwright MCP server via npm (Node.js is now installed directly)
+RUN sudo npm install -g @playwright/mcp@latest
 
 # Install uv for Python package management (enables uvx)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
