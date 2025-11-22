@@ -52,9 +52,6 @@ RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 g
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Lightpanda Browser
-RUN curl -L -o /usr/local/bin/lightpanda https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux && \
-    chmod +x /usr/local/bin/lightpanda
 
 # Create a non-root user
 RUN groupadd -r agentapi && useradd -r -g agentapi -d /home/agentapi -s /bin/bash agentapi && \
@@ -100,9 +97,6 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 # Set combined PATH environment variable
 ENV PATH="/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
-# Setup Lightpanda Browser
-ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
