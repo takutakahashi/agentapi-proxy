@@ -90,6 +90,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 # Install Playwright MCP server via npm (Node.js is now installed directly)
 RUN sudo npm install -g @playwright/mcp@latest
 
+# Add Playwright MCP server to Claude Code
+RUN /home/agentapi/.local/bin/claude mcp add @playwright/mcp
+
 # Install uv for Python package management (enables uvx)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc
