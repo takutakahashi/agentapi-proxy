@@ -1,17 +1,20 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -20,151 +23,293 @@ const (
 )
 
 type KubernetesServiceImpl struct {
-	client kubernetes.Interface
+	client    client.Client
+	clientset kubernetes.Interface
 }
 
-func NewKubernetesService(client kubernetes.Interface) services.KubernetesService {
+func NewKubernetesService(client client.Client, clientset kubernetes.Interface) services.KubernetesService {
 	return &KubernetesServiceImpl{
-		client: client,
+		client:    client,
+		clientset: clientset,
 	}
 }
 
 func (s *KubernetesServiceImpl) CreateAgentStatefulSet(ctx context.Context, agentID, sessionID string) error {
-	return fmt.Errorf("CreateAgentStatefulSet not implemented in legacy service, use KubernetesServiceV2")
-}
+	statefulsetName := fmt.Sprintf("agent-%s", agentID)
+	serviceName := fmt.Sprintf("agent-%s-headless", agentID)
 
-func (s *KubernetesServiceImpl) DeleteStatefulSet(ctx context.Context, agentID string) error {
-	return fmt.Errorf("DeleteStatefulSet not implemented in legacy service, use KubernetesServiceV2")
-}
-
-func (s *KubernetesServiceImpl) CreateAgentPod(ctx context.Context, sessionID string) (string, error) {
-	podName := fmt.Sprintf("agent-%s-%d", sessionID, metav1.Now().Unix())
-
-	pod := &corev1.Pod{
+	// Create headless service first
+	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
+			Name:      serviceName,
+			Namespace: agentNamespace,
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Selector: map[string]string{
+				"app":       "agentapi-proxy",
+				"component": "agent",
+				"agent-id":  agentID,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Port:       8080,
+					TargetPort: intstr.FromInt(8080),
+					Name:       "http",
+				},
+			},
+		},
+	}
+
+	if err := s.client.Create(ctx, service); err != nil {
+		return fmt.Errorf("failed to create headless service: %w", err)
+	}
+
+	// Create StatefulSet
+	statefulset := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      statefulsetName,
 			Namespace: agentNamespace,
 			Labels: map[string]string{
 				"app":        "agentapi-proxy",
 				"component":  "agent",
+				"agent-id":   agentID,
 				"session-id": sessionID,
 			},
 		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
+		Spec: appsv1.StatefulSetSpec{
+			ServiceName: serviceName,
+			Replicas:    &[]int32{1}[0],
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":       "agentapi-proxy",
+					"component": "agent",
+					"agent-id":  agentID,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":        "agentapi-proxy",
+						"component":  "agent",
+						"agent-id":   agentID,
+						"session-id": sessionID,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "agent",
+							Image: agentImage,
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 8080,
+									Name:          "http",
+								},
+							},
+							Env: []corev1.EnvVar{
+								{
+									Name:  "AGENT_ID",
+									Value: agentID,
+								},
+								{
+									Name:  "SESSION_ID",
+									Value: sessionID,
+								},
+								{
+									Name: "POD_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.name",
+										},
+									},
+								},
+								{
+									Name: "POD_NAMESPACE",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+								{
+									Name: "POD_IP",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "status.podIP",
+										},
+									},
+								},
+								{
+									Name:  "SESSION_PROVIDER",
+									Value: "kubernetes",
+								},
+								{
+									Name:  "K8S_NAMESPACE",
+									Value: agentNamespace,
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "data",
+									MountPath: "/data",
+								},
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("256Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+							},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/health",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 30,
+								PeriodSeconds:       10,
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/ready",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       5,
+							},
+						},
+					},
+					RestartPolicy: corev1.RestartPolicyAlways,
+				},
+			},
+			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
 				{
-					Name:  "agent",
-					Image: agentImage,
-					Ports: []corev1.ContainerPort{
-						{
-							ContainerPort: 8080,
-							Name:          "http",
-						},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "data",
 					},
-					Env: []corev1.EnvVar{
-						{
-							Name:  "SESSION_ID",
-							Value: sessionID,
+					Spec: corev1.PersistentVolumeClaimSpec{
+						AccessModes: []corev1.PersistentVolumeAccessMode{
+							corev1.ReadWriteOnce,
 						},
-						{
-							Name: "POD_NAME",
-							ValueFrom: &corev1.EnvVarSource{
-								FieldRef: &corev1.ObjectFieldSelector{
-									FieldPath: "metadata.name",
-								},
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse("1Gi"),
 							},
 						},
-						{
-							Name: "POD_NAMESPACE",
-							ValueFrom: &corev1.EnvVarSource{
-								FieldRef: &corev1.ObjectFieldSelector{
-									FieldPath: "metadata.namespace",
-								},
-							},
-						},
-						{
-							Name: "POD_IP",
-							ValueFrom: &corev1.EnvVarSource{
-								FieldRef: &corev1.ObjectFieldSelector{
-									FieldPath: "status.podIP",
-								},
-							},
-						},
-					},
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("100m"),
-							corev1.ResourceMemory: resource.MustParse("128Mi"),
-						},
-						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("500m"),
-							corev1.ResourceMemory: resource.MustParse("512Mi"),
-						},
-					},
-					LivenessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/health",
-								Port: intstr.FromInt(8080),
-							},
-						},
-						InitialDelaySeconds: 30,
-						PeriodSeconds:       10,
-					},
-					ReadinessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/ready",
-								Port: intstr.FromInt(8080),
-							},
-						},
-						InitialDelaySeconds: 5,
-						PeriodSeconds:       5,
 					},
 				},
 			},
-			RestartPolicy: corev1.RestartPolicyAlways,
 		},
 	}
 
-	created, err := s.client.CoreV1().Pods(agentNamespace).Create(ctx, pod, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to create pod: %w", err)
+	if err := s.client.Create(ctx, statefulset); err != nil {
+		// Clean up service if StatefulSet creation fails
+		_ = s.client.Delete(ctx, service)
+		return fmt.Errorf("failed to create statefulset: %w", err)
 	}
 
-	return created.Name, nil
+	return nil
+}
+
+func (s *KubernetesServiceImpl) CreateAgentPod(ctx context.Context, sessionID string) (string, error) {
+	// This method is deprecated in favor of CreateAgentStatefulSet
+	// Keep for backward compatibility but redirect to StatefulSet creation
+	agentID := fmt.Sprintf("agent-%d", metav1.Now().Unix())
+
+	if err := s.CreateAgentStatefulSet(ctx, agentID, sessionID); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("agent-%s-0", agentID), nil
+}
+
+func (s *KubernetesServiceImpl) DeleteStatefulSet(ctx context.Context, agentID string) error {
+	statefulsetName := fmt.Sprintf("agent-%s", agentID)
+	serviceName := fmt.Sprintf("agent-%s-headless", agentID)
+
+	// Delete StatefulSet
+	statefulset := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      statefulsetName,
+			Namespace: agentNamespace,
+		},
+	}
+
+	if err := s.client.Delete(ctx, statefulset); err != nil && client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete statefulset: %w", err)
+	}
+
+	// Delete headless service
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: agentNamespace,
+		},
+	}
+
+	if err := s.client.Delete(ctx, service); err != nil && client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete headless service: %w", err)
+	}
+
+	return nil
 }
 
 func (s *KubernetesServiceImpl) DeletePod(ctx context.Context, podName string) error {
-	err := s.client.CoreV1().Pods(agentNamespace).Delete(ctx, podName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
+	// Extract agent ID from pod name (format: agent-{agentID}-0)
+	if strings.HasPrefix(podName, "agent-") && strings.HasSuffix(podName, "-0") {
+		agentID := strings.TrimSuffix(strings.TrimPrefix(podName, "agent-"), "-0")
+		return s.DeleteStatefulSet(ctx, agentID)
+	}
+
+	// Fallback to direct pod deletion for backward compatibility
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: agentNamespace,
+		},
+	}
+
+	if err := s.client.Delete(ctx, pod); err != nil && client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete pod: %w", err)
 	}
 	return nil
 }
 
 func (s *KubernetesServiceImpl) GetPodStatus(ctx context.Context, podName string) (string, error) {
-	pod, err := s.client.CoreV1().Pods(agentNamespace).Get(ctx, podName, metav1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return "NotFound", nil
+	pod := &corev1.Pod{}
+	key := client.ObjectKey{
+		Namespace: agentNamespace,
+		Name:      podName,
+	}
+
+	if err := s.client.Get(ctx, key, pod); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return "", fmt.Errorf("failed to get pod: %w", err)
 		}
-		return "", fmt.Errorf("failed to get pod: %w", err)
+		return "NotFound", nil
 	}
 
 	return string(pod.Status.Phase), nil
 }
 
 func (s *KubernetesServiceImpl) ScalePods(ctx context.Context, sessionID string, replicas int) error {
-	labelSelector := fmt.Sprintf("session-id=%s", sessionID)
-	pods, err := s.client.CoreV1().Pods(agentNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
+	podList := &corev1.PodList{}
+	if err := s.client.List(ctx, podList,
+		client.InNamespace(agentNamespace),
+		client.MatchingLabels{"session-id": sessionID},
+	); err != nil {
 		return fmt.Errorf("failed to list pods: %w", err)
 	}
 
-	currentCount := len(pods.Items)
+	currentCount := len(podList.Items)
 
 	if currentCount == replicas {
 		return nil
@@ -172,8 +317,8 @@ func (s *KubernetesServiceImpl) ScalePods(ctx context.Context, sessionID string,
 
 	if currentCount > replicas {
 		toDelete := currentCount - replicas
-		for i := 0; i < toDelete && i < len(pods.Items); i++ {
-			if err := s.DeletePod(ctx, pods.Items[i].Name); err != nil {
+		for i := 0; i < toDelete && i < len(podList.Items); i++ {
+			if err := s.DeletePod(ctx, podList.Items[i].Name); err != nil {
 				return fmt.Errorf("failed to delete pod during scale down: %w", err)
 			}
 		}
@@ -190,16 +335,16 @@ func (s *KubernetesServiceImpl) ScalePods(ctx context.Context, sessionID string,
 }
 
 func (s *KubernetesServiceImpl) ListPodsBySession(ctx context.Context, sessionID string) ([]services.PodInfo, error) {
-	labelSelector := fmt.Sprintf("session-id=%s", sessionID)
-	pods, err := s.client.CoreV1().Pods(agentNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
+	podList := &corev1.PodList{}
+	if err := s.client.List(ctx, podList,
+		client.InNamespace(agentNamespace),
+		client.MatchingLabels{"session-id": sessionID},
+	); err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}
 
-	podInfos := make([]services.PodInfo, 0, len(pods.Items))
-	for _, pod := range pods.Items {
+	podInfos := make([]services.PodInfo, 0, len(podList.Items))
+	for _, pod := range podList.Items {
 		podInfo := services.PodInfo{
 			Name:     pod.Name,
 			Status:   string(pod.Status.Phase),
@@ -222,57 +367,30 @@ func (s *KubernetesServiceImpl) GetPodLogs(ctx context.Context, podName string, 
 		TailLines: &tailLines,
 	}
 
-	req := s.client.CoreV1().Pods(agentNamespace).GetLogs(podName, logOptions)
+	req := s.clientset.CoreV1().Pods(agentNamespace).GetLogs(podName, logOptions)
 	logs, err := req.Stream(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod logs: %w", err)
 	}
-	defer logs.Close()
+	defer func() { _ = logs.Close() }()
 
-	buf := make([]byte, 2048)
-	var logLines []string
-	var currentLine strings.Builder
-
-	for {
-		n, err := logs.Read(buf)
-		if n > 0 {
-			data := string(buf[:n])
-			lines := strings.Split(data, "\n")
-
-			for i, line := range lines {
-				if i == 0 {
-					currentLine.WriteString(line)
-				} else {
-					if currentLine.Len() > 0 {
-						logLines = append(logLines, currentLine.String())
-						currentLine.Reset()
-					}
-					if i < len(lines)-1 || strings.HasSuffix(data, "\n") {
-						logLines = append(logLines, line)
-					} else {
-						currentLine.WriteString(line)
-					}
-				}
-			}
-		}
-		if err != nil {
-			if err.Error() != "EOF" && !strings.Contains(err.Error(), "EOF") {
-				return nil, fmt.Errorf("error reading logs: %w", err)
-			}
-			break
-		}
+	buf := &bytes.Buffer{}
+	if _, err := io.Copy(buf, logs); err != nil {
+		return nil, fmt.Errorf("failed to read logs: %w", err)
 	}
 
-	if currentLine.Len() > 0 {
-		logLines = append(logLines, currentLine.String())
-	}
-
+	logLines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	return logLines, nil
 }
 
 func (s *KubernetesServiceImpl) UpdatePodLabels(ctx context.Context, podName string, labels map[string]string) error {
-	pod, err := s.client.CoreV1().Pods(agentNamespace).Get(ctx, podName, metav1.GetOptions{})
-	if err != nil {
+	pod := &corev1.Pod{}
+	key := client.ObjectKey{
+		Namespace: agentNamespace,
+		Name:      podName,
+	}
+
+	if err := s.client.Get(ctx, key, pod); err != nil {
 		return fmt.Errorf("failed to get pod: %w", err)
 	}
 
@@ -284,8 +402,7 @@ func (s *KubernetesServiceImpl) UpdatePodLabels(ctx context.Context, podName str
 		pod.Labels[k] = v
 	}
 
-	_, err = s.client.CoreV1().Pods(agentNamespace).Update(ctx, pod, metav1.UpdateOptions{})
-	if err != nil {
+	if err := s.client.Update(ctx, pod); err != nil {
 		return fmt.Errorf("failed to update pod labels: %w", err)
 	}
 
@@ -310,8 +427,7 @@ func (s *KubernetesServiceImpl) CreateConfigMap(ctx context.Context, name string
 		Data: data,
 	}
 
-	_, err := s.client.CoreV1().ConfigMaps(agentNamespace).Create(ctx, configMap, metav1.CreateOptions{})
-	if err != nil {
+	if err := s.client.Create(ctx, configMap); err != nil {
 		return fmt.Errorf("failed to create configmap: %w", err)
 	}
 
@@ -319,14 +435,18 @@ func (s *KubernetesServiceImpl) CreateConfigMap(ctx context.Context, name string
 }
 
 func (s *KubernetesServiceImpl) UpdateConfigMap(ctx context.Context, name string, data map[string]string) error {
-	cm, err := s.client.CoreV1().ConfigMaps(agentNamespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
+	configMap := &corev1.ConfigMap{}
+	key := client.ObjectKey{
+		Namespace: agentNamespace,
+		Name:      name,
+	}
+
+	if err := s.client.Get(ctx, key, configMap); err != nil {
 		return fmt.Errorf("failed to get configmap: %w", err)
 	}
 
-	cm.Data = data
-	_, err = s.client.CoreV1().ConfigMaps(agentNamespace).Update(ctx, cm, metav1.UpdateOptions{})
-	if err != nil {
+	configMap.Data = data
+	if err := s.client.Update(ctx, configMap); err != nil {
 		return fmt.Errorf("failed to update configmap: %w", err)
 	}
 
@@ -334,8 +454,14 @@ func (s *KubernetesServiceImpl) UpdateConfigMap(ctx context.Context, name string
 }
 
 func (s *KubernetesServiceImpl) DeleteConfigMap(ctx context.Context, name string) error {
-	err := s.client.CoreV1().ConfigMaps(agentNamespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: agentNamespace,
+		},
+	}
+
+	if err := s.client.Delete(ctx, configMap); err != nil && client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete configmap: %w", err)
 	}
 	return nil

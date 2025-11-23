@@ -8,9 +8,8 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -19,10 +18,10 @@ const (
 )
 
 type KubernetesAgentRepository struct {
-	client kubernetes.Interface
+	client client.Client
 }
 
-func NewKubernetesAgentRepository(client kubernetes.Interface) repositories.AgentRepository {
+func NewKubernetesAgentRepository(client client.Client) repositories.AgentRepository {
 	return &KubernetesAgentRepository{
 		client: client,
 	}
@@ -49,8 +48,7 @@ func (r *KubernetesAgentRepository) Save(ctx context.Context, agent *entities.Ag
 		},
 	}
 
-	_, err = r.client.CoreV1().ConfigMaps(agentNamespace).Create(ctx, configMap, metav1.CreateOptions{})
-	if err != nil {
+	if err := r.client.Create(ctx, configMap); err != nil {
 		return fmt.Errorf("failed to create configmap: %w", err)
 	}
 
@@ -63,14 +61,18 @@ func (r *KubernetesAgentRepository) Update(ctx context.Context, agent *entities.
 		return fmt.Errorf("failed to marshal agent: %w", err)
 	}
 
-	cm, err := r.client.CoreV1().ConfigMaps(agentNamespace).Get(ctx, r.getConfigMapName(agent.ID), metav1.GetOptions{})
-	if err != nil {
+	configMap := &corev1.ConfigMap{}
+	key := client.ObjectKey{
+		Namespace: agentNamespace,
+		Name:      r.getConfigMapName(agent.ID),
+	}
+
+	if err := r.client.Get(ctx, key, configMap); err != nil {
 		return fmt.Errorf("failed to get configmap: %w", err)
 	}
 
-	cm.Data["agent.json"] = data
-	_, err = r.client.CoreV1().ConfigMaps(agentNamespace).Update(ctx, cm, metav1.UpdateOptions{})
-	if err != nil {
+	configMap.Data["agent.json"] = data
+	if err := r.client.Update(ctx, configMap); err != nil {
 		return fmt.Errorf("failed to update configmap: %w", err)
 	}
 
@@ -78,15 +80,20 @@ func (r *KubernetesAgentRepository) Update(ctx context.Context, agent *entities.
 }
 
 func (r *KubernetesAgentRepository) FindByID(ctx context.Context, id entities.AgentID) (*entities.Agent, error) {
-	cm, err := r.client.CoreV1().ConfigMaps(agentNamespace).Get(ctx, r.getConfigMapName(id), metav1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil, fmt.Errorf("agent not found")
-		}
-		return nil, fmt.Errorf("failed to get configmap: %w", err)
+	configMap := &corev1.ConfigMap{}
+	key := client.ObjectKey{
+		Namespace: agentNamespace,
+		Name:      r.getConfigMapName(id),
 	}
 
-	data, ok := cm.Data["agent.json"]
+	if err := r.client.Get(ctx, key, configMap); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return nil, fmt.Errorf("failed to get configmap: %w", err)
+		}
+		return nil, fmt.Errorf("agent not found")
+	}
+
+	data, ok := configMap.Data["agent.json"]
 	if !ok {
 		return nil, fmt.Errorf("agent data not found in configmap")
 	}
@@ -95,16 +102,19 @@ func (r *KubernetesAgentRepository) FindByID(ctx context.Context, id entities.Ag
 }
 
 func (r *KubernetesAgentRepository) FindBySessionID(ctx context.Context, sessionID entities.SessionID) ([]*entities.Agent, error) {
-	labelSelector := fmt.Sprintf("type=agent,session-id=%s", string(sessionID))
-	cmList, err := r.client.CoreV1().ConfigMaps(agentNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
+	configMapList := &corev1.ConfigMapList{}
+	if err := r.client.List(ctx, configMapList,
+		client.InNamespace(agentNamespace),
+		client.MatchingLabels{
+			"type":       "agent",
+			"session-id": string(sessionID),
+		},
+	); err != nil {
 		return nil, fmt.Errorf("failed to list configmaps: %w", err)
 	}
 
-	agents := make([]*entities.Agent, 0, len(cmList.Items))
-	for _, cm := range cmList.Items {
+	agents := make([]*entities.Agent, 0, len(configMapList.Items))
+	for _, cm := range configMapList.Items {
 		data, ok := cm.Data["agent.json"]
 		if !ok {
 			continue
@@ -122,16 +132,16 @@ func (r *KubernetesAgentRepository) FindBySessionID(ctx context.Context, session
 }
 
 func (r *KubernetesAgentRepository) FindAll(ctx context.Context) ([]*entities.Agent, error) {
-	labelSelector := "type=agent"
-	cmList, err := r.client.CoreV1().ConfigMaps(agentNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
+	configMapList := &corev1.ConfigMapList{}
+	if err := r.client.List(ctx, configMapList,
+		client.InNamespace(agentNamespace),
+		client.MatchingLabels{"type": "agent"},
+	); err != nil {
 		return nil, fmt.Errorf("failed to list configmaps: %w", err)
 	}
 
-	agents := make([]*entities.Agent, 0, len(cmList.Items))
-	for _, cm := range cmList.Items {
+	agents := make([]*entities.Agent, 0, len(configMapList.Items))
+	for _, cm := range configMapList.Items {
 		data, ok := cm.Data["agent.json"]
 		if !ok {
 			continue
@@ -149,21 +159,37 @@ func (r *KubernetesAgentRepository) FindAll(ctx context.Context) ([]*entities.Ag
 }
 
 func (r *KubernetesAgentRepository) Delete(ctx context.Context, id entities.AgentID) error {
-	err := r.client.CoreV1().ConfigMaps(agentNamespace).Delete(ctx, r.getConfigMapName(id), metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      r.getConfigMapName(id),
+			Namespace: agentNamespace,
+		},
+	}
+
+	if err := r.client.Delete(ctx, configMap); err != nil && client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete configmap: %w", err)
 	}
 	return nil
 }
 
 func (r *KubernetesAgentRepository) DeleteBySessionID(ctx context.Context, sessionID entities.SessionID) error {
-	labelSelector := fmt.Sprintf("type=agent,session-id=%s", string(sessionID))
-	err := r.client.CoreV1().ConfigMaps(agentNamespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to delete configmaps: %w", err)
+	configMapList := &corev1.ConfigMapList{}
+	if err := r.client.List(ctx, configMapList,
+		client.InNamespace(agentNamespace),
+		client.MatchingLabels{
+			"type":       "agent",
+			"session-id": string(sessionID),
+		},
+	); err != nil {
+		return fmt.Errorf("failed to list configmaps: %w", err)
 	}
+
+	for _, cm := range configMapList.Items {
+		if err := r.client.Delete(ctx, &cm); err != nil && client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("failed to delete configmap: %w", err)
+		}
+	}
+
 	return nil
 }
 

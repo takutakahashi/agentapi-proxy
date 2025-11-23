@@ -58,7 +58,10 @@ func (c *AgentController) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 type ListAgentsResponse struct {
@@ -101,7 +104,10 @@ func (c *AgentController) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (c *AgentController) GetAgent(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +130,10 @@ func (c *AgentController) GetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (c *AgentController) StartAgent(w http.ResponseWriter, r *http.Request) {
@@ -137,9 +146,12 @@ func (c *AgentController) StartAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"message": "Agent started successfully",
-	})
+	}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (c *AgentController) StopAgent(w http.ResponseWriter, r *http.Request) {
@@ -152,9 +164,12 @@ func (c *AgentController) StopAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"message": "Agent stopped successfully",
-	})
+	}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (c *AgentController) HealthCheck(w http.ResponseWriter, r *http.Request) {
@@ -163,17 +178,22 @@ func (c *AgentController) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 	if err := c.agentManager.HealthCheck(r.Context(), agentID); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{
+		if encodeErr := json.NewEncoder(w).Encode(map[string]string{
 			"status": "unhealthy",
 			"error":  err.Error(),
-		})
+		}); encodeErr != nil {
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		}
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "healthy",
-	})
+	}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 type ScaleAgentsRequest struct {
@@ -196,8 +216,11 @@ func (c *AgentController) ScaleAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":     "Scaling operation completed",
 		"targetCount": req.TargetCount,
-	})
+	}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }

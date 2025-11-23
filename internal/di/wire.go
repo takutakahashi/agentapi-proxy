@@ -1,5 +1,4 @@
 //go:build wireinject
-// +build wireinject
 
 package di
 
@@ -39,7 +38,7 @@ func provideKubernetesClientset(cfg *config.KubernetesConfig) kubernetes.Interfa
 }
 
 func provideAgentRepository(client client.Client) port_repositories.AgentRepository {
-	return repositories.NewKubernetesAgentRepositoryV2(client)
+	return repositories.NewKubernetesAgentRepository(client)
 }
 
 func provideSessionRepository() port_repositories.SessionRepository {
@@ -47,5 +46,5 @@ func provideSessionRepository() port_repositories.SessionRepository {
 }
 
 func provideKubernetesService(client client.Client, clientset kubernetes.Interface) port_services.KubernetesService {
-	return services.NewKubernetesServiceV2(client, clientset)
+	return services.NewKubernetesService(client, clientset)
 }
