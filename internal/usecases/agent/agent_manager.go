@@ -38,9 +38,9 @@ func NewAgentManager(
 	}
 }
 
-// isProvisionModeEnabled returns true if provision mode (Kubernetes StatefulSets) is enabled
-func (m *AgentManager) isProvisionModeEnabled() bool {
-	return m.config != nil && m.config.ProvisionMode.Enabled
+// isK8sModeEnabled returns true if k8s mode (Kubernetes StatefulSets) is enabled
+func (m *AgentManager) isK8sModeEnabled() bool {
+	return m.config != nil && m.config.K8sMode.Enabled
 }
 
 func (m *AgentManager) CreateAgent(ctx context.Context, sessionID entities.SessionID) (*entities.Agent, error) {
@@ -55,15 +55,15 @@ func (m *AgentManager) CreateAgent(ctx context.Context, sessionID entities.Sessi
 
 	agent := entities.NewAgent(sessionID, "")
 
-	if m.isProvisionModeEnabled() {
-		return m.createAgentWithProvisionMode(ctx, agent, string(sessionID))
+	if m.isK8sModeEnabled() {
+		return m.createAgentWithK8sMode(ctx, agent, string(sessionID))
 	}
 	
-	return m.createAgentWithLegacyMode(ctx, agent, session)
+	return m.createAgentWithLocalMode(ctx, agent, session)
 }
 
-// createAgentWithProvisionMode creates an agent using Kubernetes StatefulSets
-func (m *AgentManager) createAgentWithProvisionMode(ctx context.Context, agent *entities.Agent, sessionID string) (*entities.Agent, error) {
+// createAgentWithK8sMode creates an agent using Kubernetes StatefulSets
+func (m *AgentManager) createAgentWithK8sMode(ctx context.Context, agent *entities.Agent, sessionID string) (*entities.Agent, error) {
 	agentID := string(agent.ID)
 
 	// Create StatefulSet for the agent
@@ -82,8 +82,8 @@ func (m *AgentManager) createAgentWithProvisionMode(ctx context.Context, agent *
 	return agent, nil
 }
 
-// createAgentWithLegacyMode creates an agent using legacy process management
-func (m *AgentManager) createAgentWithLegacyMode(ctx context.Context, agent *entities.Agent, session *entities.Session) (*entities.Agent, error) {
+// createAgentWithLocalMode creates an agent using local process management
+func (m *AgentManager) createAgentWithLocalMode(ctx context.Context, agent *entities.Agent, session *entities.Session) (*entities.Agent, error) {
 	// Allocate port for agent
 	port, err := m.agentService.AllocatePort(ctx)
 	if err != nil {
@@ -129,15 +129,15 @@ func (m *AgentManager) StartAgent(ctx context.Context, agentID entities.AgentID)
 		return fmt.Errorf("agent is not in pending status")
 	}
 
-	if m.isProvisionModeEnabled() {
-		return m.startAgentWithProvisionMode(ctx, agent)
+	if m.isK8sModeEnabled() {
+		return m.startAgentWithK8sMode(ctx, agent)
 	}
 	
-	return m.startAgentWithLegacyMode(ctx, agent)
+	return m.startAgentWithLocalMode(ctx, agent)
 }
 
-// startAgentWithProvisionMode starts an agent in provision mode (Kubernetes)
-func (m *AgentManager) startAgentWithProvisionMode(ctx context.Context, agent *entities.Agent) error {
+// startAgentWithK8sMode starts an agent in k8s mode (Kubernetes)
+func (m *AgentManager) startAgentWithK8sMode(ctx context.Context, agent *entities.Agent) error {
 	podStatus, err := m.k8sService.GetPodStatus(ctx, agent.PodName)
 	if err != nil {
 		return fmt.Errorf("failed to get pod status: %w", err)
@@ -155,9 +155,9 @@ func (m *AgentManager) startAgentWithProvisionMode(ctx context.Context, agent *e
 	return nil
 }
 
-// startAgentWithLegacyMode starts an agent in legacy mode (process management)
-func (m *AgentManager) startAgentWithLegacyMode(ctx context.Context, agent *entities.Agent) error {
-	// In legacy mode, the agent is already started when created
+// startAgentWithLocalMode starts an agent in local mode (process management)
+func (m *AgentManager) startAgentWithLocalMode(ctx context.Context, agent *entities.Agent) error {
+	// In local mode, the agent is already started when created
 	// Just update the status to running
 	agent.Start()
 	if err := m.agentRepo.Update(ctx, agent); err != nil {
@@ -177,15 +177,15 @@ func (m *AgentManager) StopAgent(ctx context.Context, agentID entities.AgentID) 
 		return fmt.Errorf("agent is not active")
 	}
 
-	if m.isProvisionModeEnabled() {
-		return m.stopAgentWithProvisionMode(ctx, agent, string(agentID))
+	if m.isK8sModeEnabled() {
+		return m.stopAgentWithK8sMode(ctx, agent, string(agentID))
 	}
 	
-	return m.stopAgentWithLegacyMode(ctx, agent)
+	return m.stopAgentWithLocalMode(ctx, agent)
 }
 
-// stopAgentWithProvisionMode stops an agent in provision mode (Kubernetes)
-func (m *AgentManager) stopAgentWithProvisionMode(ctx context.Context, agent *entities.Agent, agentID string) error {
+// stopAgentWithK8sMode stops an agent in k8s mode (Kubernetes)
+func (m *AgentManager) stopAgentWithK8sMode(ctx context.Context, agent *entities.Agent, agentID string) error {
 	if err := m.k8sService.DeleteStatefulSet(ctx, agentID); err != nil {
 		return fmt.Errorf("failed to delete statefulset: %w", err)
 	}
@@ -198,9 +198,9 @@ func (m *AgentManager) stopAgentWithProvisionMode(ctx context.Context, agent *en
 	return nil
 }
 
-// stopAgentWithLegacyMode stops an agent in legacy mode (process management)
-func (m *AgentManager) stopAgentWithLegacyMode(ctx context.Context, agent *entities.Agent) error {
-	// Parse PID from PodName (which stores PID in legacy mode)
+// stopAgentWithLocalMode stops an agent in local mode (process management)
+func (m *AgentManager) stopAgentWithLocalMode(ctx context.Context, agent *entities.Agent) error {
+	// Parse PID from PodName (which stores PID in local mode)
 	pid, err := strconv.Atoi(agent.PodName)
 	if err != nil {
 		return fmt.Errorf("invalid PID in agent data: %w", err)
@@ -232,15 +232,15 @@ func (m *AgentManager) HealthCheck(ctx context.Context, agentID entities.AgentID
 		return fmt.Errorf("agent is not active")
 	}
 
-	if m.isProvisionModeEnabled() {
-		return m.healthCheckWithProvisionMode(ctx, agent)
+	if m.isK8sModeEnabled() {
+		return m.healthCheckWithK8sMode(ctx, agent)
 	}
 	
-	return m.healthCheckWithLegacyMode(ctx, agent)
+	return m.healthCheckWithLocalMode(ctx, agent)
 }
 
-// healthCheckWithProvisionMode performs health check in provision mode (Kubernetes)
-func (m *AgentManager) healthCheckWithProvisionMode(ctx context.Context, agent *entities.Agent) error {
+// healthCheckWithK8sMode performs health check in k8s mode (Kubernetes)
+func (m *AgentManager) healthCheckWithK8sMode(ctx context.Context, agent *entities.Agent) error {
 	podStatus, err := m.k8sService.GetPodStatus(ctx, agent.PodName)
 	if err != nil {
 		agent.Fail()
@@ -262,9 +262,9 @@ func (m *AgentManager) healthCheckWithProvisionMode(ctx context.Context, agent *
 	return nil
 }
 
-// healthCheckWithLegacyMode performs health check in legacy mode (process management)
-func (m *AgentManager) healthCheckWithLegacyMode(ctx context.Context, agent *entities.Agent) error {
-	// Parse PID from PodName (which stores PID in legacy mode)
+// healthCheckWithLocalMode performs health check in local mode (process management)
+func (m *AgentManager) healthCheckWithLocalMode(ctx context.Context, agent *entities.Agent) error {
+	// Parse PID from PodName (which stores PID in local mode)
 	pid, err := strconv.Atoi(agent.PodName)
 	if err != nil {
 		agent.Fail()

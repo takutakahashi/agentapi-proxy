@@ -1,15 +1,15 @@
-# プロビジョンモード (Provision Mode)
+# エージェント管理モード (Agent Management Modes)
 
-プロビジョンモードは、エージェントを従来のプロセス管理からKubernetes StatefulSetに切り替えるための設定です。
+agentapi-proxyは、エージェントを2つの異なる方法で管理することができます。
 
 ## 概要
 
 agentapi-proxyは2つの動作モードをサポートしています：
 
-1. **レガシーモード** (デフォルト): エージェントをローカルプロセスとして管理
-2. **プロビジョンモード**: エージェントをKubernetes StatefulSetとして管理
+1. **ローカルプロビジョンモード** (デフォルト): エージェントをローカルプロセスとして管理
+2. **K8sモード**: エージェントをKubernetes StatefulSetとして管理
 
-## プロビジョンモードの利点
+## K8sモードの利点
 
 - **スケーラビリティ**: Kubernetesの自動スケーリング機能
 - **堅牢性**: Pod再起動、ヘルスチェック、リソース制限
@@ -22,26 +22,26 @@ agentapi-proxyは2つの動作モードをサポートしています：
 ### 環境変数
 
 ```bash
-# プロビジョンモードを有効化
-export AGENTAPI_PROVISION_MODE_ENABLED=true
+# K8sモードを有効化
+export AGENTAPI_K8S_MODE_ENABLED=true
 
 # Kubernetesの設定
-export AGENTAPI_PROVISION_MODE_NAMESPACE=agentapi-proxy
-export AGENTAPI_PROVISION_MODE_IMAGE=agentapi-proxy:latest
+export AGENTAPI_K8S_MODE_NAMESPACE=agentapi-proxy
+export AGENTAPI_K8S_MODE_IMAGE=agentapi-proxy:latest
 
 # リソース設定
-export AGENTAPI_PROVISION_MODE_RESOURCES_CPU_REQUEST=100m
-export AGENTAPI_PROVISION_MODE_RESOURCES_CPU_LIMIT=500m
-export AGENTAPI_PROVISION_MODE_RESOURCES_MEMORY_REQUEST=256Mi
-export AGENTAPI_PROVISION_MODE_RESOURCES_MEMORY_LIMIT=512Mi
-export AGENTAPI_PROVISION_MODE_RESOURCES_STORAGE_SIZE=1Gi
+export AGENTAPI_K8S_MODE_RESOURCES_CPU_REQUEST=100m
+export AGENTAPI_K8S_MODE_RESOURCES_CPU_LIMIT=500m
+export AGENTAPI_K8S_MODE_RESOURCES_MEMORY_REQUEST=256Mi
+export AGENTAPI_K8S_MODE_RESOURCES_MEMORY_LIMIT=512Mi
+export AGENTAPI_K8S_MODE_RESOURCES_STORAGE_SIZE=1Gi
 ```
 
 ### 設定ファイル (JSON)
 
 ```json
 {
-  "provision_mode": {
+  "k8s_mode": {
     "enabled": true,
     "namespace": "agentapi-proxy",
     "image": "agentapi-proxy:latest",
@@ -59,7 +59,7 @@ export AGENTAPI_PROVISION_MODE_RESOURCES_STORAGE_SIZE=1Gi
 ### 設定ファイル (YAML)
 
 ```yaml
-provision_mode:
+k8s_mode:
   enabled: true
   namespace: agentapi-proxy
   image: agentapi-proxy:latest
@@ -75,7 +75,7 @@ provision_mode:
 
 | 項目 | 説明 | デフォルト値 |
 |------|------|-------------|
-| `enabled` | プロビジョンモードの有効/無効 | `false` |
+| `enabled` | K8sモードの有効/無効 | `false` |
 | `namespace` | エージェント用Kubernetesネームスペース | `agentapi-proxy` |
 | `image` | エージェントコンテナイメージ | `agentapi-proxy:latest` |
 | `resources.cpu_request` | CPU要求値 | `100m` |
@@ -86,7 +86,7 @@ provision_mode:
 
 ## 前提条件
 
-プロビジョンモードを使用するには、以下が必要です：
+K8sモードを使用するには、以下が必要です：
 
 1. **Kubernetes クラスター**: 適切に設定されたKubernetesクラスター
 2. **RBAC権限**: StatefulSet、Service、ConfigMap、PVCの作成・削除権限
@@ -95,7 +95,7 @@ provision_mode:
 
 ## アーキテクチャ
 
-プロビジョンモードでは、各エージェントは以下のKubernetesリソースを作成します：
+K8sモードでは、各エージェントは以下のKubernetesリソースを作成します：
 
 ### Agent-per-StatefulSet パターン
 - **StatefulSet**: 各エージェントに専用のStatefulSet (replicas=1)
@@ -111,15 +111,15 @@ provision_mode:
 
 ## モード切り替え
 
-### レガシーモードからプロビジョンモードへ
+### ローカルプロビジョンモードからK8sモードへ
 1. 既存のエージェントを停止
-2. 設定でプロビジョンモードを有効化
+2. 設定でK8sモードを有効化
 3. agentapi-proxyを再起動
 4. 新しいエージェントはStatefulSetとして作成される
 
-### プロビジョンモードからレガシーモードへ
+### K8sモードからローカルプロビジョンモードへ
 1. 既存のStatefulSetを削除
-2. 設定でプロビジョンモードを無効化
+2. 設定でK8sモードを無効化
 3. agentapi-proxyを再起動
 4. 新しいエージェントはプロセスとして作成される
 
@@ -160,8 +160,8 @@ kubectl get pvc data-agent-{agentID}-0
 ### 基本的な使用例
 
 ```bash
-# プロビジョンモードを有効化
-export AGENTAPI_PROVISION_MODE_ENABLED=true
+# K8sモードを有効化
+export AGENTAPI_K8S_MODE_ENABLED=true
 
 # agentapi-proxyを起動
 ./agentapi-proxy
@@ -173,11 +173,11 @@ curl -X POST http://localhost:8080/sessions/my-session/agents
 ### カスタム設定の例
 
 ```bash
-# 高リソース設定でプロビジョンモード
-export AGENTAPI_PROVISION_MODE_ENABLED=true
-export AGENTAPI_PROVISION_MODE_RESOURCES_CPU_REQUEST=500m
-export AGENTAPI_PROVISION_MODE_RESOURCES_CPU_LIMIT=2000m
-export AGENTAPI_PROVISION_MODE_RESOURCES_MEMORY_REQUEST=1Gi
-export AGENTAPI_PROVISION_MODE_RESOURCES_MEMORY_LIMIT=2Gi
-export AGENTAPI_PROVISION_MODE_RESOURCES_STORAGE_SIZE=5Gi
+# 高リソース設定でK8sモード
+export AGENTAPI_K8S_MODE_ENABLED=true
+export AGENTAPI_K8S_MODE_RESOURCES_CPU_REQUEST=500m
+export AGENTAPI_K8S_MODE_RESOURCES_CPU_LIMIT=2000m
+export AGENTAPI_K8S_MODE_RESOURCES_MEMORY_REQUEST=1Gi
+export AGENTAPI_K8S_MODE_RESOURCES_MEMORY_LIMIT=2Gi
+export AGENTAPI_K8S_MODE_RESOURCES_STORAGE_SIZE=5Gi
 ```
