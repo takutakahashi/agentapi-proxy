@@ -571,52 +571,6 @@ func postProcessConfig(config *Config) error {
 	return nil
 }
 
-// LoadConfigLegacy loads configuration from a JSON file (legacy method)
-func LoadConfigLegacy(filename string) (*Config, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			log.Printf("Failed to close config file: %v", err)
-		}
-	}()
-
-	var config Config
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&config); err != nil {
-		return nil, err
-	}
-
-	// Set default values if not specified
-	if config.StartPort == 0 {
-		config.StartPort = 9000
-	}
-
-	// Set default persistence configuration
-	if config.Persistence.Backend == "" {
-		config.Persistence.Backend = "file"
-	}
-	if config.Persistence.FilePath == "" {
-		config.Persistence.FilePath = "./sessions.json"
-	}
-	if config.Persistence.SyncInterval == 0 {
-		config.Persistence.SyncInterval = 30
-	}
-	if !config.Persistence.Enabled {
-		config.Persistence.EncryptSecrets = true
-		config.Persistence.SessionRecoveryMaxAge = 24
-	}
-
-	// Apply post-processing
-	if err := postProcessConfig(&config); err != nil {
-		return nil, err
-	}
-
-	return &config, nil
-}
-
 // expandEnvVars expands environment variables in the form ${VAR_NAME}
 func expandEnvVars(s string) string {
 	if s == "" {
