@@ -52,12 +52,12 @@ func TestK8sModeConfig(t *testing.T) {
 		{
 			name: "custom resource configuration",
 			envVars: map[string]string{
-				"AGENTAPI_K8S_MODE_ENABLED":                      "true",
-				"AGENTAPI_K8S_MODE_RESOURCES_CPU_REQUEST":        "200m",
-				"AGENTAPI_K8S_MODE_RESOURCES_CPU_LIMIT":          "1000m",
-				"AGENTAPI_K8S_MODE_RESOURCES_MEMORY_REQUEST":     "512Mi",
-				"AGENTAPI_K8S_MODE_RESOURCES_MEMORY_LIMIT":       "1Gi",
-				"AGENTAPI_K8S_MODE_RESOURCES_STORAGE_SIZE":       "2Gi",
+				"AGENTAPI_K8S_MODE_ENABLED":                  "true",
+				"AGENTAPI_K8S_MODE_RESOURCES_CPU_REQUEST":    "200m",
+				"AGENTAPI_K8S_MODE_RESOURCES_CPU_LIMIT":      "1000m",
+				"AGENTAPI_K8S_MODE_RESOURCES_MEMORY_REQUEST": "512Mi",
+				"AGENTAPI_K8S_MODE_RESOURCES_MEMORY_LIMIT":   "1Gi",
+				"AGENTAPI_K8S_MODE_RESOURCES_STORAGE_SIZE":   "2Gi",
 			},
 			expected: K8sModeConfig{
 				Enabled:   true,
@@ -211,9 +211,9 @@ func TestK8sModeConfigEnvOverridesFile(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify environment variables override file config
-	assert.True(t, config.K8sMode.Enabled)      // Overridden by env
+	assert.True(t, config.K8sMode.Enabled)                     // Overridden by env
 	assert.Equal(t, "env-namespace", config.K8sMode.Namespace) // Overridden by env
-	assert.Equal(t, "file:v1.0", config.K8sMode.Image)        // From file (not overridden)
+	assert.Equal(t, "file:v1.0", config.K8sMode.Image)         // From file (not overridden)
 }
 
 func clearK8sModeEnv() {
