@@ -136,7 +136,7 @@ func (s *AgentServiceImpl) IsPortAvailable(ctx context.Context, port entities.Po
 	if err != nil {
 		return false, nil
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	return true, nil
 }
 
