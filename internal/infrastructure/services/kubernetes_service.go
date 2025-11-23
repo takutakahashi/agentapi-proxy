@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -27,6 +27,14 @@ func NewKubernetesService(client kubernetes.Interface) services.KubernetesServic
 	return &KubernetesServiceImpl{
 		client: client,
 	}
+}
+
+func (s *KubernetesServiceImpl) CreateAgentStatefulSet(ctx context.Context, agentID, sessionID string) error {
+	return fmt.Errorf("CreateAgentStatefulSet not implemented in legacy service, use KubernetesServiceV2")
+}
+
+func (s *KubernetesServiceImpl) DeleteStatefulSet(ctx context.Context, agentID string) error {
+	return fmt.Errorf("DeleteStatefulSet not implemented in legacy service, use KubernetesServiceV2")
 }
 
 func (s *KubernetesServiceImpl) CreateAgentPod(ctx context.Context, sessionID string) (string, error) {

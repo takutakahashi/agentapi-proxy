@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,104 +29,242 @@ func NewKubernetesServiceV2(client client.Client, clientset kubernetes.Interface
 	}
 }
 
-func (s *KubernetesServiceV2) CreateAgentPod(ctx context.Context, sessionID string) (string, error) {
-	podName := fmt.Sprintf("agent-%s-%d", sessionID, metav1.Now().Unix())
+func (s *KubernetesServiceV2) CreateAgentStatefulSet(ctx context.Context, agentID, sessionID string) error {
+	statefulsetName := fmt.Sprintf("agent-%s", agentID)
+	serviceName := fmt.Sprintf("agent-%s-headless", agentID)
 
-	pod := &corev1.Pod{
+	// Create headless service first
+	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
+			Name:      serviceName,
+			Namespace: agentNamespace,
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "None",
+			Selector: map[string]string{
+				"app":       "agentapi-proxy",
+				"component": "agent",
+				"agent-id":  agentID,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Port:       8080,
+					TargetPort: intstr.FromInt(8080),
+					Name:       "http",
+				},
+			},
+		},
+	}
+
+	if err := s.client.Create(ctx, service); err != nil {
+		return fmt.Errorf("failed to create headless service: %w", err)
+	}
+
+	// Create StatefulSet
+	statefulset := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      statefulsetName,
 			Namespace: agentNamespace,
 			Labels: map[string]string{
 				"app":        "agentapi-proxy",
 				"component":  "agent",
+				"agent-id":   agentID,
 				"session-id": sessionID,
 			},
 		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
+		Spec: appsv1.StatefulSetSpec{
+			ServiceName: serviceName,
+			Replicas:    &[]int32{1}[0],
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":       "agentapi-proxy",
+					"component": "agent",
+					"agent-id":  agentID,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":        "agentapi-proxy",
+						"component":  "agent",
+						"agent-id":   agentID,
+						"session-id": sessionID,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "agent",
+							Image: agentImage,
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 8080,
+									Name:          "http",
+								},
+							},
+							Env: []corev1.EnvVar{
+								{
+									Name:  "AGENT_ID",
+									Value: agentID,
+								},
+								{
+									Name:  "SESSION_ID",
+									Value: sessionID,
+								},
+								{
+									Name: "POD_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.name",
+										},
+									},
+								},
+								{
+									Name: "POD_NAMESPACE",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+								{
+									Name: "POD_IP",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "status.podIP",
+										},
+									},
+								},
+								{
+									Name:  "SESSION_PROVIDER",
+									Value: "kubernetes",
+								},
+								{
+									Name:  "K8S_NAMESPACE",
+									Value: agentNamespace,
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "data",
+									MountPath: "/data",
+								},
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("256Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+							},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/health",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 30,
+								PeriodSeconds:       10,
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/ready",
+										Port: intstr.FromInt(8080),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       5,
+							},
+						},
+					},
+					RestartPolicy: corev1.RestartPolicyAlways,
+				},
+			},
+			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
 				{
-					Name:  "agent",
-					Image: agentImage,
-					Ports: []corev1.ContainerPort{
-						{
-							ContainerPort: 8080,
-							Name:          "http",
-						},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "data",
 					},
-					Env: []corev1.EnvVar{
-						{
-							Name:  "SESSION_ID",
-							Value: sessionID,
+					Spec: corev1.PersistentVolumeClaimSpec{
+						AccessModes: []corev1.PersistentVolumeAccessMode{
+							corev1.ReadWriteOnce,
 						},
-						{
-							Name: "POD_NAME",
-							ValueFrom: &corev1.EnvVarSource{
-								FieldRef: &corev1.ObjectFieldSelector{
-									FieldPath: "metadata.name",
-								},
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse("1Gi"),
 							},
 						},
-						{
-							Name: "POD_NAMESPACE",
-							ValueFrom: &corev1.EnvVarSource{
-								FieldRef: &corev1.ObjectFieldSelector{
-									FieldPath: "metadata.namespace",
-								},
-							},
-						},
-						{
-							Name: "POD_IP",
-							ValueFrom: &corev1.EnvVarSource{
-								FieldRef: &corev1.ObjectFieldSelector{
-									FieldPath: "status.podIP",
-								},
-							},
-						},
-					},
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("100m"),
-							corev1.ResourceMemory: resource.MustParse("128Mi"),
-						},
-						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("500m"),
-							corev1.ResourceMemory: resource.MustParse("512Mi"),
-						},
-					},
-					LivenessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/health",
-								Port: intstr.FromInt(8080),
-							},
-						},
-						InitialDelaySeconds: 30,
-						PeriodSeconds:       10,
-					},
-					ReadinessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/ready",
-								Port: intstr.FromInt(8080),
-							},
-						},
-						InitialDelaySeconds: 5,
-						PeriodSeconds:       5,
 					},
 				},
 			},
-			RestartPolicy: corev1.RestartPolicyAlways,
 		},
 	}
 
-	if err := s.client.Create(ctx, pod); err != nil {
-		return "", fmt.Errorf("failed to create pod: %w", err)
+	if err := s.client.Create(ctx, statefulset); err != nil {
+		// Clean up service if StatefulSet creation fails
+		_ = s.client.Delete(ctx, service)
+		return fmt.Errorf("failed to create statefulset: %w", err)
 	}
 
-	return pod.Name, nil
+	return nil
+}
+
+func (s *KubernetesServiceV2) CreateAgentPod(ctx context.Context, sessionID string) (string, error) {
+	// This method is deprecated in favor of CreateAgentStatefulSet
+	// Keep for backward compatibility but redirect to StatefulSet creation
+	agentID := fmt.Sprintf("agent-%d", metav1.Now().Unix())
+
+	if err := s.CreateAgentStatefulSet(ctx, agentID, sessionID); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("agent-%s-0", agentID), nil
+}
+
+func (s *KubernetesServiceV2) DeleteStatefulSet(ctx context.Context, agentID string) error {
+	statefulsetName := fmt.Sprintf("agent-%s", agentID)
+	serviceName := fmt.Sprintf("agent-%s-headless", agentID)
+
+	// Delete StatefulSet
+	statefulset := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      statefulsetName,
+			Namespace: agentNamespace,
+		},
+	}
+
+	if err := s.client.Delete(ctx, statefulset); err != nil && client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete statefulset: %w", err)
+	}
+
+	// Delete headless service
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: agentNamespace,
+		},
+	}
+
+	if err := s.client.Delete(ctx, service); err != nil && client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete headless service: %w", err)
+	}
+
+	return nil
 }
 
 func (s *KubernetesServiceV2) DeletePod(ctx context.Context, podName string) error {
+	// Extract agent ID from pod name (format: agent-{agentID}-0)
+	if strings.HasPrefix(podName, "agent-") && strings.HasSuffix(podName, "-0") {
+		agentID := strings.TrimSuffix(strings.TrimPrefix(podName, "agent-"), "-0")
+		return s.DeleteStatefulSet(ctx, agentID)
+	}
+
+	// Fallback to direct pod deletion for backward compatibility
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -133,7 +272,7 @@ func (s *KubernetesServiceV2) DeletePod(ctx context.Context, podName string) err
 		},
 	}
 
-	if err := s.client.Delete(ctx, pod); err != nil && !client.IgnoreNotFound(err) != nil {
+	if err := s.client.Delete(ctx, pod); err != nil && client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete pod: %w", err)
 	}
 	return nil

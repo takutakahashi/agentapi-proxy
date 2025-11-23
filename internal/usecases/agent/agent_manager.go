@@ -40,14 +40,19 @@ func (m *AgentManager) CreateAgent(ctx context.Context, sessionID entities.Sessi
 		return nil, fmt.Errorf("session is not active")
 	}
 
-	podName, err := m.k8sService.CreateAgentPod(ctx, string(sessionID))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create agent pod: %w", err)
+	agent := entities.NewAgent(sessionID, "")
+	agentID := string(agent.ID)
+
+	// Create StatefulSet for the agent
+	if err := m.k8sService.CreateAgentStatefulSet(ctx, agentID, string(sessionID)); err != nil {
+		return nil, fmt.Errorf("failed to create agent statefulset: %w", err)
 	}
 
-	agent := entities.NewAgent(sessionID, podName)
+	// Update agent with pod name
+	agent.PodName = fmt.Sprintf("agent-%s-0", agentID)
+
 	if err := m.agentRepo.Save(ctx, agent); err != nil {
-		_ = m.k8sService.DeletePod(ctx, podName)
+		_ = m.k8sService.DeleteStatefulSet(ctx, agentID)
 		return nil, fmt.Errorf("failed to save agent: %w", err)
 	}
 
@@ -91,8 +96,8 @@ func (m *AgentManager) StopAgent(ctx context.Context, agentID entities.AgentID) 
 		return fmt.Errorf("agent is not active")
 	}
 
-	if err := m.k8sService.DeletePod(ctx, agent.PodName); err != nil {
-		return fmt.Errorf("failed to delete pod: %w", err)
+	if err := m.k8sService.DeleteStatefulSet(ctx, string(agentID)); err != nil {
+		return fmt.Errorf("failed to delete statefulset: %w", err)
 	}
 
 	agent.Stop()

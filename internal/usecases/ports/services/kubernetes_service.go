@@ -5,6 +5,8 @@ import (
 )
 
 type KubernetesService interface {
+	CreateAgentStatefulSet(ctx context.Context, agentID, sessionID string) error
+	DeleteStatefulSet(ctx context.Context, agentID string) error
 	CreateAgentPod(ctx context.Context, sessionID string) (string, error)
 	DeletePod(ctx context.Context, podName string) error
 	GetPodStatus(ctx context.Context, podName string) (string, error)
