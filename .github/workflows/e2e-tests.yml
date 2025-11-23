@@ -75,14 +75,14 @@ jobs:
         AGENTAPI_AUTH_ENABLED: false
         AGENTAPI_GITHUB_AUTH_ENABLED: false
         AGENTAPI_STATIC_AUTH_ENABLED: false
-        # Set binary path for tests
-        AGENTAPI_PROXY_BINARY: ./bin/agentapi-proxy
+        # Set binary path for tests (use absolute path)
+        AGENTAPI_PROXY_BINARY: ${{ github.workspace }}/bin/agentapi-proxy
       run: |
         # Create output directory for test results
         mkdir -p test-results
         # Run only mock integration tests in CI to avoid external dependencies
         echo "Running mock agent integration tests in CI..."
-        go test -v -timeout=${GO_TEST_TIMEOUT:-120s} ./test/... -tags=e2e -run "TestMockAgent(Integration|EnvironmentConfiguration|SessionLifecycle|PortManagement|ConfigurationSwitching)$" 2>&1 | tee test-results/e2e-output.log || echo "Tests failed with exit code: $?"
+        go test -v -timeout=${GO_TEST_TIMEOUT:-120s} ./test/... -tags=e2e -run "TestMockAgent(Integration|EnvironmentConfiguration|SessionLifecycle|PortManagement|ConfigurationSwitching)$" 2>&1 | tee test-results/e2e-output.log
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
