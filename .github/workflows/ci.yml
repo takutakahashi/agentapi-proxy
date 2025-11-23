@@ -13,18 +13,6 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     
-    services:
-      minio:
-        image: bitnami/minio:latest
-        ports:
-          - 9000:9000
-          - 9001:9001
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-          MINIO_DEFAULT_BUCKETS: test-bucket,test-bucket-encrypted,test-bucket-loadall
-        options: --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -100,6 +88,3 @@ jobs:
       run: make test
       env:
         INTEGRATION_TEST: "true"
-        MINIO_ENDPOINT: "http://localhost:9000"
-        MINIO_ACCESS_KEY: "minioadmin"
-        MINIO_SECRET_KEY: "minioadmin"

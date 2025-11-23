@@ -85,7 +85,7 @@ func (uc *DeleteSessionUseCase) Execute(ctx context.Context, req *DeleteSessionR
 		}
 
 		// Try graceful shutdown first
-		err = uc.agentService.StopAgent(ctx, session.ProcessInfo())
+		err = uc.agentService.StopAgent(ctx, session.ProcessInfo().PID())
 		if err != nil {
 			terminationError = err
 

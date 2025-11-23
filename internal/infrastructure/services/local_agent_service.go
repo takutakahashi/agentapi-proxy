@@ -33,8 +33,8 @@ func NewLocalAgentService() *LocalAgentService {
 	}
 }
 
-// StartAgent starts a new agent process with the given configuration
-func (s *LocalAgentService) StartAgent(ctx context.Context, config *services.AgentConfig) (*entities.ProcessInfo, error) {
+// StartAgentWithConfig starts a new agent process with the given configuration
+func (s *LocalAgentService) StartAgentWithConfig(ctx context.Context, config *services.AgentConfig) (*entities.ProcessInfo, error) {
 	// Validate configuration
 	if err := s.validateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -79,8 +79,8 @@ func (s *LocalAgentService) StartAgent(ctx context.Context, config *services.Age
 	return processInfo, nil
 }
 
-// StopAgent stops an existing agent process
-func (s *LocalAgentService) StopAgent(ctx context.Context, processInfo *entities.ProcessInfo) error {
+// StopAgentByProcessInfo stops an existing agent process (legacy method)
+func (s *LocalAgentService) StopAgentByProcessInfo(ctx context.Context, processInfo *entities.ProcessInfo) error {
 	pid := processInfo.PID()
 
 	// Find the process
@@ -284,4 +284,99 @@ func (s *LocalAgentService) checkSystemProcessStatus(pid int) (services.ProcessS
 
 	// Process exists and is running
 	return services.ProcessStatusRunning, nil
+}
+
+// AllocatePort allocates the next available port (simple implementation)
+func (s *LocalAgentService) AllocatePort(ctx context.Context) (int, error) {
+	// Start from port 8100 and find the first available port
+	startPort := 8100
+	endPort := 8200
+
+	for port := startPort; port <= endPort; port++ {
+		available, err := s.IsPortAvailable(ctx, entities.Port(port))
+		if err != nil {
+			continue
+		}
+		if available {
+			return port, nil
+		}
+	}
+
+	return 0, errors.New("no available ports in range 8100-8200")
+}
+
+// StartAgent starts an agent with simplified parameters (new interface method)
+func (s *LocalAgentService) StartAgent(ctx context.Context, port int, environment map[string]string, repository *entities.Repository) (*entities.ProcessInfo, error) {
+	// Create a simple command - in a real implementation, this would be more sophisticated
+	cmd := exec.CommandContext(ctx, "sleep", "3600") // Placeholder command
+
+	// Set environment variables
+	env := os.Environ()
+	for k, v := range environment {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+	cmd.Env = env
+
+	// Set working directory if repository is provided
+	if repository != nil {
+		// In a real implementation, this would clone the repository first
+		// For now, just use a placeholder directory
+		cmd.Dir = "/tmp/" + repository.Name()
+	}
+
+	// Start the process
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start agent process: %w", err)
+	}
+
+	// Create ProcessInfo
+	processInfo := entities.NewProcessInfo(cmd.Process.Pid, time.Now())
+	processInfo.SetCommand(cmd.Path, cmd.Args)
+
+	// Store process for management
+	s.processes[cmd.Process.Pid] = &LocalProcess{
+		PID:       cmd.Process.Pid,
+		Cmd:       cmd,
+		StartedAt: time.Now(),
+	}
+
+	return processInfo, nil
+}
+
+// StopAgent stops an existing agent process by PID (new interface method)
+func (s *LocalAgentService) StopAgent(ctx context.Context, pid int) error {
+	// Find the process
+	localProcess, exists := s.processes[pid]
+	if !exists {
+		// Process might have been started externally, try to stop by PID
+		return s.stopProcessByPID(pid)
+	}
+
+	// Send SIGTERM for graceful shutdown
+	if err := localProcess.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("failed to send SIGTERM: %w", err)
+	}
+
+	// Wait for process to exit with timeout
+	done := make(chan error, 1)
+	go func() {
+		done <- localProcess.Cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		// Process exited
+		delete(s.processes, pid)
+		if err != nil {
+			return fmt.Errorf("process exited with error: %w", err)
+		}
+		return nil
+	case <-time.After(10 * time.Second):
+		// Timeout, force kill
+		processInfo := entities.NewProcessInfo(pid, time.Now())
+		return s.KillProcess(ctx, processInfo)
+	case <-ctx.Done():
+		// Context cancelled
+		return ctx.Err()
+	}
 }

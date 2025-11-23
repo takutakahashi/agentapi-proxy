@@ -112,7 +112,7 @@ func (uc *CreateSessionUseCase) Execute(ctx context.Context, req *CreateSessionR
 		Repository:  req.Repository,
 	}
 
-	processInfo, err := uc.agentService.StartAgent(ctx, agentConfig)
+	processInfo, err := uc.agentService.StartAgentWithConfig(ctx, agentConfig)
 	if err != nil {
 		// Mark session as failed and update
 		session.MarkFailed(err.Error())
@@ -123,7 +123,7 @@ func (uc *CreateSessionUseCase) Execute(ctx context.Context, req *CreateSessionR
 	// Mark session as active
 	if err := session.Start(processInfo); err != nil {
 		// Try to stop the agent if session start failed
-		_ = uc.agentService.StopAgent(ctx, processInfo)
+		_ = uc.agentService.StopAgent(ctx, processInfo.PID())
 		session.MarkFailed(err.Error())
 		_ = uc.sessionRepo.Update(ctx, session)
 		return nil, fmt.Errorf("failed to start session: %w", err)
@@ -132,7 +132,7 @@ func (uc *CreateSessionUseCase) Execute(ctx context.Context, req *CreateSessionR
 	// Update session with process info
 	if err := uc.sessionRepo.Update(ctx, session); err != nil {
 		// Try to stop the agent if update failed
-		_ = uc.agentService.StopAgent(ctx, processInfo)
+		_ = uc.agentService.StopAgent(ctx, processInfo.PID())
 		return nil, fmt.Errorf("failed to update session: %w", err)
 	}
 

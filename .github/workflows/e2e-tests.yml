@@ -68,11 +68,21 @@ jobs:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         CLAUDE_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         GO_TEST_TIMEOUT: 120s
+        # Enable mock mode for CI e2e tests to avoid external dependencies
+        AGENTAPI_MOCK_MODE: true
+        AGENTAPI_MOCK_BEHAVIOR: normal
+        # Disable authentication for mock tests in CI
+        AGENTAPI_AUTH_ENABLED: false
+        AGENTAPI_GITHUB_AUTH_ENABLED: false
+        AGENTAPI_STATIC_AUTH_ENABLED: false
+        # Set binary path for tests (use absolute path)
+        AGENTAPI_PROXY_BINARY: ${{ github.workspace }}/bin/agentapi-proxy
       run: |
         # Create output directory for test results
         mkdir -p test-results
-        # Run tests and capture results
-        make e2e 2>&1 | tee test-results/e2e-output.log || echo "Tests failed with exit code: $?"
+        # Run only mock integration tests in CI to avoid external dependencies
+        echo "Running mock agent integration tests in CI..."
+        go test -v -timeout=${GO_TEST_TIMEOUT:-120s} ./test/... -tags=e2e -run "TestMockAgent(Integration|EnvironmentConfiguration|SessionLifecycle|PortManagement|ConfigurationSwitching)$" 2>&1 | tee test-results/e2e-output.log
 
     - name: Upload test results
       uses: actions/upload-artifact@v4

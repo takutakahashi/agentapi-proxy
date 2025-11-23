@@ -26,7 +26,7 @@ const (
 
 // TestClaudeCodeProxyIntegration tests the core proxy functionality:
 // - Proxy server startup
-// - Session creation and management  
+// - Session creation and management
 // - AgentAPI server routing
 // - Basic status checking
 // Note: Actual Claude Code message sending is skipped due to CI terminal limitations
@@ -131,7 +131,7 @@ func TestClaudeCodeProxyIntegration(t *testing.T) {
 // - Multiple session creation
 // - Session isolation
 // - Status checking for multiple sessions
-// Note: Message sending is skipped due to CI terminal limitations  
+// Note: Message sending is skipped due to CI terminal limitations
 func TestClaudeCodeProxyMultipleSessions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -224,7 +224,7 @@ func TestClaudeCodeProxyMultipleSessions(t *testing.T) {
 func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 	// Check environment variable first
 	binaryPath := os.Getenv("AGENTAPI_PROXY_BINARY")
-	
+
 	if binaryPath == "" {
 		// Try multiple possible binary locations
 		possiblePaths := []string{
@@ -232,7 +232,7 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 			"bin/agentapi-proxy",
 			"../bin/agentapi-proxy",
 		}
-		
+
 		for _, path := range possiblePaths {
 			if _, err := os.Stat(path); err == nil {
 				binaryPath = path
@@ -240,13 +240,13 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 			}
 		}
 	}
-	
+
 	if binaryPath == "" {
 		// Get current working directory for debugging
 		wd, _ := os.Getwd()
 		return nil, nil, fmt.Errorf("agentapi-proxy binary not found. Current working directory: %s", wd)
 	}
-	
+
 	t.Logf("Using proxy binary at: %s", binaryPath)
 
 	// Start the proxy server with config that disables auth
@@ -295,18 +295,18 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 					}
 				}
 			}()
-			
+
 			// Try graceful shutdown first
 			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 				t.Logf("Failed to send SIGTERM: %v", err)
 			}
-			
+
 			// Wait for graceful shutdown with timeout
 			done := make(chan error, 1)
 			go func() {
 				done <- cmd.Wait()
 			}()
-			
+
 			select {
 			case waitErr := <-done:
 				if waitErr != nil {
@@ -481,7 +481,7 @@ func TestClaudeCodeProxyBasicSetup(t *testing.T) {
 	// Skip tool usage tests due to CI limitations
 	t.Logf("Skipping tool usage tests due to CI environment limitations")
 	t.Logf("Session created successfully with working directory: %s", tempDir)
-	
+
 	// Verify session status instead
 	status, err := clientInstance.GetStatus(ctx, sessionID)
 	if err != nil {
