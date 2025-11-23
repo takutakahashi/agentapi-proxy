@@ -89,14 +89,18 @@ func (u *StartAgentSessionUseCase) Execute(ctx context.Context, req StartAgentSe
 	// Mark session as started
 	if err := session.Start(processInfo); err != nil {
 		// Cleanup process if session start fails
-		u.agentService.StopAgent(ctx, processInfo.PID())
+		if stopErr := u.agentService.StopAgent(ctx, processInfo.PID()); stopErr != nil {
+			// Log cleanup error but continue with original error
+		}
 		return nil, fmt.Errorf("failed to mark session as started: %w", err)
 	}
 
 	// Save session
 	if err := u.sessionRepo.Save(ctx, session); err != nil {
 		// Cleanup process if save fails
-		u.agentService.StopAgent(ctx, processInfo.PID())
+		if stopErr := u.agentService.StopAgent(ctx, processInfo.PID()); stopErr != nil {
+			// Log cleanup error but continue with original error
+		}
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
 

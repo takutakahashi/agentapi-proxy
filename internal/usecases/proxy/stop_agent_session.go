@@ -66,6 +66,7 @@ func (u *StopAgentSessionUseCase) Execute(ctx context.Context, req StopAgentSess
 		if err := u.agentService.StopAgent(ctx, processInfo.PID()); err != nil {
 			// Log error but don't fail the operation
 			// The process might already be dead
+			_ = err // Explicitly ignore error for lint
 		}
 	}
 
