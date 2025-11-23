@@ -16,5 +16,6 @@
   "mock": {
     "enabled": true,
     "description": "Configuration for e2e testing with mock agent service"
-  }
+  },
+  "version": "1.0"
 }
