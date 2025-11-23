@@ -15,15 +15,15 @@ jobs:
     
     services:
       minio:
-        image: bitnami/minio:latest
+        image: minio/minio:latest
         ports:
           - 9000:9000
           - 9001:9001
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin
-          MINIO_DEFAULT_BUCKETS: test-bucket,test-bucket-encrypted,test-bucket-loadall
-        options: --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+        options: --health-cmd "curl -f http://localhost:9000/minio/health/live" --health-interval=10s --health-timeout=5s --health-retries=3 --health-start-period=5s
+        command: server /data --console-address ":9001"
     
     steps:
     - name: Checkout code
@@ -95,6 +95,29 @@ jobs:
       uses: golangci/golangci-lint-action@v6
       with:
         version: latest
+
+    - name: Wait for MinIO to be ready
+      run: |
+        echo "Waiting for MinIO to be ready..."
+        timeout 60 bash -c 'until curl -f http://localhost:9000/minio/health/ready; do sleep 1; done'
+        echo "MinIO is ready!"
+
+    - name: Setup MinIO buckets
+      run: |
+        # Install mc (MinIO client)
+        wget https://dl.min.io/client/mc/release/linux-amd64/mc
+        chmod +x mc
+        sudo mv mc /usr/local/bin/
+        
+        # Configure mc
+        mc alias set minio http://localhost:9000 minioadmin minioadmin
+        
+        # Create test buckets
+        mc mb minio/test-bucket || true
+        mc mb minio/test-bucket-encrypted || true
+        mc mb minio/test-bucket-loadall || true
+        
+        echo "MinIO buckets created successfully"
 
     - name: Run CI pipeline
       run: make test
