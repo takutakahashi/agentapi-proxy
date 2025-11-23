@@ -460,7 +460,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("role_env_files.path", "/etc/agentapi/env")
 	v.SetDefault("role_env_files.load_default", true)
 
-	// K8s mode defaults
+	// K8s mode defaults - Local mode is the default (k8s_mode.enabled=false)
 	v.SetDefault("k8s_mode.enabled", false)
 	v.SetDefault("k8s_mode.namespace", "agentapi-proxy")
 	v.SetDefault("k8s_mode.image", "agentapi-proxy:latest")

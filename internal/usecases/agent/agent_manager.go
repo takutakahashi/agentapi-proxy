@@ -39,6 +39,7 @@ func NewAgentManager(
 }
 
 // isK8sModeEnabled returns true if k8s mode (Kubernetes StatefulSets) is enabled
+// By default, local mode (process management) is used when k8s mode is disabled
 func (m *AgentManager) isK8sModeEnabled() bool {
 	return m.config != nil && m.config.K8sMode.Enabled
 }
