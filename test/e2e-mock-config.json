@@ -1,0 +1,20 @@
+{
+  "server": {
+    "port": 18081,
+    "host": "localhost"
+  },
+  "auth": {
+    "enabled": false
+  },
+  "logging": {
+    "level": "debug"
+  },
+  "session": {
+    "timeout": "1h",
+    "maxSessions": 100
+  },
+  "mock": {
+    "enabled": true,
+    "description": "Configuration for e2e testing with mock agent service"
+  }
+}
