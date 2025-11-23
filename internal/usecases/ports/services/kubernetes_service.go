@@ -20,6 +20,18 @@ type KubernetesService interface {
 	DeleteConfigMap(ctx context.Context, name string) error
 }
 
+type AgentResourceConfig struct {
+	AgentID       string
+	SessionID     string
+	Image         string
+	MemoryRequest string
+	CPURequest    string
+	MemoryLimit   string
+	CPULimit      string
+	StorageSize   string
+	Namespace     string
+}
+
 type PodInfo struct {
 	Name      string
 	Status    string
