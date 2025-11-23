@@ -1,0 +1,171 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentapi-proxy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentapi-proxy-config
+  namespace: agentapi-proxy
+data:
+  config.yaml: |
+    server:
+      port: 8080
+      metrics_port: 9090
+    session:
+      provider: kubernetes
+      ttl: 3600
+    agents:
+      max_per_session: 10
+      timeout: 300
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentapi-proxy-headless
+  namespace: agentapi-proxy
+spec:
+  clusterIP: None
+  selector:
+    app: agentapi-proxy
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+    - port: 9090
+      targetPort: 9090
+      name: metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentapi-proxy
+  namespace: agentapi-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app: agentapi-proxy
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+    - port: 9090
+      targetPort: 9090
+      name: metrics
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agentapi-proxy
+  namespace: agentapi-proxy
+spec:
+  serviceName: agentapi-proxy-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: agentapi-proxy
+  template:
+    metadata:
+      labels:
+        app: agentapi-proxy
+    spec:
+      containers:
+      - name: agentapi-proxy
+        image: agentapi-proxy:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SESSION_PROVIDER
+          value: "kubernetes"
+        - name: K8S_NAMESPACE
+          value: "agentapi-proxy"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/agentapi-proxy
+        - name: data
+          mountPath: /data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: config
+        configMap:
+          name: agentapi-proxy-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agentapi-proxy-pdb
+  namespace: agentapi-proxy
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: agentapi-proxy
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agentapi-proxy-hpa
+  namespace: agentapi-proxy
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: agentapi-proxy
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
