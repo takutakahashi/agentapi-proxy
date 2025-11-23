@@ -10,8 +10,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// TestS3Storage tests the S3 storage implementation with MinIO
+// TestS3Storage tests the S3 storage implementation
 func TestS3Storage(t *testing.T) {
+	// Skip S3 integration tests (MinIO dependency removed)
+	t.Skip("Skipping S3 integration test (MinIO dependency removed)")
+	
 	// Skip if not running integration tests
 	if os.Getenv("INTEGRATION_TEST") != "true" {
 		t.Skip("Skipping S3 integration test (set INTEGRATION_TEST=true to run)")
@@ -51,6 +54,9 @@ func TestS3Storage(t *testing.T) {
 
 // TestS3StorageWithEncryption tests S3 storage with encryption enabled
 func TestS3StorageWithEncryption(t *testing.T) {
+	// Skip S3 integration tests (MinIO dependency removed)
+	t.Skip("Skipping S3 encryption integration test (MinIO dependency removed)")
+	
 	// Skip if not running integration tests
 	if os.Getenv("INTEGRATION_TEST") != "true" {
 		t.Skip("Skipping S3 encryption integration test (set INTEGRATION_TEST=true to run)")
@@ -127,6 +133,9 @@ func TestS3StorageWithEncryption(t *testing.T) {
 
 // TestS3StorageLoadAll tests loading all sessions from S3
 func TestS3StorageLoadAll(t *testing.T) {
+	// Skip S3 integration tests (MinIO dependency removed)
+	t.Skip("Skipping S3 LoadAll integration test (MinIO dependency removed)")
+	
 	// Skip if not running integration tests
 	if os.Getenv("INTEGRATION_TEST") != "true" {
 		t.Skip("Skipping S3 LoadAll integration test (set INTEGRATION_TEST=true to run)")
