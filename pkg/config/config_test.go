@@ -3,11 +3,37 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// cleanupEnvironmentVars removes all AGENTAPI_ environment variables and returns a function to restore them
+func cleanupEnvironmentVars() func() {
+	var envVarsToRestore []string
+
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "AGENTAPI_") {
+			envVarsToRestore = append(envVarsToRestore, env)
+			keyValue := strings.SplitN(env, "=", 2)
+			if len(keyValue) == 2 {
+				os.Unsetenv(keyValue[0])
+			}
+		}
+	}
+
+	return func() {
+		// Restore environment variables
+		for _, env := range envVarsToRestore {
+			keyValue := strings.SplitN(env, "=", 2)
+			if len(keyValue) == 2 {
+				os.Setenv(keyValue[0], keyValue[1])
+			}
+		}
+	}
+}
 
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
@@ -32,6 +58,10 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Create a temporary config file
 	tempConfig := &Config{
 		StartPort: 8000,
@@ -276,6 +306,10 @@ func TestAPIKey_HasPermission_Wildcard(t *testing.T) {
 }
 
 func TestLoadConfig_EnableMultipleUsers(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Test with EnableMultipleUsers enabled
 	tempConfig := &Config{
 		StartPort:           8000,
@@ -367,6 +401,10 @@ func TestExpandEnvVars(t *testing.T) {
 }
 
 func TestLoadConfigWithEnvVarExpansion(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Set up test environment variables
 	_ = os.Setenv("TEST_CLIENT_ID", "github_client_123")
 	_ = os.Setenv("TEST_CLIENT_SECRET", "github_secret_456")
@@ -424,6 +462,10 @@ func TestLoadConfigWithEnvVarExpansion(t *testing.T) {
 }
 
 func TestLoadConfigWithYAML(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Create YAML config
 	yamlConfig := `
 start_port: 8000
@@ -576,6 +618,10 @@ func TestInitializeConfigStructsFromEnv_StaticAuth(t *testing.T) {
 }
 
 func TestInitializeConfigStructsFromEnv_GitHubAuth(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Set up test environment variables for GitHub auth
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_ENABLED", "true")
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_BASE_URL", "https://github.company.com/api/v3")
@@ -703,6 +749,10 @@ func TestInitializeConfigStructsFromEnv_S3Persistence(t *testing.T) {
 }
 
 func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Set up environment variables
 	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_ENABLED", "true")
@@ -755,6 +805,10 @@ func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *test
 }
 
 func TestInitializeConfigStructsFromEnv_PartialEnvironmentVariables(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Set up only some environment variables
 	_ = os.Setenv("AGENTAPI_AUTH_STATIC_HEADER_NAME", "X-Partial-Key")
 	// Note: Not setting AGENTAPI_AUTH_STATIC_ENABLED
@@ -779,6 +833,10 @@ func TestInitializeConfigStructsFromEnv_PartialEnvironmentVariables(t *testing.T
 }
 
 func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Set up comprehensive environment variables
 	envVars := map[string]string{
 		"AGENTAPI_START_PORT":                            "7777",

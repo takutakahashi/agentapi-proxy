@@ -15,7 +15,7 @@ import (
 type AgentManager struct {
 	agentRepo           repositories.AgentRepository
 	sessionRepo         repositories.SessionRepository
-	agentService        services.AgentService    // Legacy agent service (process management)
+	agentService        services.AgentService      // Legacy agent service (process management)
 	k8sService          services.KubernetesService // Provision mode service (Kubernetes)
 	config              *config.Config
 	healthCheckInterval time.Duration
@@ -39,6 +39,7 @@ func NewAgentManager(
 }
 
 // isK8sModeEnabled returns true if k8s mode (Kubernetes StatefulSets) is enabled
+// By default, local mode (process management) is used when k8s mode is disabled
 func (m *AgentManager) isK8sModeEnabled() bool {
 	return m.config != nil && m.config.K8sMode.Enabled
 }
@@ -58,7 +59,7 @@ func (m *AgentManager) CreateAgent(ctx context.Context, sessionID entities.Sessi
 	if m.isK8sModeEnabled() {
 		return m.createAgentWithK8sMode(ctx, agent, string(sessionID))
 	}
-	
+
 	return m.createAgentWithLocalMode(ctx, agent, session)
 }
 
@@ -132,7 +133,7 @@ func (m *AgentManager) StartAgent(ctx context.Context, agentID entities.AgentID)
 	if m.isK8sModeEnabled() {
 		return m.startAgentWithK8sMode(ctx, agent)
 	}
-	
+
 	return m.startAgentWithLocalMode(ctx, agent)
 }
 
@@ -180,7 +181,7 @@ func (m *AgentManager) StopAgent(ctx context.Context, agentID entities.AgentID) 
 	if m.isK8sModeEnabled() {
 		return m.stopAgentWithK8sMode(ctx, agent, string(agentID))
 	}
-	
+
 	return m.stopAgentWithLocalMode(ctx, agent)
 }
 
@@ -235,7 +236,7 @@ func (m *AgentManager) HealthCheck(ctx context.Context, agentID entities.AgentID
 	if m.isK8sModeEnabled() {
 		return m.healthCheckWithK8sMode(ctx, agent)
 	}
-	
+
 	return m.healthCheckWithLocalMode(ctx, agent)
 }
 
