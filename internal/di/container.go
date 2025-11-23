@@ -12,6 +12,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/notification"
 	repositories_ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	services_ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/proxy"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 )
 
@@ -45,6 +46,11 @@ type Container struct {
 	SendNotificationUC   *notification.SendNotificationUseCase
 	ManageSubscriptionUC *notification.ManageSubscriptionUseCase
 
+	// Proxy use cases
+	StartAgentSessionUC *proxy.StartAgentSessionUseCase
+	StopAgentSessionUC  *proxy.StopAgentSessionUseCase
+	ListAgentSessionsUC *proxy.ListAgentSessionsUseCase
+
 	// Presenters
 	SessionPresenter      presenters.SessionPresenter
 	AuthPresenter         presenters.AuthPresenter
@@ -54,6 +60,7 @@ type Container struct {
 	SessionController      *controllers.SessionController
 	AuthController         *controllers.AuthController
 	NotificationController *controllers.NotificationController
+	ProxyController        *controllers.ProxyController
 	AuthMiddleware         *controllers.AuthMiddleware
 }
 
@@ -91,7 +98,7 @@ func (c *Container) initRepositories() {
 
 // initServices initializes all service dependencies
 func (c *Container) initServices() {
-	c.AgentService = services.NewLocalAgentService()
+	c.AgentService = services.NewAgentService(8100, 8200) // Port range 8100-8200
 	c.AuthService = services.NewSimpleAuthService()
 	c.NotificationService = services.NewSimpleNotificationService()
 
@@ -174,6 +181,24 @@ func (c *Container) initUseCases() {
 		c.UserRepo,
 		c.NotificationService,
 	)
+
+	// Proxy use cases
+	c.StartAgentSessionUC = proxy.NewStartAgentSessionUseCase(
+		c.SessionRepo,
+		c.UserRepo,
+		c.AgentService,
+		c.NotificationService,
+	)
+
+	c.StopAgentSessionUC = proxy.NewStopAgentSessionUseCase(
+		c.SessionRepo,
+		c.AgentService,
+		c.NotificationService,
+	)
+
+	c.ListAgentSessionsUC = proxy.NewListAgentSessionsUseCase(
+		c.SessionRepo,
+	)
 }
 
 // initPresenters initializes all presenter dependencies
@@ -206,6 +231,12 @@ func (c *Container) initControllers() {
 		c.SendNotificationUC,
 		c.ManageSubscriptionUC,
 		c.NotificationPresenter,
+	)
+
+	c.ProxyController = controllers.NewProxyController(
+		c.StartAgentSessionUC,
+		c.StopAgentSessionUC,
+		c.ListAgentSessionsUC,
 	)
 
 	c.AuthMiddleware = controllers.NewAuthMiddleware(
