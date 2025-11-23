@@ -156,6 +156,10 @@ func TestLoadAuthConfigFromFile(t *testing.T) {
 }
 
 func TestLoadConfigWithAuthConfigFile(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	// Create a temporary directory for test files
 	tempDir, err := os.MkdirTemp("", "config-test")
 	if err != nil {

@@ -181,6 +181,10 @@ k8s_mode:
 }
 
 func TestK8sModeConfigEnvOverridesFile(t *testing.T) {
+	// Clean up environment variables for this test
+	restore := cleanupEnvironmentVars()
+	defer restore()
+
 	configJSON := `{
 		"k8s_mode": {
 			"enabled": false,
