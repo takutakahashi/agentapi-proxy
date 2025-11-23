@@ -3,6 +3,10 @@ package di
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
+	"time"
+
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
@@ -98,7 +102,14 @@ func (c *Container) initRepositories() {
 
 // initServices initializes all service dependencies
 func (c *Container) initServices() {
-	c.AgentService = services.NewAgentService(8100, 8200) // Port range 8100-8200
+	// Initialize AgentService based on environment variable
+	if isMockMode() {
+		mockConfig := loadMockConfig()
+		c.AgentService = services.NewMockAgentService(mockConfig)
+	} else {
+		c.AgentService = services.NewLocalAgentService() // Use LocalAgentService instead of AgentService
+	}
+
 	c.AuthService = services.NewSimpleAuthService()
 	c.NotificationService = services.NewSimpleNotificationService()
 
@@ -346,4 +357,40 @@ func (s *SimpleGitHubAuthService) ExchangeCodeForToken(ctx context.Context, code
 
 func (s *SimpleGitHubAuthService) RevokeOAuthToken(ctx context.Context, token string) error {
 	return nil
+}
+
+// isMockMode checks if the application should use mock implementations
+func isMockMode() bool {
+	return os.Getenv("AGENTAPI_MOCK_MODE") == "true"
+}
+
+// loadMockConfig loads mock configuration from environment variables
+func loadMockConfig() *services.MockConfig {
+	config := &services.MockConfig{
+		Behavior:      services.MockBehaviorNormal,
+		DefaultStatus: services_ports.ProcessStatusRunning,
+		Latency:       0,
+		FailureRate:   0,
+	}
+
+	// Load behavior from environment
+	if behavior := os.Getenv("AGENTAPI_MOCK_BEHAVIOR"); behavior != "" {
+		config.Behavior = services.MockBehavior(behavior)
+	}
+
+	// Load latency from environment
+	if latencyStr := os.Getenv("AGENTAPI_MOCK_LATENCY"); latencyStr != "" {
+		if latency, err := time.ParseDuration(latencyStr); err == nil {
+			config.Latency = latency
+		}
+	}
+
+	// Load failure rate from environment
+	if failureRateStr := os.Getenv("AGENTAPI_MOCK_FAILURE_RATE"); failureRateStr != "" {
+		if failureRate, err := strconv.ParseFloat(failureRateStr, 64); err == nil {
+			config.FailureRate = failureRate
+		}
+	}
+
+	return config
 }
