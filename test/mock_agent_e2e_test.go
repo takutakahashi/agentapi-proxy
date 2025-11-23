@@ -5,7 +5,6 @@ package test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -163,7 +162,7 @@ func testNormalMockBehavior(ctx context.Context, t *testing.T, clientInstance *c
 	}
 
 	// Test session management operations
-	sessions, err := clientInstance.SearchSessions(ctx, nil)
+	sessions, err := clientInstance.Search(ctx, "")
 	if err != nil {
 		t.Fatalf("Failed to search sessions with mock: %v", err)
 	}
@@ -502,7 +501,7 @@ func TestMockAgentMultipleSessions(t *testing.T) {
 	}
 
 	// Test session search
-	sessions, err := clientInstance.SearchSessions(ctx, nil)
+	sessions, err := clientInstance.Search(ctx, "")
 	if err != nil {
 		t.Fatalf("Failed to search mock sessions: %v", err)
 	}
