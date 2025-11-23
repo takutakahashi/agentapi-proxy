@@ -25,6 +25,14 @@
 //	AGENTAPI_PERSISTENCE_S3_BUCKET=my-bucket
 //	AGENTAPI_PERSISTENCE_S3_REGION=us-east-1
 //	AGENTAPI_ENABLE_MULTIPLE_USERS=true
+//	AGENTAPI_K8S_MODE_ENABLED=true
+//	AGENTAPI_K8S_MODE_NAMESPACE=agentapi-proxy
+//	AGENTAPI_K8S_MODE_IMAGE=agentapi-proxy:latest
+//	AGENTAPI_K8S_MODE_RESOURCES_CPU_REQUEST=100m
+//	AGENTAPI_K8S_MODE_RESOURCES_CPU_LIMIT=500m
+//	AGENTAPI_K8S_MODE_RESOURCES_MEMORY_REQUEST=256Mi
+//	AGENTAPI_K8S_MODE_RESOURCES_MEMORY_LIMIT=512Mi
+//	AGENTAPI_K8S_MODE_RESOURCES_STORAGE_SIZE=1Gi
 //
 // Configuration file search paths:
 //   - Current directory
@@ -102,6 +110,32 @@ type RoleEnvFilesConfig struct {
 	LoadDefault bool `json:"load_default" mapstructure:"load_default"`
 }
 
+// K8sModeConfig represents agent Kubernetes mode configuration
+type K8sModeConfig struct {
+	// Enabled enables k8s mode (using Kubernetes StatefulSets)
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// Namespace is the Kubernetes namespace for agent resources
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// Image is the container image for agents
+	Image string `json:"image" mapstructure:"image"`
+	// Resources contains default resource configurations
+	Resources K8sResourcesConfig `json:"resources" mapstructure:"resources"`
+}
+
+// K8sResourcesConfig represents default resource configurations for agents
+type K8sResourcesConfig struct {
+	// CPURequest is the default CPU request for agents
+	CPURequest string `json:"cpu_request" mapstructure:"cpu_request"`
+	// CPULimit is the default CPU limit for agents
+	CPULimit string `json:"cpu_limit" mapstructure:"cpu_limit"`
+	// MemoryRequest is the default memory request for agents
+	MemoryRequest string `json:"memory_request" mapstructure:"memory_request"`
+	// MemoryLimit is the default memory limit for agents
+	MemoryLimit string `json:"memory_limit" mapstructure:"memory_limit"`
+	// StorageSize is the default storage size for agent PVCs
+	StorageSize string `json:"storage_size" mapstructure:"storage_size"`
+}
+
 // APIKey represents an API key configuration
 type APIKey struct {
 	Key         string   `json:"key" mapstructure:"key"`
@@ -145,6 +179,8 @@ type Config struct {
 	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
 	// RoleEnvFiles is the configuration for role-based environment files
 	RoleEnvFiles RoleEnvFilesConfig `json:"role_env_files" mapstructure:"role_env_files"`
+	// K8sMode is the configuration for agent k8s mode
+	K8sMode K8sModeConfig `json:"k8s_mode" mapstructure:"k8s_mode"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -218,6 +254,7 @@ func LoadConfig(filename string) (*Config, error) {
 	log.Printf("[CONFIG] Persistence enabled: %v (backend: %s)", config.Persistence.Enabled, config.Persistence.Backend)
 	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
+	log.Printf("[CONFIG] K8s mode enabled: %v (namespace: %s)", config.K8sMode.Enabled, config.K8sMode.Namespace)
 
 	return &config, nil
 }
@@ -374,6 +411,16 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("role_env_files.enabled")
 	_ = v.BindEnv("role_env_files.path")
 	_ = v.BindEnv("role_env_files.load_default")
+
+	// K8s mode configuration
+	_ = v.BindEnv("k8s_mode.enabled")
+	_ = v.BindEnv("k8s_mode.namespace")
+	_ = v.BindEnv("k8s_mode.image")
+	_ = v.BindEnv("k8s_mode.resources.cpu_request")
+	_ = v.BindEnv("k8s_mode.resources.cpu_limit")
+	_ = v.BindEnv("k8s_mode.resources.memory_request")
+	_ = v.BindEnv("k8s_mode.resources.memory_limit")
+	_ = v.BindEnv("k8s_mode.resources.storage_size")
 }
 
 // setDefaults sets default values for viper configuration
@@ -412,6 +459,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("role_env_files.enabled", false)
 	v.SetDefault("role_env_files.path", "/etc/agentapi/env")
 	v.SetDefault("role_env_files.load_default", true)
+
+	// K8s mode defaults
+	v.SetDefault("k8s_mode.enabled", false)
+	v.SetDefault("k8s_mode.namespace", "agentapi-proxy")
+	v.SetDefault("k8s_mode.image", "agentapi-proxy:latest")
+	v.SetDefault("k8s_mode.resources.cpu_request", "100m")
+	v.SetDefault("k8s_mode.resources.cpu_limit", "500m")
+	v.SetDefault("k8s_mode.resources.memory_request", "256Mi")
+	v.SetDefault("k8s_mode.resources.memory_limit", "512Mi")
+	v.SetDefault("k8s_mode.resources.storage_size", "1Gi")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
@@ -445,6 +502,29 @@ func applyConfigDefaults(config *Config) {
 		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
 			config.Auth.GitHub.OAuth.Scope = "read:user read:org"
 		}
+	}
+
+	// Apply k8s mode defaults
+	if config.K8sMode.Namespace == "" {
+		config.K8sMode.Namespace = "agentapi-proxy"
+	}
+	if config.K8sMode.Image == "" {
+		config.K8sMode.Image = "agentapi-proxy:latest"
+	}
+	if config.K8sMode.Resources.CPURequest == "" {
+		config.K8sMode.Resources.CPURequest = "100m"
+	}
+	if config.K8sMode.Resources.CPULimit == "" {
+		config.K8sMode.Resources.CPULimit = "500m"
+	}
+	if config.K8sMode.Resources.MemoryRequest == "" {
+		config.K8sMode.Resources.MemoryRequest = "256Mi"
+	}
+	if config.K8sMode.Resources.MemoryLimit == "" {
+		config.K8sMode.Resources.MemoryLimit = "512Mi"
+	}
+	if config.K8sMode.Resources.StorageSize == "" {
+		config.K8sMode.Resources.StorageSize = "1Gi"
 	}
 }
 
