@@ -25,6 +25,14 @@
 //	AGENTAPI_PERSISTENCE_S3_BUCKET=my-bucket
 //	AGENTAPI_PERSISTENCE_S3_REGION=us-east-1
 //	AGENTAPI_ENABLE_MULTIPLE_USERS=true
+//	AGENTAPI_PROVISION_MODE_ENABLED=true
+//	AGENTAPI_PROVISION_MODE_NAMESPACE=agentapi-proxy
+//	AGENTAPI_PROVISION_MODE_IMAGE=agentapi-proxy:latest
+//	AGENTAPI_PROVISION_MODE_RESOURCES_CPU_REQUEST=100m
+//	AGENTAPI_PROVISION_MODE_RESOURCES_CPU_LIMIT=500m
+//	AGENTAPI_PROVISION_MODE_RESOURCES_MEMORY_REQUEST=256Mi
+//	AGENTAPI_PROVISION_MODE_RESOURCES_MEMORY_LIMIT=512Mi
+//	AGENTAPI_PROVISION_MODE_RESOURCES_STORAGE_SIZE=1Gi
 //
 // Configuration file search paths:
 //   - Current directory
@@ -102,6 +110,32 @@ type RoleEnvFilesConfig struct {
 	LoadDefault bool `json:"load_default" mapstructure:"load_default"`
 }
 
+// ProvisionModeConfig represents agent provisioning mode configuration
+type ProvisionModeConfig struct {
+	// Enabled enables provisioning mode (using Kubernetes StatefulSets)
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// Namespace is the Kubernetes namespace for agent resources
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// Image is the container image for agents
+	Image string `json:"image" mapstructure:"image"`
+	// Resources contains default resource configurations
+	Resources ProvisionResourcesConfig `json:"resources" mapstructure:"resources"`
+}
+
+// ProvisionResourcesConfig represents default resource configurations for agents
+type ProvisionResourcesConfig struct {
+	// CPURequest is the default CPU request for agents
+	CPURequest string `json:"cpu_request" mapstructure:"cpu_request"`
+	// CPULimit is the default CPU limit for agents
+	CPULimit string `json:"cpu_limit" mapstructure:"cpu_limit"`
+	// MemoryRequest is the default memory request for agents
+	MemoryRequest string `json:"memory_request" mapstructure:"memory_request"`
+	// MemoryLimit is the default memory limit for agents
+	MemoryLimit string `json:"memory_limit" mapstructure:"memory_limit"`
+	// StorageSize is the default storage size for agent PVCs
+	StorageSize string `json:"storage_size" mapstructure:"storage_size"`
+}
+
 // APIKey represents an API key configuration
 type APIKey struct {
 	Key         string   `json:"key" mapstructure:"key"`
@@ -145,6 +179,8 @@ type Config struct {
 	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
 	// RoleEnvFiles is the configuration for role-based environment files
 	RoleEnvFiles RoleEnvFilesConfig `json:"role_env_files" mapstructure:"role_env_files"`
+	// ProvisionMode is the configuration for agent provisioning mode
+	ProvisionMode ProvisionModeConfig `json:"provision_mode" mapstructure:"provision_mode"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -218,6 +254,7 @@ func LoadConfig(filename string) (*Config, error) {
 	log.Printf("[CONFIG] Persistence enabled: %v (backend: %s)", config.Persistence.Enabled, config.Persistence.Backend)
 	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
+	log.Printf("[CONFIG] Provision mode enabled: %v (namespace: %s)", config.ProvisionMode.Enabled, config.ProvisionMode.Namespace)
 
 	return &config, nil
 }
@@ -374,6 +411,16 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("role_env_files.enabled")
 	_ = v.BindEnv("role_env_files.path")
 	_ = v.BindEnv("role_env_files.load_default")
+
+	// Provision mode configuration
+	_ = v.BindEnv("provision_mode.enabled")
+	_ = v.BindEnv("provision_mode.namespace")
+	_ = v.BindEnv("provision_mode.image")
+	_ = v.BindEnv("provision_mode.resources.cpu_request")
+	_ = v.BindEnv("provision_mode.resources.cpu_limit")
+	_ = v.BindEnv("provision_mode.resources.memory_request")
+	_ = v.BindEnv("provision_mode.resources.memory_limit")
+	_ = v.BindEnv("provision_mode.resources.storage_size")
 }
 
 // setDefaults sets default values for viper configuration
@@ -412,6 +459,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("role_env_files.enabled", false)
 	v.SetDefault("role_env_files.path", "/etc/agentapi/env")
 	v.SetDefault("role_env_files.load_default", true)
+
+	// Provision mode defaults
+	v.SetDefault("provision_mode.enabled", false)
+	v.SetDefault("provision_mode.namespace", "agentapi-proxy")
+	v.SetDefault("provision_mode.image", "agentapi-proxy:latest")
+	v.SetDefault("provision_mode.resources.cpu_request", "100m")
+	v.SetDefault("provision_mode.resources.cpu_limit", "500m")
+	v.SetDefault("provision_mode.resources.memory_request", "256Mi")
+	v.SetDefault("provision_mode.resources.memory_limit", "512Mi")
+	v.SetDefault("provision_mode.resources.storage_size", "1Gi")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
@@ -445,6 +502,29 @@ func applyConfigDefaults(config *Config) {
 		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
 			config.Auth.GitHub.OAuth.Scope = "read:user read:org"
 		}
+	}
+
+	// Apply provision mode defaults
+	if config.ProvisionMode.Namespace == "" {
+		config.ProvisionMode.Namespace = "agentapi-proxy"
+	}
+	if config.ProvisionMode.Image == "" {
+		config.ProvisionMode.Image = "agentapi-proxy:latest"
+	}
+	if config.ProvisionMode.Resources.CPURequest == "" {
+		config.ProvisionMode.Resources.CPURequest = "100m"
+	}
+	if config.ProvisionMode.Resources.CPULimit == "" {
+		config.ProvisionMode.Resources.CPULimit = "500m"
+	}
+	if config.ProvisionMode.Resources.MemoryRequest == "" {
+		config.ProvisionMode.Resources.MemoryRequest = "256Mi"
+	}
+	if config.ProvisionMode.Resources.MemoryLimit == "" {
+		config.ProvisionMode.Resources.MemoryLimit = "512Mi"
+	}
+	if config.ProvisionMode.Resources.StorageSize == "" {
+		config.ProvisionMode.Resources.StorageSize = "1Gi"
 	}
 }
 
