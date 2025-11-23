@@ -91,6 +91,7 @@ func (u *StartAgentSessionUseCase) Execute(ctx context.Context, req StartAgentSe
 		// Cleanup process if session start fails
 		if stopErr := u.agentService.StopAgent(ctx, processInfo.PID()); stopErr != nil {
 			// Log cleanup error but continue with original error
+			_ = stopErr // Explicitly ignore cleanup error for lint
 		}
 		return nil, fmt.Errorf("failed to mark session as started: %w", err)
 	}
@@ -100,6 +101,7 @@ func (u *StartAgentSessionUseCase) Execute(ctx context.Context, req StartAgentSe
 		// Cleanup process if save fails
 		if stopErr := u.agentService.StopAgent(ctx, processInfo.PID()); stopErr != nil {
 			// Log cleanup error but continue with original error
+			_ = stopErr // Explicitly ignore cleanup error for lint
 		}
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
