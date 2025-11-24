@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+	portServices "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,7 +25,7 @@ type KubernetesServiceImpl struct {
 	clientset kubernetes.Interface
 }
 
-func NewKubernetesService(client client.Client, clientset kubernetes.Interface) services.KubernetesService {
+func NewKubernetesService(client client.Client, clientset kubernetes.Interface) portServices.KubernetesService {
 	return &KubernetesServiceImpl{
 		client:    client,
 		clientset: clientset,
@@ -33,14 +33,14 @@ func NewKubernetesService(client client.Client, clientset kubernetes.Interface) 
 }
 
 func (s *KubernetesServiceImpl) CreateAgentStatefulSet(ctx context.Context, agentID, sessionID string) error {
-	return s.CreateAgentStatefulSetWithConfig(ctx, AgentResourceConfig{
+	return s.CreateAgentStatefulSetWithConfig(ctx, portServices.AgentResourceConfig{
 		AgentID:   agentID,
 		SessionID: sessionID,
 		Namespace: agentNamespace,
 	})
 }
 
-func (s *KubernetesServiceImpl) CreateAgentStatefulSetWithConfig(ctx context.Context, config AgentResourceConfig) error {
+func (s *KubernetesServiceImpl) CreateAgentStatefulSetWithConfig(ctx context.Context, config portServices.AgentResourceConfig) error {
 	builder := NewAgentResourceBuilder(config)
 
 	// Create headless service first
@@ -73,7 +73,7 @@ func (s *KubernetesServiceImpl) CreateAgentPod(ctx context.Context, sessionID st
 }
 
 func (s *KubernetesServiceImpl) DeleteStatefulSet(ctx context.Context, agentID string) error {
-	builder := NewAgentResourceBuilder(AgentResourceConfig{
+	builder := NewAgentResourceBuilder(portServices.AgentResourceConfig{
 		AgentID:   agentID,
 		Namespace: agentNamespace,
 	})
@@ -179,7 +179,7 @@ func (s *KubernetesServiceImpl) ScalePods(ctx context.Context, sessionID string,
 	return nil
 }
 
-func (s *KubernetesServiceImpl) ListPodsBySession(ctx context.Context, sessionID string) ([]services.PodInfo, error) {
+func (s *KubernetesServiceImpl) ListPodsBySession(ctx context.Context, sessionID string) ([]portServices.PodInfo, error) {
 	podList := &corev1.PodList{}
 	if err := s.client.List(ctx, podList,
 		client.InNamespace(agentNamespace),
@@ -188,9 +188,9 @@ func (s *KubernetesServiceImpl) ListPodsBySession(ctx context.Context, sessionID
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}
 
-	podInfos := make([]services.PodInfo, 0, len(podList.Items))
+	podInfos := make([]portServices.PodInfo, 0, len(podList.Items))
 	for _, pod := range podList.Items {
-		podInfo := services.PodInfo{
+		podInfo := portServices.PodInfo{
 			Name:     pod.Name,
 			Status:   string(pod.Status.Phase),
 			IP:       pod.Status.PodIP,
@@ -254,8 +254,8 @@ func (s *KubernetesServiceImpl) UpdatePodLabels(ctx context.Context, podName str
 	return nil
 }
 
-func (s *KubernetesServiceImpl) GetPodMetrics(ctx context.Context, podName string) (*services.PodMetrics, error) {
-	return &services.PodMetrics{
+func (s *KubernetesServiceImpl) GetPodMetrics(ctx context.Context, podName string) (*portServices.PodMetrics, error) {
+	return &portServices.PodMetrics{
 		CPUUsage:    "100m",
 		MemoryUsage: "128Mi",
 		NetworkIn:   0,
@@ -309,5 +309,95 @@ func (s *KubernetesServiceImpl) DeleteConfigMap(ctx context.Context, name string
 	if err := s.client.Delete(ctx, configMap); err != nil && client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to delete configmap: %w", err)
 	}
+	return nil
+}
+
+func (s *KubernetesServiceImpl) CreateSecret(ctx context.Context, name string, data map[string][]byte) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: agentNamespace,
+		},
+		Data: data,
+	}
+
+	if err := s.client.Create(ctx, secret); err != nil {
+		return fmt.Errorf("failed to create secret: %w", err)
+	}
+
+	return nil
+}
+
+func (s *KubernetesServiceImpl) UpdateSecret(ctx context.Context, name string, data map[string][]byte) error {
+	secret := &corev1.Secret{}
+	key := client.ObjectKey{
+		Namespace: agentNamespace,
+		Name:      name,
+	}
+
+	if err := s.client.Get(ctx, key, secret); err != nil {
+		return fmt.Errorf("failed to get secret: %w", err)
+	}
+
+	secret.Data = data
+	if err := s.client.Update(ctx, secret); err != nil {
+		return fmt.Errorf("failed to update secret: %w", err)
+	}
+
+	return nil
+}
+
+func (s *KubernetesServiceImpl) DeleteSecret(ctx context.Context, name string) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: agentNamespace,
+		},
+	}
+
+	if err := s.client.Delete(ctx, secret); err != nil && client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to delete secret: %w", err)
+	}
+	return nil
+}
+
+func (s *KubernetesServiceImpl) CreateUserConfigMap(ctx context.Context, userID string, notificationTargets []string) error {
+	configMapName := fmt.Sprintf("user-%s-notifications", userID)
+
+	// Create notification targets as JSON
+	targetData := strings.Join(notificationTargets, ",")
+	data := map[string]string{
+		"notification_targets.txt": targetData,
+	}
+
+	return s.CreateConfigMap(ctx, configMapName, data)
+}
+
+func (s *KubernetesServiceImpl) CreateUserSecret(ctx context.Context, userID string, envVars map[string]string) error {
+	secretName := fmt.Sprintf("user-%s-env", userID)
+
+	// Convert string map to byte map
+	data := make(map[string][]byte)
+	for key, value := range envVars {
+		data[key] = []byte(value)
+	}
+
+	return s.CreateSecret(ctx, secretName, data)
+}
+
+func (s *KubernetesServiceImpl) DeleteUserResources(ctx context.Context, userID string) error {
+	configMapName := fmt.Sprintf("user-%s-notifications", userID)
+	secretName := fmt.Sprintf("user-%s-env", userID)
+
+	// Delete ConfigMap
+	if err := s.DeleteConfigMap(ctx, configMapName); err != nil {
+		return fmt.Errorf("failed to delete user configmap: %w", err)
+	}
+
+	// Delete Secret
+	if err := s.DeleteSecret(ctx, secretName); err != nil {
+		return fmt.Errorf("failed to delete user secret: %w", err)
+	}
+
 	return nil
 }

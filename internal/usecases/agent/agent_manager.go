@@ -67,8 +67,33 @@ func (m *AgentManager) CreateAgent(ctx context.Context, sessionID entities.Sessi
 func (m *AgentManager) createAgentWithK8sMode(ctx context.Context, agent *entities.Agent, sessionID string) (*entities.Agent, error) {
 	agentID := string(agent.ID)
 
-	// Create StatefulSet for the agent
-	if err := m.k8sService.CreateAgentStatefulSet(ctx, agentID, sessionID); err != nil {
+	// Get session to retrieve user information
+	session, err := m.sessionRepo.FindByID(ctx, entities.SessionID(sessionID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	userID := string(session.UserID())
+
+	// Create user-specific ConfigMap and Secret if k8s mode is enabled
+	if err := m.k8sService.CreateUserConfigMap(ctx, userID, []string{"webhook:example"}); err != nil {
+		return nil, fmt.Errorf("failed to create user configmap: %w", err)
+	}
+
+	envVars := session.Environment()
+	if err := m.k8sService.CreateUserSecret(ctx, userID, envVars); err != nil {
+		_ = m.k8sService.DeleteUserResources(ctx, userID) // Cleanup ConfigMap
+		return nil, fmt.Errorf("failed to create user secret: %w", err)
+	}
+
+	// Create StatefulSet for the agent with user information
+	if err := m.k8sService.CreateAgentStatefulSetWithConfig(ctx, services.AgentResourceConfig{
+		AgentID:   agentID,
+		SessionID: sessionID,
+		UserID:    userID,
+		Namespace: "agentapi-proxy",
+	}); err != nil {
+		_ = m.k8sService.DeleteUserResources(ctx, userID) // Cleanup user resources
 		return nil, fmt.Errorf("failed to create agent statefulset: %w", err)
 	}
 
@@ -77,6 +102,7 @@ func (m *AgentManager) createAgentWithK8sMode(ctx context.Context, agent *entiti
 
 	if err := m.agentRepo.Save(ctx, agent); err != nil {
 		_ = m.k8sService.DeleteStatefulSet(ctx, agentID)
+		_ = m.k8sService.DeleteUserResources(ctx, userID)
 		return nil, fmt.Errorf("failed to save agent: %w", err)
 	}
 
@@ -187,6 +213,13 @@ func (m *AgentManager) StopAgent(ctx context.Context, agentID entities.AgentID) 
 
 // stopAgentWithK8sMode stops an agent in k8s mode (Kubernetes)
 func (m *AgentManager) stopAgentWithK8sMode(ctx context.Context, agent *entities.Agent, agentID string) error {
+	// Get session to retrieve user information for cleanup
+	session, err := m.sessionRepo.FindByID(ctx, agent.SessionID)
+	if err == nil { // Only cleanup if we can get the session
+		userID := string(session.UserID())
+		_ = m.k8sService.DeleteUserResources(ctx, userID) // Best effort cleanup
+	}
+
 	if err := m.k8sService.DeleteStatefulSet(ctx, agentID); err != nil {
 		return fmt.Errorf("failed to delete statefulset: %w", err)
 	}
