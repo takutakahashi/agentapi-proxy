@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	portServices "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -12,12 +13,12 @@ import (
 func TestNewAgentResourceBuilder(t *testing.T) {
 	tests := []struct {
 		name     string
-		config   AgentResourceConfig
-		expected AgentResourceConfig
+		config   portServices.AgentResourceConfig
+		expected portServices.AgentResourceConfig
 	}{
 		{
 			name: "with all config provided",
-			config: AgentResourceConfig{
+			config: portServices.AgentResourceConfig{
 				AgentID:       "test-agent",
 				SessionID:     "test-session",
 				Image:         "custom:v1.0",
@@ -28,7 +29,7 @@ func TestNewAgentResourceBuilder(t *testing.T) {
 				StorageSize:   "2Gi",
 				Namespace:     "custom-namespace",
 			},
-			expected: AgentResourceConfig{
+			expected: portServices.AgentResourceConfig{
 				AgentID:       "test-agent",
 				SessionID:     "test-session",
 				Image:         "custom:v1.0",
@@ -42,11 +43,11 @@ func TestNewAgentResourceBuilder(t *testing.T) {
 		},
 		{
 			name: "with defaults applied",
-			config: AgentResourceConfig{
+			config: portServices.AgentResourceConfig{
 				AgentID:   "test-agent",
 				SessionID: "test-session",
 			},
-			expected: AgentResourceConfig{
+			expected: portServices.AgentResourceConfig{
 				AgentID:       "test-agent",
 				SessionID:     "test-session",
 				Image:         "agentapi-proxy:latest",
@@ -69,7 +70,7 @@ func TestNewAgentResourceBuilder(t *testing.T) {
 }
 
 func TestAgentResourceBuilder_BuildHeadlessService(t *testing.T) {
-	config := AgentResourceConfig{
+	config := portServices.AgentResourceConfig{
 		AgentID:   "test-agent",
 		SessionID: "test-session",
 		Namespace: "test-namespace",
@@ -105,7 +106,7 @@ func TestAgentResourceBuilder_BuildHeadlessService(t *testing.T) {
 }
 
 func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
-	config := AgentResourceConfig{
+	config := portServices.AgentResourceConfig{
 		AgentID:       "test-agent",
 		SessionID:     "test-session",
 		Image:         "test:latest",
@@ -144,6 +145,12 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 	}
 	assert.Equal(t, expectedSelector, statefulset.Spec.Selector.MatchLabels)
 
+	// Check InitContainers
+	require.Len(t, statefulset.Spec.Template.Spec.InitContainers, 1)
+	initContainer := statefulset.Spec.Template.Spec.InitContainers[0]
+	assert.Equal(t, "setup", initContainer.Name)
+	assert.Equal(t, "busybox:latest", initContainer.Image)
+
 	require.Len(t, statefulset.Spec.Template.Spec.Containers, 1)
 	container := statefulset.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, "agent", container.Name)
@@ -154,10 +161,12 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 	assert.Equal(t, "http", container.Ports[0].Name)
 
 	expectedEnvs := map[string]string{
-		"AGENT_ID":         "test-agent",
-		"SESSION_ID":       "test-session",
-		"SESSION_PROVIDER": "kubernetes",
-		"K8S_NAMESPACE":    "test-namespace",
+		"AGENT_ID":          "test-agent",
+		"SESSION_ID":        "test-session",
+		"SESSION_PROVIDER":  "kubernetes",
+		"K8S_NAMESPACE":     "test-namespace",
+		"USER_CONFIG_PATH":  "/shared/config",
+		"USER_ENV_PATH":     "/shared/env",
 	}
 
 	for _, env := range container.Env {
@@ -166,10 +175,16 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 		}
 	}
 
-	require.Len(t, container.VolumeMounts, 1)
-	volumeMount := container.VolumeMounts[0]
-	assert.Equal(t, "data", volumeMount.Name)
-	assert.Equal(t, "/data", volumeMount.MountPath)
+	require.Len(t, container.VolumeMounts, 3)
+	
+	volumeMountNames := make(map[string]string)
+	for _, vm := range container.VolumeMounts {
+		volumeMountNames[vm.Name] = vm.MountPath
+	}
+	
+	assert.Equal(t, "/data", volumeMountNames["data"])
+	assert.Equal(t, "/shared/config", volumeMountNames["shared-config"])
+	assert.Equal(t, "/shared/env", volumeMountNames["shared-env"])
 
 	cpuRequest, _ := resource.ParseQuantity("100m")
 	memoryRequest, _ := resource.ParseQuantity("256Mi")
@@ -198,11 +213,22 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 	storageSize, _ := resource.ParseQuantity("1Gi")
 	assert.Equal(t, storageSize, volumeClaimTemplate.Spec.Resources.Requests[corev1.ResourceStorage])
 
+	// Check Volumes
+	require.Len(t, statefulset.Spec.Template.Spec.Volumes, 4)
+	volumeNames := make(map[string]bool)
+	for _, vol := range statefulset.Spec.Template.Spec.Volumes {
+		volumeNames[vol.Name] = true
+	}
+	assert.True(t, volumeNames["config-volume"])
+	assert.True(t, volumeNames["secret-volume"])
+	assert.True(t, volumeNames["shared-config"])
+	assert.True(t, volumeNames["shared-env"])
+
 	assert.Contains(t, volumeClaimTemplate.Spec.AccessModes, corev1.ReadWriteOnce)
 }
 
 func TestAgentResourceBuilder_GetResourceNames(t *testing.T) {
-	config := AgentResourceConfig{
+	config := portServices.AgentResourceConfig{
 		AgentID: "test-agent",
 	}
 	builder := NewAgentResourceBuilder(config)
@@ -214,7 +240,7 @@ func TestAgentResourceBuilder_GetResourceNames(t *testing.T) {
 }
 
 func TestAgentResourceBuilder_StatefulSetValidation(t *testing.T) {
-	config := AgentResourceConfig{
+	config := portServices.AgentResourceConfig{
 		AgentID:   "test-agent",
 		SessionID: "test-session",
 		Namespace: "test-namespace",
