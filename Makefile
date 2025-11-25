@@ -1,4 +1,4 @@
-.PHONY: help install-deps build test test-template test-integration test-all lint clean docker-build docker-push e2e ci gofmt
+.PHONY: help install-deps build test test-template test-integration test-all lint clean docker-build docker-push e2e ci gofmt setup-envtest
 
 BINARY_NAME := agentapi-proxy
 GO_FILES := $(shell find . -name "*.go" -type f)
@@ -11,6 +11,7 @@ help:
 	@echo "Available targets:"
 	@echo "  install-deps - Install project dependencies"
 	@echo "  build        - Build the Go binary"
+	@echo "  setup-envtest - Download envtest binaries for Kubernetes testing"
 	@echo "  test         - Run Go unit tests"
 	@echo "  test-template - Run template generation tests"
 	@echo "  test-integration - Run integration tests"
@@ -43,17 +44,21 @@ gofmt:
 	@echo "Formatting Go code..."
 	go fmt ./...
 
-test: gofmt
+setup-envtest:
+	@echo "Setting up envtest binaries..."
+	@./scripts/setup-envtest.sh
+
+test: gofmt setup-envtest
 	@echo "Running unit tests..."
 	go test -v -race ./internal/... ./pkg/... -short
 
-test-template: gofmt
+test-template: gofmt setup-envtest
 	@echo "Running template generation tests..."
 	@echo "Checking if envsubst is available..."
 	@command -v envsubst >/dev/null 2>&1 || { echo "envsubst not found. Install gettext package."; exit 1; }
 	go test -v -race ./internal/infrastructure/services/template_service_test.go ./internal/infrastructure/services/template_service.go
 
-test-integration: gofmt
+test-integration: gofmt setup-envtest
 	@echo "Running integration tests..."
 	@echo "Checking if envsubst is available..."
 	@command -v envsubst >/dev/null 2>&1 || { echo "envsubst not found. Install gettext package."; exit 1; }
