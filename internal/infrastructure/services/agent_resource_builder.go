@@ -116,8 +116,7 @@ func (b *AgentResourceBuilder) BuildStatefulSet() *appsv1.StatefulSet {
 							Image:   "busybox:latest",
 							Command: []string{"sh", "-c"},
 							Args: []string{
-								`cp /config/notification_targets.txt /shared/config/ 2>/dev/null || true; 
-								 cp /secret/* /shared/env/ 2>/dev/null || true; 
+								`cp /config/subscriptions.json /notifications/ 2>/dev/null || true; 
 								 echo "Setup complete"`,
 							},
 							VolumeMounts: []corev1.VolumeMount{
@@ -127,17 +126,8 @@ func (b *AgentResourceBuilder) BuildStatefulSet() *appsv1.StatefulSet {
 									ReadOnly:  true,
 								},
 								{
-									Name:      "secret-volume",
-									MountPath: "/secret",
-									ReadOnly:  true,
-								},
-								{
-									Name:      "shared-config",
-									MountPath: "/shared/config",
-								},
-								{
-									Name:      "shared-env",
-									MountPath: "/shared/env",
+									Name:      "notifications",
+									MountPath: "/notifications",
 								},
 							},
 						},
@@ -199,11 +189,17 @@ func (b *AgentResourceBuilder) BuildStatefulSet() *appsv1.StatefulSet {
 								},
 								{
 									Name:  "USER_CONFIG_PATH",
-									Value: "/shared/config",
+									Value: "/home/agentapi/notifications",
 								},
+							},
+							EnvFrom: []corev1.EnvFromSource{
 								{
-									Name:  "USER_ENV_PATH",
-									Value: "/shared/env",
+									SecretRef: &corev1.SecretEnvSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: fmt.Sprintf("user-%s-env", b.config.UserID),
+										},
+										Optional: boolPtr(true),
+									},
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
@@ -212,13 +208,8 @@ func (b *AgentResourceBuilder) BuildStatefulSet() *appsv1.StatefulSet {
 									MountPath: "/data",
 								},
 								{
-									Name:      "shared-config",
-									MountPath: "/shared/config",
-									ReadOnly:  true,
-								},
-								{
-									Name:      "shared-env",
-									MountPath: "/shared/env",
+									Name:      "notifications",
+									MountPath: "/home/agentapi/notifications",
 									ReadOnly:  true,
 								},
 							},
@@ -267,22 +258,7 @@ func (b *AgentResourceBuilder) BuildStatefulSet() *appsv1.StatefulSet {
 							},
 						},
 						{
-							Name: "secret-volume",
-							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
-									SecretName: fmt.Sprintf("user-%s-env", b.config.UserID),
-									Optional:   boolPtr(true),
-								},
-							},
-						},
-						{
-							Name: "shared-config",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: "shared-env",
+							Name: "notifications",
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},

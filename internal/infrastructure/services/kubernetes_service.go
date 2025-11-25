@@ -367,7 +367,7 @@ func (s *KubernetesServiceImpl) CreateUserConfigMap(ctx context.Context, userID 
 	// Create notification targets as JSON
 	targetData := strings.Join(notificationTargets, ",")
 	data := map[string]string{
-		"notification_targets.txt": targetData,
+		"subscriptions.json": targetData,
 	}
 
 	return s.CreateConfigMap(ctx, configMapName, data)
