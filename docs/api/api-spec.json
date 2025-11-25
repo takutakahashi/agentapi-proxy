@@ -1,0 +1,978 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AgentAPI Proxy Server",
+    "description": "API proxy server for managing AgentAPI sessions and routing requests to Claude Code instances",
+    "version": "1.0.0",
+    "contact": {
+      "name": "AgentAPI Proxy",
+      "url": "https://github.com/takutakahashi/agentapi-proxy"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development server"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check endpoint",
+        "description": "Check the health status of the proxy server",
+        "operationId": "healthCheck",
+        "tags": ["Health"],
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  },
+                  "required": ["status"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/start": {
+      "post": {
+        "summary": "Start a new AgentAPI session",
+        "description": "Creates and starts a new AgentAPI server instance",
+        "operationId": "startSession",
+        "tags": ["Sessions"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "requestBody": {
+          "description": "Session start request",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session started successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "description": "Unique session identifier"
+                    }
+                  },
+                  "required": ["session_id"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/search": {
+      "get": {
+        "summary": "Search and list sessions",
+        "description": "List and filter active sessions with optional filtering by status and tags",
+        "operationId": "searchSessions",
+        "tags": ["Sessions"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by session status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["active", "failed", "recovered", "terminated"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionInfo"
+                      }
+                    }
+                  },
+                  "required": ["sessions"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}": {
+      "delete": {
+        "summary": "Delete a session",
+        "description": "Terminate and delete a specific session",
+        "operationId": "deleteSession",
+        "tags": ["Sessions"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID to delete",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Session terminated successfully"
+                    },
+                    "session_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "terminated"
+                    }
+                  },
+                  "required": ["message", "session_id", "status"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - missing session ID"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - user does not own session"
+          },
+          "404": {
+            "description": "Session not found"
+          }
+        }
+      }
+    },
+    "/auth/types": {
+      "get": {
+        "summary": "Get available authentication types",
+        "description": "Returns the available authentication methods",
+        "operationId": "getAuthTypes",
+        "tags": ["Authentication"],
+        "responses": {
+          "200": {
+            "description": "Available authentication types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "example": ["api_key", "github"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/status": {
+      "get": {
+        "summary": "Get authentication status",
+        "description": "Returns the current authentication status",
+        "operationId": "getAuthStatus",
+        "tags": ["Authentication"],
+        "responses": {
+          "200": {
+            "description": "Authentication status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authenticated": {
+                      "type": "boolean"
+                    },
+                    "user_id": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "method": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notification/subscribe": {
+      "post": {
+        "summary": "Subscribe to notifications",
+        "description": "Subscribe to session notifications",
+        "operationId": "subscribeNotifications",
+        "tags": ["Notifications"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "requestBody": {
+          "description": "Notification subscription request",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Notification endpoint URL"
+                  },
+                  "session_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Session ID to subscribe to"
+                  }
+                },
+                "required": ["endpoint"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subscription created successfully"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "summary": "Get notification subscriptions",
+        "description": "Get current notification subscriptions",
+        "operationId": "getSubscriptions",
+        "tags": ["Notifications"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "session_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "nullable": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete notification subscription",
+        "description": "Delete a notification subscription",
+        "operationId": "deleteSubscription",
+        "tags": ["Notifications"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subscription deleted successfully"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Subscription not found"
+          }
+        }
+      }
+    },
+    "/notifications/webhook": {
+      "post": {
+        "summary": "Notification webhook endpoint",
+        "description": "Webhook endpoint for receiving notifications",
+        "operationId": "notificationWebhook",
+        "tags": ["Notifications"],
+        "requestBody": {
+          "description": "Webhook payload",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook processed successfully"
+          },
+          "400": {
+            "description": "Invalid webhook payload"
+          }
+        }
+      }
+    },
+    "/notifications/history": {
+      "get": {
+        "summary": "Get notification history",
+        "description": "Get history of notifications",
+        "operationId": "getNotificationHistory",
+        "tags": ["Notifications"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notification history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "session_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "nullable": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/oauth/authorize": {
+      "post": {
+        "summary": "Start OAuth authorization",
+        "description": "Start OAuth authorization flow",
+        "operationId": "oauthAuthorize",
+        "tags": ["OAuth"],
+        "responses": {
+          "302": {
+            "description": "Redirect to OAuth provider"
+          },
+          "400": {
+            "description": "OAuth not configured"
+          }
+        }
+      }
+    },
+    "/oauth/callback": {
+      "get": {
+        "summary": "OAuth callback endpoint",
+        "description": "Handle OAuth callback from provider",
+        "operationId": "oauthCallback",
+        "tags": ["OAuth"],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OAuth callback processed successfully"
+          },
+          "400": {
+            "description": "Invalid OAuth callback"
+          }
+        }
+      }
+    },
+    "/oauth/logout": {
+      "post": {
+        "summary": "OAuth logout",
+        "description": "Logout from OAuth session",
+        "operationId": "oauthLogout",
+        "tags": ["OAuth"],
+        "responses": {
+          "200": {
+            "description": "Logged out successfully"
+          }
+        }
+      }
+    },
+    "/oauth/refresh": {
+      "post": {
+        "summary": "Refresh OAuth token",
+        "description": "Refresh OAuth access token",
+        "operationId": "oauthRefresh",
+        "tags": ["OAuth"],
+        "responses": {
+          "200": {
+            "description": "Token refreshed successfully"
+          },
+          "400": {
+            "description": "Invalid refresh token"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/{sessionId}/{path}": {
+      "get": {
+        "summary": "Route request to session",
+        "description": "Route GET request to the specified session",
+        "operationId": "routeGetToSession",
+        "tags": ["Session Proxy"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to route to session",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request routed successfully"
+          },
+          "403": {
+            "description": "Forbidden - user does not own session"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "502": {
+            "description": "Bad gateway - session not responding"
+          }
+        }
+      },
+      "post": {
+        "summary": "Route POST request to session",
+        "description": "Route POST request to the specified session",
+        "operationId": "routePostToSession",
+        "tags": ["Session Proxy"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to route to session",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Request body to forward to session",
+          "content": {
+            "*/*": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request routed successfully"
+          },
+          "403": {
+            "description": "Forbidden - user does not own session"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "502": {
+            "description": "Bad gateway - session not responding"
+          }
+        }
+      },
+      "put": {
+        "summary": "Route PUT request to session",
+        "description": "Route PUT request to the specified session",
+        "operationId": "routePutToSession",
+        "tags": ["Session Proxy"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to route to session",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Request body to forward to session",
+          "content": {
+            "*/*": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request routed successfully"
+          },
+          "403": {
+            "description": "Forbidden - user does not own session"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "502": {
+            "description": "Bad gateway - session not responding"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Route PATCH request to session",
+        "description": "Route PATCH request to the specified session",
+        "operationId": "routePatchToSession",
+        "tags": ["Session Proxy"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to route to session",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Request body to forward to session",
+          "content": {
+            "*/*": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request routed successfully"
+          },
+          "403": {
+            "description": "Forbidden - user does not own session"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "502": {
+            "description": "Bad gateway - session not responding"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Route DELETE request to session",
+        "description": "Route DELETE request to the specified session",
+        "operationId": "routeDeleteToSession",
+        "tags": ["Session Proxy"],
+        "security": [
+          {
+            "ApiKey": []
+          },
+          {
+            "GitHubAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to route to session",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request routed successfully"
+          },
+          "403": {
+            "description": "Forbidden - user does not own session"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "502": {
+            "description": "Bad gateway - session not responding"
+          }
+        }
+      },
+      "options": {
+        "summary": "Handle CORS preflight for session routes",
+        "description": "Handle CORS preflight requests for session routes",
+        "operationId": "routeOptionsToSession",
+        "tags": ["Session Proxy"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to route to session",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "CORS preflight successful"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "StartRequest": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables for the session"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Tags for the session (e.g., repository, message)"
+          },
+          "message": {
+            "type": "string",
+            "description": "Initial message to send to the session"
+          }
+        }
+      },
+      "SessionInfo": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique session identifier"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "User who owns the session"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["active", "failed", "recovered", "terminated"],
+            "description": "Current session status"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Session start time"
+          },
+          "port": {
+            "type": "integer",
+            "description": "Port number the session is running on"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Session tags"
+          }
+        },
+        "required": ["session_id", "user_id", "status", "started_at", "port"]
+      }
+    },
+    "securitySchemes": {
+      "ApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "API key authentication"
+      },
+      "GitHubAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "GitHub authentication token"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health check endpoints"
+    },
+    {
+      "name": "Sessions",
+      "description": "Session management endpoints"
+    },
+    {
+      "name": "Authentication",
+      "description": "Authentication information endpoints"
+    },
+    {
+      "name": "Notifications",
+      "description": "Notification management endpoints"
+    },
+    {
+      "name": "OAuth",
+      "description": "OAuth authentication endpoints"
+    },
+    {
+      "name": "Session Proxy",
+      "description": "Session proxy endpoints for routing requests to AgentAPI instances"
+    }
+  ]
+}
