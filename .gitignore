@@ -38,6 +38,7 @@ logs/
 *.json
 !config*.json
 !api_keys.example.json
+!docs/api/api-spec.json
 !go.mod
 !go.sum
 !.tool-versions
