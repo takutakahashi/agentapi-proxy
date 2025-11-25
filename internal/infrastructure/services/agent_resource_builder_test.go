@@ -161,12 +161,11 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 	assert.Equal(t, "http", container.Ports[0].Name)
 
 	expectedEnvs := map[string]string{
-		"AGENT_ID":          "test-agent",
-		"SESSION_ID":        "test-session",
-		"SESSION_PROVIDER":  "kubernetes",
-		"K8S_NAMESPACE":     "test-namespace",
-		"USER_CONFIG_PATH":  "/shared/config",
-		"USER_ENV_PATH":     "/shared/env",
+		"AGENT_ID":         "test-agent",
+		"SESSION_ID":       "test-session",
+		"SESSION_PROVIDER": "kubernetes",
+		"K8S_NAMESPACE":    "test-namespace",
+		"USER_CONFIG_PATH": "/home/agentapi/notifications",
 	}
 
 	for _, env := range container.Env {
@@ -175,16 +174,15 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 		}
 	}
 
-	require.Len(t, container.VolumeMounts, 3)
-	
+	require.Len(t, container.VolumeMounts, 2)
+
 	volumeMountNames := make(map[string]string)
 	for _, vm := range container.VolumeMounts {
 		volumeMountNames[vm.Name] = vm.MountPath
 	}
-	
+
 	assert.Equal(t, "/data", volumeMountNames["data"])
-	assert.Equal(t, "/shared/config", volumeMountNames["shared-config"])
-	assert.Equal(t, "/shared/env", volumeMountNames["shared-env"])
+	assert.Equal(t, "/home/agentapi/notifications", volumeMountNames["notifications"])
 
 	cpuRequest, _ := resource.ParseQuantity("100m")
 	memoryRequest, _ := resource.ParseQuantity("256Mi")
@@ -214,15 +212,13 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 	assert.Equal(t, storageSize, volumeClaimTemplate.Spec.Resources.Requests[corev1.ResourceStorage])
 
 	// Check Volumes
-	require.Len(t, statefulset.Spec.Template.Spec.Volumes, 4)
+	require.Len(t, statefulset.Spec.Template.Spec.Volumes, 2)
 	volumeNames := make(map[string]bool)
 	for _, vol := range statefulset.Spec.Template.Spec.Volumes {
 		volumeNames[vol.Name] = true
 	}
 	assert.True(t, volumeNames["config-volume"])
-	assert.True(t, volumeNames["secret-volume"])
-	assert.True(t, volumeNames["shared-config"])
-	assert.True(t, volumeNames["shared-env"])
+	assert.True(t, volumeNames["notifications"])
 
 	assert.Contains(t, volumeClaimTemplate.Spec.AccessModes, corev1.ReadWriteOnce)
 }
