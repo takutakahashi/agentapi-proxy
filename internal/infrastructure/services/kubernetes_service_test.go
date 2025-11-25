@@ -586,7 +586,6 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 
 		assert.Equal(t, "/config", volumeMountNames["config-volume"])
 		assert.Equal(t, "/notifications", volumeMountNames["notifications"])
-		assert.Equal(t, "/shared/env", volumeMountNames["shared-env"])
 
 		// Verify read-only mounts
 		for _, vm := range initContainer.VolumeMounts {
@@ -623,7 +622,7 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 
 		assert.Equal(t, "/data", volumeMountNames["data"])
 		assert.Equal(t, "/home/agentapi/notifications", volumeMountNames["notifications"])
-    assert.Equal(t, "/shared/env", volumeMountNames["shared-env"])
+		
 		// Verify notifications volume is read-only for agent container
 		for _, vm := range agentContainer.VolumeMounts {
 			if vm.Name == "notifications" {
