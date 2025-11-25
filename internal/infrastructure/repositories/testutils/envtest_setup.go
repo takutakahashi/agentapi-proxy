@@ -46,7 +46,7 @@ func (s *EnvTestSuite) Setup() error {
 		},
 		ErrorIfCRDPathMissing: false,
 		BinaryAssetsDirectory: filepath.Join("..", "..", "..", "testbin", "k8s", "k8s",
-			fmt.Sprintf("1.32.0-%s-%s", "linux", "amd64")),
+			fmt.Sprintf("1.30.0-%s-%s", "linux", "amd64")),
 	}
 
 	cfg, err := s.testEnv.Start()

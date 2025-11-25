@@ -33,6 +33,9 @@ go.work.sum
 bin/
 .claude/
 
+# Test binaries
+testbin/
+
 # Session and log files
 logs/
 *.json

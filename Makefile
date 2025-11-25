@@ -1,4 +1,4 @@
-.PHONY: help install-deps build test test-template test-integration test-all lint clean docker-build docker-push e2e ci gofmt
+.PHONY: help install-deps build test test-template test-integration test-all lint clean docker-build docker-push e2e ci gofmt setup-envtest
 
 BINARY_NAME := agentapi-proxy
 GO_FILES := $(shell find . -name "*.go" -type f)
@@ -6,6 +6,12 @@ IMAGE_NAME := agentapi-proxy
 IMAGE_TAG := latest
 REGISTRY ?= ghcr.io/takutakahashi
 FULL_IMAGE_NAME := $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+
+# envtest binary configuration
+ENVTEST_K8S_VERSION = 1.30.0
+ENVTEST_ASSETS_DIR = testbin/k8s
+ENVTEST_BINARY_DIR = $(ENVTEST_ASSETS_DIR)/k8s/$(ENVTEST_K8S_VERSION)-linux-amd64
+ENVTEST_SETUP_URL = https://storage.googleapis.com/kubebuilder-tools/kubebuilder-tools-$(ENVTEST_K8S_VERSION)-linux-amd64.tar.gz
 
 help:
 	@echo "Available targets:"
@@ -34,6 +40,22 @@ install-deps:
 	}
 	@echo "Dependencies installed successfully"
 
+setup-envtest:
+	@echo "Setting up envtest binaries..."
+	@if [ ! -d "$(ENVTEST_BINARY_DIR)" ] || [ ! -f "$(ENVTEST_BINARY_DIR)/etcd" ]; then \
+		echo "Downloading Kubernetes $(ENVTEST_K8S_VERSION) binaries..."; \
+		mkdir -p $(ENVTEST_ASSETS_DIR); \
+		curl -L https://go.kubebuilder.io/test-tools/$(ENVTEST_K8S_VERSION)/linux/amd64 -o /tmp/envtest.tar.gz; \
+		tar xzf /tmp/envtest.tar.gz -C $(ENVTEST_ASSETS_DIR); \
+		mkdir -p $(ENVTEST_BINARY_DIR); \
+		mv $(ENVTEST_ASSETS_DIR)/kubebuilder/bin/* $(ENVTEST_BINARY_DIR)/; \
+		rm -rf $(ENVTEST_ASSETS_DIR)/kubebuilder; \
+		rm /tmp/envtest.tar.gz; \
+		echo "envtest binaries downloaded successfully"; \
+	else \
+		echo "envtest binaries already exist at $(ENVTEST_BINARY_DIR)"; \
+	fi
+
 build:
 	@echo "Building $(BINARY_NAME)..."
 	go mod tidy
@@ -43,7 +65,7 @@ gofmt:
 	@echo "Formatting Go code..."
 	go fmt ./...
 
-test: gofmt
+test: gofmt setup-envtest
 	@echo "Running unit tests..."
 	go test -v -race ./internal/... ./pkg/... -short
 
@@ -53,7 +75,7 @@ test-template: gofmt
 	@command -v envsubst >/dev/null 2>&1 || { echo "envsubst not found. Install gettext package."; exit 1; }
 	go test -v -race ./internal/infrastructure/services/template_service_test.go ./internal/infrastructure/services/template_service.go
 
-test-integration: gofmt
+test-integration: gofmt setup-envtest
 	@echo "Running integration tests..."
 	@echo "Checking if envsubst is available..."
 	@command -v envsubst >/dev/null 2>&1 || { echo "envsubst not found. Install gettext package."; exit 1; }
@@ -69,6 +91,7 @@ lint: gofmt
 clean:
 	@echo "Cleaning up..."
 	rm -rf bin/
+	rm -rf testbin/
 	go clean
 
 docker-build:
