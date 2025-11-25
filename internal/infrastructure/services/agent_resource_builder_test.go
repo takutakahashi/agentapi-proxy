@@ -166,6 +166,7 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 		"SESSION_PROVIDER": "kubernetes",
 		"K8S_NAMESPACE":    "test-namespace",
 		"USER_CONFIG_PATH": "/home/agentapi/notifications",
+    "USER_ENV_PATH":    "/shared/env",
 	}
 
 	for _, env := range container.Env {
@@ -174,7 +175,7 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 		}
 	}
 
-	require.Len(t, container.VolumeMounts, 2)
+	require.Len(t, container.VolumeMounts, 3)
 
 	volumeMountNames := make(map[string]string)
 	for _, vm := range container.VolumeMounts {

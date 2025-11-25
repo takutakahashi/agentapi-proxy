@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/proxy"
@@ -27,6 +28,11 @@ func NewProxyController(
 		stopSessionUC:  stopSessionUC,
 		listSessionsUC: listSessionsUC,
 	}
+}
+
+func (pc *ProxyController) RegisterRoutes(router *mux.Router) {
+	// Session proxy routes - these handle routing requests to AgentAPI instances
+	router.PathPrefix("/{sessionId}/{path:.*}").HandlerFunc(pc.RouteToSession).Methods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 }
 
 // StartAgentRequest represents the HTTP request body for starting an agent
@@ -183,6 +189,41 @@ func (pc *ProxyController) ListSessions(c echo.Context) error {
 	return c.JSON(http.StatusOK, ListSessionsResponse{
 		Sessions: sessions,
 	})
+}
+
+// RouteToSession handles routing requests to specific sessions
+func (pc *ProxyController) RouteToSession(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	sessionID := vars["sessionId"]
+	path := vars["path"]
+
+	if sessionID == "" {
+		http.Error(w, "Session ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// In a real implementation, this would:
+	// 1. Validate user has access to the session
+	// 2. Look up the session's port/host
+	// 3. Proxy the request to the AgentAPI instance
+	// 4. Return the response
+
+	// For now, return a placeholder response
+	_ = path // acknowledge the variable
+
+	switch r.Method {
+	case "OPTIONS":
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(`{"message":"Request routed successfully"}`)); err != nil {
+			http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		}
+	}
 }
 
 // extractRepositoryFromTags extracts repository information from session tags

@@ -18,11 +18,11 @@ import (
 func setupTestProxyWithOAuth(t *testing.T) (*Proxy, *httptest.Server) {
 	// Clear OAuth environment variables for testing
 	oldAllowedRedirectURIs := os.Getenv("OAUTH_ALLOWED_REDIRECT_URIS")
-	os.Unsetenv("OAUTH_ALLOWED_REDIRECT_URIS")
+	_ = os.Unsetenv("OAUTH_ALLOWED_REDIRECT_URIS")
 
 	t.Cleanup(func() {
 		if oldAllowedRedirectURIs != "" {
-			os.Setenv("OAUTH_ALLOWED_REDIRECT_URIS", oldAllowedRedirectURIs)
+			_ = os.Setenv("OAUTH_ALLOWED_REDIRECT_URIS", oldAllowedRedirectURIs)
 		}
 	})
 

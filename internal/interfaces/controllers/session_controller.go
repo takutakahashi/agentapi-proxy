@@ -2,11 +2,13 @@ package controllers
 
 import (
 	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/gorilla/mux"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
-	"net/http"
-	"strconv"
 )
 
 // SessionController handles HTTP requests for session operations
@@ -17,6 +19,15 @@ type SessionController struct {
 	getSessionByIDUC *session.GetSessionByIDUseCase
 	monitorSessionUC *session.MonitorSessionUseCase
 	sessionPresenter presenters.SessionPresenter
+}
+
+func (c *SessionController) RegisterRoutes(router *mux.Router) {
+	router.HandleFunc("/start", c.StartSession).Methods("POST")
+	router.HandleFunc("/search", c.SearchSessions).Methods("GET")
+	router.HandleFunc("/sessions/{sessionId}", c.DeleteSession).Methods("DELETE")
+	router.HandleFunc("/sessions/{sessionId}", c.GetSession).Methods("GET")
+	router.HandleFunc("/sessions", c.ListSessions).Methods("GET")
+	router.HandleFunc("/sessions/{sessionId}/monitor", c.MonitorSession).Methods("GET")
 }
 
 // NewSessionController creates a new SessionController
@@ -51,6 +62,16 @@ type RepositoryRequest struct {
 	URL    string `json:"url"`
 	Branch string `json:"branch,omitempty"`
 	Token  string `json:"token,omitempty"`
+}
+
+// StartSession handles POST /start
+func (c *SessionController) StartSession(w http.ResponseWriter, r *http.Request) {
+	c.CreateSession(w, r)
+}
+
+// SearchSessions handles GET /search
+func (c *SessionController) SearchSessions(w http.ResponseWriter, r *http.Request) {
+	c.ListSessions(w, r)
 }
 
 // CreateSession handles POST /sessions
@@ -279,12 +300,7 @@ func (c *SessionController) MonitorSession(w http.ResponseWriter, r *http.Reques
 }
 
 // extractSessionID extracts session ID from URL path
-// This is a simplified implementation - in real applications, use a proper router
 func extractSessionID(r *http.Request) string {
-	// Assuming URL format: /sessions/{id} or /sessions/{id}/monitor
-	path := r.URL.Path
-	// This is a placeholder implementation
-	// In real applications, use a proper router like gorilla/mux or chi
-	_ = path             // Acknowledge the variable is intentionally unused in this placeholder
-	return "session_123" // Placeholder
+	vars := mux.Vars(r)
+	return vars["sessionId"]
 }

@@ -2,10 +2,12 @@ package controllers
 
 import (
 	"encoding/json"
+	"net/http"
+
+	"github.com/gorilla/mux"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/notification"
-	"net/http"
 )
 
 // NotificationController handles HTTP requests for notification operations
@@ -26,6 +28,14 @@ func NewNotificationController(
 		manageSubscriptionUC:  manageSubscriptionUC,
 		notificationPresenter: notificationPresenter,
 	}
+}
+
+func (c *NotificationController) RegisterRoutes(router *mux.Router) {
+	router.HandleFunc("/notification/subscribe", c.SubscribeNotifications).Methods("POST")
+	router.HandleFunc("/notification/subscribe", c.GetSubscriptions).Methods("GET")
+	router.HandleFunc("/notification/subscribe", c.DeleteSubscription).Methods("DELETE")
+	router.HandleFunc("/notifications/webhook", c.NotificationWebhook).Methods("POST")
+	router.HandleFunc("/notifications/history", c.GetNotificationHistory).Methods("GET")
 }
 
 // SendNotificationRequest represents the HTTP request for sending a notification
@@ -152,6 +162,40 @@ func (c *NotificationController) DeleteSubscription(w http.ResponseWriter, r *ht
 
 	// Present response
 	c.notificationPresenter.PresentDeleteSubscription(w, response)
+}
+
+// SubscribeNotifications handles POST /notification/subscribe
+func (c *NotificationController) SubscribeNotifications(w http.ResponseWriter, r *http.Request) {
+	c.CreateSubscription(w, r)
+}
+
+// GetSubscriptions handles GET /notification/subscribe
+func (c *NotificationController) GetSubscriptions(w http.ResponseWriter, r *http.Request) {
+	// In a real implementation, this would list user's subscriptions
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte(`[]`)); err != nil {
+		c.notificationPresenter.PresentError(w, "Failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// NotificationWebhook handles POST /notifications/webhook
+func (c *NotificationController) NotificationWebhook(w http.ResponseWriter, r *http.Request) {
+	// In a real implementation, this would process webhook notifications
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte(`{"message":"Webhook processed successfully"}`)); err != nil {
+		c.notificationPresenter.PresentError(w, "Failed to write response", http.StatusInternalServerError)
+	}
+}
+
+// GetNotificationHistory handles GET /notifications/history
+func (c *NotificationController) GetNotificationHistory(w http.ResponseWriter, r *http.Request) {
+	// In a real implementation, this would return notification history
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte(`[]`)); err != nil {
+		c.notificationPresenter.PresentError(w, "Failed to write response", http.StatusInternalServerError)
+	}
 }
 
 // extractSubscriptionID extracts subscription ID from URL path
