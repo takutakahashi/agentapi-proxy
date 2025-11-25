@@ -161,12 +161,12 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 	assert.Equal(t, "http", container.Ports[0].Name)
 
 	expectedEnvs := map[string]string{
-		"AGENT_ID":          "test-agent",
-		"SESSION_ID":        "test-session",
-		"SESSION_PROVIDER":  "kubernetes",
-		"K8S_NAMESPACE":     "test-namespace",
-		"USER_CONFIG_PATH":  "/shared/config",
-		"USER_ENV_PATH":     "/shared/env",
+		"AGENT_ID":         "test-agent",
+		"SESSION_ID":       "test-session",
+		"SESSION_PROVIDER": "kubernetes",
+		"K8S_NAMESPACE":    "test-namespace",
+		"USER_CONFIG_PATH": "/shared/config",
+		"USER_ENV_PATH":    "/shared/env",
 	}
 
 	for _, env := range container.Env {
@@ -176,12 +176,12 @@ func TestAgentResourceBuilder_BuildStatefulSet(t *testing.T) {
 	}
 
 	require.Len(t, container.VolumeMounts, 3)
-	
+
 	volumeMountNames := make(map[string]string)
 	for _, vm := range container.VolumeMounts {
 		volumeMountNames[vm.Name] = vm.MountPath
 	}
-	
+
 	assert.Equal(t, "/data", volumeMountNames["data"])
 	assert.Equal(t, "/shared/config", volumeMountNames["shared-config"])
 	assert.Equal(t, "/shared/env", volumeMountNames["shared-env"])

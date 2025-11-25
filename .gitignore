@@ -41,3 +41,4 @@ logs/
 !go.mod
 !go.sum
 !.tool-versions
+testbin/

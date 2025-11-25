@@ -19,7 +19,7 @@ func cleanupEnvironmentVars() func() {
 			envVarsToRestore = append(envVarsToRestore, env)
 			keyValue := strings.SplitN(env, "=", 2)
 			if len(keyValue) == 2 {
-				os.Unsetenv(keyValue[0])
+				_ = os.Unsetenv(keyValue[0])
 			}
 		}
 	}
@@ -29,7 +29,7 @@ func cleanupEnvironmentVars() func() {
 		for _, env := range envVarsToRestore {
 			keyValue := strings.SplitN(env, "=", 2)
 			if len(keyValue) == 2 {
-				os.Setenv(keyValue[0], keyValue[1])
+				_ = os.Setenv(keyValue[0], keyValue[1])
 			}
 		}
 	}
