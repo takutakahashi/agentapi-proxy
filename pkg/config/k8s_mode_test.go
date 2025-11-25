@@ -81,11 +81,11 @@ func TestK8sModeConfig(t *testing.T) {
 
 			// Set test environment variables
 			for key, value := range tt.envVars {
-				os.Setenv(key, value)
+				_ = os.Setenv(key, value)
 			}
 			defer func() {
 				for key := range tt.envVars {
-					os.Unsetenv(key)
+					_ = os.Unsetenv(key)
 				}
 			}()
 
@@ -121,11 +121,11 @@ func TestK8sModeConfigJSON(t *testing.T) {
 	// Create temporary config file
 	tmpfile, err := os.CreateTemp("", "config*.json")
 	assert.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	_, err = tmpfile.Write([]byte(configJSON))
 	assert.NoError(t, err)
-	tmpfile.Close()
+	_ = tmpfile.Close()
 
 	// Load config from file
 	config, err := LoadConfig(tmpfile.Name())
@@ -159,11 +159,11 @@ k8s_mode:
 	// Create temporary config file
 	tmpfile, err := os.CreateTemp("", "config*.yaml")
 	assert.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	_, err = tmpfile.Write([]byte(configYAML))
 	assert.NoError(t, err)
-	tmpfile.Close()
+	_ = tmpfile.Close()
 
 	// Load config from file
 	config, err := LoadConfig(tmpfile.Name())
@@ -196,18 +196,18 @@ func TestK8sModeConfigEnvOverridesFile(t *testing.T) {
 	// Create temporary config file
 	tmpfile, err := os.CreateTemp("", "config*.json")
 	assert.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	_, err = tmpfile.Write([]byte(configJSON))
 	assert.NoError(t, err)
-	tmpfile.Close()
+	_ = tmpfile.Close()
 
 	// Set environment variables that should override file config
-	os.Setenv("AGENTAPI_K8S_MODE_ENABLED", "true")
-	os.Setenv("AGENTAPI_K8S_MODE_NAMESPACE", "env-namespace")
+	_ = os.Setenv("AGENTAPI_K8S_MODE_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_K8S_MODE_NAMESPACE", "env-namespace")
 	defer func() {
-		os.Unsetenv("AGENTAPI_K8S_MODE_ENABLED")
-		os.Unsetenv("AGENTAPI_K8S_MODE_NAMESPACE")
+		_ = os.Unsetenv("AGENTAPI_K8S_MODE_ENABLED")
+		_ = os.Unsetenv("AGENTAPI_K8S_MODE_NAMESPACE")
 	}()
 
 	// Load config from file
@@ -233,6 +233,6 @@ func clearK8sModeEnv() {
 	}
 
 	for _, envVar := range envVars {
-		os.Unsetenv(envVar)
+		_ = os.Unsetenv(envVar)
 	}
 }

@@ -103,7 +103,7 @@ func encryptString(text string) (string, error) {
 		return "", err
 	}
 
-	stream := cipher.NewCFBEncrypter(block, iv)
+	stream := cipher.NewCTR(block, iv)
 	stream.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
 
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
@@ -129,7 +129,7 @@ func decryptString(cryptoText string) (string, error) {
 	iv := ciphertext[:aes.BlockSize]
 	ciphertext = ciphertext[aes.BlockSize:]
 
-	stream := cipher.NewCFBDecrypter(block, iv)
+	stream := cipher.NewCTR(block, iv)
 	stream.XORKeyStream(ciphertext, ciphertext)
 
 	return string(ciphertext), nil

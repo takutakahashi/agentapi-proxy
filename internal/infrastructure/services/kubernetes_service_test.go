@@ -567,11 +567,11 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 
 	t.Run("verify InitContainer configuration", func(t *testing.T) {
 		require.Len(t, statefulset.Spec.Template.Spec.InitContainers, 1)
-		
+
 		initContainer := statefulset.Spec.Template.Spec.InitContainers[0]
 		assert.Equal(t, "setup", initContainer.Name)
 		assert.Equal(t, "busybox:latest", initContainer.Image)
-		
+
 		// Verify InitContainer command
 		assert.Equal(t, []string{"sh", "-c"}, initContainer.Command)
 		require.Len(t, initContainer.Args, 1)
@@ -583,12 +583,12 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 		for _, vm := range initContainer.VolumeMounts {
 			volumeMountNames[vm.Name] = vm.MountPath
 		}
-		
+
 		assert.Equal(t, "/config", volumeMountNames["config-volume"])
 		assert.Equal(t, "/secret", volumeMountNames["secret-volume"])
 		assert.Equal(t, "/shared/config", volumeMountNames["shared-config"])
 		assert.Equal(t, "/shared/env", volumeMountNames["shared-env"])
-		
+
 		// Verify read-only mounts
 		for _, vm := range initContainer.VolumeMounts {
 			if vm.Name == "config-volume" || vm.Name == "secret-volume" {
@@ -599,7 +599,7 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 
 	t.Run("verify agent container configuration", func(t *testing.T) {
 		require.Len(t, statefulset.Spec.Template.Spec.Containers, 1)
-		
+
 		agentContainer := statefulset.Spec.Template.Spec.Containers[0]
 		assert.Equal(t, "agent", agentContainer.Name)
 
@@ -610,7 +610,7 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 				envMap[env.Name] = env.Value
 			}
 		}
-		
+
 		assert.Equal(t, agentID, envMap["AGENT_ID"])
 		assert.Equal(t, sessionID, envMap["SESSION_ID"])
 		assert.Equal(t, userID, envMap["USER_ID"])
@@ -622,11 +622,11 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 		for _, vm := range agentContainer.VolumeMounts {
 			volumeMountNames[vm.Name] = vm.MountPath
 		}
-		
+
 		assert.Equal(t, "/data", volumeMountNames["data"])
 		assert.Equal(t, "/shared/config", volumeMountNames["shared-config"])
 		assert.Equal(t, "/shared/env", volumeMountNames["shared-env"])
-		
+
 		// Verify shared volumes are read-only for agent container
 		for _, vm := range agentContainer.VolumeMounts {
 			if vm.Name == "shared-config" || vm.Name == "shared-env" {
@@ -672,11 +672,11 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 
 	t.Run("verify volume claim template", func(t *testing.T) {
 		require.Len(t, statefulset.Spec.VolumeClaimTemplates, 1)
-		
+
 		volumeClaimTemplate := statefulset.Spec.VolumeClaimTemplates[0]
 		assert.Equal(t, "data", volumeClaimTemplate.Name)
 		assert.Contains(t, volumeClaimTemplate.Spec.AccessModes, corev1.ReadWriteOnce)
-		
+
 		// Verify storage request exists
 		storageRequest, exists := volumeClaimTemplate.Spec.Resources.Requests[corev1.ResourceStorage]
 		assert.True(t, exists)
@@ -686,7 +686,7 @@ func TestKubernetesServiceImpl_StatefulSetWithUserVolumes(t *testing.T) {
 	// Cleanup
 	err = svc.DeleteStatefulSet(ctx, agentID)
 	require.NoError(t, err)
-	
+
 	err = svc.DeleteUserResources(ctx, userID)
 	require.NoError(t, err)
 }
@@ -713,10 +713,10 @@ func TestKubernetesServiceImpl_EndToEndUserWorkflow(t *testing.T) {
 			"email:user@example.com",
 		}
 		envVars := map[string]string{
-			"GITHUB_TOKEN":  "ghp_integration123",
-			"DATABASE_URL":  "postgresql://test:test@localhost/test",
-			"REDIS_URL":     "redis://localhost:6379",
-			"LOG_LEVEL":     "debug",
+			"GITHUB_TOKEN": "ghp_integration123",
+			"DATABASE_URL": "postgresql://test:test@localhost/test",
+			"REDIS_URL":    "redis://localhost:6379",
+			"LOG_LEVEL":    "debug",
 		}
 
 		err := svc.CreateUserConfigMap(ctx, userID, notificationTargets)
@@ -763,7 +763,7 @@ func TestKubernetesServiceImpl_EndToEndUserWorkflow(t *testing.T) {
 		// Verify volumes reference correct user resources
 		volumes := statefulset.Spec.Template.Spec.Volumes
 		var configMapFound, secretFound bool
-		
+
 		for _, vol := range volumes {
 			if vol.Name == "config-volume" && vol.ConfigMap != nil {
 				expectedName := "user-" + userID + "-notifications"
@@ -776,7 +776,7 @@ func TestKubernetesServiceImpl_EndToEndUserWorkflow(t *testing.T) {
 				secretFound = true
 			}
 		}
-		
+
 		assert.True(t, configMapFound, "ConfigMap volume not found or incorrectly configured")
 		assert.True(t, secretFound, "Secret volume not found or incorrectly configured")
 
@@ -788,7 +788,7 @@ func TestKubernetesServiceImpl_EndToEndUserWorkflow(t *testing.T) {
 		}
 		err = suite.GetClient().Get(ctx, configMapKey, configMap)
 		require.NoError(t, err)
-		
+
 		expectedConfigData := "slack:https://hooks.slack.com/test,email:user@example.com"
 		assert.Equal(t, expectedConfigData, configMap.Data["notification_targets.txt"])
 
@@ -799,7 +799,7 @@ func TestKubernetesServiceImpl_EndToEndUserWorkflow(t *testing.T) {
 		}
 		err = suite.GetClient().Get(ctx, secretKey, secret)
 		require.NoError(t, err)
-		
+
 		assert.Equal(t, []byte("ghp_integration123"), secret.Data["GITHUB_TOKEN"])
 		assert.Equal(t, []byte("postgresql://test:test@localhost/test"), secret.Data["DATABASE_URL"])
 		assert.Equal(t, []byte("debug"), secret.Data["LOG_LEVEL"])
