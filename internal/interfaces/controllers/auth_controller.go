@@ -3,10 +3,12 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+
+	"github.com/gorilla/mux"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/auth"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
-	"net/http"
 )
 
 // AuthController handles HTTP requests for authentication operations
@@ -33,6 +35,15 @@ func NewAuthController(
 		validatePermissionUC: validatePermissionUC,
 		authPresenter:        authPresenter,
 	}
+}
+
+func (c *AuthController) RegisterRoutes(router *mux.Router) {
+	router.HandleFunc("/auth/types", c.GetAuthTypes).Methods("GET")
+	router.HandleFunc("/auth/status", c.GetAuthStatus).Methods("GET")
+	router.HandleFunc("/auth/login", c.Login).Methods("POST")
+	router.HandleFunc("/auth/github", c.GitHubLogin).Methods("POST")
+	router.HandleFunc("/auth/validate", c.ValidateAPIKey).Methods("POST")
+	router.HandleFunc("/auth/logout", c.Logout).Methods("POST")
 }
 
 // LoginRequest represents the HTTP request for user login
@@ -145,6 +156,52 @@ func (c *AuthController) Logout(w http.ResponseWriter, r *http.Request) {
 	// 3. Return success response
 
 	c.authPresenter.PresentLogout(w)
+}
+
+type AuthTypesResponse struct {
+	Types []string `json:"types"`
+}
+
+// GetAuthTypes handles GET /auth/types
+func (c *AuthController) GetAuthTypes(w http.ResponseWriter, r *http.Request) {
+	response := AuthTypesResponse{
+		Types: []string{"api_key", "github"},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		c.authPresenter.PresentError(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
+}
+
+type AuthStatusResponse struct {
+	Authenticated bool    `json:"authenticated"`
+	UserID        *string `json:"user_id"`
+	Method        *string `json:"method"`
+}
+
+// GetAuthStatus handles GET /auth/status
+func (c *AuthController) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
+	// Extract user info from context if available
+	ctx := r.Context()
+	userID, hasUserID := ctx.Value("userID").(string)
+
+	response := AuthStatusResponse{
+		Authenticated: hasUserID,
+	}
+
+	if hasUserID {
+		response.UserID = &userID
+		method := "api_key"
+		response.Method = &method
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		c.authPresenter.PresentError(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 // extractAPIKeyFromHeader extracts API key from Authorization header
