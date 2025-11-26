@@ -36,9 +36,10 @@ func (p *Proxy) SetupControllersRoutes() {
 
 // UseControllerImplementations enables using the interfaces/controller implementations
 // This provides a configuration option to switch between implementations
+// Set AGENTAPI_USE_CLEAN_CONTROLLERS=true environment variable to enable
 func (p *Proxy) UseControllerImplementations(enable bool) {
 	// This method can be used to toggle between legacy and new implementations
-	// For example, it could be called based on a configuration flag
+	// For example, it could be called based on a configuration flag or environment variable
 	if enable && p.container != nil {
 		p.SetupControllersRoutes()
 	}
