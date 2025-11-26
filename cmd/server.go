@@ -64,6 +64,21 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	proxyServer := proxy.NewProxy(configData, verbose)
 
+	// Enable clean architecture controllers if environment variable is set
+	// Set AGENTAPI_USE_CLEAN_CONTROLLERS=true to enable new controller implementations
+	// This provides a gradual migration path from monolithic proxy to clean architecture.
+	//
+	// The new controllers from internal/interfaces/controllers provide:
+	// - Better separation of concerns
+	// - Testable business logic
+	// - Clean architecture patterns
+	if os.Getenv("AGENTAPI_USE_CLEAN_CONTROLLERS") == "true" {
+		log.Printf("Enabling clean architecture controllers")
+		proxyServer.UseControllerImplementations(true)
+	} else {
+		log.Printf("Using legacy controller implementations (set AGENTAPI_USE_CLEAN_CONTROLLERS=true to use new controllers)")
+	}
+
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
 
