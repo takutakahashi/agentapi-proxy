@@ -64,6 +64,17 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	proxyServer := proxy.NewProxy(configData, verbose)
 
+	// Optional: Enable clean architecture controllers
+	// This provides a gradual migration path from monolithic proxy to clean architecture.
+	// Uncomment the following line to enable the new controller implementations:
+	// proxyServer.UseControllerImplementations(true)
+	//
+	// The new controllers from internal/interfaces/controllers provide:
+	// - Better separation of concerns
+	// - Testable business logic
+	// - Clean architecture patterns
+	// Currently, the legacy implementations are used by default for backward compatibility.
+
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
 

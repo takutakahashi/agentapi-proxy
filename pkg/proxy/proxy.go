@@ -453,13 +453,18 @@ func (p *Proxy) recoverSessions() {
 
 // setupRoutes configures the router with all defined routes
 func (p *Proxy) setupRoutes() {
-	// Add health check endpoint
-	p.echo.GET("/health", p.healthCheck)
-
-	// Add session management routes according to API specification
+	// For now, keep using the existing implementations to maintain backward compatibility
+	// The controllers from interfaces/controller can be integrated gradually
+	// once all the infrastructure and tests are updated to support the clean architecture.
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService))
-	p.echo.GET("/search", p.searchSessions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService))
+
+	// Keep /search endpoint for backward compatibility (maps to listing sessions)
+	p.echo.GET("/search", p.searchSessions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+
+	// Add health check endpoint - use simple handler for now
+	// (HealthController uses Gorilla mux, would need Echo adapter)
+	p.echo.GET("/health", p.healthCheck)
 
 	// Add authentication info routes
 	authInfoHandlers := NewAuthInfoHandlers(p.config)
@@ -1507,6 +1512,11 @@ func (p *Proxy) cleanupDefunctProcessesOnce() {
 // GetEcho returns the Echo instance for external access
 func (p *Proxy) GetEcho() *echo.Echo {
 	return p.echo
+}
+
+// GetContainer returns the DI container for external access
+func (p *Proxy) GetContainer() *di.Container {
+	return p.container
 }
 
 // restoreSessionProcess restores the agentapi process for a recovered session
