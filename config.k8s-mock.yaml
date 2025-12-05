@@ -1,0 +1,175 @@
+# Kubernetes mode configuration with mock agent
+# This configuration enables Kubernetes session management with a mock agent provider
+
+# Starting port for agentapi servers
+start_port: 9000
+
+# Kubernetes mode configuration
+mode: kubernetes
+
+# Kubernetes-specific settings
+kubernetes:
+  namespace: agentapi-proxy
+  service_name: agentapi-proxy
+  
+  # Session management
+  session:
+    # Use Kubernetes ConfigMaps for session storage
+    storage_type: configmap
+    configmap_prefix: agentapi-session-
+    ttl_seconds: 3600
+    max_sessions: 100
+  
+  # Pod configuration for agent containers
+  agent_pod:
+    image: "agentapi/mock-agent:latest"
+    image_pull_policy: IfNotPresent
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+    
+    # Volume mounts for agent pods
+    volume_mounts:
+      - name: workdir
+        mount_path: /home/agentapi/workdir
+      - name: cache
+        mount_path: /home/agentapi/.cache
+    
+    # Volumes for agent pods
+    volumes:
+      - name: workdir
+        empty_dir:
+          size_limit: 10Gi
+      - name: cache
+        empty_dir:
+          size_limit: 5Gi
+  
+  # Service account configuration
+  service_account:
+    name: agentapi-proxy
+    create: true
+    automount_token: true
+
+# Mock agent provider configuration
+agent:
+  provider: mock
+  
+  # Mock agent settings
+  mock:
+    enabled: true
+    response_delay_ms: 100
+    
+    # Mock responses configuration
+    responses:
+      - pattern: ".*hello.*"
+        response: "Hello! I'm a mock agent running in Kubernetes."
+      - pattern: ".*status.*"
+        response: "Mock agent is running in pod: ${POD_NAME}"
+      - pattern: ".*test.*"
+        response: "Test successful. Mock agent is responding."
+    
+    # Default response when no pattern matches
+    default_response: "Mock agent received your message: {{input}}"
+    
+    # Simulate agent capabilities
+    capabilities:
+      - code_execution
+      - file_operations
+      - web_search
+      - task_management
+    
+    # Mock session data
+    session_data:
+      agent_id: "mock-agent-k8s"
+      version: "1.0.0"
+      environment: "kubernetes"
+
+# Authentication configuration (optional)
+auth:
+  enabled: false
+  
+  # Enable for production
+  static:
+    enabled: false
+    header_name: "X-API-Key"
+    api_keys: []
+
+# Session persistence configuration
+persistence:
+  enabled: true
+  backend: "kubernetes"  # Use Kubernetes ConfigMaps/Secrets
+  sync_interval_seconds: 30
+  encrypt_sensitive_data: true
+  session_recovery_max_age_hours: 24
+
+# Health checks and monitoring
+health:
+  enabled: true
+  port: 8081
+  liveness_probe:
+    path: /healthz
+    initial_delay_seconds: 10
+    period_seconds: 10
+  readiness_probe:
+    path: /ready
+    initial_delay_seconds: 5
+    period_seconds: 5
+
+# Metrics and observability
+metrics:
+  enabled: true
+  port: 9090
+  path: /metrics
+  
+  # Prometheus scraping annotations
+  prometheus:
+    scrape: true
+    path: /metrics
+    port: 9090
+
+# Logging configuration
+logging:
+  level: info
+  format: json
+  output: stdout
+  
+  # Structured logging fields
+  fields:
+    service: agentapi-proxy
+    environment: kubernetes
+    mode: mock
+
+# Network configuration
+network:
+  bind_address: "0.0.0.0"
+  port: 8080
+  
+  # CORS settings
+  cors:
+    enabled: true
+    allowed_origins:
+      - "*"
+    allowed_methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    allowed_headers:
+      - "*"
+
+# Rate limiting
+rate_limiting:
+  enabled: true
+  requests_per_minute: 60
+  burst_size: 10
+
+# Notifications configuration  
+notifications:
+  enabled: true
+  mount_path: /home/agentapi/.notifications
+  config_map: agentapi-notifications-config

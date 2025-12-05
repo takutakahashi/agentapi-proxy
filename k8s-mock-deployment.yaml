@@ -1,0 +1,275 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentapi-proxy
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentapi-proxy
+  namespace: agentapi-proxy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentapi-proxy
+  namespace: agentapi-proxy
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets", "pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentapi-proxy
+  namespace: agentapi-proxy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentapi-proxy
+subjects:
+  - kind: ServiceAccount
+    name: agentapi-proxy
+    namespace: agentapi-proxy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentapi-proxy-config
+  namespace: agentapi-proxy
+data:
+  config.yaml: |
+    # Kubernetes mode configuration with mock agent
+    start_port: 9000
+    mode: kubernetes
+    
+    kubernetes:
+      namespace: agentapi-proxy
+      service_name: agentapi-proxy
+      session:
+        storage_type: configmap
+        configmap_prefix: agentapi-session-
+        ttl_seconds: 3600
+        max_sessions: 100
+      agent_pod:
+        image: "agentapi/mock-agent:latest"
+        image_pull_policy: IfNotPresent
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+    
+    agent:
+      provider: mock
+      mock:
+        enabled: true
+        response_delay_ms: 100
+        responses:
+          - pattern: ".*hello.*"
+            response: "Hello! I'm a mock agent running in Kubernetes."
+          - pattern: ".*status.*"
+            response: "Mock agent is running in pod: ${POD_NAME}"
+          - pattern: ".*test.*"
+            response: "Test successful. Mock agent is responding."
+        default_response: "Mock agent received your message: {{input}}"
+        capabilities:
+          - code_execution
+          - file_operations
+          - web_search
+          - task_management
+        session_data:
+          agent_id: "mock-agent-k8s"
+          version: "1.0.0"
+          environment: "kubernetes"
+    
+    persistence:
+      enabled: true
+      backend: "kubernetes"
+      sync_interval_seconds: 30
+      encrypt_sensitive_data: true
+      session_recovery_max_age_hours: 24
+    
+    health:
+      enabled: true
+      port: 8081
+      liveness_probe:
+        path: /healthz
+        initial_delay_seconds: 10
+        period_seconds: 10
+      readiness_probe:
+        path: /ready
+        initial_delay_seconds: 5
+        period_seconds: 5
+    
+    metrics:
+      enabled: true
+      port: 9090
+      path: /metrics
+    
+    logging:
+      level: info
+      format: json
+      output: stdout
+    
+    network:
+      bind_address: "0.0.0.0"
+      port: 8080
+      cors:
+        enabled: true
+        allowed_origins: ["*"]
+    
+    notifications:
+      enabled: true
+      mount_path: /home/agentapi/.notifications
+      config_map: agentapi-notifications-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentapi-notifications-config
+  namespace: agentapi-proxy
+data:
+  config.json: |
+    {
+      "enabled": true,
+      "channels": ["slack", "email"],
+      "templates": {
+        "session_started": "New session started: {{session_id}}",
+        "session_ended": "Session ended: {{session_id}}",
+        "error": "Error occurred: {{error_message}}"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentapi-proxy
+  namespace: agentapi-proxy
+  labels:
+    app: agentapi-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentapi-proxy
+  template:
+    metadata:
+      labels:
+        app: agentapi-proxy
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: agentapi-proxy
+      containers:
+        - name: agentapi-proxy
+          image: agentapi/proxy:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: AGENTAPI_MODE
+              value: "kubernetes"
+            - name: AGENTAPI_AGENT_PROVIDER
+              value: "mock"
+            - name: AGENTAPI_CONFIG_PATH
+              value: "/etc/agentapi/config.yaml"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/agentapi
+            - name: notifications-config
+              mountPath: /home/agentapi/.notifications
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+      volumes:
+        - name: config
+          configMap:
+            name: agentapi-proxy-config
+        - name: notifications-config
+          configMap:
+            name: agentapi-notifications-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentapi-proxy
+  namespace: agentapi-proxy
+  labels:
+    app: agentapi-proxy
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+    - name: health
+      port: 8081
+      targetPort: 8081
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  selector:
+    app: agentapi-proxy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentapi-proxy-nodeport
+  namespace: agentapi-proxy
+  labels:
+    app: agentapi-proxy
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+      protocol: TCP
+  selector:
+    app: agentapi-proxy
