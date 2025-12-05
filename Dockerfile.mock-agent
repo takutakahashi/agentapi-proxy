@@ -1,0 +1,39 @@
+# Mock Agent Dockerfile for Kubernetes testing
+FROM alpine:3.19
+
+# Install basic utilities
+RUN apk add --no-cache \
+    bash \
+    curl \
+    jq \
+    ca-certificates
+
+# Create user and directories
+RUN addgroup -g 1000 agentapi && \
+    adduser -D -u 1000 -G agentapi agentapi && \
+    mkdir -p /home/agentapi/workdir /home/agentapi/.cache && \
+    chown -R agentapi:agentapi /home/agentapi
+
+# Switch to non-root user
+USER agentapi
+WORKDIR /home/agentapi
+
+# Create a simple mock agent script
+RUN echo '#!/bin/bash' > /home/agentapi/mock-agent.sh && \
+    echo 'echo "Mock Agent Started"' >> /home/agentapi/mock-agent.sh && \
+    echo 'echo "Pod Name: $POD_NAME"' >> /home/agentapi/mock-agent.sh && \
+    echo 'echo "Namespace: $POD_NAMESPACE"' >> /home/agentapi/mock-agent.sh && \
+    echo 'echo "Agent ID: mock-agent-k8s"' >> /home/agentapi/mock-agent.sh && \
+    echo 'echo "Version: 1.0.0"' >> /home/agentapi/mock-agent.sh && \
+    echo '' >> /home/agentapi/mock-agent.sh && \
+    echo '# Simple HTTP server for health checks' >> /home/agentapi/mock-agent.sh && \
+    echo 'while true; do' >> /home/agentapi/mock-agent.sh && \
+    echo '  echo -e "HTTP/1.1 200 OK\n\n{\"status\":\"healthy\",\"agent\":\"mock\",\"pod\":\"$POD_NAME\"}" | nc -l -p 8000 -q 1' >> /home/agentapi/mock-agent.sh && \
+    echo 'done' >> /home/agentapi/mock-agent.sh && \
+    chmod +x /home/agentapi/mock-agent.sh
+
+# Expose health check port
+EXPOSE 8000
+
+# Run the mock agent
+CMD ["/home/agentapi/mock-agent.sh"]
