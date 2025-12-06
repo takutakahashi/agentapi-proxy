@@ -453,8 +453,8 @@ func (p *Proxy) recoverSessions() {
 
 // setupRoutes configures the router with all defined routes
 func (p *Proxy) setupRoutes() {
-	// Add health check endpoint using the internal health controller
-	p.echo.GET("/health", echo.WrapHandler(http.HandlerFunc(p.container.HealthController.HealthCheck)))
+	// Register health controller routes
+	p.container.HealthController.RegisterRoutes(p.echo)
 
 	// Add session management routes according to API specification
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService))
