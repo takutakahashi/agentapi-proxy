@@ -37,11 +37,3 @@
      - configMapRef:
          name: agentapi-config
 
-{{- if not .Values.persistence.enabled }}
-
-WARNING: Persistence is disabled. Session data will be lost when pods are restarted.
-To enable persistence, set:
-  persistence:
-    enabled: true
-
-{{- end }}
