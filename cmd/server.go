@@ -9,8 +9,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/takutakahashi/agentapi-proxy/internal/di"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
@@ -62,15 +66,37 @@ func runProxy(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// Initialize DI container
+	container := di.NewContainer()
+	container.SetConfig(configData)
+
+	// Create Echo instance
+	e := echo.New()
+
+	// Add basic middleware
+	e.Use(middleware.Recover())
+	e.Use(middleware.Logger())
+
+	// Add authentication middleware
+	e.Use(auth.AuthMiddleware(configData, container.AuthService))
+
+	// Register routes using MainController
+	container.MainController.RegisterRoutes(e)
+
+	// Create proxy server for legacy routes and session management
 	proxyServer := proxy.NewProxy(configData, verbose)
 
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
 
+	// Register proxy routes on the main Echo instance
+	proxyGroup := e.Group("")
+	proxyServer.RegisterLegacyRoutes(proxyGroup)
+
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Starting agentapi-proxy on port %s", port)
-		if err := proxyServer.GetEcho().Start(":" + port); err != nil && err != http.ErrServerClosed {
+		if err := e.Start(":" + port); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
@@ -95,7 +121,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Shutdown the HTTP server
 	serverShutdownDone := make(chan error, 1)
 	go func() {
-		serverShutdownDone <- proxyServer.GetEcho().Shutdown(ctx)
+		serverShutdownDone <- e.Shutdown(ctx)
 	}()
 
 	// Wait for both shutdowns to complete

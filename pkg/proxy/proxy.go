@@ -355,7 +355,64 @@ func (p *Proxy) setupRoutes() {
 		c.Response().Header().Set("Access-Control-Max-Age", "86400")
 		return c.NoContent(http.StatusNoContent)
 	})
+
 	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+}
+
+// RegisterLegacyRoutes registers legacy proxy routes on external Echo instance
+func (p *Proxy) RegisterLegacyRoutes(e *echo.Group) {
+	// Register legacy session management routes
+	sessionReadMiddleware := auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService)
+	sessionCreateMiddleware := auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService)
+	sessionDeleteMiddleware := auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService)
+
+	e.POST("/start", p.startAgentAPIServer, sessionCreateMiddleware)
+	e.GET("/search", p.searchSessions, sessionReadMiddleware)
+	e.DELETE("/sessions/:sessionId", p.deleteSession, sessionDeleteMiddleware)
+
+	// Add authentication info routes
+	authInfoHandlers := NewAuthInfoHandlers(p.config)
+	e.GET("/auth/types", authInfoHandlers.GetAuthTypes)
+	e.GET("/auth/status", authInfoHandlers.GetAuthStatus)
+
+	// Add notification routes if service is available
+	if p.notificationSvc != nil {
+		notificationHandlers := NewNotificationHandlers(p.notificationSvc)
+		// Legacy notification routes (proxied from agentapi-ui)
+		e.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		e.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		e.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+
+		// Internal routes
+		e.POST("/notifications/webhook", notificationHandlers.Webhook)
+		e.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+	}
+
+	// Add OAuth routes if OAuth is configured
+	if p.oauthProvider != nil {
+		// OAuth endpoints don't require existing authentication
+		e.POST("/oauth/authorize", p.handleOAuthLogin)
+		e.GET("/oauth/callback", p.handleOAuthCallback)
+		e.POST("/oauth/logout", p.handleOAuthLogout)
+		e.POST("/oauth/refresh", p.handleOAuthRefresh)
+	}
+
+	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
+	e.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+	// Add explicit OPTIONS handler for session proxy routes to ensure CORS preflight works
+	e.OPTIONS("/:sessionId/*", func(c echo.Context) error {
+		// Set CORS headers for preflight
+		c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+		c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
+		c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
+		c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Response().Header().Set("Access-Control-Max-Age", "86400")
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	e.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 }
 
 // searchSessions handles GET /search requests to list and filter sessions
