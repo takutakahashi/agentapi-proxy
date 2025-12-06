@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
@@ -101,3 +103,69 @@ func TestHealthEndpointWithoutAuth(t *testing.T) {
 		t.Errorf("Expected status %d for /health endpoint, got %d", http.StatusOK, w.Code)
 	}
 }
+
+type mockServerRunner struct {
+	runCalled bool
+	session   *AgentSession
+}
+
+func (m *mockServerRunner) Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+	m.runCalled = true
+	m.session = session
+}
+
+func TestCustomServerRunner(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
+	proxy := NewProxy(cfg, false)
+
+	// Set custom server runner
+	mockRunner := &mockServerRunner{}
+	proxy.SetServerRunner(mockRunner)
+
+	// Create test session
+	session := &AgentSession{
+		ID:          "test-session",
+		Port:        9001,
+		UserID:      "test-user",
+		Status:      "active",
+		Environment: map[string]string{"TEST": "value"},
+		StartedAt:   time.Now(),
+	}
+
+	// Run the server
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go proxy.runAgentAPIServer(ctx, session, "", nil, "")
+
+	// Give it time to call the mock runner
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify mock runner was called
+	if !mockRunner.runCalled {
+		t.Error("Mock server runner was not called")
+	}
+
+	if mockRunner.session != session {
+		t.Error("Mock server runner received different session")
+	}
+}
+
+func TestDefaultServerRunner(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
+	proxy := NewProxy(cfg, false)
+
+	// Verify default runner is returned when none is set
+	runner := proxy.getServerRunner()
+	if runner == nil {
+		t.Error("getServerRunner should return a default runner")
+	}
+
+	// Check if it's an instance of defaultServerRunner
+	if _, ok := runner.(*defaultServerRunner); !ok {
+		t.Error("Default runner should be of type defaultServerRunner")
+	}
+}
+

@@ -76,7 +76,7 @@ func (r *Router) registerCoreRoutes() error {
 	// Session management routes - temporarily disabled due to removed SessionHandlers
 	// TODO: Re-implement session management endpoints
 	// r.echo.POST("/start", ...)
-	// r.echo.GET("/search", ...)  
+	// r.echo.GET("/search", ...)
 	// r.echo.DELETE("/sessions/:sessionId", ...)
 
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works

@@ -72,6 +72,7 @@ type Proxy struct {
 	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
 	container          *di.Container // Internal DI container
+	serverRunner       ServerRunner  // Configurable server runner
 }
 
 // NewProxy creates a new proxy instance
@@ -228,7 +229,6 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 
 	// Start cleanup goroutine for defunct processes
 	go p.cleanupDefunctProcesses()
-
 
 	p.setupRoutes()
 
@@ -495,36 +495,45 @@ func (p *Proxy) getAvailablePort() (int, error) {
 	return 0, fmt.Errorf("no available ports in range %d-%d", startPort, startPort+1000)
 }
 
-// runAgentAPIServer runs an agentapi server instance using Go functions instead of scripts
+// ServerRunner interface for running agentapi servers
+type ServerRunner interface {
+	Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string)
+}
+
+// defaultServerRunner is the default implementation of ServerRunner
+type defaultServerRunner struct {
+	proxy *Proxy
+}
+
+// getServerRunner returns the configured server runner
+func (p *Proxy) getServerRunner() ServerRunner {
+	if p.serverRunner != nil {
+		return p.serverRunner
+	}
+	// Default implementation
+	return &defaultServerRunner{proxy: p}
+}
+
+// SetServerRunner allows configuration of a custom server runner
+func (p *Proxy) SetServerRunner(runner ServerRunner) {
+	p.serverRunner = runner
+}
+
+// runAgentAPIServer runs an agentapi server instance using configuration
 func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
-	defer func() {
-		// Clean up session when server stops
-		p.sessionsMutex.Lock()
-		// Check if session still exists (might have been removed by deleteSession)
-		_, sessionExists := p.sessions[session.ID]
-		if sessionExists {
-			delete(p.sessions, session.ID)
-		}
-		p.sessionsMutex.Unlock()
+	// Use configurable server runner
+	runner := p.getServerRunner()
+	runner.Run(ctx, session, scriptName, repoInfo, initialMessage)
+}
 
-		// Log session end when process terminates naturally (not via deleteSession)
-		if sessionExists {
-			// Log session end when process terminates naturally (not via deleteSession)
-			if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
-				log.Printf("Failed to log session end for %s: %v", session.ID, err)
-			}
-		}
+// getStartupManager returns a startup manager instance
+func (r *defaultServerRunner) getStartupManager() *StartupManager {
+	return NewStartupManager(r.proxy.config, r.proxy.verbose)
+}
 
-		if p.verbose {
-			log.Printf("Cleaned up session %s", session.ID)
-		}
-	}()
-
-	// Create startup manager
-	startupManager := NewStartupManager(p.config, p.verbose)
-
-	// Prepare startup configuration
-	cfg := &StartupConfig{
+// buildStartupConfig builds the startup configuration for a session
+func (r *defaultServerRunner) buildStartupConfig(session *AgentSession) *StartupConfig {
+	return &StartupConfig{
 		Port:                      session.Port,
 		UserID:                    session.UserID,
 		GitHubToken:               getEnvFromSession(session, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
@@ -536,9 +545,41 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
 		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
 		Environment:               session.Environment,
-		Config:                    p.config,
-		Verbose:                   p.verbose,
+		Config:                    r.proxy.config,
+		Verbose:                   r.proxy.verbose,
 	}
+}
+
+// Run implements the ServerRunner interface
+func (r *defaultServerRunner) Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+	defer func() {
+		// Clean up session when server stops
+		r.proxy.sessionsMutex.Lock()
+		// Check if session still exists (might have been removed by deleteSession)
+		_, sessionExists := r.proxy.sessions[session.ID]
+		if sessionExists {
+			delete(r.proxy.sessions, session.ID)
+		}
+		r.proxy.sessionsMutex.Unlock()
+
+		// Log session end when process terminates naturally (not via deleteSession)
+		if sessionExists {
+			// Log session end when process terminates naturally (not via deleteSession)
+			if err := r.proxy.logger.LogSessionEnd(session.ID, 0); err != nil {
+				log.Printf("Failed to log session end for %s: %v", session.ID, err)
+			}
+		}
+
+		if r.proxy.verbose {
+			log.Printf("Cleaned up session %s", session.ID)
+		}
+	}()
+
+	// Create startup manager
+	startupManager := r.getStartupManager()
+
+	// Prepare startup configuration
+	cfg := r.buildStartupConfig(session)
 
 	// Add repository information if available
 	if repoInfo != nil {
@@ -595,13 +636,13 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		return
 	}
 
-	if p.verbose {
+	if r.proxy.verbose {
 		log.Printf("AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
 	}
 
 	// Send initial message if provided
 	if initialMessage != "" {
-		go p.sendInitialMessage(session, initialMessage)
+		go r.proxy.sendInitialMessage(session, initialMessage)
 	}
 
 	// Wait for the process to finish or context cancellation
@@ -647,7 +688,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	select {
 	case <-ctx.Done():
 		// Context cancelled, terminate the process
-		if p.verbose {
+		if r.proxy.verbose {
 			log.Printf("Terminating agentapi process for session %s", session.ID)
 		}
 
@@ -665,15 +706,15 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 		gracefulTimeout := time.After(5 * time.Second)
 		select {
 		case waitErr := <-done:
-			if p.verbose {
+			if r.proxy.verbose {
 				log.Printf("AgentAPI process for session %s terminated gracefully", session.ID)
 			}
-			if waitErr != nil && p.verbose {
+			if waitErr != nil && r.proxy.verbose {
 				log.Printf("Process wait error for session %s: %v", session.ID, waitErr)
 			}
 		case <-gracefulTimeout:
 			// Force kill if graceful shutdown failed
-			if p.verbose {
+			if r.proxy.verbose {
 				log.Printf("Force killing agentapi process for session %s", session.ID)
 			}
 			// Kill entire process group
@@ -689,7 +730,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 			// Always wait for the process to prevent zombie
 			select {
 			case waitErr := <-done:
-				if waitErr != nil && p.verbose {
+				if waitErr != nil && r.proxy.verbose {
 					log.Printf("Process wait error after kill for session %s: %v", session.ID, waitErr)
 				}
 			case <-time.After(2 * time.Second):
@@ -719,7 +760,7 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 			} else {
 				log.Printf("AgentAPI process for session %s exited with error: %v", session.ID, err)
 			}
-		} else if p.verbose {
+		} else if r.proxy.verbose {
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
 	}
