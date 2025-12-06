@@ -53,6 +53,39 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				return next(c)
 			}
 
+			// Handle legacy endpoints with relaxed authentication (v1.74.0 compatible)
+			if isLegacyEndpoint(path) {
+				log.Printf("Legacy endpoint authentication for: %s", path)
+
+				var user *entities.User
+				var err error
+
+				// Try API key authentication first (v1.74.0 style - no pre-check)
+				if cfg.Auth.Static != nil && cfg.Auth.Static.Enabled {
+					if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
+						c.Set("internal_user", user)
+						log.Printf("API key authentication successful for legacy endpoint: user %s", user.ID())
+						return next(c)
+					}
+					log.Printf("API key authentication failed for legacy endpoint: %v from %s", err, c.RealIP())
+				}
+
+				// Try GitHub authentication (v1.74.0 style - no pre-check)
+				if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
+					log.Printf("Trying GitHub authentication for legacy endpoint from %s", c.RealIP())
+					if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
+						c.Set("internal_user", user)
+						log.Printf("GitHub authentication successful for legacy endpoint: user %s", user.ID())
+						return next(c)
+					}
+					log.Printf("GitHub authentication failed for legacy endpoint: %v from %s", err, c.RealIP())
+				}
+
+				// For legacy endpoints, continue without authentication if both auth methods fail
+				log.Printf("Legacy endpoint accessed without authentication: %s from %s", path, c.RealIP())
+				return next(c)
+			}
+
 			var user *entities.User
 			var err error
 
@@ -68,6 +101,7 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 
 			// Try GitHub authentication (placeholder for now)
 			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
+				log.Printf("Attempting GitHub authentication from %s", c.RealIP())
 				if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
 					c.Set("internal_user", user)
 					log.Printf("GitHub authentication successful: user %s (type: %s)", user.ID(), user.UserType())
@@ -182,18 +216,23 @@ func tryInternalAPIKeyAuth(c echo.Context, cfg *config.Config, authService servi
 // tryInternalGitHubAuth attempts GitHub authentication using internal auth service
 func tryInternalGitHubAuth(c echo.Context, cfg *config.Config, authService services.AuthService) (*entities.User, error) {
 	if cfg.Auth.GitHub == nil {
+		log.Printf("GitHub authentication failed: no GitHub config")
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub auth not configured")
 	}
 
 	tokenHeader := c.Request().Header.Get(cfg.Auth.GitHub.TokenHeader)
 	if tokenHeader == "" {
+		log.Printf("GitHub authentication failed: no token in header '%s'", cfg.Auth.GitHub.TokenHeader)
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub token required")
 	}
 
 	token := ExtractTokenFromHeader(tokenHeader)
 	if token == "" {
+		log.Printf("GitHub authentication failed: invalid token format in header: %s", tokenHeader)
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid GitHub token format")
 	}
+
+	log.Printf("GitHub authentication: extracted token (length: %d) from header '%s'", len(token), cfg.Auth.GitHub.TokenHeader)
 
 	// Create credentials for token-based authentication
 	credentials := &services.Credentials{
@@ -202,8 +241,10 @@ func tryInternalGitHubAuth(c echo.Context, cfg *config.Config, authService servi
 	}
 
 	// Use internal auth service to authenticate
+	log.Printf("GitHub authentication: calling authService.AuthenticateUser with token")
 	user, err := authService.AuthenticateUser(c.Request().Context(), credentials)
 	if err != nil {
+		log.Printf("GitHub authentication failed: authService.AuthenticateUser error: %v", err)
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub authentication failed")
 	}
 
@@ -231,6 +272,21 @@ func isOAuthEndpoint(path string) bool {
 
 	for _, oauthPath := range oauthPaths {
 		if strings.HasPrefix(path, oauthPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// isLegacyEndpoint checks if the given path is a legacy endpoint that should skip auth
+func isLegacyEndpoint(path string) bool {
+	legacyPaths := []string{
+		"/start",
+		"/search",
+	}
+
+	for _, legacyPath := range legacyPaths {
+		if path == legacyPath {
 			return true
 		}
 	}
