@@ -1,0 +1,192 @@
+name: Build Development Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: 'Git reference (branch, tag, or commit hash) to build from'
+        required: false
+        default: ''
+        type: string
+      tag_suffix:
+        description: 'Additional tag suffix (e.g., "-feature-test")'
+        required: false
+        default: ''
+        type: string
+      platforms:
+        description: 'Build platforms'
+        required: false
+        default: 'linux/amd64'
+        type: choice
+        options:
+          - 'linux/amd64'
+          - 'linux/amd64,linux/arm64'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-dev-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Determine Git reference
+        id: git_ref
+        run: |
+          if [ -n "${{ github.event.inputs.git_ref }}" ]; then
+            echo "ref=${{ github.event.inputs.git_ref }}" >> $GITHUB_OUTPUT
+            echo "Using specified git reference: ${{ github.event.inputs.git_ref }}"
+          else
+            echo "ref=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "Using current branch: ${{ github.ref_name }}"
+          fi
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.git_ref.outputs.ref }}
+      
+      - name: Get commit hash
+        id: commit
+        run: |
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "full_hash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "Commit hash: $COMMIT_HASH"
+      
+      - name: Generate image tags
+        id: tags
+        run: |
+          BASE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          COMMIT_HASH="${{ steps.commit.outputs.hash }}"
+          TAG_SUFFIX="${{ github.event.inputs.tag_suffix }}"
+          
+          # Primary tag with commit hash
+          PRIMARY_TAG="${BASE_TAG}:dev-${COMMIT_HASH}${TAG_SUFFIX}"
+          
+          # Additional tags
+          TAGS="${PRIMARY_TAG}"
+          
+          # Add branch-based tag if building from a branch
+          if [[ "${{ steps.git_ref.outputs.ref }}" == */* ]] || [[ "${{ steps.git_ref.outputs.ref }}" =~ ^[a-f0-9]+$ ]]; then
+            # Skip branch tag for commit hashes or refs with slashes
+            echo "Skipping branch tag for commit hash or complex ref"
+          else
+            BRANCH_TAG="${BASE_TAG}:dev-${{ steps.git_ref.outputs.ref }}${TAG_SUFFIX}"
+            TAGS="${TAGS},$BRANCH_TAG"
+          fi
+          
+          # Add latest-dev tag if no suffix specified
+          if [ -z "$TAG_SUFFIX" ]; then
+            LATEST_TAG="${BASE_TAG}:latest-dev"
+            TAGS="${TAGS},$LATEST_TAG"
+          fi
+          
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "primary_tag=$PRIMARY_TAG" >> $GITHUB_OUTPUT
+          echo "Generated tags: $TAGS"
+      
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=AgentAPI Proxy (Development)
+            org.opencontainers.image.description=Development image for AgentAPI Proxy
+            org.opencontainers.image.revision=${{ steps.commit.outputs.full_hash }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            dev.commit.hash=${{ steps.commit.outputs.hash }}
+            dev.git.ref=${{ steps.git_ref.outputs.ref }}
+            dev.build.timestamp=${{ github.run_id }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ github.event.inputs.platforms }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            AGENTAPI_VERSION=v0.6.0
+      
+      - name: Print image information
+        run: |
+          echo "🎉 Development image built successfully!"
+          echo ""
+          echo "📦 **Primary Image Tag:**"
+          echo "${{ steps.tags.outputs.primary_tag }}"
+          echo ""
+          echo "🏷️ **All Tags:**"
+          echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n' | sed 's/^/  - /'
+          echo ""
+          echo "📋 **Image Details:**"
+          echo "  - Git Reference: ${{ steps.git_ref.outputs.ref }}"
+          echo "  - Commit Hash: ${{ steps.commit.outputs.hash }}"
+          echo "  - Full Commit: ${{ steps.commit.outputs.full_hash }}"
+          echo "  - Platforms: ${{ github.event.inputs.platforms }}"
+          echo ""
+          echo "🚀 **Usage Example:**"
+          echo "  docker pull ${{ steps.tags.outputs.primary_tag }}"
+          echo "  docker run -p 8080:8080 ${{ steps.tags.outputs.primary_tag }}"
+          echo ""
+          echo "🔗 **Container Registry:**"
+          echo "  https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }}"
+      
+      - name: Create GitHub summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 🎉 Development Image Build Complete
+          
+          ## 📦 Image Information
+          
+          | Property | Value |
+          |----------|-------|
+          | Primary Tag | `${{ steps.tags.outputs.primary_tag }}` |
+          | Git Reference | `${{ steps.git_ref.outputs.ref }}` |
+          | Commit Hash | `${{ steps.commit.outputs.hash }}` |
+          | Platforms | `${{ github.event.inputs.platforms }}` |
+          | Build Time | `$(date -u +"%Y-%m-%d %H:%M:%S UTC")` |
+          
+          ## 🏷️ Generated Tags
+          
+          ```
+          ${{ steps.tags.outputs.tags }}
+          ```
+          
+          ## 🚀 Quick Start
+          
+          ```bash
+          # Pull the image
+          docker pull ${{ steps.tags.outputs.primary_tag }}
+          
+          # Run the container
+          docker run -p 8080:8080 ${{ steps.tags.outputs.primary_tag }}
+          ```
+          
+          ## 🔗 Links
+          
+          - [Container Registry](https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }})
+          - [Source Commit](${{ github.server_url }}/${{ github.repository }}/commit/${{ steps.commit.outputs.full_hash }})
+          EOF

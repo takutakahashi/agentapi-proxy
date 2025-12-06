@@ -10,22 +10,17 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
-	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -61,33 +56,6 @@ type ScriptTemplateData struct {
 	CloneDir                  string
 	UserID                    string
 	MCPConfigs                string
-}
-
-// StartRequest represents the request body for starting a new agentapi server
-type StartRequest struct {
-	Environment map[string]string `json:"environment,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-	Message     string            `json:"message,omitempty"`
-}
-
-// RepositoryInfo contains repository information extracted from tags
-type RepositoryInfo struct {
-	FullName string
-	CloneDir string
-}
-
-// AgentSession represents a running agentapi server instance
-type AgentSession struct {
-	ID           string
-	Port         int
-	Process      *exec.Cmd
-	Cancel       context.CancelFunc
-	StartedAt    time.Time
-	UserID       string
-	Status       string
-	Environment  map[string]string
-	Tags         map[string]string
-	processMutex sync.RWMutex
 }
 
 // Proxy represents the HTTP proxy server
@@ -453,31 +421,22 @@ func (p *Proxy) recoverSessions() {
 
 // setupRoutes configures the router with all defined routes
 func (p *Proxy) setupRoutes() {
-	// Add health check endpoint
-	p.echo.GET("/health", p.healthCheck)
+	// Register non-auth routes using Router
+	router := NewRouter(p.echo, p)
+	if err := router.RegisterRoutes(); err != nil {
+		log.Printf("Failed to register routes: %v", err)
+	}
 
-	// Add session management routes according to API specification
-	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService))
-	p.echo.GET("/search", p.searchSessions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService))
+	// Register auth-related routes directly
+	p.setupAuthRoutes()
+}
 
+// setupAuthRoutes registers authentication-related routes
+func (p *Proxy) setupAuthRoutes() {
 	// Add authentication info routes
 	authInfoHandlers := NewAuthInfoHandlers(p.config)
 	p.echo.GET("/auth/types", authInfoHandlers.GetAuthTypes)
 	p.echo.GET("/auth/status", authInfoHandlers.GetAuthStatus)
-
-	// Add notification routes if service is available
-	if p.notificationSvc != nil {
-		notificationHandlers := NewNotificationHandlers(p.notificationSvc)
-		// UI-compatible routes (proxied from agentapi-ui)
-		p.echo.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-		p.echo.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-
-		// Internal routes
-		p.echo.POST("/notifications/webhook", notificationHandlers.Webhook)
-		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-	}
 
 	// Add OAuth routes if OAuth is configured
 	log.Printf("[ROUTES] OAuth provider configured: %v", p.oauthProvider != nil)
@@ -492,146 +451,130 @@ func (p *Proxy) setupRoutes() {
 	} else {
 		log.Printf("[ROUTES] OAuth endpoints not registered - OAuth provider not configured")
 	}
-
-	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
-	p.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
-		return c.NoContent(http.StatusNoContent)
-	})
-	// Add explicit OPTIONS handler for session proxy routes to ensure CORS preflight works
-	p.echo.OPTIONS("/:sessionId/*", func(c echo.Context) error {
-		// Set CORS headers for preflight
-		c.Response().Header().Set("Access-Control-Allow-Origin", "*")
-		c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
-		c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
-		c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Response().Header().Set("Access-Control-Max-Age", "86400")
-		return c.NoContent(http.StatusNoContent)
-	})
-	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 }
 
-// healthCheck handles GET /health requests to check server health
-func (p *Proxy) healthCheck(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]string{
-		"status": "ok",
-	})
+// SessionProxy interface implementation methods
+
+// GetSessions returns the sessions map
+func (p *Proxy) GetSessions() map[string]*AgentSession {
+	return p.sessions
 }
 
-// searchSessions handles GET /search requests to list and filter sessions
-func (p *Proxy) searchSessions(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
-	status := c.QueryParam("status")
-
-	// Determine userID for filtering based on authentication
-	var userID string
-	if user != nil && !user.IsAdmin() {
-		// Non-admin users can only see their own sessions
-		userID = string(user.ID())
-	}
-	// Admin users can see all sessions (userID remains empty for no filtering)
-
-	// Extract tag filters from query parameters
-	tagFilters := make(map[string]string)
-	for paramName, paramValues := range c.QueryParams() {
-		if strings.HasPrefix(paramName, "tag.") && len(paramValues) > 0 {
-			tagKey := strings.TrimPrefix(paramName, "tag.")
-			tagFilters[tagKey] = paramValues[0]
-		}
-	}
-
-	p.sessionsMutex.RLock()
-	defer p.sessionsMutex.RUnlock()
-
-	// First, collect matching sessions
-	matchingSessions := make([]*AgentSession, 0)
-
-	for _, session := range p.sessions {
-		// Apply user filtering based on role
-		if user != nil && !user.IsAdmin() && session.UserID != string(user.ID()) {
-			continue
-		}
-
-		// Apply filters
-		if userID != "" && session.UserID != userID {
-			continue
-		}
-		if status != "" && session.Status != status {
-			continue
-		}
-
-		// Apply tag filters
-		matchAllTags := true
-		for tagKey, tagValue := range tagFilters {
-			sessionTagValue, exists := session.Tags[tagKey]
-			if !exists || sessionTagValue != tagValue {
-				matchAllTags = false
-				break
-			}
-		}
-		if !matchAllTags {
-			continue
-		}
-
-		matchingSessions = append(matchingSessions, session)
-	}
-
-	// Sort sessions by creation time (newest first)
-	sort.Slice(matchingSessions, func(i, j int) bool {
-		return matchingSessions[i].StartedAt.After(matchingSessions[j].StartedAt)
-	})
-
-	// Convert sorted sessions to response format
-	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
-	for _, session := range matchingSessions {
-		sessionData := map[string]interface{}{
-			"session_id": session.ID,
-			"user_id":    session.UserID,
-			"status":     session.Status,
-			"started_at": session.StartedAt,
-			"port":       session.Port,
-			"tags":       session.Tags,
-		}
-		filteredSessions = append(filteredSessions, sessionData)
-	}
-
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"sessions": filteredSessions,
-	})
+// GetSessionsMutex returns the sessions mutex
+func (p *Proxy) GetSessionsMutex() *sync.RWMutex {
+	return &p.sessionsMutex
 }
 
-// deleteSession handles DELETE /sessions/:sessionId requests to terminate a session
-func (p *Proxy) deleteSession(c echo.Context) error {
-	sessionID := c.Param("sessionId")
-	clientIP := c.RealIP()
+// GetContainer returns the DI container
+func (p *Proxy) GetContainer() *di.Container {
+	return p.container
+}
 
-	log.Printf("Request: DELETE /sessions/%s from %s", sessionID, clientIP)
+// CreateSession creates a new agent session
+func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, userRole string) (*AgentSession, error) {
+	// Get auth team env file from user context if available
+	var authTeamEnvFile string
+	// Note: This would need to be passed from the handler if required
 
-	if sessionID == "" {
-		log.Printf("Delete session failed: missing session ID from %s", clientIP)
-		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
+	// Merge environment variables from multiple sources
+	envConfig := EnvMergeConfig{
+		RoleEnvFiles:    &p.config.RoleEnvFiles,
+		UserRole:        userRole,
+		TeamEnvFile:     ExtractTeamEnvFile(startReq.Tags),
+		AuthTeamEnvFile: authTeamEnvFile,
+		RequestEnv:      startReq.Environment,
 	}
 
+	mergedEnv, err := MergeEnvironmentVariables(envConfig)
+	if err != nil {
+		log.Printf("[ENV] Failed to merge environment variables: %v", err)
+		return nil, fmt.Errorf("failed to merge environment variables: %w", err)
+	}
+
+	// Replace the request environment with merged values
+	startReq.Environment = mergedEnv
+
+	// Find available port
+	port, err := p.getAvailablePort()
+	if err != nil {
+		log.Printf("Failed to find available port: %v", err)
+		return nil, fmt.Errorf("failed to allocate port: %w", err)
+	}
+
+	// Extract repository information from tags
+	repoInfo := p.extractRepositoryInfo(sessionID, startReq.Tags)
+
+	// Determine which script to use based on request parameters
+	scriptName := p.selectScript(nil, scriptCache, startReq.Tags)
+
+	// Determine initial message - check tags.message first, then startReq.Message
+	var initialMessage string
+	if startReq.Tags != nil {
+		if msg, exists := startReq.Tags["message"]; exists && msg != "" {
+			initialMessage = msg
+		}
+	}
+	if initialMessage == "" && startReq.Message != "" {
+		initialMessage = startReq.Message
+	}
+
+	// Start agentapi server in goroutine
+	ctx, cancel := context.WithCancel(context.Background())
+
+	session := &AgentSession{
+		ID:          sessionID,
+		Port:        port,
+		Cancel:      cancel,
+		StartedAt:   time.Now(),
+		UserID:      userID,
+		Status:      "active",
+		Environment: startReq.Environment,
+		Tags:        startReq.Tags,
+	}
+
+	// Store session
+	p.sessionsMutex.Lock()
+	p.sessions[sessionID] = session
+	p.sessionsMutex.Unlock()
+
+	log.Printf("[SESSION_CREATED] ID: %s, Port: %d, User: %s, Tags: %v",
+		sessionID, port, userID, startReq.Tags)
+
+	// Persist session to storage
+	p.saveSession(session)
+
+	// Log session start
+	repository := ""
+	if repoInfo != nil {
+		repository = repoInfo.FullName
+	}
+	if err := p.logger.LogSessionStart(sessionID, repository); err != nil {
+		log.Printf("Failed to log session start for %s: %v", sessionID, err)
+	}
+
+	// Start agentapi server in goroutine
+	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo, initialMessage)
+
+	if p.verbose {
+		if scriptName != "" {
+			log.Printf("Started agentapi server for session %s on port %d using script %s", sessionID, port, scriptName)
+		} else {
+			log.Printf("Started agentapi server for session %s on port %d using direct command", sessionID, port)
+		}
+	}
+
+	return session, nil
+}
+
+// DeleteSessionByID deletes a session by ID
+func (p *Proxy) DeleteSessionByID(sessionID string) error {
 	p.sessionsMutex.RLock()
 	session, exists := p.sessions[sessionID]
-	sessionStatus := "unknown"
-	if exists {
-		sessionStatus = session.Status
-	}
 	p.sessionsMutex.RUnlock()
 
 	if !exists {
-		log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+		return fmt.Errorf("session not found")
 	}
-
-	// Check if user has access to this session
-	if !auth.UserOwnsSession(c, session.UserID) {
-		log.Printf("Delete session failed: user does not own session %s (requested by %s)", sessionID, clientIP)
-		return echo.NewHTTPError(http.StatusForbidden, "You can only delete your own sessions")
-	}
-
-	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
-		sessionID, sessionStatus, session.UserID, clientIP)
 
 	// Cancel the session context to trigger graceful shutdown
 	if session.Cancel != nil {
@@ -674,16 +617,12 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 		time.Sleep(waitInterval)
 	}
 
-	log.Printf("Session %s deletion completed successfully", sessionID)
-
 	// Log session end with estimated message count
-	// Since we don't track actual message count, we'll use 0 as placeholder
 	if err := p.logger.LogSessionEnd(sessionID, 0); err != nil {
 		log.Printf("Failed to log session end for %s: %v", sessionID, err)
 	}
 
 	// Clean up session working directory only on explicit deletion
-	// Safety check: ensure sessionID is not empty
 	if sessionID != "" {
 		workDir := fmt.Sprintf("/home/agentapi/workdir/%s", sessionID)
 		if _, err := os.Stat(workDir); err == nil {
@@ -694,275 +633,8 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 				log.Printf("Successfully removed session working directory: %s", workDir)
 			}
 		}
-	} else {
-		log.Printf("WARNING: Attempted to delete working directory with empty session ID - operation skipped")
 	}
 
-	// Return success response
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"message":    "Session terminated successfully",
-		"session_id": sessionID,
-		"status":     "terminated",
-	})
-}
-
-// startAgentAPIServer starts a new agentapi server instance and returns session ID
-func (p *Proxy) startAgentAPIServer(c echo.Context) error {
-	// Generate UUID for session
-	sessionID := uuid.New().String()
-
-	// Parse request body for environment variables and other parameters
-	var startReq StartRequest
-
-	// Try to parse JSON body, but don't fail if it's empty or invalid
-	if err := c.Bind(&startReq); err != nil {
-		if p.verbose {
-			log.Printf("Failed to parse request body (using defaults): %v", err)
-		}
-	}
-
-	// Get user_id from authenticated context
-	user := auth.GetUserFromContext(c)
-	var userID string
-	var userRole string
-	if user != nil {
-		userID = string(user.ID())
-		// Get first role or default to "user"
-		if len(user.Roles()) > 0 {
-			userRole = string(user.Roles()[0])
-		} else {
-			userRole = "user"
-		}
-	} else {
-		userID = "anonymous"
-		userRole = "guest"
-	}
-
-	// Get auth team env file from user context if available
-	var authTeamEnvFile string
-	if user != nil && user.EnvFile() != "" {
-		authTeamEnvFile = user.EnvFile()
-		log.Printf("[ENV] Auth team env file from user context: %s", authTeamEnvFile)
-	}
-
-	// Merge environment variables from multiple sources
-	envConfig := EnvMergeConfig{
-		RoleEnvFiles:    &p.config.RoleEnvFiles,
-		UserRole:        userRole,
-		TeamEnvFile:     ExtractTeamEnvFile(startReq.Tags),
-		AuthTeamEnvFile: authTeamEnvFile,
-		RequestEnv:      startReq.Environment,
-	}
-
-	mergedEnv, err := MergeEnvironmentVariables(envConfig)
-	if err != nil {
-		log.Printf("[ENV] Failed to merge environment variables: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to merge environment variables")
-	}
-
-	// Replace the request environment with merged values
-	startReq.Environment = mergedEnv
-
-	// Debug log merged environment variables
-	if len(mergedEnv) > 0 {
-		log.Printf("[ENV] Merged environment variables (%d):", len(mergedEnv))
-		for key, value := range mergedEnv {
-			log.Printf("[ENV]   %s=%s", key, value)
-		}
-	}
-
-	// Find available port
-	port, err := p.getAvailablePort()
-	if err != nil {
-		log.Printf("Failed to find available port: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to allocate port")
-	}
-
-	// Extract repository information from tags
-	repoInfo := p.extractRepositoryInfo(sessionID, startReq.Tags)
-
-	// Determine which script to use based on request parameters
-	scriptName := p.selectScript(c, scriptCache, startReq.Tags)
-
-	// Determine initial message - check tags.message first, then startReq.Message
-	var initialMessage string
-	if startReq.Tags != nil {
-		if msg, exists := startReq.Tags["message"]; exists && msg != "" {
-			initialMessage = msg
-		}
-	}
-	if initialMessage == "" && startReq.Message != "" {
-		initialMessage = startReq.Message
-	}
-
-	// Start agentapi server in goroutine
-	ctx, cancel := context.WithCancel(context.Background())
-
-	session := &AgentSession{
-		ID:          sessionID,
-		Port:        port,
-		Cancel:      cancel,
-		StartedAt:   time.Now(),
-		UserID:      userID,
-		Status:      "active",
-		Environment: startReq.Environment,
-		Tags:        startReq.Tags,
-	}
-
-	// Store session
-	p.sessionsMutex.Lock()
-	p.sessions[sessionID] = session
-	p.sessionsMutex.Unlock()
-
-	log.Printf("[SESSION_CREATED] ID: %s, Port: %d, User: %s, Tags: %v",
-		sessionID, port, userID, startReq.Tags)
-
-	// Persist session to storage
-	p.saveSession(session)
-	log.Printf("session: %+v", session)
-	log.Printf("scriptName: %s", scriptName)
-
-	// Log session start
-	repository := ""
-	if repoInfo != nil {
-		repository = repoInfo.FullName
-	}
-	if err := p.logger.LogSessionStart(sessionID, repository); err != nil {
-		log.Printf("Failed to log session start for %s: %v", sessionID, err)
-	}
-
-	// Start agentapi server in goroutine
-	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo, initialMessage)
-
-	if p.verbose {
-		if scriptName != "" {
-			log.Printf("Started agentapi server for session %s on port %d using script %s", sessionID, port, scriptName)
-		} else {
-			log.Printf("Started agentapi server for session %s on port %d using direct command", sessionID, port)
-		}
-	}
-
-	// Return session ID according to API specification
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"session_id": sessionID,
-	})
-}
-
-// routeToSession routes requests to the appropriate agentapi server instance
-func (p *Proxy) routeToSession(c echo.Context) error {
-	sessionID := c.Param("sessionId")
-
-	p.sessionsMutex.RLock()
-	session, exists := p.sessions[sessionID]
-	p.sessionsMutex.RUnlock()
-
-	if !exists {
-		if p.verbose {
-			log.Printf("Session %s not found", sessionID)
-		}
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
-	}
-
-	// Skip session access check for OPTIONS requests (CORS preflight)
-	if c.Request().Method == "OPTIONS" {
-		// For OPTIONS requests, skip session access validation
-		// since auth middleware already skipped authentication
-	} else {
-		// Check if user has access to this session (only if auth is enabled)
-		cfg := auth.GetConfigFromContext(c)
-		if cfg != nil && cfg.Auth.Enabled {
-			if !auth.UserOwnsSession(c, session.UserID) {
-				log.Printf("User does not have access to session %s", sessionID)
-				return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
-			}
-		}
-	}
-
-	// Create target URL for the agentapi server
-	targetURL := fmt.Sprintf("http://localhost:%d", session.Port)
-	target, err := url.Parse(targetURL)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))
-	}
-
-	// Check if this is a POST to /message and capture the first message for description
-	if c.Request().Method == "POST" && strings.HasSuffix(c.Request().URL.Path, "/message") {
-		p.captureFirstMessage(c, session)
-	}
-
-	// Get request and response from Echo context
-	req := c.Request()
-	w := c.Response()
-
-	// Create reverse proxy
-	proxy := httputil.NewSingleHostReverseProxy(target)
-
-	// Configure for streaming responses (SSE support)
-	proxy.FlushInterval = time.Millisecond * 100 // Flush every 100ms for real-time streaming
-
-	// Customize the director to preserve the original path (minus the session ID part)
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-
-		// Remove /sessionId prefix from path
-		originalPath := req.URL.Path
-		// Remove the /sessionId prefix from the path
-		pathParts := strings.SplitN(originalPath, "/", 3)
-		if len(pathParts) >= 3 {
-			req.URL.Path = "/" + pathParts[2]
-		} else {
-			req.URL.Path = "/"
-		}
-
-		// Set forwarded headers
-		originalHost := c.Request().Host
-		if originalHost == "" {
-			originalHost = c.Request().Header.Get("Host")
-		}
-		req.Header.Set("X-Forwarded-Host", originalHost)
-		req.Header.Set("X-Forwarded-Proto", "http")
-		if req.TLS != nil {
-			req.Header.Set("X-Forwarded-Proto", "https")
-		}
-	}
-
-	// Add CORS headers to response
-	originalModifyResponse := proxy.ModifyResponse
-	proxy.ModifyResponse = func(resp *http.Response) error {
-		// Set CORS headers
-		resp.Header.Set("Access-Control-Allow-Origin", "*")
-		resp.Header.Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
-		resp.Header.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
-		resp.Header.Set("Access-Control-Allow-Credentials", "true")
-		resp.Header.Set("Access-Control-Max-Age", "86400")
-
-		// Handle Server-Sent Events (SSE) specific headers
-		if resp.Header.Get("Content-Type") == "text/event-stream" {
-			// Ensure proper SSE headers are maintained
-			resp.Header.Set("Cache-Control", "no-cache")
-			resp.Header.Set("Connection", "keep-alive")
-			// Don't set Content-Length for streaming responses
-			resp.Header.Del("Content-Length")
-		}
-
-		if originalModifyResponse != nil {
-			return originalModifyResponse(resp)
-		}
-		return nil
-	}
-
-	// Custom error handler
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Printf("Proxy error for session %s: %v", sessionID, err)
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
-	}
-
-	if p.verbose {
-		log.Printf("Routing request %s %s to session %s (port %d)", req.Method, req.URL.Path, sessionID, session.Port)
-	}
-
-	proxy.ServeHTTP(w, req)
 	return nil
 }
 
@@ -1792,45 +1464,4 @@ func (p *Proxy) isPortAvailable(port int) bool {
 		log.Printf("Warning: Failed to close listener: %v", err)
 	}
 	return true
-}
-
-// captureFirstMessage captures the first message content for description
-func (p *Proxy) captureFirstMessage(c echo.Context, session *AgentSession) {
-	// Check if description is already set
-	if session.Tags != nil {
-		if _, exists := session.Tags["description"]; exists {
-			return // Description already set
-		}
-	}
-
-	// Read the request body
-	body, err := io.ReadAll(c.Request().Body)
-	if err != nil {
-		return // Best-effort operation
-	}
-
-	// Restore the request body for the proxy
-	c.Request().Body = io.NopCloser(bytes.NewBuffer(body))
-
-	// Parse the message request
-	var messageReq map[string]interface{}
-	if err := json.Unmarshal(body, &messageReq); err != nil {
-		return // Best-effort operation
-	}
-
-	// Check if this is a user message with content
-	if msgType, ok := messageReq["type"].(string); ok && msgType == "user" {
-		if content, ok := messageReq["content"].(string); ok && content != "" {
-			// Set description in session tags
-			p.sessionsMutex.Lock()
-			if session.Tags == nil {
-				session.Tags = make(map[string]string)
-			}
-			session.Tags["description"] = content
-			p.sessionsMutex.Unlock()
-
-			// Update the persisted session
-			p.updateSession(session)
-		}
-	}
 }
