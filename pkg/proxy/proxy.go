@@ -322,6 +322,10 @@ func (p *Proxy) setupRoutes() {
 		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 		p.echo.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 
+		// API v1 notification routes
+		p.echo.POST("/api/v1/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+		p.echo.GET("/api/v1/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+
 		// Internal routes
 		p.echo.POST("/notifications/webhook", notificationHandlers.Webhook)
 		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
@@ -355,6 +359,9 @@ func (p *Proxy) setupRoutes() {
 		c.Response().Header().Set("Access-Control-Max-Age", "86400")
 		return c.NoContent(http.StatusNoContent)
 	})
+	// API v1 session proxy routes
+	p.echo.Any("/api/v1/sessions/:sessionId/*", p.routeToSessionAPIV1, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+
 	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 }
 
@@ -797,6 +804,124 @@ func (p *Proxy) routeToSession(c echo.Context) error {
 
 	if p.verbose {
 		log.Printf("Routing request %s %s to session %s (port %d)", req.Method, req.URL.Path, sessionID, session.Port)
+	}
+
+	proxy.ServeHTTP(w, req)
+	return nil
+}
+
+// routeToSessionAPIV1 routes API v1 requests to the appropriate agentapi server instance
+func (p *Proxy) routeToSessionAPIV1(c echo.Context) error {
+	sessionID := c.Param("sessionId")
+
+	p.sessionsMutex.RLock()
+	session, exists := p.sessions[sessionID]
+	p.sessionsMutex.RUnlock()
+
+	if !exists {
+		if p.verbose {
+			log.Printf("Session %s not found", sessionID)
+		}
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+
+	// Skip session access check for OPTIONS requests (CORS preflight)
+	if c.Request().Method == "OPTIONS" {
+		// For OPTIONS requests, skip session access validation
+		// since auth middleware already skipped authentication
+	} else {
+		// Check if user has access to this session (only if auth is enabled)
+		cfg := auth.GetConfigFromContext(c)
+		if cfg != nil && cfg.Auth.Enabled {
+			if !auth.UserOwnsSession(c, session.UserID) {
+				log.Printf("User does not have access to session %s", sessionID)
+				return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
+			}
+		}
+	}
+
+	// Create target URL for the agentapi server
+	targetURL := fmt.Sprintf("http://localhost:%d", session.Port)
+	target, err := url.Parse(targetURL)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))
+	}
+
+	// Check if this is a POST to /message and capture the first message for description
+	if c.Request().Method == "POST" && strings.HasSuffix(c.Request().URL.Path, "/message") {
+		p.captureFirstMessage(c, session)
+	}
+
+	// Get request and response from Echo context
+	req := c.Request()
+	w := c.Response()
+
+	// Create reverse proxy
+	proxy := httputil.NewSingleHostReverseProxy(target)
+
+	// Configure for streaming responses (SSE support)
+	proxy.FlushInterval = time.Millisecond * 100 // Flush every 100ms for real-time streaming
+
+	// Customize the director to preserve the original path (minus the API v1 session prefix)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+
+		// Remove /api/v1/sessions/sessionId prefix from path
+		originalPath := req.URL.Path
+		// Remove the /api/v1/sessions/sessionId prefix from the path
+		pathParts := strings.SplitN(originalPath, "/", 5)
+		if len(pathParts) >= 5 {
+			req.URL.Path = "/" + pathParts[4]
+		} else {
+			req.URL.Path = "/"
+		}
+
+		// Set forwarded headers
+		originalHost := c.Request().Host
+		if originalHost == "" {
+			originalHost = c.Request().Header.Get("Host")
+		}
+		req.Header.Set("X-Forwarded-Host", originalHost)
+		req.Header.Set("X-Forwarded-Proto", "http")
+		if req.TLS != nil {
+			req.Header.Set("X-Forwarded-Proto", "https")
+		}
+	}
+
+	// Add CORS headers to response
+	originalModifyResponse := proxy.ModifyResponse
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		// Set CORS headers
+		resp.Header.Set("Access-Control-Allow-Origin", "*")
+		resp.Header.Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
+		resp.Header.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
+		resp.Header.Set("Access-Control-Allow-Credentials", "true")
+		resp.Header.Set("Access-Control-Max-Age", "86400")
+
+		// Handle Server-Sent Events (SSE) specific headers
+		if resp.Header.Get("Content-Type") == "text/event-stream" {
+			// Ensure proper SSE headers are maintained
+			resp.Header.Set("Cache-Control", "no-cache")
+			resp.Header.Set("Connection", "keep-alive")
+			// Don't set Content-Length for streaming responses
+			resp.Header.Del("Content-Length")
+		}
+
+		if originalModifyResponse != nil {
+			return originalModifyResponse(resp)
+		}
+		return nil
+	}
+
+	// Custom error handler
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("Proxy error for session %s: %v", sessionID, err)
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+	}
+
+	if p.verbose {
+		log.Printf("Routing API v1 request %s %s to session %s (port %d)", req.Method, req.URL.Path, sessionID, session.Port)
 	}
 
 	proxy.ServeHTTP(w, req)
