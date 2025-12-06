@@ -28,6 +28,13 @@ serviceAccount:
 podAnnotations: {}
 podLabels: {}
 
+# Pod security context
+# If not set, defaults to fsGroup: 999, runAsUser: 999, runAsGroup: 999
+podSecurityContext: {}
+  # fsGroup: 999
+  # runAsUser: 999
+  # runAsGroup: 999
+
 service:
   type: ClusterIP
   port: 8080
