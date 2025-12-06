@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,11 +106,14 @@ func TestHealthEndpointWithoutAuth(t *testing.T) {
 }
 
 type mockServerRunner struct {
+	mu        sync.Mutex
 	runCalled bool
 	session   *AgentSession
 }
 
 func (m *mockServerRunner) Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.runCalled = true
 	m.session = session
 }
@@ -143,11 +147,16 @@ func TestCustomServerRunner(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify mock runner was called
-	if !mockRunner.runCalled {
+	mockRunner.mu.Lock()
+	runCalled := mockRunner.runCalled
+	runnerSession := mockRunner.session
+	mockRunner.mu.Unlock()
+
+	if !runCalled {
 		t.Error("Mock server runner was not called")
 	}
 
-	if mockRunner.session != session {
+	if runnerSession != session {
 		t.Error("Mock server runner received different session")
 	}
 }
