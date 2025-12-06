@@ -7,7 +7,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
 // SessionController handles HTTP requests for session operations
@@ -20,32 +22,32 @@ type SessionController struct {
 	sessionPresenter presenters.SessionPresenter
 }
 
-// RegisterRoutes registers session routes with optional middleware
-func (c *SessionController) RegisterRoutes(e *echo.Echo, middleware ...echo.MiddlewareFunc) {
-	// Create route group for sessions
-	sessionGroup := e.Group("/sessions", middleware...)
+// RegisterRoutes registers session routes with authentication middleware
+func (c *SessionController) RegisterRoutes(e *echo.Echo, authService services.AuthService) {
+	// Create middleware for different permissions
+	sessionReadMiddleware := auth.RequirePermission(entities.PermissionSessionRead, authService)
+	sessionCreateMiddleware := auth.RequirePermission(entities.PermissionSessionCreate, authService)
+	sessionDeleteMiddleware := auth.RequirePermission(entities.PermissionSessionDelete, authService)
 
-	// Register session routes
-	e.POST("/start", c.StartSession, middleware...)
-	e.GET("/search", c.SearchSessions, middleware...)
-	sessionGroup.DELETE("/:sessionId", c.DeleteSession)
-	sessionGroup.GET("/:sessionId", c.GetSession)
-	sessionGroup.GET("", c.ListSessions)
-	sessionGroup.GET("/:sessionId/monitor", c.MonitorSession)
-}
+	// Register legacy routes (for backward compatibility)
+	e.POST("/start", c.StartSession, sessionCreateMiddleware)
+	e.GET("/search", c.SearchSessions, sessionReadMiddleware)
 
-// RegisterAPIRoutes registers session routes under /api/v1 prefix with optional middleware
-func (c *SessionController) RegisterAPIRoutes(e *echo.Echo, middleware ...echo.MiddlewareFunc) {
-	// Create API v1 group
-	apiV1 := e.Group("/api/v1", middleware...)
+	// Create session group with appropriate permissions
+	sessionGroup := e.Group("/sessions")
+	sessionGroup.DELETE("/:sessionId", c.DeleteSession, sessionDeleteMiddleware)
+	sessionGroup.GET("/:sessionId", c.GetSession, sessionReadMiddleware)
+	sessionGroup.GET("", c.ListSessions, sessionReadMiddleware)
+	sessionGroup.GET("/:sessionId/monitor", c.MonitorSession, sessionReadMiddleware)
 
-	// Register session routes under /api/v1
-	apiV1.POST("/sessions", c.StartSession)
-	apiV1.GET("/sessions/search", c.SearchSessions)
-	apiV1.DELETE("/sessions/:sessionId", c.DeleteSession)
-	apiV1.GET("/sessions/:sessionId", c.GetSession)
-	apiV1.GET("/sessions", c.ListSessions)
-	apiV1.GET("/sessions/:sessionId/monitor", c.MonitorSession)
+	// Register API v1 routes
+	apiV1 := e.Group("/api/v1")
+	apiV1.POST("/sessions", c.StartSession, sessionCreateMiddleware)
+	apiV1.GET("/sessions/search", c.SearchSessions, sessionReadMiddleware)
+	apiV1.DELETE("/sessions/:sessionId", c.DeleteSession, sessionDeleteMiddleware)
+	apiV1.GET("/sessions/:sessionId", c.GetSession, sessionReadMiddleware)
+	apiV1.GET("/sessions", c.ListSessions, sessionReadMiddleware)
+	apiV1.GET("/sessions/:sessionId/monitor", c.MonitorSession, sessionReadMiddleware)
 }
 
 // NewSessionController creates a new SessionController

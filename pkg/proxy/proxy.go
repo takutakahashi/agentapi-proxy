@@ -291,31 +291,20 @@ func (p *Proxy) setupRoutes() {
 	// Register health controller routes
 	p.container.HealthController.RegisterRoutes(p.echo)
 
-	// Register session controller API routes with authentication middleware
+	// Register session controller routes (includes both legacy and API v1 routes)
+	p.container.SessionController.RegisterRoutes(p.echo, p.container.AuthService)
+
+	// Note: The SessionController now handles:
+	// - Legacy routes: /start, /search (for backward compatibility with existing proxy routes)
+	// - Session routes: /sessions/* (standard RESTful session management)
+	// - API v1 routes: /api/v1/sessions/* (new versioned API)
+	//
+	// The following proxy-specific routes override the SessionController routes
+	// for actual process management (which is different from abstracted session management)
 	sessionReadMiddleware := auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService)
 	sessionCreateMiddleware := auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService)
 	sessionDeleteMiddleware := auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService)
 
-	// Create custom middleware that applies different permissions based on method
-	sessionMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			method := c.Request().Method
-
-			switch method {
-			case "POST":
-				return sessionCreateMiddleware(next)(c)
-			case "DELETE":
-				return sessionDeleteMiddleware(next)(c)
-			default:
-				return sessionReadMiddleware(next)(c)
-			}
-		}
-	}
-
-	// Register API routes with combined middleware
-	p.container.SessionController.RegisterAPIRoutes(p.echo, sessionMiddleware)
-
-	// Proxy-specific session management routes (for actual process management)
 	p.echo.POST("/start", p.startAgentAPIServer, sessionCreateMiddleware)
 	p.echo.GET("/search", p.searchSessions, sessionReadMiddleware)
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, sessionDeleteMiddleware)
