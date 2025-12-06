@@ -10,12 +10,12 @@ import (
 
 // SessionPresenter defines the interface for presenting session data
 type SessionPresenter interface {
-	PresentCreateSession(w http.ResponseWriter, response *session.CreateSessionResponse)
-	PresentSession(w http.ResponseWriter, session *entities.Session)
-	PresentSessionList(w http.ResponseWriter, response *session.ListSessionsResponse)
-	PresentDeleteSession(w http.ResponseWriter, response *session.DeleteSessionResponse)
-	PresentMonitorSession(w http.ResponseWriter, response *session.MonitorSessionResponse)
-	PresentError(w http.ResponseWriter, message string, statusCode int)
+	PresentCreateSession(w http.ResponseWriter, response *session.CreateSessionResponse) error
+	PresentSession(w http.ResponseWriter, session *entities.Session) error
+	PresentSessionList(w http.ResponseWriter, response *session.ListSessionsResponse) error
+	PresentDeleteSession(w http.ResponseWriter, response *session.DeleteSessionResponse) error
+	PresentMonitorSession(w http.ResponseWriter, response *session.MonitorSessionResponse) error
+	PresentError(w http.ResponseWriter, message string, statusCode int) error
 }
 
 // HTTPSessionPresenter implements SessionPresenter for HTTP responses
@@ -95,7 +95,7 @@ type ErrorResponse struct {
 }
 
 // PresentCreateSession presents a create session response
-func (p *HTTPSessionPresenter) PresentCreateSession(w http.ResponseWriter, response *session.CreateSessionResponse) {
+func (p *HTTPSessionPresenter) PresentCreateSession(w http.ResponseWriter, response *session.CreateSessionResponse) error {
 	sessionResp := p.convertSessionToResponse(response.Session)
 
 	createResp := &CreateSessionResponse{
@@ -105,20 +105,20 @@ func (p *HTTPSessionPresenter) PresentCreateSession(w http.ResponseWriter, respo
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(createResp)
+	return json.NewEncoder(w).Encode(createResp)
 }
 
 // PresentSession presents a single session
-func (p *HTTPSessionPresenter) PresentSession(w http.ResponseWriter, session *entities.Session) {
+func (p *HTTPSessionPresenter) PresentSession(w http.ResponseWriter, session *entities.Session) error {
 	sessionResp := p.convertSessionToResponse(session)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(sessionResp)
+	return json.NewEncoder(w).Encode(sessionResp)
 }
 
 // PresentSessionList presents a list of sessions
-func (p *HTTPSessionPresenter) PresentSessionList(w http.ResponseWriter, response *session.ListSessionsResponse) {
+func (p *HTTPSessionPresenter) PresentSessionList(w http.ResponseWriter, response *session.ListSessionsResponse) error {
 	sessionResps := make([]*SessionResponse, len(response.Sessions))
 	for i, sess := range response.Sessions {
 		sessionResps[i] = p.convertSessionToResponse(sess)
@@ -132,11 +132,11 @@ func (p *HTTPSessionPresenter) PresentSessionList(w http.ResponseWriter, respons
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listResp)
+	return json.NewEncoder(w).Encode(listResp)
 }
 
 // PresentDeleteSession presents a delete session response
-func (p *HTTPSessionPresenter) PresentDeleteSession(w http.ResponseWriter, response *session.DeleteSessionResponse) {
+func (p *HTTPSessionPresenter) PresentDeleteSession(w http.ResponseWriter, response *session.DeleteSessionResponse) error {
 	deleteResp := &DeleteSessionResponse{
 		SessionID: string(response.SessionID),
 		Success:   response.Success,
@@ -145,11 +145,11 @@ func (p *HTTPSessionPresenter) PresentDeleteSession(w http.ResponseWriter, respo
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(deleteResp)
+	return json.NewEncoder(w).Encode(deleteResp)
 }
 
 // PresentMonitorSession presents a monitor session response
-func (p *HTTPSessionPresenter) PresentMonitorSession(w http.ResponseWriter, response *session.MonitorSessionResponse) {
+func (p *HTTPSessionPresenter) PresentMonitorSession(w http.ResponseWriter, response *session.MonitorSessionResponse) error {
 	sessionResp := p.convertSessionToResponse(response.Session)
 
 	var healthCheckResp *HealthCheckResponse
@@ -179,11 +179,11 @@ func (p *HTTPSessionPresenter) PresentMonitorSession(w http.ResponseWriter, resp
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(monitorResp)
+	return json.NewEncoder(w).Encode(monitorResp)
 }
 
 // PresentError presents an error response
-func (p *HTTPSessionPresenter) PresentError(w http.ResponseWriter, message string, statusCode int) {
+func (p *HTTPSessionPresenter) PresentError(w http.ResponseWriter, message string, statusCode int) error {
 	errorResp := &ErrorResponse{
 		Error:   http.StatusText(statusCode),
 		Message: message,
@@ -191,7 +191,7 @@ func (p *HTTPSessionPresenter) PresentError(w http.ResponseWriter, message strin
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(errorResp)
+	return json.NewEncoder(w).Encode(errorResp)
 }
 
 // convertSessionToResponse converts a domain session to HTTP response format
