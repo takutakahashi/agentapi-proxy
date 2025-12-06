@@ -28,6 +28,9 @@ type Container struct {
 	NotificationService services_ports.NotificationService
 	ProxyService        services_ports.ProxyService
 	GitHubAuthService   services_ports.GitHubAuthService
+	EnvironmentService  services_ports.EnvironmentService
+	PortManager         services_ports.PortManager
+	RepositoryService   services_ports.RepositoryService
 
 	// Use Cases
 	CreateSessionUC      *session.CreateSessionUseCase
@@ -36,6 +39,7 @@ type Container struct {
 	GetSessionByIDUC     *session.GetSessionByIDUseCase
 	MonitorSessionUC     *session.MonitorSessionUseCase
 	MonitorAllSessionsUC *session.MonitorAllSessionsUseCase
+	StartSessionUC       *session.StartSessionUseCase
 
 	AuthenticateUserUC   *auth.AuthenticateUserUseCase
 	ValidateAPIKeyUC     *auth.ValidateAPIKeyUseCase
@@ -100,6 +104,11 @@ func (c *Container) initServices() {
 
 	// Initialize GitHub auth service (simple implementation)
 	c.GitHubAuthService = &SimpleGitHubAuthService{}
+
+	// Initialize new services for clean architecture
+	c.EnvironmentService = services.NewLocalEnvironmentService(nil) // TODO: Pass actual config
+	c.PortManager = services.NewLocalPortManager(9000)
+	c.RepositoryService = services.NewLocalRepositoryService("/tmp/agentapi-sessions")
 }
 
 // initUseCases initializes all use case dependencies
@@ -140,6 +149,16 @@ func (c *Container) initUseCases() {
 		c.AgentService,
 		c.ProxyService,
 	)
+
+	// TODO: Enable after fixing compilation errors
+	// c.StartSessionUC = session.NewStartSessionUseCase(
+	//	c.SessionRepo,
+	//	c.UserRepo,
+	//	c.AgentService,
+	//	c.EnvironmentService,
+	//	c.PortManager,
+	//	c.RepositoryService,
+	// )
 
 	// Auth use cases
 	c.AuthenticateUserUC = auth.NewAuthenticateUserUseCase(

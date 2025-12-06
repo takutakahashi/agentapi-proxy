@@ -36,6 +36,7 @@ type AgentConfig struct {
 	Repository  *entities.Repository
 	Script      string
 	Args        []string
+	Message     string // Initial message for the agent
 }
 
 // ProcessStatus represents the status of a process
