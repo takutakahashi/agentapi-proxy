@@ -118,14 +118,6 @@ func TestLoadConfig(t *testing.T) {
 				},
 			},
 		},
-		Persistence: PersistenceConfig{
-			Enabled:               false,
-			Backend:               "file",
-			FilePath:              "./sessions.json",
-			SyncInterval:          30,
-			EncryptSecrets:        true,
-			SessionRecoveryMaxAge: 24,
-		},
 		EnableMultipleUsers: false, // Default value
 	}
 
@@ -138,9 +130,6 @@ func TestLoadConfig(t *testing.T) {
 	}
 
 	// Compare persistence config
-	if loadedConfig.Persistence != expectedConfig.Persistence {
-		t.Errorf("Persistence config mismatch.\nExpected: %+v\nGot: %+v", expectedConfig.Persistence, loadedConfig.Persistence)
-	}
 
 	// Compare auth config values (not pointer equality)
 	if loadedConfig.Auth.Enabled != expectedConfig.Auth.Enabled {
@@ -511,14 +500,6 @@ enable_multiple_users: true
 		t.Errorf("Expected EnableMultipleUsers to be true, got %t", loadedConfig.EnableMultipleUsers)
 	}
 
-	if !loadedConfig.Persistence.Enabled {
-		t.Errorf("Expected Persistence.Enabled to be true, got %t", loadedConfig.Persistence.Enabled)
-	}
-
-	if loadedConfig.Persistence.FilePath != "./test_sessions.json" {
-		t.Errorf("Expected Persistence.FilePath to be './test_sessions.json', got '%s'", loadedConfig.Persistence.FilePath)
-	}
-
 	if loadedConfig.Auth.GitHub == nil || loadedConfig.Auth.GitHub.OAuth == nil {
 		t.Fatal("GitHub OAuth config should not be nil")
 	}
@@ -565,14 +546,6 @@ func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 
 	if !loadedConfig.EnableMultipleUsers {
 		t.Errorf("Expected EnableMultipleUsers to be true, got %t", loadedConfig.EnableMultipleUsers)
-	}
-
-	if !loadedConfig.Persistence.Enabled {
-		t.Errorf("Expected Persistence.Enabled to be true, got %t", loadedConfig.Persistence.Enabled)
-	}
-
-	if loadedConfig.Persistence.Backend != "sqlite" {
-		t.Errorf("Expected Persistence.Backend to be 'sqlite', got '%s'", loadedConfig.Persistence.Backend)
 	}
 
 	if loadedConfig.Auth.GitHub == nil || loadedConfig.Auth.GitHub.OAuth == nil {
@@ -686,66 +659,6 @@ func TestInitializeConfigStructsFromEnv_GitHubOAuth(t *testing.T) {
 	assert.Equal(t, "oauth_secret_456", loadedConfig.Auth.GitHub.OAuth.ClientSecret)
 	assert.Equal(t, "read:user read:org repo", loadedConfig.Auth.GitHub.OAuth.Scope)
 	assert.Equal(t, "https://github.company.com", loadedConfig.Auth.GitHub.OAuth.BaseURL)
-}
-
-func TestInitializeConfigStructsFromEnv_Persistence(t *testing.T) {
-	// Set up test environment variables for persistence
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_ENABLED", "true")
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_BACKEND", "postgres")
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_FILE_PATH", "/custom/path/sessions.json")
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_SYNC_INTERVAL_SECONDS", "60")
-
-	defer func() {
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_ENABLED")
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_BACKEND")
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_FILE_PATH")
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_SYNC_INTERVAL_SECONDS")
-	}()
-
-	// Load config without file (should initialize from env vars)
-	loadedConfig, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	// Verify Persistence config was initialized from environment variables
-	assert.True(t, loadedConfig.Persistence.Enabled)
-	assert.Equal(t, "postgres", loadedConfig.Persistence.Backend)
-	assert.Equal(t, "/custom/path/sessions.json", loadedConfig.Persistence.FilePath)
-	assert.Equal(t, 60, loadedConfig.Persistence.SyncInterval)
-}
-
-func TestInitializeConfigStructsFromEnv_S3Persistence(t *testing.T) {
-	// Set up test environment variables for S3 persistence
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_BUCKET", "my-test-bucket")
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_REGION", "us-west-2")
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_PREFIX", "agentapi/sessions/")
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_ENDPOINT", "https://s3.amazonaws.com")
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_ACCESS_KEY", "test_access_key")
-	_ = os.Setenv("AGENTAPI_PERSISTENCE_S3_SECRET_KEY", "test_secret_key")
-
-	defer func() {
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_BUCKET")
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_REGION")
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_PREFIX")
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_ENDPOINT")
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_ACCESS_KEY")
-		_ = os.Unsetenv("AGENTAPI_PERSISTENCE_S3_SECRET_KEY")
-	}()
-
-	// Load config without file (should initialize from env vars)
-	loadedConfig, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	// Verify S3 Persistence config was initialized from environment variables
-	assert.Equal(t, "my-test-bucket", loadedConfig.Persistence.S3Bucket)
-	assert.Equal(t, "us-west-2", loadedConfig.Persistence.S3Region)
-	assert.Equal(t, "agentapi/sessions/", loadedConfig.Persistence.S3Prefix)
-	assert.Equal(t, "https://s3.amazonaws.com", loadedConfig.Persistence.S3Endpoint)
-	assert.Equal(t, "test_access_key", loadedConfig.Persistence.S3AccessKey)
-	assert.Equal(t, "test_secret_key", loadedConfig.Persistence.S3SecretKey)
 }
 
 func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *testing.T) {
@@ -911,15 +824,4 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 		}
 	}
 
-	// Persistence verification
-	assert.True(t, loadedConfig.Persistence.Enabled)
-	assert.Equal(t, "s3", loadedConfig.Persistence.Backend)
-	assert.Equal(t, "/full/test/sessions.json", loadedConfig.Persistence.FilePath)
-	assert.Equal(t, 120, loadedConfig.Persistence.SyncInterval)
-	assert.Equal(t, "full-test-bucket", loadedConfig.Persistence.S3Bucket)
-	assert.Equal(t, "eu-central-1", loadedConfig.Persistence.S3Region)
-	assert.Equal(t, "full-test/sessions/", loadedConfig.Persistence.S3Prefix)
-	assert.Equal(t, "https://full.test.s3.endpoint.com", loadedConfig.Persistence.S3Endpoint)
-	assert.Equal(t, "full_test_access", loadedConfig.Persistence.S3AccessKey)
-	assert.Equal(t, "full_test_secret", loadedConfig.Persistence.S3SecretKey)
 }

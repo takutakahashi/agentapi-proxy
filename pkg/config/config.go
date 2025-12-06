@@ -19,11 +19,6 @@
 //	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
 //	AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE=read:user read:org
 //	AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE=user
-//	AGENTAPI_PERSISTENCE_ENABLED=true
-//	AGENTAPI_PERSISTENCE_BACKEND=file
-//	AGENTAPI_PERSISTENCE_FILE_PATH=./sessions.json
-//	AGENTAPI_PERSISTENCE_S3_BUCKET=my-bucket
-//	AGENTAPI_PERSISTENCE_S3_REGION=us-east-1
 //	AGENTAPI_ENABLE_MULTIPLE_USERS=true
 //	AGENTAPI_K8S_MODE_ENABLED=true
 //	AGENTAPI_K8S_MODE_NAMESPACE=agentapi-proxy
@@ -146,33 +141,12 @@ type APIKey struct {
 	ExpiresAt   string   `json:"expires_at,omitempty" mapstructure:"expires_at"`
 }
 
-// PersistenceConfig represents session persistence configuration
-type PersistenceConfig struct {
-	Enabled               bool   `json:"enabled" mapstructure:"enabled"`
-	Backend               string `json:"backend" mapstructure:"backend"` // "file", "sqlite", "postgres", "s3"
-	FilePath              string `json:"file_path" mapstructure:"file_path"`
-	SyncInterval          int    `json:"sync_interval_seconds" mapstructure:"sync_interval_seconds"`
-	EncryptSecrets        bool   `json:"encrypt_sensitive_data" mapstructure:"encrypt_sensitive_data"`
-	SessionRecoveryMaxAge int    `json:"session_recovery_max_age_hours" mapstructure:"session_recovery_max_age_hours"` // Max age in hours for session recovery
-	RestoreProcesses      bool   `json:"restore_processes" mapstructure:"restore_processes"`                           // Whether to restore agentapi processes on recovery
-
-	// S3-specific configuration
-	S3Bucket    string `json:"s3_bucket" mapstructure:"s3_bucket"`
-	S3Region    string `json:"s3_region" mapstructure:"s3_region"`
-	S3Prefix    string `json:"s3_prefix" mapstructure:"s3_prefix"`
-	S3Endpoint  string `json:"s3_endpoint" mapstructure:"s3_endpoint"` // For custom S3-compatible services
-	S3AccessKey string `json:"s3_access_key" mapstructure:"s3_access_key"`
-	S3SecretKey string `json:"s3_secret_key" mapstructure:"s3_secret_key"`
-}
-
 // Config represents the proxy configuration
 type Config struct {
 	// StartPort is the starting port for agentapi servers
 	StartPort int `json:"start_port" mapstructure:"start_port"`
 	// Auth represents authentication configuration
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
-	// Persistence represents session persistence configuration
-	Persistence PersistenceConfig `json:"persistence" mapstructure:"persistence"`
 	// EnableMultipleUsers enables user-specific directory isolation
 	EnableMultipleUsers bool `json:"enable_multiple_users" mapstructure:"enable_multiple_users"`
 	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
@@ -251,7 +225,6 @@ func LoadConfig(filename string) (*Config, error) {
 	if config.Auth.GitHub != nil {
 		log.Printf("[CONFIG] GitHub OAuth configured: %v", config.Auth.GitHub.OAuth != nil)
 	}
-	log.Printf("[CONFIG] Persistence enabled: %v (backend: %s)", config.Persistence.Enabled, config.Persistence.Backend)
 	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 	log.Printf("[CONFIG] K8s mode enabled: %v (namespace: %s)", config.K8sMode.Enabled, config.K8sMode.Namespace)
@@ -337,29 +310,6 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		}
 	}
 
-	// Initialize Persistence config if environment variables are set
-	if !config.Persistence.Enabled && v.GetBool("persistence.enabled") {
-		config.Persistence.Enabled = true
-		log.Printf("[CONFIG] Enabled persistence from environment variables")
-	}
-	if config.Persistence.Backend == "" && v.GetString("persistence.backend") != "" {
-		config.Persistence.Backend = v.GetString("persistence.backend")
-	}
-	if config.Persistence.FilePath == "" && v.GetString("persistence.file_path") != "" {
-		config.Persistence.FilePath = v.GetString("persistence.file_path")
-	}
-	if config.Persistence.SyncInterval == 0 && v.GetInt("persistence.sync_interval_seconds") != 0 {
-		config.Persistence.SyncInterval = v.GetInt("persistence.sync_interval_seconds")
-	}
-	if config.Persistence.S3Bucket == "" && v.GetString("persistence.s3_bucket") != "" {
-		config.Persistence.S3Bucket = v.GetString("persistence.s3_bucket")
-		config.Persistence.S3Region = v.GetString("persistence.s3_region")
-		config.Persistence.S3Prefix = v.GetString("persistence.s3_prefix")
-		config.Persistence.S3Endpoint = v.GetString("persistence.s3_endpoint")
-		config.Persistence.S3AccessKey = v.GetString("persistence.s3_access_key")
-		config.Persistence.S3SecretKey = v.GetString("persistence.s3_secret_key")
-		log.Printf("[CONFIG] Initialized S3 persistence config from environment variables")
-	}
 }
 
 // bindEnvVars explicitly binds environment variables to configuration keys
@@ -387,21 +337,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth.github.oauth.scope")
 	_ = v.BindEnv("auth.github.oauth.base_url")
 
-	// Persistence configuration
-	_ = v.BindEnv("persistence.enabled")
-	_ = v.BindEnv("persistence.backend")
-	_ = v.BindEnv("persistence.file_path")
-	_ = v.BindEnv("persistence.sync_interval_seconds")
-	_ = v.BindEnv("persistence.encrypt_sensitive_data")
-	_ = v.BindEnv("persistence.session_recovery_max_age_hours")
-	_ = v.BindEnv("persistence.restore_processes")
-	_ = v.BindEnv("persistence.s3_bucket")
-	_ = v.BindEnv("persistence.s3_region")
-	_ = v.BindEnv("persistence.s3_prefix")
-	_ = v.BindEnv("persistence.s3_endpoint")
-	_ = v.BindEnv("persistence.s3_access_key")
-	_ = v.BindEnv("persistence.s3_secret_key")
-
 	// Other configuration
 	_ = v.BindEnv("start_port")
 	_ = v.BindEnv("enable_multiple_users")
@@ -426,19 +361,6 @@ func bindEnvVars(v *viper.Viper) {
 // setDefaults sets default values for viper configuration
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("start_port", 9000)
-
-	// Persistence defaults
-	v.SetDefault("persistence.enabled", false)
-	v.SetDefault("persistence.backend", "file")
-	v.SetDefault("persistence.file_path", "./sessions.json")
-	v.SetDefault("persistence.sync_interval_seconds", 30)
-	v.SetDefault("persistence.encrypt_sensitive_data", true)
-	v.SetDefault("persistence.session_recovery_max_age_hours", 24)
-	v.SetDefault("persistence.restore_processes", true)
-
-	// S3 persistence defaults
-	v.SetDefault("persistence.s3_region", "us-east-1")
-	v.SetDefault("persistence.s3_prefix", "sessions/")
 
 	// Auth defaults
 	v.SetDefault("auth.enabled", false)
@@ -473,20 +395,6 @@ func setDefaults(v *viper.Viper) {
 
 // applyConfigDefaults applies default values to any unset configuration fields
 func applyConfigDefaults(config *Config) {
-	// Apply defaults for persistence if the entire struct is uninitialized
-	if config.Persistence.Backend == "" {
-		config.Persistence.Backend = "file"
-	}
-	if config.Persistence.FilePath == "" {
-		config.Persistence.FilePath = "./sessions.json"
-	}
-	if config.Persistence.SyncInterval == 0 {
-		config.Persistence.SyncInterval = 30
-	}
-	if !config.Persistence.Enabled {
-		config.Persistence.EncryptSecrets = true
-		config.Persistence.SessionRecoveryMaxAge = 24
-	}
 
 	// Apply auth defaults
 	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
@@ -605,14 +513,6 @@ func DefaultConfig() *Config {
 				HeaderName: "X-API-Key",
 				APIKeys:    []APIKey{},
 			},
-		},
-		Persistence: PersistenceConfig{
-			Enabled:               false,
-			Backend:               "file",
-			FilePath:              "./sessions.json",
-			SyncInterval:          30,
-			EncryptSecrets:        true,
-			SessionRecoveryMaxAge: 24, // Default 24 hours
 		},
 		EnableMultipleUsers: false,
 	}

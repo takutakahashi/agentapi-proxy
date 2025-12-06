@@ -31,8 +31,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
-	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
-	"github.com/takutakahashi/agentapi-proxy/pkg/storage"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
 
@@ -100,7 +98,6 @@ type Proxy struct {
 	nextPort           int
 	portMutex          sync.Mutex
 	logger             *logger.Logger
-	storage            storage.Storage
 	oauthProvider      *auth.GitHubOAuthProvider
 	githubAuthProvider *auth.GitHubAuthProvider
 	oauthSessions      sync.Map // sessionID -> OAuthSession
@@ -207,33 +204,6 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		container:     container,
 	}
 
-	// Initialize storage if persistence is enabled
-	if cfg.Persistence.Enabled {
-		storageConfig := &storage.StorageConfig{
-			Type:           cfg.Persistence.Backend,
-			FilePath:       cfg.Persistence.FilePath,
-			SyncInterval:   cfg.Persistence.SyncInterval,
-			EncryptSecrets: cfg.Persistence.EncryptSecrets,
-			S3Bucket:       cfg.Persistence.S3Bucket,
-			S3Region:       cfg.Persistence.S3Region,
-			S3Prefix:       cfg.Persistence.S3Prefix,
-			S3Endpoint:     cfg.Persistence.S3Endpoint,
-			S3AccessKey:    cfg.Persistence.S3AccessKey,
-			S3SecretKey:    cfg.Persistence.S3SecretKey,
-		}
-
-		var err error
-		p.storage, err = storage.NewStorage(storageConfig)
-		if err != nil {
-			log.Printf("Failed to initialize storage: %v", err)
-			// Fall back to memory storage
-			p.storage = storage.NewMemoryStorage()
-		}
-	} else {
-		// Use memory storage by default
-		p.storage = storage.NewMemoryStorage()
-	}
-
 	// Add logging middleware if verbose
 	if verbose {
 		e.Use(p.loggingMiddleware())
@@ -297,11 +267,6 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 
 	p.setupRoutes()
 
-	// Load existing sessions from storage if persistence is enabled
-	if cfg.Persistence.Enabled {
-		p.recoverSessions()
-	}
-
 	return p
 }
 
@@ -319,136 +284,6 @@ func (p *Proxy) loggingMiddleware() echo.MiddlewareFunc {
 			return next(c)
 		}
 	})
-}
-
-// sessionToStorage converts an AgentSession to SessionData for storage
-func (p *Proxy) sessionToStorage(session *AgentSession) *storage.SessionData {
-	var processID int
-	var command []string
-
-	session.processMutex.RLock()
-	if session.Process != nil {
-		processID = session.Process.Process.Pid
-		command = session.Process.Args
-	}
-	session.processMutex.RUnlock()
-
-	return &storage.SessionData{
-		ID:          session.ID,
-		Port:        session.Port,
-		StartedAt:   session.StartedAt,
-		UserID:      session.UserID,
-		Status:      session.Status,
-		Environment: session.Environment,
-		Tags:        session.Tags,
-		ProcessID:   processID,
-		Command:     command,
-		WorkingDir:  session.ID, // Session working directory is the session ID
-	}
-}
-
-// sessionFromStorage converts SessionData to AgentSession during recovery
-func (p *Proxy) sessionFromStorage(data *storage.SessionData) *AgentSession {
-	return &AgentSession{
-		ID:          data.ID,
-		Port:        data.Port,
-		StartedAt:   data.StartedAt,
-		UserID:      data.UserID,
-		Status:      data.Status,
-		Environment: data.Environment,
-		Tags:        data.Tags,
-		// Process and Cancel will be nil - these need special handling
-	}
-}
-
-// saveSession persists a session to storage
-func (p *Proxy) saveSession(session *AgentSession) {
-	if p.storage == nil {
-		return
-	}
-
-	sessionData := p.sessionToStorage(session)
-	if err := p.storage.Save(sessionData); err != nil {
-		log.Printf("Failed to save session %s: %v", session.ID, err)
-	}
-}
-
-// updateSession updates a session in storage
-func (p *Proxy) updateSession(session *AgentSession) {
-	if p.storage == nil {
-		return
-	}
-
-	sessionData := p.sessionToStorage(session)
-	if err := p.storage.Update(sessionData); err != nil {
-		log.Printf("Failed to update session %s: %v", session.ID, err)
-	}
-}
-
-// deleteSessionFromStorage removes a session from storage
-func (p *Proxy) deleteSessionFromStorage(sessionID string) {
-	if p.storage == nil {
-		return
-	}
-
-	if err := p.storage.Delete(sessionID); err != nil {
-		log.Printf("Failed to delete session %s from storage: %v", sessionID, err)
-	}
-}
-
-// recoverSessions loads persisted sessions on startup
-func (p *Proxy) recoverSessions() {
-	if p.storage == nil {
-		log.Printf("[SESSION_RECOVERY] Storage is nil, skipping recovery")
-		return
-	}
-
-	log.Printf("[SESSION_RECOVERY] Starting session recovery...")
-	sessions, err := p.storage.LoadAll()
-	if err != nil {
-		log.Printf("[SESSION_RECOVERY] Failed to load sessions from storage: %v", err)
-		return
-	}
-
-	log.Printf("[SESSION_RECOVERY] Found %d sessions to recover", len(sessions))
-	recovered := 0
-	cleaned := 0
-
-	for _, sessionData := range sessions {
-
-		// Convert to AgentSession and add to memory
-		session := p.sessionFromStorage(sessionData)
-		session.Status = "recovered" // Mark as recovered
-
-		p.sessionsMutex.Lock()
-		p.sessions[session.ID] = session
-
-		// Update next port to avoid conflicts
-		if session.Port >= p.nextPort {
-			p.nextPort = session.Port + 1
-		}
-		p.sessionsMutex.Unlock()
-
-		// Restore the process for this session if enabled in config
-		if p.config.Persistence.RestoreProcesses {
-			if err := p.restoreSessionProcess(session, sessionData); err != nil {
-				log.Printf("Failed to restore process for session %s: %v", session.ID, err)
-				// Keep session metadata but mark as failed
-				session.Status = "failed"
-				p.updateSession(session)
-			} else {
-				log.Printf("Successfully restored session %s on port %d", session.ID, session.Port)
-			}
-		} else {
-			log.Printf("Process restoration disabled, session %s metadata only", session.ID)
-		}
-
-		recovered++
-	}
-
-	if recovered > 0 || cleaned > 0 {
-		log.Printf("[SESSION_RECOVERY] Completed: %d recovered, %d cleaned up", recovered, cleaned)
-	}
 }
 
 // setupRoutes configures the router with all defined routes
@@ -659,8 +494,6 @@ func (p *Proxy) deleteSession(c echo.Context) error {
 			delete(p.sessions, sessionID)
 			p.sessionsMutex.Unlock()
 
-			// Also remove from persistent storage
-			p.deleteSessionFromStorage(sessionID)
 			break
 		}
 
@@ -810,8 +643,6 @@ func (p *Proxy) startAgentAPIServer(c echo.Context) error {
 	log.Printf("[SESSION_CREATED] ID: %s, Port: %d, User: %s, Tags: %v",
 		sessionID, port, userID, startReq.Tags)
 
-	// Persist session to storage
-	p.saveSession(session)
 	log.Printf("session: %+v", session)
 	log.Printf("scriptName: %s", scriptName)
 
@@ -1003,7 +834,6 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 
 		// Remove session from persistent storage only if it still existed in the map
 		if sessionExists {
-			p.deleteSessionFromStorage(session.ID)
 			// Log session end when process terminates naturally (not via deleteSession)
 			if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
 				log.Printf("Failed to log session end for %s: %v", session.ID, err)
@@ -1091,7 +921,6 @@ func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, sc
 	}
 
 	// Update session in storage after process is started
-	p.updateSession(session)
 
 	if p.verbose {
 		log.Printf("AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
@@ -1502,291 +1331,6 @@ func (p *Proxy) GetEcho() *echo.Echo {
 	return p.echo
 }
 
-// restoreSessionProcess restores the agentapi process for a recovered session
-func (p *Proxy) restoreSessionProcess(session *AgentSession, sessionData *storage.SessionData) error {
-	// Check if port is available
-	if !p.isPortAvailable(session.Port) {
-		return fmt.Errorf("port %d is not available", session.Port)
-	}
-
-	// Extract repository information from tags
-	repoInfo := p.extractRepositoryInfo(session.ID, session.Tags)
-
-	// Create context with cancellation for the restored process
-	ctx, cancel := context.WithCancel(context.Background())
-	session.Cancel = cancel
-
-	// Start the agentapi process in a goroutine with restore flag
-	go p.runAgentAPIServerForRestore(ctx, session, repoInfo)
-
-	// Update session status to active after successful start
-	session.Status = "active"
-	p.updateSession(session)
-
-	return nil
-}
-
-// runAgentAPIServerForRestore runs an agentapi server instance for restored sessions
-func (p *Proxy) runAgentAPIServerForRestore(ctx context.Context, session *AgentSession, repoInfo *RepositoryInfo) {
-	defer func() {
-		// Clean up session when server stops
-		p.sessionsMutex.Lock()
-		// Check if session still exists (might have been removed by deleteSession)
-		_, sessionExists := p.sessions[session.ID]
-		if sessionExists {
-			delete(p.sessions, session.ID)
-		}
-		p.sessionsMutex.Unlock()
-
-		// Remove session from persistent storage only if it still existed in the map
-		if sessionExists {
-			p.deleteSessionFromStorage(session.ID)
-			// Log session end when process terminates naturally (not via deleteSession)
-			if err := p.logger.LogSessionEnd(session.ID, 0); err != nil {
-				log.Printf("Failed to log session end for %s: %v", session.ID, err)
-			}
-		}
-
-		if p.verbose {
-			log.Printf("Cleaned up restored session %s", session.ID)
-		}
-	}()
-
-	// Create startup manager
-	startupManager := NewStartupManager(p.config, p.verbose)
-
-	// Prepare startup configuration for restored session
-	cfg := &StartupConfig{
-		Port:                      session.Port,
-		UserID:                    session.UserID,
-		GitHubToken:               getEnvFromSession(session, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
-		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
-		GitHubInstallationID:      os.Getenv("GITHUB_INSTALLATION_ID"),
-		GitHubAppPEMPath:          os.Getenv("GITHUB_APP_PEM_PATH"),
-		GitHubAPI:                 os.Getenv("GITHUB_API"),
-		GitHubPersonalAccessToken: os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"),
-		AgentAPIArgs:              os.Getenv("AGENTAPI_ARGS"),
-		ClaudeArgs:                os.Getenv("CLAUDE_ARGS"),
-		Environment:               session.Environment,
-		Config:                    p.config,
-		Verbose:                   p.verbose,
-		IsRestore:                 true, // Mark as restore session for -c option
-	}
-
-	// Add repository information if available
-	if repoInfo != nil {
-		cfg.RepoFullName = repoInfo.FullName
-		cfg.CloneDir = repoInfo.CloneDir
-
-		// Run setup-gh for restored sessions with repository information
-		if err := p.runSetupGHForRestore(repoInfo.FullName, repoInfo.CloneDir); err != nil {
-			log.Printf("Warning: Failed to run setup-gh for restored session %s: %v", session.ID, err)
-			// Continue without failing the restore process
-		}
-	}
-
-	// Start the AgentAPI session
-	cmd, err := startupManager.StartAgentAPISession(ctx, cfg)
-	if err != nil {
-		log.Printf("Failed to start restored AgentAPI session %s: %v", session.ID, err)
-		session.Status = "failed"
-		p.updateSession(session)
-		return
-	}
-
-	// Capture stderr output for logging on exit code 1
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
-	// Store the command in the session and start the process
-	session.processMutex.Lock()
-	session.Process = cmd
-	err = cmd.Start()
-	session.processMutex.Unlock()
-
-	if err != nil {
-		log.Printf("Failed to start restored agentapi process for session %s: %v", session.ID, err)
-		return
-	}
-
-	// Update session in storage after process is started
-	p.updateSession(session)
-
-	if p.verbose {
-		log.Printf("Restored AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
-	}
-
-	// Wait for the process to finish or context cancellation
-	done := make(chan error, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Recovered from panic in cmd.Wait() for restored session %s: %v", session.ID, r)
-				done <- fmt.Errorf("panic in cmd.Wait(): %v", r)
-			}
-		}()
-		done <- cmd.Wait()
-	}()
-
-	// Ensure the process is cleaned up to prevent zombie processes
-	defer func() {
-		// This defer ensures cmd.Wait() is called if it hasn't been called yet
-		if cmd.Process != nil && cmd.ProcessState == nil {
-			// Process is still running, wait for it to prevent zombie
-			select {
-			case <-done:
-				// Wait completed in the main logic
-			case <-time.After(10 * time.Second):
-				// Increased timeout to 10 seconds to allow proper cleanup
-				log.Printf("Warning: Process %d cleanup timed out after 10 seconds", cmd.Process.Pid)
-				// Force kill if still running
-				if cmd.Process != nil {
-					log.Printf("Force killing process %d to prevent zombie", cmd.Process.Pid)
-					if err := cmd.Process.Kill(); err != nil {
-						log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, err)
-					}
-					// Wait for the killed process to prevent zombie
-					go func() {
-						if waitErr := cmd.Wait(); waitErr != nil {
-							log.Printf("Wait error after force kill for process %d: %v", cmd.Process.Pid, waitErr)
-						}
-					}()
-				}
-			}
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		// Context cancelled, terminate the process
-		if p.verbose {
-			log.Printf("Terminating restored agentapi process for session %s", session.ID)
-		}
-
-		// Try graceful shutdown first (SIGTERM to process group)
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
-			// If process group signal fails, try individual process
-			if termErr := cmd.Process.Signal(syscall.SIGTERM); termErr != nil {
-				log.Printf("Failed to send SIGTERM to process %d: %v", cmd.Process.Pid, termErr)
-			}
-		} else {
-			log.Printf("Sent SIGTERM to process group %d", cmd.Process.Pid)
-		}
-
-		// Wait for graceful shutdown with timeout
-		gracefulTimeout := time.After(5 * time.Second)
-		select {
-		case waitErr := <-done:
-			if p.verbose {
-				log.Printf("Restored AgentAPI process for session %s terminated gracefully", session.ID)
-			}
-			if waitErr != nil && p.verbose {
-				log.Printf("Process wait error for restored session %s: %v", session.ID, waitErr)
-			}
-		case <-gracefulTimeout:
-			// Force kill if graceful shutdown failed
-			if p.verbose {
-				log.Printf("Force killing restored agentapi process for session %s", session.ID)
-			}
-			// Kill entire process group
-			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-				log.Printf("Failed to kill process group %d: %v", cmd.Process.Pid, err)
-				// If process group kill fails, try individual process
-				if killErr := cmd.Process.Kill(); killErr != nil {
-					log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, killErr)
-				}
-			} else {
-				log.Printf("Sent SIGKILL to process group %d", cmd.Process.Pid)
-			}
-			// Always wait for the process to prevent zombie
-			select {
-			case waitErr := <-done:
-				if waitErr != nil && p.verbose {
-					log.Printf("Process wait error after kill for restored session %s: %v", session.ID, waitErr)
-				}
-			case <-time.After(2 * time.Second):
-				log.Printf("Warning: Process %d may not have exited cleanly", cmd.Process.Pid)
-				// Even if timed out, try to consume from done channel to prevent goroutine leak
-				go func() {
-					select {
-					case <-done: // Consume the value when available
-					case <-time.After(5 * time.Second):
-						// If we can't consume within 5 seconds, just exit the goroutine
-						log.Printf("Warning: Could not consume done channel for process %d", cmd.Process.Pid)
-					}
-				}()
-			}
-		}
-
-	case err := <-done:
-		// Process finished on its own
-		if err != nil {
-			// Check if error is exit code 1 and log stderr output if available
-			if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
-				log.Printf("Restored AgentAPI process for session %s exited with code 1: %v", session.ID, err)
-				// Log stderr output if available
-				if stderrOutput := stderrBuf.String(); stderrOutput != "" {
-					log.Printf("Stderr output for restored session %s: %s", session.ID, stderrOutput)
-				}
-			} else {
-				log.Printf("Restored AgentAPI process for session %s exited with error: %v", session.ID, err)
-			}
-		} else if p.verbose {
-			log.Printf("Restored AgentAPI process for session %s exited normally", session.ID)
-		}
-	}
-}
-
-// runSetupGHForRestore runs setup-gh helper for restored sessions
-func (p *Proxy) runSetupGHForRestore(repoFullName, cloneDir string) error {
-	if repoFullName == "" {
-		return fmt.Errorf("repository full name is required")
-	}
-	if cloneDir == "" {
-		return fmt.Errorf("clone directory is required")
-	}
-
-	log.Printf("Running setup-gh for restored session with repository: %s in directory: %s", repoFullName, cloneDir)
-
-	// Change to the clone directory before running setup-gh
-	originalDir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
-	}
-
-	// Change to clone directory
-	if err := os.Chdir(cloneDir); err != nil {
-		return fmt.Errorf("failed to change to clone directory %s: %w", cloneDir, err)
-	}
-
-	// Ensure we change back to original directory
-	defer func() {
-		if err := os.Chdir(originalDir); err != nil {
-			log.Printf("Warning: Failed to change back to original directory: %v", err)
-		}
-	}()
-
-	// Run setup-gh in the clone directory
-	if err := startup.SetupGitHubAuth(repoFullName); err != nil {
-		return fmt.Errorf("setup-gh failed: %w", err)
-	}
-
-	log.Printf("Successfully completed setup-gh for repository: %s", repoFullName)
-	return nil
-}
-
-// isPortAvailable checks if a port is available for use
-func (p *Proxy) isPortAvailable(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return false
-	}
-	if err := ln.Close(); err != nil {
-		log.Printf("Warning: Failed to close listener: %v", err)
-	}
-	return true
-}
-
 // captureFirstMessage captures the first message content for description
 func (p *Proxy) captureFirstMessage(c echo.Context, session *AgentSession) {
 	// Check if description is already set
@@ -1823,7 +1367,6 @@ func (p *Proxy) captureFirstMessage(c echo.Context, session *AgentSession) {
 			p.sessionsMutex.Unlock()
 
 			// Update the persisted session
-			p.updateSession(session)
 		}
 	}
 }
