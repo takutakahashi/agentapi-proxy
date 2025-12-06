@@ -20,14 +20,6 @@ type SessionController struct {
 	sessionPresenter presenters.SessionPresenter
 }
 
-func (c *SessionController) RegisterRoutes(e *echo.Echo) {
-	e.POST("/start", c.StartSession)
-	e.GET("/search", c.SearchSessions)
-	e.DELETE("/sessions/:sessionId", c.DeleteSession)
-	e.GET("/sessions/:sessionId", c.GetSession)
-	e.GET("/sessions", c.ListSessions)
-	e.GET("/sessions/:sessionId/monitor", c.MonitorSession)
-}
 
 // NewSessionController creates a new SessionController
 func NewSessionController(
