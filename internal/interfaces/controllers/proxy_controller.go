@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/proxy"
@@ -30,9 +29,9 @@ func NewProxyController(
 	}
 }
 
-func (pc *ProxyController) RegisterRoutes(router *mux.Router) {
+func (pc *ProxyController) RegisterRoutes(e *echo.Echo) {
 	// Session proxy routes - these handle routing requests to AgentAPI instances
-	router.PathPrefix("/{sessionId}/{path:.*}").HandlerFunc(pc.RouteToSession).Methods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+	e.Any("/:sessionId/*", pc.RouteToSession)
 }
 
 // StartAgentRequest represents the HTTP request body for starting an agent
@@ -192,14 +191,12 @@ func (pc *ProxyController) ListSessions(c echo.Context) error {
 }
 
 // RouteToSession handles routing requests to specific sessions
-func (pc *ProxyController) RouteToSession(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	sessionID := vars["sessionId"]
-	path := vars["path"]
+func (pc *ProxyController) RouteToSession(c echo.Context) error {
+	sessionID := c.Param("sessionId")
+	path := c.Param("*")
 
 	if sessionID == "" {
-		http.Error(w, "Session ID is required", http.StatusBadRequest)
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Session ID is required"})
 	}
 
 	// In a real implementation, this would:
@@ -211,18 +208,14 @@ func (pc *ProxyController) RouteToSession(w http.ResponseWriter, r *http.Request
 	// For now, return a placeholder response
 	_ = path // acknowledge the variable
 
-	switch r.Method {
+	switch c.Request().Method {
 	case "OPTIONS":
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.WriteHeader(http.StatusNoContent)
+		c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+		c.Response().Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		c.Response().Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		return c.NoContent(http.StatusNoContent)
 	default:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte(`{"message":"Request routed successfully"}`)); err != nil {
-			http.Error(w, "Failed to write response", http.StatusInternalServerError)
-		}
+		return c.JSON(http.StatusOK, map[string]string{"message": "Request routed successfully"})
 	}
 }
 

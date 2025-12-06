@@ -2,10 +2,9 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/mux"
+	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/auth"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
@@ -37,13 +36,13 @@ func NewAuthController(
 	}
 }
 
-func (c *AuthController) RegisterRoutes(router *mux.Router) {
-	router.HandleFunc("/auth/types", c.GetAuthTypes).Methods("GET")
-	router.HandleFunc("/auth/status", c.GetAuthStatus).Methods("GET")
-	router.HandleFunc("/auth/login", c.Login).Methods("POST")
-	router.HandleFunc("/auth/github", c.GitHubLogin).Methods("POST")
-	router.HandleFunc("/auth/validate", c.ValidateAPIKey).Methods("POST")
-	router.HandleFunc("/auth/logout", c.Logout).Methods("POST")
+func (c *AuthController) RegisterRoutes(e *echo.Echo) {
+	e.GET("/auth/types", c.GetAuthTypes)
+	e.GET("/auth/status", c.GetAuthStatus)
+	e.POST("/auth/login", c.Login)
+	e.POST("/auth/github", c.GitHubLogin)
+	e.POST("/auth/validate", c.ValidateAPIKey)
+	e.POST("/auth/logout", c.Logout)
 }
 
 // LoginRequest represents the HTTP request for user login
@@ -61,14 +60,14 @@ type GitHubLoginRequest struct {
 }
 
 // Login handles POST /auth/login
-func (c *AuthController) Login(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *AuthController) Login(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Parse request body
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.authPresenter.PresentError(w, "invalid request body", http.StatusBadRequest)
-		return
+	if err := ctx.Bind(&req); err != nil {
+		c.authPresenter.PresentError(ctx.Response(), "invalid request body", http.StatusBadRequest)
+		return nil
 	}
 
 	// Convert to credentials
@@ -85,25 +84,26 @@ func (c *AuthController) Login(w http.ResponseWriter, r *http.Request) {
 		Credentials: credentials,
 	}
 
-	response, err := c.authenticateUserUC.Execute(ctx, ucReq)
+	response, err := c.authenticateUserUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.authPresenter.PresentError(w, "authentication failed", http.StatusUnauthorized)
-		return
+		c.authPresenter.PresentError(ctx.Response(), "authentication failed", http.StatusUnauthorized)
+		return nil
 	}
 
 	// Present response
-	c.authPresenter.PresentAuthentication(w, response)
+	c.authPresenter.PresentAuthentication(ctx.Response(), response)
+	return nil
 }
 
 // GitHubLogin handles POST /auth/github
-func (c *AuthController) GitHubLogin(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *AuthController) GitHubLogin(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Parse request body
 	var req GitHubLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.authPresenter.PresentError(w, "invalid request body", http.StatusBadRequest)
-		return
+	if err := ctx.Bind(&req); err != nil {
+		c.authPresenter.PresentError(ctx.Response(), "invalid request body", http.StatusBadRequest)
+		return nil
 	}
 
 	// Execute use case
@@ -111,25 +111,26 @@ func (c *AuthController) GitHubLogin(w http.ResponseWriter, r *http.Request) {
 		Token: req.Token,
 	}
 
-	response, err := c.githubAuthenticateUC.Execute(ctx, ucReq)
+	response, err := c.githubAuthenticateUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.authPresenter.PresentError(w, "GitHub authentication failed", http.StatusUnauthorized)
-		return
+		c.authPresenter.PresentError(ctx.Response(), "GitHub authentication failed", http.StatusUnauthorized)
+		return nil
 	}
 
 	// Present response
-	c.authPresenter.PresentGitHubAuthentication(w, response)
+	c.authPresenter.PresentGitHubAuthentication(ctx.Response(), response)
+	return nil
 }
 
 // ValidateAPIKey handles POST /auth/validate
-func (c *AuthController) ValidateAPIKey(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *AuthController) ValidateAPIKey(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract API key from Authorization header
-	apiKey := extractAPIKeyFromHeader(r)
+	apiKey := extractAPIKeyFromHeader(ctx.Request())
 	if apiKey == "" {
-		c.authPresenter.PresentError(w, "API key is required", http.StatusBadRequest)
-		return
+		c.authPresenter.PresentError(ctx.Response(), "API key is required", http.StatusBadRequest)
+		return nil
 	}
 
 	// Execute use case
@@ -137,25 +138,27 @@ func (c *AuthController) ValidateAPIKey(w http.ResponseWriter, r *http.Request) 
 		APIKey: apiKey,
 	}
 
-	response, err := c.validateAPIKeyUC.Execute(ctx, ucReq)
+	response, err := c.validateAPIKeyUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.authPresenter.PresentError(w, "validation failed", http.StatusInternalServerError)
-		return
+		c.authPresenter.PresentError(ctx.Response(), "validation failed", http.StatusInternalServerError)
+		return nil
 	}
 
 	// Present response
-	c.authPresenter.PresentValidation(w, response)
+	c.authPresenter.PresentValidation(ctx.Response(), response)
+	return nil
 }
 
 // Logout handles POST /auth/logout
-func (c *AuthController) Logout(w http.ResponseWriter, r *http.Request) {
+func (c *AuthController) Logout(ctx echo.Context) error {
 	// In a stateless API with JWT/API keys, logout is typically handled client-side
 	// by discarding the token. For server-side token revocation, you would:
 	// 1. Extract the API key/token from the request
 	// 2. Add it to a blacklist/revocation list
 	// 3. Return success response
 
-	c.authPresenter.PresentLogout(w)
+	c.authPresenter.PresentLogout(ctx.Response())
+	return nil
 }
 
 type AuthTypesResponse struct {
@@ -163,16 +166,12 @@ type AuthTypesResponse struct {
 }
 
 // GetAuthTypes handles GET /auth/types
-func (c *AuthController) GetAuthTypes(w http.ResponseWriter, r *http.Request) {
+func (c *AuthController) GetAuthTypes(ctx echo.Context) error {
 	response := AuthTypesResponse{
 		Types: []string{"api_key", "github"},
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		c.authPresenter.PresentError(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	return ctx.JSON(http.StatusOK, response)
 }
 
 type AuthStatusResponse struct {
@@ -182,10 +181,10 @@ type AuthStatusResponse struct {
 }
 
 // GetAuthStatus handles GET /auth/status
-func (c *AuthController) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
+func (c *AuthController) GetAuthStatus(ctx echo.Context) error {
 	// Extract user info from context if available
-	ctx := r.Context()
-	userID, hasUserID := ctx.Value("userID").(string)
+	reqCtx := ctx.Request().Context()
+	userID, hasUserID := reqCtx.Value("userID").(string)
 
 	response := AuthStatusResponse{
 		Authenticated: hasUserID,
@@ -197,11 +196,7 @@ func (c *AuthController) GetAuthStatus(w http.ResponseWriter, r *http.Request) {
 		response.Method = &method
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		c.authPresenter.PresentError(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	return ctx.JSON(http.StatusOK, response)
 }
 
 // extractAPIKeyFromHeader extracts API key from Authorization header
@@ -242,13 +237,13 @@ func NewAuthMiddleware(
 }
 
 // Authenticate is a middleware that validates API keys and sets user context
-func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (m *AuthMiddleware) Authenticate(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(ctx echo.Context) error {
 		// Extract API key from request
-		apiKey := extractAPIKeyFromHeader(r)
+		apiKey := extractAPIKeyFromHeader(ctx.Request())
 		if apiKey == "" {
-			m.authPresenter.PresentError(w, "authentication required", http.StatusUnauthorized)
-			return
+			m.authPresenter.PresentError(ctx.Response(), "authentication required", http.StatusUnauthorized)
+			return nil
 		}
 
 		// Validate API key
@@ -256,10 +251,10 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			APIKey: apiKey,
 		}
 
-		response, err := m.validateAPIKeyUC.Execute(r.Context(), ucReq)
+		response, err := m.validateAPIKeyUC.Execute(ctx.Request().Context(), ucReq)
 		if err != nil || !response.Valid {
-			m.authPresenter.PresentError(w, "invalid API key", http.StatusUnauthorized)
-			return
+			m.authPresenter.PresentError(ctx.Response(), "invalid API key", http.StatusUnauthorized)
+			return nil
 		}
 
 		// Define context keys to avoid collisions
@@ -271,11 +266,14 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		)
 
 		// Add user to context
-		ctx := context.WithValue(r.Context(), userKey, response.User)
-		ctx = context.WithValue(ctx, userIDKey, response.User.ID())
-		ctx = context.WithValue(ctx, permissionsKey, response.Permissions)
+		reqCtx := context.WithValue(ctx.Request().Context(), userKey, response.User)
+		reqCtx = context.WithValue(reqCtx, userIDKey, response.User.ID())
+		reqCtx = context.WithValue(reqCtx, permissionsKey, response.Permissions)
+
+		// Set updated context
+		ctx.SetRequest(ctx.Request().WithContext(reqCtx))
 
 		// Call next handler
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+		return next(ctx)
+	}
 }

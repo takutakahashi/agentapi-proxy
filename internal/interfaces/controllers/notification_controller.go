@@ -1,10 +1,9 @@
 package controllers
 
 import (
-	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/mux"
+	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/notification"
@@ -30,12 +29,12 @@ func NewNotificationController(
 	}
 }
 
-func (c *NotificationController) RegisterRoutes(router *mux.Router) {
-	router.HandleFunc("/notification/subscribe", c.SubscribeNotifications).Methods("POST")
-	router.HandleFunc("/notification/subscribe", c.GetSubscriptions).Methods("GET")
-	router.HandleFunc("/notification/subscribe", c.DeleteSubscription).Methods("DELETE")
-	router.HandleFunc("/notifications/webhook", c.NotificationWebhook).Methods("POST")
-	router.HandleFunc("/notifications/history", c.GetNotificationHistory).Methods("GET")
+func (c *NotificationController) RegisterRoutes(e *echo.Echo) {
+	e.POST("/notification/subscribe", c.SubscribeNotifications)
+	e.GET("/notification/subscribe", c.GetSubscriptions)
+	e.DELETE("/notification/subscribe", c.DeleteSubscription)
+	e.POST("/notifications/webhook", c.NotificationWebhook)
+	e.GET("/notifications/history", c.GetNotificationHistory)
 }
 
 // SendNotificationRequest represents the HTTP request for sending a notification
@@ -55,21 +54,21 @@ type CreateSubscriptionRequest struct {
 }
 
 // SendNotification handles POST /notifications
-func (c *NotificationController) SendNotification(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *NotificationController) SendNotification(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract user ID from context
-	userID, ok := ctx.Value("userID").(entities.UserID)
+	userID, ok := reqCtx.Value("userID").(entities.UserID)
 	if !ok {
-		c.notificationPresenter.PresentError(w, "unauthorized", http.StatusUnauthorized)
-		return
+		c.notificationPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
+		return nil
 	}
 
 	// Parse request body
 	var req SendNotificationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.notificationPresenter.PresentError(w, "invalid request body", http.StatusBadRequest)
-		return
+	if err := ctx.Bind(&req); err != nil {
+		c.notificationPresenter.PresentError(ctx.Response(), "invalid request body", http.StatusBadRequest)
+		return nil
 	}
 
 	// Convert to use case request
@@ -83,32 +82,33 @@ func (c *NotificationController) SendNotification(w http.ResponseWriter, r *http
 	}
 
 	// Execute use case
-	response, err := c.sendNotificationUC.Execute(ctx, ucReq)
+	response, err := c.sendNotificationUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.notificationPresenter.PresentError(w, err.Error(), http.StatusInternalServerError)
-		return
+		c.notificationPresenter.PresentError(ctx.Response(), err.Error(), http.StatusInternalServerError)
+		return nil
 	}
 
 	// Present response
-	c.notificationPresenter.PresentSendNotification(w, response)
+	c.notificationPresenter.PresentSendNotification(ctx.Response(), response)
+	return nil
 }
 
 // CreateSubscription handles POST /subscriptions
-func (c *NotificationController) CreateSubscription(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *NotificationController) CreateSubscription(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract user ID from context
-	userID, ok := ctx.Value("userID").(entities.UserID)
+	userID, ok := reqCtx.Value("userID").(entities.UserID)
 	if !ok {
-		c.notificationPresenter.PresentError(w, "unauthorized", http.StatusUnauthorized)
-		return
+		c.notificationPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
+		return nil
 	}
 
 	// Parse request body
 	var req CreateSubscriptionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.notificationPresenter.PresentError(w, "invalid request body", http.StatusBadRequest)
-		return
+	if err := ctx.Bind(&req); err != nil {
+		c.notificationPresenter.PresentError(ctx.Response(), "invalid request body", http.StatusBadRequest)
+		return nil
 	}
 
 	// Convert to use case request
@@ -120,32 +120,37 @@ func (c *NotificationController) CreateSubscription(w http.ResponseWriter, r *ht
 	}
 
 	// Execute use case
-	response, err := c.manageSubscriptionUC.CreateSubscription(ctx, ucReq)
+	response, err := c.manageSubscriptionUC.CreateSubscription(reqCtx, ucReq)
 	if err != nil {
-		c.notificationPresenter.PresentError(w, err.Error(), http.StatusBadRequest)
-		return
+		c.notificationPresenter.PresentError(ctx.Response(), err.Error(), http.StatusBadRequest)
+		return nil
 	}
 
 	// Present response
-	c.notificationPresenter.PresentCreateSubscription(w, response)
+	c.notificationPresenter.PresentCreateSubscription(ctx.Response(), response)
+	return nil
 }
 
 // DeleteSubscription handles DELETE /subscriptions/{id}
-func (c *NotificationController) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *NotificationController) DeleteSubscription(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract user ID from context
-	userID, ok := ctx.Value("userID").(entities.UserID)
+	userID, ok := reqCtx.Value("userID").(entities.UserID)
 	if !ok {
-		c.notificationPresenter.PresentError(w, "unauthorized", http.StatusUnauthorized)
-		return
+		c.notificationPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
+		return nil
 	}
 
-	// Extract subscription ID from URL path
-	subscriptionID := extractSubscriptionID(r)
+	// Extract subscription ID from URL path or query parameter
+	subscriptionID := ctx.Param("id")
 	if subscriptionID == "" {
-		c.notificationPresenter.PresentError(w, "subscription ID is required", http.StatusBadRequest)
-		return
+		// Try to get from query parameter for DELETE /notification/subscribe
+		subscriptionID = ctx.QueryParam("subscription_id")
+	}
+	if subscriptionID == "" {
+		c.notificationPresenter.PresentError(ctx.Response(), "subscription ID is required", http.StatusBadRequest)
+		return nil
 	}
 
 	// Execute use case
@@ -154,52 +159,36 @@ func (c *NotificationController) DeleteSubscription(w http.ResponseWriter, r *ht
 		UserID:         userID,
 	}
 
-	response, err := c.manageSubscriptionUC.DeleteSubscription(ctx, ucReq)
+	response, err := c.manageSubscriptionUC.DeleteSubscription(reqCtx, ucReq)
 	if err != nil {
-		c.notificationPresenter.PresentError(w, err.Error(), http.StatusInternalServerError)
-		return
+		c.notificationPresenter.PresentError(ctx.Response(), err.Error(), http.StatusInternalServerError)
+		return nil
 	}
 
 	// Present response
-	c.notificationPresenter.PresentDeleteSubscription(w, response)
+	c.notificationPresenter.PresentDeleteSubscription(ctx.Response(), response)
+	return nil
 }
 
 // SubscribeNotifications handles POST /notification/subscribe
-func (c *NotificationController) SubscribeNotifications(w http.ResponseWriter, r *http.Request) {
-	c.CreateSubscription(w, r)
+func (c *NotificationController) SubscribeNotifications(ctx echo.Context) error {
+	return c.CreateSubscription(ctx)
 }
 
 // GetSubscriptions handles GET /notification/subscribe
-func (c *NotificationController) GetSubscriptions(w http.ResponseWriter, r *http.Request) {
+func (c *NotificationController) GetSubscriptions(ctx echo.Context) error {
 	// In a real implementation, this would list user's subscriptions
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(`[]`)); err != nil {
-		c.notificationPresenter.PresentError(w, "Failed to write response", http.StatusInternalServerError)
-	}
+	return ctx.JSON(http.StatusOK, []interface{}{})
 }
 
 // NotificationWebhook handles POST /notifications/webhook
-func (c *NotificationController) NotificationWebhook(w http.ResponseWriter, r *http.Request) {
+func (c *NotificationController) NotificationWebhook(ctx echo.Context) error {
 	// In a real implementation, this would process webhook notifications
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(`{"message":"Webhook processed successfully"}`)); err != nil {
-		c.notificationPresenter.PresentError(w, "Failed to write response", http.StatusInternalServerError)
-	}
+	return ctx.JSON(http.StatusOK, map[string]string{"message": "Webhook processed successfully"})
 }
 
 // GetNotificationHistory handles GET /notifications/history
-func (c *NotificationController) GetNotificationHistory(w http.ResponseWriter, r *http.Request) {
+func (c *NotificationController) GetNotificationHistory(ctx echo.Context) error {
 	// In a real implementation, this would return notification history
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(`[]`)); err != nil {
-		c.notificationPresenter.PresentError(w, "Failed to write response", http.StatusInternalServerError)
-	}
-}
-
-// extractSubscriptionID extracts subscription ID from URL path
-func extractSubscriptionID(r *http.Request) string {
-	// Placeholder implementation - use proper router in real applications
-	return "sub_123"
+	return ctx.JSON(http.StatusOK, []interface{}{})
 }

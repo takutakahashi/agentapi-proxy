@@ -2,9 +2,10 @@ package presenters
 
 import (
 	"encoding/json"
+	"net/http"
+
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/auth"
-	"net/http"
 )
 
 // AuthPresenter defines the interface for presenting authentication data

@@ -6,22 +6,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"net"
-	"net/http"
-	"net/http/httputil"
-	"net/url"
-	"os"
-	"os/exec"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
-	"syscall"
-	"time"
-
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
@@ -32,6 +16,19 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
 )
 
 //go:embed scripts/*
@@ -294,38 +291,11 @@ func (p *Proxy) setupRoutes() {
 	// Register session controller routes (includes both legacy and API v1 routes)
 	p.container.SessionController.RegisterRoutes(p.echo, p.container.AuthService)
 
-	// Note: The SessionController now handles:
-	// - Legacy routes: /start, /search (for backward compatibility with existing proxy routes)
-	// - Session routes: /sessions/* (standard RESTful session management)
-	// - API v1 routes: /api/v1/sessions/* (new versioned API)
-	//
-	// The following proxy-specific routes override the SessionController routes
-	// for actual process management (which is different from abstracted session management)
-	sessionReadMiddleware := auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService)
-	sessionCreateMiddleware := auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService)
-	sessionDeleteMiddleware := auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService)
+	// Register auth controller routes
+	p.container.AuthController.RegisterRoutes(p.echo)
 
-	p.echo.POST("/start", p.startAgentAPIServer, sessionCreateMiddleware)
-	p.echo.GET("/search", p.searchSessions, sessionReadMiddleware)
-	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, sessionDeleteMiddleware)
-
-	// Add authentication info routes
-	authInfoHandlers := NewAuthInfoHandlers(p.config)
-	p.echo.GET("/auth/types", authInfoHandlers.GetAuthTypes)
-	p.echo.GET("/auth/status", authInfoHandlers.GetAuthStatus)
-
-	// Add notification routes if service is available
-	if p.notificationSvc != nil {
-		notificationHandlers := NewNotificationHandlers(p.notificationSvc)
-		// UI-compatible routes (proxied from agentapi-ui)
-		p.echo.POST("/notification/subscribe", notificationHandlers.Subscribe, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-		p.echo.GET("/notification/subscribe", notificationHandlers.GetSubscriptions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-		p.echo.DELETE("/notification/subscribe", notificationHandlers.DeleteSubscription, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-
-		// Internal routes
-		p.echo.POST("/notifications/webhook", notificationHandlers.Webhook)
-		p.echo.GET("/notifications/history", notificationHandlers.GetHistory, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-	}
+	// Register notification controller routes
+	p.container.NotificationController.RegisterRoutes(p.echo)
 
 	// Add OAuth routes if OAuth is configured
 	log.Printf("[ROUTES] OAuth provider configured: %v", p.oauthProvider != nil)
@@ -356,333 +326,6 @@ func (p *Proxy) setupRoutes() {
 		return c.NoContent(http.StatusNoContent)
 	})
 	p.echo.Any("/:sessionId/*", p.routeToSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
-}
-
-// searchSessions handles GET /search requests to list and filter sessions
-func (p *Proxy) searchSessions(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
-	status := c.QueryParam("status")
-
-	// Determine userID for filtering based on authentication
-	var userID string
-	if user != nil && !user.IsAdmin() {
-		// Non-admin users can only see their own sessions
-		userID = string(user.ID())
-	}
-	// Admin users can see all sessions (userID remains empty for no filtering)
-
-	// Extract tag filters from query parameters
-	tagFilters := make(map[string]string)
-	for paramName, paramValues := range c.QueryParams() {
-		if strings.HasPrefix(paramName, "tag.") && len(paramValues) > 0 {
-			tagKey := strings.TrimPrefix(paramName, "tag.")
-			tagFilters[tagKey] = paramValues[0]
-		}
-	}
-
-	p.sessionsMutex.RLock()
-	defer p.sessionsMutex.RUnlock()
-
-	// First, collect matching sessions
-	matchingSessions := make([]*AgentSession, 0)
-
-	for _, session := range p.sessions {
-		// Apply user filtering based on role
-		if user != nil && !user.IsAdmin() && session.UserID != string(user.ID()) {
-			continue
-		}
-
-		// Apply filters
-		if userID != "" && session.UserID != userID {
-			continue
-		}
-		if status != "" && session.Status != status {
-			continue
-		}
-
-		// Apply tag filters
-		matchAllTags := true
-		for tagKey, tagValue := range tagFilters {
-			sessionTagValue, exists := session.Tags[tagKey]
-			if !exists || sessionTagValue != tagValue {
-				matchAllTags = false
-				break
-			}
-		}
-		if !matchAllTags {
-			continue
-		}
-
-		matchingSessions = append(matchingSessions, session)
-	}
-
-	// Sort sessions by creation time (newest first)
-	sort.Slice(matchingSessions, func(i, j int) bool {
-		return matchingSessions[i].StartedAt.After(matchingSessions[j].StartedAt)
-	})
-
-	// Convert sorted sessions to response format
-	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
-	for _, session := range matchingSessions {
-		sessionData := map[string]interface{}{
-			"session_id": session.ID,
-			"user_id":    session.UserID,
-			"status":     session.Status,
-			"started_at": session.StartedAt,
-			"port":       session.Port,
-			"tags":       session.Tags,
-		}
-		filteredSessions = append(filteredSessions, sessionData)
-	}
-
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"sessions": filteredSessions,
-	})
-}
-
-// deleteSession handles DELETE /sessions/:sessionId requests to terminate a session
-func (p *Proxy) deleteSession(c echo.Context) error {
-	sessionID := c.Param("sessionId")
-	clientIP := c.RealIP()
-
-	log.Printf("Request: DELETE /sessions/%s from %s", sessionID, clientIP)
-
-	if sessionID == "" {
-		log.Printf("Delete session failed: missing session ID from %s", clientIP)
-		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
-	}
-
-	p.sessionsMutex.RLock()
-	session, exists := p.sessions[sessionID]
-	sessionStatus := "unknown"
-	if exists {
-		sessionStatus = session.Status
-	}
-	p.sessionsMutex.RUnlock()
-
-	if !exists {
-		log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
-	}
-
-	// Check if user has access to this session
-	if !auth.UserOwnsSession(c, session.UserID) {
-		log.Printf("Delete session failed: user does not own session %s (requested by %s)", sessionID, clientIP)
-		return echo.NewHTTPError(http.StatusForbidden, "You can only delete your own sessions")
-	}
-
-	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
-		sessionID, sessionStatus, session.UserID, clientIP)
-
-	// Cancel the session context to trigger graceful shutdown
-	if session.Cancel != nil {
-		session.Cancel()
-		log.Printf("Successfully cancelled context for session %s", sessionID)
-	} else {
-		log.Printf("Warning: session %s had no cancel function", sessionID)
-	}
-
-	// Wait for session cleanup with timeout
-	maxWaitTime := 5 * time.Second
-	waitInterval := 50 * time.Millisecond
-	startTime := time.Now()
-
-	for {
-		// Check if session was actually cleaned up
-		p.sessionsMutex.RLock()
-		_, stillExists := p.sessions[sessionID]
-		p.sessionsMutex.RUnlock()
-
-		if !stillExists {
-			log.Printf("Session %s successfully removed from active sessions", sessionID)
-			break
-		}
-
-		// Check if we've exceeded the maximum wait time
-		if time.Since(startTime) >= maxWaitTime {
-			log.Printf("Warning: session %s still exists after %v, forcing removal", sessionID, maxWaitTime)
-
-			// Force remove the session from the map
-			p.sessionsMutex.Lock()
-			delete(p.sessions, sessionID)
-			p.sessionsMutex.Unlock()
-
-			break
-		}
-
-		time.Sleep(waitInterval)
-	}
-
-	log.Printf("Session %s deletion completed successfully", sessionID)
-
-	// Log session end with estimated message count
-	// Since we don't track actual message count, we'll use 0 as placeholder
-	if err := p.logger.LogSessionEnd(sessionID, 0); err != nil {
-		log.Printf("Failed to log session end for %s: %v", sessionID, err)
-	}
-
-	// Clean up session working directory only on explicit deletion
-	// Safety check: ensure sessionID is not empty
-	if sessionID != "" {
-		workDir := fmt.Sprintf("/home/agentapi/workdir/%s", sessionID)
-		if _, err := os.Stat(workDir); err == nil {
-			log.Printf("Removing session working directory: %s", workDir)
-			if err := os.RemoveAll(workDir); err != nil {
-				log.Printf("Failed to remove session working directory %s: %v", workDir, err)
-			} else {
-				log.Printf("Successfully removed session working directory: %s", workDir)
-			}
-		}
-	} else {
-		log.Printf("WARNING: Attempted to delete working directory with empty session ID - operation skipped")
-	}
-
-	// Return success response
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"message":    "Session terminated successfully",
-		"session_id": sessionID,
-		"status":     "terminated",
-	})
-}
-
-// startAgentAPIServer starts a new agentapi server instance and returns session ID
-func (p *Proxy) startAgentAPIServer(c echo.Context) error {
-	// Generate UUID for session
-	sessionID := uuid.New().String()
-
-	// Parse request body for environment variables and other parameters
-	var startReq StartRequest
-
-	// Try to parse JSON body, but don't fail if it's empty or invalid
-	if err := c.Bind(&startReq); err != nil {
-		if p.verbose {
-			log.Printf("Failed to parse request body (using defaults): %v", err)
-		}
-	}
-
-	// Get user_id from authenticated context
-	user := auth.GetUserFromContext(c)
-	var userID string
-	var userRole string
-	if user != nil {
-		userID = string(user.ID())
-		// Get first role or default to "user"
-		if len(user.Roles()) > 0 {
-			userRole = string(user.Roles()[0])
-		} else {
-			userRole = "user"
-		}
-	} else {
-		userID = "anonymous"
-		userRole = "guest"
-	}
-
-	// Get auth team env file from user context if available
-	var authTeamEnvFile string
-	if user != nil && user.EnvFile() != "" {
-		authTeamEnvFile = user.EnvFile()
-		log.Printf("[ENV] Auth team env file from user context: %s", authTeamEnvFile)
-	}
-
-	// Merge environment variables from multiple sources
-	envConfig := EnvMergeConfig{
-		RoleEnvFiles:    &p.config.RoleEnvFiles,
-		UserRole:        userRole,
-		TeamEnvFile:     ExtractTeamEnvFile(startReq.Tags),
-		AuthTeamEnvFile: authTeamEnvFile,
-		RequestEnv:      startReq.Environment,
-	}
-
-	mergedEnv, err := MergeEnvironmentVariables(envConfig)
-	if err != nil {
-		log.Printf("[ENV] Failed to merge environment variables: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to merge environment variables")
-	}
-
-	// Replace the request environment with merged values
-	startReq.Environment = mergedEnv
-
-	// Debug log merged environment variables
-	if len(mergedEnv) > 0 {
-		log.Printf("[ENV] Merged environment variables (%d):", len(mergedEnv))
-		for key, value := range mergedEnv {
-			log.Printf("[ENV]   %s=%s", key, value)
-		}
-	}
-
-	// Find available port
-	port, err := p.getAvailablePort()
-	if err != nil {
-		log.Printf("Failed to find available port: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to allocate port")
-	}
-
-	// Extract repository information from tags
-	repoInfo := p.extractRepositoryInfo(sessionID, startReq.Tags)
-
-	// Determine which script to use based on request parameters
-	scriptName := p.selectScript(c, scriptCache, startReq.Tags)
-
-	// Determine initial message - check tags.message first, then startReq.Message
-	var initialMessage string
-	if startReq.Tags != nil {
-		if msg, exists := startReq.Tags["message"]; exists && msg != "" {
-			initialMessage = msg
-		}
-	}
-	if initialMessage == "" && startReq.Message != "" {
-		initialMessage = startReq.Message
-	}
-
-	// Start agentapi server in goroutine
-	ctx, cancel := context.WithCancel(context.Background())
-
-	session := &AgentSession{
-		ID:          sessionID,
-		Port:        port,
-		Cancel:      cancel,
-		StartedAt:   time.Now(),
-		UserID:      userID,
-		Status:      "active",
-		Environment: startReq.Environment,
-		Tags:        startReq.Tags,
-	}
-
-	// Store session
-	p.sessionsMutex.Lock()
-	p.sessions[sessionID] = session
-	p.sessionsMutex.Unlock()
-
-	log.Printf("[SESSION_CREATED] ID: %s, Port: %d, User: %s, Tags: %v",
-		sessionID, port, userID, startReq.Tags)
-
-	log.Printf("session: %+v", session)
-	log.Printf("scriptName: %s", scriptName)
-
-	// Log session start
-	repository := ""
-	if repoInfo != nil {
-		repository = repoInfo.FullName
-	}
-	if err := p.logger.LogSessionStart(sessionID, repository); err != nil {
-		log.Printf("Failed to log session start for %s: %v", sessionID, err)
-	}
-
-	// Start agentapi server in goroutine
-	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo, initialMessage)
-
-	if p.verbose {
-		if scriptName != "" {
-			log.Printf("Started agentapi server for session %s on port %d using script %s", sessionID, port, scriptName)
-		} else {
-			log.Printf("Started agentapi server for session %s on port %d using direct command", sessionID, port)
-		}
-	}
-
-	// Return session ID according to API specification
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"session_id": sessionID,
-	})
 }
 
 // routeToSession routes requests to the appropriate agentapi server instance
