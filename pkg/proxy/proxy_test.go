@@ -79,7 +79,7 @@ func TestExtractRepoFullNameFromURLFixed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractRepoFullNameFromURL(tt.url)
+			result, _ := extractRepoFullNameFromURL(tt.url)
 			if result != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, result)
 			}
