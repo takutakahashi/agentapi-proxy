@@ -53,6 +53,35 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				return next(c)
 			}
 
+			// Handle legacy endpoints with relaxed authentication
+			if isLegacyEndpoint(path) {
+				log.Printf("Legacy endpoint authentication for: %s", path)
+
+				var user *entities.User
+				var err error
+
+				// Try authentication but don't fail if no credentials provided
+				if cfg.Auth.Static != nil && cfg.Auth.Static.Enabled {
+					if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
+						c.Set("internal_user", user)
+						log.Printf("API key authentication successful for legacy endpoint: user %s", user.ID())
+						return next(c)
+					}
+				}
+
+				if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
+					if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
+						c.Set("internal_user", user)
+						log.Printf("GitHub authentication successful for legacy endpoint: user %s", user.ID())
+						return next(c)
+					}
+				}
+
+				// For legacy endpoints, continue without authentication
+				log.Printf("Legacy endpoint accessed without authentication: %s from %s", path, c.RealIP())
+				return next(c)
+			}
+
 			var user *entities.User
 			var err error
 
@@ -231,6 +260,21 @@ func isOAuthEndpoint(path string) bool {
 
 	for _, oauthPath := range oauthPaths {
 		if strings.HasPrefix(path, oauthPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// isLegacyEndpoint checks if the given path is a legacy endpoint that should skip auth
+func isLegacyEndpoint(path string) bool {
+	legacyPaths := []string{
+		"/start",
+		"/search",
+	}
+
+	for _, legacyPath := range legacyPaths {
+		if path == legacyPath {
 			return true
 		}
 	}

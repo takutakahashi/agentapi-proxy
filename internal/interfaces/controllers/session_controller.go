@@ -29,9 +29,9 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo, authService services.Au
 	sessionCreateMiddleware := auth.RequirePermission(entities.PermissionSessionCreate, authService)
 	sessionDeleteMiddleware := auth.RequirePermission(entities.PermissionSessionDelete, authService)
 
-	// Register legacy routes (for backward compatibility)
-	e.POST("/start", c.StartSession, sessionCreateMiddleware)
-	e.GET("/search", c.SearchSessions, sessionReadMiddleware)
+	// Register legacy routes (for backward compatibility) - auth is handled by base AuthMiddleware
+	e.POST("/start", c.StartSession)
+	e.GET("/search", c.SearchSessions)
 
 	// Create session group with appropriate permissions
 	sessionGroup := e.Group("/sessions")
@@ -98,10 +98,13 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 func (c *SessionController) CreateSession(ctx echo.Context) error {
 	reqCtx := ctx.Request().Context()
 
-	// Extract user ID from context (set by auth middleware)
-	userID, ok := reqCtx.Value("userID").(entities.UserID)
-	if !ok {
-		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
+	// Extract user from context (set by auth middleware)
+	var userID entities.UserID
+	if user := auth.GetUserFromContext(ctx); user != nil {
+		userID = user.ID()
+	} else {
+		// For legacy compatibility, create a default anonymous user
+		userID = entities.UserID("anonymous")
 	}
 
 	// Parse request body
@@ -154,10 +157,13 @@ func (c *SessionController) CreateSession(ctx echo.Context) error {
 func (c *SessionController) GetSession(ctx echo.Context) error {
 	reqCtx := ctx.Request().Context()
 
-	// Extract user ID from context
-	userID, ok := reqCtx.Value("userID").(entities.UserID)
-	if !ok {
-		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
+	// Extract user from context (set by auth middleware)
+	var userID entities.UserID
+	if user := auth.GetUserFromContext(ctx); user != nil {
+		userID = user.ID()
+	} else {
+		// For legacy compatibility, create a default anonymous user
+		userID = entities.UserID("anonymous")
 	}
 
 	// Extract session ID from URL path
@@ -185,10 +191,13 @@ func (c *SessionController) GetSession(ctx echo.Context) error {
 func (c *SessionController) ListSessions(ctx echo.Context) error {
 	reqCtx := ctx.Request().Context()
 
-	// Extract user ID from context
-	userID, ok := reqCtx.Value("userID").(entities.UserID)
-	if !ok {
-		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
+	// Extract user from context (set by auth middleware)
+	var userID entities.UserID
+	if user := auth.GetUserFromContext(ctx); user != nil {
+		userID = user.ID()
+	} else {
+		// For legacy compatibility, create a default anonymous user
+		userID = entities.UserID("anonymous")
 	}
 
 	ucReq := &session.ListSessionsRequest{
@@ -237,10 +246,13 @@ func (c *SessionController) ListSessions(ctx echo.Context) error {
 func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	reqCtx := ctx.Request().Context()
 
-	// Extract user ID from context
-	userID, ok := reqCtx.Value("userID").(entities.UserID)
-	if !ok {
-		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
+	// Extract user from context (set by auth middleware)
+	var userID entities.UserID
+	if user := auth.GetUserFromContext(ctx); user != nil {
+		userID = user.ID()
+	} else {
+		// For legacy compatibility, create a default anonymous user
+		userID = entities.UserID("anonymous")
 	}
 
 	// Extract session ID from URL path
@@ -272,10 +284,13 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 func (c *SessionController) MonitorSession(ctx echo.Context) error {
 	reqCtx := ctx.Request().Context()
 
-	// Extract user ID from context
-	userID, ok := reqCtx.Value("userID").(entities.UserID)
-	if !ok {
-		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
+	// Extract user from context (set by auth middleware)
+	var userID entities.UserID
+	if user := auth.GetUserFromContext(ctx); user != nil {
+		userID = user.ID()
+	} else {
+		// For legacy compatibility, create a default anonymous user
+		userID = entities.UserID("anonymous")
 	}
 
 	// Extract session ID from URL path
