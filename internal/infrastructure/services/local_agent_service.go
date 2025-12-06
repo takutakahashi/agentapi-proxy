@@ -67,7 +67,11 @@ func (s *LocalAgentService) StartAgent(ctx context.Context, config *services.Age
 
 	// Create process info
 	startedAt := time.Now()
-	processInfo := entities.NewProcessInfo(cmd.Process.Pid, startedAt)
+	processInfo := &entities.ProcessInfo{
+		PID:     cmd.Process.Pid,
+		Command: cmd.Args,
+		Port:    entities.Port(config.Port),
+	}
 
 	// Store process for management
 	s.processes[cmd.Process.Pid] = &LocalProcess{
@@ -81,7 +85,7 @@ func (s *LocalAgentService) StartAgent(ctx context.Context, config *services.Age
 
 // StopAgent stops an existing agent process
 func (s *LocalAgentService) StopAgent(ctx context.Context, processInfo *entities.ProcessInfo) error {
-	pid := processInfo.PID()
+	pid := processInfo.PID
 
 	// Find the process
 	localProcess, exists := s.processes[pid]
@@ -120,7 +124,7 @@ func (s *LocalAgentService) StopAgent(ctx context.Context, processInfo *entities
 
 // GetAgentStatus checks the status of an agent process
 func (s *LocalAgentService) GetAgentStatus(ctx context.Context, processInfo *entities.ProcessInfo) (services.ProcessStatus, error) {
-	pid := processInfo.PID()
+	pid := processInfo.PID
 
 	// Check if process exists in our tracking
 	if localProcess, exists := s.processes[pid]; exists {
@@ -167,7 +171,7 @@ func (s *LocalAgentService) GetAvailablePort(ctx context.Context, startPort, end
 
 // KillProcess forcefully terminates a process
 func (s *LocalAgentService) KillProcess(ctx context.Context, processInfo *entities.ProcessInfo) error {
-	pid := processInfo.PID()
+	pid := processInfo.PID
 
 	// Find the process
 	localProcess, exists := s.processes[pid]

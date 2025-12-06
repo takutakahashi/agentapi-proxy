@@ -118,7 +118,7 @@ func (p *HTTPNotificationPresenter) PresentDeleteSubscription(w http.ResponseWri
 
 // PresentError presents an error response
 func (p *HTTPNotificationPresenter) PresentError(w http.ResponseWriter, message string, statusCode int) {
-	errorResp := &ErrorResponse{
+	errorResp := &entities.ErrorResponse{
 		Error:   http.StatusText(statusCode),
 		Message: message,
 	}

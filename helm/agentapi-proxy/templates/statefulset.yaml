@@ -30,7 +30,7 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       initContainers:
-        {{- if or .Values.persistence.enabled .Values.myclaudesPersistence.enabled }}
+        {{- if .Values.myclaudesPersistence.enabled }}
         - name: fix-permissions
           image: busybox:1.35
           command:
@@ -40,15 +40,6 @@ spec:
               echo "Checking PVC permissions for uid:gid 999:999..."
               NEED_FIX=false
               
-              {{- if .Values.persistence.enabled }}
-              echo "Testing write access to /home/agentapi/workdir..."
-              if ! su -s /bin/sh -c "touch /home/agentapi/workdir/.write_test && rm -f /home/agentapi/workdir/.write_test" 999 2>/dev/null; then
-                echo "Write test failed for /home/agentapi/workdir, need to fix permissions"
-                NEED_FIX=true
-              else
-                echo "Write test passed for /home/agentapi/workdir"
-              fi
-              {{- end }}
               
               {{- if .Values.myclaudesPersistence.enabled }}
               echo "Testing write access to /home/agentapi/.agentapi-proxy/myclaudes..."
@@ -63,13 +54,6 @@ spec:
               
               if [ "$NEED_FIX" = "true" ]; then
                 echo "Fixing PVC permissions..."
-                {{- if .Values.persistence.enabled }}
-                if [ -d "/home/agentapi/workdir" ]; then
-                  chown -R 999:999 /home/agentapi/workdir || echo "Warning: Failed to change ownership of workdir"
-                  chmod -R 755 /home/agentapi/workdir || echo "Warning: Failed to change permissions of workdir"
-                  echo "Fixed permissions for /home/agentapi/workdir"
-                fi
-                {{- end }}
                 {{- if .Values.myclaudesPersistence.enabled }}
                 if [ -d "/home/agentapi/.agentapi-proxy/myclaudes" ]; then
                   chown -R 999:999 /home/agentapi/.agentapi-proxy || echo "Warning: Failed to change ownership of myclaudes"
@@ -82,10 +66,6 @@ spec:
                 echo "No permission fix needed"
               fi
           volumeMounts:
-            {{- if .Values.persistence.enabled }}
-            - name: data
-              mountPath: /home/agentapi/workdir
-            {{- end }}
             {{- if .Values.myclaudesPersistence.enabled }}
             - name: myclaudes-data
               mountPath: /home/agentapi/.agentapi-proxy/myclaudes
@@ -135,46 +115,6 @@ spec:
               value: {{ .Values.config.startPort | quote }}
             - name: AGENTAPI_ENABLE_MULTIPLE_USERS
               value: {{ .Values.config.enableMultipleUsers | quote }}
-            - name: AGENTAPI_PERSISTENCE_ENABLED
-              value: {{ .Values.config.persistence.enabled | quote }}
-            - name: AGENTAPI_PERSISTENCE_BACKEND
-              value: {{ .Values.config.persistence.backend | quote }}
-            - name: AGENTAPI_PERSISTENCE_FILE_PATH
-              value: {{ .Values.config.persistence.filePath | quote }}
-            - name: AGENTAPI_PERSISTENCE_SYNC_INTERVAL_SECONDS
-              value: {{ .Values.config.persistence.syncIntervalSeconds | quote }}
-            - name: AGENTAPI_PERSISTENCE_ENCRYPT_SENSITIVE_DATA
-              value: {{ .Values.config.persistence.encryptSensitiveData | quote }}
-            - name: AGENTAPI_PERSISTENCE_SESSION_RECOVERY_MAX_AGE_HOURS
-              value: {{ .Values.config.persistence.sessionRecoveryMaxAgeHours | quote }}
-            {{- if .Values.config.persistence.s3.bucket }}
-            - name: AGENTAPI_PERSISTENCE_S3_BUCKET
-              value: {{ .Values.config.persistence.s3.bucket | quote }}
-            {{- end }}
-            {{- if .Values.config.persistence.s3.region }}
-            - name: AGENTAPI_PERSISTENCE_S3_REGION
-              value: {{ .Values.config.persistence.s3.region | quote }}
-            {{- end }}
-            {{- if .Values.config.persistence.s3.prefix }}
-            - name: AGENTAPI_PERSISTENCE_S3_PREFIX
-              value: {{ .Values.config.persistence.s3.prefix | quote }}
-            {{- end }}
-            {{- if .Values.config.persistence.s3.endpoint }}
-            - name: AGENTAPI_PERSISTENCE_S3_ENDPOINT
-              value: {{ .Values.config.persistence.s3.endpoint | quote }}
-            {{- end }}
-            {{- if and .Values.config.persistence.s3.accessKey .Values.config.persistence.s3.secretKey }}
-            - name: AGENTAPI_PERSISTENCE_S3_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "agentapi-proxy.fullname" . }}-s3-credentials
-                  key: access-key
-            - name: AGENTAPI_PERSISTENCE_S3_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "agentapi-proxy.fullname" . }}-s3-credentials
-                  key: secret-key
-            {{- end }}
             - name: AGENTAPI_AUTH_ENABLED
               value: {{ .Values.config.auth.enabled | quote }}
             - name: AGENTAPI_AUTH_STATIC_ENABLED
@@ -249,10 +189,6 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- if .Values.persistence.enabled }}
-            - name: data
-              mountPath: /home/agentapi/workdir
-            {{- end }}
             {{- if .Values.myclaudesPersistence.enabled }}
             - name: myclaudes-data
               mountPath: /home/agentapi/.agentapi-proxy/myclaudes
@@ -328,21 +264,8 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+  {{- if .Values.myclaudesPersistence.enabled }}
   volumeClaimTemplates:
-    {{- if .Values.persistence.enabled }}
-    - metadata:
-        name: data
-      spec:
-        accessModes:
-          - {{ .Values.persistence.accessMode }}
-        resources:
-          requests:
-            storage: {{ .Values.persistence.size }}
-        {{- if .Values.persistence.storageClassName }}
-        storageClassName: {{ .Values.persistence.storageClassName }}
-        {{- end }}
-    {{- end }}
-    {{- if .Values.myclaudesPersistence.enabled }}
     - metadata:
         name: myclaudes-data
       spec:
@@ -354,4 +277,4 @@ spec:
         {{- if .Values.myclaudesPersistence.storageClassName }}
         storageClassName: {{ .Values.myclaudesPersistence.storageClassName }}
         {{- end }}
-    {{- end }}
+  {{- end }}

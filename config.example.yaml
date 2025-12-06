@@ -36,14 +36,5 @@ auth:
       scope: "read:user read:org"
       base_url: ""  # Defaults to auth.github.base_url
 
-# Session persistence configuration
-persistence:
-  enabled: false
-  backend: "file"  # Options: file, sqlite, postgres
-  file_path: "./sessions.json"
-  sync_interval_seconds: 30
-  encrypt_sensitive_data: true
-  session_recovery_max_age_hours: 24
-
 # Enable user-specific directory isolation
 enable_multiple_users: false
