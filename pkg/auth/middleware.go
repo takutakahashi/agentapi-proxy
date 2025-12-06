@@ -291,16 +291,24 @@ func isLegacyEndpoint(path string) bool {
 
 // hasAPIKeyCredentials checks if API key credentials are provided
 func hasAPIKeyCredentials(c echo.Context, cfg *config.Config) bool {
-	// Check custom header
-	if cfg.Auth.Static != nil && cfg.Auth.Static.HeaderName != "" {
+	// Check custom header first (higher priority)
+	if cfg.Auth.Static != nil && cfg.Auth.Static.HeaderName != "" && cfg.Auth.Static.HeaderName != "Authorization" {
 		if c.Request().Header.Get(cfg.Auth.Static.HeaderName) != "" {
 			return true
 		}
 	}
 
-	// Check Authorization header (Bearer token)
+	// Check Authorization header only if GitHub is not using it
 	authHeader := c.Request().Header.Get("Authorization")
-	return authHeader != ""
+	if authHeader != "" {
+		// Don't treat Authorization header as API key if GitHub auth is enabled and also uses Authorization header
+		if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled && cfg.Auth.GitHub.TokenHeader == "Authorization" {
+			return false
+		}
+		return true
+	}
+
+	return false
 }
 
 // hasGitHubCredentials checks if GitHub credentials are provided
