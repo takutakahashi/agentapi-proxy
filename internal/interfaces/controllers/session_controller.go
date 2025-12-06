@@ -24,7 +24,7 @@ type SessionController struct {
 
 // RegisterRoutes registers session routes with authentication middleware
 func (c *SessionController) RegisterRoutes(e *echo.Echo, authService services.AuthService) {
-	// Create middleware for different permissions
+	// Create middleware for different permissions (these will check auth config internally)
 	sessionReadMiddleware := auth.RequirePermission(entities.PermissionSessionRead, authService)
 	sessionCreateMiddleware := auth.RequirePermission(entities.PermissionSessionCreate, authService)
 	sessionDeleteMiddleware := auth.RequirePermission(entities.PermissionSessionDelete, authService)
@@ -48,6 +48,36 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo, authService services.Au
 	apiV1.GET("/sessions/:sessionId", c.GetSession, sessionReadMiddleware)
 	apiV1.GET("/sessions", c.ListSessions, sessionReadMiddleware)
 	apiV1.GET("/sessions/:sessionId/monitor", c.MonitorSession, sessionReadMiddleware)
+
+	// Debug endpoint to check auth status (no middleware for testing)
+	apiV1.GET("/debug/auth", c.DebugAuth)
+}
+
+// DebugAuth is a debug endpoint to check authentication status
+func (c *SessionController) DebugAuth(ctx echo.Context) error {
+	// Check if config is available
+	cfg := auth.GetConfigFromContext(ctx)
+	if cfg == nil {
+		return ctx.JSON(200, map[string]interface{}{
+			"status":  "error",
+			"message": "No config found in context",
+		})
+	}
+
+	// Check if user is authenticated
+	user := auth.GetUserFromContext(ctx)
+
+	return ctx.JSON(200, map[string]interface{}{
+		"status":             "ok",
+		"auth_enabled":       cfg.Auth.Enabled,
+		"user_authenticated": user != nil,
+		"user_id": func() string {
+			if user != nil {
+				return string(user.ID())
+			}
+			return ""
+		}(),
+	})
 }
 
 // NewSessionController creates a new SessionController
