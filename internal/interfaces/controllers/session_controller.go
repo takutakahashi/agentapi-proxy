@@ -1,11 +1,10 @@
 package controllers
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
-	"github.com/gorilla/mux"
+	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/presenters"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
@@ -21,13 +20,13 @@ type SessionController struct {
 	sessionPresenter presenters.SessionPresenter
 }
 
-func (c *SessionController) RegisterRoutes(router *mux.Router) {
-	router.HandleFunc("/start", c.StartSession).Methods("POST")
-	router.HandleFunc("/search", c.SearchSessions).Methods("GET")
-	router.HandleFunc("/sessions/{sessionId}", c.DeleteSession).Methods("DELETE")
-	router.HandleFunc("/sessions/{sessionId}", c.GetSession).Methods("GET")
-	router.HandleFunc("/sessions", c.ListSessions).Methods("GET")
-	router.HandleFunc("/sessions/{sessionId}/monitor", c.MonitorSession).Methods("GET")
+func (c *SessionController) RegisterRoutes(e *echo.Echo) {
+	e.POST("/start", c.StartSession)
+	e.GET("/search", c.SearchSessions)
+	e.DELETE("/sessions/:sessionId", c.DeleteSession)
+	e.GET("/sessions/:sessionId", c.GetSession)
+	e.GET("/sessions", c.ListSessions)
+	e.GET("/sessions/:sessionId/monitor", c.MonitorSession)
 }
 
 // NewSessionController creates a new SessionController
@@ -65,31 +64,29 @@ type RepositoryRequest struct {
 }
 
 // StartSession handles POST /start
-func (c *SessionController) StartSession(w http.ResponseWriter, r *http.Request) {
-	c.CreateSession(w, r)
+func (c *SessionController) StartSession(ctx echo.Context) error {
+	return c.CreateSession(ctx)
 }
 
 // SearchSessions handles GET /search
-func (c *SessionController) SearchSessions(w http.ResponseWriter, r *http.Request) {
-	c.ListSessions(w, r)
+func (c *SessionController) SearchSessions(ctx echo.Context) error {
+	return c.ListSessions(ctx)
 }
 
 // CreateSession handles POST /sessions
-func (c *SessionController) CreateSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *SessionController) CreateSession(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract user ID from context (set by auth middleware)
-	userID, ok := ctx.Value("userID").(entities.UserID)
+	userID, ok := reqCtx.Value("userID").(entities.UserID)
 	if !ok {
-		c.sessionPresenter.PresentError(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
 	}
 
 	// Parse request body
 	var req CreateSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.sessionPresenter.PresentError(w, "invalid request body", http.StatusBadRequest)
-		return
+	if err := ctx.Bind(&req); err != nil {
+		return c.sessionPresenter.PresentError(ctx.Response(), "invalid request body", http.StatusBadRequest)
 	}
 
 	// Convert to use case request
@@ -103,13 +100,11 @@ func (c *SessionController) CreateSession(w http.ResponseWriter, r *http.Request
 	if req.Repository != nil {
 		repo, err := entities.NewRepository(entities.RepositoryURL(req.Repository.URL))
 		if err != nil {
-			c.sessionPresenter.PresentError(w, "invalid repository: "+err.Error(), http.StatusBadRequest)
-			return
+			return c.sessionPresenter.PresentError(ctx.Response(), "invalid repository: "+err.Error(), http.StatusBadRequest)
 		}
 		if req.Repository.Branch != "" {
 			if err := repo.SetBranch(req.Repository.Branch); err != nil {
-				c.sessionPresenter.PresentError(w, "invalid branch: "+err.Error(), http.StatusBadRequest)
-				return
+				return c.sessionPresenter.PresentError(ctx.Response(), "invalid branch: "+err.Error(), http.StatusBadRequest)
 			}
 		}
 		if req.Repository.Token != "" {
@@ -125,32 +120,29 @@ func (c *SessionController) CreateSession(w http.ResponseWriter, r *http.Request
 	}
 
 	// Execute use case
-	response, err := c.createSessionUC.Execute(ctx, ucReq)
+	response, err := c.createSessionUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.sessionPresenter.PresentError(w, err.Error(), http.StatusInternalServerError)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), err.Error(), http.StatusInternalServerError)
 	}
 
 	// Present response
-	c.sessionPresenter.PresentCreateSession(w, response)
+	return c.sessionPresenter.PresentCreateSession(ctx.Response(), response)
 }
 
 // GetSession handles GET /sessions/{id}
-func (c *SessionController) GetSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *SessionController) GetSession(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract user ID from context
-	userID, ok := ctx.Value("userID").(entities.UserID)
+	userID, ok := reqCtx.Value("userID").(entities.UserID)
 	if !ok {
-		c.sessionPresenter.PresentError(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
 	}
 
 	// Extract session ID from URL path
-	sessionID := extractSessionID(r)
+	sessionID := ctx.Param("sessionId")
 	if sessionID == "" {
-		c.sessionPresenter.PresentError(w, "session ID is required", http.StatusBadRequest)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), "session ID is required", http.StatusBadRequest)
 	}
 
 	// Execute use case
@@ -159,94 +151,85 @@ func (c *SessionController) GetSession(w http.ResponseWriter, r *http.Request) {
 		UserID:    userID,
 	}
 
-	response, err := c.getSessionByIDUC.Execute(ctx, ucReq)
+	response, err := c.getSessionByIDUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.sessionPresenter.PresentError(w, err.Error(), http.StatusNotFound)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), err.Error(), http.StatusNotFound)
 	}
 
 	// Present response
-	c.sessionPresenter.PresentSession(w, response.Session)
+	return c.sessionPresenter.PresentSession(ctx.Response(), response.Session)
 }
 
 // ListSessions handles GET /sessions
-func (c *SessionController) ListSessions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *SessionController) ListSessions(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract user ID from context
-	userID, ok := ctx.Value("userID").(entities.UserID)
+	userID, ok := reqCtx.Value("userID").(entities.UserID)
 	if !ok {
-		c.sessionPresenter.PresentError(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
 	}
-
-	// Parse query parameters
-	query := r.URL.Query()
 
 	ucReq := &session.ListSessionsRequest{
 		UserID: userID,
 	}
 
 	// Parse status filter
-	if statusStr := query.Get("status"); statusStr != "" {
+	if statusStr := ctx.QueryParam("status"); statusStr != "" {
 		status := entities.SessionStatus(statusStr)
 		ucReq.Status = &status
 	}
 
 	// Parse limit and offset
-	if limitStr := query.Get("limit"); limitStr != "" {
+	if limitStr := ctx.QueryParam("limit"); limitStr != "" {
 		if limit, err := strconv.Atoi(limitStr); err == nil {
 			ucReq.Limit = limit
 		}
 	}
 
-	if offsetStr := query.Get("offset"); offsetStr != "" {
+	if offsetStr := ctx.QueryParam("offset"); offsetStr != "" {
 		if offset, err := strconv.Atoi(offsetStr); err == nil {
 			ucReq.Offset = offset
 		}
 	}
 
 	// Parse sort parameters
-	if sortBy := query.Get("sort_by"); sortBy != "" {
+	if sortBy := ctx.QueryParam("sort_by"); sortBy != "" {
 		ucReq.SortBy = session.SortField(sortBy)
 	}
 
-	if sortOrder := query.Get("sort_order"); sortOrder != "" {
+	if sortOrder := ctx.QueryParam("sort_order"); sortOrder != "" {
 		ucReq.SortOrder = session.SortOrder(sortOrder)
 	}
 
 	// Execute use case
-	response, err := c.listSessionsUC.Execute(ctx, ucReq)
+	response, err := c.listSessionsUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.sessionPresenter.PresentError(w, err.Error(), http.StatusInternalServerError)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), err.Error(), http.StatusInternalServerError)
 	}
 
 	// Present response
-	c.sessionPresenter.PresentSessionList(w, response)
+	return c.sessionPresenter.PresentSessionList(ctx.Response(), response)
 }
 
 // DeleteSession handles DELETE /sessions/{id}
-func (c *SessionController) DeleteSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *SessionController) DeleteSession(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract user ID from context
-	userID, ok := ctx.Value("userID").(entities.UserID)
+	userID, ok := reqCtx.Value("userID").(entities.UserID)
 	if !ok {
-		c.sessionPresenter.PresentError(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
 	}
 
 	// Extract session ID from URL path
-	sessionID := extractSessionID(r)
+	sessionID := ctx.Param("sessionId")
 	if sessionID == "" {
-		c.sessionPresenter.PresentError(w, "session ID is required", http.StatusBadRequest)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), "session ID is required", http.StatusBadRequest)
 	}
 
 	// Parse query parameters
-	query := r.URL.Query()
-	force := query.Get("force") == "true"
+	force := ctx.QueryParam("force") == "true"
 
 	// Execute use case
 	ucReq := &session.DeleteSessionRequest{
@@ -255,32 +238,29 @@ func (c *SessionController) DeleteSession(w http.ResponseWriter, r *http.Request
 		Force:     force,
 	}
 
-	response, err := c.deleteSessionUC.Execute(ctx, ucReq)
+	response, err := c.deleteSessionUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.sessionPresenter.PresentError(w, err.Error(), http.StatusInternalServerError)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), err.Error(), http.StatusInternalServerError)
 	}
 
 	// Present response
-	c.sessionPresenter.PresentDeleteSession(w, response)
+	return c.sessionPresenter.PresentDeleteSession(ctx.Response(), response)
 }
 
 // MonitorSession handles GET /sessions/{id}/monitor
-func (c *SessionController) MonitorSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+func (c *SessionController) MonitorSession(ctx echo.Context) error {
+	reqCtx := ctx.Request().Context()
 
 	// Extract user ID from context
-	userID, ok := ctx.Value("userID").(entities.UserID)
+	userID, ok := reqCtx.Value("userID").(entities.UserID)
 	if !ok {
-		c.sessionPresenter.PresentError(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), "unauthorized", http.StatusUnauthorized)
 	}
 
 	// Extract session ID from URL path
-	sessionID := extractSessionID(r)
+	sessionID := ctx.Param("sessionId")
 	if sessionID == "" {
-		c.sessionPresenter.PresentError(w, "session ID is required", http.StatusBadRequest)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), "session ID is required", http.StatusBadRequest)
 	}
 
 	// Execute use case
@@ -289,18 +269,11 @@ func (c *SessionController) MonitorSession(w http.ResponseWriter, r *http.Reques
 		UserID:    userID,
 	}
 
-	response, err := c.monitorSessionUC.Execute(ctx, ucReq)
+	response, err := c.monitorSessionUC.Execute(reqCtx, ucReq)
 	if err != nil {
-		c.sessionPresenter.PresentError(w, err.Error(), http.StatusInternalServerError)
-		return
+		return c.sessionPresenter.PresentError(ctx.Response(), err.Error(), http.StatusInternalServerError)
 	}
 
 	// Present response
-	c.sessionPresenter.PresentMonitorSession(w, response)
-}
-
-// extractSessionID extracts session ID from URL path
-func extractSessionID(r *http.Request) string {
-	vars := mux.Vars(r)
-	return vars["sessionId"]
+	return c.sessionPresenter.PresentMonitorSession(ctx.Response(), response)
 }

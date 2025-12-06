@@ -291,7 +291,15 @@ func (p *Proxy) setupRoutes() {
 	// Register health controller routes
 	p.container.HealthController.RegisterRoutes(p.echo)
 
-	// Add session management routes according to API specification
+	// Register session controller routes (abstracted layer) with middleware
+	p.echo.POST("/api/v1/sessions", p.container.SessionController.StartSession, auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService))
+	p.echo.GET("/api/v1/sessions/search", p.container.SessionController.SearchSessions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+	p.echo.DELETE("/api/v1/sessions/:sessionId", p.container.SessionController.DeleteSession, auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService))
+	p.echo.GET("/api/v1/sessions/:sessionId", p.container.SessionController.GetSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+	p.echo.GET("/api/v1/sessions", p.container.SessionController.ListSessions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+	p.echo.GET("/api/v1/sessions/:sessionId/monitor", p.container.SessionController.MonitorSession, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
+
+	// Proxy-specific session management routes (for actual process management)
 	p.echo.POST("/start", p.startAgentAPIServer, auth.RequirePermission(entities.PermissionSessionCreate, p.container.AuthService))
 	p.echo.GET("/search", p.searchSessions, auth.RequirePermission(entities.PermissionSessionRead, p.container.AuthService))
 	p.echo.DELETE("/sessions/:sessionId", p.deleteSession, auth.RequirePermission(entities.PermissionSessionDelete, p.container.AuthService))
