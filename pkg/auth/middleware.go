@@ -60,24 +60,32 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				var user *entities.User
 				var err error
 
-				// Try authentication but don't fail if no credentials provided
+				// Check if credentials are provided and try authentication
 				if cfg.Auth.Static != nil && cfg.Auth.Static.Enabled {
-					if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
-						c.Set("internal_user", user)
-						log.Printf("API key authentication successful for legacy endpoint: user %s", user.ID())
-						return next(c)
+					if hasAPIKeyCredentials(c, cfg) {
+						if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
+							c.Set("internal_user", user)
+							log.Printf("API key authentication successful for legacy endpoint: user %s", user.ID())
+							return next(c)
+						}
+						log.Printf("API key authentication failed for legacy endpoint: %v from %s", err, c.RealIP())
+						return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 					}
 				}
 
 				if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
-					if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
-						c.Set("internal_user", user)
-						log.Printf("GitHub authentication successful for legacy endpoint: user %s", user.ID())
-						return next(c)
+					if hasGitHubCredentials(c, cfg) {
+						if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
+							c.Set("internal_user", user)
+							log.Printf("GitHub authentication successful for legacy endpoint: user %s", user.ID())
+							return next(c)
+						}
+						log.Printf("GitHub authentication failed for legacy endpoint: %v from %s", err, c.RealIP())
+						return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 					}
 				}
 
-				// For legacy endpoints, continue without authentication
+				// For legacy endpoints without credentials, continue without authentication
 				log.Printf("Legacy endpoint accessed without authentication: %s from %s", path, c.RealIP())
 				return next(c)
 			}
@@ -279,6 +287,30 @@ func isLegacyEndpoint(path string) bool {
 		}
 	}
 	return false
+}
+
+// hasAPIKeyCredentials checks if API key credentials are provided
+func hasAPIKeyCredentials(c echo.Context, cfg *config.Config) bool {
+	// Check custom header
+	if cfg.Auth.Static != nil && cfg.Auth.Static.HeaderName != "" {
+		if c.Request().Header.Get(cfg.Auth.Static.HeaderName) != "" {
+			return true
+		}
+	}
+
+	// Check Authorization header (Bearer token)
+	authHeader := c.Request().Header.Get("Authorization")
+	return authHeader != ""
+}
+
+// hasGitHubCredentials checks if GitHub credentials are provided
+func hasGitHubCredentials(c echo.Context, cfg *config.Config) bool {
+	if cfg.Auth.GitHub == nil || cfg.Auth.GitHub.TokenHeader == "" {
+		return false
+	}
+
+	tokenHeader := c.Request().Header.Get(cfg.Auth.GitHub.TokenHeader)
+	return tokenHeader != ""
 }
 
 // extractAPIKeyFromAuthHeader extracts API key from Authorization header
