@@ -65,6 +65,7 @@ type Container struct {
 	AuthController         *controllers.AuthController
 	NotificationController *controllers.NotificationController
 	ProxyController        *controllers.ProxyController
+	HealthController       *controllers.HealthController
 	AuthMiddleware         *controllers.AuthMiddleware
 }
 
@@ -249,6 +250,8 @@ func (c *Container) initControllers() {
 		c.StopAgentSessionUC,
 		c.ListAgentSessionsUC,
 	)
+
+	c.HealthController = controllers.NewHealthController()
 
 	c.AuthMiddleware = controllers.NewAuthMiddleware(
 		c.ValidateAPIKeyUC,
