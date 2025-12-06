@@ -18,6 +18,7 @@ import (
 	services_ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/proxy"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
 // Container holds all dependencies for the application
@@ -67,6 +68,7 @@ type Container struct {
 	ProxyController        *controllers.ProxyController
 	HealthController       *controllers.HealthController
 	AuthMiddleware         *controllers.AuthMiddleware
+	MainController         *controllers.MainController
 }
 
 // NewContainer creates and configures a new dependency injection container
@@ -257,6 +259,16 @@ func (c *Container) initControllers() {
 		c.ValidateAPIKeyUC,
 		c.AuthPresenter,
 	)
+
+	c.MainController = controllers.NewMainController(
+		c.SessionController,
+		c.AuthController,
+		c.NotificationController,
+		c.ProxyController,
+		c.HealthController,
+		c.AuthService,
+		nil, // config will be set later
+	)
 }
 
 // seedData seeds initial data for development and testing
@@ -396,4 +408,11 @@ func loadMockConfig() *services.MockConfig {
 	}
 
 	return config
+}
+
+// SetConfig sets the configuration for MainController
+func (c *Container) SetConfig(cfg *config.Config) {
+	if c.MainController != nil {
+		c.MainController.SetConfig(cfg)
+	}
 }
