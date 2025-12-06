@@ -20,6 +20,33 @@ type SessionController struct {
 	sessionPresenter presenters.SessionPresenter
 }
 
+// RegisterRoutes registers session routes with optional middleware
+func (c *SessionController) RegisterRoutes(e *echo.Echo, middleware ...echo.MiddlewareFunc) {
+	// Create route group for sessions
+	sessionGroup := e.Group("/sessions", middleware...)
+
+	// Register session routes
+	e.POST("/start", c.StartSession, middleware...)
+	e.GET("/search", c.SearchSessions, middleware...)
+	sessionGroup.DELETE("/:sessionId", c.DeleteSession)
+	sessionGroup.GET("/:sessionId", c.GetSession)
+	sessionGroup.GET("", c.ListSessions)
+	sessionGroup.GET("/:sessionId/monitor", c.MonitorSession)
+}
+
+// RegisterAPIRoutes registers session routes under /api/v1 prefix with optional middleware
+func (c *SessionController) RegisterAPIRoutes(e *echo.Echo, middleware ...echo.MiddlewareFunc) {
+	// Create API v1 group
+	apiV1 := e.Group("/api/v1", middleware...)
+
+	// Register session routes under /api/v1
+	apiV1.POST("/sessions", c.StartSession)
+	apiV1.GET("/sessions/search", c.SearchSessions)
+	apiV1.DELETE("/sessions/:sessionId", c.DeleteSession)
+	apiV1.GET("/sessions/:sessionId", c.GetSession)
+	apiV1.GET("/sessions", c.ListSessions)
+	apiV1.GET("/sessions/:sessionId/monitor", c.MonitorSession)
+}
 
 // NewSessionController creates a new SessionController
 func NewSessionController(
