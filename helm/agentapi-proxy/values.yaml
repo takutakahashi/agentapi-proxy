@@ -60,13 +60,6 @@ resources:
     memory: "8Gi"
     cpu: 8
 
-# Persistent Volume for session data
-persistence:
-  enabled: true
-  storageClassName: ""
-  accessMode: ReadWriteOnce
-  size: 10Gi
-
 # Persistent Volume for myclaudes directory
 myclaudesPersistence:
   enabled: true
@@ -112,23 +105,6 @@ config:
   # マルチユーザー設定
   enableMultipleUsers: false
   
-  # 永続化設定
-  persistence:
-    enabled: false
-    backend: "file"  # "file", "memory", "s3"
-    filePath: "./sessions.json"
-    syncIntervalSeconds: 30
-    encryptSensitiveData: true
-    sessionRecoveryMaxAgeHours: 24
-    # S3設定（backend: "s3" の場合に使用）
-    s3:
-      bucket: ""
-      region: "us-east-1"
-      prefix: "sessions/"
-      endpoint: ""  # カスタムS3エンドポイント（MinIOなど）
-      # 認証情報（環境変数またはIAMロールを推奨）
-      accessKey: ""
-      secretKey: ""
   
   # 認証設定
   auth:

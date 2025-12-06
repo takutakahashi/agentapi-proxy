@@ -18,7 +18,6 @@ type Router struct {
 
 // HandlerRegistry contains all handlers
 type HandlerRegistry struct {
-	sessionHandlers      *SessionHandlers
 	notificationHandlers *NotificationHandlers
 	healthHandlers       *HealthHandlers
 	customHandlers       []CustomHandler
@@ -36,7 +35,6 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 		echo:  e,
 		proxy: proxy,
 		handlers: &HandlerRegistry{
-			sessionHandlers:      NewSessionHandlers(proxy),
 			notificationHandlers: NewNotificationHandlers(proxy.notificationSvc),
 			healthHandlers:       NewHealthHandlers(),
 			customHandlers:       make([]CustomHandler, 0),
@@ -75,10 +73,11 @@ func (r *Router) registerCoreRoutes() error {
 	// Health check endpoint
 	r.echo.GET("/health", r.handlers.healthHandlers.HealthCheck)
 
-	// Session management routes according to API specification
-	r.echo.POST("/start", r.handlers.sessionHandlers.StartSession, auth.RequirePermission(entities.PermissionSessionCreate, r.proxy.container.AuthService))
-	r.echo.GET("/search", r.handlers.sessionHandlers.SearchSessions, auth.RequirePermission(entities.PermissionSessionRead, r.proxy.container.AuthService))
-	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionHandlers.DeleteSession, auth.RequirePermission(entities.PermissionSessionDelete, r.proxy.container.AuthService))
+	// Session management routes - temporarily disabled due to removed SessionHandlers
+	// TODO: Re-implement session management endpoints
+	// r.echo.POST("/start", ...)
+	// r.echo.GET("/search", ...)  
+	// r.echo.DELETE("/sessions/:sessionId", ...)
 
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
 	r.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
@@ -96,8 +95,9 @@ func (r *Router) registerCoreRoutes() error {
 		return c.NoContent(http.StatusNoContent)
 	})
 
-	// Session proxy routes - must be last to avoid conflicts
-	r.echo.Any("/:sessionId/*", r.handlers.sessionHandlers.RouteToSession, auth.RequirePermission(entities.PermissionSessionRead, r.proxy.container.AuthService))
+	// Session proxy routes - temporarily disabled due to removed SessionHandlers
+	// TODO: Re-implement session proxy endpoint
+	// r.echo.Any("/:sessionId/*", ...)
 
 	return nil
 }

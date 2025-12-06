@@ -161,7 +161,7 @@ func (p *HTTPAuthPresenter) PresentLogout(w http.ResponseWriter) {
 
 // PresentError presents an error response
 func (p *HTTPAuthPresenter) PresentError(w http.ResponseWriter, message string, statusCode int) {
-	errorResp := &ErrorResponse{
+	errorResp := &entities.ErrorResponse{
 		Error:   http.StatusText(statusCode),
 		Message: message,
 	}

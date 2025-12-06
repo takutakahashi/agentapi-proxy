@@ -12,13 +12,11 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/notification"
 	repositories_ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	services_ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
-	"github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 )
 
 // Container holds all dependencies for the application
 type Container struct {
 	// Repositories
-	SessionRepo      repositories_ports.SessionRepository
 	UserRepo         repositories_ports.UserRepository
 	NotificationRepo repositories_ports.NotificationRepository
 
@@ -30,13 +28,6 @@ type Container struct {
 	GitHubAuthService   services_ports.GitHubAuthService
 
 	// Use Cases
-	CreateSessionUC      *session.CreateSessionUseCase
-	DeleteSessionUC      *session.DeleteSessionUseCase
-	ListSessionsUC       *session.ListSessionsUseCase
-	GetSessionByIDUC     *session.GetSessionByIDUseCase
-	MonitorSessionUC     *session.MonitorSessionUseCase
-	MonitorAllSessionsUC *session.MonitorAllSessionsUseCase
-
 	AuthenticateUserUC   *auth.AuthenticateUserUseCase
 	ValidateAPIKeyUC     *auth.ValidateAPIKeyUseCase
 	GitHubAuthenticateUC *auth.GitHubAuthenticateUseCase
@@ -46,12 +37,10 @@ type Container struct {
 	ManageSubscriptionUC *notification.ManageSubscriptionUseCase
 
 	// Presenters
-	SessionPresenter      presenters.SessionPresenter
 	AuthPresenter         presenters.AuthPresenter
 	NotificationPresenter presenters.NotificationPresenter
 
 	// Controllers
-	SessionController      *controllers.SessionController
 	AuthController         *controllers.AuthController
 	NotificationController *controllers.NotificationController
 	AuthMiddleware         *controllers.AuthMiddleware
@@ -84,7 +73,6 @@ func NewContainer() *Container {
 
 // initRepositories initializes all repository dependencies
 func (c *Container) initRepositories() {
-	c.SessionRepo = repositories.NewMemorySessionRepository()
 	c.UserRepo = repositories.NewMemoryUserRepository()
 	c.NotificationRepo = repositories.NewMemoryNotificationRepository()
 }
@@ -104,43 +92,6 @@ func (c *Container) initServices() {
 
 // initUseCases initializes all use case dependencies
 func (c *Container) initUseCases() {
-	// Session use cases
-	c.CreateSessionUC = session.NewCreateSessionUseCase(
-		c.SessionRepo,
-		c.UserRepo,
-		c.AgentService,
-		c.ProxyService,
-	)
-
-	c.DeleteSessionUC = session.NewDeleteSessionUseCase(
-		c.SessionRepo,
-		c.UserRepo,
-		c.AgentService,
-	)
-
-	c.ListSessionsUC = session.NewListSessionsUseCase(
-		c.SessionRepo,
-		c.UserRepo,
-	)
-
-	c.GetSessionByIDUC = session.NewGetSessionByIDUseCase(
-		c.SessionRepo,
-		c.UserRepo,
-	)
-
-	c.MonitorSessionUC = session.NewMonitorSessionUseCase(
-		c.SessionRepo,
-		c.UserRepo,
-		c.AgentService,
-		c.ProxyService,
-	)
-
-	c.MonitorAllSessionsUC = session.NewMonitorAllSessionsUseCase(
-		c.SessionRepo,
-		c.AgentService,
-		c.ProxyService,
-	)
-
 	// Auth use cases
 	c.AuthenticateUserUC = auth.NewAuthenticateUserUseCase(
 		c.UserRepo,
@@ -178,22 +129,12 @@ func (c *Container) initUseCases() {
 
 // initPresenters initializes all presenter dependencies
 func (c *Container) initPresenters() {
-	c.SessionPresenter = presenters.NewHTTPSessionPresenter()
 	c.AuthPresenter = presenters.NewHTTPAuthPresenter()
 	c.NotificationPresenter = presenters.NewHTTPNotificationPresenter()
 }
 
 // initControllers initializes all controller dependencies
 func (c *Container) initControllers() {
-	c.SessionController = controllers.NewSessionController(
-		c.CreateSessionUC,
-		c.DeleteSessionUC,
-		c.ListSessionsUC,
-		c.GetSessionByIDUC,
-		c.MonitorSessionUC,
-		c.SessionPresenter,
-	)
-
 	c.AuthController = controllers.NewAuthController(
 		c.AuthenticateUserUC,
 		c.ValidateAPIKeyUC,

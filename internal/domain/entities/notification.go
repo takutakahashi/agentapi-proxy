@@ -6,6 +6,32 @@ import (
 	"time"
 )
 
+// SessionID represents a session identifier
+type SessionID string
+
+// Tags represents session tags
+type Tags map[string]string
+
+// Port represents a network port
+type Port int
+
+// Environment represents environment variables
+type Environment map[string]string
+
+// ProcessInfo represents process information
+type ProcessInfo struct {
+	PID     int
+	Command []string
+	Port    Port
+}
+
+// ErrorResponse represents an error response
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Message string `json:"message,omitempty"`
+	Code    int    `json:"code,omitempty"`
+}
+
 // NotificationID represents a unique notification identifier
 type NotificationID string
 
