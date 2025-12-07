@@ -218,16 +218,7 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 			continue
 		}
 
-		// Check if installation has write permissions by trying to access refs
-		// This is a lightweight way to verify contents write permissions
-		hasWritePermission, writeErr := c.checkWritePermission(ctx, installationClient, owner, repo)
-		if !hasWritePermission {
-			log.Printf("[INSTALLATION_CACHE] Installation %d (%s) has READ-only access to %s/%s: %v",
-				installationID, accountLogin, owner, repo, writeErr)
-			continue
-		}
-
-		log.Printf("[INSTALLATION_CACHE] Installation %d (%s) has WRITE access to %s/%s",
+		log.Printf("[INSTALLATION_CACHE] Installation %d (%s) has access to %s/%s",
 			installationID, accountLogin, owner, repo)
 
 		// Repository access confirmed - calculate priority
@@ -304,44 +295,6 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 	}
 
 	return bestCandidate.installationID, nil
-}
-
-// checkWritePermission checks if the installation has write permission to the repository
-// by querying the installation repositories API to get permission information
-func (c *InstallationCache) checkWritePermission(ctx context.Context, client *github.Client, owner, repo string) (bool, error) {
-	// List repositories accessible to the installation to get permission information
-	// The response includes permissions hash with push/pull access for each repository
-	installationRepos, _, err := client.Apps.ListRepos(ctx, &github.ListOptions{})
-	if err != nil {
-		return false, fmt.Errorf("failed to list installation repositories: %w", err)
-	}
-
-	// Look for the specific repository in the installation's accessible repositories
-	targetRepoFullName := fmt.Sprintf("%s/%s", owner, repo)
-	for _, installationRepo := range installationRepos.Repositories {
-		repoFullName := installationRepo.GetFullName()
-		if strings.EqualFold(repoFullName, targetRepoFullName) {
-			permissions := installationRepo.GetPermissions()
-			if permissions == nil {
-				log.Printf("[INSTALLATION_CACHE] No permissions found for repository %s", targetRepoFullName)
-				return false, fmt.Errorf("no permissions information available for repository %s", targetRepoFullName)
-			}
-
-			// Check if the installation has push (write) permission
-			hasPushAccess := permissions["push"]
-			log.Printf("[INSTALLATION_CACHE] Repository %s permissions: push=%v, pull=%v, admin=%v",
-				targetRepoFullName, permissions["push"], permissions["pull"], permissions["admin"])
-
-			if !hasPushAccess {
-				return false, fmt.Errorf("installation has read-only access (push=false) to repository %s", targetRepoFullName)
-			}
-
-			log.Printf("[INSTALLATION_CACHE] Installation has WRITE access (push=true) to %s", targetRepoFullName)
-			return true, nil
-		}
-	}
-
-	return false, fmt.Errorf("repository %s not found in installation's accessible repositories", targetRepoFullName)
 }
 
 // ClearCache clears all cached entries
