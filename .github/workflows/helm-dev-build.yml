@@ -1,0 +1,322 @@
+name: Build Development Helm Chart
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: 'Git reference (branch, tag, or commit hash) to build from'
+        required: false
+        default: ''
+        type: string
+      chart_version_suffix:
+        description: 'Chart version suffix (e.g., "-dev", "-alpha.1")'
+        required: false
+        default: '-dev'
+        type: string
+      dry_run:
+        description: 'Dry run (validate only, do not push)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  CHART_NAME: agentapi-proxy
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-dev-helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine Git reference
+        id: git_ref
+        run: |
+          if [ -n "${{ github.event.inputs.git_ref }}" ]; then
+            echo "ref=${{ github.event.inputs.git_ref }}" >> $GITHUB_OUTPUT
+            echo "Using specified git reference: ${{ github.event.inputs.git_ref }}"
+          else
+            echo "ref=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "Using current branch: ${{ github.ref_name }}"
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.git_ref.outputs.ref }}
+
+      - name: Get commit information
+        id: commit
+        run: |
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "full_hash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(date -u +"%Y%m%d%H%M%S")" >> $GITHUB_OUTPUT
+          echo "Commit hash: $COMMIT_HASH"
+
+      - name: Generate chart version
+        id: version
+        run: |
+          # Get base version from Chart.yaml
+          BASE_VERSION=$(grep '^version:' helm/${{ env.CHART_NAME }}/Chart.yaml | awk '{print $2}')
+          
+          # Generate development version
+          # Format: <base-version>-dev.<date>.<commit-hash>
+          DEV_VERSION="${BASE_VERSION}${{ github.event.inputs.chart_version_suffix }}.${{ steps.commit.outputs.date }}.${{ steps.commit.outputs.hash }}"
+          
+          echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
+          echo "dev_version=$DEV_VERSION" >> $GITHUB_OUTPUT
+          echo "Generated chart version: $DEV_VERSION"
+
+      - name: Update Chart.yaml with dev version
+        run: |
+          # Backup original Chart.yaml
+          cp helm/${{ env.CHART_NAME }}/Chart.yaml helm/${{ env.CHART_NAME }}/Chart.yaml.bak
+          
+          # Update version
+          sed -i "s/^version:.*/version: ${{ steps.version.outputs.dev_version }}/" helm/${{ env.CHART_NAME }}/Chart.yaml
+          
+          # Update appVersion to use the dev image tag
+          sed -i "s/^appVersion:.*/appVersion: \"dev-${{ steps.commit.outputs.hash }}\"/" helm/${{ env.CHART_NAME }}/Chart.yaml
+          
+          echo "Updated Chart.yaml:"
+          grep -E "^(version|appVersion):" helm/${{ env.CHART_NAME }}/Chart.yaml
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.18.3'
+
+      - name: Install additional tools
+        run: |
+          # Install kubeval for manifest validation
+          curl -L https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz | tar xz
+          sudo mv kubeval /usr/local/bin
+          
+          # Install yamllint
+          pip install yamllint
+
+      - name: Lint YAML files
+        run: |
+          echo "Running yamllint on Helm chart files..."
+          yamllint -d "{extends: default, rules: {line-length: {max: 200}}}" helm/${{ env.CHART_NAME }}/
+
+      - name: Lint Helm chart
+        run: |
+          echo "Running Helm lint..."
+          helm lint helm/${{ env.CHART_NAME }}/ --strict
+
+      - name: Template and validate chart
+        run: |
+          echo "Generating templates with default values..."
+          helm template dev-release helm/${{ env.CHART_NAME }}/ > /tmp/default-templates.yaml
+          
+          echo "Validating Kubernetes manifests..."
+          helm template dev-release helm/${{ env.CHART_NAME }}/ | kubeval --skip-kinds ServiceMonitor,Ingress
+          
+          echo "✅ Template validation successful"
+
+      - name: Test with various configurations
+        run: |
+          echo "Testing with multiple users enabled..."
+          helm template test-multi-user helm/${{ env.CHART_NAME }}/ \
+            --set config.enableMultipleUsers=true \
+            --set config.auth.enabled=true \
+            --set config.auth.github.enabled=true | kubeval --skip-kinds ServiceMonitor,Ingress
+          
+          echo "Testing with ingress enabled..."
+          helm template test-ingress helm/${{ env.CHART_NAME }}/ \
+            --set ingress.enabled=true \
+            --set ingress.hosts[0].host=dev.example.com | kubeval --skip-kinds ServiceMonitor,Ingress
+          
+          echo "Testing with custom resources..."
+          helm template test-resources helm/${{ env.CHART_NAME }}/ \
+            --set resources.limits.memory=16Gi \
+            --set resources.limits.cpu=4 \
+            --set resources.requests.memory=2Gi \
+            --set resources.requests.cpu=1 | kubeval --skip-kinds ServiceMonitor,Ingress
+          
+          echo "Testing with GitHub Enterprise configuration..."
+          helm template test-ghe helm/${{ env.CHART_NAME }}/ \
+            --set github.enterprise.enabled=true \
+            --set github.enterprise.baseUrl=https://github.company.com \
+            --set github.app.id=12345 | kubeval --skip-kinds ServiceMonitor,Ingress
+          
+          echo "✅ All configuration tests passed"
+
+      - name: Package Helm chart
+        run: |
+          helm package helm/${{ env.CHART_NAME }}/ --destination /tmp/
+          
+          CHART_FILE=$(ls /tmp/${{ env.CHART_NAME }}-*.tgz)
+          echo "chart_file=$CHART_FILE" >> $GITHUB_ENV
+          echo "Packaged chart: $CHART_FILE"
+          
+          # Display package contents
+          echo "Chart package contents:"
+          tar -tzf "$CHART_FILE" | head -20
+
+      - name: Login to GitHub Container Registry
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+
+      - name: Push chart to OCI registry
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          echo "Pushing chart to OCI registry..."
+          helm push "${{ env.chart_file }}" oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+          
+          echo "✅ Chart pushed successfully!"
+          echo "Pull with: helm pull oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }} --version ${{ steps.version.outputs.dev_version }}"
+
+      - name: Generate installation instructions
+        id: install_instructions
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            echo "instructions=Dry run completed. Chart was not pushed to registry." >> $GITHUB_OUTPUT
+          else
+            cat >> install_instructions.txt << 'EOF'
+          # Development Helm Chart Installation
+
+          ## Add Helm repository (if using Helm < 3.8)
+          ```bash
+          helm registry login ${{ env.REGISTRY }} --username <github-username> --password <github-token>
+          ```
+
+          ## Install the development chart
+          ```bash
+          helm install agentapi-proxy-dev \
+            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }} \
+            --version ${{ steps.version.outputs.dev_version }}
+          ```
+
+          ## Install with custom values
+          ```bash
+          helm install agentapi-proxy-dev \
+            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }} \
+            --version ${{ steps.version.outputs.dev_version }} \
+            --set image.tag=dev-${{ steps.commit.outputs.hash }} \
+            --set config.enableMultipleUsers=true
+          ```
+
+          ## Upgrade existing installation
+          ```bash
+          helm upgrade agentapi-proxy-dev \
+            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }} \
+            --version ${{ steps.version.outputs.dev_version }}
+          ```
+
+          ## Uninstall
+          ```bash
+          helm uninstall agentapi-proxy-dev
+          ```
+          EOF
+            echo "instructions_file=install_instructions.txt" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-dev-${{ steps.version.outputs.dev_version }}
+          path: |
+            /tmp/${{ env.CHART_NAME }}-*.tgz
+            /tmp/default-templates.yaml
+            install_instructions.txt
+            helm/${{ env.CHART_NAME }}/Chart.yaml
+          retention-days: 7
+
+      - name: Create GitHub summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 🎯 Development Helm Chart Build
+          
+          ## 📊 Build Information
+          
+          | Property | Value |
+          |----------|-------|
+          | Chart Name | `${{ env.CHART_NAME }}` |
+          | Base Version | `${{ steps.version.outputs.base_version }}` |
+          | Dev Version | `${{ steps.version.outputs.dev_version }}` |
+          | Git Reference | `${{ steps.git_ref.outputs.ref }}` |
+          | Commit | `${{ steps.commit.outputs.hash }}` |
+          | App Version | `dev-${{ steps.commit.outputs.hash }}` |
+          | Dry Run | `${{ github.event.inputs.dry_run }}` |
+          
+          ## 🧪 Validation Results
+          
+          - ✅ YAML lint passed
+          - ✅ Helm lint passed (strict mode)
+          - ✅ Kubernetes manifest validation passed
+          - ✅ Multiple configuration tests passed
+          
+          ## 📦 Package Information
+          
+          - Package: `${{ env.chart_file }}`
+          - Registry: `${{ env.REGISTRY }}/${{ github.repository_owner }}/charts`
+          
+          EOF
+          
+          if [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
+          ## 🚀 Installation
+          
+          ### Quick Install
+          ```bash
+          helm install agentapi-proxy-dev \
+            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }} \
+            --version ${{ steps.version.outputs.dev_version }}
+          ```
+          
+          ### With Custom Values
+          ```bash
+          helm install agentapi-proxy-dev \
+            oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }} \
+            --version ${{ steps.version.outputs.dev_version }} \
+            --values custom-values.yaml
+          ```
+          
+          EOF
+          else
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
+          ## ⚠️ Dry Run Mode
+          
+          This was a dry run. The chart was validated but not pushed to the registry.
+          
+          EOF
+          fi
+          
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
+          ## 🔗 Links
+          
+          - [Source Commit](${{ github.server_url }}/${{ github.repository }}/commit/${{ steps.commit.outputs.full_hash }})
+          - [Chart Registry](https://github.com/${{ github.repository }}/pkgs/container/charts%2F${{ env.CHART_NAME }})
+          - [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          EOF
+
+      - name: Display summary
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "  Development Helm Chart Build Complete"
+          echo "=========================================="
+          echo ""
+          echo "📋 Chart Version: ${{ steps.version.outputs.dev_version }}"
+          echo "🏷️ App Version: dev-${{ steps.commit.outputs.hash }}"
+          echo "📦 Package: ${{ env.chart_file }}"
+          echo ""
+          if [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
+            echo "🚀 Install with:"
+            echo "  helm install agentapi-proxy-dev \\"
+            echo "    oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }} \\"
+            echo "    --version ${{ steps.version.outputs.dev_version }}"
+          else
+            echo "⚠️ Dry run completed - chart was not pushed to registry"
+          fi
+          echo ""
+          echo "=========================================="
