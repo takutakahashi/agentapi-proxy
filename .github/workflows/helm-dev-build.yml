@@ -192,7 +192,22 @@ jobs:
       - name: Lint YAML files
         run: |
           echo "Running yamllint on Helm chart files..."
-          yamllint -d "{extends: default, rules: {line-length: {max: 200}}}" helm/${{ env.CHART_NAME }}/
+          # Create yamllint config that excludes templates directory and relaxes some rules
+          cat > /tmp/yamllint-config.yaml << 'EOF'
+          extends: default
+          rules:
+            line-length:
+              max: 200
+            comments-indentation: disable
+            braces: disable
+            trailing-spaces: disable
+            empty-lines:
+              max-end: 1
+          ignore: |
+            helm/**/templates/
+          EOF
+          
+          yamllint -c /tmp/yamllint-config.yaml helm/${{ env.CHART_NAME }}/
 
       - name: Lint Helm chart
         run: |

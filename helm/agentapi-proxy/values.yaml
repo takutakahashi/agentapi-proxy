@@ -1,3 +1,4 @@
+---
 # Default values for agentapi-proxy.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
@@ -19,8 +20,8 @@ serviceAccount:
   automount: true
   # Annotations to add to the service account
   annotations: {}
-    # AWS IAM Role for S3 access (EKS + IRSA)
-    # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT-ID:role/agentapi-s3-role
+  # AWS IAM Role for S3 access (EKS + IRSA)
+  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT-ID:role/agentapi-s3-role
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
   name: ""
@@ -31,9 +32,9 @@ podLabels: {}
 # Pod security context
 # If not set, defaults to fsGroup: 999, runAsUser: 999, runAsGroup: 999
 podSecurityContext: {}
-  # fsGroup: 999
-  # runAsUser: 999
-  # runAsGroup: 999
+# fsGroup: 999
+# runAsUser: 999
+# runAsGroup: 999
 
 service:
   type: ClusterIP
@@ -105,14 +106,13 @@ github:
 config:
   # ホスト名設定 (例: agentapi.example.com)
   hostname: ""
-  
+
   # サーバー設定
   startPort: 9000
-  
+
   # マルチユーザー設定
   enableMultipleUsers: false
-  
-  
+
   # 認証設定
   auth:
     enabled: false
@@ -128,13 +128,13 @@ config:
         clientSecret: ""
         scope: "read:user read:org"
         baseUrl: ""
-  
+
   # ロールベース環境変数ファイル設定
   roleEnvFiles:
     enabled: false
     path: "/etc/role-env-files"
     loadDefault: true
-  
+
   # 通知設定
   notification:
     # 通知ベースURL (例: https://example.com)
@@ -143,22 +143,22 @@ config:
 
 # Environment variables
 env: []
-  # - name: GITHUB_TOKEN
-  #   value: "your-token"
-  # - name: CLAUDE_ARGS
-  #   value: "--dangerously-skip-permissions"
-  # GitHub Enterprise Server を使用する場合の環境変数例
-  # - name: GITHUB_URL
-  #   value: "https://github.company.com"
-  # - name: GITHUB_API
-  #   value: "https://github.company.com/api/v3"
+# - name: GITHUB_TOKEN
+#   value: "your-token"
+# - name: CLAUDE_ARGS
+#   value: "--dangerously-skip-permissions"
+# GitHub Enterprise Server を使用する場合の環境変数例
+# - name: GITHUB_URL
+#   value: "https://github.company.com"
+# - name: GITHUB_API
+#   value: "https://github.company.com/api/v3"
 
 # Environment variables from ConfigMaps and Secrets
 envFrom: []
-  # - configMapRef:
-  #     name: agentapi-config
-  # - secretRef:
-  #     name: agentapi-secrets
+# - configMapRef:
+#     name: agentapi-config
+# - secretRef:
+#     name: agentapi-secrets
 
 # Liveness and readiness probes
 livenessProbe:
@@ -209,41 +209,41 @@ affinity: {}
 # Auth configuration (stored in ConfigMap and mounted to the container)
 # This allows complex authorization rules that cannot be easily expressed as environment variables
 authConfig:
-  # Example configuration structure:
-  # github:
-  #   user_mapping:
-  #     default_role: "user"
-  #     default_permissions:
-  #       - "read"
-  #       - "session:create"
-  #       - "session:list"
-  #     team_role_mapping:
-  #       "myorg/admins":
-  #         role: "admin"
-  #         permissions:
-  #           - "*"
-  #       "myorg/developers":
-  #         role: "developer"
-  #         permissions:
-  #           - "read"
-  #           - "write"
-  #           - "execute"
-  #           - "session:create"
-  #           - "session:list"
-  #           - "session:delete"
-  #           - "session:access"
-  #       "myorg/viewers":
-  #         role: "viewer"
-  #         permissions:
-  #           - "read"
-  #           - "session:list"
+# Example configuration structure:
+# github:
+#   user_mapping:
+#     default_role: "user"
+#     default_permissions:
+#       - "read"
+#       - "session:create"
+#       - "session:list"
+#     team_role_mapping:
+#       "myorg/admins":
+#         role: "admin"
+#         permissions:
+#           - "*"
+#       "myorg/developers":
+#         role: "developer"
+#         permissions:
+#           - "read"
+#           - "write"
+#           - "execute"
+#           - "session:create"
+#           - "session:list"
+#           - "session:delete"
+#           - "session:access"
+#       "myorg/viewers":
+#         role: "viewer"
+#         permissions:
+#           - "read"
+#           - "session:list"
 
 # Role-based environment files configuration
 # Map environment files to secrets - this creates the appropriate projected volume automatically
 roleEnvFiles:
   # Configuration for role-based environment variables
   enabled: false
-  
+
   # Simple mapping: filename -> secret configuration
   # ファイル名とSecretの設定を直接マッピング
   files:
@@ -276,3 +276,4 @@ roleEnvFiles:
   #     "developer.env":
   #       secretName: "dev-config"
   #       key: "development.env"
+
