@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -15,6 +16,15 @@ import (
 )
 
 func setupTestProxyWithOAuth(t *testing.T) (*Proxy, *httptest.Server) {
+	// Clear environment variable that might interfere with redirect URI validation
+	oldRedirectURIs := os.Getenv("OAUTH_ALLOWED_REDIRECT_URIS")
+	_ = os.Unsetenv("OAUTH_ALLOWED_REDIRECT_URIS")
+	t.Cleanup(func() {
+		if oldRedirectURIs != "" {
+			_ = os.Setenv("OAUTH_ALLOWED_REDIRECT_URIS", oldRedirectURIs)
+		}
+	})
+
 	// Mock GitHub OAuth server
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

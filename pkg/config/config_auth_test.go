@@ -156,6 +156,27 @@ func TestLoadAuthConfigFromFile(t *testing.T) {
 }
 
 func TestLoadConfigWithAuthConfigFile(t *testing.T) {
+	// Save and clear environment variables that might interfere with the test
+	envVarsToSave := []string{
+		"AGENTAPI_AUTH_CONFIG_FILE",
+		"AGENTAPI_START_PORT",
+		"AGENTAPI_AUTH_ENABLED",
+		"AGENTAPI_AUTH_GITHUB_ENABLED",
+	}
+	savedEnvVars := make(map[string]string)
+	for _, key := range envVarsToSave {
+		savedEnvVars[key] = os.Getenv(key)
+		_ = os.Unsetenv(key)
+	}
+	defer func() {
+		// Restore environment variables
+		for key, value := range savedEnvVars {
+			if value != "" {
+				_ = os.Setenv(key, value)
+			}
+		}
+	}()
+
 	// Create a temporary directory for test files
 	tempDir, err := os.MkdirTemp("", "config-test")
 	if err != nil {
