@@ -190,7 +190,7 @@ func (sm *StartupManager) setupMCPServers(cfg *StartupConfig, mcpConfigs string)
 
 // createAgentAPICommand creates the agentapi server command
 func (sm *StartupManager) createAgentAPICommand(ctx context.Context, cfg *StartupConfig) *exec.Cmd {
-	args := []string{"server", "--port", strconv.Itoa(cfg.Port)}
+	args := []string{"server", "--allowed-hosts", "*", "--allowed-origins", "*", "--port", strconv.Itoa(cfg.Port)}
 
 	if cfg.AgentAPIArgs != "" {
 		// Parse AgentAPIArgs safely to prevent command injection
