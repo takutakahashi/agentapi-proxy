@@ -297,6 +297,12 @@ func (sm *StartupManager) setupEnvironment(cmd *exec.Cmd, cfg *StartupConfig) er
 	if cfg.GitHubPersonalAccessToken != "" {
 		envMap["GITHUB_PERSONAL_ACCESS_TOKEN"] = cfg.GitHubPersonalAccessToken
 	}
+	if cfg.RepoFullName != "" {
+		envMap["GITHUB_REPO_FULLNAME"] = cfg.RepoFullName
+	}
+	if cfg.CloneDir != "" {
+		envMap["GITHUB_CLONE_DIR"] = cfg.CloneDir
+	}
 
 	// Add custom environment variables from session (highest priority)
 	if len(cfg.Environment) > 0 {
