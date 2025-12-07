@@ -114,6 +114,17 @@ func (m *mockAgentAPIServer) Close() {
 	m.server.Close()
 }
 
+// e2eServerRunnerFactory creates individual runners for each session
+type e2eServerRunnerFactory struct {
+	proxy *Proxy
+}
+
+func (f *e2eServerRunnerFactory) Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+	// Create individual runner for this session
+	runner := &e2eServerRunner{proxy: f.proxy}
+	runner.Run(ctx, session, scriptName, repoInfo, initialMessage)
+}
+
 // e2eServerRunner runs a mock agentapi server instead of the real one
 type e2eServerRunner struct {
 	mockServer *mockAgentAPIServer
@@ -134,7 +145,9 @@ func (r *e2eServerRunner) Run(ctx context.Context, session *AgentSession, script
 	<-ctx.Done()
 	
 	// Cleanup
-	r.mockServer.Close()
+	if r.mockServer != nil {
+		r.mockServer.Close()
+	}
 	
 	// Clean up session
 	r.proxy.sessionsMutex.Lock()
@@ -150,9 +163,9 @@ func TestE2ESessionLifecycle(t *testing.T) {
 	cfg.StartPort = 19000
 	proxy := NewProxy(cfg, false)
 	
-	// Set up e2e server runner
-	e2eRunner := &e2eServerRunner{proxy: proxy}
-	proxy.SetServerRunner(e2eRunner)
+	// Set up e2e server runner factory
+	factory := &e2eServerRunnerFactory{proxy: proxy}
+	proxy.SetServerRunner(factory)
 	
 	// Start proxy server
 	server := httptest.NewServer(proxy.GetEcho())
@@ -346,9 +359,9 @@ func TestE2EConcurrentSessions(t *testing.T) {
 	cfg.StartPort = 20000
 	proxy := NewProxy(cfg, false)
 	
-	// Set up e2e server runner
-	e2eRunner := &e2eServerRunner{proxy: proxy}
-	proxy.SetServerRunner(e2eRunner)
+	// Set up e2e server runner factory
+	factory := &e2eServerRunnerFactory{proxy: proxy}
+	proxy.SetServerRunner(factory)
 	
 	// Start proxy server
 	server := httptest.NewServer(proxy.GetEcho())
