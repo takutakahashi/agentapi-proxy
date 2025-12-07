@@ -20,6 +20,7 @@ type Router struct {
 type HandlerRegistry struct {
 	notificationHandlers *NotificationHandlers
 	healthHandlers       *HealthHandlers
+	sessionHandlers      *SessionHandlers
 	customHandlers       []CustomHandler
 }
 
@@ -37,6 +38,7 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 		handlers: &HandlerRegistry{
 			notificationHandlers: NewNotificationHandlers(proxy.notificationSvc),
 			healthHandlers:       NewHealthHandlers(),
+			sessionHandlers:      NewSessionHandlers(proxy),
 			customHandlers:       make([]CustomHandler, 0),
 		},
 	}
@@ -73,11 +75,15 @@ func (r *Router) registerCoreRoutes() error {
 	// Health check endpoint
 	r.echo.GET("/health", r.handlers.healthHandlers.HealthCheck)
 
-	// Session management routes - temporarily disabled due to removed SessionHandlers
-	// TODO: Re-implement session management endpoints
-	// r.echo.POST("/start", ...)
-	// r.echo.GET("/search", ...)
-	// r.echo.DELETE("/sessions/:sessionId", ...)
+	// Session management routes
+	log.Printf("[ROUTES] Registering session management endpoints...")
+	r.echo.POST("/start", r.handlers.sessionHandlers.StartSession)
+	r.echo.GET("/search", r.handlers.sessionHandlers.SearchSessions)
+	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionHandlers.DeleteSession)
+
+	// Session proxy route
+	r.echo.Any("/:sessionId/*", r.handlers.sessionHandlers.RouteToSession)
+	log.Printf("[ROUTES] Session management endpoints registered")
 
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
 	r.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
@@ -94,10 +100,6 @@ func (r *Router) registerCoreRoutes() error {
 		c.Response().Header().Set("Access-Control-Max-Age", "86400")
 		return c.NoContent(http.StatusNoContent)
 	})
-
-	// Session proxy routes - temporarily disabled due to removed SessionHandlers
-	// TODO: Re-implement session proxy endpoint
-	// r.echo.Any("/:sessionId/*", ...)
 
 	return nil
 }
