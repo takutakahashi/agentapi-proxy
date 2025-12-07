@@ -229,7 +229,6 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Start cleanup goroutine for defunct processes
 	go p.cleanupDefunctProcesses()
 
-
 	p.setupRoutes()
 
 	return p
