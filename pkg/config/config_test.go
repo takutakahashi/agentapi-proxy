@@ -3,11 +3,34 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// clearAGENTAPIEnvVars clears all AGENTAPI_ environment variables and returns a cleanup function
+func clearAGENTAPIEnvVars(t *testing.T) {
+	t.Helper()
+	savedEnvVars := make(map[string]string)
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "AGENTAPI_") {
+			parts := strings.SplitN(env, "=", 2)
+			key := parts[0]
+			savedEnvVars[key] = os.Getenv(key)
+			_ = os.Unsetenv(key)
+		}
+	}
+	t.Cleanup(func() {
+		// Restore environment variables
+		for key, value := range savedEnvVars {
+			if value != "" {
+				_ = os.Setenv(key, value)
+			}
+		}
+	})
+}
 
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
@@ -32,6 +55,8 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
 	// Create a temporary config file
 	tempConfig := &Config{
 		StartPort: 8000,
@@ -263,6 +288,8 @@ func TestAPIKey_HasPermission_Wildcard(t *testing.T) {
 }
 
 func TestLoadConfig_EnableMultipleUsers(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
 	// Test with EnableMultipleUsers enabled
 	tempConfig := &Config{
 		StartPort:           8000,
@@ -354,6 +381,8 @@ func TestExpandEnvVars(t *testing.T) {
 }
 
 func TestLoadConfigWithEnvVarExpansion(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
 	// Set up test environment variables
 	_ = os.Setenv("TEST_CLIENT_ID", "github_client_123")
 	_ = os.Setenv("TEST_CLIENT_SECRET", "github_secret_456")
@@ -411,6 +440,8 @@ func TestLoadConfigWithEnvVarExpansion(t *testing.T) {
 }
 
 func TestLoadConfigWithYAML(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
 	// Create YAML config
 	yamlConfig := `
 start_port: 8000
@@ -539,6 +570,8 @@ func TestInitializeConfigStructsFromEnv_StaticAuth(t *testing.T) {
 }
 
 func TestInitializeConfigStructsFromEnv_GitHubAuth(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
 	// Set up test environment variables for GitHub auth
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_ENABLED", "true")
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_BASE_URL", "https://github.company.com/api/v3")
@@ -606,6 +639,8 @@ func TestInitializeConfigStructsFromEnv_GitHubOAuth(t *testing.T) {
 }
 
 func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
 	// Set up environment variables
 	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_ENABLED", "true")
@@ -682,6 +717,8 @@ func TestInitializeConfigStructsFromEnv_PartialEnvironmentVariables(t *testing.T
 }
 
 func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
 	// Set up comprehensive environment variables
 	envVars := map[string]string{
 		"AGENTAPI_START_PORT":                            "7777",
