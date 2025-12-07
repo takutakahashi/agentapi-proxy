@@ -233,24 +233,32 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 		// Repository access confirmed - calculate priority
 		priority := 0
 
-		// Higher priority for exact account match
+		// Get the actual repository owner organization/user from the API response
+		repoOwner := repoResponse.GetOwner()
+		var repoOwnerLogin string
+		if repoOwner != nil {
+			repoOwnerLogin = repoOwner.GetLogin()
+		}
+
+		// Highest priority: Installation account matches the repository owner organization
+		// This ensures we select the installation for the org that owns the repo
+		if repoOwner != nil && strings.EqualFold(accountLogin, repoOwnerLogin) {
+			priority += 1000
+			log.Printf("[INSTALLATION_CACHE] Installation %d account (%s) MATCHES repository owner organization %s",
+				installationID, accountLogin, repoOwnerLogin)
+		}
+
+		// Medium priority: Installation account matches the provided owner parameter
+		// This is for backward compatibility but lower priority than actual org match
 		if strings.EqualFold(accountLogin, owner) {
 			priority += 100
-			log.Printf("[INSTALLATION_CACHE] Installation %d has EXACT match with repository owner %s",
+			log.Printf("[INSTALLATION_CACHE] Installation %d has match with provided owner parameter %s",
 				installationID, owner)
 		}
 
-		// Higher priority for organization installations over user installations
+		// Lower priority bonus for organization installations over user installations
 		if accountType == "Organization" {
 			priority += 50
-		}
-
-		// Verify repository ownership matches installation account
-		repoOwner := repoResponse.GetOwner()
-		if repoOwner != nil && strings.EqualFold(repoOwner.GetLogin(), accountLogin) {
-			priority += 200
-			log.Printf("[INSTALLATION_CACHE] Installation %d OWNS the repository %s/%s",
-				installationID, owner, repo)
 		}
 
 		candidate := installationCandidate{
@@ -261,8 +269,8 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 		}
 
 		candidates = append(candidates, candidate)
-		log.Printf("[INSTALLATION_CACHE] Installation %d (%s, %s) has access to %s/%s with priority %d",
-			installationID, accountLogin, accountType, owner, repo, priority)
+		log.Printf("[INSTALLATION_CACHE] Installation %d (%s, %s) has access to %s/%s (actual owner: %s) with priority %d",
+			installationID, accountLogin, accountType, owner, repo, repoOwnerLogin, priority)
 	}
 
 	if len(candidates) == 0 {
@@ -279,13 +287,14 @@ func (c *InstallationCache) discoverInstallationID(ctx context.Context, appID in
 
 	// Log selection reasoning
 	if len(candidates) > 1 {
-		log.Printf("[INSTALLATION_CACHE] Multiple installations found (%d total), selected installation %d (%s, type: %s) with highest priority %d",
-			len(candidates), bestCandidate.installationID, bestCandidate.account, bestCandidate.accountType, bestCandidate.priority)
+		log.Printf("[INSTALLATION_CACHE] Multiple installations found (%d total), selected installation %d (%s, type: %s) with highest priority %d for repository %s/%s",
+			len(candidates), bestCandidate.installationID, bestCandidate.account, bestCandidate.accountType, bestCandidate.priority, owner, repo)
+		log.Printf("[INSTALLATION_CACHE] Selection reason: Installation account '%s' best matches the repository organization/owner", bestCandidate.account)
 
 		// Log other candidates for debugging
 		for _, candidate := range candidates {
 			if candidate.installationID != bestCandidate.installationID {
-				log.Printf("[INSTALLATION_CACHE] Alternative: installation %d (%s, type: %s) with priority %d",
+				log.Printf("[INSTALLATION_CACHE] Alternative (not selected): installation %d (%s, type: %s) with priority %d",
 					candidate.installationID, candidate.account, candidate.accountType, candidate.priority)
 			}
 		}
