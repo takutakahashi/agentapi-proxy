@@ -62,8 +62,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=amd64
           cache-to: type=gha,mode=max,scope=amd64
-          build-args: |
-            AGENTAPI_VERSION=v0.2.1
 
   build-arm64:
     runs-on: ubuntu-24.04-arm
@@ -114,8 +112,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=arm64-native
           cache-to: type=gha,mode=max,scope=arm64-native
-          build-args: |
-            AGENTAPI_VERSION=v0.2.1
 
   merge:
     runs-on: ubuntu-latest
