@@ -51,6 +51,9 @@ func (h *SessionHandlers) RegisterRoutes(e *echo.Echo, proxy *Proxy) error {
 
 // StartSession handles POST /start requests to start a new agentapi server
 func (h *SessionHandlers) StartSession(c echo.Context) error {
+	// Set CORS headers
+	h.setCORSHeaders(c)
+
 	sessionID := uuid.New().String()
 
 	var startReq StartRequest
@@ -89,6 +92,9 @@ func (h *SessionHandlers) StartSession(c echo.Context) error {
 
 // SearchSessions handles GET /search requests to list and filter active sessions (memory only)
 func (h *SessionHandlers) SearchSessions(c echo.Context) error {
+	// Set CORS headers
+	h.setCORSHeaders(c)
+
 	user := auth.GetUserFromContext(c)
 	status := c.QueryParam("status")
 
@@ -168,6 +174,9 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 
 // DeleteSession handles DELETE /sessions/:sessionId requests to terminate a session
 func (h *SessionHandlers) DeleteSession(c echo.Context) error {
+	// Set CORS headers
+	h.setCORSHeaders(c)
+
 	sessionID := c.Param("sessionId")
 	clientIP := c.RealIP()
 
@@ -344,4 +353,13 @@ func (h *SessionHandlers) captureFirstMessage(c echo.Context, session *AgentSess
 			h.proxy.sessionsMutex.Unlock()
 		}
 	}
+}
+
+// setCORSHeaders sets CORS headers for all session management endpoints
+func (h *SessionHandlers) setCORSHeaders(c echo.Context) {
+	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
+	c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
+	c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
+	c.Response().Header().Set("Access-Control-Max-Age", "86400")
 }
