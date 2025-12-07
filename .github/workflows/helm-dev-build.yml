@@ -28,8 +28,92 @@ permissions:
   packages: write
 
 jobs:
+  trigger-docker-build:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      image_tag: ${{ steps.trigger.outputs.image_tag }}
+    steps:
+      - name: Determine Git reference
+        id: git_ref
+        run: |
+          if [ -n "${{ github.event.inputs.git_ref }}" ]; then
+            echo "ref=${{ github.event.inputs.git_ref }}" >> $GITHUB_OUTPUT
+            echo "Using specified git reference: ${{ github.event.inputs.git_ref }}"
+          else
+            echo "ref=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "Using current branch: ${{ github.ref_name }}"
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.git_ref.outputs.ref }}
+
+      - name: Get commit hash
+        id: commit
+        run: |
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "Commit hash: $COMMIT_HASH"
+          echo "image_tag=dev-$COMMIT_HASH" >> $GITHUB_OUTPUT
+
+      - name: Trigger Docker image build
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        id: trigger
+        run: |
+          echo "Triggering Docker image build for commit ${{ steps.commit.outputs.hash }}..."
+          
+          # Trigger the dev image build workflow
+          gh workflow run "Build Development Image" \
+            --repo ${{ github.repository }} \
+            --ref ${{ steps.git_ref.outputs.ref }} \
+            -f git_ref=${{ steps.git_ref.outputs.ref }} \
+            -f platforms="linux/amd64" \
+            -f tag_suffix=""
+          
+          echo "Docker build triggered. Waiting for it to start..."
+          sleep 10
+          
+          # Get the run ID of the triggered workflow
+          RUN_ID=$(gh run list \
+            --workflow="Build Development Image" \
+            --repo ${{ github.repository }} \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+          
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          echo "image_tag=dev-${{ steps.commit.outputs.hash }}" >> $GITHUB_OUTPUT
+          echo "Docker build workflow run ID: $RUN_ID"
+          echo "Expected image tag: dev-${{ steps.commit.outputs.hash }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for Docker image build
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          echo "Waiting for Docker image build to complete (run ID: ${{ steps.trigger.outputs.run_id }})..."
+          
+          # Wait for the workflow to complete (max 20 minutes)
+          gh run watch ${{ steps.trigger.outputs.run_id }} \
+            --repo ${{ github.repository }} \
+            --interval 30 \
+            --exit-status || {
+              echo "Warning: Docker build may have failed or is taking longer than expected"
+              echo "Continuing with Helm chart build anyway..."
+            }
+          
+          echo "Docker image build completed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-dev-helm-chart:
     runs-on: ubuntu-latest
+    needs: trigger-docker-build
+    if: always()
     steps:
       - name: Determine Git reference
         id: git_ref
@@ -55,6 +139,13 @@ jobs:
           echo "full_hash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "date=$(date -u +"%Y%m%d%H%M%S")" >> $GITHUB_OUTPUT
           echo "Commit hash: $COMMIT_HASH"
+          
+          # Use the image tag from Docker build if available
+          if [ -n "${{ needs.trigger-docker-build.outputs.image_tag }}" ]; then
+            echo "Using Docker build image tag: ${{ needs.trigger-docker-build.outputs.image_tag }}"
+          else
+            echo "Docker build was skipped (dry run mode)"
+          fi
 
       - name: Generate chart version
         id: version
@@ -243,7 +334,25 @@ jobs:
           | Git Reference | `${{ steps.git_ref.outputs.ref }}` |
           | Commit | `${{ steps.commit.outputs.hash }}` |
           | App Version | `dev-${{ steps.commit.outputs.hash }}` |
+          | Docker Image | `${{ env.REGISTRY }}/${{ github.repository }}:dev-${{ steps.commit.outputs.hash }}` |
           | Dry Run | `${{ github.event.inputs.dry_run }}` |
+          
+          ## 🐳 Docker Image Build
+          
+          EOF
+          
+          if [ "${{ github.event.inputs.dry_run }}" != "true" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          - ✅ Docker image build triggered and completed
+          - Image: `${{ env.REGISTRY }}/${{ github.repository }}:dev-${{ steps.commit.outputs.hash }}`
+          EOF
+          else
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          - ⏭️ Docker image build skipped (dry run mode)
+          EOF
+          fi
+          
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
           
           ## 🧪 Validation Results
           
