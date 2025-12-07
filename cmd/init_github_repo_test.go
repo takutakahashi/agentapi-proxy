@@ -1109,8 +1109,8 @@ func TestFindInstallationIDForRepo(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{}`)
 				}
 			},
-			expectError:   true,
-			errorContains: "no installation found with access",
+			expectedID:  12345,
+			expectError: false, // Now accepts read-only installations
 		},
 		{
 			name:         "Invalid repo fullname format",
