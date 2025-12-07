@@ -177,4 +177,3 @@ func TestDefaultServerRunner(t *testing.T) {
 		t.Error("Default runner should be of type defaultServerRunner")
 	}
 }
-

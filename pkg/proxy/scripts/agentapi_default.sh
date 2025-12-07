@@ -50,4 +50,4 @@ if [[ -n "$MCP_CONFIGS" ]]; then
     fi
 fi
 
-exec agentapi server --port "$PORT" {{.AgentAPIArgs}} -- claude {{.ClaudeArgs}}
+exec agentapi server --allowed-hosts "*" --allowed-origins "*" --port "$PORT" {{.AgentAPIArgs}} -- claude {{.ClaudeArgs}}

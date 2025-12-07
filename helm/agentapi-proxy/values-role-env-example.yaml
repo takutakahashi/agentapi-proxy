@@ -1,3 +1,4 @@
+---
 # Example configuration for role-based environment variables
 # ロールベース環境変数の設定例
 
@@ -28,13 +29,13 @@ roleEnvFiles:
     "guest.env":
       secretName: "agentapi-env-guest"
       key: "guest.env"
-    # You can also map files with different names:
-    # "special-config.env":
-    #   secretName: "custom-secret"
-    #   key: "special-key"
-    # "database.env":
-    #   secretName: "db-config"
-    #   key: "production.env"
+# You can also map files with different names:
+# "special-config.env":
+#   secretName: "custom-secret"
+#   key: "special-key"
+# "database.env":
+#   secretName: "db-config"
+#   key: "production.env"
 
 ---
 # Example secrets for role-based environment variables
