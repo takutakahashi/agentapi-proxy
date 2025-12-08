@@ -84,7 +84,7 @@ func TestKubernetesSessionManager_CreateSession(t *testing.T) {
 	}
 
 	lgr := logger.NewLogger()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestKubernetesSessionManager_GetSession(t *testing.T) {
 	}
 
 	lgr := logger.NewLogger()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestKubernetesSessionManager_ListSessions(t *testing.T) {
 	}
 
 	lgr := logger.NewLogger()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestKubernetesSessionManager_DeleteSession(t *testing.T) {
 	}
 
 	lgr := logger.NewLogger()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestKubernetesSessionManager_Shutdown(t *testing.T) {
 	}
 
 	lgr := logger.NewLogger()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestKubernetesSessionManager_SessionLabels(t *testing.T) {
 	}
 
 	lgr := logger.NewLogger()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -624,7 +624,7 @@ func TestKubernetesSessionManager_SessionAddr(t *testing.T) {
 	}
 
 	lgr := logger.NewLogger()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -689,7 +689,7 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 	}
 
 	lgr := logger.NewLogger()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
