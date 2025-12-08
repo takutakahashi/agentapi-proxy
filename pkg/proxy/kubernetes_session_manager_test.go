@@ -788,10 +788,10 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 	}
 
 	// Verify probes
-	if container.LivenessProbe == nil || container.LivenessProbe.HTTPGet.Path != "/health" {
-		t.Error("Expected liveness probe with /health path")
+	if container.LivenessProbe == nil || container.LivenessProbe.HTTPGet.Path != "/status" {
+		t.Error("Expected liveness probe with /status path")
 	}
-	if container.ReadinessProbe == nil || container.ReadinessProbe.HTTPGet.Path != "/health" {
-		t.Error("Expected readiness probe with /health path")
+	if container.ReadinessProbe == nil || container.ReadinessProbe.HTTPGet.Path != "/status" {
+		t.Error("Expected readiness probe with /status path")
 	}
 }
