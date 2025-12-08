@@ -35,9 +35,9 @@ func (s *localSession) ID() string {
 	return s.id
 }
 
-// Port returns the port the session is running on
-func (s *localSession) Port() int {
-	return s.request.Port
+// Addr returns the address (host:port) the session is running on
+func (s *localSession) Addr() string {
+	return fmt.Sprintf("localhost:%d", s.request.Port)
 }
 
 // UserID returns the user ID that owns this session

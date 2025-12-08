@@ -41,3 +41,7 @@ logs/
 !go.mod
 !go.sum
 !.tool-versions
+
+# envtest binaries
+bin/setup-envtest
+bin/k8s/

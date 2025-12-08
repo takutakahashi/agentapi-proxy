@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -129,7 +130,7 @@ type mockSession struct {
 }
 
 func (s *mockSession) ID() string              { return s.id }
-func (s *mockSession) Port() int               { return s.port }
+func (s *mockSession) Addr() string            { return fmt.Sprintf("localhost:%d", s.port) }
 func (s *mockSession) UserID() string          { return s.userID }
 func (s *mockSession) Tags() map[string]string { return s.tags }
 func (s *mockSession) Status() string          { return s.status }

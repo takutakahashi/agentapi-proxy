@@ -107,6 +107,38 @@ type APIKey struct {
 	ExpiresAt   string   `json:"expires_at,omitempty" mapstructure:"expires_at"`
 }
 
+// KubernetesSessionConfig represents Kubernetes session manager configuration
+type KubernetesSessionConfig struct {
+	// Enabled enables Kubernetes-based session management
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// Namespace is the Kubernetes namespace where session resources are created
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// Image is the container image for session pods
+	Image string `json:"image" mapstructure:"image"`
+	// ImagePullPolicy is the image pull policy for session pods
+	ImagePullPolicy string `json:"image_pull_policy" mapstructure:"image_pull_policy"`
+	// ServiceAccount is the service account for session pods
+	ServiceAccount string `json:"service_account" mapstructure:"service_account"`
+	// BasePort is the port that agentapi listens on in session pods
+	BasePort int `json:"base_port" mapstructure:"base_port"`
+	// CPURequest is the CPU request for session pods
+	CPURequest string `json:"cpu_request" mapstructure:"cpu_request"`
+	// CPULimit is the CPU limit for session pods
+	CPULimit string `json:"cpu_limit" mapstructure:"cpu_limit"`
+	// MemoryRequest is the memory request for session pods
+	MemoryRequest string `json:"memory_request" mapstructure:"memory_request"`
+	// MemoryLimit is the memory limit for session pods
+	MemoryLimit string `json:"memory_limit" mapstructure:"memory_limit"`
+	// PVCStorageClass is the storage class for session PVCs
+	PVCStorageClass string `json:"pvc_storage_class" mapstructure:"pvc_storage_class"`
+	// PVCStorageSize is the storage size for session PVCs
+	PVCStorageSize string `json:"pvc_storage_size" mapstructure:"pvc_storage_size"`
+	// PodStartTimeout is the timeout in seconds for pod startup
+	PodStartTimeout int `json:"pod_start_timeout" mapstructure:"pod_start_timeout"`
+	// PodStopTimeout is the timeout in seconds for pod termination
+	PodStopTimeout int `json:"pod_stop_timeout" mapstructure:"pod_stop_timeout"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
 	// StartPort is the starting port for agentapi servers
@@ -119,6 +151,8 @@ type Config struct {
 	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
 	// RoleEnvFiles is the configuration for role-based environment files
 	RoleEnvFiles RoleEnvFilesConfig `json:"role_env_files" mapstructure:"role_env_files"`
+	// KubernetesSession is the configuration for Kubernetes-based session management
+	KubernetesSession KubernetesSessionConfig `json:"kubernetes_session" mapstructure:"kubernetes_session"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -309,6 +343,22 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("role_env_files.enabled")
 	_ = v.BindEnv("role_env_files.path")
 	_ = v.BindEnv("role_env_files.load_default")
+
+	// Kubernetes session configuration
+	_ = v.BindEnv("kubernetes_session.enabled", "AGENTAPI_K8S_SESSION_ENABLED")
+	_ = v.BindEnv("kubernetes_session.namespace", "AGENTAPI_K8S_SESSION_NAMESPACE")
+	_ = v.BindEnv("kubernetes_session.image", "AGENTAPI_K8S_SESSION_IMAGE")
+	_ = v.BindEnv("kubernetes_session.image_pull_policy", "AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY")
+	_ = v.BindEnv("kubernetes_session.service_account", "AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT")
+	_ = v.BindEnv("kubernetes_session.base_port", "AGENTAPI_K8S_SESSION_BASE_PORT")
+	_ = v.BindEnv("kubernetes_session.cpu_request", "AGENTAPI_K8S_SESSION_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.cpu_limit", "AGENTAPI_K8S_SESSION_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.memory_request", "AGENTAPI_K8S_SESSION_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.memory_limit", "AGENTAPI_K8S_SESSION_MEMORY_LIMIT")
+	_ = v.BindEnv("kubernetes_session.pvc_storage_class", "AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS")
+	_ = v.BindEnv("kubernetes_session.pvc_storage_size", "AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE")
+	_ = v.BindEnv("kubernetes_session.pod_start_timeout", "AGENTAPI_K8S_SESSION_POD_START_TIMEOUT")
+	_ = v.BindEnv("kubernetes_session.pod_stop_timeout", "AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT")
 }
 
 // setDefaults sets default values for viper configuration
@@ -334,6 +384,22 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("role_env_files.enabled", false)
 	v.SetDefault("role_env_files.path", "/etc/agentapi/env")
 	v.SetDefault("role_env_files.load_default", true)
+
+	// Kubernetes session defaults
+	v.SetDefault("kubernetes_session.enabled", false)
+	v.SetDefault("kubernetes_session.namespace", "")
+	v.SetDefault("kubernetes_session.image", "")
+	v.SetDefault("kubernetes_session.image_pull_policy", "IfNotPresent")
+	v.SetDefault("kubernetes_session.service_account", "default")
+	v.SetDefault("kubernetes_session.base_port", 9000)
+	v.SetDefault("kubernetes_session.cpu_request", "500m")
+	v.SetDefault("kubernetes_session.cpu_limit", "2")
+	v.SetDefault("kubernetes_session.memory_request", "512Mi")
+	v.SetDefault("kubernetes_session.memory_limit", "4Gi")
+	v.SetDefault("kubernetes_session.pvc_storage_class", "")
+	v.SetDefault("kubernetes_session.pvc_storage_size", "10Gi")
+	v.SetDefault("kubernetes_session.pod_start_timeout", 120)
+	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields

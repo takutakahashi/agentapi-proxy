@@ -143,7 +143,7 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 			"user_id":    session.UserID(),
 			"status":     session.Status(),
 			"started_at": session.StartedAt(),
-			"port":       session.Port(),
+			"addr":       session.Addr(),
 			"tags":       session.Tags(),
 		}
 		filteredSessions = append(filteredSessions, sessionData)
@@ -217,7 +217,8 @@ func (h *SessionHandlers) RouteToSession(c echo.Context) error {
 		}
 	}
 
-	targetURL := fmt.Sprintf("http://localhost:%d", session.Port())
+	// Determine target URL using session address
+	targetURL := fmt.Sprintf("http://%s", session.Addr())
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))

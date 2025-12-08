@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install git for Go modules
 RUN apk add --no-cache git
@@ -20,7 +20,7 @@ COPY . .
 RUN go build -o bin/agentapi-proxy main.go
 
 # Build agentapi from source stage
-FROM golang:1.23-alpine AS agentapi-builder
+FROM golang:1.25-alpine AS agentapi-builder
 
 # Install git for cloning
 RUN apk add --no-cache git
