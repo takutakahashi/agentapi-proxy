@@ -32,8 +32,8 @@ func TestNewProxyFixed(t *testing.T) {
 		t.Error("Echo instance not initialized")
 	}
 
-	if proxy.nextPort != cfg.StartPort {
-		t.Errorf("Expected nextPort to be %d, got %d", cfg.StartPort, proxy.nextPort)
+	if proxy.sessionManager == nil {
+		t.Error("Session manager not initialized")
 	}
 }
 
@@ -105,78 +105,191 @@ func TestHealthEndpointWithoutAuth(t *testing.T) {
 	}
 }
 
-type mockServerRunner struct {
-	mu        sync.Mutex
-	runCalled bool
-	session   *AgentSession
+// mockSessionManager is a mock implementation of SessionManager for testing
+type mockSessionManager struct {
+	mu             sync.Mutex
+	createCalled   bool
+	getCalled      bool
+	listCalled     bool
+	deleteCalled   bool
+	shutdownCalled bool
+	sessions       map[string]*mockSession
+	lastCreatedID  string
+	lastDeletedID  string
 }
 
-func (m *mockServerRunner) Run(ctx context.Context, session *AgentSession) {
+type mockSession struct {
+	id        string
+	port      int
+	userID    string
+	tags      map[string]string
+	status    string
+	startedAt time.Time
+	cancelled bool
+}
+
+func (s *mockSession) ID() string              { return s.id }
+func (s *mockSession) Port() int               { return s.port }
+func (s *mockSession) UserID() string          { return s.userID }
+func (s *mockSession) Tags() map[string]string { return s.tags }
+func (s *mockSession) Status() string          { return s.status }
+func (s *mockSession) StartedAt() time.Time    { return s.startedAt }
+func (s *mockSession) Cancel()                 { s.cancelled = true }
+
+func newMockSessionManager() *mockSessionManager {
+	return &mockSessionManager{
+		sessions: make(map[string]*mockSession),
+	}
+}
+
+func (m *mockSessionManager) CreateSession(ctx context.Context, id string, req *RunServerRequest) (Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.runCalled = true
-	m.session = session
+	m.createCalled = true
+	m.lastCreatedID = id
+	session := &mockSession{
+		id:        id,
+		port:      req.Port,
+		userID:    req.UserID,
+		tags:      req.Tags,
+		status:    "active",
+		startedAt: time.Now(),
+	}
+	m.sessions[id] = session
+	return session, nil
 }
 
-func TestCustomServerRunner(t *testing.T) {
+func (m *mockSessionManager) GetSession(id string) Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getCalled = true
+	if session, ok := m.sessions[id]; ok {
+		return session
+	}
+	return nil
+}
+
+func (m *mockSessionManager) ListSessions(filter SessionFilter) []Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listCalled = true
+	var result []Session
+	for _, session := range m.sessions {
+		result = append(result, session)
+	}
+	return result
+}
+
+func (m *mockSessionManager) DeleteSession(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deleteCalled = true
+	m.lastDeletedID = id
+	delete(m.sessions, id)
+	return nil
+}
+
+func (m *mockSessionManager) Shutdown(timeout time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.shutdownCalled = true
+	return nil
+}
+
+func TestCustomSessionManager(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Auth.Enabled = false
 	proxy := NewProxy(cfg, false)
 
-	// Set custom server runner
-	mockRunner := &mockServerRunner{}
-	proxy.SetServerRunner(mockRunner)
+	// Set custom session manager
+	mockManager := newMockSessionManager()
+	proxy.SetSessionManager(mockManager)
 
-	// Create test session
-	req := &RunServerRequest{
-		Port:        9001,
-		UserID:      "test-user",
+	// Create a session
+	session, err := proxy.CreateSession("test-session", StartRequest{
 		Environment: map[string]string{"TEST": "value"},
-	}
-	session := &AgentSession{
-		ID:        "test-session",
-		Request:   req,
-		Status:    "active",
-		StartedAt: time.Now(),
+	}, "test-user", "user")
+
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
 	}
 
-	// Run the server
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go proxy.runAgentAPIServer(ctx, session)
-
-	// Give it time to call the mock runner
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify mock runner was called
-	mockRunner.mu.Lock()
-	runCalled := mockRunner.runCalled
-	runnerSession := mockRunner.session
-	mockRunner.mu.Unlock()
-
-	if !runCalled {
-		t.Error("Mock server runner was not called")
+	if session == nil {
+		t.Fatal("Session should not be nil")
 	}
 
-	if runnerSession != session {
-		t.Error("Mock server runner received different session")
+	mockManager.mu.Lock()
+	if !mockManager.createCalled {
+		t.Error("Mock session manager CreateSession was not called")
 	}
+	if mockManager.lastCreatedID != "test-session" {
+		t.Errorf("Expected session ID 'test-session', got '%s'", mockManager.lastCreatedID)
+	}
+	mockManager.mu.Unlock()
+
+	// Get the session
+	retrievedSession := proxy.GetSessionManager().GetSession("test-session")
+	if retrievedSession == nil {
+		t.Error("GetSession should return the session")
+	}
+
+	mockManager.mu.Lock()
+	if !mockManager.getCalled {
+		t.Error("Mock session manager GetSession was not called")
+	}
+	mockManager.mu.Unlock()
+
+	// Delete the session
+	err = proxy.DeleteSessionByID("test-session")
+	if err != nil {
+		t.Fatalf("DeleteSessionByID failed: %v", err)
+	}
+
+	mockManager.mu.Lock()
+	if !mockManager.deleteCalled {
+		t.Error("Mock session manager DeleteSession was not called")
+	}
+	if mockManager.lastDeletedID != "test-session" {
+		t.Errorf("Expected deleted session ID 'test-session', got '%s'", mockManager.lastDeletedID)
+	}
+	mockManager.mu.Unlock()
 }
 
-func TestDefaultServerRunner(t *testing.T) {
+func TestDefaultSessionManager(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Auth.Enabled = false
 	proxy := NewProxy(cfg, false)
 
-	// Verify default runner is returned when none is set
-	runner := proxy.getServerRunner()
-	if runner == nil {
-		t.Error("getServerRunner should return a default runner")
+	// Verify default session manager is returned
+	manager := proxy.GetSessionManager()
+	if manager == nil {
+		t.Error("GetSessionManager should return a session manager")
 	}
 
-	// Check if it's an instance of defaultServerRunner
-	if _, ok := runner.(*defaultServerRunner); !ok {
-		t.Error("Default runner should be of type defaultServerRunner")
+	// Check if it's an instance of LocalSessionManager
+	if _, ok := manager.(*LocalSessionManager); !ok {
+		t.Error("Default session manager should be of type LocalSessionManager")
 	}
+}
+
+func TestProxyShutdown(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
+	proxy := NewProxy(cfg, false)
+
+	// Set custom session manager
+	mockManager := newMockSessionManager()
+	proxy.SetSessionManager(mockManager)
+
+	// Shutdown
+	err := proxy.Shutdown(5 * time.Second)
+	if err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
+
+	mockManager.mu.Lock()
+	if !mockManager.shutdownCalled {
+		t.Error("Mock session manager Shutdown was not called")
+	}
+	mockManager.mu.Unlock()
 }

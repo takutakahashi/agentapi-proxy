@@ -1,13 +1,10 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -33,18 +30,14 @@ type Proxy struct {
 	config             *config.Config
 	echo               *echo.Echo
 	verbose            bool
-	sessions           map[string]*AgentSession
-	sessionsMutex      sync.RWMutex
-	nextPort           int
-	portMutex          sync.Mutex
 	logger             *logger.Logger
 	oauthProvider      *auth.GitHubOAuthProvider
 	githubAuthProvider *auth.GitHubAuthProvider
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
-	container          *di.Container // Internal DI container
-	serverRunner       ServerRunner  // Configurable server runner
+	container          *di.Container  // Internal DI container
+	sessionManager     SessionManager // Session lifecycle manager
 }
 
 // NewProxy creates a new proxy instance
@@ -115,16 +108,20 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Initialize internal DI container
 	container := di.NewContainer()
 
+	// Initialize logger
+	lgr := logger.NewLogger()
+
+	// Initialize session manager
+	sessionManager := NewLocalSessionManager(cfg, verbose, lgr, cfg.StartPort)
+
 	p := &Proxy{
-		config:        cfg,
-		echo:          e,
-		verbose:       verbose,
-		sessions:      make(map[string]*AgentSession),
-		sessionsMutex: sync.RWMutex{},
-		nextPort:      cfg.StartPort,
-		logger:        logger.NewLogger(),
-		userDirMgr:    userDirMgr,
-		container:     container,
+		config:         cfg,
+		echo:           e,
+		verbose:        verbose,
+		logger:         lgr,
+		userDirMgr:     userDirMgr,
+		container:      container,
+		sessionManager: sessionManager,
 	}
 
 	// Add logging middleware if verbose
@@ -240,16 +237,14 @@ func (p *Proxy) setupAuthRoutes() {
 	}
 }
 
-// SessionProxy interface implementation methods
-
-// GetSessions returns the sessions map
-func (p *Proxy) GetSessions() map[string]*AgentSession {
-	return p.sessions
+// GetSessionManager returns the session manager
+func (p *Proxy) GetSessionManager() SessionManager {
+	return p.sessionManager
 }
 
-// GetSessionsMutex returns the sessions mutex
-func (p *Proxy) GetSessionsMutex() *sync.RWMutex {
-	return &p.sessionsMutex
+// SetSessionManager allows configuration of a custom session manager (for testing)
+func (p *Proxy) SetSessionManager(manager SessionManager) {
+	p.sessionManager = manager
 }
 
 // GetContainer returns the DI container
@@ -258,7 +253,7 @@ func (p *Proxy) GetContainer() *di.Container {
 }
 
 // CreateSession creates a new agent session
-func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, userRole string) (*AgentSession, error) {
+func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, userRole string) (Session, error) {
 	// Get auth team env file from user context if available
 	var authTeamEnvFile string
 	// Note: This would need to be passed from the handler if required
@@ -281,13 +276,6 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 	// Replace the request environment with merged values
 	startReq.Environment = mergedEnv
 
-	// Find available port
-	port, err := p.getAvailablePort()
-	if err != nil {
-		log.Printf("Failed to find available port: %v", err)
-		return nil, fmt.Errorf("failed to allocate port: %w", err)
-	}
-
 	// Extract repository information from tags
 	repoInfo := p.extractRepositoryInfo(sessionID, startReq.Tags)
 
@@ -304,7 +292,6 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 
 	// Build run server request
 	req := &RunServerRequest{
-		Port:           port,
 		UserID:         userID,
 		Environment:    startReq.Environment,
 		Tags:           startReq.Tags,
@@ -312,115 +299,16 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 		InitialMessage: initialMessage,
 	}
 
-	// Start agentapi server in goroutine
-	ctx, cancel := context.WithCancel(context.Background())
-
-	session := &AgentSession{
-		ID:        sessionID,
-		Request:   req,
-		Cancel:    cancel,
-		StartedAt: time.Now(),
-		Status:    "active",
-	}
-
-	// Store session
-	p.sessionsMutex.Lock()
-	p.sessions[sessionID] = session
-	p.sessionsMutex.Unlock()
-
-	log.Printf("[SESSION_CREATED] ID: %s, Port: %d, User: %s, Tags: %v",
-		sessionID, port, userID, startReq.Tags)
-
-	// Log session start
-	repository := ""
-	if repoInfo != nil {
-		repository = repoInfo.FullName
-	}
-	if err := p.logger.LogSessionStart(sessionID, repository); err != nil {
-		log.Printf("Failed to log session start for %s: %v", sessionID, err)
-	}
-
-	// Start agentapi server in goroutine
-	go p.runAgentAPIServer(ctx, session)
-
-	if p.verbose {
-		log.Printf("Started agentapi server for session %s on port %d", sessionID, port)
-	}
-
-	return session, nil
+	// Delegate to session manager
+	return p.sessionManager.CreateSession(context.Background(), sessionID, req)
 }
 
 // DeleteSessionByID deletes a session by ID
 func (p *Proxy) DeleteSessionByID(sessionID string) error {
-	p.sessionsMutex.RLock()
-	session, exists := p.sessions[sessionID]
-	p.sessionsMutex.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("session not found")
-	}
-
-	// Cancel the session context to trigger graceful shutdown
-	if session.Cancel != nil {
-		session.Cancel()
-		log.Printf("Successfully cancelled context for session %s", sessionID)
-	} else {
-		log.Printf("Warning: session %s had no cancel function", sessionID)
-	}
-
-	// Wait for session cleanup with timeout
-	maxWaitTime := 5 * time.Second
-	waitInterval := 50 * time.Millisecond
-	startTime := time.Now()
-
-	for {
-		// Check if session was actually cleaned up
-		p.sessionsMutex.RLock()
-		_, stillExists := p.sessions[sessionID]
-		p.sessionsMutex.RUnlock()
-
-		if !stillExists {
-			log.Printf("Session %s successfully removed from active sessions", sessionID)
-			break
-		}
-
-		// Check if we've exceeded the maximum wait time
-		if time.Since(startTime) >= maxWaitTime {
-			log.Printf("Warning: session %s still exists after %v, forcing removal", sessionID, maxWaitTime)
-
-			// Force remove the session from the map
-			p.sessionsMutex.Lock()
-			delete(p.sessions, sessionID)
-			p.sessionsMutex.Unlock()
-
-			break
-		}
-
-		time.Sleep(waitInterval)
-	}
-
-	// Log session end with estimated message count
-	if err := p.logger.LogSessionEnd(sessionID, 0); err != nil {
-		log.Printf("Failed to log session end for %s: %v", sessionID, err)
-	}
-
-	// Clean up session working directory only on explicit deletion
-	if sessionID != "" {
-		workDir := fmt.Sprintf("/home/agentapi/workdir/%s", sessionID)
-		if _, err := os.Stat(workDir); err == nil {
-			log.Printf("Removing session working directory: %s", workDir)
-			if err := os.RemoveAll(workDir); err != nil {
-				log.Printf("Failed to remove session working directory %s: %v", workDir, err)
-			} else {
-				log.Printf("Successfully removed session working directory: %s", workDir)
-			}
-		}
-	}
-
-	return nil
+	return p.sessionManager.DeleteSession(sessionID)
 }
 
-// getEnvFromSession retrieves an environment variable from the session environment,
+// getEnvFromRequest retrieves an environment variable from the request environment,
 // falling back to the default value if not found
 func getEnvFromRequest(req *RunServerRequest, key string, defaultValue string) string {
 	if req.Environment != nil {
@@ -431,362 +319,9 @@ func getEnvFromRequest(req *RunServerRequest, key string, defaultValue string) s
 	return defaultValue
 }
 
-// getAvailablePort finds an available port starting from nextPort
-func (p *Proxy) getAvailablePort() (int, error) {
-	p.portMutex.Lock()
-	defer p.portMutex.Unlock()
-
-	startPort := p.nextPort
-	for port := startPort; port < startPort+1000; port++ {
-		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-		if err == nil {
-			if err := ln.Close(); err != nil {
-				log.Printf("Failed to close listener: %v", err)
-			}
-			p.nextPort = port + 1
-			return port, nil
-		}
-	}
-	return 0, fmt.Errorf("no available ports in range %d-%d", startPort, startPort+1000)
-}
-
-// ServerRunner interface for running agentapi servers
-type ServerRunner interface {
-	Run(ctx context.Context, session *AgentSession)
-}
-
-// defaultServerRunner is the default implementation of ServerRunner
-type defaultServerRunner struct {
-	proxy *Proxy
-}
-
-// getServerRunner returns the configured server runner
-func (p *Proxy) getServerRunner() ServerRunner {
-	if p.serverRunner != nil {
-		return p.serverRunner
-	}
-	// Default implementation
-	return &defaultServerRunner{proxy: p}
-}
-
-// SetServerRunner allows configuration of a custom server runner
-func (p *Proxy) SetServerRunner(runner ServerRunner) {
-	p.serverRunner = runner
-}
-
-// runAgentAPIServer runs an agentapi server instance using configuration
-func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
-	// Use configurable server runner
-	runner := p.getServerRunner()
-	runner.Run(ctx, session)
-}
-
-// getStartupManager returns a startup manager instance
-func (r *defaultServerRunner) getStartupManager() *StartupManager {
-	return NewStartupManager(r.proxy.config, r.proxy.verbose)
-}
-
-// buildStartupConfig builds the startup configuration for a session
-func (r *defaultServerRunner) buildStartupConfig(session *AgentSession) *StartupConfig {
-	req := session.Request
-	return &StartupConfig{
-		Port:                      req.Port,
-		UserID:                    req.UserID,
-		GitHubToken:               getEnvFromRequest(req, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
-		GitHubAppID:               getEnvFromRequest(req, "GITHUB_APP_ID", os.Getenv("GITHUB_APP_ID")),
-		GitHubInstallationID:      getEnvFromRequest(req, "GITHUB_INSTALLATION_ID", os.Getenv("GITHUB_INSTALLATION_ID")),
-		GitHubAppPEMPath:          getEnvFromRequest(req, "GITHUB_APP_PEM_PATH", os.Getenv("GITHUB_APP_PEM_PATH")),
-		GitHubAPI:                 getEnvFromRequest(req, "GITHUB_API", os.Getenv("GITHUB_API")),
-		GitHubPersonalAccessToken: getEnvFromRequest(req, "GITHUB_PERSONAL_ACCESS_TOKEN", os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN")),
-		AgentAPIArgs:              getEnvFromRequest(req, "AGENTAPI_ARGS", os.Getenv("AGENTAPI_ARGS")),
-		ClaudeArgs:                getEnvFromRequest(req, "CLAUDE_ARGS", os.Getenv("CLAUDE_ARGS")),
-		Environment:               req.Environment,
-		Config:                    r.proxy.config,
-		Verbose:                   r.proxy.verbose,
-	}
-}
-
-// Run implements the ServerRunner interface
-func (r *defaultServerRunner) Run(ctx context.Context, session *AgentSession) {
-	req := session.Request
-
-	defer func() {
-		// Clean up session when server stops
-		r.proxy.sessionsMutex.Lock()
-		// Check if session still exists (might have been removed by deleteSession)
-		_, sessionExists := r.proxy.sessions[session.ID]
-		if sessionExists {
-			delete(r.proxy.sessions, session.ID)
-		}
-		r.proxy.sessionsMutex.Unlock()
-
-		// Log session end when process terminates naturally (not via deleteSession)
-		if sessionExists {
-			// Log session end when process terminates naturally (not via deleteSession)
-			if err := r.proxy.logger.LogSessionEnd(session.ID, 0); err != nil {
-				log.Printf("Failed to log session end for %s: %v", session.ID, err)
-			}
-		}
-
-		if r.proxy.verbose {
-			log.Printf("Cleaned up session %s", session.ID)
-		}
-	}()
-
-	// Create startup manager
-	startupManager := r.getStartupManager()
-
-	// Prepare startup configuration
-	cfg := r.buildStartupConfig(session)
-
-	// Add repository information if available
-	if req.RepoInfo != nil {
-		cfg.RepoFullName = req.RepoInfo.FullName
-		cfg.CloneDir = req.RepoInfo.CloneDir
-	} else {
-		// Always set CloneDir to session ID, even when no repository is specified
-		cfg.CloneDir = session.ID
-	}
-
-	// Extract MCP configurations from tags if available
-	if req.Tags != nil {
-		if mcpConfigs, exists := req.Tags["claude.mcp_configs"]; exists && mcpConfigs != "" {
-			cfg.MCPConfigs = mcpConfigs
-		}
-	}
-
-	// Start the AgentAPI session using Go functions
-	cmd, err := startupManager.StartAgentAPISession(ctx, cfg)
-	if err != nil {
-		log.Printf("Failed to start AgentAPI session for %s: %v", session.ID, err)
-		return
-	}
-
-	// Log startup details
-	log.Printf("Starting agentapi process for session %s on %d using Go functions", session.ID, req.Port)
-	log.Printf("Session startup parameters:")
-	log.Printf("  Port: %d", req.Port)
-	log.Printf("  Session ID: %s", session.ID)
-	log.Printf("  User ID: %s", req.UserID)
-	if cfg.RepoFullName != "" {
-		log.Printf("  Repository: %s", cfg.RepoFullName)
-		log.Printf("  Clone dir: %s", cfg.CloneDir)
-	}
-	if len(req.Tags) > 0 {
-		log.Printf("  Request tags:")
-		for key, value := range req.Tags {
-			log.Printf("    %s=%s", key, value)
-		}
-	}
-
-	// Capture stderr output for logging on exit code 1
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
-	// Store the command in the session and start the process
-	session.processMutex.Lock()
-	session.Process = cmd
-	err = cmd.Start()
-	session.processMutex.Unlock()
-
-	if err != nil {
-		log.Printf("Failed to start agentapi process for session %s: %v", session.ID, err)
-		return
-	}
-
-	if r.proxy.verbose {
-		log.Printf("AgentAPI process started for session %s (PID: %d)", session.ID, cmd.Process.Pid)
-	}
-
-	// Send initial message if provided
-	if req.InitialMessage != "" {
-		go r.proxy.sendInitialMessage(session, req.InitialMessage)
-	}
-
-	// Wait for the process to finish or context cancellation
-	done := make(chan error, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Recovered from panic in cmd.Wait() for session %s: %v", session.ID, r)
-				done <- fmt.Errorf("panic in cmd.Wait(): %v", r)
-			}
-		}()
-		done <- cmd.Wait()
-	}()
-
-	// Ensure the process is cleaned up to prevent zombie processes
-	defer func() {
-		// This defer ensures cmd.Wait() is called if it hasn't been called yet
-		if cmd.Process != nil && cmd.ProcessState == nil {
-			// Process is still running, wait for it to prevent zombie
-			select {
-			case <-done:
-				// Wait completed in the main logic
-			case <-time.After(10 * time.Second):
-				// Increased timeout to 10 seconds to allow proper cleanup
-				log.Printf("Warning: Process %d cleanup timed out after 10 seconds", cmd.Process.Pid)
-				// Force kill if still running
-				if cmd.Process != nil {
-					log.Printf("Force killing process %d to prevent zombie", cmd.Process.Pid)
-					if err := cmd.Process.Kill(); err != nil {
-						log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, err)
-					}
-					// Wait for the killed process to prevent zombie
-					go func() {
-						if waitErr := cmd.Wait(); waitErr != nil {
-							log.Printf("Wait error after force kill for process %d: %v", cmd.Process.Pid, waitErr)
-						}
-					}()
-				}
-			}
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		// Context cancelled, terminate the process
-		if r.proxy.verbose {
-			log.Printf("Terminating agentapi process for session %s", session.ID)
-		}
-
-		// Try graceful shutdown first (SIGTERM to process group)
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
-			// If process group signal fails, try individual process
-			if termErr := cmd.Process.Signal(syscall.SIGTERM); termErr != nil {
-				log.Printf("Failed to send SIGTERM to process %d: %v", cmd.Process.Pid, termErr)
-			}
-		} else {
-			log.Printf("Sent SIGTERM to process group %d", cmd.Process.Pid)
-		}
-
-		// Wait for graceful shutdown with timeout
-		gracefulTimeout := time.After(5 * time.Second)
-		select {
-		case waitErr := <-done:
-			if r.proxy.verbose {
-				log.Printf("AgentAPI process for session %s terminated gracefully", session.ID)
-			}
-			if waitErr != nil && r.proxy.verbose {
-				log.Printf("Process wait error for session %s: %v", session.ID, waitErr)
-			}
-		case <-gracefulTimeout:
-			// Force kill if graceful shutdown failed
-			if r.proxy.verbose {
-				log.Printf("Force killing agentapi process for session %s", session.ID)
-			}
-			// Kill entire process group
-			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-				log.Printf("Failed to kill process group %d: %v", cmd.Process.Pid, err)
-				// If process group kill fails, try individual process
-				if killErr := cmd.Process.Kill(); killErr != nil {
-					log.Printf("Failed to kill process %d: %v", cmd.Process.Pid, killErr)
-				}
-			} else {
-				log.Printf("Sent SIGKILL to process group %d", cmd.Process.Pid)
-			}
-			// Always wait for the process to prevent zombie
-			select {
-			case waitErr := <-done:
-				if waitErr != nil && r.proxy.verbose {
-					log.Printf("Process wait error after kill for session %s: %v", session.ID, waitErr)
-				}
-			case <-time.After(2 * time.Second):
-				log.Printf("Warning: Process %d may not have exited cleanly", cmd.Process.Pid)
-				// Even if timed out, try to consume from done channel to prevent goroutine leak
-				go func() {
-					select {
-					case <-done: // Consume the value when available
-					case <-time.After(5 * time.Second):
-						// If we can't consume within 5 seconds, just exit the goroutine
-						log.Printf("Warning: Could not consume done channel for process %d", cmd.Process.Pid)
-					}
-				}()
-			}
-		}
-
-	case err := <-done:
-		// Process finished on its own
-		if err != nil {
-			// Check if error is exit code 1 and log stderr output if available
-			if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
-				log.Printf("AgentAPI process for session %s exited with code 1: %v", session.ID, err)
-				// Log stderr output if available
-				if stderrOutput := stderrBuf.String(); stderrOutput != "" {
-					log.Printf("Stderr output for session %s: %s", session.ID, stderrOutput)
-				}
-			} else {
-				log.Printf("AgentAPI process for session %s exited with error: %v", session.ID, err)
-			}
-		} else if r.proxy.verbose {
-			log.Printf("AgentAPI process for session %s exited normally", session.ID)
-		}
-	}
-}
-
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (p *Proxy) Shutdown(timeout time.Duration) error {
-	// Session monitor removed - nothing to stop
-
-	log.Printf("Shutting down proxy, terminating %d active sessions...", len(p.sessions))
-
-	// Get all session cancel functions
-	p.sessionsMutex.RLock()
-	var sessions []*AgentSession
-	for _, session := range p.sessions {
-		sessions = append(sessions, session)
-	}
-	p.sessionsMutex.RUnlock()
-
-	if len(sessions) == 0 {
-		log.Printf("No active sessions to terminate")
-		return nil
-	}
-
-	// Cancel all sessions
-	for _, session := range sessions {
-		if session.Cancel != nil {
-			session.processMutex.RLock()
-			process := session.Process
-			session.processMutex.RUnlock()
-
-			if process != nil && process.Process != nil {
-				log.Printf("Terminating session %s (PID: %d)", session.ID, process.Process.Pid)
-			} else {
-				log.Printf("Terminating session %s", session.ID)
-			}
-			session.Cancel()
-		}
-	}
-
-	// Wait for all sessions to complete with timeout
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			p.sessionsMutex.RLock()
-			remaining := len(p.sessions)
-			p.sessionsMutex.RUnlock()
-
-			if remaining == 0 {
-				return
-			}
-
-			time.Sleep(100 * time.Millisecond)
-		}
-	}()
-
-	select {
-	case <-done:
-		log.Printf("All sessions terminated gracefully")
-		return nil
-	case <-time.After(timeout):
-		p.sessionsMutex.RLock()
-		remaining := len(p.sessions)
-		p.sessionsMutex.RUnlock()
-		log.Printf("Timeout reached, %d sessions may still be running", remaining)
-		return fmt.Errorf("shutdown timeout reached with %d sessions still running", remaining)
-	}
+	return p.sessionManager.Shutdown(timeout)
 }
 
 // extractRepositoryInfo extracts repository information from tags
@@ -874,66 +409,6 @@ func extractRepoFullNameFromURL(repoURL string) (string, error) {
 	}
 
 	return repoPath, nil
-}
-
-// sendInitialMessage sends an initial message to the agentapi server after startup
-func (p *Proxy) sendInitialMessage(session *AgentSession, message string) {
-	port := session.Request.Port
-
-	// Wait a bit for the server to start up
-	time.Sleep(2 * time.Second)
-
-	// Check server health first
-	maxRetries := 30
-	for i := 0; i < maxRetries; i++ {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
-		if err == nil {
-			if closeErr := resp.Body.Close(); closeErr != nil {
-				log.Printf("Failed to close response body: %v", closeErr)
-			}
-			if resp.StatusCode == http.StatusOK {
-				break
-			}
-		}
-		if i == maxRetries-1 {
-			log.Printf("AgentAPI server for session %s not ready after %d retries, skipping initial message", session.ID, maxRetries)
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	// Prepare message request
-	messageReq := map[string]interface{}{
-		"content": message,
-		"type":    "user",
-	}
-
-	jsonBody, err := json.Marshal(messageReq)
-	if err != nil {
-		log.Printf("Failed to marshal message request for session %s: %v", session.ID, err)
-		return
-	}
-
-	// Send message to agentapi
-	url := fmt.Sprintf("http://localhost:%d/message", port)
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		log.Printf("Failed to send initial message to session %s: %v", session.ID, err)
-		return
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("Failed to close response body: %v", closeErr)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("Failed to send initial message to session %s (status: %d): %s", session.ID, resp.StatusCode, string(body))
-		return
-	}
-
-	log.Printf("Successfully sent initial message to session %s", session.ID)
 }
 
 // cleanupDefunctProcesses periodically checks for and cleans up defunct processes

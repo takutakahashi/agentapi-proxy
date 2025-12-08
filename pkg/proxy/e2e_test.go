@@ -114,45 +114,150 @@ func (m *mockAgentAPIServer) Close() {
 	m.server.Close()
 }
 
-// e2eServerRunnerFactory creates individual runners for each session
-type e2eServerRunnerFactory struct {
-	proxy *Proxy
+// e2eSession implements the Session interface for e2e testing
+type e2eSession struct {
+	id        string
+	port      int
+	userID    string
+	tags      map[string]string
+	status    string
+	startedAt time.Time
+	cancel    context.CancelFunc
 }
 
-func (f *e2eServerRunnerFactory) Run(ctx context.Context, session *AgentSession) {
-	// Create individual runner for this session
-	runner := &e2eServerRunner{proxy: f.proxy}
-	runner.Run(ctx, session)
+func (s *e2eSession) ID() string              { return s.id }
+func (s *e2eSession) Port() int               { return s.port }
+func (s *e2eSession) UserID() string          { return s.userID }
+func (s *e2eSession) Tags() map[string]string { return s.tags }
+func (s *e2eSession) Status() string          { return s.status }
+func (s *e2eSession) StartedAt() time.Time    { return s.startedAt }
+func (s *e2eSession) Cancel() {
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
-// e2eServerRunner runs a mock agentapi server instead of the real one
-type e2eServerRunner struct {
-	mockServer *mockAgentAPIServer
-	proxy      *Proxy
+// e2eSessionManager is a SessionManager for e2e testing that uses mock agentapi servers
+type e2eSessionManager struct {
+	sessions    map[string]*e2eSession
+	mockServers map[string]*mockAgentAPIServer
+	mutex       sync.RWMutex
 }
 
-func (r *e2eServerRunner) Run(ctx context.Context, session *AgentSession) {
-	// Create and start mock server on the session's port
-	r.mockServer = newMockAgentAPIServer()
+func newE2ESessionManager() *e2eSessionManager {
+	return &e2eSessionManager{
+		sessions:    make(map[string]*e2eSession),
+		mockServers: make(map[string]*mockAgentAPIServer),
+	}
+}
 
-	// Store the mock server port in the session request
-	session.Request.Port = r.mockServer.Port()
+func (m *e2eSessionManager) CreateSession(ctx context.Context, id string, req *RunServerRequest) (Session, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
-	// Log for debugging
-	fmt.Printf("E2E Mock server started on port %d for session %s\n", session.Request.Port, session.ID)
+	// Create mock server
+	mockServer := newMockAgentAPIServer()
+	m.mockServers[id] = mockServer
 
-	// Wait for context cancellation
-	<-ctx.Done()
+	// Create session context
+	sessionCtx, cancel := context.WithCancel(context.Background())
 
-	// Cleanup
-	if r.mockServer != nil {
-		r.mockServer.Close()
+	session := &e2eSession{
+		id:        id,
+		port:      mockServer.Port(),
+		userID:    req.UserID,
+		tags:      req.Tags,
+		status:    "active",
+		startedAt: time.Now(),
+		cancel:    cancel,
+	}
+	m.sessions[id] = session
+
+	// Start goroutine to cleanup on context cancellation
+	go func() {
+		<-sessionCtx.Done()
+		m.mutex.Lock()
+		if server, ok := m.mockServers[id]; ok {
+			server.Close()
+			delete(m.mockServers, id)
+		}
+		delete(m.sessions, id)
+		m.mutex.Unlock()
+	}()
+
+	fmt.Printf("E2E Mock server started on port %d for session %s\n", session.port, id)
+	return session, nil
+}
+
+func (m *e2eSessionManager) GetSession(id string) Session {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if session, ok := m.sessions[id]; ok {
+		return session
+	}
+	return nil
+}
+
+func (m *e2eSessionManager) ListSessions(filter SessionFilter) []Session {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	var result []Session
+	for _, session := range m.sessions {
+		// Apply filters
+		if filter.UserID != "" && session.userID != filter.UserID {
+			continue
+		}
+		if filter.Status != "" && session.status != filter.Status {
+			continue
+		}
+		if len(filter.Tags) > 0 {
+			matchAllTags := true
+			for key, value := range filter.Tags {
+				if session.tags[key] != value {
+					matchAllTags = false
+					break
+				}
+			}
+			if !matchAllTags {
+				continue
+			}
+		}
+		result = append(result, session)
+	}
+	return result
+}
+
+func (m *e2eSessionManager) DeleteSession(id string) error {
+	m.mutex.RLock()
+	session, exists := m.sessions[id]
+	m.mutex.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("session not found")
 	}
 
-	// Clean up session
-	r.proxy.sessionsMutex.Lock()
-	delete(r.proxy.sessions, session.ID)
-	r.proxy.sessionsMutex.Unlock()
+	session.Cancel()
+
+	// Wait for cleanup
+	time.Sleep(100 * time.Millisecond)
+	return nil
+}
+
+func (m *e2eSessionManager) Shutdown(timeout time.Duration) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	for id, session := range m.sessions {
+		session.Cancel()
+		if server, ok := m.mockServers[id]; ok {
+			server.Close()
+		}
+	}
+	m.sessions = make(map[string]*e2eSession)
+	m.mockServers = make(map[string]*mockAgentAPIServer)
+	return nil
 }
 
 // TestE2ESessionLifecycle tests the complete session lifecycle with a mock agentapi
@@ -163,9 +268,9 @@ func TestE2ESessionLifecycle(t *testing.T) {
 	cfg.StartPort = 19000
 	proxy := NewProxy(cfg, false)
 
-	// Set up e2e server runner factory
-	factory := &e2eServerRunnerFactory{proxy: proxy}
-	proxy.SetServerRunner(factory)
+	// Set up e2e session manager
+	e2eManager := newE2ESessionManager()
+	proxy.SetSessionManager(e2eManager)
 
 	// Start proxy server
 	server := httptest.NewServer(proxy.GetEcho())
@@ -359,9 +464,9 @@ func TestE2EConcurrentSessions(t *testing.T) {
 	cfg.StartPort = 20000
 	proxy := NewProxy(cfg, false)
 
-	// Set up e2e server runner factory
-	factory := &e2eServerRunnerFactory{proxy: proxy}
-	proxy.SetServerRunner(factory)
+	// Set up e2e session manager
+	e2eManager := newE2ESessionManager()
+	proxy.SetSessionManager(e2eManager)
 
 	// Start proxy server
 	server := httptest.NewServer(proxy.GetEcho())
@@ -415,13 +520,9 @@ func TestE2EConcurrentSessions(t *testing.T) {
 	wg.Wait()
 
 	// Verify all sessions were created
-	activeCount := 0
-	proxy.sessionsMutex.RLock()
-	activeCount = len(proxy.sessions)
-	proxy.sessionsMutex.RUnlock()
-
-	if activeCount != numSessions {
-		t.Errorf("Expected %d active sessions, got %d", numSessions, activeCount)
+	sessions := e2eManager.ListSessions(SessionFilter{})
+	if len(sessions) != numSessions {
+		t.Errorf("Expected %d active sessions, got %d", numSessions, len(sessions))
 	}
 
 	// Clean up all sessions
