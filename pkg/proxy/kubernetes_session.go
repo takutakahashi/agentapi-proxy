@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -26,9 +27,10 @@ func (s *kubernetesSession) ID() string {
 	return s.id
 }
 
-// Port returns the port the session is running on
-func (s *kubernetesSession) Port() int {
-	return s.servicePort
+// Addr returns the address (host:port) the session is running on
+// For Kubernetes sessions, this returns the Service DNS name with port
+func (s *kubernetesSession) Addr() string {
+	return fmt.Sprintf("%s:%d", s.ServiceDNS(), s.servicePort)
 }
 
 // UserID returns the user ID that owns this session

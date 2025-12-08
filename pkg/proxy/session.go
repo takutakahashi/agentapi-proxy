@@ -10,8 +10,10 @@ type Session interface {
 	// ID returns the unique session identifier
 	ID() string
 
-	// Port returns the port the session is running on
-	Port() int
+	// Addr returns the address (host:port) the session is running on
+	// For local sessions, this returns "localhost:{port}"
+	// For Kubernetes sessions, this returns "{service-dns}:{port}"
+	Addr() string
 
 	// UserID returns the user ID that owns this session
 	UserID() string

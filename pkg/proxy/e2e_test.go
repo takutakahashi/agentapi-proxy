@@ -126,7 +126,7 @@ type e2eSession struct {
 }
 
 func (s *e2eSession) ID() string              { return s.id }
-func (s *e2eSession) Port() int               { return s.port }
+func (s *e2eSession) Addr() string            { return fmt.Sprintf("localhost:%d", s.port) }
 func (s *e2eSession) UserID() string          { return s.userID }
 func (s *e2eSession) Tags() map[string]string { return s.tags }
 func (s *e2eSession) Status() string          { return s.status }
