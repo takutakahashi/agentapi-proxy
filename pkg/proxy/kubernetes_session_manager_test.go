@@ -795,3 +795,316 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 		t.Error("Expected readiness probe with /status path")
 	}
 }
+
+// mockCredentialProviderForTest is a mock implementation for testing
+type mockCredentialProviderForTest struct {
+	creds *ClaudeCredentials
+	err   error
+}
+
+func (m *mockCredentialProviderForTest) Name() string {
+	return "mock"
+}
+
+func (m *mockCredentialProviderForTest) Load() (*ClaudeCredentials, error) {
+	return m.creds, m.err
+}
+
+func TestKubernetesSessionManager_CreateSessionWithCredentials(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-credentials",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	// Create manager with mock credential provider
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:         true,
+			Namespace:       ns.Name,
+			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy: "IfNotPresent",
+			ServiceAccount:  "default",
+			BasePort:        9000,
+			CPURequest:      "100m",
+			CPULimit:        "500m",
+			MemoryRequest:   "128Mi",
+			MemoryLimit:     "512Mi",
+			PVCStorageClass: "",
+			PVCStorageSize:  "1Gi",
+			PodStartTimeout: 60,
+			PodStopTimeout:  30,
+		},
+	}
+
+	mockProvider := &mockCredentialProviderForTest{
+		creds: &ClaudeCredentials{
+			AccessToken:  "test-access-token",
+			RefreshToken: "test-refresh-token",
+			ExpiresAt:    "1234567890",
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, mockProvider)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session
+	sessionID := "test-session-creds"
+	req := &RunServerRequest{
+		UserID: "test-user",
+	}
+
+	session, err := manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	if session == nil {
+		t.Fatal("Expected session to be created")
+	}
+
+	// Verify Secret was created
+	secretName := "agentapi-session-" + sessionID + "-credentials"
+	secret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get Secret: %v", err)
+	}
+
+	// Verify Secret data
+	if string(secret.Data[EnvClaudeAccessToken]) != "test-access-token" {
+		t.Errorf("Expected access token 'test-access-token', got %s", string(secret.Data[EnvClaudeAccessToken]))
+	}
+	if string(secret.Data[EnvClaudeRefreshToken]) != "test-refresh-token" {
+		t.Errorf("Expected refresh token 'test-refresh-token', got %s", string(secret.Data[EnvClaudeRefreshToken]))
+	}
+	if string(secret.Data[EnvClaudeExpiresAt]) != "1234567890" {
+		t.Errorf("Expected expires at '1234567890', got %s", string(secret.Data[EnvClaudeExpiresAt]))
+	}
+
+	// Verify Secret labels
+	if secret.Labels["agentapi.proxy/session-id"] != sessionID {
+		t.Errorf("Expected session-id label %s, got %s", sessionID, secret.Labels["agentapi.proxy/session-id"])
+	}
+
+	// Verify Deployment has envFrom referencing the Secret
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get Deployment: %v", err)
+	}
+
+	container := deployment.Spec.Template.Spec.Containers[0]
+	if len(container.EnvFrom) == 0 {
+		t.Fatal("Expected envFrom to be set on container")
+	}
+
+	foundSecretRef := false
+	for _, envFrom := range container.EnvFrom {
+		if envFrom.SecretRef != nil && envFrom.SecretRef.Name == secretName {
+			foundSecretRef = true
+			if envFrom.SecretRef.Optional == nil || !*envFrom.SecretRef.Optional {
+				t.Error("Expected Secret reference to be optional")
+			}
+			break
+		}
+	}
+	if !foundSecretRef {
+		t.Errorf("Expected envFrom to reference Secret %s", secretName)
+	}
+}
+
+func TestKubernetesSessionManager_CreateSessionWithoutCredentials(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-no-credentials",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	// Create manager with mock credential provider that returns nil
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:         true,
+			Namespace:       ns.Name,
+			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy: "IfNotPresent",
+			ServiceAccount:  "default",
+			BasePort:        9000,
+			CPURequest:      "100m",
+			CPULimit:        "500m",
+			MemoryRequest:   "128Mi",
+			MemoryLimit:     "512Mi",
+			PVCStorageClass: "",
+			PVCStorageSize:  "1Gi",
+			PodStartTimeout: 60,
+			PodStopTimeout:  30,
+		},
+	}
+
+	mockProvider := &mockCredentialProviderForTest{
+		creds: nil, // No credentials
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, mockProvider)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session
+	sessionID := "test-session-no-creds"
+	req := &RunServerRequest{
+		UserID: "test-user",
+	}
+
+	session, err := manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	if session == nil {
+		t.Fatal("Expected session to be created")
+	}
+
+	// Verify Secret was NOT created
+	secretName := "agentapi-session-" + sessionID + "-credentials"
+	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil {
+		t.Error("Expected Secret to not exist when no credentials provided")
+	}
+
+	// Verify Deployment does NOT have envFrom
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get Deployment: %v", err)
+	}
+
+	container := deployment.Spec.Template.Spec.Containers[0]
+	if len(container.EnvFrom) != 0 {
+		t.Error("Expected envFrom to be empty when no credentials provided")
+	}
+}
+
+func TestKubernetesSessionManager_DeleteSessionWithCredentials(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-delete-creds",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	// Create manager with mock credential provider
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:         true,
+			Namespace:       ns.Name,
+			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy: "IfNotPresent",
+			ServiceAccount:  "default",
+			BasePort:        9000,
+			CPURequest:      "100m",
+			CPULimit:        "500m",
+			MemoryRequest:   "128Mi",
+			MemoryLimit:     "512Mi",
+			PVCStorageClass: "",
+			PVCStorageSize:  "1Gi",
+			PodStartTimeout: 60,
+			PodStopTimeout:  30,
+		},
+	}
+
+	mockProvider := &mockCredentialProviderForTest{
+		creds: &ClaudeCredentials{
+			AccessToken:  "test-access-token",
+			RefreshToken: "test-refresh-token",
+			ExpiresAt:    "1234567890",
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, mockProvider)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session
+	sessionID := "test-session-delete-creds"
+	req := &RunServerRequest{
+		UserID: "test-user",
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+
+	// Verify Secret exists
+	secretName := "agentapi-session-" + sessionID + "-credentials"
+	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Expected Secret to exist: %v", err)
+	}
+
+	// Delete session
+	err = manager.DeleteSession(sessionID)
+	if err != nil {
+		t.Fatalf("Failed to delete session: %v", err)
+	}
+
+	// Verify Secret has DeletionTimestamp set (marked for deletion)
+	secret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil {
+		// Secret still exists, check if it's marked for deletion
+		if secret.DeletionTimestamp == nil {
+			t.Error("Expected Secret to be marked for deletion (DeletionTimestamp should be set)")
+		}
+	}
+	// If err != nil (NotFound), Secret was already deleted - that's also OK
+}
