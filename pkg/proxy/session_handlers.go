@@ -118,13 +118,14 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 	matchingSessions := make([]*AgentSession, 0)
 
 	for _, session := range sessions {
+		req := session.Request
 		// User authorization check
-		if user != nil && !user.IsAdmin() && session.UserID != string(user.ID()) {
+		if user != nil && !user.IsAdmin() && req.UserID != string(user.ID()) {
 			continue
 		}
 
 		// User ID filter
-		if userID != "" && session.UserID != userID {
+		if userID != "" && req.UserID != userID {
 			continue
 		}
 
@@ -136,7 +137,7 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 		// Tag filters
 		matchAllTags := true
 		for tagKey, tagValue := range tagFilters {
-			sessionTagValue, exists := session.Tags[tagKey]
+			sessionTagValue, exists := req.Tags[tagKey]
 			if !exists || sessionTagValue != tagValue {
 				matchAllTags = false
 				break
@@ -156,13 +157,14 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 
 	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
 	for _, session := range matchingSessions {
+		req := session.Request
 		sessionData := map[string]interface{}{
 			"session_id": session.ID,
-			"user_id":    session.UserID,
+			"user_id":    req.UserID,
 			"status":     session.Status,
 			"started_at": session.StartedAt,
-			"port":       session.Port,
-			"tags":       session.Tags,
+			"port":       req.Port,
+			"tags":       req.Tags,
 		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
@@ -201,13 +203,13 @@ func (h *SessionHandlers) DeleteSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
-	if !auth.UserOwnsSession(c, session.UserID) {
+	if !auth.UserOwnsSession(c, session.Request.UserID) {
 		log.Printf("Delete session failed: user does not own session %s (requested by %s)", sessionID, clientIP)
 		return echo.NewHTTPError(http.StatusForbidden, "You can only delete your own sessions")
 	}
 
 	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
-		sessionID, sessionStatus, session.UserID, clientIP)
+		sessionID, sessionStatus, session.Request.UserID, clientIP)
 
 	if err := h.proxy.DeleteSessionByID(sessionID); err != nil {
 		log.Printf("Failed to delete session %s: %v", sessionID, err)
@@ -240,14 +242,14 @@ func (h *SessionHandlers) RouteToSession(c echo.Context) error {
 	if c.Request().Method != "OPTIONS" {
 		cfg := auth.GetConfigFromContext(c)
 		if cfg != nil && cfg.Auth.Enabled {
-			if !auth.UserOwnsSession(c, session.UserID) {
+			if !auth.UserOwnsSession(c, session.Request.UserID) {
 				log.Printf("User does not have access to session %s", sessionID)
 				return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
 			}
 		}
 	}
 
-	targetURL := fmt.Sprintf("http://localhost:%d", session.Port)
+	targetURL := fmt.Sprintf("http://localhost:%d", session.Request.Port)
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))
@@ -323,8 +325,8 @@ func (h *SessionHandlers) RouteToSession(c echo.Context) error {
 // captureFirstMessage captures the first message content for session description
 func (h *SessionHandlers) captureFirstMessage(c echo.Context, session *AgentSession) {
 	// Skip if description already exists
-	if session.Tags != nil {
-		if _, exists := session.Tags["description"]; exists {
+	if session.Request.Tags != nil {
+		if _, exists := session.Request.Tags["description"]; exists {
 			return
 		}
 	}
@@ -346,10 +348,10 @@ func (h *SessionHandlers) captureFirstMessage(c echo.Context, session *AgentSess
 	if msgType, ok := messageReq["type"].(string); ok && msgType == "user" {
 		if content, ok := messageReq["content"].(string); ok && content != "" {
 			h.proxy.sessionsMutex.Lock()
-			if session.Tags == nil {
-				session.Tags = make(map[string]string)
+			if session.Request.Tags == nil {
+				session.Request.Tags = make(map[string]string)
 			}
-			session.Tags["description"] = content
+			session.Request.Tags["description"] = content
 			h.proxy.sessionsMutex.Unlock()
 		}
 	}

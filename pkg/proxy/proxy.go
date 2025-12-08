@@ -3,7 +3,6 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,33 +27,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
-
-//go:embed scripts/*
-var embeddedScripts embed.FS
-
-// embedded script cache
-var scriptCache map[string][]byte
-
-const (
-	ScriptWithGithub = "agentapi_with_github.sh"
-	ScriptDefault    = "agentapi_default.sh"
-)
-
-// ScriptTemplateData holds data for script templates
-type ScriptTemplateData struct {
-	AgentAPIArgs              string
-	ClaudeArgs                string
-	GitHubToken               string
-	GitHubAppID               string
-	GitHubInstallationID      string
-	GitHubAppPEMPath          string
-	GitHubAPI                 string
-	GitHubPersonalAccessToken string
-	RepoFullName              string
-	CloneDir                  string
-	UserID                    string
-	MCPConfigs                string
-}
 
 // Proxy represents the HTTP proxy server
 type Proxy struct {
@@ -136,23 +108,6 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		AllowCredentials: true,
 		MaxAge:           86400,
 	}))
-
-	// --- scriptCache初期化 ---
-	if scriptCache == nil {
-		scriptCache = make(map[string][]byte)
-		entries, err := embeddedScripts.ReadDir("scripts")
-		if err == nil {
-			for _, entry := range entries {
-				if !entry.IsDir() {
-					b, err := embeddedScripts.ReadFile("scripts/" + entry.Name())
-					if err == nil {
-						scriptCache[entry.Name()] = b
-					}
-				}
-			}
-		}
-	}
-	// --- ここまで ---
 
 	// Initialize user directory manager
 	userDirMgr := userdir.NewManager("./data", cfg.EnableMultipleUsers)
@@ -336,9 +291,6 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 	// Extract repository information from tags
 	repoInfo := p.extractRepositoryInfo(sessionID, startReq.Tags)
 
-	// Determine which script to use based on request parameters
-	scriptName := p.selectScript(nil, scriptCache, startReq.Tags)
-
 	// Determine initial message - check tags.message first, then startReq.Message
 	var initialMessage string
 	if startReq.Tags != nil {
@@ -350,18 +302,25 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 		initialMessage = startReq.Message
 	}
 
+	// Build run server request
+	req := &RunServerRequest{
+		Port:           port,
+		UserID:         userID,
+		Environment:    startReq.Environment,
+		Tags:           startReq.Tags,
+		RepoInfo:       repoInfo,
+		InitialMessage: initialMessage,
+	}
+
 	// Start agentapi server in goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 
 	session := &AgentSession{
-		ID:          sessionID,
-		Port:        port,
-		Cancel:      cancel,
-		StartedAt:   time.Now(),
-		UserID:      userID,
-		Status:      "active",
-		Environment: startReq.Environment,
-		Tags:        startReq.Tags,
+		ID:        sessionID,
+		Request:   req,
+		Cancel:    cancel,
+		StartedAt: time.Now(),
+		Status:    "active",
 	}
 
 	// Store session
@@ -382,14 +341,10 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 	}
 
 	// Start agentapi server in goroutine
-	go p.runAgentAPIServer(ctx, session, scriptName, repoInfo, initialMessage)
+	go p.runAgentAPIServer(ctx, session)
 
 	if p.verbose {
-		if scriptName != "" {
-			log.Printf("Started agentapi server for session %s on port %d using script %s", sessionID, port, scriptName)
-		} else {
-			log.Printf("Started agentapi server for session %s on port %d using direct command", sessionID, port)
-		}
+		log.Printf("Started agentapi server for session %s on port %d", sessionID, port)
 	}
 
 	return session, nil
@@ -467,9 +422,9 @@ func (p *Proxy) DeleteSessionByID(sessionID string) error {
 
 // getEnvFromSession retrieves an environment variable from the session environment,
 // falling back to the default value if not found
-func getEnvFromSession(session *AgentSession, key string, defaultValue string) string {
-	if session.Environment != nil {
-		if value, exists := session.Environment[key]; exists && value != "" {
+func getEnvFromRequest(req *RunServerRequest, key string, defaultValue string) string {
+	if req.Environment != nil {
+		if value, exists := req.Environment[key]; exists && value != "" {
 			return value
 		}
 	}
@@ -497,7 +452,7 @@ func (p *Proxy) getAvailablePort() (int, error) {
 
 // ServerRunner interface for running agentapi servers
 type ServerRunner interface {
-	Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string)
+	Run(ctx context.Context, session *AgentSession)
 }
 
 // defaultServerRunner is the default implementation of ServerRunner
@@ -520,10 +475,10 @@ func (p *Proxy) SetServerRunner(runner ServerRunner) {
 }
 
 // runAgentAPIServer runs an agentapi server instance using configuration
-func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+func (p *Proxy) runAgentAPIServer(ctx context.Context, session *AgentSession) {
 	// Use configurable server runner
 	runner := p.getServerRunner()
-	runner.Run(ctx, session, scriptName, repoInfo, initialMessage)
+	runner.Run(ctx, session)
 }
 
 // getStartupManager returns a startup manager instance
@@ -533,25 +488,28 @@ func (r *defaultServerRunner) getStartupManager() *StartupManager {
 
 // buildStartupConfig builds the startup configuration for a session
 func (r *defaultServerRunner) buildStartupConfig(session *AgentSession) *StartupConfig {
+	req := session.Request
 	return &StartupConfig{
-		Port:                      session.Port,
-		UserID:                    session.UserID,
-		GitHubToken:               getEnvFromSession(session, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
-		GitHubAppID:               getEnvFromSession(session, "GITHUB_APP_ID", os.Getenv("GITHUB_APP_ID")),
-		GitHubInstallationID:      getEnvFromSession(session, "GITHUB_INSTALLATION_ID", os.Getenv("GITHUB_INSTALLATION_ID")),
-		GitHubAppPEMPath:          getEnvFromSession(session, "GITHUB_APP_PEM_PATH", os.Getenv("GITHUB_APP_PEM_PATH")),
-		GitHubAPI:                 getEnvFromSession(session, "GITHUB_API", os.Getenv("GITHUB_API")),
-		GitHubPersonalAccessToken: getEnvFromSession(session, "GITHUB_PERSONAL_ACCESS_TOKEN", os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN")),
-		AgentAPIArgs:              getEnvFromSession(session, "AGENTAPI_ARGS", os.Getenv("AGENTAPI_ARGS")),
-		ClaudeArgs:                getEnvFromSession(session, "CLAUDE_ARGS", os.Getenv("CLAUDE_ARGS")),
-		Environment:               session.Environment,
+		Port:                      req.Port,
+		UserID:                    req.UserID,
+		GitHubToken:               getEnvFromRequest(req, "GITHUB_TOKEN", os.Getenv("GITHUB_TOKEN")),
+		GitHubAppID:               getEnvFromRequest(req, "GITHUB_APP_ID", os.Getenv("GITHUB_APP_ID")),
+		GitHubInstallationID:      getEnvFromRequest(req, "GITHUB_INSTALLATION_ID", os.Getenv("GITHUB_INSTALLATION_ID")),
+		GitHubAppPEMPath:          getEnvFromRequest(req, "GITHUB_APP_PEM_PATH", os.Getenv("GITHUB_APP_PEM_PATH")),
+		GitHubAPI:                 getEnvFromRequest(req, "GITHUB_API", os.Getenv("GITHUB_API")),
+		GitHubPersonalAccessToken: getEnvFromRequest(req, "GITHUB_PERSONAL_ACCESS_TOKEN", os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN")),
+		AgentAPIArgs:              getEnvFromRequest(req, "AGENTAPI_ARGS", os.Getenv("AGENTAPI_ARGS")),
+		ClaudeArgs:                getEnvFromRequest(req, "CLAUDE_ARGS", os.Getenv("CLAUDE_ARGS")),
+		Environment:               req.Environment,
 		Config:                    r.proxy.config,
 		Verbose:                   r.proxy.verbose,
 	}
 }
 
 // Run implements the ServerRunner interface
-func (r *defaultServerRunner) Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+func (r *defaultServerRunner) Run(ctx context.Context, session *AgentSession) {
+	req := session.Request
+
 	defer func() {
 		// Clean up session when server stops
 		r.proxy.sessionsMutex.Lock()
@@ -582,17 +540,17 @@ func (r *defaultServerRunner) Run(ctx context.Context, session *AgentSession, sc
 	cfg := r.buildStartupConfig(session)
 
 	// Add repository information if available
-	if repoInfo != nil {
-		cfg.RepoFullName = repoInfo.FullName
-		cfg.CloneDir = repoInfo.CloneDir
+	if req.RepoInfo != nil {
+		cfg.RepoFullName = req.RepoInfo.FullName
+		cfg.CloneDir = req.RepoInfo.CloneDir
 	} else {
 		// Always set CloneDir to session ID, even when no repository is specified
 		cfg.CloneDir = session.ID
 	}
 
 	// Extract MCP configurations from tags if available
-	if session.Tags != nil {
-		if mcpConfigs, exists := session.Tags["claude.mcp_configs"]; exists && mcpConfigs != "" {
+	if req.Tags != nil {
+		if mcpConfigs, exists := req.Tags["claude.mcp_configs"]; exists && mcpConfigs != "" {
 			cfg.MCPConfigs = mcpConfigs
 		}
 	}
@@ -605,18 +563,18 @@ func (r *defaultServerRunner) Run(ctx context.Context, session *AgentSession, sc
 	}
 
 	// Log startup details
-	log.Printf("Starting agentapi process for session %s on %d using Go functions", session.ID, session.Port)
+	log.Printf("Starting agentapi process for session %s on %d using Go functions", session.ID, req.Port)
 	log.Printf("Session startup parameters:")
-	log.Printf("  Port: %d", session.Port)
+	log.Printf("  Port: %d", req.Port)
 	log.Printf("  Session ID: %s", session.ID)
-	log.Printf("  User ID: %s", session.UserID)
+	log.Printf("  User ID: %s", req.UserID)
 	if cfg.RepoFullName != "" {
 		log.Printf("  Repository: %s", cfg.RepoFullName)
 		log.Printf("  Clone dir: %s", cfg.CloneDir)
 	}
-	if len(session.Tags) > 0 {
+	if len(req.Tags) > 0 {
 		log.Printf("  Request tags:")
-		for key, value := range session.Tags {
+		for key, value := range req.Tags {
 			log.Printf("    %s=%s", key, value)
 		}
 	}
@@ -641,8 +599,8 @@ func (r *defaultServerRunner) Run(ctx context.Context, session *AgentSession, sc
 	}
 
 	// Send initial message if provided
-	if initialMessage != "" {
-		go r.proxy.sendInitialMessage(session, initialMessage)
+	if req.InitialMessage != "" {
+		go r.proxy.sendInitialMessage(session, req.InitialMessage)
 	}
 
 	// Wait for the process to finish or context cancellation
@@ -764,15 +722,6 @@ func (r *defaultServerRunner) Run(ctx context.Context, session *AgentSession, sc
 			log.Printf("AgentAPI process for session %s exited normally", session.ID)
 		}
 	}
-}
-
-// selectScript determines which script to use based on request parameters
-func (p *Proxy) selectScript(c echo.Context, scriptCache map[string][]byte, tags map[string]string) string {
-	// Always use default script
-	if _, ok := scriptCache[ScriptDefault]; ok {
-		return ScriptDefault
-	}
-	return ""
 }
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate
@@ -929,13 +878,15 @@ func extractRepoFullNameFromURL(repoURL string) (string, error) {
 
 // sendInitialMessage sends an initial message to the agentapi server after startup
 func (p *Proxy) sendInitialMessage(session *AgentSession, message string) {
+	port := session.Request.Port
+
 	// Wait a bit for the server to start up
 	time.Sleep(2 * time.Second)
 
 	// Check server health first
 	maxRetries := 30
 	for i := 0; i < maxRetries; i++ {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", session.Port))
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
 		if err == nil {
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				log.Printf("Failed to close response body: %v", closeErr)
@@ -964,7 +915,7 @@ func (p *Proxy) sendInitialMessage(session *AgentSession, message string) {
 	}
 
 	// Send message to agentapi
-	url := fmt.Sprintf("http://localhost:%d/message", session.Port)
+	url := fmt.Sprintf("http://localhost:%d/message", port)
 	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		log.Printf("Failed to send initial message to session %s: %v", session.ID, err)

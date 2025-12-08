@@ -119,10 +119,10 @@ type e2eServerRunnerFactory struct {
 	proxy *Proxy
 }
 
-func (f *e2eServerRunnerFactory) Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+func (f *e2eServerRunnerFactory) Run(ctx context.Context, session *AgentSession) {
 	// Create individual runner for this session
 	runner := &e2eServerRunner{proxy: f.proxy}
-	runner.Run(ctx, session, scriptName, repoInfo, initialMessage)
+	runner.Run(ctx, session)
 }
 
 // e2eServerRunner runs a mock agentapi server instead of the real one
@@ -131,15 +131,15 @@ type e2eServerRunner struct {
 	proxy      *Proxy
 }
 
-func (r *e2eServerRunner) Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+func (r *e2eServerRunner) Run(ctx context.Context, session *AgentSession) {
 	// Create and start mock server on the session's port
 	r.mockServer = newMockAgentAPIServer()
 
-	// Store the mock server port in the session
-	session.Port = r.mockServer.Port()
+	// Store the mock server port in the session request
+	session.Request.Port = r.mockServer.Port()
 
 	// Log for debugging
-	fmt.Printf("E2E Mock server started on port %d for session %s\n", session.Port, session.ID)
+	fmt.Printf("E2E Mock server started on port %d for session %s\n", session.Request.Port, session.ID)
 
 	// Wait for context cancellation
 	<-ctx.Done()
