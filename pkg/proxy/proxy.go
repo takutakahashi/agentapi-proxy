@@ -111,8 +111,22 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Initialize logger
 	lgr := logger.NewLogger()
 
-	// Initialize session manager
-	sessionManager := NewLocalSessionManager(cfg, verbose, lgr, cfg.StartPort)
+	// Initialize session manager based on configuration
+	var sessionManager SessionManager
+	if cfg.KubernetesSession.Enabled {
+		log.Printf("[PROXY] Kubernetes session management enabled")
+		k8sSessionManager, err := NewKubernetesSessionManager(cfg, verbose, lgr)
+		if err != nil {
+			log.Printf("[PROXY] Failed to initialize Kubernetes session manager: %v, falling back to local", err)
+			sessionManager = NewLocalSessionManager(cfg, verbose, lgr, cfg.StartPort)
+		} else {
+			sessionManager = k8sSessionManager
+			log.Printf("[PROXY] Kubernetes session manager initialized successfully")
+		}
+	} else {
+		log.Printf("[PROXY] Using local session management")
+		sessionManager = NewLocalSessionManager(cfg, verbose, lgr, cfg.StartPort)
+	}
 
 	p := &Proxy{
 		config:         cfg,

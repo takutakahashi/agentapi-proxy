@@ -217,7 +217,15 @@ func (h *SessionHandlers) RouteToSession(c echo.Context) error {
 		}
 	}
 
-	targetURL := fmt.Sprintf("http://localhost:%d", session.Port())
+	// Determine target URL based on session type
+	var targetURL string
+	if k8sSess, ok := session.(*kubernetesSession); ok {
+		// Kubernetes session: use Service DNS
+		targetURL = fmt.Sprintf("http://%s:%d", k8sSess.ServiceDNS(), session.Port())
+	} else {
+		// Local session: use localhost
+		targetURL = fmt.Sprintf("http://localhost:%d", session.Port())
+	}
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))

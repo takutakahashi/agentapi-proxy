@@ -277,3 +277,43 @@ roleEnvFiles:
   #       secretName: "dev-config"
   #       key: "development.env"
 
+# Kubernetes Session Management
+# When enabled, sessions are created as separate Kubernetes Deployments instead of local processes
+kubernetesSession:
+  # Enable Kubernetes-based session management
+  enabled: false
+
+  # Namespace for session resources (defaults to release namespace if empty)
+  namespace: ""
+
+  # Container image for session pods
+  # If empty, uses the same image as the proxy
+  image: ""
+
+  # Image pull policy for session pods
+  imagePullPolicy: "IfNotPresent"
+
+  # Service account for session pods
+  serviceAccount: "default"
+
+  # Base port that agentapi listens on in session pods
+  basePort: 9000
+
+  # Resource requests and limits for session pods
+  resources:
+    cpuRequest: "500m"
+    cpuLimit: "2"
+    memoryRequest: "512Mi"
+    memoryLimit: "4Gi"
+
+  # PVC configuration for session workdir
+  pvc:
+    # Storage class for session PVCs (empty for default)
+    storageClass: ""
+    # Storage size for session PVCs
+    storageSize: "10Gi"
+
+  # Timeout settings (in seconds)
+  podStartTimeout: 120
+  podStopTimeout: 30
+
