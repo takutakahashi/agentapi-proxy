@@ -389,10 +389,18 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 									MountPath: "/home/agentapi/workdir",
 								},
 							},
+							Command: []string{"agentapi"},
+							Args: []string{
+								"server",
+								"--allowed-hosts", "*",
+								"--allowed-origins", "*",
+								"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+								"--", "claude",
+							},
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/health",
+										Path: "/status",
 										Port: intstr.FromInt(m.k8sConfig.BasePort),
 									},
 								},
@@ -402,7 +410,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/health",
+										Path: "/status",
 										Port: intstr.FromInt(m.k8sConfig.BasePort),
 									},
 								},
