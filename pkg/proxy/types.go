@@ -20,16 +20,23 @@ type RepositoryInfo struct {
 	CloneDir string
 }
 
+// RunServerRequest contains parameters needed to run an agentapi server
+type RunServerRequest struct {
+	Port           int
+	UserID         string
+	Environment    map[string]string
+	Tags           map[string]string
+	RepoInfo       *RepositoryInfo
+	InitialMessage string
+}
+
 // AgentSession represents a running agentapi server instance
 type AgentSession struct {
 	ID           string
-	Port         int
+	Request      *RunServerRequest
 	Process      *exec.Cmd
 	Cancel       context.CancelFunc
 	StartedAt    time.Time
-	UserID       string
 	Status       string
-	Environment  map[string]string
-	Tags         map[string]string
 	processMutex sync.RWMutex
 }

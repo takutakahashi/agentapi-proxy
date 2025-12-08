@@ -111,7 +111,7 @@ type mockServerRunner struct {
 	session   *AgentSession
 }
 
-func (m *mockServerRunner) Run(ctx context.Context, session *AgentSession, scriptName string, repoInfo *RepositoryInfo, initialMessage string) {
+func (m *mockServerRunner) Run(ctx context.Context, session *AgentSession) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.runCalled = true
@@ -128,20 +128,23 @@ func TestCustomServerRunner(t *testing.T) {
 	proxy.SetServerRunner(mockRunner)
 
 	// Create test session
-	session := &AgentSession{
-		ID:          "test-session",
+	req := &RunServerRequest{
 		Port:        9001,
 		UserID:      "test-user",
-		Status:      "active",
 		Environment: map[string]string{"TEST": "value"},
-		StartedAt:   time.Now(),
+	}
+	session := &AgentSession{
+		ID:        "test-session",
+		Request:   req,
+		Status:    "active",
+		StartedAt: time.Now(),
 	}
 
 	// Run the server
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go proxy.runAgentAPIServer(ctx, session, "", nil, "")
+	go proxy.runAgentAPIServer(ctx, session)
 
 	// Give it time to call the mock runner
 	time.Sleep(100 * time.Millisecond)
