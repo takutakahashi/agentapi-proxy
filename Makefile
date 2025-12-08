@@ -31,10 +31,10 @@ install-deps:
 	@echo "Installing project dependencies..."
 	@echo "Installing Go modules..."
 	go mod download
-	@echo "Installing golangci-lint..."
+	@echo "Installing golangci-lint v2..."
 	@command -v golangci-lint >/dev/null 2>&1 || { \
 		echo "golangci-lint not found, installing..."; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin v2.7.2; \
 	}
 	@echo "Dependencies installed successfully"
 
