@@ -40,8 +40,6 @@ func NewKubernetesSessionManager(
 	verbose bool,
 	lgr *logger.Logger,
 ) (*KubernetesSessionManager, error) {
-	k8sConfig := &cfg.KubernetesSession
-
 	// Get config using controller-runtime (supports in-cluster and kubeconfig)
 	restConfig := ctrl.GetConfigOrDie()
 
@@ -49,6 +47,19 @@ func NewKubernetesSessionManager(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
+
+	return NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, client)
+}
+
+// NewKubernetesSessionManagerWithClient creates a new KubernetesSessionManager with a custom client
+// This is useful for testing with a fake client
+func NewKubernetesSessionManagerWithClient(
+	cfg *config.Config,
+	verbose bool,
+	lgr *logger.Logger,
+	client kubernetes.Interface,
+) (*KubernetesSessionManager, error) {
+	k8sConfig := &cfg.KubernetesSession
 
 	// Determine namespace
 	namespace := k8sConfig.Namespace
