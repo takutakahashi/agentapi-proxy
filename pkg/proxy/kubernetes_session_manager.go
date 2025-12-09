@@ -24,14 +24,15 @@ import (
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 type KubernetesSessionManager struct {
-	config    *config.Config
-	k8sConfig *config.KubernetesSessionConfig
-	client    kubernetes.Interface
-	verbose   bool
-	logger    *logger.Logger
-	sessions  map[string]*kubernetesSession
-	mutex     sync.RWMutex
-	namespace string
+	config             *config.Config
+	k8sConfig          *config.KubernetesSessionConfig
+	client             kubernetes.Interface
+	verbose            bool
+	logger             *logger.Logger
+	sessions           map[string]*kubernetesSession
+	mutex              sync.RWMutex
+	namespace          string
+	credentialProvider CredentialProvider
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -48,16 +49,18 @@ func NewKubernetesSessionManager(
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
-	return NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, client)
+	return NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, client, nil)
 }
 
 // NewKubernetesSessionManagerWithClient creates a new KubernetesSessionManager with a custom client
 // This is useful for testing with a fake client
+// If credProvider is nil, the default credential provider chain will be used
 func NewKubernetesSessionManagerWithClient(
 	cfg *config.Config,
 	verbose bool,
 	lgr *logger.Logger,
 	client kubernetes.Interface,
+	credProvider CredentialProvider,
 ) (*KubernetesSessionManager, error) {
 	k8sConfig := &cfg.KubernetesSession
 
@@ -68,16 +71,22 @@ func NewKubernetesSessionManagerWithClient(
 		namespace = "default"
 	}
 
+	// Use default credential provider if not specified
+	if credProvider == nil {
+		credProvider = DefaultCredentialProvider()
+	}
+
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
 	return &KubernetesSessionManager{
-		config:    cfg,
-		k8sConfig: k8sConfig,
-		client:    client,
-		verbose:   verbose,
-		logger:    lgr,
-		sessions:  make(map[string]*kubernetesSession),
-		namespace: namespace,
+		config:             cfg,
+		k8sConfig:          k8sConfig,
+		client:             client,
+		verbose:            verbose,
+		logger:             lgr,
+		sessions:           make(map[string]*kubernetesSession),
+		namespace:          namespace,
+		credentialProvider: credProvider,
 	}, nil
 }
 
@@ -91,6 +100,18 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
 	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
 
+	// Load credentials (optional) - use userID to locate user-specific credentials
+	var secretName string
+	creds, err := m.credentialProvider.Load(req.UserID)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to load credentials for user %s: %v", req.UserID, err)
+		// Continue without credentials (non-fatal)
+	}
+	if creds != nil {
+		secretName = fmt.Sprintf("agentapi-session-%s-credentials", id)
+		log.Printf("[K8S_SESSION] Loaded credentials for user %s", req.UserID)
+	}
+
 	// Create kubernetesSession
 	session := &kubernetesSession{
 		id:             id,
@@ -98,6 +119,7 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		deploymentName: deploymentName,
 		serviceName:    serviceName,
 		pvcName:        pvcName,
+		secretName:     secretName,
 		servicePort:    m.k8sConfig.BasePort,
 		namespace:      m.namespace,
 		startedAt:      time.Now(),
@@ -112,8 +134,22 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 
 	log.Printf("[K8S_SESSION] Creating session %s in namespace %s", id, m.namespace)
 
+	// Create Credential Secret (if credentials exist)
+	if creds != nil {
+		if err := m.createCredentialSecret(ctx, session, creds); err != nil {
+			m.cleanupSession(id)
+			return nil, fmt.Errorf("failed to create credential Secret: %w", err)
+		}
+		log.Printf("[K8S_SESSION] Created credential Secret %s for session %s", secretName, id)
+	}
+
 	// Create PVC
 	if err := m.createPVC(ctx, session); err != nil {
+		if session.secretName != "" {
+			if delErr := m.deleteCredentialSecret(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup Secret after PVC creation failure: %v", delErr)
+			}
+		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create PVC: %w", err)
 	}
@@ -123,6 +159,11 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	if err := m.createDeployment(ctx, session, req); err != nil {
 		if delErr := m.deletePVC(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup PVC after deployment creation failure: %v", delErr)
+		}
+		if session.secretName != "" {
+			if delErr := m.deleteCredentialSecret(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup Secret after deployment creation failure: %v", delErr)
+			}
 		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create Deployment: %w", err)
@@ -136,6 +177,11 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 		if delErr := m.deletePVC(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup PVC after service creation failure: %v", delErr)
+		}
+		if session.secretName != "" {
+			if delErr := m.deleteCredentialSecret(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup Secret after service creation failure: %v", delErr)
+			}
 		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create Service: %w", err)
@@ -336,6 +382,79 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	memoryRequest := resource.MustParse(m.k8sConfig.MemoryRequest)
 	memoryLimit := resource.MustParse(m.k8sConfig.MemoryLimit)
 
+	// Build container spec
+	container := corev1.Container{
+		Name:            "agentapi",
+		Image:           m.k8sConfig.Image,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "http",
+				ContainerPort: int32(m.k8sConfig.BasePort),
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		Env: envVars,
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    cpuRequest,
+				corev1.ResourceMemory: memoryRequest,
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    cpuLimit,
+				corev1.ResourceMemory: memoryLimit,
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "workdir",
+				MountPath: "/home/agentapi/workdir",
+			},
+		},
+		Command: []string{"agentapi"},
+		Args: []string{
+			"server",
+			"--allowed-hosts", "*",
+			"--allowed-origins", "*",
+			"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+			"--", "claude",
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/status",
+					Port: intstr.FromInt(m.k8sConfig.BasePort),
+				},
+			},
+			InitialDelaySeconds: 30,
+			PeriodSeconds:       10,
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/status",
+					Port: intstr.FromInt(m.k8sConfig.BasePort),
+				},
+			},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       5,
+		},
+	}
+
+	// Add envFrom if credential Secret exists
+	if session.secretName != "" {
+		container.EnvFrom = []corev1.EnvFromSource{
+			{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: session.secretName,
+					},
+					Optional: boolPtr(true),
+				},
+			},
+		}
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      session.deploymentName,
@@ -360,65 +479,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 						RunAsUser:  int64Ptr(999),
 						RunAsGroup: int64Ptr(999),
 					},
-					Containers: []corev1.Container{
-						{
-							Name:            "agentapi",
-							Image:           m.k8sConfig.Image,
-							ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "http",
-									ContainerPort: int32(m.k8sConfig.BasePort),
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-							Env: envVars,
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    cpuRequest,
-									corev1.ResourceMemory: memoryRequest,
-								},
-								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    cpuLimit,
-									corev1.ResourceMemory: memoryLimit,
-								},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "workdir",
-									MountPath: "/home/agentapi/workdir",
-								},
-							},
-							Command: []string{"agentapi"},
-							Args: []string{
-								"server",
-								"--allowed-hosts", "*",
-								"--allowed-origins", "*",
-								"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
-								"--", "claude",
-							},
-							LivenessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/status",
-										Port: intstr.FromInt(m.k8sConfig.BasePort),
-									},
-								},
-								InitialDelaySeconds: 30,
-								PeriodSeconds:       10,
-							},
-							ReadinessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/status",
-										Port: intstr.FromInt(m.k8sConfig.BasePort),
-									},
-								},
-								InitialDelaySeconds: 5,
-								PeriodSeconds:       5,
-							},
-						},
-					},
+					Containers: []corev1.Container{container},
 					Volumes: []corev1.Volume{
 						{
 							Name: "workdir",
@@ -555,6 +616,14 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 
 	var errs []string
 
+	// Delete Credential Secret (if exists)
+	if session.secretName != "" {
+		err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, session.secretName, deleteOptions)
+		if err != nil && !errors.IsNotFound(err) {
+			errs = append(errs, fmt.Sprintf("secret: %v", err))
+		}
+	}
+
 	// Delete Service
 	err := m.client.CoreV1().Services(m.namespace).Delete(ctx, session.serviceName, deleteOptions)
 	if err != nil && !errors.IsNotFound(err) {
@@ -674,4 +743,34 @@ func sanitizeLabelValue(s string) string {
 // int64Ptr returns a pointer to an int64
 func int64Ptr(i int64) *int64 {
 	return &i
+}
+
+// boolPtr returns a pointer to a bool
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+// createCredentialSecret creates a Kubernetes Secret for Claude credentials
+func (m *KubernetesSessionManager) createCredentialSecret(ctx context.Context, session *kubernetesSession, creds *ClaudeCredentials) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      session.secretName,
+			Namespace: m.namespace,
+			Labels:    m.buildLabels(session),
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			EnvClaudeAccessToken:  creds.AccessToken,
+			EnvClaudeRefreshToken: creds.RefreshToken,
+			EnvClaudeExpiresAt:    creds.ExpiresAt,
+		},
+	}
+
+	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	return err
+}
+
+// deleteCredentialSecret deletes the credential Secret for a session
+func (m *KubernetesSessionManager) deleteCredentialSecret(ctx context.Context, session *kubernetesSession) error {
+	return m.client.CoreV1().Secrets(m.namespace).Delete(ctx, session.secretName, metav1.DeleteOptions{})
 }
