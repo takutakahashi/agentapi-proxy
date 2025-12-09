@@ -12,8 +12,9 @@ type CredentialProvider interface {
 	// Name returns the provider name for logging purposes
 	Name() string
 
-	// Load attempts to load credentials from this provider
+	// Load attempts to load credentials from this provider for the specified user
+	// userID is used to locate user-specific credential files
 	// Returns nil, nil if credentials are not available (not an error)
 	// Returns nil, error if there was an error loading credentials
-	Load() (*ClaudeCredentials, error)
+	Load(userID string) (*ClaudeCredentials, error)
 }

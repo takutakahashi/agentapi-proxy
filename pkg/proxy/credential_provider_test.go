@@ -68,7 +68,8 @@ func TestFileCredentialProvider_Load(t *testing.T) {
 				provider = NewFileCredentialProviderWithPath(filePath)
 			}
 
-			creds, err := provider.Load()
+			// When using filePath override, userID is ignored
+			creds, err := provider.Load("")
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Load() error = %v, wantErr %v", err, tt.wantErr)
@@ -97,6 +98,67 @@ func TestFileCredentialProvider_Load(t *testing.T) {
 				t.Errorf("ExpiresAt = %v, want %v", creds.ExpiresAt, tt.wantCreds.ExpiresAt)
 			}
 		})
+	}
+}
+
+func TestFileCredentialProvider_LoadWithUserID(t *testing.T) {
+	// Create temp directory structure for user-specific credentials
+	tempDir := t.TempDir()
+
+	// Set up environment to use temp directory as base
+	// userdir.SetupUserHome uses USERHOME_BASEDIR if set, otherwise $HOME/.agentapi-proxy
+	originalHome := os.Getenv("HOME")
+	originalBaseDir := os.Getenv("USERHOME_BASEDIR")
+	_ = os.Setenv("HOME", tempDir)
+	_ = os.Unsetenv("USERHOME_BASEDIR") // Clear to ensure HOME is used as base
+	defer func() {
+		_ = os.Setenv("HOME", originalHome)
+		if originalBaseDir != "" {
+			_ = os.Setenv("USERHOME_BASEDIR", originalBaseDir)
+		}
+	}()
+
+	// Create user-specific credential file
+	// userdir.SetupUserHome creates: $HOME/.agentapi-proxy/myclaudes/[userID]
+	// Then the provider looks for .claude/.credentials.json under that
+	userID := "testuser"
+	userCredDir := filepath.Join(tempDir, ".agentapi-proxy", "myclaudes", userID, ".claude")
+	if err := os.MkdirAll(userCredDir, 0755); err != nil {
+		t.Fatalf("failed to create user credential directory: %v", err)
+	}
+
+	credContent := `{
+		"claudeAiOauth": {
+			"accessToken": "user-specific-access-token",
+			"refreshToken": "user-specific-refresh-token",
+			"expiresAt": 1765205562255
+		}
+	}`
+	credPath := filepath.Join(userCredDir, ".credentials.json")
+	if err := os.WriteFile(credPath, []byte(credContent), 0600); err != nil {
+		t.Fatalf("failed to write credential file: %v", err)
+	}
+
+	t.Logf("Credential file created at: %s", credPath)
+
+	provider := NewFileCredentialProvider()
+	creds, err := provider.Load(userID)
+
+	if err != nil {
+		t.Errorf("Load() unexpected error: %v", err)
+		return
+	}
+
+	if creds == nil {
+		t.Errorf("Load() got nil, want credentials. Expected credential path: %s", credPath)
+		return
+	}
+
+	if creds.AccessToken != "user-specific-access-token" {
+		t.Errorf("AccessToken = %v, want 'user-specific-access-token'", creds.AccessToken)
+	}
+	if creds.RefreshToken != "user-specific-refresh-token" {
+		t.Errorf("RefreshToken = %v, want 'user-specific-refresh-token'", creds.RefreshToken)
 	}
 }
 
@@ -161,7 +223,7 @@ func TestEnvCredentialProvider_Load(t *testing.T) {
 			}()
 
 			provider := NewEnvCredentialProvider()
-			creds, err := provider.Load()
+			creds, err := provider.Load("") // userID is ignored for env provider
 
 			if err != nil {
 				t.Errorf("Load() unexpected error: %v", err)
@@ -254,7 +316,7 @@ func TestChainCredentialProvider_Load(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := NewChainCredentialProvider(tt.providers...)
-			creds, err := provider.Load()
+			creds, err := provider.Load("testuser")
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Load() error = %v, wantErr %v", err, tt.wantErr)
@@ -298,6 +360,6 @@ func (m *mockCredentialProvider) Name() string {
 	return m.name
 }
 
-func (m *mockCredentialProvider) Load() (*ClaudeCredentials, error) {
+func (m *mockCredentialProvider) Load(_ string) (*ClaudeCredentials, error) {
 	return m.creds, m.err
 }

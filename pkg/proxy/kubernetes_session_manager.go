@@ -100,15 +100,16 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
 	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
 
-	// Load credentials (optional)
+	// Load credentials (optional) - use userID to locate user-specific credentials
 	var secretName string
-	creds, err := m.credentialProvider.Load()
+	creds, err := m.credentialProvider.Load(req.UserID)
 	if err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to load credentials: %v", err)
+		log.Printf("[K8S_SESSION] Warning: failed to load credentials for user %s: %v", req.UserID, err)
 		// Continue without credentials (non-fatal)
 	}
 	if creds != nil {
 		secretName = fmt.Sprintf("agentapi-session-%s-credentials", id)
+		log.Printf("[K8S_SESSION] Loaded credentials for user %s", req.UserID)
 	}
 
 	// Create kubernetesSession

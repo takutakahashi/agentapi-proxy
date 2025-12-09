@@ -806,7 +806,7 @@ func (m *mockCredentialProviderForTest) Name() string {
 	return "mock"
 }
 
-func (m *mockCredentialProviderForTest) Load() (*ClaudeCredentials, error) {
+func (m *mockCredentialProviderForTest) Load(_ string) (*ClaudeCredentials, error) {
 	return m.creds, m.err
 }
 

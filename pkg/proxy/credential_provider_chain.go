@@ -23,11 +23,11 @@ func (p *ChainCredentialProvider) Name() string {
 // Load attempts to load credentials from each provider in order
 // Returns the first successful result
 // Returns nil, nil if all providers return nil
-func (p *ChainCredentialProvider) Load() (*ClaudeCredentials, error) {
+func (p *ChainCredentialProvider) Load(userID string) (*ClaudeCredentials, error) {
 	var lastErr error
 
 	for _, provider := range p.providers {
-		creds, err := provider.Load()
+		creds, err := provider.Load(userID)
 		if err != nil {
 			log.Printf("[CREDENTIAL_PROVIDER] Provider %s failed: %v", provider.Name(), err)
 			lastErr = err

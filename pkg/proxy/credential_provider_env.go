@@ -23,8 +23,9 @@ func (p *EnvCredentialProvider) Name() string {
 }
 
 // Load attempts to load credentials from environment variables
+// userID is ignored for environment variable provider
 // Returns nil, nil if CLAUDE_ACCESS_TOKEN is not set
-func (p *EnvCredentialProvider) Load() (*ClaudeCredentials, error) {
+func (p *EnvCredentialProvider) Load(_ string) (*ClaudeCredentials, error) {
 	accessToken := os.Getenv(EnvClaudeAccessToken)
 	if accessToken == "" {
 		return nil, nil
