@@ -137,6 +137,15 @@ type KubernetesSessionConfig struct {
 	PodStartTimeout int `json:"pod_start_timeout" mapstructure:"pod_start_timeout"`
 	// PodStopTimeout is the timeout in seconds for pod termination
 	PodStopTimeout int `json:"pod_stop_timeout" mapstructure:"pod_stop_timeout"`
+	// ClaudeConfigBaseConfigMap is the name of the base ConfigMap for Claude configuration
+	// This ConfigMap should contain claude.json and settings.json files
+	ClaudeConfigBaseConfigMap string `json:"claude_config_base_configmap" mapstructure:"claude_config_base_configmap"`
+	// ClaudeConfigUserConfigMapPrefix is the prefix for user-specific ConfigMap names
+	// Full name will be: {prefix}-{username} (e.g., claude-config-johndoe)
+	ClaudeConfigUserConfigMapPrefix string `json:"claude_config_user_configmap_prefix" mapstructure:"claude_config_user_configmap_prefix"`
+	// InitContainerImage is the image used for the init container that sets up Claude configuration
+	// Defaults to alpine:3.19 which includes basic tools needed for configuration setup
+	InitContainerImage string `json:"init_container_image" mapstructure:"init_container_image"`
 }
 
 // Config represents the proxy configuration
@@ -359,6 +368,9 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.pvc_storage_size", "AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE")
 	_ = v.BindEnv("kubernetes_session.pod_start_timeout", "AGENTAPI_K8S_SESSION_POD_START_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.pod_stop_timeout", "AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT")
+	_ = v.BindEnv("kubernetes_session.claude_config_base_configmap", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_BASE_CONFIGMAP")
+	_ = v.BindEnv("kubernetes_session.claude_config_user_configmap_prefix", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_USER_CONFIGMAP_PREFIX")
+	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
 }
 
 // setDefaults sets default values for viper configuration
@@ -400,6 +412,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.pvc_storage_size", "10Gi")
 	v.SetDefault("kubernetes_session.pod_start_timeout", 120)
 	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
+	v.SetDefault("kubernetes_session.claude_config_base_configmap", "claude-config-base")
+	v.SetDefault("kubernetes_session.claude_config_user_configmap_prefix", "claude-config")
+	v.SetDefault("kubernetes_session.init_container_image", "alpine:3.19")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields

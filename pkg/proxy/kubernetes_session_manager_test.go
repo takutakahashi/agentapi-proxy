@@ -66,20 +66,23 @@ func TestKubernetesSessionManager_CreateSession(t *testing.T) {
 	// Create manager
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageClass: "",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -170,19 +173,22 @@ func TestKubernetesSessionManager_GetSession(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -244,19 +250,22 @@ func TestKubernetesSessionManager_ListSessions(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -343,19 +352,22 @@ func TestKubernetesSessionManager_DeleteSession(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -434,19 +446,22 @@ func TestKubernetesSessionManager_Shutdown(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -512,19 +527,22 @@ func TestKubernetesSessionManager_SessionLabels(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -607,19 +625,22 @@ func TestKubernetesSessionManager_SessionAddr(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -672,19 +693,22 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:v1.0.0",
-			ImagePullPolicy: "Always",
-			ServiceAccount:  "custom-sa",
-			BasePort:        9000,
-			CPURequest:      "200m",
-			CPULimit:        "1",
-			MemoryRequest:   "256Mi",
-			MemoryLimit:     "1Gi",
-			PVCStorageSize:  "5Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:v1.0.0",
+			ImagePullPolicy:                 "Always",
+			ServiceAccount:                  "custom-sa",
+			BasePort:                        9000,
+			CPURequest:                      "200m",
+			CPULimit:                        "1",
+			MemoryRequest:                   "256Mi",
+			MemoryLimit:                     "1Gi",
+			PVCStorageSize:                  "5Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -782,9 +806,19 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 		t.Errorf("Expected CUSTOM_VAR 'custom-value', got %s", envMap["CUSTOM_VAR"])
 	}
 
-	// Verify volume mounts
-	if len(container.VolumeMounts) != 1 || container.VolumeMounts[0].Name != "workdir" {
+	// Verify volume mounts (workdir + claude-config for .claude.json and .claude)
+	if len(container.VolumeMounts) != 3 {
+		t.Errorf("Expected 3 volume mounts, got %d", len(container.VolumeMounts))
+	}
+	volumeMountNames := make(map[string]bool)
+	for _, vm := range container.VolumeMounts {
+		volumeMountNames[vm.Name] = true
+	}
+	if !volumeMountNames["workdir"] {
 		t.Error("Expected workdir volume mount")
+	}
+	if !volumeMountNames["claude-config"] {
+		t.Error("Expected claude-config volume mount")
 	}
 
 	// Verify probes
@@ -833,20 +867,23 @@ func TestKubernetesSessionManager_CreateSessionWithCredentials(t *testing.T) {
 	// Create manager with mock credential provider
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageClass: "",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -955,20 +992,23 @@ func TestKubernetesSessionManager_CreateSessionWithoutCredentials(t *testing.T) 
 	// Create manager with mock credential provider that returns nil
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageClass: "",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 
@@ -1020,6 +1060,288 @@ func TestKubernetesSessionManager_CreateSessionWithoutCredentials(t *testing.T) 
 	}
 }
 
+func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-claude-config",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session
+	sessionID := "test-session-claude"
+	req := &RunServerRequest{
+		UserID: "test-user",
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	// Get deployment and verify InitContainer
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get deployment: %v", err)
+	}
+
+	// Verify InitContainer exists
+	podSpec := deployment.Spec.Template.Spec
+	if len(podSpec.InitContainers) != 1 {
+		t.Fatalf("Expected 1 init container, got %d", len(podSpec.InitContainers))
+	}
+
+	initContainer := podSpec.InitContainers[0]
+	if initContainer.Name != "setup-claude" {
+		t.Errorf("Expected init container name 'setup-claude', got %s", initContainer.Name)
+	}
+	if initContainer.Image != "alpine:3.19" {
+		t.Errorf("Expected init container image 'alpine:3.19', got %s", initContainer.Image)
+	}
+
+	// Verify InitContainer volume mounts
+	initVolumeMountNames := make(map[string]bool)
+	for _, vm := range initContainer.VolumeMounts {
+		initVolumeMountNames[vm.Name] = true
+	}
+	expectedInitMounts := []string{"claude-config-base", "claude-config-user", "claude-config"}
+	for _, name := range expectedInitMounts {
+		if !initVolumeMountNames[name] {
+			t.Errorf("Expected init container to have volume mount '%s'", name)
+		}
+	}
+
+	// Verify Volumes
+	volumeNames := make(map[string]bool)
+	for _, v := range podSpec.Volumes {
+		volumeNames[v.Name] = true
+	}
+	expectedVolumes := []string{"workdir", "claude-config-base", "claude-config-user", "claude-config"}
+	for _, name := range expectedVolumes {
+		if !volumeNames[name] {
+			t.Errorf("Expected volume '%s' to exist", name)
+		}
+	}
+
+	// Verify claude-config-base ConfigMap volume
+	var baseConfigMapVolume *corev1.Volume
+	for i, v := range podSpec.Volumes {
+		if v.Name == "claude-config-base" {
+			baseConfigMapVolume = &podSpec.Volumes[i]
+			break
+		}
+	}
+	if baseConfigMapVolume == nil {
+		t.Fatal("Expected claude-config-base volume")
+	}
+	if baseConfigMapVolume.ConfigMap == nil {
+		t.Fatal("Expected claude-config-base to be a ConfigMap volume")
+	}
+	if baseConfigMapVolume.ConfigMap.Name != "claude-config-base" {
+		t.Errorf("Expected ConfigMap name 'claude-config-base', got %s", baseConfigMapVolume.ConfigMap.Name)
+	}
+	if baseConfigMapVolume.ConfigMap.Optional == nil || !*baseConfigMapVolume.ConfigMap.Optional {
+		t.Error("Expected claude-config-base ConfigMap to be optional")
+	}
+
+	// Verify claude-config-user ConfigMap volume
+	var userConfigMapVolume *corev1.Volume
+	for i, v := range podSpec.Volumes {
+		if v.Name == "claude-config-user" {
+			userConfigMapVolume = &podSpec.Volumes[i]
+			break
+		}
+	}
+	if userConfigMapVolume == nil {
+		t.Fatal("Expected claude-config-user volume")
+	}
+	if userConfigMapVolume.ConfigMap == nil {
+		t.Fatal("Expected claude-config-user to be a ConfigMap volume")
+	}
+	// User ConfigMap name should be prefix + sanitized userID
+	expectedUserConfigMap := "claude-config-test-user"
+	if userConfigMapVolume.ConfigMap.Name != expectedUserConfigMap {
+		t.Errorf("Expected ConfigMap name '%s', got %s", expectedUserConfigMap, userConfigMapVolume.ConfigMap.Name)
+	}
+	if userConfigMapVolume.ConfigMap.Optional == nil || !*userConfigMapVolume.ConfigMap.Optional {
+		t.Error("Expected claude-config-user ConfigMap to be optional")
+	}
+
+	// Verify claude-config EmptyDir volume
+	var emptyDirVolume *corev1.Volume
+	for i, v := range podSpec.Volumes {
+		if v.Name == "claude-config" {
+			emptyDirVolume = &podSpec.Volumes[i]
+			break
+		}
+	}
+	if emptyDirVolume == nil {
+		t.Fatal("Expected claude-config volume")
+	}
+	if emptyDirVolume.EmptyDir == nil {
+		t.Fatal("Expected claude-config to be an EmptyDir volume")
+	}
+
+	// Verify main container volume mounts with SubPath
+	container := podSpec.Containers[0]
+	var claudeJSONMount, claudeDirMount *corev1.VolumeMount
+	for i, vm := range container.VolumeMounts {
+		if vm.MountPath == "/home/agentapi/.claude.json" {
+			claudeJSONMount = &container.VolumeMounts[i]
+		}
+		if vm.MountPath == "/home/agentapi/.claude" {
+			claudeDirMount = &container.VolumeMounts[i]
+		}
+	}
+
+	if claudeJSONMount == nil {
+		t.Fatal("Expected .claude.json volume mount")
+	}
+	if claudeJSONMount.SubPath != ".claude.json" {
+		t.Errorf("Expected SubPath '.claude.json', got %s", claudeJSONMount.SubPath)
+	}
+
+	if claudeDirMount == nil {
+		t.Fatal("Expected .claude directory volume mount")
+	}
+	if claudeDirMount.SubPath != ".claude" {
+		t.Errorf("Expected SubPath '.claude', got %s", claudeDirMount.SubPath)
+	}
+}
+
+func TestKubernetesSessionManager_ClaudeConfigUserSanitization(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-claude-sanitize",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session with special characters in userID
+	sessionID := "test-session-sanitize"
+	req := &RunServerRequest{
+		UserID: "test@user.com/special", // Contains @ and /
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	// Get deployment
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get deployment: %v", err)
+	}
+
+	// Find claude-config-user volume and verify sanitized name
+	var userConfigMapVolume *corev1.Volume
+	for i, v := range deployment.Spec.Template.Spec.Volumes {
+		if v.Name == "claude-config-user" {
+			userConfigMapVolume = &deployment.Spec.Template.Spec.Volumes[i]
+			break
+		}
+	}
+
+	if userConfigMapVolume == nil {
+		t.Fatal("Expected claude-config-user volume")
+	}
+
+	// UserID should be sanitized: test@user.com/special -> test-user.com-special
+	expectedConfigMapName := "claude-config-test-user.com-special"
+	if userConfigMapVolume.ConfigMap.Name != expectedConfigMapName {
+		t.Errorf("Expected sanitized ConfigMap name '%s', got %s", expectedConfigMapName, userConfigMapVolume.ConfigMap.Name)
+	}
+}
+
 func TestKubernetesSessionManager_DeleteSessionWithCredentials(t *testing.T) {
 	k8sClient, cleanup := setupEnvTest(t)
 	defer cleanup()
@@ -1043,20 +1365,23 @@ func TestKubernetesSessionManager_DeleteSessionWithCredentials(t *testing.T) {
 	// Create manager with mock credential provider
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:         true,
-			Namespace:       ns.Name,
-			Image:           "ghcr.io/takutakahashi/agentapi-proxy:latest",
-			ImagePullPolicy: "IfNotPresent",
-			ServiceAccount:  "default",
-			BasePort:        9000,
-			CPURequest:      "100m",
-			CPULimit:        "500m",
-			MemoryRequest:   "128Mi",
-			MemoryLimit:     "512Mi",
-			PVCStorageClass: "",
-			PVCStorageSize:  "1Gi",
-			PodStartTimeout: 60,
-			PodStopTimeout:  30,
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
 		},
 	}
 

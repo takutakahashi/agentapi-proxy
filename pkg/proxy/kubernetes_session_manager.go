@@ -370,6 +370,42 @@ func (m *KubernetesSessionManager) createPVC(ctx context.Context, session *kuber
 	return err
 }
 
+// setupClaudeScript is the shell script executed by the init container to set up Claude configuration
+const setupClaudeScript = `
+set -e
+
+# Install jq for JSON merging
+apk add --no-cache jq >/dev/null 2>&1
+
+# Create directory structure in EmptyDir
+mkdir -p /claude-config/.claude
+
+# Merge claude.json: base + user (user takes precedence)
+if [ -f /claude-config-base/claude.json ]; then
+    cp /claude-config-base/claude.json /tmp/base.json
+else
+    echo '{}' > /tmp/base.json
+fi
+
+if [ -f /claude-config-user/claude.json ]; then
+    jq -s '.[0] * .[1]' /tmp/base.json /claude-config-user/claude.json > /claude-config/.claude.json
+else
+    cp /tmp/base.json /claude-config/.claude.json
+fi
+
+# Copy settings.json from base config
+if [ -f /claude-config-base/settings.json ]; then
+    cp /claude-config-base/settings.json /claude-config/.claude/settings.json
+fi
+
+# Set permissions (running as user 999)
+chmod 644 /claude-config/.claude.json
+chmod -R 755 /claude-config/.claude
+chmod 644 /claude-config/.claude/settings.json 2>/dev/null || true
+
+echo "Claude configuration setup complete"
+`
+
 // createDeployment creates a Deployment for the session
 func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session *kubernetesSession, req *RunServerRequest) error {
 	labels := m.buildLabels(session)
@@ -381,6 +417,14 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	cpuLimit := resource.MustParse(m.k8sConfig.CPULimit)
 	memoryRequest := resource.MustParse(m.k8sConfig.MemoryRequest)
 	memoryLimit := resource.MustParse(m.k8sConfig.MemoryLimit)
+
+	// Build user-specific ConfigMap name
+	userConfigMapName := fmt.Sprintf("%s-%s",
+		m.k8sConfig.ClaudeConfigUserConfigMapPrefix,
+		sanitizeLabelValue(req.UserID))
+
+	// Build init container for Claude configuration setup
+	initContainer := m.buildClaudeSetupInitContainer(userConfigMapName)
 
 	// Build container spec
 	container := corev1.Container{
@@ -409,6 +453,18 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			{
 				Name:      "workdir",
 				MountPath: "/home/agentapi/workdir",
+			},
+			// Mount claude.json from EmptyDir using SubPath
+			{
+				Name:      "claude-config",
+				MountPath: "/home/agentapi/.claude.json",
+				SubPath:   ".claude.json",
+			},
+			// Mount .claude directory from EmptyDir using SubPath
+			{
+				Name:      "claude-config",
+				MountPath: "/home/agentapi/.claude",
+				SubPath:   ".claude",
 			},
 		},
 		Command: []string{"agentapi"},
@@ -455,6 +511,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		}
 	}
 
+	// Build volumes
+	volumes := m.buildVolumes(session, userConfigMapName)
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      session.deploymentName,
@@ -479,17 +538,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 						RunAsUser:  int64Ptr(999),
 						RunAsGroup: int64Ptr(999),
 					},
-					Containers: []corev1.Container{container},
-					Volumes: []corev1.Volume{
-						{
-							Name: "workdir",
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: session.pvcName,
-								},
-							},
-						},
-					},
+					InitContainers: []corev1.Container{initContainer},
+					Containers:     []corev1.Container{container},
+					Volumes:        volumes,
 				},
 			},
 		},
@@ -497,6 +548,83 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	_, err := m.client.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
+}
+
+// buildClaudeSetupInitContainer builds the init container for Claude configuration setup
+func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(userConfigMapName string) corev1.Container {
+	return corev1.Container{
+		Name:            "setup-claude",
+		Image:           m.k8sConfig.InitContainerImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c"},
+		Args:            []string{setupClaudeScript},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "claude-config-base",
+				MountPath: "/claude-config-base",
+				ReadOnly:  true,
+			},
+			{
+				Name:      "claude-config-user",
+				MountPath: "/claude-config-user",
+				ReadOnly:  true,
+			},
+			{
+				Name:      "claude-config",
+				MountPath: "/claude-config",
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
+}
+
+// buildVolumes builds the volume configuration for the session pod
+func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, userConfigMapName string) []corev1.Volume {
+	return []corev1.Volume{
+		// Workdir PVC
+		{
+			Name: "workdir",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: session.pvcName,
+				},
+			},
+		},
+		// Base Claude configuration ConfigMap
+		{
+			Name: "claude-config-base",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.ClaudeConfigBaseConfigMap,
+					},
+					Optional: boolPtr(true),
+				},
+			},
+		},
+		// User-specific Claude configuration ConfigMap
+		{
+			Name: "claude-config-user",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: userConfigMapName,
+					},
+					Optional: boolPtr(true), // User config is optional
+				},
+			},
+		},
+		// EmptyDir for merged Claude configuration
+		{
+			Name: "claude-config",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
 }
 
 // createService creates a Service for the session
