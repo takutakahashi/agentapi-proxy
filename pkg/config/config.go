@@ -144,7 +144,7 @@ type KubernetesSessionConfig struct {
 	// Full name will be: {prefix}-{username} (e.g., claude-config-johndoe)
 	ClaudeConfigUserConfigMapPrefix string `json:"claude_config_user_configmap_prefix" mapstructure:"claude_config_user_configmap_prefix"`
 	// InitContainerImage is the image used for the init container that sets up Claude configuration
-	// Defaults to alpine:3.19 which includes basic tools needed for configuration setup
+	// Defaults to the same image as the session container (Image field) if not specified
 	InitContainerImage string `json:"init_container_image" mapstructure:"init_container_image"`
 }
 
@@ -414,7 +414,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
 	v.SetDefault("kubernetes_session.claude_config_base_configmap", "claude-config-base")
 	v.SetDefault("kubernetes_session.claude_config_user_configmap_prefix", "claude-config")
-	v.SetDefault("kubernetes_session.init_container_image", "alpine:3.19")
+	v.SetDefault("kubernetes_session.init_container_image", "")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields

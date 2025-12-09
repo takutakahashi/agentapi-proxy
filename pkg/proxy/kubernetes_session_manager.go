@@ -371,16 +371,15 @@ func (m *KubernetesSessionManager) createPVC(ctx context.Context, session *kuber
 }
 
 // setupClaudeScript is the shell script executed by the init container to set up Claude configuration
+// Uses Node.js for JSON merging since it's available in the agentapi-proxy image
 const setupClaudeScript = `
 set -e
-
-# Install jq for JSON merging
-apk add --no-cache jq >/dev/null 2>&1
 
 # Create directory structure in EmptyDir
 mkdir -p /claude-config/.claude
 
 # Merge claude.json: base + user (user takes precedence)
+# Using Node.js for JSON merging
 if [ -f /claude-config-base/claude.json ]; then
     cp /claude-config-base/claude.json /tmp/base.json
 else
@@ -388,7 +387,12 @@ else
 fi
 
 if [ -f /claude-config-user/claude.json ]; then
-    jq -s '.[0] * .[1]' /tmp/base.json /claude-config-user/claude.json > /claude-config/.claude.json
+    node -e "
+const base = JSON.parse(require('fs').readFileSync('/tmp/base.json', 'utf8'));
+const user = JSON.parse(require('fs').readFileSync('/claude-config-user/claude.json', 'utf8'));
+const merged = { ...base, ...user };
+require('fs').writeFileSync('/claude-config/.claude.json', JSON.stringify(merged, null, 2));
+"
 else
     cp /tmp/base.json /claude-config/.claude.json
 fi
@@ -552,9 +556,15 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 // buildClaudeSetupInitContainer builds the init container for Claude configuration setup
 func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(userConfigMapName string) corev1.Container {
+	// Use the main container image if InitContainerImage is not specified
+	initImage := m.k8sConfig.InitContainerImage
+	if initImage == "" {
+		initImage = m.k8sConfig.Image
+	}
+
 	return corev1.Container{
 		Name:            "setup-claude",
-		Image:           m.k8sConfig.InitContainerImage,
+		Image:           initImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{"sh", "-c"},
 		Args:            []string{setupClaudeScript},

@@ -1253,6 +1253,90 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 	}
 }
 
+func TestKubernetesSessionManager_InitContainerImageDefault(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-init-image-default",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	// Config with InitContainerImage not set (empty string)
+	// Should default to using the main Image
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:v1.2.3",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "", // Empty - should use main Image
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session
+	sessionID := "test-session-init-default"
+	req := &RunServerRequest{
+		UserID: "test-user",
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	// Get deployment and verify InitContainer uses main image
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get deployment: %v", err)
+	}
+
+	// Verify InitContainer uses the main image when InitContainerImage is empty
+	podSpec := deployment.Spec.Template.Spec
+	if len(podSpec.InitContainers) != 1 {
+		t.Fatalf("Expected 1 init container, got %d", len(podSpec.InitContainers))
+	}
+
+	initContainer := podSpec.InitContainers[0]
+	expectedImage := "ghcr.io/takutakahashi/agentapi-proxy:v1.2.3"
+	if initContainer.Image != expectedImage {
+		t.Errorf("Expected init container image '%s', got '%s'", expectedImage, initContainer.Image)
+	}
+}
+
 func TestKubernetesSessionManager_ClaudeConfigUserSanitization(t *testing.T) {
 	k8sClient, cleanup := setupEnvTest(t)
 	defer cleanup()
