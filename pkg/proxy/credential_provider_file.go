@@ -1,23 +1,12 @@
 package proxy
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
-
-// credentialsFile represents the JSON structure of ~/.claude/.credentials.json
-type credentialsFile struct {
-	ClaudeAiOauth struct {
-		AccessToken  string `json:"accessToken"`
-		RefreshToken string `json:"refreshToken"`
-		ExpiresAt    int64  `json:"expiresAt"`
-	} `json:"claudeAiOauth"`
-}
 
 // FileCredentialProvider loads credentials from user-specific credential files
 // When userID is provided, it looks for credentials at:
@@ -46,7 +35,7 @@ func (p *FileCredentialProvider) Name() string {
 // Load attempts to load credentials from the file
 // If userID is provided, looks in the user-specific directory
 // Returns nil, nil if the file doesn't exist
-// Returns nil, error if there was an error reading or parsing the file
+// Returns nil, error if there was an error reading the file
 func (p *FileCredentialProvider) Load(userID string) (*ClaudeCredentials, error) {
 	path := p.filePath
 	if path == "" {
@@ -62,28 +51,15 @@ func (p *FileCredentialProvider) Load(userID string) (*ClaudeCredentials, error)
 		return nil, nil
 	}
 
-	// Read file
+	// Read file content directly without parsing
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read credentials file: %w", err)
 	}
 
-	// Parse JSON to validate and extract fields
-	var creds credentialsFile
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return nil, fmt.Errorf("failed to parse credentials file: %w", err)
-	}
-
-	// Validate required fields
-	if creds.ClaudeAiOauth.AccessToken == "" {
-		return nil, nil
-	}
-
+	// Return credentials with raw file content
 	return &ClaudeCredentials{
-		AccessToken:  creds.ClaudeAiOauth.AccessToken,
-		RefreshToken: creds.ClaudeAiOauth.RefreshToken,
-		ExpiresAt:    strconv.FormatInt(creds.ClaudeAiOauth.ExpiresAt, 10),
-		RawJSON:      data, // Keep the original file content
+		RawJSON: data,
 	}, nil
 }
 
