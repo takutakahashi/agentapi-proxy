@@ -5,6 +5,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -926,15 +927,32 @@ func TestKubernetesSessionManager_CreateSessionWithCredentials(t *testing.T) {
 		t.Fatalf("Failed to get Secret: %v", err)
 	}
 
-	// Verify Secret data
-	if string(secret.Data[EnvClaudeAccessToken]) != "test-access-token" {
-		t.Errorf("Expected access token 'test-access-token', got %s", string(secret.Data[EnvClaudeAccessToken]))
+	// Verify Secret contains credentials.json
+	credentialsData, ok := secret.Data["credentials.json"]
+	if !ok {
+		t.Fatal("Expected credentials.json key in Secret data")
 	}
-	if string(secret.Data[EnvClaudeRefreshToken]) != "test-refresh-token" {
-		t.Errorf("Expected refresh token 'test-refresh-token', got %s", string(secret.Data[EnvClaudeRefreshToken]))
+
+	// Parse and verify credentials.json content
+	var credJSON map[string]interface{}
+	if err := json.Unmarshal(credentialsData, &credJSON); err != nil {
+		t.Fatalf("Failed to parse credentials.json: %v", err)
 	}
-	if string(secret.Data[EnvClaudeExpiresAt]) != "1234567890" {
-		t.Errorf("Expected expires at '1234567890', got %s", string(secret.Data[EnvClaudeExpiresAt]))
+
+	claudeAiOauth, ok := credJSON["claudeAiOauth"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected claudeAiOauth object in credentials.json")
+	}
+
+	if claudeAiOauth["accessToken"] != "test-access-token" {
+		t.Errorf("Expected accessToken 'test-access-token', got %v", claudeAiOauth["accessToken"])
+	}
+	if claudeAiOauth["refreshToken"] != "test-refresh-token" {
+		t.Errorf("Expected refreshToken 'test-refresh-token', got %v", claudeAiOauth["refreshToken"])
+	}
+	// expiresAt should be parsed as int64
+	if int64(claudeAiOauth["expiresAt"].(float64)) != 1234567890 {
+		t.Errorf("Expected expiresAt 1234567890, got %v", claudeAiOauth["expiresAt"])
 	}
 
 	// Verify Secret labels
@@ -942,30 +960,47 @@ func TestKubernetesSessionManager_CreateSessionWithCredentials(t *testing.T) {
 		t.Errorf("Expected session-id label %s, got %s", sessionID, secret.Labels["agentapi.proxy/session-id"])
 	}
 
-	// Verify Deployment has envFrom referencing the Secret
+	// Verify Deployment has credentials volume
 	deploymentName := "agentapi-session-" + sessionID
 	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get Deployment: %v", err)
 	}
 
-	container := deployment.Spec.Template.Spec.Containers[0]
-	if len(container.EnvFrom) == 0 {
-		t.Fatal("Expected envFrom to be set on container")
-	}
-
-	foundSecretRef := false
-	for _, envFrom := range container.EnvFrom {
-		if envFrom.SecretRef != nil && envFrom.SecretRef.Name == secretName {
-			foundSecretRef = true
-			if envFrom.SecretRef.Optional == nil || !*envFrom.SecretRef.Optional {
-				t.Error("Expected Secret reference to be optional")
+	// Check for credentials volume
+	foundCredentialsVolume := false
+	for _, vol := range deployment.Spec.Template.Spec.Volumes {
+		if vol.Name == "claude-credentials" {
+			foundCredentialsVolume = true
+			if vol.Secret == nil {
+				t.Error("Expected credentials volume to be a Secret volume")
+			} else if vol.Secret.SecretName != secretName {
+				t.Errorf("Expected credentials volume to reference Secret %s, got %s", secretName, vol.Secret.SecretName)
 			}
 			break
 		}
 	}
-	if !foundSecretRef {
-		t.Errorf("Expected envFrom to reference Secret %s", secretName)
+	if !foundCredentialsVolume {
+		t.Error("Expected claude-credentials volume to exist")
+	}
+
+	// Check initContainer has credentials volume mount
+	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
+	foundCredentialsMount := false
+	for _, mount := range initContainer.VolumeMounts {
+		if mount.Name == "claude-credentials" {
+			foundCredentialsMount = true
+			if mount.MountPath != "/claude-credentials" {
+				t.Errorf("Expected credentials mount path '/claude-credentials', got %s", mount.MountPath)
+			}
+			if !mount.ReadOnly {
+				t.Error("Expected credentials volume mount to be read-only")
+			}
+			break
+		}
+	}
+	if !foundCredentialsMount {
+		t.Error("Expected initContainer to have claude-credentials volume mount")
 	}
 }
 
@@ -1047,16 +1082,26 @@ func TestKubernetesSessionManager_CreateSessionWithoutCredentials(t *testing.T) 
 		t.Error("Expected Secret to not exist when no credentials provided")
 	}
 
-	// Verify Deployment does NOT have envFrom
+	// Verify Deployment does NOT have credentials volume
 	deploymentName := "agentapi-session-" + sessionID
 	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get Deployment: %v", err)
 	}
 
-	container := deployment.Spec.Template.Spec.Containers[0]
-	if len(container.EnvFrom) != 0 {
-		t.Error("Expected envFrom to be empty when no credentials provided")
+	// Check that credentials volume does not exist
+	for _, vol := range deployment.Spec.Template.Spec.Volumes {
+		if vol.Name == "claude-credentials" {
+			t.Error("Expected claude-credentials volume to not exist when no credentials provided")
+		}
+	}
+
+	// Check initContainer does not have credentials volume mount
+	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
+	for _, mount := range initContainer.VolumeMounts {
+		if mount.Name == "claude-credentials" {
+			t.Error("Expected initContainer to not have claude-credentials volume mount when no credentials provided")
+		}
 	}
 }
 

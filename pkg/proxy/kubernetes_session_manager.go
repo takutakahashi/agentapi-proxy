@@ -2,9 +2,11 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -471,6 +473,13 @@ if [ -f /claude-config-base/settings.json ]; then
     cp /claude-config-base/settings.json /claude-config/.claude/settings.json
 fi
 
+# Copy credentials.json from Secret if exists
+if [ -f /claude-credentials/credentials.json ]; then
+    cp /claude-credentials/credentials.json /claude-config/.claude/.credentials.json
+    chmod 600 /claude-config/.claude/.credentials.json
+    echo "Credentials file copied"
+fi
+
 # Set permissions (running as user 999)
 chmod 644 /claude-config/.claude.json
 chmod -R 755 /claude-config/.claude
@@ -497,7 +506,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		sanitizeLabelValue(req.UserID))
 
 	// Build init container for Claude configuration setup
-	initContainer := m.buildClaudeSetupInitContainer(userConfigMapName)
+	initContainer := m.buildClaudeSetupInitContainer(session)
 
 	// Build container spec
 	container := corev1.Container{
@@ -570,20 +579,6 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		},
 	}
 
-	// Add envFrom if credential Secret exists
-	if session.secretName != "" {
-		container.EnvFrom = []corev1.EnvFromSource{
-			{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: session.secretName,
-					},
-					Optional: boolPtr(true),
-				},
-			},
-		}
-	}
-
 	// Build volumes
 	volumes := m.buildVolumes(session, userConfigMapName)
 
@@ -624,11 +619,37 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 }
 
 // buildClaudeSetupInitContainer builds the init container for Claude configuration setup
-func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(userConfigMapName string) corev1.Container {
+func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(session *kubernetesSession) corev1.Container {
 	// Use the main container image if InitContainerImage is not specified
 	initImage := m.k8sConfig.InitContainerImage
 	if initImage == "" {
 		initImage = m.k8sConfig.Image
+	}
+
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "claude-config-base",
+			MountPath: "/claude-config-base",
+			ReadOnly:  true,
+		},
+		{
+			Name:      "claude-config-user",
+			MountPath: "/claude-config-user",
+			ReadOnly:  true,
+		},
+		{
+			Name:      "claude-config",
+			MountPath: "/claude-config",
+		},
+	}
+
+	// Add credentials volume mount if exists
+	if session.secretName != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "claude-credentials",
+			MountPath: "/claude-credentials",
+			ReadOnly:  true,
+		})
 	}
 
 	return corev1.Container{
@@ -637,22 +658,7 @@ func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(userConfigMapNa
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{"sh", "-c"},
 		Args:            []string{setupClaudeScript},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "claude-config-base",
-				MountPath: "/claude-config-base",
-				ReadOnly:  true,
-			},
-			{
-				Name:      "claude-config-user",
-				MountPath: "/claude-config-user",
-				ReadOnly:  true,
-			},
-			{
-				Name:      "claude-config",
-				MountPath: "/claude-config",
-			},
-		},
+		VolumeMounts:    volumeMounts,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:  int64Ptr(999),
 			RunAsGroup: int64Ptr(999),
@@ -662,7 +668,7 @@ func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(userConfigMapNa
 
 // buildVolumes builds the volume configuration for the session pod
 func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, userConfigMapName string) []corev1.Volume {
-	return []corev1.Volume{
+	volumes := []corev1.Volume{
 		// Workdir PVC
 		{
 			Name: "workdir",
@@ -704,6 +710,21 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 			},
 		},
 	}
+
+	// Add credentials Secret volume if exists
+	if session.secretName != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "claude-credentials",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: session.secretName,
+					Optional:   boolPtr(true),
+				},
+			},
+		})
+	}
+
+	return volumes
 }
 
 // createService creates a Service for the session
@@ -958,7 +979,30 @@ func boolPtr(b bool) *bool {
 }
 
 // createCredentialSecret creates a Kubernetes Secret for Claude credentials
+// The secret contains credentials.json file that will be mounted to $HOME/.claude/.credentials.json
 func (m *KubernetesSessionManager) createCredentialSecret(ctx context.Context, session *kubernetesSession, creds *ClaudeCredentials) error {
+	// Parse expiresAt to int64 for the JSON structure
+	expiresAt, err := strconv.ParseInt(creds.ExpiresAt, 10, 64)
+	if err != nil {
+		// If parsing fails, use 0 as fallback
+		log.Printf("[K8S_SESSION] Warning: failed to parse expiresAt '%s': %v", creds.ExpiresAt, err)
+		expiresAt = 0
+	}
+
+	// Build credentials.json structure matching Claude CLI expectations
+	credentialsJSON := map[string]interface{}{
+		"claudeAiOauth": map[string]interface{}{
+			"accessToken":  creds.AccessToken,
+			"refreshToken": creds.RefreshToken,
+			"expiresAt":    expiresAt,
+		},
+	}
+
+	credentialsBytes, err := json.Marshal(credentialsJSON)
+	if err != nil {
+		return fmt.Errorf("failed to marshal credentials: %w", err)
+	}
+
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      session.secretName,
@@ -966,14 +1010,12 @@ func (m *KubernetesSessionManager) createCredentialSecret(ctx context.Context, s
 			Labels:    m.buildLabels(session),
 		},
 		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			EnvClaudeAccessToken:  creds.AccessToken,
-			EnvClaudeRefreshToken: creds.RefreshToken,
-			EnvClaudeExpiresAt:    creds.ExpiresAt,
+		Data: map[string][]byte{
+			"credentials.json": credentialsBytes,
 		},
 	}
 
-	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	return err
 }
 
