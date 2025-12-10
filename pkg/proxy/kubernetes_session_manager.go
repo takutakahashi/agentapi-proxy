@@ -981,26 +981,32 @@ func boolPtr(b bool) *bool {
 // createCredentialSecret creates a Kubernetes Secret for Claude credentials
 // The secret contains credentials.json file that will be mounted to $HOME/.claude/.credentials.json
 func (m *KubernetesSessionManager) createCredentialSecret(ctx context.Context, session *kubernetesSession, creds *ClaudeCredentials) error {
-	// Parse expiresAt to int64 for the JSON structure
-	expiresAt, err := strconv.ParseInt(creds.ExpiresAt, 10, 64)
-	if err != nil {
-		// If parsing fails, use 0 as fallback
-		log.Printf("[K8S_SESSION] Warning: failed to parse expiresAt '%s': %v", creds.ExpiresAt, err)
-		expiresAt = 0
-	}
+	var credentialsBytes []byte
 
-	// Build credentials.json structure matching Claude CLI expectations
-	credentialsJSON := map[string]interface{}{
-		"claudeAiOauth": map[string]interface{}{
-			"accessToken":  creds.AccessToken,
-			"refreshToken": creds.RefreshToken,
-			"expiresAt":    expiresAt,
-		},
-	}
+	// Use RawJSON if available (preserves original file format)
+	if len(creds.RawJSON) > 0 {
+		credentialsBytes = creds.RawJSON
+	} else {
+		// Fall back to constructing JSON from fields (for EnvCredentialProvider)
+		expiresAt, err := strconv.ParseInt(creds.ExpiresAt, 10, 64)
+		if err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to parse expiresAt '%s': %v", creds.ExpiresAt, err)
+			expiresAt = 0
+		}
 
-	credentialsBytes, err := json.Marshal(credentialsJSON)
-	if err != nil {
-		return fmt.Errorf("failed to marshal credentials: %w", err)
+		credentialsJSON := map[string]interface{}{
+			"claudeAiOauth": map[string]interface{}{
+				"accessToken":  creds.AccessToken,
+				"refreshToken": creds.RefreshToken,
+				"expiresAt":    expiresAt,
+			},
+		}
+
+		var err2 error
+		credentialsBytes, err2 = json.Marshal(credentialsJSON)
+		if err2 != nil {
+			return fmt.Errorf("failed to marshal credentials: %w", err2)
+		}
 	}
 
 	secret := &corev1.Secret{
@@ -1015,7 +1021,7 @@ func (m *KubernetesSessionManager) createCredentialSecret(ctx context.Context, s
 		},
 	}
 
-	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	return err
 }
 

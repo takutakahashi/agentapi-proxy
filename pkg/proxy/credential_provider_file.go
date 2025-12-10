@@ -68,7 +68,7 @@ func (p *FileCredentialProvider) Load(userID string) (*ClaudeCredentials, error)
 		return nil, fmt.Errorf("failed to read credentials file: %w", err)
 	}
 
-	// Parse JSON
+	// Parse JSON to validate and extract fields
 	var creds credentialsFile
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return nil, fmt.Errorf("failed to parse credentials file: %w", err)
@@ -83,6 +83,7 @@ func (p *FileCredentialProvider) Load(userID string) (*ClaudeCredentials, error)
 		AccessToken:  creds.ClaudeAiOauth.AccessToken,
 		RefreshToken: creds.ClaudeAiOauth.RefreshToken,
 		ExpiresAt:    strconv.FormatInt(creds.ClaudeAiOauth.ExpiresAt, 10),
+		RawJSON:      data, // Keep the original file content
 	}, nil
 }
 

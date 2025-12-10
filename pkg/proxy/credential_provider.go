@@ -5,6 +5,10 @@ type ClaudeCredentials struct {
 	AccessToken  string
 	RefreshToken string
 	ExpiresAt    string // epoch milliseconds as string
+
+	// RawJSON contains the original credentials.json file content
+	// When set, this should be used directly instead of reconstructing from fields
+	RawJSON []byte
 }
 
 // CredentialProvider is an interface for loading Claude credentials from various sources
