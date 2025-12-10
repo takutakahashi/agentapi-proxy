@@ -14,7 +14,7 @@ func TestFileCredentialProvider_Load(t *testing.T) {
 		name        string
 		fileContent string
 		filePath    string
-		wantCreds   *ClaudeCredentials
+		wantRawJSON bool // true if we expect RawJSON to be set
 		wantErr     bool
 	}{
 		{
@@ -26,30 +26,26 @@ func TestFileCredentialProvider_Load(t *testing.T) {
 					"expiresAt": 1765205562255
 				}
 			}`,
-			wantCreds: &ClaudeCredentials{
-				AccessToken:  "sk-ant-oat01-test-access-token",
-				RefreshToken: "sk-ant-ort01-test-refresh-token",
-				ExpiresAt:    "1765205562255",
-			},
-			wantErr: false,
-		},
-		{
-			name:        "missing access token",
-			fileContent: `{"claudeAiOauth": {"refreshToken": "token", "expiresAt": 123}}`,
-			wantCreds:   nil,
+			wantRawJSON: true,
 			wantErr:     false,
 		},
 		{
-			name:        "invalid JSON",
-			fileContent: `{invalid json}`,
-			wantCreds:   nil,
-			wantErr:     true,
+			name:        "any JSON content is accepted",
+			fileContent: `{"claudeAiOauth": {"refreshToken": "token", "expiresAt": 123}}`,
+			wantRawJSON: true,
+			wantErr:     false,
 		},
 		{
-			name:      "file does not exist",
-			filePath:  filepath.Join(tempDir, "nonexistent", ".credentials.json"),
-			wantCreds: nil,
-			wantErr:   false,
+			name:        "even invalid JSON is accepted (file content is passed as-is)",
+			fileContent: `{invalid json}`,
+			wantRawJSON: true,
+			wantErr:     false,
+		},
+		{
+			name:        "file does not exist",
+			filePath:    filepath.Join(tempDir, "nonexistent", ".credentials.json"),
+			wantRawJSON: false,
+			wantErr:     false,
 		},
 	}
 
@@ -76,7 +72,7 @@ func TestFileCredentialProvider_Load(t *testing.T) {
 				return
 			}
 
-			if tt.wantCreds == nil {
+			if !tt.wantRawJSON {
 				if creds != nil {
 					t.Errorf("Load() got = %v, want nil", creds)
 				}
@@ -84,18 +80,13 @@ func TestFileCredentialProvider_Load(t *testing.T) {
 			}
 
 			if creds == nil {
-				t.Errorf("Load() got nil, want %v", tt.wantCreds)
+				t.Errorf("Load() got nil, want credentials with RawJSON")
 				return
 			}
 
-			if creds.AccessToken != tt.wantCreds.AccessToken {
-				t.Errorf("AccessToken = %v, want %v", creds.AccessToken, tt.wantCreds.AccessToken)
-			}
-			if creds.RefreshToken != tt.wantCreds.RefreshToken {
-				t.Errorf("RefreshToken = %v, want %v", creds.RefreshToken, tt.wantCreds.RefreshToken)
-			}
-			if creds.ExpiresAt != tt.wantCreds.ExpiresAt {
-				t.Errorf("ExpiresAt = %v, want %v", creds.ExpiresAt, tt.wantCreds.ExpiresAt)
+			// Verify RawJSON contains the original file content
+			if string(creds.RawJSON) != tt.fileContent {
+				t.Errorf("RawJSON = %v, want %v", string(creds.RawJSON), tt.fileContent)
 			}
 		})
 	}
@@ -154,11 +145,9 @@ func TestFileCredentialProvider_LoadWithUserID(t *testing.T) {
 		return
 	}
 
-	if creds.AccessToken != "user-specific-access-token" {
-		t.Errorf("AccessToken = %v, want 'user-specific-access-token'", creds.AccessToken)
-	}
-	if creds.RefreshToken != "user-specific-refresh-token" {
-		t.Errorf("RefreshToken = %v, want 'user-specific-refresh-token'", creds.RefreshToken)
+	// Verify RawJSON contains the original file content
+	if string(creds.RawJSON) != credContent {
+		t.Errorf("RawJSON = %v, want %v", string(creds.RawJSON), credContent)
 	}
 }
 
