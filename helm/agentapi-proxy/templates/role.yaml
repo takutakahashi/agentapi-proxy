@@ -20,7 +20,7 @@ rules:
     verbs: ["get", "list", "create", "delete"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "create"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "delete"]

@@ -134,6 +134,12 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 
 	log.Printf("[K8S_SESSION] Creating session %s in namespace %s", id, m.namespace)
 
+	// Ensure Base ConfigMap exists (create if not present)
+	if err := m.ensureBaseConfigMap(ctx); err != nil {
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to ensure base ConfigMap: %w", err)
+	}
+
 	// Create Credential Secret (if credentials exist)
 	if creds != nil {
 		if err := m.createCredentialSecret(ctx, session, creds); err != nil {
@@ -368,6 +374,69 @@ func (m *KubernetesSessionManager) createPVC(ctx context.Context, session *kuber
 
 	_, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Create(ctx, pvc, metav1.CreateOptions{})
 	return err
+}
+
+// defaultClaudeJSON is the default claude.json content with required settings
+const defaultClaudeJSON = `{
+  "hasCompletedOnboarding": true,
+  "bypassPermissionsModeAccepted": true
+}`
+
+// defaultSettingsJSON is the default settings.json content
+const defaultSettingsJSON = `{
+  "workspaceFolders": [],
+  "recentWorkspaces": [],
+  "settings": {
+    "mcp.enabled": true
+  }
+}`
+
+// ensureBaseConfigMap ensures the base ConfigMap exists, creating it if necessary
+func (m *KubernetesSessionManager) ensureBaseConfigMap(ctx context.Context) error {
+	configMapName := m.k8sConfig.ClaudeConfigBaseConfigMap
+	if configMapName == "" {
+		configMapName = "claude-config-base"
+	}
+
+	// Check if ConfigMap already exists
+	_, err := m.client.CoreV1().ConfigMaps(m.namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	if err == nil {
+		// ConfigMap already exists
+		return nil
+	}
+
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check ConfigMap existence: %w", err)
+	}
+
+	// Create the base ConfigMap with default settings
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      configMapName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "agentapi-proxy",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"app.kubernetes.io/component":  "claude-config",
+			},
+		},
+		Data: map[string]string{
+			"claude.json":   defaultClaudeJSON,
+			"settings.json": defaultSettingsJSON,
+		},
+	}
+
+	_, err = m.client.CoreV1().ConfigMaps(m.namespace).Create(ctx, configMap, metav1.CreateOptions{})
+	if err != nil {
+		// If another process created it concurrently, that's fine
+		if errors.IsAlreadyExists(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to create base ConfigMap: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created base ConfigMap %s in namespace %s", configMapName, m.namespace)
+	return nil
 }
 
 // setupClaudeScript is the shell script executed by the init container to set up Claude configuration
