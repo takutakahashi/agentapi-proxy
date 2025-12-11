@@ -840,13 +840,14 @@ while true; do
 done
 `
 
+// credentialsSyncSidecarImage is the image used for the credentials sync sidecar
+// This image must contain kubectl for interacting with Kubernetes API
+const credentialsSyncSidecarImage = "bitnami/kubectl:latest"
+
 // buildCredentialsSyncSidecar builds the sidecar container for syncing credentials to Secret
 func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *kubernetesSession) *corev1.Container {
-	// Use the main container image if InitContainerImage is not specified
-	sidecarImage := m.k8sConfig.InitContainerImage
-	if sidecarImage == "" {
-		sidecarImage = m.k8sConfig.Image
-	}
+	// Use bitnami/kubectl image which contains kubectl
+	sidecarImage := credentialsSyncSidecarImage
 
 	// Secret name is per-user, not per-session
 	// Format: agentapi-agent-credentials-{userID}
