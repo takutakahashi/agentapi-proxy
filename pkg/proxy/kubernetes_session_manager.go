@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1031,6 +1032,20 @@ func (m *KubernetesSessionManager) buildEnvVars(session *kubernetesSession, req 
 		{Name: "HOME", Value: "/home/agentapi"},
 	}
 
+	// Add CLAUDE_ARGS from request environment or proxy's environment
+	claudeArgs := ""
+	if req.Environment != nil {
+		if v, ok := req.Environment["CLAUDE_ARGS"]; ok {
+			claudeArgs = v
+		}
+	}
+	if claudeArgs == "" {
+		claudeArgs = os.Getenv("CLAUDE_ARGS")
+	}
+	if claudeArgs != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "CLAUDE_ARGS", Value: claudeArgs})
+	}
+
 	// Add repository info if available
 	if req.RepoInfo != nil {
 		envVars = append(envVars,
@@ -1039,9 +1054,11 @@ func (m *KubernetesSessionManager) buildEnvVars(session *kubernetesSession, req 
 		)
 	}
 
-	// Add environment variables from request
+	// Add environment variables from request (except CLAUDE_ARGS which is already handled)
 	for k, v := range req.Environment {
-		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
+		if k != "CLAUDE_ARGS" {
+			envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
+		}
 	}
 
 	return envVars
