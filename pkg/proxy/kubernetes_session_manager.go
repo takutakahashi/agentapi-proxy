@@ -505,8 +505,16 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		m.k8sConfig.ClaudeConfigUserConfigMapPrefix,
 		sanitizeLabelValue(req.UserID))
 
-	// Build init container for Claude configuration setup
-	initContainer := m.buildClaudeSetupInitContainer(session)
+	// Build init containers
+	var initContainers []corev1.Container
+
+	// Add clone-repo init container if repository info is provided
+	if cloneRepoInitContainer := m.buildCloneRepoInitContainer(session, req); cloneRepoInitContainer != nil {
+		initContainers = append(initContainers, *cloneRepoInitContainer)
+	}
+
+	// Add Claude configuration setup init container
+	initContainers = append(initContainers, m.buildClaudeSetupInitContainer(session))
 
 	// Build container spec
 	container := corev1.Container{
@@ -606,7 +614,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 						RunAsUser:  int64Ptr(999),
 						RunAsGroup: int64Ptr(999),
 					},
-					InitContainers: []corev1.Container{initContainer},
+					InitContainers: initContainers,
 					Containers:     []corev1.Container{container},
 					Volumes:        volumes,
 				},
@@ -616,6 +624,98 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	_, err := m.client.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
+}
+
+// cloneRepoScript is the shell script executed by the init container to clone the repository
+const cloneRepoScript = `
+set -e
+
+# Skip if no repository is specified
+if [ -z "$AGENTAPI_REPO_FULLNAME" ]; then
+    echo "No repository specified, skipping clone"
+    exit 0
+fi
+
+echo "Setting up repository clone for: $AGENTAPI_REPO_FULLNAME"
+
+# Write PEM to file if provided via environment variable
+if [ -n "$GITHUB_APP_PEM" ]; then
+    mkdir -p /home/agentapi/.github
+    echo "$GITHUB_APP_PEM" > /home/agentapi/.github/app.pem
+    chmod 600 /home/agentapi/.github/app.pem
+    export GITHUB_APP_PEM_PATH=/home/agentapi/.github/app.pem
+    echo "GitHub App PEM file created"
+fi
+
+# Setup GitHub authentication
+echo "Setting up GitHub authentication..."
+agentapi-proxy helpers setup-gh --repo-fullname "$AGENTAPI_REPO_FULLNAME"
+
+# Clone or update repository
+if [ -d "$AGENTAPI_CLONE_DIR/.git" ]; then
+    echo "Repository already exists, pulling latest changes..."
+    cd "$AGENTAPI_CLONE_DIR"
+    git pull || echo "Warning: git pull failed, continuing with existing repository"
+else
+    echo "Cloning repository to $AGENTAPI_CLONE_DIR..."
+    gh repo clone "$AGENTAPI_REPO_FULLNAME" "$AGENTAPI_CLONE_DIR"
+fi
+
+echo "Repository setup completed"
+`
+
+// buildCloneRepoInitContainer builds the init container for repository cloning
+func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *kubernetesSession, req *RunServerRequest) *corev1.Container {
+	// Skip if no repository info is provided
+	if req.RepoInfo == nil || req.RepoInfo.FullName == "" {
+		return nil
+	}
+
+	// Use the main container image if InitContainerImage is not specified
+	initImage := m.k8sConfig.InitContainerImage
+	if initImage == "" {
+		initImage = m.k8sConfig.Image
+	}
+
+	// Build environment variables
+	env := []corev1.EnvVar{
+		{Name: "AGENTAPI_REPO_FULLNAME", Value: req.RepoInfo.FullName},
+		{Name: "AGENTAPI_CLONE_DIR", Value: req.RepoInfo.CloneDir},
+		{Name: "HOME", Value: "/home/agentapi"},
+	}
+
+	// Build envFrom for GitHub secret
+	var envFrom []corev1.EnvFromSource
+	if m.k8sConfig.GitHubSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.GitHubSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	return &corev1.Container{
+		Name:            "clone-repo",
+		Image:           initImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c"},
+		Args:            []string{cloneRepoScript},
+		Env:             env,
+		EnvFrom:         envFrom,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "workdir",
+				MountPath: "/home/agentapi/workdir",
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
 }
 
 // buildClaudeSetupInitContainer builds the init container for Claude configuration setup
