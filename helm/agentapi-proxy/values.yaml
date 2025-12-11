@@ -317,3 +317,28 @@ kubernetesSession:
   podStartTimeout: 120
   podStopTimeout: 30
 
+  # GitHub authentication for repository cloning in session pods
+  # This creates a Secret with GitHub credentials that will be used by the clone-repo init container
+  github:
+    # Enable creation of GitHub credentials Secret for session pods
+    enabled: false
+
+    # Option 1: Use Personal Access Token
+    # token: "ghp_xxxxxxxxxxxxxxxxxxxx"
+
+    # Option 2: Use GitHub App credentials
+    # If not specified, values are inherited from top-level github.app settings
+    # appId: ""
+    # installationId: ""
+    # pem: |
+    #   -----BEGIN RSA PRIVATE KEY-----
+    #   ...
+    #   -----END RSA PRIVATE KEY-----
+
+    # GitHub Enterprise Server API URL (optional)
+    # Inherited from github.enterprise.apiUrl if not specified
+    # apiUrl: "https://github.enterprise.com/api/v3"
+
+    # Name of the Secret to create (auto-generated if empty)
+    # secretName: ""
+
