@@ -1080,6 +1080,14 @@ func (m *KubernetesSessionManager) buildEnvVars(session *kubernetesSession, req 
 		}
 	}
 
+	// Add VAPID environment variables for push notifications
+	vapidEnvVars := []string{"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_CONTACT_EMAIL"}
+	for _, envName := range vapidEnvVars {
+		if value := os.Getenv(envName); value != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: envName, Value: value})
+		}
+	}
+
 	return envVars
 }
 
