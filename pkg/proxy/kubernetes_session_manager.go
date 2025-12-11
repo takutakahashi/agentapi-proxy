@@ -516,11 +516,18 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Add Claude configuration setup init container
 	initContainers = append(initContainers, m.buildClaudeSetupInitContainer(session))
 
+	// Determine working directory based on whether repository is specified
+	workingDir := "/home/agentapi/workdir"
+	if req.RepoInfo != nil && req.RepoInfo.FullName != "" {
+		workingDir = "/home/agentapi/workdir/repo"
+	}
+
 	// Build container spec
 	container := corev1.Container{
 		Name:            "agentapi",
 		Image:           m.k8sConfig.Image,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		WorkingDir:      workingDir,
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          "http",
@@ -627,11 +634,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 }
 
 // cloneRepoScript is the shell script executed by the init container to clone the repository
-// The repository is cloned directly to /home/agentapi/workdir (the PVC mount point)
+// The repository is cloned to /home/agentapi/workdir/repo
 const cloneRepoScript = `
 set -e
 
-WORKDIR="/home/agentapi/workdir"
+CLONE_DIR="/home/agentapi/workdir/repo"
 
 # Skip if no repository is specified
 if [ -z "$AGENTAPI_REPO_FULLNAME" ]; then
@@ -659,13 +666,13 @@ else
 fi
 
 # Clone or update repository
-if [ -d "$WORKDIR/.git" ]; then
+if [ -d "$CLONE_DIR/.git" ]; then
     echo "Repository already exists, pulling latest changes..."
-    cd "$WORKDIR"
+    cd "$CLONE_DIR"
     git pull || echo "Warning: git pull failed, continuing with existing repository"
 else
-    echo "Cloning repository to $WORKDIR..."
-    gh repo clone "$AGENTAPI_REPO_FULLNAME" "$WORKDIR"
+    echo "Cloning repository to $CLONE_DIR..."
+    gh repo clone "$AGENTAPI_REPO_FULLNAME" "$CLONE_DIR"
 fi
 
 echo "Repository setup completed"
