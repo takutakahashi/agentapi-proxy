@@ -191,6 +191,18 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	} else {
 		p.notificationSvc = notificationSvc
 		log.Printf("Notification service initialized successfully")
+
+		// Set up subscription secret syncer if Kubernetes mode is enabled
+		if k8sManager, ok := sessionManager.(*KubernetesSessionManager); ok {
+			syncer := NewKubernetesSubscriptionSecretSyncer(
+				k8sManager.GetClient(),
+				k8sManager.GetNamespace(),
+				notificationSvc.GetStorage(),
+				"", // Use default prefix
+			)
+			notificationSvc.SetSecretSyncer(syncer)
+			log.Printf("Subscription secret syncer configured for Kubernetes mode")
+		}
 	}
 
 	// Start cleanup goroutine for defunct processes

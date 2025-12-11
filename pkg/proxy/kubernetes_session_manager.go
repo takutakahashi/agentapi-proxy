@@ -564,6 +564,12 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				MountPath: "/home/agentapi/.claude",
 				SubPath:   ".claude",
 			},
+			// Mount notification subscriptions from Secret
+			{
+				Name:      "notification-subscriptions",
+				MountPath: "/home/agentapi/notifications",
+				ReadOnly:  true,
+			},
 		},
 		Command: []string{"sh", "-c"},
 		Args: []string{
@@ -833,6 +839,19 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 			},
 		})
 	}
+
+	// Add notification subscription Secret volume
+	// Secret name follows the pattern: notification-subscriptions-{userID}
+	notificationSecretName := fmt.Sprintf("notification-subscriptions-%s", sanitizeLabelValue(session.request.UserID))
+	volumes = append(volumes, corev1.Volume{
+		Name: "notification-subscriptions",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: notificationSecretName,
+				Optional:   boolPtr(true), // Optional - user may not have subscriptions
+			},
+		},
+	})
 
 	return volumes
 }
@@ -1154,4 +1173,14 @@ func (m *KubernetesSessionManager) createCredentialSecret(ctx context.Context, s
 // deleteCredentialSecret deletes the credential Secret for a session
 func (m *KubernetesSessionManager) deleteCredentialSecret(ctx context.Context, session *kubernetesSession) error {
 	return m.client.CoreV1().Secrets(m.namespace).Delete(ctx, session.secretName, metav1.DeleteOptions{})
+}
+
+// GetClient returns the Kubernetes client (used by subscription secret syncer)
+func (m *KubernetesSessionManager) GetClient() kubernetes.Interface {
+	return m.client
+}
+
+// GetNamespace returns the Kubernetes namespace (used by subscription secret syncer)
+func (m *KubernetesSessionManager) GetNamespace() string {
+	return m.namespace
 }

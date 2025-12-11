@@ -2,6 +2,7 @@ package notification
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,8 +12,9 @@ import (
 
 // Service provides notification functionality
 type Service struct {
-	storage Storage
-	webpush *WebPushService
+	storage      Storage
+	webpush      *WebPushService
+	secretSyncer SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets
 }
 
 // NewService creates a new notification service
@@ -26,6 +28,17 @@ func NewService(baseDir string) (*Service, error) {
 		storage: storage,
 		webpush: webpush,
 	}, nil
+}
+
+// SetSecretSyncer sets the secret syncer for syncing subscriptions to K8s Secrets
+// This is optional and only used when Kubernetes mode is enabled
+func (s *Service) SetSecretSyncer(syncer SubscriptionSecretSyncer) {
+	s.secretSyncer = syncer
+}
+
+// GetStorage returns the storage instance (used by secret syncer)
+func (s *Service) GetStorage() Storage {
+	return s.storage
 }
 
 // Subscribe creates a new push notification subscription
@@ -57,6 +70,14 @@ func (s *Service) Subscribe(user *entities.User, endpoint string, keys map[strin
 		return nil, fmt.Errorf("failed to add subscription: %w", err)
 	}
 
+	// Sync to K8s Secret if syncer is configured
+	if s.secretSyncer != nil {
+		if syncErr := s.secretSyncer.Sync(string(user.ID())); syncErr != nil {
+			// Log warning but don't fail the subscription
+			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+		}
+	}
+
 	return &sub, nil
 }
 
@@ -67,7 +88,20 @@ func (s *Service) GetSubscriptions(userID string) ([]Subscription, error) {
 
 // DeleteSubscription removes a subscription by endpoint
 func (s *Service) DeleteSubscription(userID string, endpoint string) error {
-	return s.storage.DeleteSubscription(userID, endpoint)
+	err := s.storage.DeleteSubscription(userID, endpoint)
+	if err != nil {
+		return err
+	}
+
+	// Sync to K8s Secret if syncer is configured
+	if s.secretSyncer != nil {
+		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
+			// Log warning but don't fail the deletion
+			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+		}
+	}
+
+	return nil
 }
 
 // SendNotificationToUser sends a notification to all subscriptions of a user
