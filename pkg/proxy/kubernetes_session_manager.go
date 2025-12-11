@@ -765,7 +765,6 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *kubernet
 // It watches for changes to .credentials.json and syncs them to the Kubernetes Secret
 const credentialsSyncScript = `
 #!/bin/sh
-set -e
 
 CREDENTIALS_PATH="${CREDENTIALS_FILE_PATH:-/home/agentapi/.claude/.credentials.json}"
 SECRET_NAME="${SECRET_NAME}"
@@ -799,30 +798,33 @@ sync_to_secret() {
 
     # Check if secret exists
     if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
-        # Patch existing secret
-        kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
-            --type='json' \
-            -p="[{\"op\": \"replace\", \"path\": \"/data/credentials.json\", \"value\": \"$ENCODED\"}]" \
-            2>/dev/null
+        # Patch existing secret - use add operation for upsert behavior
+        RESULT=$(kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
+            --type='merge' \
+            -p="{\"data\":{\"credentials.json\":\"$ENCODED\"}}" 2>&1)
 
         if [ $? -eq 0 ]; then
             log "Successfully synced credentials to existing Secret"
             LAST_HASH="$CURRENT_HASH"
         else
-            log "ERROR: Failed to patch Secret"
+            log "ERROR: Failed to patch Secret: $RESULT"
         fi
     else
-        # Create new secret
+        # Create new secret with labels
         log "Secret does not exist, creating..."
-        kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
-            --from-file=credentials.json="$CREDENTIALS_PATH" \
-            2>/dev/null
+        RESULT=$(kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
+            --from-file=credentials.json="$CREDENTIALS_PATH" 2>&1)
 
         if [ $? -eq 0 ]; then
             log "Successfully created Secret"
+            # Add labels to the secret
+            kubectl label secret "$SECRET_NAME" -n "$NAMESPACE" \
+                app.kubernetes.io/name=agentapi-agent-credentials \
+                app.kubernetes.io/managed-by=agentapi-proxy \
+                --overwrite >/dev/null 2>&1 || true
             LAST_HASH="$CURRENT_HASH"
         else
-            log "ERROR: Failed to create Secret"
+            log "ERROR: Failed to create Secret: $RESULT"
         fi
     fi
 }
@@ -846,6 +848,10 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *kubernet
 		sidecarImage = m.k8sConfig.Image
 	}
 
+	// Secret name is per-user, not per-session
+	// Format: agentapi-agent-credentials-{userID}
+	credentialsSecretName := fmt.Sprintf("agentapi-agent-credentials-%s", sanitizeLabelValue(session.request.UserID))
+
 	return &corev1.Container{
 		Name:            "credentials-sync",
 		Image:           sidecarImage,
@@ -854,7 +860,7 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *kubernet
 		Args:            []string{credentialsSyncScript},
 		Env: []corev1.EnvVar{
 			{Name: "CREDENTIALS_FILE_PATH", Value: "/home/agentapi/.claude/.credentials.json"},
-			{Name: "SECRET_NAME", Value: session.secretName},
+			{Name: "SECRET_NAME", Value: credentialsSecretName},
 			{
 				Name: "SECRET_NAMESPACE",
 				ValueFrom: &corev1.EnvVarSource{
