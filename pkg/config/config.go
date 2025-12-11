@@ -407,7 +407,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.namespace", "")
 	v.SetDefault("kubernetes_session.image", "")
 	v.SetDefault("kubernetes_session.image_pull_policy", "IfNotPresent")
-	v.SetDefault("kubernetes_session.service_account", "default")
+	v.SetDefault("kubernetes_session.service_account", "agentapi-proxy")
 	v.SetDefault("kubernetes_session.base_port", 9000)
 	v.SetDefault("kubernetes_session.cpu_request", "500m")
 	v.SetDefault("kubernetes_session.cpu_limit", "2")

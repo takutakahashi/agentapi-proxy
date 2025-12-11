@@ -1078,33 +1078,57 @@ func TestKubernetesSessionManager_CreateSessionWithoutCredentials(t *testing.T) 
 		t.Fatal("Expected session to be created")
 	}
 
-	// Verify Secret was NOT created
+	// Verify Secret was NOT created (credentials data is not stored without actual credentials)
 	secretName := "agentapi-session-" + sessionID + "-credentials"
 	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, secretName, metav1.GetOptions{})
 	if err == nil {
 		t.Error("Expected Secret to not exist when no credentials provided")
 	}
 
-	// Verify Deployment does NOT have credentials volume
+	// Verify Deployment configuration
 	deploymentName := "agentapi-session-" + sessionID
 	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get Deployment: %v", err)
 	}
 
-	// Check that credentials volume does not exist
+	// Note: With credentials sync sidecar, volume is always present (with Optional: true)
+	// so that the sidecar can create the Secret when user logs in later
+	foundCredentialsVolume := false
 	for _, vol := range deployment.Spec.Template.Spec.Volumes {
 		if vol.Name == "claude-credentials" {
-			t.Error("Expected claude-credentials volume to not exist when no credentials provided")
+			foundCredentialsVolume = true
+			// Verify it's marked as optional
+			if vol.Secret == nil || vol.Secret.Optional == nil || !*vol.Secret.Optional {
+				t.Error("Expected claude-credentials volume to be optional")
+			}
 		}
 	}
+	if !foundCredentialsVolume {
+		t.Error("Expected claude-credentials volume to exist for credentials sync sidecar")
+	}
 
-	// Check initContainer does not have credentials volume mount
+	// Check initContainer has credentials volume mount (for setup)
 	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
+	foundCredentialsMount := false
 	for _, mount := range initContainer.VolumeMounts {
 		if mount.Name == "claude-credentials" {
-			t.Error("Expected initContainer to not have claude-credentials volume mount when no credentials provided")
+			foundCredentialsMount = true
 		}
+	}
+	if !foundCredentialsMount {
+		t.Error("Expected initContainer to have claude-credentials volume mount for credentials sync")
+	}
+
+	// Verify credentials-sync sidecar is present
+	foundSidecar := false
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "credentials-sync" {
+			foundSidecar = true
+		}
+	}
+	if !foundSidecar {
+		t.Error("Expected credentials-sync sidecar to be present")
 	}
 }
 
