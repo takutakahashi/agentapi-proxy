@@ -1562,3 +1562,313 @@ func TestKubernetesSessionManager_DeleteSessionWithCredentials(t *testing.T) {
 	}
 	// If err != nil (NotFound), Secret was already deleted - that's also OK
 }
+
+func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-clone-repo",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	// Create manager with GitHubSecretName configured
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
+			GitHubSecretName:                "github-credentials",
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session with RepoInfo
+	sessionID := "test-session-clone"
+	req := &RunServerRequest{
+		UserID: "test-user",
+		RepoInfo: &RepositoryInfo{
+			FullName: "owner/repo",
+			CloneDir: "/home/agentapi/workdir/test-session-clone",
+		},
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	// Get deployment and verify clone-repo InitContainer
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get deployment: %v", err)
+	}
+
+	// Verify we have 2 init containers: clone-repo and setup-claude
+	podSpec := deployment.Spec.Template.Spec
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
+	}
+
+	// Verify first init container is clone-repo
+	cloneRepoContainer := podSpec.InitContainers[0]
+	if cloneRepoContainer.Name != "clone-repo" {
+		t.Errorf("Expected first init container name 'clone-repo', got %s", cloneRepoContainer.Name)
+	}
+
+	// Verify clone-repo container has correct environment variables
+	envMap := make(map[string]string)
+	for _, env := range cloneRepoContainer.Env {
+		envMap[env.Name] = env.Value
+	}
+	if envMap["AGENTAPI_REPO_FULLNAME"] != "owner/repo" {
+		t.Errorf("Expected AGENTAPI_REPO_FULLNAME 'owner/repo', got %s", envMap["AGENTAPI_REPO_FULLNAME"])
+	}
+	// Note: AGENTAPI_CLONE_DIR is no longer set; the script uses a fixed path /home/agentapi/workdir/repo
+	if envMap["HOME"] != "/home/agentapi" {
+		t.Errorf("Expected HOME '/home/agentapi', got %s", envMap["HOME"])
+	}
+
+	// Verify clone-repo container has envFrom referencing the GitHub secret
+	if len(cloneRepoContainer.EnvFrom) != 1 {
+		t.Fatalf("Expected 1 envFrom, got %d", len(cloneRepoContainer.EnvFrom))
+	}
+	if cloneRepoContainer.EnvFrom[0].SecretRef == nil {
+		t.Fatal("Expected secretRef in envFrom")
+	}
+	if cloneRepoContainer.EnvFrom[0].SecretRef.Name != "github-credentials" {
+		t.Errorf("Expected secretRef name 'github-credentials', got %s", cloneRepoContainer.EnvFrom[0].SecretRef.Name)
+	}
+	if cloneRepoContainer.EnvFrom[0].SecretRef.Optional == nil || !*cloneRepoContainer.EnvFrom[0].SecretRef.Optional {
+		t.Error("Expected secretRef to be optional")
+	}
+
+	// Verify clone-repo container has workdir volume mount
+	foundWorkdirMount := false
+	for _, mount := range cloneRepoContainer.VolumeMounts {
+		if mount.Name == "workdir" && mount.MountPath == "/home/agentapi/workdir" {
+			foundWorkdirMount = true
+			break
+		}
+	}
+	if !foundWorkdirMount {
+		t.Error("Expected clone-repo container to have workdir volume mount")
+	}
+
+	// Verify second init container is setup-claude
+	setupClaudeContainer := podSpec.InitContainers[1]
+	if setupClaudeContainer.Name != "setup-claude" {
+		t.Errorf("Expected second init container name 'setup-claude', got %s", setupClaudeContainer.Name)
+	}
+}
+
+func TestKubernetesSessionManager_CloneRepoInitContainerSkippedWithoutRepoInfo(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-clone-repo-skip",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	// Create manager with GitHubSecretName configured
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
+			GitHubSecretName:                "github-credentials",
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session WITHOUT RepoInfo
+	sessionID := "test-session-no-clone"
+	req := &RunServerRequest{
+		UserID: "test-user",
+		// RepoInfo is nil
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	// Get deployment and verify only setup-claude InitContainer exists
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get deployment: %v", err)
+	}
+
+	// Verify we have only 1 init container (setup-claude)
+	podSpec := deployment.Spec.Template.Spec
+	if len(podSpec.InitContainers) != 1 {
+		t.Fatalf("Expected 1 init container when RepoInfo is nil, got %d", len(podSpec.InitContainers))
+	}
+
+	// Verify the init container is setup-claude (not clone-repo)
+	if podSpec.InitContainers[0].Name != "setup-claude" {
+		t.Errorf("Expected init container name 'setup-claude', got %s", podSpec.InitContainers[0].Name)
+	}
+}
+
+func TestKubernetesSessionManager_CloneRepoInitContainerWithoutGitHubSecret(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-clone-no-secret",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	// Create manager WITHOUT GitHubSecretName configured
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
+			GitHubSecretName:                "", // Empty - no GitHub secret
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient, nil)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session with RepoInfo
+	sessionID := "test-session-clone-no-secret"
+	req := &RunServerRequest{
+		UserID: "test-user",
+		RepoInfo: &RepositoryInfo{
+			FullName: "owner/repo",
+			CloneDir: "/home/agentapi/workdir/test-session-clone-no-secret",
+		},
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	// Get deployment and verify clone-repo InitContainer exists but without envFrom
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get deployment: %v", err)
+	}
+
+	// Verify we have 2 init containers
+	podSpec := deployment.Spec.Template.Spec
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
+	}
+
+	// Verify first init container is clone-repo
+	cloneRepoContainer := podSpec.InitContainers[0]
+	if cloneRepoContainer.Name != "clone-repo" {
+		t.Errorf("Expected first init container name 'clone-repo', got %s", cloneRepoContainer.Name)
+	}
+
+	// Verify clone-repo container has NO envFrom when GitHubSecretName is empty
+	if len(cloneRepoContainer.EnvFrom) != 0 {
+		t.Errorf("Expected 0 envFrom when GitHubSecretName is empty, got %d", len(cloneRepoContainer.EnvFrom))
+	}
+}

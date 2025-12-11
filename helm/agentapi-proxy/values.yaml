@@ -77,6 +77,9 @@ myclaudesPersistence:
 
 # GitHub configuration
 github:
+  # GitHub Personal Access Token (GitHub App を使わない場合)
+  token: ""
+
   # GitHub Enterprise Server を使用する場合は true に設定
   enterprise:
     enabled: false
@@ -316,4 +319,8 @@ kubernetesSession:
   # Timeout settings (in seconds)
   podStartTimeout: 120
   podStopTimeout: 30
+
+  # GitHub authentication for repository cloning in session pods
+  # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
+  # The Secret will be used by the clone-repo init container
 

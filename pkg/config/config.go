@@ -146,6 +146,10 @@ type KubernetesSessionConfig struct {
 	// InitContainerImage is the image used for the init container that sets up Claude configuration
 	// Defaults to the same image as the session container (Image field) if not specified
 	InitContainerImage string `json:"init_container_image" mapstructure:"init_container_image"`
+	// GitHubSecretName is the name of the Kubernetes Secret containing GitHub authentication credentials
+	// This Secret is used by the clone-repo init container for repository cloning
+	// Expected keys: GITHUB_TOKEN, GITHUB_APP_ID, GITHUB_APP_PEM, GITHUB_INSTALLATION_ID, GITHUB_API
+	GitHubSecretName string `json:"github_secret_name" mapstructure:"github_secret_name"`
 }
 
 // Config represents the proxy configuration
@@ -371,6 +375,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.claude_config_base_configmap", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_BASE_CONFIGMAP")
 	_ = v.BindEnv("kubernetes_session.claude_config_user_configmap_prefix", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_USER_CONFIGMAP_PREFIX")
 	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
+	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
 }
 
 // setDefaults sets default values for viper configuration
@@ -415,6 +420,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.claude_config_base_configmap", "claude-config-base")
 	v.SetDefault("kubernetes_session.claude_config_user_configmap_prefix", "claude-config")
 	v.SetDefault("kubernetes_session.init_container_image", "")
+	v.SetDefault("kubernetes_session.github_secret_name", "")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
