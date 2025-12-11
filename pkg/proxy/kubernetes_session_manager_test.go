@@ -1658,9 +1658,7 @@ func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
 	if envMap["AGENTAPI_REPO_FULLNAME"] != "owner/repo" {
 		t.Errorf("Expected AGENTAPI_REPO_FULLNAME 'owner/repo', got %s", envMap["AGENTAPI_REPO_FULLNAME"])
 	}
-	if envMap["AGENTAPI_CLONE_DIR"] != "/home/agentapi/workdir/test-session-clone" {
-		t.Errorf("Expected AGENTAPI_CLONE_DIR '/home/agentapi/workdir/test-session-clone', got %s", envMap["AGENTAPI_CLONE_DIR"])
-	}
+	// Note: AGENTAPI_CLONE_DIR is no longer set; the script uses a fixed path /home/agentapi/workdir/repo
 	if envMap["HOME"] != "/home/agentapi" {
 		t.Errorf("Expected HOME '/home/agentapi', got %s", envMap["HOME"])
 	}
