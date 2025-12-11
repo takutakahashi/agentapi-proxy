@@ -564,13 +564,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				SubPath:   ".claude",
 			},
 		},
-		Command: []string{"agentapi"},
+		Command: []string{"sh", "-c"},
 		Args: []string{
-			"server",
-			"--allowed-hosts", "*",
-			"--allowed-origins", "*",
-			"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
-			"--", "claude",
+			fmt.Sprintf("agentapi server --allowed-hosts '*' --allowed-origins '*' --port %d -- claude $CLAUDE_ARGS", m.k8sConfig.BasePort),
 		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
