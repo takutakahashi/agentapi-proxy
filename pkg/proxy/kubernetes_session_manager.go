@@ -627,8 +627,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 }
 
 // cloneRepoScript is the shell script executed by the init container to clone the repository
+// The repository is cloned directly to /home/agentapi/workdir (the PVC mount point)
 const cloneRepoScript = `
 set -e
+
+WORKDIR="/home/agentapi/workdir"
 
 # Skip if no repository is specified
 if [ -z "$AGENTAPI_REPO_FULLNAME" ]; then
@@ -656,13 +659,13 @@ else
 fi
 
 # Clone or update repository
-if [ -d "$AGENTAPI_CLONE_DIR/.git" ]; then
+if [ -d "$WORKDIR/.git" ]; then
     echo "Repository already exists, pulling latest changes..."
-    cd "$AGENTAPI_CLONE_DIR"
+    cd "$WORKDIR"
     git pull || echo "Warning: git pull failed, continuing with existing repository"
 else
-    echo "Cloning repository to $AGENTAPI_CLONE_DIR..."
-    gh repo clone "$AGENTAPI_REPO_FULLNAME" "$AGENTAPI_CLONE_DIR"
+    echo "Cloning repository to $WORKDIR..."
+    gh repo clone "$AGENTAPI_REPO_FULLNAME" "$WORKDIR"
 fi
 
 echo "Repository setup completed"
@@ -684,7 +687,6 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *kubernet
 	// Build environment variables
 	env := []corev1.EnvVar{
 		{Name: "AGENTAPI_REPO_FULLNAME", Value: req.RepoInfo.FullName},
-		{Name: "AGENTAPI_CLONE_DIR", Value: req.RepoInfo.CloneDir},
 		{Name: "HOME", Value: "/home/agentapi"},
 	}
 
