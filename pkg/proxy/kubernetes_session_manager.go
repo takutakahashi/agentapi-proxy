@@ -842,7 +842,7 @@ done
 
 // credentialsSyncSidecarImage is the image used for the credentials sync sidecar
 // This image must contain kubectl for interacting with Kubernetes API
-const credentialsSyncSidecarImage = "bitnami/kubectl:latest"
+const credentialsSyncSidecarImage = "mirror.gcr.io/bitnami/kubectl:latest"
 
 // buildCredentialsSyncSidecar builds the sidecar container for syncing credentials to Secret
 func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *kubernetesSession) *corev1.Container {
