@@ -524,6 +524,19 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		workingDir = "/home/agentapi/workdir/repo"
 	}
 
+	// Build envFrom for GitHub secret (used for GitHub authentication in session)
+	var envFrom []corev1.EnvFromSource
+	if m.k8sConfig.GitHubSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.GitHubSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
 	// Build container spec
 	container := corev1.Container{
 		Name:            "agentapi",
@@ -537,7 +550,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		Env: envVars,
+		Env:     envVars,
+		EnvFrom: envFrom,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    cpuRequest,
