@@ -209,7 +209,7 @@ func TestCustomSessionManager(t *testing.T) {
 	// Create a session
 	session, err := proxy.CreateSession("test-session", StartRequest{
 		Environment: map[string]string{"TEST": "value"},
-	}, "test-user", "user")
+	}, "test-user", "user", nil)
 
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)

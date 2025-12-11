@@ -63,12 +63,21 @@ func (h *SessionHandlers) StartSession(c echo.Context) error {
 
 	user := auth.GetUserFromContext(c)
 	var userID, userRole string
+	var teams []string
 	if user != nil {
 		userID = string(user.ID())
 		if len(user.Roles()) > 0 {
 			userRole = string(user.Roles()[0])
 		} else {
 			userRole = "user"
+		}
+		// Extract team slugs from GitHub user info
+		if githubInfo := user.GitHubInfo(); githubInfo != nil {
+			for _, team := range githubInfo.Teams() {
+				// Format: "org/team-slug"
+				teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+				teams = append(teams, teamSlug)
+			}
 		}
 	} else {
 		userID = "anonymous"
@@ -79,7 +88,7 @@ func (h *SessionHandlers) StartSession(c echo.Context) error {
 		Environment: startReq.Environment,
 		Tags:        startReq.Tags,
 		Message:     startReq.Message,
-	}, userID, userRole)
+	}, userID, userRole, teams)
 	if err != nil {
 		log.Printf("Failed to create session: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")

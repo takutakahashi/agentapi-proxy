@@ -537,6 +537,35 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		})
 	}
 
+	// Add team-based credentials Secrets (agent-credentials-{org}-{team})
+	for _, team := range req.Teams {
+		secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(team))
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: secretName,
+				},
+				Optional: boolPtr(true), // Secret may not exist for all teams
+			},
+		})
+		log.Printf("[K8S_SESSION] Adding team credentials Secret %s for session %s", secretName, session.id)
+	}
+
+	// Add user-specific credentials Secret (agent-credentials-{user-id})
+	// This is added last so user-specific values override team values
+	if req.UserID != "" {
+		userSecretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.UserID))
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: userSecretName,
+				},
+				Optional: boolPtr(true), // Secret may not exist for all users
+			},
+		})
+		log.Printf("[K8S_SESSION] Adding user credentials Secret %s for session %s", userSecretName, session.id)
+	}
+
 	// Build container spec
 	container := corev1.Container{
 		Name:            "agentapi",
@@ -1281,6 +1310,28 @@ func sanitizeLabelValue(s string) string {
 	}
 	// Trim non-alphanumeric characters from start and end
 	sanitized = strings.Trim(sanitized, "-_.")
+	return sanitized
+}
+
+// sanitizeSecretName sanitizes a string to be used as a Kubernetes Secret name
+// Secret names must be lowercase, alphanumeric, and may contain dashes
+// Example: "myorg/backend-team" -> "myorg-backend-team"
+func sanitizeSecretName(s string) string {
+	// Convert to lowercase
+	sanitized := strings.ToLower(s)
+	// Replace non-alphanumeric characters (except dash) with dash
+	re := regexp.MustCompile(`[^a-z0-9-]`)
+	sanitized = re.ReplaceAllString(sanitized, "-")
+	// Remove consecutive dashes
+	for strings.Contains(sanitized, "--") {
+		sanitized = strings.ReplaceAll(sanitized, "--", "-")
+	}
+	// Secret names must be 253 characters or less
+	if len(sanitized) > 253 {
+		sanitized = sanitized[:253]
+	}
+	// Trim dashes from start and end
+	sanitized = strings.Trim(sanitized, "-")
 	return sanitized
 }
 

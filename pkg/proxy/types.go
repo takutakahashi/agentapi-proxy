@@ -21,4 +21,5 @@ type RunServerRequest struct {
 	Tags           map[string]string
 	RepoInfo       *RepositoryInfo
 	InitialMessage string
+	Teams          []string // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
 }
