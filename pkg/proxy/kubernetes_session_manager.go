@@ -104,14 +104,15 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
 
 	// Load credentials (optional) - use userID to locate user-specific credentials
-	var secretName string
+	// Always generate secretName for credentials sync sidecar to work
+	// even when user logs in after session creation
+	secretName := fmt.Sprintf("agentapi-session-%s-credentials", id)
 	creds, err := m.credentialProvider.Load(req.UserID)
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to load credentials for user %s: %v", req.UserID, err)
 		// Continue without credentials (non-fatal)
 	}
 	if creds != nil {
-		secretName = fmt.Sprintf("agentapi-session-%s-credentials", id)
 		log.Printf("[K8S_SESSION] Loaded credentials for user %s", req.UserID)
 	}
 
@@ -600,6 +601,18 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session, userConfigMapName)
 
+	// Build containers list (main container + optional sidecar)
+	containers := []corev1.Container{container}
+
+	// Add credentials sync sidecar if session has a secret name
+	// This sidecar watches for credential file changes and syncs them to the Secret
+	if session.secretName != "" {
+		if sidecar := m.buildCredentialsSyncSidecar(session); sidecar != nil {
+			containers = append(containers, *sidecar)
+			log.Printf("[K8S_SESSION] Added credentials-sync sidecar for session %s", session.id)
+		}
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      session.deploymentName,
@@ -625,7 +638,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 						RunAsGroup: int64Ptr(999),
 					},
 					InitContainers: initContainers,
-					Containers:     []corev1.Container{container},
+					Containers:     containers,
 					Volumes:        volumes,
 				},
 			},
@@ -725,6 +738,135 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *kubernet
 			{
 				Name:      "workdir",
 				MountPath: "/home/agentapi/workdir",
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
+}
+
+// credentialsSyncScript is the shell script for the credentials sync sidecar
+// It watches for changes to .credentials.json and syncs them to the Kubernetes Secret
+const credentialsSyncScript = `
+#!/bin/sh
+set -e
+
+CREDENTIALS_PATH="${CREDENTIALS_FILE_PATH:-/home/agentapi/.claude/.credentials.json}"
+SECRET_NAME="${SECRET_NAME}"
+NAMESPACE="${SECRET_NAMESPACE}"
+INTERVAL="${SYNC_INTERVAL:-10}"
+LAST_HASH=""
+
+log() {
+    echo "[$(date -Iseconds)] [credentials-sync] $1"
+}
+
+sync_to_secret() {
+    if [ ! -f "$CREDENTIALS_PATH" ]; then
+        return
+    fi
+
+    CURRENT_HASH=$(sha256sum "$CREDENTIALS_PATH" 2>/dev/null | cut -d' ' -f1 || echo "")
+
+    if [ -z "$CURRENT_HASH" ]; then
+        return
+    fi
+
+    if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
+        return
+    fi
+
+    log "Credentials file changed, syncing to Secret $SECRET_NAME..."
+
+    # Base64 encode the file content
+    ENCODED=$(base64 -w0 "$CREDENTIALS_PATH")
+
+    # Check if secret exists
+    if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+        # Patch existing secret
+        kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
+            --type='json' \
+            -p="[{\"op\": \"replace\", \"path\": \"/data/credentials.json\", \"value\": \"$ENCODED\"}]" \
+            2>/dev/null
+
+        if [ $? -eq 0 ]; then
+            log "Successfully synced credentials to existing Secret"
+            LAST_HASH="$CURRENT_HASH"
+        else
+            log "ERROR: Failed to patch Secret"
+        fi
+    else
+        # Create new secret
+        log "Secret does not exist, creating..."
+        kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
+            --from-file=credentials.json="$CREDENTIALS_PATH" \
+            2>/dev/null
+
+        if [ $? -eq 0 ]; then
+            log "Successfully created Secret"
+            LAST_HASH="$CURRENT_HASH"
+        else
+            log "ERROR: Failed to create Secret"
+        fi
+    fi
+}
+
+log "Starting credentials sync sidecar"
+log "Watching: $CREDENTIALS_PATH"
+log "Target Secret: $SECRET_NAME in $NAMESPACE"
+log "Sync interval: ${INTERVAL}s"
+
+while true; do
+    sync_to_secret
+    sleep "$INTERVAL"
+done
+`
+
+// buildCredentialsSyncSidecar builds the sidecar container for syncing credentials to Secret
+func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *kubernetesSession) *corev1.Container {
+	// Use the main container image if InitContainerImage is not specified
+	sidecarImage := m.k8sConfig.InitContainerImage
+	if sidecarImage == "" {
+		sidecarImage = m.k8sConfig.Image
+	}
+
+	return &corev1.Container{
+		Name:            "credentials-sync",
+		Image:           sidecarImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c"},
+		Args:            []string{credentialsSyncScript},
+		Env: []corev1.EnvVar{
+			{Name: "CREDENTIALS_FILE_PATH", Value: "/home/agentapi/.claude/.credentials.json"},
+			{Name: "SECRET_NAME", Value: session.secretName},
+			{
+				Name: "SECRET_NAMESPACE",
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{
+						FieldPath: "metadata.namespace",
+					},
+				},
+			},
+			{Name: "SYNC_INTERVAL", Value: "10"},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			// Mount .claude directory (shared with main container)
+			{
+				Name:      "claude-config",
+				MountPath: "/home/agentapi/.claude",
+				SubPath:   ".claude",
+			},
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
