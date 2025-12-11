@@ -647,9 +647,13 @@ if [ -n "$GITHUB_APP_PEM" ]; then
     echo "GitHub App PEM file created"
 fi
 
-# Setup GitHub authentication
-echo "Setting up GitHub authentication..."
-agentapi-proxy helpers setup-gh --repo-fullname "$AGENTAPI_REPO_FULLNAME"
+# Setup GitHub authentication (skip if GITHUB_TOKEN is already set, as gh CLI uses it automatically)
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "Setting up GitHub authentication..."
+    agentapi-proxy helpers setup-gh --repo-fullname "$AGENTAPI_REPO_FULLNAME"
+else
+    echo "GITHUB_TOKEN is set, skipping setup-gh (gh CLI uses it automatically)"
+fi
 
 # Clone or update repository
 if [ -d "$AGENTAPI_CLONE_DIR/.git" ]; then
