@@ -77,6 +77,9 @@ myclaudesPersistence:
 
 # GitHub configuration
 github:
+  # GitHub Personal Access Token (GitHub App を使わない場合)
+  token: ""
+
   # GitHub Enterprise Server を使用する場合は true に設定
   enterprise:
     enabled: false

@@ -151,7 +151,7 @@ spec:
               value: {{ .Values.kubernetesSession.podStartTimeout | quote }}
             - name: AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT
               value: {{ .Values.kubernetesSession.podStopTimeout | quote }}
-            {{- if and .Values.github.app.id .Values.github.app.privateKey.secretName }}
+            {{- if or .Values.github.token (and .Values.github.app.id .Values.github.app.privateKey.secretName) }}
             - name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME
               value: {{ printf "%s-github-session" (include "agentapi-proxy.fullname" .) | quote }}
             {{- end }}
