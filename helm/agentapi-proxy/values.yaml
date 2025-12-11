@@ -318,10 +318,6 @@ kubernetesSession:
   podStopTimeout: 30
 
   # GitHub authentication for repository cloning in session pods
-  # When enabled, creates a Secret using the top-level github.app and github.enterprise settings
+  # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
   # The Secret will be used by the clone-repo init container
-  github:
-    # Enable creation of GitHub credentials Secret for session pods
-    # Uses settings from github.app (id, installationId, privateKey) and github.enterprise (apiUrl)
-    enabled: false
 
