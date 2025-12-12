@@ -251,6 +251,12 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 				return existingUser, nil
 			}
 
+			// Skip creating user if GitHubUser is nil (e.g., GitHub App authentication)
+			if userContext.GitHubUser == nil {
+				// Fall through to simple token auth
+				return nil, errors.New("GitHub user info not available")
+			}
+
 			// Create new user from GitHub context
 			s.mu.Lock()
 			defer s.mu.Unlock()
