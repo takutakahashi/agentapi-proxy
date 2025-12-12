@@ -14,7 +14,6 @@ type kubernetesSession struct {
 	deploymentName string
 	serviceName    string
 	pvcName        string
-	secretName     string // Credential Secret name (empty if no credentials)
 	servicePort    int
 	namespace      string
 	startedAt      time.Time
