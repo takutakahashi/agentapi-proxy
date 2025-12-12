@@ -375,52 +375,18 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 }
 
 // Shutdown gracefully stops all sessions
+// Note: This does NOT delete Kubernetes resources (Deployment, Service, PVC, Secret).
+// Resources are preserved so sessions can be restored when the proxy restarts.
+// Use DeleteSession to explicitly delete a session and its resources.
 func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
-	m.mutex.RLock()
-	sessions := make([]*kubernetesSession, 0, len(m.sessions))
-	for _, session := range m.sessions {
-		sessions = append(sessions, session)
-	}
-	m.mutex.RUnlock()
+	m.mutex.Lock()
+	sessionCount := len(m.sessions)
+	// Clear in-memory sessions (resources remain in Kubernetes)
+	m.sessions = make(map[string]*kubernetesSession)
+	m.mutex.Unlock()
 
-	log.Printf("[K8S_SESSION] Shutting down, terminating %d sessions...", len(sessions))
-
-	if len(sessions) == 0 {
-		return nil
-	}
-
-	// Delete all sessions in parallel
-	var wg sync.WaitGroup
-	for _, session := range sessions {
-		wg.Add(1)
-		go func(s *kubernetesSession) {
-			defer wg.Done()
-			if s.cancelFunc != nil {
-				s.cancelFunc()
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			defer cancel()
-			if err := m.deleteSessionResources(ctx, s); err != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to delete session %s: %v", s.id, err)
-			}
-		}(session)
-	}
-
-	// Wait with timeout
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		log.Printf("[K8S_SESSION] All sessions terminated")
-		return nil
-	case <-time.After(timeout):
-		log.Printf("[K8S_SESSION] Shutdown timeout reached")
-		return fmt.Errorf("shutdown timeout")
-	}
+	log.Printf("[K8S_SESSION] Shutting down, preserving %d session(s) in Kubernetes for recovery", sessionCount)
+	return nil
 }
 
 // createPVC creates a PersistentVolumeClaim for the session
