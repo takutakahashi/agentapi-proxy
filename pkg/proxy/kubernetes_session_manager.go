@@ -215,39 +215,80 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 }
 
 // GetSession returns a session by ID
+// If the session is not in memory, it attempts to restore from Kubernetes Service
 func (m *KubernetesSessionManager) GetSession(id string) Session {
+	// First, check memory
 	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-
 	session, exists := m.sessions[id]
-	if !exists {
+	m.mutex.RUnlock()
+
+	if exists {
+		return session
+	}
+
+	// Try to restore from Kubernetes Service
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(
+		context.Background(), serviceName, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Printf("[K8S_SESSION] Failed to get service %s: %v", serviceName, err)
+		}
 		return nil
 	}
-	return session
+
+	// Restore session from Service
+	return m.restoreSessionFromService(svc)
 }
 
 // ListSessions returns all sessions matching the filter
+// Sessions are retrieved from Kubernetes Services to survive proxy restarts
 func (m *KubernetesSessionManager) ListSessions(filter SessionFilter) []Session {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	// Get services from Kubernetes API
+	services, err := m.client.CoreV1().Services(m.namespace).List(
+		context.Background(),
+		metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+		})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to list services: %v", err)
+		return []Session{}
+	}
 
 	var result []Session
-	for _, session := range m.sessions {
-		// User ID filter
-		if filter.UserID != "" && session.request.UserID != filter.UserID {
+	for i := range services.Items {
+		svc := &services.Items[i]
+
+		// Extract session info from Service labels
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
 			continue
 		}
 
-		// Status filter
+		userID := svc.Labels["agentapi.proxy/user-id"]
+
+		// Apply UserID filter
+		if filter.UserID != "" && userID != filter.UserID {
+			continue
+		}
+
+		// Get or restore session
+		session := m.getOrRestoreSession(svc)
+		if session == nil {
+			continue
+		}
+
+		// Apply Status filter
 		if filter.Status != "" && session.Status() != filter.Status {
 			continue
 		}
 
-		// Tag filters
+		// Apply Tag filters
 		if len(filter.Tags) > 0 {
 			matchAllTags := true
+			sessionTags := session.Tags()
 			for tagKey, tagValue := range filter.Tags {
-				if sessionTagValue, exists := session.request.Tags[tagKey]; !exists || sessionTagValue != tagValue {
+				if sessionTagValue, exists := sessionTags[tagKey]; !exists || sessionTagValue != tagValue {
 					matchAllTags = false
 					break
 				}
@@ -263,13 +304,41 @@ func (m *KubernetesSessionManager) ListSessions(filter SessionFilter) []Session 
 	return result
 }
 
+// getOrRestoreSession gets a session from memory or restores it from Service
+func (m *KubernetesSessionManager) getOrRestoreSession(svc *corev1.Service) *kubernetesSession {
+	sessionID := svc.Labels["agentapi.proxy/session-id"]
+
+	// Check if session exists in memory
+	m.mutex.RLock()
+	session, exists := m.sessions[sessionID]
+	m.mutex.RUnlock()
+
+	if exists {
+		return session
+	}
+
+	// Restore session from Service
+	return m.restoreSessionFromService(svc)
+}
+
 // DeleteSession stops and removes a session
+// If the session is not in memory, it attempts to restore from Kubernetes Service first
 func (m *KubernetesSessionManager) DeleteSession(id string) error {
+	// First, check memory
 	m.mutex.RLock()
 	session, exists := m.sessions[id]
 	m.mutex.RUnlock()
 
+	// If not in memory, try to get from GetSession (which will restore from Service)
 	if !exists {
+		if restored := m.GetSession(id); restored != nil {
+			m.mutex.RLock()
+			session, exists = m.sessions[id]
+			m.mutex.RUnlock()
+		}
+	}
+
+	if !exists || session == nil {
 		return fmt.Errorf("session not found: %s", id)
 	}
 
@@ -1026,6 +1095,11 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *k
 			Name:      session.serviceName,
 			Namespace: m.namespace,
 			Labels:    m.buildLabels(session),
+			Annotations: map[string]string{
+				"agentapi.proxy/created-at":        session.startedAt.Format(time.RFC3339),
+				"agentapi.proxy/claude-model":      session.request.ClaudeModel,
+				"agentapi.proxy/working-directory": session.request.WorkingDirectory,
+			},
 		},
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeClusterIP,
@@ -1354,4 +1428,92 @@ func (m *KubernetesSessionManager) GetClient() kubernetes.Interface {
 // GetNamespace returns the Kubernetes namespace (used by subscription secret syncer)
 func (m *KubernetesSessionManager) GetNamespace() string {
 	return m.namespace
+}
+
+// getSessionStatusFromDeployment determines session status from Deployment state
+func (m *KubernetesSessionManager) getSessionStatusFromDeployment(sessionID string) string {
+	deploymentName := fmt.Sprintf("agentapi-session-%s", sessionID)
+	deployment, err := m.client.AppsV1().Deployments(m.namespace).Get(
+		context.Background(), deploymentName, metav1.GetOptions{})
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return "stopped"
+		}
+		return "unknown"
+	}
+
+	if deployment.Status.ReadyReplicas > 0 {
+		return "active"
+	}
+	if deployment.Status.Replicas > 0 {
+		return "starting"
+	}
+	return "unhealthy"
+}
+
+// restoreSessionFromService restores a session from Kubernetes Service
+// This is used to recover sessions after agentapi-proxy restart
+func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service) *kubernetesSession {
+	sessionID := svc.Labels["agentapi.proxy/session-id"]
+	userID := svc.Labels["agentapi.proxy/user-id"]
+
+	// Restore tags from labels
+	tags := make(map[string]string)
+	for k, v := range svc.Labels {
+		if strings.HasPrefix(k, "agentapi.proxy/tag-") {
+			tagKey := strings.TrimPrefix(k, "agentapi.proxy/tag-")
+			tags[tagKey] = v
+		}
+	}
+
+	// Parse created-at from annotations
+	createdAt := time.Now()
+	if createdAtStr, ok := svc.Annotations["agentapi.proxy/created-at"]; ok {
+		if parsed, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+			createdAt = parsed
+		}
+	}
+
+	claudeModel := svc.Annotations["agentapi.proxy/claude-model"]
+	workingDir := svc.Annotations["agentapi.proxy/working-directory"]
+
+	// Extract service port
+	servicePort := m.k8sConfig.BasePort
+	if len(svc.Spec.Ports) > 0 {
+		servicePort = int(svc.Spec.Ports[0].Port)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	session := &kubernetesSession{
+		id:             sessionID,
+		deploymentName: fmt.Sprintf("agentapi-session-%s", sessionID),
+		serviceName:    svc.Name,
+		pvcName:        fmt.Sprintf("agentapi-session-%s-pvc", sessionID),
+		secretName:     fmt.Sprintf("agentapi-session-%s-credentials", sessionID),
+		servicePort:    servicePort,
+		namespace:      m.namespace,
+		startedAt:      createdAt,
+		status:         m.getSessionStatusFromDeployment(sessionID),
+		cancelFunc:     cancel,
+		request: &RunServerRequest{
+			UserID:           userID,
+			Tags:             tags,
+			ClaudeModel:      claudeModel,
+			WorkingDirectory: workingDir,
+		},
+	}
+
+	// Add to memory map
+	m.mutex.Lock()
+	m.sessions[sessionID] = session
+	m.mutex.Unlock()
+
+	// Start watching deployment status
+	go m.watchDeploymentStatus(ctx, session)
+
+	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
+
+	return session
 }
