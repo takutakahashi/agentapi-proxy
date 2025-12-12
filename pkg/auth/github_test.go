@@ -542,6 +542,28 @@ func TestGitHubAuthProvider_Integration(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(orgs)
 
+		case "/user/teams":
+			teams := []struct {
+				ID           int64  `json:"id"`
+				Name         string `json:"name"`
+				Slug         string `json:"slug"`
+				Permission   string `json:"permission"`
+				Organization struct {
+					Login string `json:"login"`
+				} `json:"organization"`
+			}{
+				{
+					ID:         1,
+					Name:       "Developers",
+					Slug:       "developers",
+					Permission: "push",
+					Organization: struct {
+						Login string `json:"login"`
+					}{Login: "test-org"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(teams)
+
 		case "/orgs/test-org/teams":
 			teams := []struct {
 				Slug string `json:"slug"`

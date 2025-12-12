@@ -98,8 +98,6 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
 		if cached, found := p.userCache.Get(cacheKey); found {
 			cachedUser = cached.(*UserCache)
-			log.Printf("[AUTH_DEBUG] Using cached user info for %s: role=%s, permissions=%v, envFile=%s",
-				cachedUser.User.Login, cachedUser.Role, cachedUser.Permissions, cachedUser.EnvFile)
 
 			// Re-apply environment variables from cached env file if specified
 			if cachedUser.EnvFile != "" {
@@ -287,6 +285,53 @@ func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, u
 	return userTeams, nil
 }
 
+// checkTeamMembership checks if user is a member of a specific team without caching
+func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org, teamSlug, username string) (bool, string) {
+	url := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
+		strings.TrimSuffix(p.config.BaseURL, "/"), org, teamSlug, username)
+
+	log.Printf("[AUTH_DEBUG] Checking team membership: org=%s, team=%s, user=%s", org, teamSlug, username)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		log.Printf("[AUTH_DEBUG] Failed to create request: %v", err)
+		return false, ""
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		log.Printf("[AUTH_DEBUG] GitHub API request failed: %v", err)
+		return false, ""
+	}
+	defer utils.SafeCloseResponse(resp)
+
+	log.Printf("[AUTH_DEBUG] GitHub API response status: %d %s", resp.StatusCode, resp.Status)
+	if resp.StatusCode == http.StatusNotFound {
+		log.Printf("[AUTH_DEBUG] Team membership not found (404) for %s in %s/%s", username, org, teamSlug)
+		return false, ""
+	}
+
+	if err := utils.CheckHTTPResponse(resp, url); err != nil {
+		log.Printf("[AUTH_DEBUG] HTTP response check failed: %v", err)
+		return false, ""
+	}
+
+	var membership struct {
+		State string `json:"state"`
+		Role  string `json:"role"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&membership); err != nil {
+		log.Printf("[AUTH_DEBUG] Failed to decode membership response: %v", err)
+		return false, ""
+	}
+
+	log.Printf("[AUTH_DEBUG] Team membership response: state=%s, role=%s", membership.State, membership.Role)
+	return membership.State == "active", membership.Role
+}
+
 // getUserOrganizations retrieves user's organizations from GitHub API without caching
 func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token string) ([]GitHubOrganization, error) {
 	url := fmt.Sprintf("%s/user/orgs", strings.TrimSuffix(p.config.BaseURL, "/"))
@@ -318,47 +363,6 @@ func (p *GitHubAuthProvider) getUserOrganizations(ctx context.Context, token str
 	}
 
 	return orgs, nil
-}
-
-// checkTeamMembership checks if user is a member of a specific team without caching
-func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org, teamSlug, username string) (bool, string) {
-	url := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
-		strings.TrimSuffix(p.config.BaseURL, "/"), org, teamSlug, username)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return false, ""
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	logVerbose("Making GitHub API request: GET %s", url)
-	resp, err := p.client.Do(req)
-	if err != nil {
-		logVerbose("GitHub API request failed: %v", err)
-		return false, ""
-	}
-	defer utils.SafeCloseResponse(resp)
-
-	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
-	if resp.StatusCode == http.StatusNotFound {
-		return false, ""
-	}
-
-	if err := utils.CheckHTTPResponse(resp, url); err != nil {
-		return false, ""
-	}
-
-	var membership struct {
-		State string `json:"state"`
-		Role  string `json:"role"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&membership); err != nil {
-		return false, ""
-	}
-
-	return membership.State == "active", membership.Role
 }
 
 // mapUserPermissions maps user's team memberships to roles and permissions

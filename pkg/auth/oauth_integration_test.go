@@ -83,6 +83,34 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 				w.WriteHeader(http.StatusUnauthorized)
 			}
 
+		case "/user/teams":
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "token gho_integration_test_token" {
+				teams := []map[string]interface{}{
+					{
+						"id":         1,
+						"name":       "Engineering",
+						"slug":       "engineering",
+						"permission": "push",
+						"organization": map[string]interface{}{
+							"login": "test-org",
+						},
+					},
+					{
+						"id":         2,
+						"name":       "Administrators",
+						"slug":       "admins",
+						"permission": "admin",
+						"organization": map[string]interface{}{
+							"login": "test-org",
+						},
+					},
+				}
+				_ = json.NewEncoder(w).Encode(teams)
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+			}
+
 		case "/orgs/test-org/teams":
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "token gho_integration_test_token" {

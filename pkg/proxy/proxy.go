@@ -279,7 +279,7 @@ func (p *Proxy) GetContainer() *di.Container {
 }
 
 // CreateSession creates a new agent session
-func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, userRole string) (Session, error) {
+func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, userRole string, teams []string) (Session, error) {
 	// Get auth team env file from user context if available
 	var authTeamEnvFile string
 	// Note: This would need to be passed from the handler if required
@@ -323,6 +323,7 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 		Tags:           startReq.Tags,
 		RepoInfo:       repoInfo,
 		InitialMessage: initialMessage,
+		Teams:          teams,
 	}
 
 	// Delegate to session manager

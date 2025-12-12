@@ -70,7 +70,6 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
 				if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
 					c.Set("internal_user", user)
-					log.Printf("GitHub authentication successful: user %s (type: %s)", user.ID(), user.UserType())
 					return next(c)
 				}
 				log.Printf("GitHub authentication failed: %v from %s", err, c.RealIP())
