@@ -1,0 +1,37 @@
+{{- if .Values.kubernetesSession.enabled }}
+{{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.tolerations }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-k8s-session-config
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+data:
+  k8s-session-config.yaml: |
+    kubernetes_session:
+      {{- if .Values.kubernetesSession.nodeSelector }}
+      node_selector:
+        {{- range $key, $value := .Values.kubernetesSession.nodeSelector }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.kubernetesSession.tolerations }}
+      tolerations:
+        {{- range .Values.kubernetesSession.tolerations }}
+        - key: {{ .key | quote }}
+          {{- if .operator }}
+          operator: {{ .operator | quote }}
+          {{- end }}
+          {{- if .value }}
+          value: {{ .value | quote }}
+          {{- end }}
+          {{- if .effect }}
+          effect: {{ .effect | quote }}
+          {{- end }}
+          {{- if .tolerationSeconds }}
+          toleration_seconds: {{ .tolerationSeconds }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

@@ -107,6 +107,20 @@ type APIKey struct {
 	ExpiresAt   string   `json:"expires_at,omitempty" mapstructure:"expires_at"`
 }
 
+// Toleration represents a Kubernetes toleration for session pods
+type Toleration struct {
+	// Key is the taint key that the toleration applies to
+	Key string `json:"key" mapstructure:"key" yaml:"key"`
+	// Operator represents a key's relationship to the value (Equal or Exists)
+	Operator string `json:"operator" mapstructure:"operator" yaml:"operator"`
+	// Value is the taint value the toleration matches to
+	Value string `json:"value" mapstructure:"value" yaml:"value"`
+	// Effect indicates the taint effect to match (NoSchedule, PreferNoSchedule, NoExecute)
+	Effect string `json:"effect" mapstructure:"effect" yaml:"effect"`
+	// TolerationSeconds is the period of time the toleration tolerates the taint (for NoExecute)
+	TolerationSeconds *int64 `json:"toleration_seconds,omitempty" mapstructure:"toleration_seconds" yaml:"toleration_seconds"`
+}
+
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {
 	// Enabled enables Kubernetes-based session management
@@ -150,6 +164,14 @@ type KubernetesSessionConfig struct {
 	// This Secret is used by the clone-repo init container for repository cloning
 	// Expected keys: GITHUB_TOKEN, GITHUB_APP_ID, GITHUB_APP_PEM, GITHUB_INSTALLATION_ID, GITHUB_API
 	GitHubSecretName string `json:"github_secret_name" mapstructure:"github_secret_name"`
+	// ConfigFile is the path to an external configuration file for kubernetes session settings
+	// This file can contain node_selector and tolerations settings
+	ConfigFile string `json:"config_file,omitempty" mapstructure:"config_file"`
+	// NodeSelector is a selector which must be true for the pod to fit on a node
+	// Example: {"disktype": "ssd", "kubernetes.io/arch": "amd64"}
+	NodeSelector map[string]string `json:"node_selector,omitempty" mapstructure:"node_selector" yaml:"node_selector"`
+	// Tolerations are tolerations for session pods to schedule onto nodes with matching taints
+	Tolerations []Toleration `json:"tolerations,omitempty" mapstructure:"tolerations" yaml:"tolerations"`
 }
 
 // Config represents the proxy configuration
@@ -376,6 +398,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.claude_config_user_configmap_prefix", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_USER_CONFIGMAP_PREFIX")
 	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
+	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
 }
 
 // setDefaults sets default values for viper configuration
@@ -480,6 +503,15 @@ func postProcessConfig(config *Config) error {
 	if config.Auth.Enabled && config.Auth.Static != nil && config.Auth.Static.KeysFile != "" {
 		if err := config.loadAPIKeysFromFile(); err != nil {
 			log.Printf("Warning: Failed to load API keys from %s: %v", config.Auth.Static.KeysFile, err)
+		}
+	}
+
+	// Load kubernetes session config from external file if specified
+	if config.KubernetesSession.ConfigFile != "" {
+		if err := loadK8sSessionConfigFromFile(config, config.KubernetesSession.ConfigFile); err != nil {
+			log.Printf("[CONFIG] Warning: Failed to load kubernetes session config from %s: %v", config.KubernetesSession.ConfigFile, err)
+		} else {
+			log.Printf("[CONFIG] Loaded kubernetes session config from: %s", config.KubernetesSession.ConfigFile)
 		}
 	}
 
@@ -699,6 +731,56 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 		}
 	} else {
 		log.Printf("[CONFIG] No GitHub config found in auth override file")
+	}
+
+	return nil
+}
+
+// K8sSessionConfigOverride represents kubernetes session configuration overrides from external file
+type K8sSessionConfigOverride struct {
+	KubernetesSession *struct {
+		NodeSelector map[string]string `json:"node_selector,omitempty" yaml:"node_selector"`
+		Tolerations  []Toleration      `json:"tolerations,omitempty" yaml:"tolerations"`
+	} `json:"kubernetes_session,omitempty" yaml:"kubernetes_session"`
+}
+
+// loadK8sSessionConfigFromFile loads kubernetes session configuration from an external file
+func loadK8sSessionConfigFromFile(config *Config, filename string) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Failed to close kubernetes session config file: %v", err)
+		}
+	}()
+
+	var k8sOverride K8sSessionConfigOverride
+
+	// Determine file format based on extension
+	if strings.HasSuffix(filename, ".yaml") || strings.HasSuffix(filename, ".yml") {
+		decoder := yaml.NewDecoder(file)
+		if err := decoder.Decode(&k8sOverride); err != nil {
+			return err
+		}
+	} else {
+		decoder := json.NewDecoder(file)
+		if err := decoder.Decode(&k8sOverride); err != nil {
+			return err
+		}
+	}
+
+	// Apply overrides to the main config
+	if k8sOverride.KubernetesSession != nil {
+		if k8sOverride.KubernetesSession.NodeSelector != nil {
+			config.KubernetesSession.NodeSelector = k8sOverride.KubernetesSession.NodeSelector
+			log.Printf("[CONFIG] Applied kubernetes session node_selector: %v", config.KubernetesSession.NodeSelector)
+		}
+		if k8sOverride.KubernetesSession.Tolerations != nil {
+			config.KubernetesSession.Tolerations = k8sOverride.KubernetesSession.Tolerations
+			log.Printf("[CONFIG] Applied kubernetes session tolerations: %+v", config.KubernetesSession.Tolerations)
+		}
 	}
 
 	return nil

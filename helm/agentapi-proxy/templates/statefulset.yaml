@@ -136,13 +136,13 @@ spec:
             - name: AGENTAPI_K8S_SESSION_BASE_PORT
               value: {{ .Values.kubernetesSession.basePort | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_REQUEST
-              value: {{ .Values.kubernetesSession.resources.cpuRequest | quote }}
+              value: {{ .Values.kubernetesSession.resources.requests.cpu | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_LIMIT
-              value: {{ .Values.kubernetesSession.resources.cpuLimit | quote }}
+              value: {{ .Values.kubernetesSession.resources.limits.cpu | quote }}
             - name: AGENTAPI_K8S_SESSION_MEMORY_REQUEST
-              value: {{ .Values.kubernetesSession.resources.memoryRequest | quote }}
+              value: {{ .Values.kubernetesSession.resources.requests.memory | quote }}
             - name: AGENTAPI_K8S_SESSION_MEMORY_LIMIT
-              value: {{ .Values.kubernetesSession.resources.memoryLimit | quote }}
+              value: {{ .Values.kubernetesSession.resources.limits.memory | quote }}
             - name: AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS
               value: {{ .Values.kubernetesSession.pvc.storageClass | quote }}
             - name: AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE
@@ -154,6 +154,10 @@ spec:
             {{- if or .Values.github.token (and .Values.github.app.id .Values.github.app.privateKey.secretName) }}
             - name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME
               value: {{ printf "%s-github-session" (include "agentapi-proxy.fullname" .) | quote }}
+            {{- end }}
+            {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.tolerations }}
+            - name: AGENTAPI_K8S_SESSION_CONFIG_FILE
+              value: "/etc/k8s-session-config/k8s-session-config.yaml"
             {{- end }}
             {{- end }}
             {{- range .Values.env }}
@@ -182,6 +186,11 @@ spec:
             {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
             - name: github-app-private-key
               mountPath: /etc/github-app
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.kubernetesSession.enabled (or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.tolerations) }}
+            - name: k8s-session-config
+              mountPath: /etc/k8s-session-config
               readOnly: true
             {{- end }}
             {{- with .Values.volumeMounts }}
@@ -222,6 +231,11 @@ spec:
           secret:
             secretName: {{ .Values.github.app.privateKey.secretName }}
             defaultMode: 0440
+        {{- end }}
+        {{- if and .Values.kubernetesSession.enabled (or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.tolerations) }}
+        - name: k8s-session-config
+          configMap:
+            name: {{ include "agentapi-proxy.fullname" . }}-k8s-session-config
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
