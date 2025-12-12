@@ -237,6 +237,11 @@ func (m *KubernetesSessionManager) GetSession(id string) Session {
 		return nil
 	}
 
+	// Don't restore if Service is being deleted
+	if svc.DeletionTimestamp != nil {
+		return nil
+	}
+
 	// Restore session from Service
 	return m.restoreSessionFromService(svc)
 }
@@ -1096,9 +1101,7 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *k
 			Namespace: m.namespace,
 			Labels:    m.buildLabels(session),
 			Annotations: map[string]string{
-				"agentapi.proxy/created-at":        session.startedAt.Format(time.RFC3339),
-				"agentapi.proxy/claude-model":      session.request.ClaudeModel,
-				"agentapi.proxy/working-directory": session.request.WorkingDirectory,
+				"agentapi.proxy/created-at": session.startedAt.Format(time.RFC3339),
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -1475,9 +1478,6 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		}
 	}
 
-	claudeModel := svc.Annotations["agentapi.proxy/claude-model"]
-	workingDir := svc.Annotations["agentapi.proxy/working-directory"]
-
 	// Extract service port
 	servicePort := m.k8sConfig.BasePort
 	if len(svc.Spec.Ports) > 0 {
@@ -1498,10 +1498,8 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		status:         m.getSessionStatusFromDeployment(sessionID),
 		cancelFunc:     cancel,
 		request: &RunServerRequest{
-			UserID:           userID,
-			Tags:             tags,
-			ClaudeModel:      claudeModel,
-			WorkingDirectory: workingDir,
+			UserID: userID,
+			Tags:   tags,
 		},
 	}
 
