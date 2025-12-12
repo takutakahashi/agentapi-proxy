@@ -620,6 +620,12 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				MountPath: "/home/agentapi/notifications",
 				ReadOnly:  true,
 			},
+			// Mount GitHub App PEM from EmptyDir (written by clone-repo init container)
+			{
+				Name:      "github-app",
+				MountPath: "/github-app",
+				ReadOnly:  true,
+			},
 		},
 		Command: []string{"sh", "-c"},
 		Args: []string{
@@ -728,13 +734,13 @@ fi
 
 echo "Setting up repository clone for: $AGENTAPI_REPO_FULLNAME"
 
-# Write PEM to file if provided via environment variable
+# Write PEM to emptyDir if provided via environment variable
+# This file will be shared with main container via emptyDir volume
 if [ -n "$GITHUB_APP_PEM" ]; then
-    mkdir -p /home/agentapi/.github
-    echo "$GITHUB_APP_PEM" > /home/agentapi/.github/app.pem
-    chmod 600 /home/agentapi/.github/app.pem
-    export GITHUB_APP_PEM_PATH=/home/agentapi/.github/app.pem
-    echo "GitHub App PEM file created"
+    echo "$GITHUB_APP_PEM" > /github-app/app.pem
+    chmod 600 /github-app/app.pem
+    export GITHUB_APP_PEM_PATH=/github-app/app.pem
+    echo "GitHub App PEM file created at /github-app/app.pem"
 fi
 
 # Setup GitHub authentication (skip if GITHUB_TOKEN is already set, as gh CLI uses it automatically)
@@ -802,6 +808,11 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *kubernet
 			{
 				Name:      "workdir",
 				MountPath: "/home/agentapi/workdir",
+			},
+			// Mount emptyDir for GitHub App PEM file
+			{
+				Name:      "github-app",
+				MountPath: "/github-app",
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
@@ -1078,6 +1089,14 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 		},
 	})
 
+	// EmptyDir for GitHub App PEM file (shared between init container and main container)
+	volumes = append(volumes, corev1.Volume{
+		Name: "github-app",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	})
+
 	return volumes
 }
 
@@ -1271,6 +1290,8 @@ func (m *KubernetesSessionManager) buildEnvVars(session *kubernetesSession, req 
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
 		{Name: "AGENTAPI_USER_ID", Value: req.UserID},
 		{Name: "HOME", Value: "/home/agentapi"},
+		// GitHub App PEM path (file is created by clone-repo init container in emptyDir)
+		{Name: "GITHUB_APP_PEM_PATH", Value: "/github-app/app.pem"},
 	}
 
 	// Add CLAUDE_ARGS from request environment or proxy's environment

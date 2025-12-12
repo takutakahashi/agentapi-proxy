@@ -807,9 +807,9 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 		t.Errorf("Expected CUSTOM_VAR 'custom-value', got %s", envMap["CUSTOM_VAR"])
 	}
 
-	// Verify volume mounts (workdir + claude-config for .claude.json and .claude + notification-subscriptions)
-	if len(container.VolumeMounts) != 4 {
-		t.Errorf("Expected 4 volume mounts, got %d", len(container.VolumeMounts))
+	// Verify volume mounts (workdir + claude-config for .claude.json and .claude + notification-subscriptions + github-app)
+	if len(container.VolumeMounts) != 5 {
+		t.Errorf("Expected 5 volume mounts, got %d", len(container.VolumeMounts))
 	}
 	volumeMountNames := make(map[string]bool)
 	for _, vm := range container.VolumeMounts {
@@ -823,6 +823,9 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 	}
 	if !volumeMountNames["notification-subscriptions"] {
 		t.Error("Expected notification-subscriptions volume mount")
+	}
+	if !volumeMountNames["github-app"] {
+		t.Error("Expected github-app volume mount")
 	}
 
 	// Verify probes
