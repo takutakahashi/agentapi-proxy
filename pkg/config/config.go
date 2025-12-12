@@ -143,6 +143,9 @@ type KubernetesSessionConfig struct {
 	MemoryRequest string `json:"memory_request" mapstructure:"memory_request"`
 	// MemoryLimit is the memory limit for session pods
 	MemoryLimit string `json:"memory_limit" mapstructure:"memory_limit"`
+	// PVCEnabled enables PersistentVolumeClaim for session pods workdir
+	// When disabled, EmptyDir is used instead (data is not persisted across pod restarts)
+	PVCEnabled *bool `json:"pvc_enabled,omitempty" mapstructure:"pvc_enabled"`
 	// PVCStorageClass is the storage class for session PVCs
 	PVCStorageClass string `json:"pvc_storage_class" mapstructure:"pvc_storage_class"`
 	// PVCStorageSize is the storage size for session PVCs
@@ -390,6 +393,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.cpu_limit", "AGENTAPI_K8S_SESSION_CPU_LIMIT")
 	_ = v.BindEnv("kubernetes_session.memory_request", "AGENTAPI_K8S_SESSION_MEMORY_REQUEST")
 	_ = v.BindEnv("kubernetes_session.memory_limit", "AGENTAPI_K8S_SESSION_MEMORY_LIMIT")
+	_ = v.BindEnv("kubernetes_session.pvc_enabled", "AGENTAPI_K8S_SESSION_PVC_ENABLED")
 	_ = v.BindEnv("kubernetes_session.pvc_storage_class", "AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS")
 	_ = v.BindEnv("kubernetes_session.pvc_storage_size", "AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE")
 	_ = v.BindEnv("kubernetes_session.pod_start_timeout", "AGENTAPI_K8S_SESSION_POD_START_TIMEOUT")
@@ -436,6 +440,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.cpu_limit", "2")
 	v.SetDefault("kubernetes_session.memory_request", "512Mi")
 	v.SetDefault("kubernetes_session.memory_limit", "4Gi")
+	v.SetDefault("kubernetes_session.pvc_enabled", true)
 	v.SetDefault("kubernetes_session.pvc_storage_class", "")
 	v.SetDefault("kubernetes_session.pvc_storage_size", "10Gi")
 	v.SetDefault("kubernetes_session.pod_start_timeout", 120)

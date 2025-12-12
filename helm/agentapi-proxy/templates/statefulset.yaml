@@ -143,6 +143,8 @@ spec:
               value: {{ .Values.kubernetesSession.resources.requests.memory | quote }}
             - name: AGENTAPI_K8S_SESSION_MEMORY_LIMIT
               value: {{ .Values.kubernetesSession.resources.limits.memory | quote }}
+            - name: AGENTAPI_K8S_SESSION_PVC_ENABLED
+              value: {{ .Values.kubernetesSession.pvc.enabled | quote }}
             - name: AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS
               value: {{ .Values.kubernetesSession.pvc.storageClass | quote }}
             - name: AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE

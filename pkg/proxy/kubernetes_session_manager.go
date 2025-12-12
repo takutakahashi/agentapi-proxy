@@ -119,17 +119,23 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		return nil, fmt.Errorf("failed to ensure base ConfigMap: %w", err)
 	}
 
-	// Create PVC
-	if err := m.createPVC(ctx, session); err != nil {
-		m.cleanupSession(id)
-		return nil, fmt.Errorf("failed to create PVC: %w", err)
+	// Create PVC if enabled
+	if m.isPVCEnabled() {
+		if err := m.createPVC(ctx, session); err != nil {
+			m.cleanupSession(id)
+			return nil, fmt.Errorf("failed to create PVC: %w", err)
+		}
+		log.Printf("[K8S_SESSION] Created PVC %s for session %s", pvcName, id)
+	} else {
+		log.Printf("[K8S_SESSION] PVC disabled, using EmptyDir for session %s", id)
 	}
-	log.Printf("[K8S_SESSION] Created PVC %s for session %s", pvcName, id)
 
 	// Create Deployment
 	if err := m.createDeployment(ctx, session, req); err != nil {
-		if delErr := m.deletePVC(ctx, session); delErr != nil {
-			log.Printf("[K8S_SESSION] Failed to cleanup PVC after deployment creation failure: %v", delErr)
+		if m.isPVCEnabled() {
+			if delErr := m.deletePVC(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup PVC after deployment creation failure: %v", delErr)
+			}
 		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create Deployment: %w", err)
@@ -141,8 +147,10 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		if delErr := m.deleteDeployment(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup Deployment after service creation failure: %v", delErr)
 		}
-		if delErr := m.deletePVC(ctx, session); delErr != nil {
-			log.Printf("[K8S_SESSION] Failed to cleanup PVC after service creation failure: %v", delErr)
+		if m.isPVCEnabled() {
+			if delErr := m.deletePVC(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup PVC after service creation failure: %v", delErr)
+			}
 		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create Service: %w", err)
@@ -983,16 +991,29 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 	// Credentials Secret name follows the pattern: agentapi-agent-credentials-{userID}
 	credentialsSecretName := fmt.Sprintf("agentapi-agent-credentials-%s", sanitizeLabelValue(session.request.UserID))
 
-	volumes := []corev1.Volume{
-		// Workdir PVC
-		{
+	// Build workdir volume - use PVC if enabled, otherwise EmptyDir
+	var workdirVolume corev1.Volume
+	if m.isPVCEnabled() {
+		workdirVolume = corev1.Volume{
 			Name: "workdir",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: session.pvcName,
 				},
 			},
-		},
+		}
+	} else {
+		workdirVolume = corev1.Volume{
+			Name: "workdir",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+	}
+
+	volumes := []corev1.Volume{
+		// Workdir volume (PVC or EmptyDir based on configuration)
+		workdirVolume,
 		// Base Claude configuration ConfigMap
 		{
 			Name: "claude-config-base",
@@ -1185,10 +1206,12 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		errs = append(errs, fmt.Sprintf("deployment: %v", err))
 	}
 
-	// Delete PVC
-	err = m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, session.pvcName, deleteOptions)
-	if err != nil && !errors.IsNotFound(err) {
-		errs = append(errs, fmt.Sprintf("pvc: %v", err))
+	// Delete PVC if enabled
+	if m.isPVCEnabled() {
+		err = m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, session.pvcName, deleteOptions)
+		if err != nil && !errors.IsNotFound(err) {
+			errs = append(errs, fmt.Sprintf("pvc: %v", err))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -1343,6 +1366,15 @@ func int64Ptr(i int64) *int64 {
 // boolPtr returns a pointer to a bool
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+// isPVCEnabled returns whether PVC is enabled for session workdir
+// Returns true by default if not explicitly set
+func (m *KubernetesSessionManager) isPVCEnabled() bool {
+	if m.k8sConfig.PVCEnabled == nil {
+		return true // Default to enabled
+	}
+	return *m.k8sConfig.PVCEnabled
 }
 
 // GetClient returns the Kubernetes client (used by subscription secret syncer)
