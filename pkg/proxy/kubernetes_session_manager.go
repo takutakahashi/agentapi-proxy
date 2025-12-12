@@ -2,12 +2,10 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,15 +25,14 @@ import (
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 type KubernetesSessionManager struct {
-	config             *config.Config
-	k8sConfig          *config.KubernetesSessionConfig
-	client             kubernetes.Interface
-	verbose            bool
-	logger             *logger.Logger
-	sessions           map[string]*kubernetesSession
-	mutex              sync.RWMutex
-	namespace          string
-	credentialProvider CredentialProvider
+	config    *config.Config
+	k8sConfig *config.KubernetesSessionConfig
+	client    kubernetes.Interface
+	verbose   bool
+	logger    *logger.Logger
+	sessions  map[string]*kubernetesSession
+	mutex     sync.RWMutex
+	namespace string
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -52,18 +49,16 @@ func NewKubernetesSessionManager(
 		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
-	return NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, client, nil)
+	return NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, client)
 }
 
 // NewKubernetesSessionManagerWithClient creates a new KubernetesSessionManager with a custom client
 // This is useful for testing with a fake client
-// If credProvider is nil, the default credential provider chain will be used
 func NewKubernetesSessionManagerWithClient(
 	cfg *config.Config,
 	verbose bool,
 	lgr *logger.Logger,
 	client kubernetes.Interface,
-	credProvider CredentialProvider,
 ) (*KubernetesSessionManager, error) {
 	k8sConfig := &cfg.KubernetesSession
 
@@ -74,22 +69,16 @@ func NewKubernetesSessionManagerWithClient(
 		namespace = "default"
 	}
 
-	// Use default credential provider if not specified
-	if credProvider == nil {
-		credProvider = DefaultCredentialProvider()
-	}
-
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
 	return &KubernetesSessionManager{
-		config:             cfg,
-		k8sConfig:          k8sConfig,
-		client:             client,
-		verbose:            verbose,
-		logger:             lgr,
-		sessions:           make(map[string]*kubernetesSession),
-		namespace:          namespace,
-		credentialProvider: credProvider,
+		config:    cfg,
+		k8sConfig: k8sConfig,
+		client:    client,
+		verbose:   verbose,
+		logger:    lgr,
+		sessions:  make(map[string]*kubernetesSession),
+		namespace: namespace,
 	}, nil
 }
 
@@ -103,19 +92,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
 	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
 
-	// Load credentials (optional) - use userID to locate user-specific credentials
-	// Always generate secretName for credentials sync sidecar to work
-	// even when user logs in after session creation
-	secretName := fmt.Sprintf("agentapi-session-%s-credentials", id)
-	creds, err := m.credentialProvider.Load(req.UserID)
-	if err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to load credentials for user %s: %v", req.UserID, err)
-		// Continue without credentials (non-fatal)
-	}
-	if creds != nil {
-		log.Printf("[K8S_SESSION] Loaded credentials for user %s", req.UserID)
-	}
-
 	// Create kubernetesSession
 	session := &kubernetesSession{
 		id:             id,
@@ -123,7 +99,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		deploymentName: deploymentName,
 		serviceName:    serviceName,
 		pvcName:        pvcName,
-		secretName:     secretName,
 		servicePort:    m.k8sConfig.BasePort,
 		namespace:      m.namespace,
 		startedAt:      time.Now(),
@@ -144,22 +119,8 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		return nil, fmt.Errorf("failed to ensure base ConfigMap: %w", err)
 	}
 
-	// Create Credential Secret (if credentials exist)
-	if creds != nil {
-		if err := m.createCredentialSecret(ctx, session, creds); err != nil {
-			m.cleanupSession(id)
-			return nil, fmt.Errorf("failed to create credential Secret: %w", err)
-		}
-		log.Printf("[K8S_SESSION] Created credential Secret %s for session %s", secretName, id)
-	}
-
 	// Create PVC
 	if err := m.createPVC(ctx, session); err != nil {
-		if session.secretName != "" {
-			if delErr := m.deleteCredentialSecret(ctx, session); delErr != nil {
-				log.Printf("[K8S_SESSION] Failed to cleanup Secret after PVC creation failure: %v", delErr)
-			}
-		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create PVC: %w", err)
 	}
@@ -169,11 +130,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	if err := m.createDeployment(ctx, session, req); err != nil {
 		if delErr := m.deletePVC(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup PVC after deployment creation failure: %v", delErr)
-		}
-		if session.secretName != "" {
-			if delErr := m.deleteCredentialSecret(ctx, session); delErr != nil {
-				log.Printf("[K8S_SESSION] Failed to cleanup Secret after deployment creation failure: %v", delErr)
-			}
 		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create Deployment: %w", err)
@@ -187,11 +143,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 		if delErr := m.deletePVC(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup PVC after service creation failure: %v", delErr)
-		}
-		if session.secretName != "" {
-			if delErr := m.deleteCredentialSecret(ctx, session); delErr != nil {
-				log.Printf("[K8S_SESSION] Failed to cleanup Secret after service creation failure: %v", delErr)
-			}
 		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create Service: %w", err)
@@ -655,16 +606,14 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session, userConfigMapName)
 
-	// Build containers list (main container + optional sidecar)
+	// Build containers list (main container + credentials sync sidecar)
 	containers := []corev1.Container{container}
 
-	// Add credentials sync sidecar if session has a secret name
-	// This sidecar watches for credential file changes and syncs them to the Secret
-	if session.secretName != "" {
-		if sidecar := m.buildCredentialsSyncSidecar(session); sidecar != nil {
-			containers = append(containers, *sidecar)
-			log.Printf("[K8S_SESSION] Added credentials-sync sidecar for session %s", session.id)
-		}
+	// Add credentials sync sidecar
+	// This sidecar watches for credential file changes and syncs them to the user-level Secret
+	if sidecar := m.buildCredentialsSyncSidecar(session); sidecar != nil {
+		containers = append(containers, *sidecar)
+		log.Printf("[K8S_SESSION] Added credentials-sync sidecar for session %s", session.id)
 	}
 
 	deployment := &appsv1.Deployment{
@@ -960,15 +909,13 @@ func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(session *kubern
 			Name:      "claude-config",
 			MountPath: "/claude-config",
 		},
-	}
-
-	// Add credentials volume mount if exists
-	if session.secretName != "" {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		// Credentials from user-level Secret (agentapi-agent-credentials-{userID})
+		// This Secret is optional and managed by credentials-sync sidecar
+		{
 			Name:      "claude-credentials",
 			MountPath: "/claude-credentials",
 			ReadOnly:  true,
-		})
+		},
 	}
 
 	return corev1.Container{
@@ -987,6 +934,9 @@ func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(session *kubern
 
 // buildVolumes builds the volume configuration for the session pod
 func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, userConfigMapName string) []corev1.Volume {
+	// Credentials Secret name follows the pattern: agentapi-agent-credentials-{userID}
+	credentialsSecretName := fmt.Sprintf("agentapi-agent-credentials-%s", sanitizeLabelValue(session.request.UserID))
+
 	volumes := []corev1.Volume{
 		// Workdir PVC
 		{
@@ -1028,19 +978,17 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-	}
-
-	// Add credentials Secret volume if exists
-	if session.secretName != "" {
-		volumes = append(volumes, corev1.Volume{
+		// User credentials Secret (per-user, not per-session)
+		// This Secret is managed by the credentials-sync sidecar
+		{
 			Name: "claude-credentials",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: session.secretName,
-					Optional:   boolPtr(true),
+					SecretName: credentialsSecretName,
+					Optional:   boolPtr(true), // Optional - user may not have logged in yet
 				},
 			},
-		})
+		},
 	}
 
 	// Add notification subscription Secret volume
@@ -1178,14 +1126,6 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 	}
 
 	var errs []string
-
-	// Delete Credential Secret (if exists)
-	if session.secretName != "" {
-		err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, session.secretName, deleteOptions)
-		if err != nil && !errors.IsNotFound(err) {
-			errs = append(errs, fmt.Sprintf("secret: %v", err))
-		}
-	}
 
 	// Delete Service
 	err := m.client.CoreV1().Services(m.namespace).Delete(ctx, session.serviceName, deleteOptions)
@@ -1337,58 +1277,6 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
-// createCredentialSecret creates a Kubernetes Secret for Claude credentials
-// The secret contains credentials.json file that will be mounted to $HOME/.claude/.credentials.json
-func (m *KubernetesSessionManager) createCredentialSecret(ctx context.Context, session *kubernetesSession, creds *ClaudeCredentials) error {
-	var credentialsBytes []byte
-
-	// Use RawJSON if available (preserves original file format)
-	if len(creds.RawJSON) > 0 {
-		credentialsBytes = creds.RawJSON
-	} else {
-		// Fall back to constructing JSON from fields (for EnvCredentialProvider)
-		expiresAt, err := strconv.ParseInt(creds.ExpiresAt, 10, 64)
-		if err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to parse expiresAt '%s': %v", creds.ExpiresAt, err)
-			expiresAt = 0
-		}
-
-		credentialsJSON := map[string]interface{}{
-			"claudeAiOauth": map[string]interface{}{
-				"accessToken":  creds.AccessToken,
-				"refreshToken": creds.RefreshToken,
-				"expiresAt":    expiresAt,
-			},
-		}
-
-		var err2 error
-		credentialsBytes, err2 = json.Marshal(credentialsJSON)
-		if err2 != nil {
-			return fmt.Errorf("failed to marshal credentials: %w", err2)
-		}
-	}
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.secretName,
-			Namespace: m.namespace,
-			Labels:    m.buildLabels(session),
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"credentials.json": credentialsBytes,
-		},
-	}
-
-	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	return err
-}
-
-// deleteCredentialSecret deletes the credential Secret for a session
-func (m *KubernetesSessionManager) deleteCredentialSecret(ctx context.Context, session *kubernetesSession) error {
-	return m.client.CoreV1().Secrets(m.namespace).Delete(ctx, session.secretName, metav1.DeleteOptions{})
-}
-
 // GetClient returns the Kubernetes client (used by subscription secret syncer)
 func (m *KubernetesSessionManager) GetClient() kubernetes.Interface {
 	return m.client
@@ -1457,7 +1345,6 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		deploymentName: fmt.Sprintf("agentapi-session-%s", sessionID),
 		serviceName:    svc.Name,
 		pvcName:        fmt.Sprintf("agentapi-session-%s-pvc", sessionID),
-		secretName:     fmt.Sprintf("agentapi-session-%s-credentials", sessionID),
 		servicePort:    servicePort,
 		namespace:      m.namespace,
 		startedAt:      createdAt,
