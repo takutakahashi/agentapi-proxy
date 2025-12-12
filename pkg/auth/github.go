@@ -98,8 +98,6 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
 		if cached, found := p.userCache.Get(cacheKey); found {
 			cachedUser = cached.(*UserCache)
-			log.Printf("[AUTH_DEBUG] Using cached user info for %s: role=%s, permissions=%v, envFile=%s",
-				cachedUser.User.Login, cachedUser.Role, cachedUser.Permissions, cachedUser.EnvFile)
 
 			// Re-apply environment variables from cached env file if specified
 			if cachedUser.EnvFile != "" {
