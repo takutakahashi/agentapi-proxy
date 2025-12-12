@@ -315,6 +315,9 @@ kubernetesSession:
 
   # PVC configuration for session workdir
   pvc:
+    # Enable PersistentVolumeClaim for session pods workdir
+    # When disabled, EmptyDir is used instead (data is not persisted across pod restarts)
+    enabled: true
     # Storage class for session PVCs (empty for default)
     storageClass: ""
     # Storage size for session PVCs
