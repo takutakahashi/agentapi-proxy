@@ -165,7 +165,7 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- if .Values.myclaudesPersistence.enabled }}
+            {{- if and .Values.myclaudesPersistence.enabled (not .Values.kubernetesSession.enabled) }}
             - name: myclaudes-data
               mountPath: /home/agentapi/.agentapi-proxy/myclaudes
             {{- end }}
@@ -238,7 +238,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- if .Values.myclaudesPersistence.enabled }}
+  {{- if and .Values.myclaudesPersistence.enabled (not .Values.kubernetesSession.enabled) }}
   volumeClaimTemplates:
     - metadata:
         name: myclaudes-data

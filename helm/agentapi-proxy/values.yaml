@@ -69,6 +69,8 @@ resources:
     cpu: 8
 
 # Persistent Volume for myclaudes directory
+# Note: Automatically disabled when kubernetesSession.enabled is true,
+# as credentials are stored in Kubernetes Secrets instead.
 myclaudesPersistence:
   enabled: true
   storageClassName: ""
