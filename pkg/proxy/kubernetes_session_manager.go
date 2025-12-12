@@ -474,6 +474,13 @@ if [ -f /claude-config-base/settings.json ]; then
     cp /claude-config-base/settings.json /claude-config/.claude/settings.json
 fi
 
+# Copy CLAUDE.md from embedded location (from Docker image)
+if [ -f /tmp/config/CLAUDE.md ]; then
+    cp /tmp/config/CLAUDE.md /claude-config/.claude/CLAUDE.md
+    chmod 644 /claude-config/.claude/CLAUDE.md
+    echo "CLAUDE.md copied from Docker image"
+fi
+
 # Copy credentials.json from Secret if exists
 if [ -f /claude-credentials/credentials.json ]; then
     cp /claude-credentials/credentials.json /claude-config/.claude/.credentials.json
