@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -208,56 +209,95 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 	return &user, nil
 }
 
-// getUserTeamsOptimized retrieves user's teams from GitHub API and filters by configured team mappings
+// getUserTeamsOptimized retrieves only configured team memberships from GitHub API
 func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
-	// Extract configured team mappings
-	configuredTeams := make(map[string]bool) // "org/team" -> true
+	// Extract unique organizations from configured team mappings
+	configuredOrgs := make(map[string][]string) // org -> []teamSlugs
 	for teamKey := range p.config.UserMapping.TeamRoleMapping {
-		configuredTeams[teamKey] = true
+		parts := strings.Split(teamKey, "/")
+		if len(parts) == 2 {
+			org, teamSlug := parts[0], parts[1]
+			configuredOrgs[org] = append(configuredOrgs[org], teamSlug)
+		}
 	}
 
-	if len(configuredTeams) == 0 {
+	if len(configuredOrgs) == 0 {
 		log.Printf("[AUTH_DEBUG] No configured team mappings found, returning empty teams")
 		return []GitHubTeamMembership{}, nil
 	}
 
-	log.Printf("[AUTH_DEBUG] Configured team mappings: %v", configuredTeams)
+	log.Printf("[AUTH_DEBUG] Checking %d configured organizations: %v", len(configuredOrgs), configuredOrgs)
 
-	// Get all teams the user belongs to via /user/teams API
-	allUserTeams, err := p.getUserTeams(ctx, token)
-	if err != nil {
-		log.Printf("[AUTH_DEBUG] Failed to get user teams: %v", err)
-		return []GitHubTeamMembership{}, err
+	// Use buffered channel to limit concurrent requests
+	maxConcurrent := 3
+	semaphore := make(chan struct{}, maxConcurrent)
+
+	type teamResult struct {
+		team GitHubTeamMembership
+		err  error
 	}
 
-	log.Printf("[AUTH_DEBUG] User %s belongs to %d teams from API", username, len(allUserTeams))
-	for _, t := range allUserTeams {
-		log.Printf("[AUTH_DEBUG]   - %s/%s (role: %s)", t.Organization, t.TeamSlug, t.Role)
-	}
+	var wg sync.WaitGroup
+	resultChan := make(chan teamResult, 100) // Large buffer for potential teams
 
-	// Filter to only configured teams
-	var matchingTeams []GitHubTeamMembership
-	for _, team := range allUserTeams {
-		teamKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
-		if configuredTeams[teamKey] {
-			log.Printf("[AUTH_DEBUG] Found matching configured team: %s", teamKey)
-			matchingTeams = append(matchingTeams, team)
+	// Check membership for each configured team concurrently
+	for org, teamSlugs := range configuredOrgs {
+		for _, teamSlug := range teamSlugs {
+			wg.Add(1)
+			go func(orgName, slug string) {
+				defer wg.Done()
+
+				// Acquire semaphore
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+
+				if isMember, role := p.checkTeamMembership(ctx, token, orgName, slug, username); isMember {
+					// Get team name (can be optimized further with batch API if needed)
+					teamName := slug // Default to slug if name retrieval fails
+
+					resultChan <- teamResult{
+						team: GitHubTeamMembership{
+							Organization: orgName,
+							TeamSlug:     slug,
+							TeamName:     teamName,
+							Role:         role,
+						},
+						err: nil,
+					}
+				}
+			}(org, teamSlug)
 		}
 	}
 
-	log.Printf("[AUTH_DEBUG] Found %d matching teams for user %s", len(matchingTeams), username)
-	return matchingTeams, nil
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	var userTeams []GitHubTeamMembership
+	for result := range resultChan {
+		if result.err == nil {
+			userTeams = append(userTeams, result.team)
+		}
+	}
+
+	log.Printf("[AUTH_DEBUG] Found %d matching teams for user %s", len(userTeams), username)
+	return userTeams, nil
 }
 
-// getUserTeams retrieves all teams the user belongs to from GitHub API
-func (p *GitHubAuthProvider) getUserTeams(ctx context.Context, token string) ([]GitHubTeamMembership, error) {
-	url := fmt.Sprintf("%s/user/teams", strings.TrimSuffix(p.config.BaseURL, "/"))
+// checkTeamMembership checks if user is a member of a specific team without caching
+func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org, teamSlug, username string) (bool, string) {
+	url := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
+		strings.TrimSuffix(p.config.BaseURL, "/"), org, teamSlug, username)
 
-	log.Printf("[AUTH_DEBUG] Fetching user teams from: %s", url)
+	log.Printf("[AUTH_DEBUG] Checking team membership: org=%s, team=%s, user=%s", org, teamSlug, username)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, err
+		log.Printf("[AUTH_DEBUG] Failed to create request: %v", err)
+		return false, ""
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
@@ -265,44 +305,33 @@ func (p *GitHubAuthProvider) getUserTeams(ctx context.Context, token string) ([]
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		log.Printf("[AUTH_DEBUG] Failed to fetch user teams: %v", err)
-		return nil, err
+		log.Printf("[AUTH_DEBUG] GitHub API request failed: %v", err)
+		return false, ""
 	}
 	defer utils.SafeCloseResponse(resp)
 
-	log.Printf("[AUTH_DEBUG] /user/teams response status: %d", resp.StatusCode)
+	log.Printf("[AUTH_DEBUG] GitHub API response status: %d %s", resp.StatusCode, resp.Status)
+	if resp.StatusCode == http.StatusNotFound {
+		log.Printf("[AUTH_DEBUG] Team membership not found (404) for %s in %s/%s", username, org, teamSlug)
+		return false, ""
+	}
 
 	if err := utils.CheckHTTPResponse(resp, url); err != nil {
-		return nil, err
+		log.Printf("[AUTH_DEBUG] HTTP response check failed: %v", err)
+		return false, ""
 	}
 
-	// GitHub /user/teams returns an array of team objects
-	var teams []struct {
-		ID           int64  `json:"id"`
-		Name         string `json:"name"`
-		Slug         string `json:"slug"`
-		Permission   string `json:"permission"`
-		Organization struct {
-			Login string `json:"login"`
-		} `json:"organization"`
+	var membership struct {
+		State string `json:"state"`
+		Role  string `json:"role"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&membership); err != nil {
+		log.Printf("[AUTH_DEBUG] Failed to decode membership response: %v", err)
+		return false, ""
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
-		log.Printf("[AUTH_DEBUG] Failed to decode teams response: %v", err)
-		return nil, err
-	}
-
-	var result []GitHubTeamMembership
-	for _, t := range teams {
-		result = append(result, GitHubTeamMembership{
-			Organization: t.Organization.Login,
-			TeamSlug:     t.Slug,
-			TeamName:     t.Name,
-			Role:         t.Permission,
-		})
-	}
-
-	return result, nil
+	log.Printf("[AUTH_DEBUG] Team membership response: state=%s, role=%s", membership.State, membership.Role)
+	return membership.State == "active", membership.Role
 }
 
 // getUserOrganizations retrieves user's organizations from GitHub API without caching
