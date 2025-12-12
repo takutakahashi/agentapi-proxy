@@ -73,11 +73,15 @@ func (h *SessionHandlers) StartSession(c echo.Context) error {
 		}
 		// Extract team slugs from GitHub user info
 		if githubInfo := user.GitHubInfo(); githubInfo != nil {
+			log.Printf("[SESSION_DEBUG] GitHubInfo found for user %s, teams count: %d", userID, len(githubInfo.Teams()))
 			for _, team := range githubInfo.Teams() {
 				// Format: "org/team-slug"
 				teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
 				teams = append(teams, teamSlug)
+				log.Printf("[SESSION_DEBUG] Added team: %s", teamSlug)
 			}
+		} else {
+			log.Printf("[SESSION_DEBUG] No GitHubInfo for user %s", userID)
 		}
 	} else {
 		userID = "anonymous"
