@@ -302,12 +302,14 @@ kubernetesSession:
   # Base port that agentapi listens on in session pods
   basePort: 9000
 
-  # Resource requests and limits for session pods
+  # Resource requests and limits for session pods (Kubernetes standard format)
   resources:
-    cpuRequest: "500m"
-    cpuLimit: "2"
-    memoryRequest: "512Mi"
-    memoryLimit: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
 
   # PVC configuration for session workdir
   pvc:
