@@ -216,12 +216,38 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			// Convert GitHub user context to entity user
 			userID := entities.UserID(userContext.UserID)
 
+			// Convert GitHub user info to entity GitHubUserInfo
+			var githubInfo *entities.GitHubUserInfo
+			var teams []entities.GitHubTeamMembership
+			if userContext.GitHubUser != nil {
+				githubInfo = entities.NewGitHubUserInfo(
+					userContext.GitHubUser.ID,
+					userContext.GitHubUser.Login,
+					userContext.GitHubUser.Name,
+					userContext.GitHubUser.Email,
+					"", // avatarURL
+					"", // company
+					"", // location
+				)
+				// Convert teams
+				for _, t := range userContext.GitHubUser.Teams {
+					teams = append(teams, entities.GitHubTeamMembership{
+						Organization: t.Organization,
+						TeamSlug:     t.TeamSlug,
+						TeamName:     t.TeamName,
+						Role:         t.Role,
+					})
+				}
+			}
+
 			// Check if user already exists
 			s.mu.RLock()
 			existingUser, exists := s.users[userID]
 			s.mu.RUnlock()
 
 			if exists {
+				// Update existing user with latest GitHub info and teams
+				existingUser.SetGitHubInfo(githubInfo, teams)
 				return existingUser, nil
 			}
 
@@ -229,17 +255,14 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			s.mu.Lock()
 			defer s.mu.Unlock()
 
-			// Map role to user type
-			userType := entities.UserTypeRegular
-			if userContext.Role == "admin" {
-				userType = entities.UserTypeAdmin
-			}
-
-			newUser := entities.NewUser(
+			newUser := entities.NewGitHubUser(
 				userID,
-				userType,
 				userContext.UserID,
+				userContext.GitHubUser.Email,
+				githubInfo,
 			)
+			// Set teams
+			newUser.SetGitHubInfo(githubInfo, teams)
 
 			// Set permissions from GitHub context
 			for _, perm := range userContext.Permissions {
