@@ -325,8 +325,12 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 	url := fmt.Sprintf("%s/orgs/%s/teams/%s/memberships/%s",
 		strings.TrimSuffix(p.config.BaseURL, "/"), org, teamSlug, username)
 
+	log.Printf("[AUTH_DEBUG] Checking team membership: org=%s, team=%s, user=%s", org, teamSlug, username)
+	log.Printf("[AUTH_DEBUG] API URL: %s", url)
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
+		log.Printf("[AUTH_DEBUG] Failed to create request: %v", err)
 		return false, ""
 	}
 
@@ -336,17 +340,21 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 	logVerbose("Making GitHub API request: GET %s", url)
 	resp, err := p.client.Do(req)
 	if err != nil {
+		log.Printf("[AUTH_DEBUG] GitHub API request failed: %v", err)
 		logVerbose("GitHub API request failed: %v", err)
 		return false, ""
 	}
 	defer utils.SafeCloseResponse(resp)
 
+	log.Printf("[AUTH_DEBUG] GitHub API response status: %d %s", resp.StatusCode, resp.Status)
 	logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
 	if resp.StatusCode == http.StatusNotFound {
+		log.Printf("[AUTH_DEBUG] Team membership not found (404) for %s in %s/%s", username, org, teamSlug)
 		return false, ""
 	}
 
 	if err := utils.CheckHTTPResponse(resp, url); err != nil {
+		log.Printf("[AUTH_DEBUG] HTTP response check failed: %v", err)
 		return false, ""
 	}
 
@@ -355,9 +363,11 @@ func (p *GitHubAuthProvider) checkTeamMembership(ctx context.Context, token, org
 		Role  string `json:"role"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&membership); err != nil {
+		log.Printf("[AUTH_DEBUG] Failed to decode membership response: %v", err)
 		return false, ""
 	}
 
+	log.Printf("[AUTH_DEBUG] Team membership response: state=%s, role=%s", membership.State, membership.Role)
 	return membership.State == "active", membership.Role
 }
 
