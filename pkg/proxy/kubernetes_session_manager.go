@@ -645,6 +645,21 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Added credentials-sync sidecar for session %s", session.id)
 	}
 
+	// Convert config tolerations to corev1 tolerations
+	var tolerations []corev1.Toleration
+	for _, t := range m.k8sConfig.Tolerations {
+		toleration := corev1.Toleration{
+			Key:      t.Key,
+			Operator: corev1.TolerationOperator(t.Operator),
+			Value:    t.Value,
+			Effect:   corev1.TaintEffect(t.Effect),
+		}
+		if t.TolerationSeconds != nil {
+			toleration.TolerationSeconds = t.TolerationSeconds
+		}
+		tolerations = append(tolerations, toleration)
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      session.deploymentName,
@@ -672,6 +687,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 					InitContainers: initContainers,
 					Containers:     containers,
 					Volumes:        volumes,
+					NodeSelector:   m.k8sConfig.NodeSelector,
+					Tolerations:    tolerations,
 				},
 			},
 		},

@@ -320,6 +320,25 @@ kubernetesSession:
   podStartTimeout: 120
   podStopTimeout: 30
 
+  # Node selector for session pods
+  # Example:
+  # nodeSelector:
+  #   disktype: ssd
+  #   kubernetes.io/arch: amd64
+  nodeSelector: {}
+
+  # Tolerations for session pods
+  # Example:
+  # tolerations:
+  #   - key: "dedicated"
+  #     operator: "Equal"
+  #     value: "agent"
+  #     effect: "NoSchedule"
+  #   - key: "gpu"
+  #     operator: "Exists"
+  #     effect: "PreferNoSchedule"
+  tolerations: []
+
   # GitHub authentication for repository cloning in session pods
   # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
   # The Secret will be used by the clone-repo init container
