@@ -41,8 +41,8 @@ RUN set -ex && \
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install ca-certificates, curl, and bash for mise installation, plus GitHub CLI, make, tmux, sudo, and Node.js
-RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc make procps tmux sudo && \
+# Install ca-certificates, curl, and bash for mise installation, plus GitHub CLI, make, tmux, sudo, Node.js, and jq
+RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc make procps tmux sudo jq && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
@@ -51,6 +51,12 @@ RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 g
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
+
+# Install kubectl for credentials-sync sidecar
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl" && \
+    chmod +x kubectl && \
+    mv kubectl /usr/local/bin/
 
 # Install Lightpanda Browser
 RUN curl -L -o /usr/local/bin/lightpanda https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux && \

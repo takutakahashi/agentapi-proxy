@@ -765,6 +765,11 @@ log() {
     echo "[$(date -Iseconds)] [credentials-sync] $1"
 }
 
+# Extract expiresAt from credentials JSON (returns empty if not found)
+get_expires_at() {
+    echo "$1" | jq -r '.claudeAiOauth.expiresAt // empty' 2>/dev/null
+}
+
 sync_to_secret() {
     if [ ! -f "$CREDENTIALS_PATH" ]; then
         return
@@ -780,14 +785,44 @@ sync_to_secret() {
         return
     fi
 
-    log "Credentials file changed, syncing to Secret $SECRET_NAME..."
+    LOCAL_JSON=$(cat "$CREDENTIALS_PATH")
+    LOCAL_EXPIRES=$(get_expires_at "$LOCAL_JSON")
 
-    # Base64 encode the file content
-    ENCODED=$(base64 -w0 "$CREDENTIALS_PATH")
+    # Skip if local credentials missing expiresAt
+    if [ -z "$LOCAL_EXPIRES" ]; then
+        log "Local credentials missing expiresAt, skipping sync"
+        LAST_HASH="$CURRENT_HASH"
+        return
+    fi
 
     # Check if secret exists
     if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
-        # Patch existing secret - use add operation for upsert behavior
+        # Get current credentials from Secret
+        SECRET_JSON=$(kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" \
+            -o jsonpath='{.data.credentials\.json}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+
+        if [ -n "$SECRET_JSON" ]; then
+            SECRET_EXPIRES=$(get_expires_at "$SECRET_JSON")
+
+            # Skip if Secret credentials missing expiresAt
+            if [ -z "$SECRET_EXPIRES" ]; then
+                log "Secret credentials missing expiresAt, skipping sync"
+                LAST_HASH="$CURRENT_HASH"
+                return
+            fi
+
+            # Only sync if local is newer (local > secret)
+            if [ "$LOCAL_EXPIRES" -le "$SECRET_EXPIRES" ] 2>/dev/null; then
+                log "Secret has newer or equal expiresAt ($SECRET_EXPIRES >= $LOCAL_EXPIRES), skipping sync"
+                LAST_HASH="$CURRENT_HASH"
+                return
+            fi
+
+            log "Local credentials are newer ($LOCAL_EXPIRES > $SECRET_EXPIRES), syncing..."
+        fi
+
+        # Patch existing secret
+        ENCODED=$(base64 -w0 "$CREDENTIALS_PATH")
         RESULT=$(kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
             --type='merge' \
             -p="{\"data\":{\"credentials.json\":\"$ENCODED\"}}" 2>&1)
@@ -829,14 +864,10 @@ while true; do
 done
 `
 
-// credentialsSyncSidecarImage is the image used for the credentials sync sidecar
-// This image must contain kubectl for interacting with Kubernetes API
-const credentialsSyncSidecarImage = "mirror.gcr.io/bitnami/kubectl:latest"
-
 // buildCredentialsSyncSidecar builds the sidecar container for syncing credentials to Secret
 func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *kubernetesSession) *corev1.Container {
-	// Use bitnami/kubectl image which contains kubectl
-	sidecarImage := credentialsSyncSidecarImage
+	// Use the same image as the main container (agentapi-proxy image includes kubectl and jq)
+	sidecarImage := m.k8sConfig.Image
 
 	// Secret name is per-user, not per-session
 	// Format: agentapi-agent-credentials-{userID}
