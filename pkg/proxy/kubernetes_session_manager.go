@@ -1510,10 +1510,11 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 func (m *KubernetesSessionManager) sendInitialMessage(session *kubernetesSession) {
 	serviceURL := fmt.Sprintf("http://%s", session.Addr())
 
-	// Check server health first (wait for agentapi server to be ready)
+	// Check server status first (wait for agentapi server to be ready)
+	// Use /status endpoint same as liveness probe
 	maxRetries := 30
 	for i := 0; i < maxRetries; i++ {
-		resp, err := http.Get(serviceURL + "/health")
+		resp, err := http.Get(serviceURL + "/status")
 		if err == nil {
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				log.Printf("[K8S_SESSION] Failed to close response body: %v", closeErr)
