@@ -1,10 +1,20 @@
 package proxy
 
+// SessionParams represents session parameters for agentapi server
+type SessionParams struct {
+	// Message is the initial message to send to the agent after session starts
+	Message string `json:"message,omitempty"`
+}
+
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
 	Environment map[string]string `json:"environment,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
-	Message     string            `json:"message,omitempty"`
+	// Params contains session parameters
+	Params *SessionParams `json:"params,omitempty"`
+	// Message is the initial message (deprecated: use Params.Message instead)
+	// Kept for backward compatibility
+	Message string `json:"message,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
