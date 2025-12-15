@@ -350,3 +350,54 @@ kubernetesSession:
   # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
   # The Secret will be used by the clone-repo init container
 
+  # MCP (Model Context Protocol) server configuration
+  # Allows loading MCP servers from Kubernetes Secrets with 3-tier hierarchy:
+  # base (organization-wide) -> team (team-specific) -> user (user-specific)
+  # Later tiers override earlier ones for servers with the same name
+  mcpServers:
+    # Enable MCP server loading from Secrets
+    enabled: false
+
+    # Base MCP config Secret (organization-wide default servers)
+    # The Secret should contain a key 'mcp-servers.json' with the MCP server configuration
+    # Format: {"mcpServers": {"server-name": {"type": "http|stdio|sse", ...}}}
+    baseSecret: "mcp-servers-base"
+
+    # Prefix for team-specific MCP config Secrets
+    # Team secrets will be named: {prefix}-{team-name}
+    # e.g., mcp-servers-team-myorg-backend-team
+    teamSecretPrefix: "mcp-servers-team"
+
+    # Prefix for user-specific MCP config Secrets
+    # User secrets will be named: {prefix}-{user-id}
+    # e.g., mcp-servers-user-johndoe
+    userSecretPrefix: "mcp-servers-user"
+
+    # Example Secret structure:
+    # apiVersion: v1
+    # kind: Secret
+    # metadata:
+    #   name: mcp-servers-base
+    # stringData:
+    #   mcp-servers.json: |
+    #     {
+    #       "mcpServers": {
+    #         "github": {
+    #           "type": "http",
+    #           "url": "https://mcp-github.example.com",
+    #           "headers": {
+    #             "Authorization": "Bearer ${GITHUB_TOKEN}"
+    #           }
+    #         },
+    #         "database": {
+    #           "type": "stdio",
+    #           "command": "mcp-database-server",
+    #           "args": ["--host", "db.example.com"]
+    #         }
+    #       }
+    #     }
+    #
+    # Environment variable expansion is supported in the configuration:
+    # - ${VAR} - expands to the value of VAR, empty if not set
+    # - ${VAR:-default} - expands to VAR if set, otherwise "default"
+

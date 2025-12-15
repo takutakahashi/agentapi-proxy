@@ -368,3 +368,189 @@ func TestSetGitHubEnvFromFlags(t *testing.T) {
 	githubToken = ""
 	setupGHRepoFullName = ""
 }
+
+func TestMergeMCPConfigCmdStructure(t *testing.T) {
+	assert.Equal(t, "merge-mcp-config", mergeMCPConfigCmd.Use)
+	assert.Equal(t, "Merge multiple MCP server configuration directories", mergeMCPConfigCmd.Short)
+	assert.NotNil(t, mergeMCPConfigCmd.RunE)
+}
+
+func TestMergeMCPConfigCmdFlags(t *testing.T) {
+	// Test that all expected flags are present
+	inputDirsFlag := mergeMCPConfigCmd.LocalFlags().Lookup("input-dirs")
+	assert.NotNil(t, inputDirsFlag)
+
+	outputFlag := mergeMCPConfigCmd.LocalFlags().Lookup("output")
+	assert.NotNil(t, outputFlag)
+
+	expandEnvFlag := mergeMCPConfigCmd.LocalFlags().Lookup("expand-env")
+	assert.NotNil(t, expandEnvFlag)
+	assert.Equal(t, "false", expandEnvFlag.DefValue)
+
+	verboseFlag := mergeMCPConfigCmd.LocalFlags().Lookup("verbose")
+	assert.NotNil(t, verboseFlag)
+	assert.Equal(t, "false", verboseFlag.DefValue)
+}
+
+func TestMergeMCPConfigCmdInSubcommands(t *testing.T) {
+	subcommands := HelpersCmd.Commands()
+
+	var commandNames []string
+	for _, cmd := range subcommands {
+		commandNames = append(commandNames, cmd.Use)
+	}
+
+	assert.Contains(t, commandNames, "merge-mcp-config")
+}
+
+func TestRunMergeMCPConfig(t *testing.T) {
+	// Create temp directories
+	tmpDir, err := os.MkdirTemp("", "mcp-merge-test-*")
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	inputDir := filepath.Join(tmpDir, "input")
+	require.NoError(t, os.MkdirAll(inputDir, 0755))
+
+	// Create test config
+	config := `{
+		"mcpServers": {
+			"test-server": {
+				"type": "http",
+				"url": "https://example.com/mcp"
+			}
+		}
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "config.json"), []byte(config), 0644))
+
+	outputPath := filepath.Join(tmpDir, "output", "merged.json")
+
+	// Set flag values
+	mcpInputDirs = inputDir
+	mcpOutputPath = outputPath
+	mcpExpandEnv = false
+	mcpMergeVerbose = false
+
+	// Run the command
+	err = runMergeMCPConfig(&cobra.Command{}, []string{})
+	require.NoError(t, err)
+
+	// Verify output file was created
+	assert.FileExists(t, outputPath)
+
+	// Read and verify content
+	data, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &result))
+
+	mcpServers, ok := result["mcpServers"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Contains(t, mcpServers, "test-server")
+
+	// Clean up flag variables
+	mcpInputDirs = ""
+	mcpOutputPath = ""
+}
+
+func TestRunMergeMCPConfigWithEnvExpansion(t *testing.T) {
+	// Create temp directories
+	tmpDir, err := os.MkdirTemp("", "mcp-merge-env-test-*")
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	inputDir := filepath.Join(tmpDir, "input")
+	require.NoError(t, os.MkdirAll(inputDir, 0755))
+
+	// Create test config with env var
+	config := `{
+		"mcpServers": {
+			"api-server": {
+				"type": "http",
+				"url": "${TEST_MCP_URL:-https://default.example.com}"
+			}
+		}
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(inputDir, "config.json"), []byte(config), 0644))
+
+	// Set env var
+	require.NoError(t, os.Setenv("TEST_MCP_URL", "https://custom.example.com"))
+	defer func() { _ = os.Unsetenv("TEST_MCP_URL") }()
+
+	outputPath := filepath.Join(tmpDir, "output", "merged.json")
+
+	// Set flag values
+	mcpInputDirs = inputDir
+	mcpOutputPath = outputPath
+	mcpExpandEnv = true
+	mcpMergeVerbose = false
+
+	// Run the command
+	err = runMergeMCPConfig(&cobra.Command{}, []string{})
+	require.NoError(t, err)
+
+	// Read and verify content
+	data, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+
+	// Verify env var was expanded
+	assert.Contains(t, string(data), "https://custom.example.com")
+	assert.NotContains(t, string(data), "${TEST_MCP_URL")
+
+	// Clean up flag variables
+	mcpInputDirs = ""
+	mcpOutputPath = ""
+	mcpExpandEnv = false
+}
+
+func TestRunMergeMCPConfigMultipleDirs(t *testing.T) {
+	// Create temp directories
+	tmpDir, err := os.MkdirTemp("", "mcp-merge-multi-test-*")
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	baseDir := filepath.Join(tmpDir, "base")
+	userDir := filepath.Join(tmpDir, "user")
+	require.NoError(t, os.MkdirAll(baseDir, 0755))
+	require.NoError(t, os.MkdirAll(userDir, 0755))
+
+	// Base config
+	baseConfig := `{
+		"mcpServers": {
+			"server": {"type": "http", "url": "https://base.example.com"}
+		}
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(baseDir, "config.json"), []byte(baseConfig), 0644))
+
+	// User config (overrides server)
+	userConfig := `{
+		"mcpServers": {
+			"server": {"type": "http", "url": "https://user.example.com"}
+		}
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(userDir, "config.json"), []byte(userConfig), 0644))
+
+	outputPath := filepath.Join(tmpDir, "merged.json")
+
+	// Set flag values with comma-separated dirs
+	mcpInputDirs = baseDir + "," + userDir
+	mcpOutputPath = outputPath
+	mcpExpandEnv = false
+	mcpMergeVerbose = false
+
+	// Run the command
+	err = runMergeMCPConfig(&cobra.Command{}, []string{})
+	require.NoError(t, err)
+
+	// Read and verify content - user should override base
+	data, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(data), "https://user.example.com")
+	assert.NotContains(t, string(data), "https://base.example.com")
+
+	// Clean up flag variables
+	mcpInputDirs = ""
+	mcpOutputPath = ""
+}
