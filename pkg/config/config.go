@@ -175,6 +175,20 @@ type KubernetesSessionConfig struct {
 	NodeSelector map[string]string `json:"node_selector,omitempty" mapstructure:"node_selector" yaml:"node_selector"`
 	// Tolerations are tolerations for session pods to schedule onto nodes with matching taints
 	Tolerations []Toleration `json:"tolerations,omitempty" mapstructure:"tolerations" yaml:"tolerations"`
+
+	// MCP Servers configuration
+	// MCPServersEnabled enables MCP server configuration from Secrets
+	MCPServersEnabled bool `json:"mcp_servers_enabled" mapstructure:"mcp_servers_enabled"`
+	// MCPServersBaseSecret is the name of the Kubernetes Secret containing base MCP server configurations
+	// This Secret is applied to all sessions. Each key should be a JSON file name (e.g., "github.json")
+	// containing mcpServers configuration
+	MCPServersBaseSecret string `json:"mcp_servers_base_secret" mapstructure:"mcp_servers_base_secret"`
+	// MCPServersTeamSecretPrefix is the prefix for team-specific MCP server Secret names
+	// Full name will be: {prefix}-{org}-{team} (e.g., mcp-servers-myorg-backend)
+	MCPServersTeamSecretPrefix string `json:"mcp_servers_team_secret_prefix" mapstructure:"mcp_servers_team_secret_prefix"`
+	// MCPServersUserSecretPrefix is the prefix for user-specific MCP server Secret names
+	// Full name will be: {prefix}-{userID} (e.g., mcp-servers-johndoe)
+	MCPServersUserSecretPrefix string `json:"mcp_servers_user_secret_prefix" mapstructure:"mcp_servers_user_secret_prefix"`
 }
 
 // Config represents the proxy configuration
@@ -403,6 +417,12 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
+
+	// MCP servers configuration
+	_ = v.BindEnv("kubernetes_session.mcp_servers_enabled", "AGENTAPI_K8S_SESSION_MCP_SERVERS_ENABLED")
+	_ = v.BindEnv("kubernetes_session.mcp_servers_base_secret", "AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_SECRET")
+	_ = v.BindEnv("kubernetes_session.mcp_servers_team_secret_prefix", "AGENTAPI_K8S_SESSION_MCP_SERVERS_TEAM_SECRET_PREFIX")
+	_ = v.BindEnv("kubernetes_session.mcp_servers_user_secret_prefix", "AGENTAPI_K8S_SESSION_MCP_SERVERS_USER_SECRET_PREFIX")
 }
 
 // setDefaults sets default values for viper configuration
@@ -449,6 +469,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.claude_config_user_configmap_prefix", "claude-config")
 	v.SetDefault("kubernetes_session.init_container_image", "")
 	v.SetDefault("kubernetes_session.github_secret_name", "")
+
+	// MCP servers defaults
+	v.SetDefault("kubernetes_session.mcp_servers_enabled", true)
+	v.SetDefault("kubernetes_session.mcp_servers_base_secret", "mcp-servers-base")
+	v.SetDefault("kubernetes_session.mcp_servers_team_secret_prefix", "mcp-servers")
+	v.SetDefault("kubernetes_session.mcp_servers_user_secret_prefix", "mcp-servers")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields

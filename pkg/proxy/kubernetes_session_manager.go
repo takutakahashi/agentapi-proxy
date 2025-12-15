@@ -500,6 +500,56 @@ chmod 644 /claude-config/.claude/settings.json 2>/dev/null || true
 echo "Claude configuration setup complete"
 `
 
+// setupMCPServersScript is the shell script executed by the init container to merge MCP server configurations
+// It uses the agentapi-proxy helpers merge-mcp-config command to merge configurations from multiple directories
+const setupMCPServersScript = `
+set -e
+
+# Check if any MCP config directories exist
+MCP_DIRS=""
+if [ -d "/mcp-config-source/base" ] && [ "$(ls -A /mcp-config-source/base 2>/dev/null)" ]; then
+    MCP_DIRS="/mcp-config-source/base"
+fi
+
+# Add team directories (numbered: /mcp-config-source/team/0, /mcp-config-source/team/1, etc.)
+for team_dir in /mcp-config-source/team/*/; do
+    if [ -d "$team_dir" ] && [ "$(ls -A "$team_dir" 2>/dev/null)" ]; then
+        if [ -n "$MCP_DIRS" ]; then
+            MCP_DIRS="$MCP_DIRS,$team_dir"
+        else
+            MCP_DIRS="$team_dir"
+        fi
+    fi
+done
+
+if [ -d "/mcp-config-source/user" ] && [ "$(ls -A /mcp-config-source/user 2>/dev/null)" ]; then
+    if [ -n "$MCP_DIRS" ]; then
+        MCP_DIRS="$MCP_DIRS,/mcp-config-source/user"
+    else
+        MCP_DIRS="/mcp-config-source/user"
+    fi
+fi
+
+if [ -z "$MCP_DIRS" ]; then
+    echo "[MCP] No MCP server configurations found, skipping"
+    exit 0
+fi
+
+echo "[MCP] Merging MCP configurations from: $MCP_DIRS"
+
+# Create output directory
+mkdir -p /mcp-config
+
+# Merge MCP configurations using agentapi-proxy helper
+agentapi-proxy helpers merge-mcp-config \
+    --input-dirs "$MCP_DIRS" \
+    --output /mcp-config/merged.json \
+    --expand-env \
+    --verbose
+
+echo "[MCP] MCP server configuration complete"
+`
+
 // createDeployment creates a Deployment for the session
 func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session *kubernetesSession, req *RunServerRequest) error {
 	labels := m.buildLabels(session)
@@ -527,6 +577,12 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	// Add Claude configuration setup init container
 	initContainers = append(initContainers, m.buildClaudeSetupInitContainer(session))
+
+	// Add MCP servers setup init container if enabled
+	if m.k8sConfig.MCPServersEnabled {
+		initContainers = append(initContainers, m.buildMCPSetupInitContainer(session, req))
+		log.Printf("[K8S_SESSION] Added MCP setup init container for session %s", session.id)
+	}
 
 	// Determine working directory based on whether repository is specified
 	workingDir := "/home/agentapi/workdir"
@@ -601,39 +657,10 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				corev1.ResourceMemory: memoryLimit,
 			},
 		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "workdir",
-				MountPath: "/home/agentapi/workdir",
-			},
-			// Mount claude.json from EmptyDir using SubPath
-			{
-				Name:      "claude-config",
-				MountPath: "/home/agentapi/.claude.json",
-				SubPath:   ".claude.json",
-			},
-			// Mount .claude directory from EmptyDir using SubPath
-			{
-				Name:      "claude-config",
-				MountPath: "/home/agentapi/.claude",
-				SubPath:   ".claude",
-			},
-			// Mount notification subscriptions from Secret
-			{
-				Name:      "notification-subscriptions",
-				MountPath: "/home/agentapi/notifications",
-				ReadOnly:  true,
-			},
-			// Mount GitHub App PEM from EmptyDir (written by clone-repo init container)
-			{
-				Name:      "github-app",
-				MountPath: "/github-app",
-				ReadOnly:  true,
-			},
-		},
-		Command: []string{"sh", "-c"},
+		VolumeMounts: m.buildMainContainerVolumeMounts(),
+		Command:      []string{"sh", "-c"},
 		Args: []string{
-			fmt.Sprintf("agentapi server --allowed-hosts '*' --allowed-origins '*' --port %d -- claude $CLAUDE_ARGS", m.k8sConfig.BasePort),
+			m.buildClaudeStartCommand(),
 		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
@@ -1101,6 +1128,107 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 		},
 	})
 
+	// Add MCP server configuration volumes if enabled
+	if m.k8sConfig.MCPServersEnabled {
+		volumes = append(volumes, m.buildMCPVolumes(session)...)
+	}
+
+	return volumes
+}
+
+// buildMCPVolumes builds the volumes for MCP server configuration
+func (m *KubernetesSessionManager) buildMCPVolumes(session *kubernetesSession) []corev1.Volume {
+	volumes := []corev1.Volume{}
+
+	// Build projected volume sources for mcp-config-source
+	var projectedSources []corev1.VolumeProjection
+
+	// Add base MCP config Secret
+	if m.k8sConfig.MCPServersBaseSecret != "" {
+		projectedSources = append(projectedSources, corev1.VolumeProjection{
+			Secret: &corev1.SecretProjection{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.MCPServersBaseSecret,
+				},
+				Items: []corev1.KeyToPath{
+					{
+						Key:  "mcp-servers.json",
+						Path: "base/mcp-servers.json",
+					},
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	// Add team MCP config Secrets
+	if m.k8sConfig.MCPServersTeamSecretPrefix != "" && session.request != nil {
+		for i, team := range session.request.Teams {
+			secretName := fmt.Sprintf("%s-%s", m.k8sConfig.MCPServersTeamSecretPrefix, sanitizeSecretName(team))
+			projectedSources = append(projectedSources, corev1.VolumeProjection{
+				Secret: &corev1.SecretProjection{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: secretName,
+					},
+					Items: []corev1.KeyToPath{
+						{
+							Key:  "mcp-servers.json",
+							Path: fmt.Sprintf("team/%d/mcp-servers.json", i),
+						},
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
+	}
+
+	// Add user MCP config Secret
+	if m.k8sConfig.MCPServersUserSecretPrefix != "" && session.request != nil && session.request.UserID != "" {
+		userSecretName := fmt.Sprintf("%s-%s", m.k8sConfig.MCPServersUserSecretPrefix, sanitizeSecretName(session.request.UserID))
+		projectedSources = append(projectedSources, corev1.VolumeProjection{
+			Secret: &corev1.SecretProjection{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: userSecretName,
+				},
+				Items: []corev1.KeyToPath{
+					{
+						Key:  "mcp-servers.json",
+						Path: "user/mcp-servers.json",
+					},
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	// Add mcp-config-source as projected volume
+	if len(projectedSources) > 0 {
+		volumes = append(volumes, corev1.Volume{
+			Name: "mcp-config-source",
+			VolumeSource: corev1.VolumeSource{
+				Projected: &corev1.ProjectedVolumeSource{
+					Sources: projectedSources,
+				},
+			},
+		})
+	} else {
+		// Use an EmptyDir if no secrets configured
+		volumes = append(volumes, corev1.Volume{
+			Name: "mcp-config-source",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+	}
+
+	// Add mcp-config EmptyDir for merged output
+	volumes = append(volumes, corev1.Volume{
+		Name: "mcp-config",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	})
+
 	return volumes
 }
 
@@ -1444,6 +1572,147 @@ func (m *KubernetesSessionManager) getSessionStatusFromDeployment(sessionID stri
 		return "starting"
 	}
 	return "unhealthy"
+}
+
+// buildMCPSetupInitContainer builds the init container for MCP server configuration setup
+func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *kubernetesSession, req *RunServerRequest) corev1.Container {
+	// Use the main container image if InitContainerImage is not specified
+	initImage := m.k8sConfig.InitContainerImage
+	if initImage == "" {
+		initImage = m.k8sConfig.Image
+	}
+
+	// Build envFrom for environment variables needed by MCP configs
+	var envFrom []corev1.EnvFromSource
+
+	// Add GitHub secret environment (may contain tokens used in MCP configs)
+	if m.k8sConfig.GitHubSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.GitHubSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	// Add team-based credentials Secrets (for environment variable expansion)
+	for _, team := range req.Teams {
+		secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(team))
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: secretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	// Add user-specific credentials Secret
+	if req.UserID != "" {
+		userSecretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.UserID))
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: userSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	return corev1.Container{
+		Name:            "setup-mcp",
+		Image:           initImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c"},
+		Args:            []string{setupMCPServersScript},
+		EnvFrom:         envFrom,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "mcp-config-source",
+				MountPath: "/mcp-config-source",
+				ReadOnly:  true,
+			},
+			{
+				Name:      "mcp-config",
+				MountPath: "/mcp-config",
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
+}
+
+// buildMainContainerVolumeMounts builds the volume mounts for the main container
+func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.VolumeMount {
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "workdir",
+			MountPath: "/home/agentapi/workdir",
+		},
+		{
+			Name:      "claude-config",
+			MountPath: "/home/agentapi/.claude.json",
+			SubPath:   ".claude.json",
+		},
+		{
+			Name:      "claude-config",
+			MountPath: "/home/agentapi/.claude",
+			SubPath:   ".claude",
+		},
+		// Mount notification subscriptions from Secret
+		{
+			Name:      "notification-subscriptions",
+			MountPath: "/home/agentapi/.claude/notification-subscriptions",
+			ReadOnly:  true,
+		},
+		// Mount emptyDir for GitHub App PEM file (shared with clone-repo init container)
+		{
+			Name:      "github-app",
+			MountPath: "/github-app",
+			ReadOnly:  true,
+		},
+	}
+
+	// Add MCP config volume mount if enabled
+	if m.k8sConfig.MCPServersEnabled {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "mcp-config",
+			MountPath: "/mcp-config",
+			ReadOnly:  true,
+		})
+	}
+
+	return volumeMounts
+}
+
+// buildClaudeStartCommand builds the Claude start command with optional MCP config
+func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
+	// Base command that uses CLAUDE_ARGS if set
+	baseCmd := `
+# Start agentapi with Claude
+CLAUDE_CMD="claude"
+
+# Add --mcp-config if MCP config file exists
+if [ -f /mcp-config/merged.json ]; then
+    CLAUDE_CMD="$CLAUDE_CMD --mcp-config /mcp-config/merged.json"
+    echo "[STARTUP] Using MCP config: /mcp-config/merged.json"
+fi
+
+# Add CLAUDE_ARGS if set
+if [ -n "$CLAUDE_ARGS" ]; then
+    CLAUDE_CMD="$CLAUDE_CMD $CLAUDE_ARGS"
+fi
+
+echo "[STARTUP] Starting agentapi with: $CLAUDE_CMD"
+exec agentapi server --allowed-hosts '*' --allowed-origins '*' --port $AGENTAPI_PORT -- $CLAUDE_CMD
+`
+	return baseCmd
 }
 
 // restoreSessionFromService restores a session from Kubernetes Service

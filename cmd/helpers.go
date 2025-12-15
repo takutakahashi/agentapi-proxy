@@ -10,11 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/github"
+	"github.com/takutakahashi/agentapi-proxy/pkg/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
@@ -30,6 +32,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  init - Initialize Claude configuration (alias for setup-claude-code)")
 		fmt.Println("  setup-gh - Setup GitHub authentication using gh CLI")
 		fmt.Println("  send-notification - Send push notifications to registered subscriptions")
+		fmt.Println("  merge-mcp-config - Merge multiple MCP server configuration directories")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
 }
@@ -537,6 +540,108 @@ func runSendNotification(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nSuccessfully sent notifications to %d subscriptions\n", successful)
 	if failed > 0 {
 		fmt.Printf("Failed to send to %d subscriptions\n", failed)
+	}
+
+	return nil
+}
+
+// merge-mcp-config command flags
+var (
+	mcpInputDirs    string
+	mcpOutputPath   string
+	mcpExpandEnv    bool
+	mcpMergeVerbose bool
+)
+
+var mergeMCPConfigCmd = &cobra.Command{
+	Use:   "merge-mcp-config",
+	Short: "Merge multiple MCP server configuration directories",
+	Long: `Merge multiple MCP server configuration directories into a single JSON file.
+
+This command reads MCP server configurations from multiple directories and merges
+them into a single configuration file. Later directories take precedence over
+earlier ones, allowing for base/team/user layered configuration.
+
+Each directory should contain one or more JSON files with the mcpServers structure:
+{
+  "mcpServers": {
+    "server-name": {
+      "type": "http",
+      "url": "https://example.com/mcp"
+    }
+  }
+}
+
+Environment variables can be expanded in the configuration using ${VAR} or
+${VAR:-default} syntax when --expand-env is specified.
+
+Examples:
+  # Merge base, team, and user configs
+  agentapi-proxy helpers merge-mcp-config \
+    --input-dirs /mcp-config/base,/mcp-config/team,/mcp-config/user \
+    --output /mcp-config/merged.json
+
+  # With environment variable expansion
+  agentapi-proxy helpers merge-mcp-config \
+    --input-dirs /mcp-config/base,/mcp-config/user \
+    --output /mcp-config/merged.json \
+    --expand-env`,
+	RunE: runMergeMCPConfig,
+}
+
+func init() {
+	mergeMCPConfigCmd.Flags().StringVar(&mcpInputDirs, "input-dirs", "",
+		"Comma-separated list of input directories (in priority order, later takes precedence)")
+	mergeMCPConfigCmd.Flags().StringVarP(&mcpOutputPath, "output", "o", "",
+		"Output file path for merged configuration")
+	mergeMCPConfigCmd.Flags().BoolVar(&mcpExpandEnv, "expand-env", false,
+		"Expand ${VAR} and ${VAR:-default} environment variable patterns")
+	mergeMCPConfigCmd.Flags().BoolVarP(&mcpMergeVerbose, "verbose", "v", false,
+		"Verbose output")
+
+	if err := mergeMCPConfigCmd.MarkFlagRequired("input-dirs"); err != nil {
+		panic(err)
+	}
+	if err := mergeMCPConfigCmd.MarkFlagRequired("output"); err != nil {
+		panic(err)
+	}
+
+	HelpersCmd.AddCommand(mergeMCPConfigCmd)
+}
+
+func runMergeMCPConfig(cmd *cobra.Command, args []string) error {
+	dirs := strings.Split(mcpInputDirs, ",")
+
+	// Trim whitespace
+	for i := range dirs {
+		dirs[i] = strings.TrimSpace(dirs[i])
+	}
+
+	opts := mcp.MergeOptions{
+		ExpandEnv: mcpExpandEnv,
+		Verbose:   mcpMergeVerbose,
+	}
+
+	if mcpMergeVerbose {
+		opts.Logger = func(format string, args ...interface{}) {
+			fmt.Printf(format+"\n", args...)
+		}
+	}
+
+	config, err := mcp.MergeConfigs(dirs, opts)
+	if err != nil {
+		return fmt.Errorf("failed to merge configs: %w", err)
+	}
+
+	if err := mcp.WriteConfig(config, mcpOutputPath); err != nil {
+		return fmt.Errorf("failed to write output: %w", err)
+	}
+
+	serverCount := len(config.MCPServers)
+	if mcpMergeVerbose {
+		fmt.Printf("[MCP] Merged %d server(s) to %s\n", serverCount, mcpOutputPath)
+	} else {
+		fmt.Printf("Successfully merged %d MCP server(s) to %s\n", serverCount, mcpOutputPath)
 	}
 
 	return nil
