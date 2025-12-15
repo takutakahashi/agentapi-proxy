@@ -1701,7 +1701,7 @@ if [ -n "$CLAUDE_ARGS" ]; then
 fi
 
 echo "[STARTUP] Starting agentapi with: $CLAUDE_CMD"
-exec agentapi server --command "$CLAUDE_CMD" --port $AGENTAPI_PORT
+exec agentapi server --port $AGENTAPI_PORT -- $CLAUDE_CMD
 `
 	return baseCmd
 }
