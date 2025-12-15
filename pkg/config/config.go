@@ -471,7 +471,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.github_secret_name", "")
 
 	// MCP servers defaults
-	v.SetDefault("kubernetes_session.mcp_servers_enabled", false)
+	v.SetDefault("kubernetes_session.mcp_servers_enabled", true)
 	v.SetDefault("kubernetes_session.mcp_servers_base_secret", "mcp-servers-base")
 	v.SetDefault("kubernetes_session.mcp_servers_team_secret_prefix", "mcp-servers")
 	v.SetDefault("kubernetes_session.mcp_servers_user_secret_prefix", "mcp-servers")

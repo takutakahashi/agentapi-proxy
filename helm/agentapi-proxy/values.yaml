@@ -356,7 +356,7 @@ kubernetesSession:
   # Later tiers override earlier ones for servers with the same name
   mcpServers:
     # Enable MCP server loading from Secrets
-    enabled: false
+    enabled: true
 
     # Base MCP config Secret (organization-wide default servers)
     # The Secret should contain a key 'mcp-servers.json' with the MCP server configuration
