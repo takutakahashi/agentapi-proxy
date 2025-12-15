@@ -1,9 +1,13 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -1171,6 +1175,11 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *ku
 				session.setStatus("active")
 				log.Printf("[K8S_SESSION] Session %s is now active", session.id)
 
+				// Send initial message if provided
+				if session.request.InitialMessage != "" {
+					go m.sendInitialMessage(session)
+				}
+
 				// Continue watching for changes
 				m.watchDeploymentStatus(ctx, session)
 				return
@@ -1495,4 +1504,62 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
 
 	return session
+}
+
+// sendInitialMessage sends an initial message to the agentapi server in Pod after it becomes ready
+func (m *KubernetesSessionManager) sendInitialMessage(session *kubernetesSession) {
+	serviceURL := fmt.Sprintf("http://%s", session.Addr())
+
+	// Check server status first (wait for agentapi server to be ready)
+	// Use /status endpoint same as liveness probe
+	maxRetries := 30
+	for i := 0; i < maxRetries; i++ {
+		resp, err := http.Get(serviceURL + "/status")
+		if err == nil {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				log.Printf("[K8S_SESSION] Failed to close response body: %v", closeErr)
+			}
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		if i == maxRetries-1 {
+			log.Printf("[K8S_SESSION] AgentAPI server for session %s not ready after %d retries, skipping initial message", session.id, maxRetries)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Prepare message request
+	messageReq := map[string]interface{}{
+		"content": session.request.InitialMessage,
+		"type":    "user",
+	}
+
+	jsonBody, err := json.Marshal(messageReq)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to marshal message request for session %s: %v", session.id, err)
+		return
+	}
+
+	// Send message to agentapi
+	url := serviceURL + "/message"
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to send initial message to session %s: %v", session.id, err)
+		return
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("[K8S_SESSION] Failed to close response body: %v", closeErr)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[K8S_SESSION] Failed to send initial message to session %s (status: %d): %s", session.id, resp.StatusCode, string(body))
+		return
+	}
+
+	log.Printf("[K8S_SESSION] Successfully sent initial message to session %s", session.id)
 }
