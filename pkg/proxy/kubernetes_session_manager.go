@@ -495,7 +495,8 @@ fi
 # Copy notification subscriptions from Secret to writable EmptyDir
 if [ -d /notification-subscriptions-source ] && [ "$(ls -A /notification-subscriptions-source 2>/dev/null)" ]; then
     cp -r /notification-subscriptions-source/* /notifications/
-    chmod -R 755 /notifications
+    # chmod only the contents, not the mount point itself
+    find /notifications -mindepth 1 -exec chmod 644 {} \; 2>/dev/null || true
     echo "Notification subscriptions copied"
 fi
 
