@@ -493,10 +493,9 @@ if [ -f /claude-credentials/credentials.json ]; then
 fi
 
 # Copy notification subscriptions from Secret to writable EmptyDir
+# Use -L to follow symlinks (Secret mounts use symlinks)
 if [ -d /notification-subscriptions-source ] && [ "$(ls -A /notification-subscriptions-source 2>/dev/null)" ]; then
-    cp -r /notification-subscriptions-source/* /notifications/
-    # chmod only the contents, not the mount point itself
-    find /notifications -mindepth 1 -exec chmod 644 {} \; 2>/dev/null || true
+    cp -rL /notification-subscriptions-source/* /notifications/
     echo "Notification subscriptions copied"
 fi
 
