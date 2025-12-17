@@ -492,6 +492,13 @@ if [ -f /claude-credentials/credentials.json ]; then
     echo "Credentials file copied"
 fi
 
+# Copy notification subscriptions from Secret to writable EmptyDir
+# Use -L to follow symlinks (Secret mounts use symlinks)
+if [ -d /notification-subscriptions-source ] && [ "$(ls -A /notification-subscriptions-source 2>/dev/null)" ]; then
+    cp -rL /notification-subscriptions-source/* /notifications/
+    echo "Notification subscriptions copied"
+fi
+
 # Set permissions (running as user 999)
 chmod 644 /claude-config/.claude.json
 chmod -R 755 /claude-config/.claude
@@ -1019,6 +1026,17 @@ func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(session *kubern
 			MountPath: "/claude-credentials",
 			ReadOnly:  true,
 		},
+		// Notification subscriptions source (Secret, read-only)
+		{
+			Name:      "notification-subscriptions-source",
+			MountPath: "/notification-subscriptions-source",
+			ReadOnly:  true,
+		},
+		// Notifications directory (EmptyDir, writable)
+		{
+			Name:      "notifications",
+			MountPath: "/notifications",
+		},
 	}
 
 	return corev1.Container{
@@ -1107,16 +1125,24 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 		},
 	}
 
-	// Add notification subscription Secret volume
+	// Add notification subscription Secret volume (source for init container)
 	// Secret name follows the pattern: notification-subscriptions-{userID}
 	notificationSecretName := fmt.Sprintf("notification-subscriptions-%s", sanitizeLabelValue(session.request.UserID))
 	volumes = append(volumes, corev1.Volume{
-		Name: "notification-subscriptions",
+		Name: "notification-subscriptions-source",
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
 				SecretName: notificationSecretName,
 				Optional:   boolPtr(true), // Optional - user may not have subscriptions
 			},
+		},
+	})
+
+	// EmptyDir for notifications (writable, populated by init container from Secret)
+	volumes = append(volumes, corev1.Volume{
+		Name: "notifications",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
 	})
 
@@ -1665,11 +1691,10 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.Vol
 			MountPath: "/home/agentapi/.claude",
 			SubPath:   ".claude",
 		},
-		// Mount notification subscriptions from Secret
+		// Mount notifications directory (EmptyDir, writable)
 		{
-			Name:      "notification-subscriptions",
-			MountPath: "/home/agentapi/.claude/notification-subscriptions",
-			ReadOnly:  true,
+			Name:      "notifications",
+			MountPath: "/home/agentapi/notifications",
 		},
 		// Mount emptyDir for GitHub App PEM file (shared with clone-repo init container)
 		{

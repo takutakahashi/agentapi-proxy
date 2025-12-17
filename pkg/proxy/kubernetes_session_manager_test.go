@@ -821,8 +821,8 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 	if !volumeMountNames["claude-config"] {
 		t.Error("Expected claude-config volume mount")
 	}
-	if !volumeMountNames["notification-subscriptions"] {
-		t.Error("Expected notification-subscriptions volume mount")
+	if !volumeMountNames["notifications"] {
+		t.Error("Expected notifications volume mount")
 	}
 	if !volumeMountNames["github-app"] {
 		t.Error("Expected github-app volume mount")
