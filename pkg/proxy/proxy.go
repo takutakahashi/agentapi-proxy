@@ -17,7 +17,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -36,8 +38,9 @@ type Proxy struct {
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
-	container          *di.Container  // Internal DI container
-	sessionManager     SessionManager // Session lifecycle manager
+	container          *di.Container                // Internal DI container
+	sessionManager     SessionManager               // Session lifecycle manager
+	settingsRepo       portrepos.SettingsRepository // Settings repository (Kubernetes mode only)
 }
 
 // NewProxy creates a new proxy instance
@@ -113,6 +116,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 
 	// Initialize session manager based on configuration
 	var sessionManager SessionManager
+	var settingsRepo portrepos.SettingsRepository
 	if cfg.KubernetesSession.Enabled {
 		log.Printf("[PROXY] Kubernetes session management enabled")
 		k8sSessionManager, err := NewKubernetesSessionManager(cfg, verbose, lgr)
@@ -122,6 +126,14 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		} else {
 			sessionManager = k8sSessionManager
 			log.Printf("[PROXY] Kubernetes session manager initialized successfully")
+			// Initialize settings repository for Kubernetes mode
+			settingsRepo = repositories.NewKubernetesSettingsRepository(
+				k8sSessionManager.GetClient(),
+				k8sSessionManager.GetNamespace(),
+			)
+			// Set settings repository in session manager for Bedrock integration
+			k8sSessionManager.SetSettingsRepository(settingsRepo)
+			log.Printf("[PROXY] Settings repository initialized for Kubernetes mode")
 		}
 	} else {
 		log.Printf("[PROXY] Using local session management")
@@ -136,6 +148,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		userDirMgr:     userDirMgr,
 		container:      container,
 		sessionManager: sessionManager,
+		settingsRepo:   settingsRepo,
 	}
 
 	// Add logging middleware if verbose
