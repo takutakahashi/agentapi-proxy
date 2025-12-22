@@ -1,0 +1,292 @@
+openapi: "3.0.3"
+info:
+  title: Settings API
+  description: |
+    API for managing user and team settings (e.g., Bedrock configuration) for agentapi-proxy.
+    Settings are stored as Kubernetes Secrets and used to configure session environments.
+  version: "1.0.0"
+
+servers:
+  - url: /
+    description: Relative to agentapi-proxy base URL
+
+security:
+  - bearerAuth: []
+
+paths:
+  /settings/{name}:
+    get:
+      summary: Get settings
+      description: |
+        Retrieves settings for the specified name. The name can be a user ID or team name
+        (org/team-slug format). Access is restricted based on user permissions.
+      operationId: getSettings
+      tags:
+        - Settings
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Settings name (user ID or sanitized team name)
+          schema:
+            type: string
+          example: myorg-backend-team
+      responses:
+        "200":
+          description: Settings retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResponse"
+        "400":
+          description: Bad request - name is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Settings not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    put:
+      summary: Create or update settings
+      description: |
+        Creates or updates settings for the specified name.
+        Requires modify permission (admin, team maintainer, or own settings).
+      operationId: updateSettings
+      tags:
+        - Settings
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Settings name (user ID or sanitized team name)
+          schema:
+            type: string
+          example: myorg-backend-team
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSettingsRequest"
+      responses:
+        "200":
+          description: Settings updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResponse"
+        "400":
+          description: Bad request - invalid request body or validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      summary: Delete settings
+      description: |
+        Deletes settings for the specified name.
+        Requires modify permission (admin, team maintainer, or own settings).
+      operationId: deleteSettings
+      tags:
+        - Settings
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Settings name (user ID or sanitized team name)
+          schema:
+            type: string
+          example: myorg-backend-team
+      responses:
+        "200":
+          description: Settings deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResponse"
+        "400":
+          description: Bad request - name is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Settings not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: JWT Bearer token for authentication
+
+  schemas:
+    BedrockSettings:
+      type: object
+      description: Amazon Bedrock configuration settings
+      required:
+        - enabled
+        - region
+      properties:
+        enabled:
+          type: boolean
+          description: Whether Bedrock is enabled
+        region:
+          type: string
+          description: AWS region for Bedrock
+          example: us-east-1
+        model:
+          type: string
+          description: Anthropic model to use (optional, defaults to claude-sonnet-4-20250514)
+          example: anthropic.claude-sonnet-4-20250514-v1:0
+        access_key_id:
+          type: string
+          description: AWS Access Key ID (optional, can use IAM role instead)
+        secret_access_key:
+          type: string
+          description: AWS Secret Access Key (optional, can use IAM role instead)
+        role_arn:
+          type: string
+          description: AWS IAM Role ARN to assume (optional)
+          example: arn:aws:iam::123456789012:role/BedrockAccessRole
+        profile:
+          type: string
+          description: AWS profile name (optional)
+
+    UpdateSettingsRequest:
+      type: object
+      description: Request body for updating settings
+      properties:
+        bedrock:
+          $ref: "#/components/schemas/BedrockSettings"
+
+    SettingsResponse:
+      type: object
+      description: Settings response
+      properties:
+        name:
+          type: string
+          description: Settings name (user ID or team name)
+        bedrock:
+          allOf:
+            - $ref: "#/components/schemas/BedrockSettings"
+            - description: "Bedrock settings. Note: secret_access_key is masked in response"
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    DeleteResponse:
+      type: object
+      description: Delete operation response
+      properties:
+        success:
+          type: boolean
+          description: Whether the deletion was successful
+
+    Error:
+      type: object
+      description: Error response
+      properties:
+        message:
+          type: string
+          description: Error message
+
+tags:
+  - name: Settings
+    description: |
+      User and team settings management. Settings are used to configure session environments,
+      such as Amazon Bedrock integration.
+
+      ## How Settings are Applied to Sessions
+
+      When a session is created via POST /start, the proxy:
+      1. Looks up settings for the user ID (highest priority)
+      2. If not found, looks up settings for each team the user belongs to (first match wins)
+      3. Creates a session-specific Secret (agentapi-session-{session-id}-env) containing the settings
+      4. Mounts this Secret as environment variables in the session Pod
+
+      This ensures credentials are stored securely in Kubernetes Secrets rather than
+      being exposed in Pod specifications.
+
+      ## Kubernetes Secret Structure
+
+      Settings are stored in Secrets named `agentapi-settings-{name}` with the following structure:
+      - Data key: `settings.json`
+      - Content: JSON representation of settings
+
+      Session-specific Secrets are named `agentapi-session-{session-id}-env` and contain:
+      - `ANTHROPIC_BEDROCK`: "true" (if Bedrock enabled)
+      - `AWS_REGION`: Bedrock region
+      - `AWS_ACCESS_KEY_ID`: Access key (if configured)
+      - `AWS_SECRET_ACCESS_KEY`: Secret key (if configured)
+      - `AWS_ROLE_ARN`: Role ARN (if configured)
+      - `ANTHROPIC_MODEL`: Model ID (if configured)

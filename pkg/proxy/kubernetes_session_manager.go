@@ -641,6 +641,24 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Adding user credentials Secret %s for session %s", userSecretName, session.id)
 	}
 
+	// Create and add Session Env Secret from Settings (Bedrock configuration, etc.)
+	// This secret is created dynamically based on user/team settings
+	sessionEnvSecretName, err := m.createSessionEnvSecret(ctx, session, req.UserID, req.Teams)
+	if err != nil {
+		return fmt.Errorf("failed to create session env secret: %w", err)
+	}
+	if sessionEnvSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: sessionEnvSecretName,
+				},
+				Optional: boolPtr(false), // Required since we just created it
+			},
+		})
+		log.Printf("[K8S_SESSION] Adding session env secret %s for session %s", sessionEnvSecretName, session.id)
+	}
+
 	// Build container spec
 	container := corev1.Container{
 		Name:            "agentapi",
@@ -755,7 +773,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		},
 	}
 
-	_, err := m.client.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
+	_, err = m.client.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
 }
 
@@ -1405,6 +1423,13 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		}
 	}
 
+	// Delete Session Env Secret (created from Settings)
+	sessionEnvSecretName := fmt.Sprintf("agentapi-session-%s-env", session.id)
+	err = m.client.CoreV1().Secrets(m.namespace).Delete(ctx, sessionEnvSecretName, deleteOptions)
+	if err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("session-env-secret: %v", err))
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to delete resources: %s", strings.Join(errs, ", "))
 	}
@@ -1496,39 +1521,95 @@ func (m *KubernetesSessionManager) buildEnvVars(session *kubernetesSession, req 
 		}
 	}
 
-	// Add Bedrock settings from settings repository
-	envVars = m.addBedrockEnvVars(envVars, req.UserID, req.Teams)
+	// Note: Bedrock settings are now injected via Session Env Secret (see createSessionEnvSecret)
+	// This provides better security by not exposing credentials in pod spec
 
 	return envVars
 }
 
-// addBedrockEnvVars adds Bedrock-related environment variables based on settings
-func (m *KubernetesSessionManager) addBedrockEnvVars(envVars []corev1.EnvVar, userID string, teams []string) []corev1.EnvVar {
-	if m.settingsRepo == nil {
-		return envVars
+// createSessionEnvSecret creates a Secret containing environment variables for the session
+// based on Settings (Bedrock configuration, etc.)
+// Returns the secret name if created, empty string if no settings found
+func (m *KubernetesSessionManager) createSessionEnvSecret(
+	ctx context.Context,
+	session *kubernetesSession,
+	userID string,
+	teams []string,
+) (string, error) {
+	secretName := fmt.Sprintf("agentapi-session-%s-env", session.id)
+
+	// Build secret data from settings
+	data := make(map[string][]byte)
+
+	// Add Bedrock settings if available
+	if err := m.addBedrockSecretData(ctx, data, userID, teams); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to add Bedrock settings: %v", err)
 	}
 
-	ctx := context.Background()
+	// Skip if no data to add
+	if len(data) == 0 {
+		return "", nil
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id":    session.id,
+				"agentapi.proxy/secret-type":   "session-env",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"app.kubernetes.io/name":       "agentapi-session",
+				"app.kubernetes.io/instance":   session.id,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
+	}
+
+	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to create session env secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created session env secret %s for session %s", secretName, session.id)
+	return secretName, nil
+}
+
+// addBedrockSecretData adds Bedrock-related data to the secret based on settings
+func (m *KubernetesSessionManager) addBedrockSecretData(
+	ctx context.Context,
+	data map[string][]byte,
+	userID string,
+	teams []string,
+) error {
+	if m.settingsRepo == nil {
+		return nil
+	}
 
 	// Try user settings first
 	settings, err := m.settingsRepo.FindByName(ctx, sanitizeSecretName(userID))
 	if err == nil && settings != nil && settings.Bedrock() != nil && settings.Bedrock().Enabled() {
-		return m.appendBedrockEnvVars(envVars, settings.Bedrock())
+		m.appendBedrockSecretData(data, settings.Bedrock())
+		log.Printf("[K8S_SESSION] Using Bedrock settings from user: %s", userID)
+		return nil
 	}
 
 	// Try team settings (first match wins)
 	for _, team := range teams {
 		settings, err := m.settingsRepo.FindByName(ctx, sanitizeSecretName(team))
 		if err == nil && settings != nil && settings.Bedrock() != nil && settings.Bedrock().Enabled() {
-			return m.appendBedrockEnvVars(envVars, settings.Bedrock())
+			m.appendBedrockSecretData(data, settings.Bedrock())
+			log.Printf("[K8S_SESSION] Using Bedrock settings from team: %s", team)
+			return nil
 		}
 	}
 
-	return envVars
+	return nil
 }
 
-// appendBedrockEnvVars appends Bedrock-specific environment variables
-func (m *KubernetesSessionManager) appendBedrockEnvVars(envVars []corev1.EnvVar, bedrock interface {
+// appendBedrockSecretData appends Bedrock-specific data to the secret
+func (m *KubernetesSessionManager) appendBedrockSecretData(data map[string][]byte, bedrock interface {
 	Enabled() bool
 	Region() string
 	Model() string
@@ -1536,33 +1617,31 @@ func (m *KubernetesSessionManager) appendBedrockEnvVars(envVars []corev1.EnvVar,
 	SecretAccessKey() string
 	RoleARN() string
 	Profile() string
-}) []corev1.EnvVar {
+}) {
 	if !bedrock.Enabled() {
-		return envVars
+		return
 	}
 
-	log.Printf("[K8S_SESSION] Adding Bedrock environment variables (region: %s)", bedrock.Region())
+	log.Printf("[K8S_SESSION] Adding Bedrock settings to session secret (region: %s)", bedrock.Region())
 
-	envVars = append(envVars, corev1.EnvVar{Name: "ANTHROPIC_BEDROCK", Value: "true"})
-	envVars = append(envVars, corev1.EnvVar{Name: "AWS_REGION", Value: bedrock.Region()})
+	data["ANTHROPIC_BEDROCK"] = []byte("true")
+	data["AWS_REGION"] = []byte(bedrock.Region())
 
 	if bedrock.Model() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "ANTHROPIC_MODEL", Value: bedrock.Model()})
+		data["ANTHROPIC_MODEL"] = []byte(bedrock.Model())
 	}
 	if bedrock.AccessKeyID() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AWS_ACCESS_KEY_ID", Value: bedrock.AccessKeyID()})
+		data["AWS_ACCESS_KEY_ID"] = []byte(bedrock.AccessKeyID())
 	}
 	if bedrock.SecretAccessKey() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AWS_SECRET_ACCESS_KEY", Value: bedrock.SecretAccessKey()})
+		data["AWS_SECRET_ACCESS_KEY"] = []byte(bedrock.SecretAccessKey())
 	}
 	if bedrock.RoleARN() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AWS_ROLE_ARN", Value: bedrock.RoleARN()})
+		data["AWS_ROLE_ARN"] = []byte(bedrock.RoleARN())
 	}
 	if bedrock.Profile() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AWS_PROFILE", Value: bedrock.Profile()})
+		data["AWS_PROFILE"] = []byte(bedrock.Profile())
 	}
-
-	return envVars
 }
 
 // sanitizeLabelKey sanitizes a string to be used as a Kubernetes label key
