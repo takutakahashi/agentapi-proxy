@@ -202,22 +202,24 @@ func (sm *StartupManager) createAgentAPICommand(ctx context.Context, cfg *Startu
 		}
 	}
 
-	args = append(args, "--", "claude")
-
-	// Add -c option for restored sessions to continue previous conversation
-	if cfg.IsRestore {
-		args = append(args, "-c")
-	}
-
+	// Prepare Claude command with fallback pattern: claude -c || claude
+	// This will try to resume existing session, and if not available, start new session
+	var claudeCmd string
 	if cfg.ClaudeArgs != "" {
 		// Parse ClaudeArgs safely to prevent command injection
 		parsedArgs, err := parseCommandArgs(cfg.ClaudeArgs)
 		if err != nil {
 			log.Printf("Warning: Failed to parse ClaudeArgs: %v", err)
+			claudeCmd = "claude -c || claude"
 		} else {
-			args = append(args, parsedArgs...)
+			claudeArgsStr := strings.Join(parsedArgs, " ")
+			claudeCmd = fmt.Sprintf("claude -c %s || claude %s", claudeArgsStr, claudeArgsStr)
 		}
+	} else {
+		claudeCmd = "claude -c || claude"
 	}
+
+	args = append(args, "--", "sh", "-c", claudeCmd)
 
 	cmd := exec.CommandContext(ctx, "agentapi", args...)
 
