@@ -22,6 +22,7 @@ type HandlerRegistry struct {
 	healthHandlers       *HealthHandlers
 	sessionHandlers      *SessionHandlers
 	settingsHandlers     *SettingsHandlers
+	userHandlers         *UserHandlers
 	customHandlers       []CustomHandler
 }
 
@@ -41,6 +42,7 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 			healthHandlers:       NewHealthHandlers(),
 			sessionHandlers:      NewSessionHandlers(proxy),
 			settingsHandlers:     NewSettingsHandlers(proxy.settingsRepo),
+			userHandlers:         NewUserHandlers(proxy),
 			customHandlers:       make([]CustomHandler, 0),
 		},
 	}
@@ -108,6 +110,11 @@ func (r *Router) registerCoreRoutes() error {
 
 // registerConditionalRoutes registers routes based on proxy configuration
 func (r *Router) registerConditionalRoutes() error {
+	// User info endpoint (requires authentication)
+	log.Printf("[ROUTES] Registering user info endpoint...")
+	r.echo.GET("/user/info", r.handlers.userHandlers.GetUserInfo, auth.RequirePermission(entities.PermissionSessionRead, r.proxy.container.AuthService))
+	log.Printf("[ROUTES] User info endpoint registered")
+
 	// Add notification routes if service is available
 	if r.proxy.notificationSvc != nil {
 		log.Printf("[ROUTES] Registering notification endpoints...")
