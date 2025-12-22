@@ -21,6 +21,7 @@ type HandlerRegistry struct {
 	notificationHandlers *NotificationHandlers
 	healthHandlers       *HealthHandlers
 	sessionHandlers      *SessionHandlers
+	settingsHandlers     *SettingsHandlers
 	customHandlers       []CustomHandler
 }
 
@@ -39,6 +40,7 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 			notificationHandlers: NewNotificationHandlers(proxy.notificationSvc),
 			healthHandlers:       NewHealthHandlers(),
 			sessionHandlers:      NewSessionHandlers(proxy),
+			settingsHandlers:     NewSettingsHandlers(proxy.settingsRepo),
 			customHandlers:       make([]CustomHandler, 0),
 		},
 	}
@@ -120,6 +122,17 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Notification endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Notification service not available, skipping notification routes")
+	}
+
+	// Add settings routes if settings repository is available (Kubernetes mode only)
+	if r.proxy.settingsRepo != nil && r.handlers.settingsHandlers != nil {
+		log.Printf("[ROUTES] Registering settings endpoints...")
+		r.echo.GET("/settings/:name", r.handlers.settingsHandlers.GetSettings, auth.RequirePermission(entities.PermissionSessionRead, r.proxy.container.AuthService))
+		r.echo.PUT("/settings/:name", r.handlers.settingsHandlers.UpdateSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.proxy.container.AuthService))
+		r.echo.DELETE("/settings/:name", r.handlers.settingsHandlers.DeleteSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.proxy.container.AuthService))
+		log.Printf("[ROUTES] Settings endpoints registered")
+	} else {
+		log.Printf("[ROUTES] Settings repository not available, skipping settings routes")
 	}
 
 	return nil
