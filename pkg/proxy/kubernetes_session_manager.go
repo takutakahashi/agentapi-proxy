@@ -1341,9 +1341,97 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *ku
 				return
 			}
 
+			// Check for Pod errors (CrashLoopBackOff, ImagePullBackOff, etc.)
+			if hasError, errorMsg := m.checkPodErrorStatus(session.id); hasError {
+				session.setError(errorMsg)
+				log.Printf("[K8S_SESSION] Session %s failed: %s", session.id, errorMsg)
+				return
+			}
+
 			session.setStatus("starting")
 		}
 	}
+}
+
+// checkPodErrorStatus checks Pod containers for error states like CrashLoopBackOff or ImagePullBackOff
+// Returns (hasError, errorMessage)
+func (m *KubernetesSessionManager) checkPodErrorStatus(sessionID string) (bool, string) {
+	// List pods by session ID label
+	labelSelector := fmt.Sprintf("agentapi.proxy/session-id=%s", sessionID)
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(
+		context.Background(),
+		metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to list pods for session %s: %v", sessionID, err)
+		return false, ""
+	}
+
+	if len(pods.Items) == 0 {
+		return false, ""
+	}
+
+	// Check the first pod (there should only be one per session)
+	pod := pods.Items[0]
+
+	// Check init container statuses first
+	for _, containerStatus := range pod.Status.InitContainerStatuses {
+		if containerStatus.State.Waiting != nil {
+			reason := containerStatus.State.Waiting.Reason
+			message := containerStatus.State.Waiting.Message
+			if reason == "CrashLoopBackOff" || reason == "ImagePullBackOff" || reason == "ErrImagePull" || reason == "CreateContainerConfigError" {
+				errorMsg := fmt.Sprintf("Init container '%s' failed: %s", containerStatus.Name, reason)
+				if message != "" {
+					errorMsg = fmt.Sprintf("%s - %s", errorMsg, message)
+				}
+				log.Printf("[K8S_SESSION] Pod error detected for session %s: %s", sessionID, errorMsg)
+				return true, errorMsg
+			}
+		}
+		if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.ExitCode != 0 {
+			errorMsg := fmt.Sprintf("Init container '%s' failed with exit code %d: %s",
+				containerStatus.Name,
+				containerStatus.State.Terminated.ExitCode,
+				containerStatus.State.Terminated.Reason)
+			if containerStatus.State.Terminated.Message != "" {
+				errorMsg = fmt.Sprintf("%s - %s", errorMsg, containerStatus.State.Terminated.Message)
+			}
+			log.Printf("[K8S_SESSION] Pod error detected for session %s: %s", sessionID, errorMsg)
+			return true, errorMsg
+		}
+	}
+
+	// Check main container statuses
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.State.Waiting != nil {
+			reason := containerStatus.State.Waiting.Reason
+			message := containerStatus.State.Waiting.Message
+			// Check for known error states
+			if reason == "CrashLoopBackOff" || reason == "ImagePullBackOff" || reason == "ErrImagePull" || reason == "CreateContainerConfigError" {
+				errorMsg := fmt.Sprintf("Container '%s' failed: %s", containerStatus.Name, reason)
+				if message != "" {
+					errorMsg = fmt.Sprintf("%s - %s", errorMsg, message)
+				}
+				log.Printf("[K8S_SESSION] Pod error detected for session %s: %s", sessionID, errorMsg)
+				return true, errorMsg
+			}
+		}
+		if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.ExitCode != 0 {
+			// Container terminated with non-zero exit code
+			errorMsg := fmt.Sprintf("Container '%s' terminated with exit code %d: %s",
+				containerStatus.Name,
+				containerStatus.State.Terminated.ExitCode,
+				containerStatus.State.Terminated.Reason)
+			if containerStatus.State.Terminated.Message != "" {
+				errorMsg = fmt.Sprintf("%s - %s", errorMsg, containerStatus.State.Terminated.Message)
+			}
+			log.Printf("[K8S_SESSION] Pod error detected for session %s: %s", sessionID, errorMsg)
+			return true, errorMsg
+		}
+	}
+
+	return false, ""
 }
 
 // watchDeploymentStatus continuously watches the deployment status after it becomes ready
@@ -1368,6 +1456,12 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 			}
 
 			if deployment.Status.ReadyReplicas == 0 {
+				// Check for Pod errors (CrashLoopBackOff, ImagePullBackOff, etc.)
+				if hasError, errorMsg := m.checkPodErrorStatus(session.id); hasError {
+					session.setError(errorMsg)
+					log.Printf("[K8S_SESSION] Session %s failed: %s", session.id, errorMsg)
+					return
+				}
 				session.setStatus("unhealthy")
 			} else {
 				session.setStatus("active")
@@ -1652,25 +1746,32 @@ func (m *KubernetesSessionManager) SetSettingsRepository(repo repositories.Setti
 }
 
 // getSessionStatusFromDeployment determines session status from Deployment state
-func (m *KubernetesSessionManager) getSessionStatusFromDeployment(sessionID string) string {
+// Returns (status, errorMessage)
+func (m *KubernetesSessionManager) getSessionStatusFromDeployment(sessionID string) (string, string) {
 	deploymentName := fmt.Sprintf("agentapi-session-%s", sessionID)
 	deployment, err := m.client.AppsV1().Deployments(m.namespace).Get(
 		context.Background(), deploymentName, metav1.GetOptions{})
 
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return "stopped"
+			return "stopped", ""
 		}
-		return "unknown"
+		return "unknown", ""
 	}
 
 	if deployment.Status.ReadyReplicas > 0 {
-		return "active"
+		return "active", ""
 	}
+
+	// Check for Pod errors
+	if hasError, errorMsg := m.checkPodErrorStatus(sessionID); hasError {
+		return "failed", errorMsg
+	}
+
 	if deployment.Status.Replicas > 0 {
-		return "starting"
+		return "starting", ""
 	}
-	return "unhealthy"
+	return "unhealthy", ""
 }
 
 // buildMCPSetupInitContainer builds the init container for MCP server configuration setup
@@ -1844,6 +1945,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Get status and error message from deployment/pod state
+	status, errorMessage := m.getSessionStatusFromDeployment(sessionID)
+
 	session := &kubernetesSession{
 		id:             sessionID,
 		deploymentName: fmt.Sprintf("agentapi-session-%s", sessionID),
@@ -1852,7 +1956,8 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		servicePort:    servicePort,
 		namespace:      m.namespace,
 		startedAt:      createdAt,
-		status:         m.getSessionStatusFromDeployment(sessionID),
+		status:         status,
+		errorMessage:   errorMessage,
 		cancelFunc:     cancel,
 		request: &RunServerRequest{
 			UserID: userID,

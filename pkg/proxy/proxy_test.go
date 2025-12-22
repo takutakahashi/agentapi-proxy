@@ -134,6 +134,7 @@ func (s *mockSession) Addr() string            { return fmt.Sprintf("localhost:%
 func (s *mockSession) UserID() string          { return s.userID }
 func (s *mockSession) Tags() map[string]string { return s.tags }
 func (s *mockSession) Status() string          { return s.status }
+func (s *mockSession) ErrorMessage() string    { return "" }
 func (s *mockSession) StartedAt() time.Time    { return s.startedAt }
 func (s *mockSession) Cancel()                 { s.cancelled = true }
 

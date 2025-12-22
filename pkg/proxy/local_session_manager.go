@@ -55,6 +55,12 @@ func (s *localSession) Status() string {
 	return s.status
 }
 
+// ErrorMessage returns the error message if the session failed
+// Local sessions don't track error messages, so this always returns empty string
+func (s *localSession) ErrorMessage() string {
+	return ""
+}
+
 // StartedAt returns when the session was started
 func (s *localSession) StartedAt() time.Time {
 	return s.startedAt

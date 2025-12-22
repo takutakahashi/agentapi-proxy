@@ -18,6 +18,7 @@ type kubernetesSession struct {
 	namespace      string
 	startedAt      time.Time
 	status         string
+	errorMessage   string
 	cancelFunc     context.CancelFunc
 	mutex          sync.RWMutex
 }
@@ -50,6 +51,13 @@ func (s *kubernetesSession) Status() string {
 	return s.status
 }
 
+// ErrorMessage returns the error message if the session failed
+func (s *kubernetesSession) ErrorMessage() string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.errorMessage
+}
+
 // StartedAt returns when the session was started
 func (s *kubernetesSession) StartedAt() time.Time {
 	return s.startedAt
@@ -67,6 +75,14 @@ func (s *kubernetesSession) setStatus(status string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	s.status = status
+}
+
+// setError updates the session status to failed and sets the error message
+func (s *kubernetesSession) setError(errorMessage string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.status = "failed"
+	s.errorMessage = errorMessage
 }
 
 // ServiceDNS returns the Kubernetes Service DNS name for this session

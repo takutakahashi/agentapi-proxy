@@ -159,6 +159,10 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 			"addr":       session.Addr(),
 			"tags":       session.Tags(),
 		}
+		// Include error_message if the session has failed
+		if errorMsg := session.ErrorMessage(); errorMsg != "" {
+			sessionData["error_message"] = errorMsg
+		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
 
