@@ -125,10 +125,34 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 	if req.Bedrock != nil {
 		bedrock := entities.NewBedrockSettings(req.Bedrock.Enabled)
 		bedrock.SetModel(req.Bedrock.Model)
-		bedrock.SetAccessKeyID(req.Bedrock.AccessKeyID)
-		bedrock.SetSecretAccessKey(req.Bedrock.SecretAccessKey)
-		bedrock.SetRoleARN(req.Bedrock.RoleARN)
-		bedrock.SetProfile(req.Bedrock.Profile)
+
+		// Preserve existing credentials if new values are empty
+		existingBedrock := settings.Bedrock()
+
+		accessKeyID := req.Bedrock.AccessKeyID
+		if accessKeyID == "" && existingBedrock != nil {
+			accessKeyID = existingBedrock.AccessKeyID()
+		}
+		bedrock.SetAccessKeyID(accessKeyID)
+
+		secretAccessKey := req.Bedrock.SecretAccessKey
+		if secretAccessKey == "" && existingBedrock != nil {
+			secretAccessKey = existingBedrock.SecretAccessKey()
+		}
+		bedrock.SetSecretAccessKey(secretAccessKey)
+
+		roleARN := req.Bedrock.RoleARN
+		if roleARN == "" && existingBedrock != nil {
+			roleARN = existingBedrock.RoleARN()
+		}
+		bedrock.SetRoleARN(roleARN)
+
+		profile := req.Bedrock.Profile
+		if profile == "" && existingBedrock != nil {
+			profile = existingBedrock.Profile()
+		}
+		bedrock.SetProfile(profile)
+
 		settings.SetBedrock(bedrock)
 	}
 
