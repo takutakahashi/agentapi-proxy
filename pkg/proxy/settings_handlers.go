@@ -34,7 +34,6 @@ func (h *SettingsHandlers) SetCredentialsSecretSyncer(syncer services.Credential
 // BedrockSettingsRequest is the request body for Bedrock settings
 type BedrockSettingsRequest struct {
 	Enabled         bool   `json:"enabled"`
-	Region          string `json:"region"`
 	Model           string `json:"model,omitempty"`
 	AccessKeyID     string `json:"access_key_id,omitempty"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
@@ -50,7 +49,6 @@ type UpdateSettingsRequest struct {
 // BedrockSettingsResponse is the response body for Bedrock settings
 type BedrockSettingsResponse struct {
 	Enabled         bool   `json:"enabled"`
-	Region          string `json:"region"`
 	Model           string `json:"model,omitempty"`
 	AccessKeyID     string `json:"access_key_id,omitempty"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
@@ -125,7 +123,7 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 
 	// Update Bedrock settings
 	if req.Bedrock != nil {
-		bedrock := entities.NewBedrockSettings(req.Bedrock.Enabled, req.Bedrock.Region)
+		bedrock := entities.NewBedrockSettings(req.Bedrock.Enabled)
 		bedrock.SetModel(req.Bedrock.Model)
 		bedrock.SetAccessKeyID(req.Bedrock.AccessKeyID)
 		bedrock.SetSecretAccessKey(req.Bedrock.SecretAccessKey)
@@ -272,7 +270,6 @@ func (h *SettingsHandlers) toResponse(settings *entities.Settings) *SettingsResp
 	if bedrock := settings.Bedrock(); bedrock != nil {
 		resp.Bedrock = &BedrockSettingsResponse{
 			Enabled: bedrock.Enabled(),
-			Region:  bedrock.Region(),
 			Model:   bedrock.Model(),
 			// AccessKeyID and SecretAccessKey are not returned for security reasons
 			RoleARN: bedrock.RoleARN(),

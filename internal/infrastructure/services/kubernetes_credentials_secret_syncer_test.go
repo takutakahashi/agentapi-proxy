@@ -18,7 +18,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync(t *testing.T) {
 
 	// Create settings with Bedrock config
 	settings := entities.NewSettings("test-user")
-	bedrock := entities.NewBedrockSettings(true, "us-east-1")
+	bedrock := entities.NewBedrockSettings(true)
 	bedrock.SetModel("anthropic.claude-sonnet-4-20250514-v1:0")
 	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
 	bedrock.SetSecretAccessKey("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
@@ -47,9 +47,6 @@ func TestKubernetesCredentialsSecretSyncer_Sync(t *testing.T) {
 	if string(secret.Data["ANTHROPIC_BEDROCK"]) != "true" {
 		t.Error("Expected ANTHROPIC_BEDROCK to be 'true'")
 	}
-	if string(secret.Data["AWS_REGION"]) != "us-east-1" {
-		t.Errorf("Expected AWS_REGION to be 'us-east-1', got '%s'", string(secret.Data["AWS_REGION"]))
-	}
 	if string(secret.Data["ANTHROPIC_MODEL"]) != "anthropic.claude-sonnet-4-20250514-v1:0" {
 		t.Error("Expected ANTHROPIC_MODEL to match")
 	}
@@ -68,7 +65,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_Update(t *testing.T) {
 
 	// Create initial settings
 	settings := entities.NewSettings("update-user")
-	bedrock := entities.NewBedrockSettings(true, "us-east-1")
+	bedrock := entities.NewBedrockSettings(true)
 	bedrock.SetAccessKeyID("INITIAL_KEY")
 	settings.SetBedrock(bedrock)
 
@@ -78,7 +75,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_Update(t *testing.T) {
 	}
 
 	// Update settings
-	newBedrock := entities.NewBedrockSettings(true, "ap-northeast-1")
+	newBedrock := entities.NewBedrockSettings(true)
 	newBedrock.SetAccessKeyID("UPDATED_KEY")
 	settings.SetBedrock(newBedrock)
 
@@ -93,9 +90,6 @@ func TestKubernetesCredentialsSecretSyncer_Sync_Update(t *testing.T) {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
 
-	if string(secret.Data["AWS_REGION"]) != "ap-northeast-1" {
-		t.Errorf("Expected AWS_REGION to be 'ap-northeast-1', got '%s'", string(secret.Data["AWS_REGION"]))
-	}
 	if string(secret.Data["AWS_ACCESS_KEY_ID"]) != "UPDATED_KEY" {
 		t.Errorf("Expected AWS_ACCESS_KEY_ID to be 'UPDATED_KEY', got '%s'", string(secret.Data["AWS_ACCESS_KEY_ID"]))
 	}
@@ -107,7 +101,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_AllFields(t *testing.T) {
 	ctx := context.Background()
 
 	settings := entities.NewSettings("all-fields")
-	bedrock := entities.NewBedrockSettings(true, "eu-west-1")
+	bedrock := entities.NewBedrockSettings(true)
 	bedrock.SetModel("anthropic.claude-opus-4-20250514-v1:0")
 	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
 	bedrock.SetSecretAccessKey("secret-key")
@@ -127,7 +121,6 @@ func TestKubernetesCredentialsSecretSyncer_Sync_AllFields(t *testing.T) {
 
 	expectedData := map[string]string{
 		"ANTHROPIC_BEDROCK":     "true",
-		"AWS_REGION":            "eu-west-1",
 		"ANTHROPIC_MODEL":       "anthropic.claude-opus-4-20250514-v1:0",
 		"AWS_ACCESS_KEY_ID":     "AKIAIOSFODNN7EXAMPLE",
 		"AWS_SECRET_ACCESS_KEY": "secret-key",
@@ -149,7 +142,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_DisabledBedrock(t *testing.T) {
 
 	// Create settings with disabled Bedrock
 	settings := entities.NewSettings("disabled-bedrock")
-	bedrock := entities.NewBedrockSettings(false, "us-east-1")
+	bedrock := entities.NewBedrockSettings(false)
 	settings.SetBedrock(bedrock)
 
 	err := syncer.Sync(ctx, settings)
@@ -206,7 +199,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_SkipsExternalSecret(t *testing.T
 
 	// Try to sync settings for the same user
 	settings := entities.NewSettings("external-user")
-	bedrock := entities.NewBedrockSettings(true, "us-east-1")
+	bedrock := entities.NewBedrockSettings(true)
 	settings.SetBedrock(bedrock)
 
 	err = syncer.Sync(ctx, settings)
@@ -236,7 +229,7 @@ func TestKubernetesCredentialsSecretSyncer_Delete(t *testing.T) {
 
 	// Create settings
 	settings := entities.NewSettings("delete-user")
-	bedrock := entities.NewBedrockSettings(true, "us-east-1")
+	bedrock := entities.NewBedrockSettings(true)
 	settings.SetBedrock(bedrock)
 
 	err := syncer.Sync(ctx, settings)

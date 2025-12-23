@@ -17,7 +17,7 @@ func TestKubernetesSettingsRepository_Save(t *testing.T) {
 	repo := NewKubernetesSettingsRepository(client, "default")
 
 	settings := entities.NewSettings("test-user")
-	bedrock := entities.NewBedrockSettings(true, "us-east-1")
+	bedrock := entities.NewBedrockSettings(true)
 	bedrock.SetModel("anthropic.claude-sonnet-4-20250514-v1:0")
 	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
 	settings.SetBedrock(bedrock)
@@ -47,7 +47,7 @@ func TestKubernetesSettingsRepository_Save_VerifySecretContent(t *testing.T) {
 	repo := NewKubernetesSettingsRepository(client, "default")
 
 	settings := entities.NewSettings("verify-content")
-	bedrock := entities.NewBedrockSettings(true, "ap-northeast-1")
+	bedrock := entities.NewBedrockSettings(true)
 	bedrock.SetModel("anthropic.claude-sonnet-4-20250514-v1:0")
 	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
 	bedrock.SetSecretAccessKey("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
@@ -107,9 +107,6 @@ func TestKubernetesSettingsRepository_Save_VerifySecretContent(t *testing.T) {
 	if bedrockData["enabled"] != true {
 		t.Errorf("Expected enabled=true, got %v", bedrockData["enabled"])
 	}
-	if bedrockData["region"] != "ap-northeast-1" {
-		t.Errorf("Expected region='ap-northeast-1', got '%v'", bedrockData["region"])
-	}
 	if bedrockData["model"] != "anthropic.claude-sonnet-4-20250514-v1:0" {
 		t.Errorf("Expected model='anthropic.claude-sonnet-4-20250514-v1:0', got '%v'", bedrockData["model"])
 	}
@@ -142,14 +139,18 @@ func TestKubernetesSettingsRepository_SaveUpdate(t *testing.T) {
 
 	// Create initial settings
 	settings := entities.NewSettings("test-user")
-	settings.SetBedrock(entities.NewBedrockSettings(true, "us-east-1"))
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("model-v1")
+	settings.SetBedrock(bedrock)
 	err := repo.Save(ctx, settings)
 	if err != nil {
 		t.Fatalf("Failed to save initial settings: %v", err)
 	}
 
 	// Update settings
-	settings.SetBedrock(entities.NewBedrockSettings(true, "ap-northeast-1"))
+	updatedBedrock := entities.NewBedrockSettings(true)
+	updatedBedrock.SetModel("model-v2")
+	settings.SetBedrock(updatedBedrock)
 	err = repo.Save(ctx, settings)
 	if err != nil {
 		t.Fatalf("Failed to update settings: %v", err)
@@ -160,8 +161,8 @@ func TestKubernetesSettingsRepository_SaveUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to load settings: %v", err)
 	}
-	if loaded.Bedrock().Region() != "ap-northeast-1" {
-		t.Errorf("Expected region 'ap-northeast-1', got '%s'", loaded.Bedrock().Region())
+	if loaded.Bedrock().Model() != "model-v2" {
+		t.Errorf("Expected model 'model-v2', got '%s'", loaded.Bedrock().Model())
 	}
 }
 
@@ -172,7 +173,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 
 	// Create initial settings with all fields
 	settings := entities.NewSettings("update-all-fields")
-	bedrock := entities.NewBedrockSettings(true, "us-east-1")
+	bedrock := entities.NewBedrockSettings(true)
 	bedrock.SetModel("anthropic.claude-sonnet-4-20250514-v1:0")
 	bedrock.SetAccessKeyID("AKIAIOSFODNN7INITIAL")
 	bedrock.SetSecretAccessKey("initial-secret-key")
@@ -195,7 +196,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	}
 
 	// Update all fields
-	updatedBedrock := entities.NewBedrockSettings(true, "ap-northeast-1")
+	updatedBedrock := entities.NewBedrockSettings(true)
 	updatedBedrock.SetModel("anthropic.claude-opus-4-20250514-v1:0")
 	updatedBedrock.SetAccessKeyID("AKIAIOSFODNN7UPDATED")
 	updatedBedrock.SetSecretAccessKey("updated-secret-key")
@@ -231,9 +232,6 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	}
 
 	// Verify all updated values
-	if bedrockData["region"] != "ap-northeast-1" {
-		t.Errorf("Expected updated region 'ap-northeast-1', got '%v'", bedrockData["region"])
-	}
 	if bedrockData["model"] != "anthropic.claude-opus-4-20250514-v1:0" {
 		t.Errorf("Expected updated model 'anthropic.claude-opus-4-20250514-v1:0', got '%v'", bedrockData["model"])
 	}
@@ -256,9 +254,6 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 		t.Fatalf("Failed to load settings after update: %v", err)
 	}
 
-	if loaded.Bedrock().Region() != "ap-northeast-1" {
-		t.Errorf("FindByName: Expected region 'ap-northeast-1', got '%s'", loaded.Bedrock().Region())
-	}
 	if loaded.Bedrock().Model() != "anthropic.claude-opus-4-20250514-v1:0" {
 		t.Errorf("FindByName: Expected model 'anthropic.claude-opus-4-20250514-v1:0', got '%s'", loaded.Bedrock().Model())
 	}
@@ -283,7 +278,9 @@ func TestKubernetesSettingsRepository_SaveUpdate_VerifySecretOverwritten(t *test
 
 	// Create initial settings
 	settings := entities.NewSettings("overwrite-test")
-	settings.SetBedrock(entities.NewBedrockSettings(true, "us-east-1"))
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("model-v1")
+	settings.SetBedrock(bedrock)
 	err := repo.Save(ctx, settings)
 	if err != nil {
 		t.Fatalf("Failed to save initial settings: %v", err)
@@ -297,7 +294,9 @@ func TestKubernetesSettingsRepository_SaveUpdate_VerifySecretOverwritten(t *test
 	initialData := string(initialSecret.Data[SecretKeySettings])
 
 	// Update settings
-	settings.SetBedrock(entities.NewBedrockSettings(true, "eu-central-1"))
+	updatedBedrock := entities.NewBedrockSettings(true)
+	updatedBedrock.SetModel("model-v2")
+	settings.SetBedrock(updatedBedrock)
 	err = repo.Save(ctx, settings)
 	if err != nil {
 		t.Fatalf("Failed to update settings: %v", err)
@@ -315,14 +314,14 @@ func TestKubernetesSettingsRepository_SaveUpdate_VerifySecretOverwritten(t *test
 		t.Error("Expected Secret data to be different after update")
 	}
 
-	// Parse updated data and verify region
+	// Parse updated data and verify model
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(updatedData), &parsed); err != nil {
 		t.Fatalf("Failed to parse updated data: %v", err)
 	}
 	bedrockData := parsed["bedrock"].(map[string]interface{})
-	if bedrockData["region"] != "eu-central-1" {
-		t.Errorf("Expected updated region 'eu-central-1', got '%v'", bedrockData["region"])
+	if bedrockData["model"] != "model-v2" {
+		t.Errorf("Expected updated model 'model-v2', got '%v'", bedrockData["model"])
 	}
 
 	// Verify only one Secret exists with this prefix
@@ -351,7 +350,7 @@ func TestKubernetesSettingsRepository_FindByName(t *testing.T) {
 
 	// Save settings
 	settings := entities.NewSettings("find-test")
-	bedrock := entities.NewBedrockSettings(true, "eu-west-1")
+	bedrock := entities.NewBedrockSettings(true)
 	bedrock.SetSecretAccessKey("test-secret")
 	settings.SetBedrock(bedrock)
 	err := repo.Save(ctx, settings)
@@ -370,9 +369,6 @@ func TestKubernetesSettingsRepository_FindByName(t *testing.T) {
 	}
 	if loaded.Bedrock() == nil {
 		t.Fatal("Expected Bedrock settings to be set")
-	}
-	if loaded.Bedrock().Region() != "eu-west-1" {
-		t.Errorf("Expected region 'eu-west-1', got '%s'", loaded.Bedrock().Region())
 	}
 	if loaded.Bedrock().SecretAccessKey() != "test-secret" {
 		t.Errorf("Expected secret access key to be preserved")
@@ -397,7 +393,7 @@ func TestKubernetesSettingsRepository_Delete(t *testing.T) {
 
 	// Save settings
 	settings := entities.NewSettings("delete-test")
-	settings.SetBedrock(entities.NewBedrockSettings(true, "us-east-1"))
+	settings.SetBedrock(entities.NewBedrockSettings(true))
 	err := repo.Save(ctx, settings)
 	if err != nil {
 		t.Fatalf("Failed to save settings: %v", err)
@@ -447,7 +443,7 @@ func TestKubernetesSettingsRepository_List(t *testing.T) {
 	// Save multiple settings
 	for _, name := range []string{"user1", "user2", "team-a"} {
 		settings := entities.NewSettings(name)
-		settings.SetBedrock(entities.NewBedrockSettings(true, "us-east-1"))
+		settings.SetBedrock(entities.NewBedrockSettings(true))
 		err := repo.Save(ctx, settings)
 		if err != nil {
 			t.Fatalf("Failed to save settings for %s: %v", name, err)
@@ -472,7 +468,7 @@ func TestKubernetesSettingsRepository_List_SkipsInvalid(t *testing.T) {
 
 	// Create a valid settings secret
 	settings := entities.NewSettings("valid")
-	settings.SetBedrock(entities.NewBedrockSettings(true, "us-east-1"))
+	settings.SetBedrock(entities.NewBedrockSettings(true))
 	err := repo.Save(ctx, settings)
 	if err != nil {
 		t.Fatalf("Failed to save settings: %v", err)
