@@ -209,6 +209,64 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 
 // getUserTeamsOptimized retrieves only configured team memberships from GitHub API
 func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
+	// Check if we have wildcard patterns - if so, use /user/teams API
+	if p.hasWildcardPatterns() {
+		return p.getUserTeamsWithWildcard(ctx, token)
+	}
+
+	// No wildcard patterns - use the optimized approach (check only configured teams)
+	return p.getUserTeamsExactMatch(ctx, token, username)
+}
+
+// getUserTeamsWithWildcard retrieves user teams using /user/teams API and filters by configured patterns
+func (p *GitHubAuthProvider) getUserTeamsWithWildcard(ctx context.Context, token string) ([]GitHubTeamMembership, error) {
+	// Get all teams user belongs to
+	allTeams, err := p.getAllUserTeams(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user teams: %w", err)
+	}
+
+	// Extract wildcard slugs and exact patterns
+	wildcardSlugs := make(map[string]bool)
+	for _, slug := range p.extractWildcardTeamSlugs() {
+		wildcardSlugs[slug] = true
+	}
+
+	exactPatterns := make(map[string]bool)
+	for teamKey := range p.config.UserMapping.TeamRoleMapping {
+		if !strings.HasPrefix(teamKey, "*/") {
+			exactPatterns[teamKey] = true
+		}
+	}
+
+	log.Printf("[AUTH_DEBUG] Wildcard slugs: %v", wildcardSlugs)
+	log.Printf("[AUTH_DEBUG] Exact patterns: %v", exactPatterns)
+
+	// Filter teams that match either wildcard or exact patterns
+	var matchedTeams []GitHubTeamMembership
+	for _, team := range allTeams {
+		exactKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+
+		// Check wildcard match
+		if wildcardSlugs[team.TeamSlug] {
+			matchedTeams = append(matchedTeams, team)
+			log.Printf("[AUTH_DEBUG] Wildcard match: */%s matched %s", team.TeamSlug, exactKey)
+			continue
+		}
+
+		// Check exact match
+		if exactPatterns[exactKey] {
+			matchedTeams = append(matchedTeams, team)
+			log.Printf("[AUTH_DEBUG] Exact match: %s", exactKey)
+		}
+	}
+
+	log.Printf("[AUTH_DEBUG] Found %d matching teams via /user/teams", len(matchedTeams))
+	return matchedTeams, nil
+}
+
+// getUserTeamsExactMatch retrieves only exact-match configured team memberships from GitHub API
+func (p *GitHubAuthProvider) getUserTeamsExactMatch(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
 	// Extract unique organizations from configured team mappings
 	configuredOrgs := make(map[string][]string) // org -> []teamSlugs
 	for teamKey := range p.config.UserMapping.TeamRoleMapping {
@@ -386,30 +444,40 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 
 	// Check each team membership against configured rules
 	for _, team := range teams {
-		teamKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
-		log.Printf("[AUTH_DEBUG] Checking team key: %s", teamKey)
+		exactKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+		wildcardKey := fmt.Sprintf("*/%s", team.TeamSlug)
+		log.Printf("[AUTH_DEBUG] Checking team: exactKey=%s, wildcardKey=%s", exactKey, wildcardKey)
 
-		if rule, exists := p.config.UserMapping.TeamRoleMapping[teamKey]; exists {
-			log.Printf("[AUTH_DEBUG] Found matching rule for %s: role=%s, permissions=%v", teamKey, rule.Role, rule.Permissions)
+		// Check both exact match and wildcard match
+		keysToCheck := []string{exactKey, wildcardKey}
+		matchFound := false
 
-			// Apply higher role if found
-			if p.isHigherRole(rule.Role, highestRole) {
-				log.Printf("[AUTH_DEBUG] Upgrading role from %s to %s", highestRole, rule.Role)
-				highestRole = rule.Role
-				// Update env file to match the highest role's team
-				if rule.EnvFile != "" {
-					envFile = rule.EnvFile
-					log.Printf("[AUTH_DEBUG] Setting env file to: %s", envFile)
+		for _, key := range keysToCheck {
+			if rule, exists := p.config.UserMapping.TeamRoleMapping[key]; exists {
+				matchFound = true
+				log.Printf("[AUTH_DEBUG] Found matching rule for %s (pattern: %s): role=%s, permissions=%v", exactKey, key, rule.Role, rule.Permissions)
+
+				// Apply higher role if found
+				if p.isHigherRole(rule.Role, highestRole) {
+					log.Printf("[AUTH_DEBUG] Upgrading role from %s to %s", highestRole, rule.Role)
+					highestRole = rule.Role
+					// Update env file to match the highest role's team
+					if rule.EnvFile != "" {
+						envFile = rule.EnvFile
+						log.Printf("[AUTH_DEBUG] Setting env file to: %s", envFile)
+					}
+				}
+
+				// Add permissions from this rule
+				for _, perm := range rule.Permissions {
+					allPermissions[perm] = true
+					log.Printf("[AUTH_DEBUG] Added team permission: %s", perm)
 				}
 			}
+		}
 
-			// Add permissions from this rule
-			for _, perm := range rule.Permissions {
-				allPermissions[perm] = true
-				log.Printf("[AUTH_DEBUG] Added team permission: %s", perm)
-			}
-		} else {
-			log.Printf("[AUTH_DEBUG] No rule found for team key: %s", teamKey)
+		if !matchFound {
+			log.Printf("[AUTH_DEBUG] No rule found for team: %s", exactKey)
 			log.Printf("[AUTH_DEBUG] Available team mappings:")
 			for availableKey := range p.config.UserMapping.TeamRoleMapping {
 				log.Printf("[AUTH_DEBUG]   - %s", availableKey)
@@ -465,4 +533,97 @@ func ExtractTokenFromHeader(header string) string {
 
 	// Handle raw token
 	return header
+}
+
+// hasWildcardPatterns checks if any team mappings contain wildcard patterns (*/team)
+func (p *GitHubAuthProvider) hasWildcardPatterns() bool {
+	for teamKey := range p.config.UserMapping.TeamRoleMapping {
+		if strings.HasPrefix(teamKey, "*/") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractWildcardTeamSlugs extracts team slugs from wildcard patterns (*/slug)
+func (p *GitHubAuthProvider) extractWildcardTeamSlugs() []string {
+	slugs := []string{}
+	for teamKey := range p.config.UserMapping.TeamRoleMapping {
+		if strings.HasPrefix(teamKey, "*/") {
+			parts := strings.Split(teamKey, "/")
+			if len(parts) == 2 {
+				slugs = append(slugs, parts[1])
+			}
+		}
+	}
+	return slugs
+}
+
+// getAllUserTeams retrieves all teams the user belongs to using /user/teams API
+func (p *GitHubAuthProvider) getAllUserTeams(ctx context.Context, token string) ([]GitHubTeamMembership, error) {
+	var allTeams []GitHubTeamMembership
+	page := 1
+	perPage := 100 // GitHub API max
+
+	for {
+		url := fmt.Sprintf("%s/user/teams?per_page=%d&page=%d",
+			strings.TrimSuffix(p.config.BaseURL, "/"), perPage, page)
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+		req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+		logVerbose("Making GitHub API request: GET %s", url)
+		resp, err := p.client.Do(req)
+		if err != nil {
+			logVerbose("GitHub API request failed: %v", err)
+			return nil, err
+		}
+		defer utils.SafeCloseResponse(resp)
+
+		logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
+		if err := utils.CheckHTTPResponse(resp, url); err != nil {
+			return nil, err
+		}
+
+		var teams []struct {
+			ID           int64  `json:"id"`
+			Slug         string `json:"slug"`
+			Name         string `json:"name"`
+			Permission   string `json:"permission"`
+			Organization struct {
+				Login string `json:"login"`
+			} `json:"organization"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
+			return nil, err
+		}
+
+		if len(teams) == 0 {
+			break
+		}
+
+		for _, team := range teams {
+			allTeams = append(allTeams, GitHubTeamMembership{
+				Organization: team.Organization.Login,
+				TeamSlug:     team.Slug,
+				TeamName:     team.Name,
+				Role:         team.Permission,
+			})
+		}
+
+		// Check if there are more pages
+		if len(teams) < perPage {
+			break
+		}
+		page++
+	}
+
+	log.Printf("[AUTH_DEBUG] Retrieved %d total teams for user via /user/teams", len(allTeams))
+	return allTeams, nil
 }
