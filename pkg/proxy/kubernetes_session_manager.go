@@ -1,13 +1,9 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -134,6 +130,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		log.Printf("[K8S_SESSION] Created PVC %s for session %s", pvcName, id)
 	} else {
 		log.Printf("[K8S_SESSION] PVC disabled, using EmptyDir for session %s", id)
+	}
+
+	// Create initial message Secret if initial message is provided
+	if req.InitialMessage != "" {
+		if err := m.createInitialMessageSecret(ctx, session, req.InitialMessage); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create initial message secret: %v", err)
+			// Continue anyway - sidecar will handle missing secret gracefully
+		}
 	}
 
 	// Create Deployment
@@ -710,6 +714,13 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Added credentials-sync sidecar for session %s", session.id)
 	}
 
+	// Add initial message sender sidecar
+	// This sidecar sends the initial message to the agentapi server after it becomes ready
+	if sidecar := m.buildInitialMessageSenderSidecar(session); sidecar != nil {
+		containers = append(containers, *sidecar)
+		log.Printf("[K8S_SESSION] Added initial-message-sender sidecar for session %s", session.id)
+	}
+
 	// Convert config tolerations to corev1 tolerations
 	var tolerations []corev1.Toleration
 	for _, t := range m.k8sConfig.Tolerations {
@@ -1002,6 +1013,196 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *kubernet
 	}
 }
 
+// initialMessageSenderScript is the shell script for the initial message sender sidecar
+// It waits for agentapi to be ready and sends the initial message from the mounted Secret
+const initialMessageSenderScript = `
+#!/bin/sh
+set -e
+
+AGENTAPI_URL="http://localhost:${AGENTAPI_PORT}"
+MESSAGE_FILE="/initial-message/message"
+SENT_FLAG="/initial-message-state/sent"
+MAX_READY_RETRIES=120
+MAX_STABLE_RETRIES=60
+
+echo "[INITIAL-MSG] Starting initial message sender sidecar"
+
+# Check if already sent (container restart case)
+if [ -f "$SENT_FLAG" ]; then
+    echo "[INITIAL-MSG] Initial message already sent (flag file exists), skipping"
+    exec sleep infinity
+fi
+
+# Check if message file exists
+if [ ! -f "$MESSAGE_FILE" ]; then
+    echo "[INITIAL-MSG] No initial message file found, nothing to send"
+    touch "$SENT_FLAG"
+    exec sleep infinity
+fi
+
+echo "[INITIAL-MSG] Waiting for agentapi to be ready..."
+
+# Wait for agentapi server to respond
+RETRY_COUNT=0
+while [ $RETRY_COUNT -lt $MAX_READY_RETRIES ]; do
+    if curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; then
+        echo "[INITIAL-MSG] agentapi is responding"
+        break
+    fi
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -eq $MAX_READY_RETRIES ]; then
+        echo "[INITIAL-MSG] ERROR: agentapi not ready after ${MAX_READY_RETRIES} retries"
+        exec sleep infinity
+    fi
+    sleep 0.5
+done
+
+# Check if messages already exist (Pod recreated case)
+MESSAGE_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+if [ "$MESSAGE_COUNT" -gt 0 ]; then
+    echo "[INITIAL-MSG] Messages already exist (count: ${MESSAGE_COUNT}), skipping initial message"
+    touch "$SENT_FLAG"
+    exec sleep infinity
+fi
+
+# Wait for agent status to be "stable"
+echo "[INITIAL-MSG] Waiting for agent status to be stable..."
+STABLE_COUNT=0
+while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
+    STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
+    if [ "$STATUS" = "stable" ]; then
+        echo "[INITIAL-MSG] Agent is stable, ready to send message"
+        break
+    fi
+    STABLE_COUNT=$((STABLE_COUNT + 1))
+    if [ $STABLE_COUNT -eq $MAX_STABLE_RETRIES ]; then
+        echo "[INITIAL-MSG] ERROR: Agent not stable after ${MAX_STABLE_RETRIES} retries (status: ${STATUS})"
+        exec sleep infinity
+    fi
+    sleep 1
+done
+
+# Double-check message count before sending (race condition prevention)
+MESSAGE_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+if [ "$MESSAGE_COUNT" -gt 0 ]; then
+    echo "[INITIAL-MSG] Messages appeared during wait (count: ${MESSAGE_COUNT}), skipping"
+    touch "$SENT_FLAG"
+    exec sleep infinity
+fi
+
+# Read and send message
+echo "[INITIAL-MSG] Sending initial message..."
+MESSAGE_CONTENT=$(cat "$MESSAGE_FILE")
+
+# Build JSON payload with proper escaping using jq
+PAYLOAD=$(printf '%s' "$MESSAGE_CONTENT" | jq -Rs '{content: ., type: "user"}')
+
+RESPONSE=$(curl -sf -w "\n%{http_code}" -X POST "${AGENTAPI_URL}/message" \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD" 2>&1) || true
+
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" = "200" ]; then
+    echo "[INITIAL-MSG] Initial message sent successfully"
+    touch "$SENT_FLAG"
+else
+    echo "[INITIAL-MSG] ERROR: Failed to send initial message (HTTP ${HTTP_CODE})"
+    echo "[INITIAL-MSG] Response: ${BODY}"
+fi
+
+# Keep container running (prevents restart loop)
+exec sleep infinity
+`
+
+// buildInitialMessageSenderSidecar builds the sidecar container for sending initial messages
+func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *kubernetesSession) *corev1.Container {
+	// Only create sidecar if there's an initial message
+	if session.request.InitialMessage == "" {
+		return nil
+	}
+
+	return &corev1.Container{
+		Name:            "initial-message-sender",
+		Image:           m.k8sConfig.Image,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "initial-message",
+				MountPath: "/initial-message",
+				ReadOnly:  true,
+			},
+			{
+				Name:      "initial-message-state",
+				MountPath: "/initial-message-state",
+			},
+		},
+		Env: []corev1.EnvVar{
+			{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+		},
+		Command: []string{"/bin/sh", "-c"},
+		Args:    []string{initialMessageSenderScript},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
+}
+
+// createInitialMessageSecret creates a Secret containing the initial message
+func (m *KubernetesSessionManager) createInitialMessageSecret(
+	ctx context.Context,
+	session *kubernetesSession,
+	message string,
+) error {
+	secretName := fmt.Sprintf("%s-initial-message", session.serviceName)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(session.request.UserID),
+				"agentapi.proxy/resource":   "initial-message",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"message": []byte(message),
+		},
+	}
+
+	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create initial message secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created initial message Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
+// deleteInitialMessageSecret deletes the initial message Secret for a session
+func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Context, session *kubernetesSession) error {
+	secretName := fmt.Sprintf("%s-initial-message", session.serviceName)
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete initial message secret: %w", err)
+	}
+	return nil
+}
+
 // buildClaudeSetupInitContainer builds the init container for Claude configuration setup
 func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(session *kubernetesSession) corev1.Container {
 	// Use the main container image if InitContainerImage is not specified
@@ -1159,6 +1360,30 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
 	})
+
+	// Add initial message volumes if initial message is provided
+	if session.request != nil && session.request.InitialMessage != "" {
+		initialMsgSecretName := fmt.Sprintf("%s-initial-message", session.serviceName)
+		volumes = append(volumes,
+			// Secret containing the initial message content
+			corev1.Volume{
+				Name: "initial-message",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: initialMsgSecretName,
+						Optional:   boolPtr(true),
+					},
+				},
+			},
+			// EmptyDir for tracking sent state (prevents double-send on container restart)
+			corev1.Volume{
+				Name: "initial-message-state",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+		)
+	}
 
 	// Add MCP server configuration volumes if enabled
 	if m.k8sConfig.MCPServersEnabled {
@@ -1335,10 +1560,8 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *ku
 				session.setStatus("active")
 				log.Printf("[K8S_SESSION] Session %s is now active", session.id)
 
-				// Send initial message if provided
-				if session.request.InitialMessage != "" {
-					go m.sendInitialMessage(session)
-				}
+				// Note: Initial message is now sent by the initial-message-sender sidecar
+				// within the Pod, not by the proxy
 
 				// Continue watching for changes
 				m.watchDeploymentStatus(ctx, session)
@@ -1407,6 +1630,11 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		if err != nil && !errors.IsNotFound(err) {
 			errs = append(errs, fmt.Sprintf("pvc: %v", err))
 		}
+	}
+
+	// Delete initial message Secret
+	if err := m.deleteInitialMessageSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("initial-message-secret: %v", err))
 	}
 
 	if len(errs) > 0 {
@@ -1812,62 +2040,4 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
 
 	return session
-}
-
-// sendInitialMessage sends an initial message to the agentapi server in Pod after it becomes ready
-func (m *KubernetesSessionManager) sendInitialMessage(session *kubernetesSession) {
-	serviceURL := fmt.Sprintf("http://%s", session.Addr())
-
-	// Check server status first (wait for agentapi server to be ready)
-	// Use /status endpoint same as liveness probe
-	maxRetries := 30
-	for i := 0; i < maxRetries; i++ {
-		resp, err := http.Get(serviceURL + "/status")
-		if err == nil {
-			if closeErr := resp.Body.Close(); closeErr != nil {
-				log.Printf("[K8S_SESSION] Failed to close response body: %v", closeErr)
-			}
-			if resp.StatusCode == http.StatusOK {
-				break
-			}
-		}
-		if i == maxRetries-1 {
-			log.Printf("[K8S_SESSION] AgentAPI server for session %s not ready after %d retries, skipping initial message", session.id, maxRetries)
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	// Prepare message request
-	messageReq := map[string]interface{}{
-		"content": session.request.InitialMessage,
-		"type":    "user",
-	}
-
-	jsonBody, err := json.Marshal(messageReq)
-	if err != nil {
-		log.Printf("[K8S_SESSION] Failed to marshal message request for session %s: %v", session.id, err)
-		return
-	}
-
-	// Send message to agentapi
-	url := serviceURL + "/message"
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		log.Printf("[K8S_SESSION] Failed to send initial message to session %s: %v", session.id, err)
-		return
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("[K8S_SESSION] Failed to close response body: %v", closeErr)
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("[K8S_SESSION] Failed to send initial message to session %s (status: %d): %s", session.id, resp.StatusCode, string(body))
-		return
-	}
-
-	log.Printf("[K8S_SESSION] Successfully sent initial message to session %s", session.id)
 }
