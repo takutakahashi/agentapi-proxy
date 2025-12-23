@@ -247,23 +247,14 @@ func (h *SettingsHandlers) toResponse(settings *entities.Settings) *SettingsResp
 
 	if bedrock := settings.Bedrock(); bedrock != nil {
 		resp.Bedrock = &BedrockSettingsResponse{
-			Enabled:         bedrock.Enabled(),
-			Region:          bedrock.Region(),
-			Model:           bedrock.Model(),
-			AccessKeyID:     bedrock.AccessKeyID(),
-			SecretAccessKey: maskSecret(bedrock.SecretAccessKey()),
-			RoleARN:         bedrock.RoleARN(),
-			Profile:         bedrock.Profile(),
+			Enabled: bedrock.Enabled(),
+			Region:  bedrock.Region(),
+			Model:   bedrock.Model(),
+			// AccessKeyID and SecretAccessKey are not returned for security reasons
+			RoleARN: bedrock.RoleARN(),
+			Profile: bedrock.Profile(),
 		}
 	}
 
 	return resp
-}
-
-// maskSecret masks a secret value for response
-func maskSecret(secret string) string {
-	if secret == "" {
-		return ""
-	}
-	return "***"
 }
