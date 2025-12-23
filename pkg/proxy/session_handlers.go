@@ -91,7 +91,7 @@ func (h *SessionHandlers) StartSession(c echo.Context) error {
 	session, err := h.proxy.CreateSession(sessionID, StartRequest{
 		Environment: startReq.Environment,
 		Tags:        startReq.Tags,
-		Message:     startReq.Message,
+		Params:      startReq.Params,
 	}, userID, userRole, teams)
 	if err != nil {
 		log.Printf("Failed to create session: %v", err)

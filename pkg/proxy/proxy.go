@@ -318,17 +318,10 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 	// Extract repository information from tags
 	repoInfo := p.extractRepositoryInfo(sessionID, startReq.Tags)
 
-	// Determine initial message - priority: Params.Message > tags.message > Message (backward compat)
+	// Determine initial message from Params.Message
 	var initialMessage string
 	if startReq.Params != nil && startReq.Params.Message != "" {
 		initialMessage = startReq.Params.Message
-	} else if startReq.Tags != nil {
-		if msg, exists := startReq.Tags["message"]; exists && msg != "" {
-			initialMessage = msg
-		}
-	}
-	if initialMessage == "" && startReq.Message != "" {
-		initialMessage = startReq.Message
 	}
 
 	// Build run server request
