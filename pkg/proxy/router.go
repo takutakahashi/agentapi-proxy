@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -34,6 +35,18 @@ type CustomHandler interface {
 
 // NewRouter creates a new Router instance
 func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
+	settingsHandlers := NewSettingsHandlers(proxy.settingsRepo)
+
+	// Set credentials secret syncer if Kubernetes mode is enabled
+	if k8sManager, ok := proxy.sessionManager.(*KubernetesSessionManager); ok {
+		syncer := services.NewKubernetesCredentialsSecretSyncer(
+			k8sManager.GetClient(),
+			k8sManager.GetNamespace(),
+		)
+		settingsHandlers.SetCredentialsSecretSyncer(syncer)
+		log.Printf("[ROUTER] Credentials secret syncer configured for settings handlers")
+	}
+
 	return &Router{
 		echo:  e,
 		proxy: proxy,
@@ -41,7 +54,7 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 			notificationHandlers: NewNotificationHandlers(proxy.notificationSvc),
 			healthHandlers:       NewHealthHandlers(),
 			sessionHandlers:      NewSessionHandlers(proxy),
-			settingsHandlers:     NewSettingsHandlers(proxy.settingsRepo),
+			settingsHandlers:     settingsHandlers,
 			userHandlers:         NewUserHandlers(proxy),
 			customHandlers:       make([]CustomHandler, 0),
 		},
