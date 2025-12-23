@@ -44,8 +44,8 @@ func TestKubernetesCredentialsSecretSyncer_Sync(t *testing.T) {
 	}
 
 	// Verify data
-	if string(secret.Data["ANTHROPIC_BEDROCK"]) != "true" {
-		t.Error("Expected ANTHROPIC_BEDROCK to be 'true'")
+	if string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]) != "1" {
+		t.Error("Expected CLAUDE_CODE_USE_BEDROCK to be '1'")
 	}
 	if string(secret.Data["ANTHROPIC_MODEL"]) != "anthropic.claude-sonnet-4-20250514-v1:0" {
 		t.Error("Expected ANTHROPIC_MODEL to match")
@@ -156,9 +156,9 @@ func TestKubernetesCredentialsSecretSyncer_Sync_DisabledBedrock(t *testing.T) {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
 
-	// Should not have ANTHROPIC_BEDROCK key
-	if _, ok := secret.Data["ANTHROPIC_BEDROCK"]; ok {
-		t.Error("Expected no ANTHROPIC_BEDROCK key for disabled bedrock")
+	// Should not have CLAUDE_CODE_USE_BEDROCK key
+	if _, ok := secret.Data["CLAUDE_CODE_USE_BEDROCK"]; ok {
+		t.Error("Expected no CLAUDE_CODE_USE_BEDROCK key for disabled bedrock")
 	}
 }
 
@@ -217,7 +217,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_SkipsExternalSecret(t *testing.T
 	if string(secret.Data["CUSTOM_KEY"]) != "custom-value" {
 		t.Error("External secret should not be modified")
 	}
-	if _, ok := secret.Data["ANTHROPIC_BEDROCK"]; ok {
+	if _, ok := secret.Data["CLAUDE_CODE_USE_BEDROCK"]; ok {
 		t.Error("External secret should not have Bedrock data")
 	}
 }
