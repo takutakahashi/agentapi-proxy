@@ -288,6 +288,9 @@ kubernetesSession:
   # Enable Kubernetes-based session management
   enabled: false
 
+  # Number of replicas for the agentapi-proxy Deployment (only used when kubernetesSession is enabled)
+  replicaCount: 3
+
   # Namespace for session resources (defaults to release namespace if empty)
   namespace: ""
 
