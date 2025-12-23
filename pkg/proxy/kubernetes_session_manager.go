@@ -1496,71 +1496,8 @@ func (m *KubernetesSessionManager) buildEnvVars(session *kubernetesSession, req 
 		}
 	}
 
-	// Add Bedrock settings from settings repository
-	envVars = m.addBedrockEnvVars(envVars, req.UserID, req.Teams)
-
-	return envVars
-}
-
-// addBedrockEnvVars adds Bedrock-related environment variables based on settings
-func (m *KubernetesSessionManager) addBedrockEnvVars(envVars []corev1.EnvVar, userID string, teams []string) []corev1.EnvVar {
-	if m.settingsRepo == nil {
-		return envVars
-	}
-
-	ctx := context.Background()
-
-	// Try user settings first
-	settings, err := m.settingsRepo.FindByName(ctx, sanitizeSecretName(userID))
-	if err == nil && settings != nil && settings.Bedrock() != nil && settings.Bedrock().Enabled() {
-		return m.appendBedrockEnvVars(envVars, settings.Bedrock())
-	}
-
-	// Try team settings (first match wins)
-	for _, team := range teams {
-		settings, err := m.settingsRepo.FindByName(ctx, sanitizeSecretName(team))
-		if err == nil && settings != nil && settings.Bedrock() != nil && settings.Bedrock().Enabled() {
-			return m.appendBedrockEnvVars(envVars, settings.Bedrock())
-		}
-	}
-
-	return envVars
-}
-
-// appendBedrockEnvVars appends Bedrock-specific environment variables
-func (m *KubernetesSessionManager) appendBedrockEnvVars(envVars []corev1.EnvVar, bedrock interface {
-	Enabled() bool
-	Region() string
-	Model() string
-	AccessKeyID() string
-	SecretAccessKey() string
-	RoleARN() string
-	Profile() string
-}) []corev1.EnvVar {
-	if !bedrock.Enabled() {
-		return envVars
-	}
-
-	log.Printf("[K8S_SESSION] Adding Bedrock environment variables (region: %s)", bedrock.Region())
-
-	envVars = append(envVars, corev1.EnvVar{Name: "ANTHROPIC_BEDROCK", Value: "true"})
-	envVars = append(envVars, corev1.EnvVar{Name: "AWS_REGION", Value: bedrock.Region()})
-
-	if bedrock.Model() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "ANTHROPIC_MODEL", Value: bedrock.Model()})
-	}
-	if bedrock.AccessKeyID() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AWS_ACCESS_KEY_ID", Value: bedrock.AccessKeyID()})
-	}
-	if bedrock.SecretAccessKey() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AWS_SECRET_ACCESS_KEY", Value: bedrock.SecretAccessKey()})
-	}
-	if bedrock.RoleARN() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AWS_ROLE_ARN", Value: bedrock.RoleARN()})
-	}
-	if bedrock.Profile() != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "AWS_PROFILE", Value: bedrock.Profile()})
-	}
+	// Note: Bedrock settings are now loaded via envFrom from agent-credentials-{name} Secret
+	// which is synced by CredentialsSecretSyncer when settings are updated via API
 
 	return envVars
 }

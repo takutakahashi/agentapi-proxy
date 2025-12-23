@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -8,12 +9,14 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
 // SettingsHandlers handles settings-related HTTP requests
 type SettingsHandlers struct {
-	repo repositories.SettingsRepository
+	repo   repositories.SettingsRepository
+	syncer services.CredentialsSecretSyncer
 }
 
 // NewSettingsHandlers creates new settings handlers
@@ -21,6 +24,11 @@ func NewSettingsHandlers(repo repositories.SettingsRepository) *SettingsHandlers
 	return &SettingsHandlers{
 		repo: repo,
 	}
+}
+
+// SetCredentialsSecretSyncer sets the credentials secret syncer
+func (h *SettingsHandlers) SetCredentialsSecretSyncer(syncer services.CredentialsSecretSyncer) {
+	h.syncer = syncer
 }
 
 // BedrockSettingsRequest is the request body for Bedrock settings
@@ -136,6 +144,14 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 
+	// Sync credentials secret
+	if h.syncer != nil {
+		if err := h.syncer.Sync(c.Request().Context(), settings); err != nil {
+			log.Printf("[SETTINGS] Failed to sync credentials secret for %s: %v", name, err)
+			// Don't fail the request, just log the error
+		}
+	}
+
 	return c.JSON(http.StatusOK, h.toResponse(settings))
 }
 
@@ -162,6 +178,14 @@ func (h *SettingsHandlers) DeleteSettings(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "Settings not found")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete settings")
+	}
+
+	// Delete credentials secret
+	if h.syncer != nil {
+		if err := h.syncer.Delete(c.Request().Context(), name); err != nil {
+			log.Printf("[SETTINGS] Failed to delete credentials secret for %s: %v", name, err)
+			// Don't fail the request, just log the error
+		}
 	}
 
 	return c.JSON(http.StatusOK, map[string]bool{
