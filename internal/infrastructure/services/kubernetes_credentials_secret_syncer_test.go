@@ -44,8 +44,8 @@ func TestKubernetesCredentialsSecretSyncer_Sync(t *testing.T) {
 	}
 
 	// Verify data
-	if string(secret.Data["ANTHROPIC_BEDROCK"]) != "true" {
-		t.Error("Expected ANTHROPIC_BEDROCK to be 'true'")
+	if string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]) != "1" {
+		t.Error("Expected CLAUDE_CODE_USE_BEDROCK to be '1'")
 	}
 	if string(secret.Data["AWS_REGION"]) != "us-east-1" {
 		t.Errorf("Expected AWS_REGION to be 'us-east-1', got '%s'", string(secret.Data["AWS_REGION"]))
@@ -126,13 +126,13 @@ func TestKubernetesCredentialsSecretSyncer_Sync_AllFields(t *testing.T) {
 	}
 
 	expectedData := map[string]string{
-		"ANTHROPIC_BEDROCK":     "true",
-		"AWS_REGION":            "eu-west-1",
-		"ANTHROPIC_MODEL":       "anthropic.claude-opus-4-20250514-v1:0",
-		"AWS_ACCESS_KEY_ID":     "AKIAIOSFODNN7EXAMPLE",
-		"AWS_SECRET_ACCESS_KEY": "secret-key",
-		"AWS_ROLE_ARN":          "arn:aws:iam::123456789012:role/ExampleRole",
-		"AWS_PROFILE":           "production",
+		"CLAUDE_CODE_USE_BEDROCK": "1",
+		"AWS_REGION":              "eu-west-1",
+		"ANTHROPIC_MODEL":         "anthropic.claude-opus-4-20250514-v1:0",
+		"AWS_ACCESS_KEY_ID":       "AKIAIOSFODNN7EXAMPLE",
+		"AWS_SECRET_ACCESS_KEY":   "secret-key",
+		"AWS_ROLE_ARN":            "arn:aws:iam::123456789012:role/ExampleRole",
+		"AWS_PROFILE":             "production",
 	}
 
 	for key, expected := range expectedData {
@@ -163,9 +163,9 @@ func TestKubernetesCredentialsSecretSyncer_Sync_DisabledBedrock(t *testing.T) {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
 
-	// Should not have ANTHROPIC_BEDROCK key
-	if _, ok := secret.Data["ANTHROPIC_BEDROCK"]; ok {
-		t.Error("Expected no ANTHROPIC_BEDROCK key for disabled bedrock")
+	// Should not have CLAUDE_CODE_USE_BEDROCK key
+	if _, ok := secret.Data["CLAUDE_CODE_USE_BEDROCK"]; ok {
+		t.Error("Expected no CLAUDE_CODE_USE_BEDROCK key for disabled bedrock")
 	}
 }
 
@@ -224,7 +224,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_SkipsExternalSecret(t *testing.T
 	if string(secret.Data["CUSTOM_KEY"]) != "custom-value" {
 		t.Error("External secret should not be modified")
 	}
-	if _, ok := secret.Data["ANTHROPIC_BEDROCK"]; ok {
+	if _, ok := secret.Data["CLAUDE_CODE_USE_BEDROCK"]; ok {
 		t.Error("External secret should not have Bedrock data")
 	}
 }
