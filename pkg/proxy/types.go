@@ -12,9 +12,6 @@ type StartRequest struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 	// Params contains session parameters
 	Params *SessionParams `json:"params,omitempty"`
-	// Message is the initial message (deprecated: use Params.Message instead)
-	// Kept for backward compatibility
-	Message string `json:"message,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags

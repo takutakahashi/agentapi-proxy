@@ -284,7 +284,9 @@ func TestE2ESessionLifecycle(t *testing.T) {
 		Environment: map[string]string{
 			"TEST_ENV": "e2e_test",
 		},
-		Message: "Hello from e2e test",
+		Params: &SessionParams{
+			Message: "Hello from e2e test",
+		},
 	}
 
 	body, _ := json.Marshal(startReq)
