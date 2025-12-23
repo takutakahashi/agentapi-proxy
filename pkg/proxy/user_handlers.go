@@ -45,5 +45,6 @@ func (h *UserHandlers) GetUserInfo(c echo.Context) error {
 		}
 	}
 
+	c.Response().Header().Set("Cache-Control", "max-age=30")
 	return c.JSON(http.StatusOK, response)
 }
