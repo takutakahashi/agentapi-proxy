@@ -8,7 +8,6 @@ import (
 // BedrockSettings represents AWS Bedrock configuration
 type BedrockSettings struct {
 	enabled         bool
-	region          string
 	model           string
 	accessKeyID     string
 	secretAccessKey string
@@ -17,21 +16,15 @@ type BedrockSettings struct {
 }
 
 // NewBedrockSettings creates a new BedrockSettings
-func NewBedrockSettings(enabled bool, region string) *BedrockSettings {
+func NewBedrockSettings(enabled bool) *BedrockSettings {
 	return &BedrockSettings{
 		enabled: enabled,
-		region:  region,
 	}
 }
 
 // Enabled returns whether Bedrock is enabled
 func (b *BedrockSettings) Enabled() bool {
 	return b.enabled
-}
-
-// Region returns the AWS region
-func (b *BedrockSettings) Region() string {
-	return b.region
 }
 
 // Model returns the model ID
@@ -86,14 +79,6 @@ func (b *BedrockSettings) SetProfile(profile string) {
 
 // Validate validates the BedrockSettings
 func (b *BedrockSettings) Validate() error {
-	if !b.enabled {
-		return nil
-	}
-
-	if b.region == "" {
-		return errors.New("region is required when Bedrock is enabled")
-	}
-
 	return nil
 }
 

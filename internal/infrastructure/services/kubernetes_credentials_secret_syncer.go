@@ -144,9 +144,6 @@ func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.S
 	if bedrock != nil && bedrock.Enabled() {
 		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
 
-		if bedrock.Region() != "" {
-			data["AWS_REGION"] = []byte(bedrock.Region())
-		}
 		if bedrock.Model() != "" {
 			data["ANTHROPIC_MODEL"] = []byte(bedrock.Model())
 		}

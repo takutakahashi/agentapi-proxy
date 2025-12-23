@@ -38,7 +38,6 @@ type settingsJSON struct {
 // bedrockJSON is the JSON representation of Bedrock settings
 type bedrockJSON struct {
 	Enabled         bool   `json:"enabled"`
-	Region          string `json:"region"`
 	Model           string `json:"model,omitempty"`
 	AccessKeyID     string `json:"access_key_id,omitempty"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
@@ -190,7 +189,6 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 	if bedrock := settings.Bedrock(); bedrock != nil {
 		sj.Bedrock = &bedrockJSON{
 			Enabled:         bedrock.Enabled(),
-			Region:          bedrock.Region(),
 			Model:           bedrock.Model(),
 			AccessKeyID:     bedrock.AccessKeyID(),
 			SecretAccessKey: bedrock.SecretAccessKey(),
@@ -219,7 +217,7 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	settings.SetUpdatedAt(sj.UpdatedAt)
 
 	if sj.Bedrock != nil {
-		bedrock := entities.NewBedrockSettings(sj.Bedrock.Enabled, sj.Bedrock.Region)
+		bedrock := entities.NewBedrockSettings(sj.Bedrock.Enabled)
 		bedrock.SetModel(sj.Bedrock.Model)
 		bedrock.SetAccessKeyID(sj.Bedrock.AccessKeyID)
 		bedrock.SetSecretAccessKey(sj.Bedrock.SecretAccessKey)

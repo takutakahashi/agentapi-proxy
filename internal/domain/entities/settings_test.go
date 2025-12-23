@@ -6,18 +6,15 @@ import (
 )
 
 func TestNewBedrockSettings(t *testing.T) {
-	bedrock := NewBedrockSettings(true, "us-east-1")
+	bedrock := NewBedrockSettings(true)
 
 	if !bedrock.Enabled() {
 		t.Error("Expected Bedrock to be enabled")
 	}
-	if bedrock.Region() != "us-east-1" {
-		t.Errorf("Expected region 'us-east-1', got '%s'", bedrock.Region())
-	}
 }
 
 func TestBedrockSettings_Setters(t *testing.T) {
-	bedrock := NewBedrockSettings(true, "us-east-1")
+	bedrock := NewBedrockSettings(true)
 
 	bedrock.SetModel("anthropic.claude-sonnet-4-20250514-v1:0")
 	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
@@ -46,32 +43,23 @@ func TestBedrockSettings_Validate(t *testing.T) {
 	tests := []struct {
 		name      string
 		enabled   bool
-		region    string
 		expectErr bool
 	}{
 		{
-			name:      "disabled - valid without region",
+			name:      "disabled - valid",
 			enabled:   false,
-			region:    "",
 			expectErr: false,
 		},
 		{
-			name:      "enabled - valid with region",
+			name:      "enabled - valid",
 			enabled:   true,
-			region:    "us-east-1",
 			expectErr: false,
-		},
-		{
-			name:      "enabled - invalid without region",
-			enabled:   true,
-			region:    "",
-			expectErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			bedrock := NewBedrockSettings(tt.enabled, tt.region)
+			bedrock := NewBedrockSettings(tt.enabled)
 			err := bedrock.Validate()
 
 			if tt.expectErr && err == nil {
@@ -108,14 +96,11 @@ func TestSettings_SetBedrock(t *testing.T) {
 	// Wait a bit to ensure time difference
 	time.Sleep(time.Millisecond)
 
-	bedrock := NewBedrockSettings(true, "ap-northeast-1")
+	bedrock := NewBedrockSettings(true)
 	settings.SetBedrock(bedrock)
 
 	if settings.Bedrock() == nil {
 		t.Error("Expected Bedrock to be set")
-	}
-	if settings.Bedrock().Region() != "ap-northeast-1" {
-		t.Errorf("Expected region 'ap-northeast-1', got '%s'", settings.Bedrock().Region())
 	}
 	if !settings.UpdatedAt().After(originalUpdatedAt) {
 		t.Error("Expected UpdatedAt to be updated")
@@ -137,19 +122,10 @@ func TestSettings_Validate(t *testing.T) {
 			name: "valid settings with valid bedrock",
 			settings: func() *Settings {
 				s := NewSettings("test-user")
-				s.SetBedrock(NewBedrockSettings(true, "us-east-1"))
+				s.SetBedrock(NewBedrockSettings(true))
 				return s
 			}(),
 			expectErr: false,
-		},
-		{
-			name: "invalid settings with invalid bedrock",
-			settings: func() *Settings {
-				s := NewSettings("test-user")
-				s.SetBedrock(NewBedrockSettings(true, ""))
-				return s
-			}(),
-			expectErr: true,
 		},
 		{
 			name: "invalid settings with empty name",
