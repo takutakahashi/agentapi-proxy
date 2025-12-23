@@ -614,3 +614,353 @@ func TestGitHubAuthProvider_Integration(t *testing.T) {
 	assert.NotNil(t, userCtx.GitHubUser)
 	assert.Equal(t, "integration@test.com", userCtx.GitHubUser.Email)
 }
+
+func TestGitHubAuthProvider_HasWildcardPatterns(t *testing.T) {
+	tests := []struct {
+		name        string
+		teamMapping map[string]config.TeamRoleRule
+		expected    bool
+	}{
+		{
+			name: "no wildcard patterns",
+			teamMapping: map[string]config.TeamRoleRule{
+				"org/team":   {Role: "developer"},
+				"org2/team2": {Role: "admin"},
+			},
+			expected: false,
+		},
+		{
+			name: "has wildcard pattern",
+			teamMapping: map[string]config.TeamRoleRule{
+				"org/team":   {Role: "developer"},
+				"*/cc-users": {Role: "admin"},
+			},
+			expected: true,
+		},
+		{
+			name: "only wildcard patterns",
+			teamMapping: map[string]config.TeamRoleRule{
+				"*/cc-users": {Role: "developer"},
+				"*/admins":   {Role: "admin"},
+			},
+			expected: true,
+		},
+		{
+			name:        "empty mapping",
+			teamMapping: map[string]config.TeamRoleRule{},
+			expected:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+				UserMapping: config.GitHubUserMapping{
+					TeamRoleMapping: tt.teamMapping,
+				},
+			})
+
+			result := provider.hasWildcardPatterns()
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGitHubAuthProvider_ExtractWildcardTeamSlugs(t *testing.T) {
+	tests := []struct {
+		name          string
+		teamMapping   map[string]config.TeamRoleRule
+		expectedSlugs []string
+	}{
+		{
+			name: "no wildcard patterns",
+			teamMapping: map[string]config.TeamRoleRule{
+				"org/team": {Role: "developer"},
+			},
+			expectedSlugs: []string{},
+		},
+		{
+			name: "single wildcard pattern",
+			teamMapping: map[string]config.TeamRoleRule{
+				"*/cc-users": {Role: "developer"},
+				"org/team":   {Role: "admin"},
+			},
+			expectedSlugs: []string{"cc-users"},
+		},
+		{
+			name: "multiple wildcard patterns",
+			teamMapping: map[string]config.TeamRoleRule{
+				"*/cc-users": {Role: "developer"},
+				"*/admins":   {Role: "admin"},
+				"org/team":   {Role: "member"},
+			},
+			expectedSlugs: []string{"cc-users", "admins"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+				UserMapping: config.GitHubUserMapping{
+					TeamRoleMapping: tt.teamMapping,
+				},
+			})
+
+			result := provider.extractWildcardTeamSlugs()
+			assert.Equal(t, len(tt.expectedSlugs), len(result))
+			for _, expectedSlug := range tt.expectedSlugs {
+				assert.Contains(t, result, expectedSlug)
+			}
+		})
+	}
+}
+
+func TestGitHubAuthProvider_MapUserPermissionsWithWildcard(t *testing.T) {
+	tests := []struct {
+		name               string
+		teams              []GitHubTeamMembership
+		config             config.GitHubUserMapping
+		expectedRole       string
+		expectedPermCount  int
+		expectedPermExists []string
+	}{
+		{
+			name: "wildcard pattern matches team",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "org-alpha",
+					TeamSlug:     "cc-users",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"*/cc-users": {
+						Role:        "developer",
+						Permissions: []string{"write", "deploy"},
+					},
+				},
+			},
+			expectedRole:       "developer",
+			expectedPermCount:  3, // read + write + deploy
+			expectedPermExists: []string{"read", "write", "deploy"},
+		},
+		{
+			name: "wildcard pattern matches multiple orgs",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "org-alpha",
+					TeamSlug:     "cc-users",
+					Role:         "member",
+				},
+				{
+					Organization: "org-beta",
+					TeamSlug:     "cc-users",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"*/cc-users": {
+						Role:        "developer",
+						Permissions: []string{"write"},
+					},
+				},
+			},
+			expectedRole:       "developer",
+			expectedPermCount:  2, // read + write
+			expectedPermExists: []string{"read", "write"},
+		},
+		{
+			name: "exact match and wildcard both apply - permissions combined",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "myorg",
+					TeamSlug:     "cc-users",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"*/cc-users": {
+						Role:        "developer",
+						Permissions: []string{"write"},
+					},
+					"myorg/cc-users": {
+						Role:        "admin",
+						Permissions: []string{"admin"},
+					},
+				},
+			},
+			expectedRole:       "admin",
+			expectedPermCount:  3, // read + write + admin (both rules apply)
+			expectedPermExists: []string{"read", "write", "admin"},
+		},
+		{
+			name: "highest role wins across multiple wildcard matches",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "org-a",
+					TeamSlug:     "developers",
+					Role:         "member",
+				},
+				{
+					Organization: "org-b",
+					TeamSlug:     "admins",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "guest",
+				DefaultPermissions: []string{},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"*/developers": {
+						Role:        "developer",
+						Permissions: []string{"write"},
+					},
+					"*/admins": {
+						Role:        "admin",
+						Permissions: []string{"admin"},
+					},
+				},
+			},
+			expectedRole:       "admin",
+			expectedPermCount:  2,
+			expectedPermExists: []string{"write", "admin"},
+		},
+		{
+			name: "no match - default only",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "org-a",
+					TeamSlug:     "other-team",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "guest",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"*/cc-users": {
+						Role:        "developer",
+						Permissions: []string{"write"},
+					},
+				},
+			},
+			expectedRole:       "guest",
+			expectedPermCount:  1,
+			expectedPermExists: []string{"read"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+				UserMapping: tt.config,
+			})
+
+			role, permissions, _ := provider.mapUserPermissions(tt.teams)
+			assert.Equal(t, tt.expectedRole, role)
+			assert.Equal(t, tt.expectedPermCount, len(permissions))
+
+			for _, expectedPerm := range tt.expectedPermExists {
+				assert.Contains(t, permissions, expectedPerm)
+			}
+		})
+	}
+}
+
+func TestGitHubAuthProvider_WildcardIntegration(t *testing.T) {
+	// Mock GitHub API server with /user/teams endpoint
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "token wildcard-test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		switch r.URL.Path {
+		case "/user":
+			user := GitHubUserInfo{
+				Login: "wildcard-user",
+				ID:    123456,
+			}
+			_ = json.NewEncoder(w).Encode(user)
+
+		case "/user/teams":
+			teams := []struct {
+				ID           int64  `json:"id"`
+				Slug         string `json:"slug"`
+				Name         string `json:"name"`
+				Permission   string `json:"permission"`
+				Organization struct {
+					Login string `json:"login"`
+				} `json:"organization"`
+			}{
+				{
+					ID:         1,
+					Slug:       "cc-users",
+					Name:       "CC Users",
+					Permission: "push",
+					Organization: struct {
+						Login string `json:"login"`
+					}{Login: "org-alpha"},
+				},
+				{
+					ID:         2,
+					Slug:       "cc-users",
+					Name:       "CC Users",
+					Permission: "push",
+					Organization: struct {
+						Login string `json:"login"`
+					}{Login: "org-beta"},
+				},
+				{
+					ID:         3,
+					Slug:       "other-team",
+					Name:       "Other Team",
+					Permission: "pull",
+					Organization: struct {
+						Login string `json:"login"`
+					}{Login: "org-alpha"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(teams)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+		BaseURL: mockServer.URL,
+		UserMapping: config.GitHubUserMapping{
+			DefaultRole:        "guest",
+			DefaultPermissions: []string{},
+			TeamRoleMapping: map[string]config.TeamRoleRule{
+				"*/cc-users": {
+					Role:        "developer",
+					Permissions: []string{"read", "write"},
+				},
+			},
+		},
+	})
+
+	userCtx, err := provider.Authenticate(context.Background(), "wildcard-test-token")
+	require.NoError(t, err)
+
+	assert.Equal(t, "wildcard-user", userCtx.UserID)
+	assert.Equal(t, "developer", userCtx.Role)
+	assert.Contains(t, userCtx.Permissions, "read")
+	assert.Contains(t, userCtx.Permissions, "write")
+
+	// Verify that both org-alpha/cc-users and org-beta/cc-users matched
+	assert.Len(t, userCtx.GitHubUser.Teams, 2)
+}
