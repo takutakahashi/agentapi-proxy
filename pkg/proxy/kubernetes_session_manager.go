@@ -496,9 +496,13 @@ fi
 
 # Copy notification subscriptions from Secret to writable EmptyDir
 # Use -L to follow symlinks (Secret mounts use symlinks)
-if [ -d /notification-subscriptions-source ] && [ "$(ls -A /notification-subscriptions-source 2>/dev/null)" ]; then
-    cp -rL /notification-subscriptions-source/* /notifications/
-    echo "Notification subscriptions copied"
+# Use find to avoid glob expansion issues when directory is empty
+if [ -d /notification-subscriptions-source ]; then
+    file_count=$(find /notification-subscriptions-source -maxdepth 1 -type f 2>/dev/null | wc -l)
+    if [ "$file_count" -gt 0 ]; then
+        cp -rL /notification-subscriptions-source/* /notifications/
+        echo "Notification subscriptions copied"
+    fi
 fi
 
 # Set permissions (running as user 999)
