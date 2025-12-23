@@ -11,7 +11,7 @@ import (
 )
 
 // UserInfoCacheTTL is the TTL for /user/info API response cache
-const UserInfoCacheTTL = 30 * time.Second
+const UserInfoCacheTTL = 10 * time.Second
 
 // UserHandlers handles user-related endpoints
 type UserHandlers struct {
