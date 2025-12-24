@@ -165,8 +165,13 @@ type KubernetesSessionConfig struct {
 	InitContainerImage string `json:"init_container_image" mapstructure:"init_container_image"`
 	// GitHubSecretName is the name of the Kubernetes Secret containing GitHub authentication credentials
 	// This Secret is used by the clone-repo init container for repository cloning
-	// Expected keys: GITHUB_TOKEN, GITHUB_APP_ID, GITHUB_APP_PEM, GITHUB_INSTALLATION_ID, GITHUB_API
+	// Expected keys: GITHUB_TOKEN, GITHUB_APP_ID, GITHUB_APP_PEM, GITHUB_INSTALLATION_ID
 	GitHubSecretName string `json:"github_secret_name" mapstructure:"github_secret_name"`
+	// GitHubConfigSecretName is the name of the Kubernetes Secret containing GitHub configuration (non-auth)
+	// This Secret contains GITHUB_API and GITHUB_URL for GitHub Enterprise Server support
+	// It is kept separate from GitHubSecretName so that params.github_token can override authentication
+	// without losing Enterprise Server URL settings
+	GitHubConfigSecretName string `json:"github_config_secret_name" mapstructure:"github_config_secret_name"`
 	// ConfigFile is the path to an external configuration file for kubernetes session settings
 	// This file can contain node_selector and tolerations settings
 	ConfigFile string `json:"config_file,omitempty" mapstructure:"config_file"`
@@ -416,6 +421,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.claude_config_user_configmap_prefix", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_USER_CONFIGMAP_PREFIX")
 	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
+	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
 
 	// MCP servers configuration
