@@ -424,6 +424,86 @@ func TestKubernetesSessionManager_DeleteSession(t *testing.T) {
 	}
 }
 
+func TestKubernetesSessionManager_DeleteSession_GithubTokenSecret(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-delete-github-token",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session with GitHub token
+	sessionID := "test-session-github-token"
+	req := &RunServerRequest{
+		UserID:      "test-user",
+		GithubToken: "test-github-token-12345",
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+
+	// Verify GitHub token Secret was created
+	serviceName := "agentapi-session-" + sessionID + "-svc"
+	secretName := serviceName + "-github-token"
+	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Expected GitHub token Secret to be created: %v", err)
+	}
+
+	// Delete session
+	err = manager.DeleteSession(sessionID)
+	if err != nil {
+		t.Errorf("Failed to delete session: %v", err)
+	}
+
+	// Verify GitHub token Secret is deleted (or has DeletionTimestamp)
+	secret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil && secret.DeletionTimestamp == nil {
+		t.Error("Expected GitHub token Secret to be deleted or have DeletionTimestamp set")
+	}
+}
+
 func TestKubernetesSessionManager_Shutdown(t *testing.T) {
 	k8sClient, cleanup := setupEnvTest(t)
 	defer cleanup()

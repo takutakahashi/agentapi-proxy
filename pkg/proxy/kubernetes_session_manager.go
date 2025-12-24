@@ -1260,6 +1260,16 @@ func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Contex
 	return nil
 }
 
+// deleteGithubTokenSecret deletes the GitHub token Secret for a session
+func (m *KubernetesSessionManager) deleteGithubTokenSecret(ctx context.Context, session *kubernetesSession) error {
+	secretName := fmt.Sprintf("%s-github-token", session.serviceName)
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete github token secret: %w", err)
+	}
+	return nil
+}
+
 // createGithubTokenSecret creates a Secret containing the GitHub token
 // This is used when params.github_token is provided to override GITHUB_TOKEN
 // from GitHubSecretName. Other GitHub settings (GITHUB_API, GITHUB_URL) are
@@ -1728,6 +1738,11 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 	// Delete initial message Secret
 	if err := m.deleteInitialMessageSecret(ctx, session); err != nil {
 		errs = append(errs, fmt.Sprintf("initial-message-secret: %v", err))
+	}
+
+	// Delete GitHub token Secret
+	if err := m.deleteGithubTokenSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("github-token-secret: %v", err))
 	}
 
 	if len(errs) > 0 {
