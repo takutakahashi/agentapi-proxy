@@ -131,7 +131,7 @@ config:
       oauth:
         clientId: ""
         clientSecret: ""
-        scope: "read:user read:org"
+        scope: "read:user read:org repo workflow"
         baseUrl: ""
 
   # ロールベース環境変数ファイル設定
