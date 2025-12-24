@@ -895,9 +895,43 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *kubernet
 		{Name: "HOME", Value: "/home/agentapi"},
 	}
 
-	// Build envFrom for GitHub secret
+	// Build envFrom for GitHub secrets
+	// When params.github_token is provided, use session-specific Secret instead of GitHubSecretName
+	// to avoid exposing GITHUB_APP_PEM and other auth credentials
 	var envFrom []corev1.EnvFromSource
-	if m.k8sConfig.GitHubSecretName != "" {
+
+	if req.GithubToken != "" {
+		// When params.github_token is provided:
+		// - Do NOT mount GitHubSecretName (to avoid exposing GITHUB_APP_PEM and other auth credentials)
+		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
+		// - Mount session-specific Secret for GITHUB_TOKEN
+
+		// Mount GitHub config Secret (GITHUB_API, GITHUB_URL) if available
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
+
+		// Mount session-specific Secret for GITHUB_TOKEN
+		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.serviceName)
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: githubTokenSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		// When params.github_token is NOT provided:
+		// - Mount GitHubSecretName for full GitHub App authentication
+		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
@@ -906,6 +940,18 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *kubernet
 				Optional: boolPtr(true),
 			},
 		})
+
+		// Mount GitHub config Secret if available (for any additional config)
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
 	}
 
 	return &corev1.Container{
@@ -1959,10 +2005,42 @@ func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *kubernete
 	}
 
 	// Build envFrom for environment variables needed by MCP configs
+	// When params.github_token is provided, use session-specific Secret instead of GitHubSecretName
+	// to avoid exposing GITHUB_APP_PEM and other auth credentials
 	var envFrom []corev1.EnvFromSource
 
-	// Add GitHub secret environment (may contain tokens used in MCP configs)
-	if m.k8sConfig.GitHubSecretName != "" {
+	if req.GithubToken != "" {
+		// When params.github_token is provided:
+		// - Do NOT mount GitHubSecretName (to avoid exposing GITHUB_APP_PEM and other auth credentials)
+		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
+		// - Mount session-specific Secret for GITHUB_TOKEN
+
+		// Mount GitHub config Secret (GITHUB_API, GITHUB_URL) if available
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
+
+		// Mount session-specific Secret for GITHUB_TOKEN
+		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.serviceName)
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: githubTokenSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		// When params.github_token is NOT provided:
+		// - Mount GitHubSecretName for full GitHub App authentication
+		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
@@ -1971,6 +2049,18 @@ func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *kubernete
 				Optional: boolPtr(true),
 			},
 		})
+
+		// Mount GitHub config Secret if available (for any additional config)
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
 	}
 
 	// Add team-based credentials Secrets (for environment variable expansion)
