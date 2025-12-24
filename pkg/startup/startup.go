@@ -561,26 +561,39 @@ func getGitHubURL() string {
 func SetupGitHubAuth(repoFullName string) error {
 	log.Printf("Setting up GitHub authentication for repository: %s", repoFullName)
 
+	// Determine GitHub host
+	githubHost := "github.com"
+	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+		githubHost = strings.TrimPrefix(githubAPI, "https://")
+		githubHost = strings.TrimPrefix(githubHost, "http://")
+		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+	}
+
 	// Check if GITHUB_TOKEN is already set in the environment
-	// If so, gh CLI will automatically use it for authentication
 	existingToken := os.Getenv("GITHUB_TOKEN")
 	if existingToken != "" {
-		log.Printf("GITHUB_TOKEN environment variable is already set, gh CLI will use it automatically")
-		log.Printf("Skipping gh auth login (not needed when GITHUB_TOKEN is set)")
+		log.Printf("GITHUB_TOKEN environment variable is already set")
 
 		// Set up environment for git setup
 		env := os.Environ()
 
-		// Determine GitHub host for Enterprise Server
-		if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
-			githubHost := strings.TrimPrefix(githubAPI, "https://")
-			githubHost = strings.TrimPrefix(githubHost, "http://")
-			githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+		// For GitHub Enterprise Server, we need to explicitly authenticate
+		// even when GITHUB_TOKEN is set, because gh auth setup-git requires
+		// the host to be in the authenticated hosts list
+		if githubHost != "github.com" {
+			log.Printf("GitHub Enterprise Server detected (%s), performing explicit gh auth login", githubHost)
 			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+
+			// Perform gh auth login for GHES
+			if err := performGHAuthLogin(githubHost, existingToken, env); err != nil {
+				return fmt.Errorf("failed to authenticate gh CLI for GHES: %w", err)
+			}
+		} else {
+			log.Printf("Skipping gh auth login for github.com (GITHUB_TOKEN is automatically used)")
 		}
 
-		// Setup git authentication (this works even with GITHUB_TOKEN)
-		if err := performGHAuthSetupGit(env); err != nil {
+		// Setup git authentication
+		if err := performGHAuthSetupGit(githubHost, env); err != nil {
 			return fmt.Errorf("failed to setup git authentication: %w", err)
 		}
 
@@ -598,12 +611,8 @@ func SetupGitHubAuth(repoFullName string) error {
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("GITHUB_TOKEN=%s", token))
 
-	// Determine GitHub host
-	githubHost := "github.com"
-	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
-		githubHost = strings.TrimPrefix(githubAPI, "https://")
-		githubHost = strings.TrimPrefix(githubHost, "http://")
-		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+	// Add GH_HOST for GitHub Enterprise Server
+	if githubHost != "github.com" {
 		env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
 	}
 
@@ -613,7 +622,7 @@ func SetupGitHubAuth(repoFullName string) error {
 	}
 
 	// Setup git authentication
-	if err := performGHAuthSetupGit(env); err != nil {
+	if err := performGHAuthSetupGit(githubHost, env); err != nil {
 		return fmt.Errorf("failed to setup git authentication: %w", err)
 	}
 
@@ -649,10 +658,18 @@ func performGHAuthLogin(githubHost, token string, env []string) error {
 }
 
 // performGHAuthSetupGit performs gh auth setup-git
-func performGHAuthSetupGit(env []string) error {
-	log.Printf("Performing gh auth setup-git")
+func performGHAuthSetupGit(githubHost string, env []string) error {
+	log.Printf("Performing gh auth setup-git for host: %s", githubHost)
 
-	cmd := exec.Command("gh", "auth", "setup-git")
+	var cmd *exec.Cmd
+	if githubHost == "" || githubHost == "github.com" {
+		cmd = exec.Command("gh", "auth", "setup-git")
+	} else {
+		// For GitHub Enterprise Server, specify hostname with --force
+		// --force is required when the host might not be in gh's authenticated hosts list
+		// (e.g., when using GITHUB_TOKEN environment variable)
+		cmd = exec.Command("gh", "auth", "setup-git", "--hostname", githubHost, "--force")
+	}
 	cmd.Env = env
 
 	var stderr bytes.Buffer
@@ -662,6 +679,6 @@ func performGHAuthSetupGit(env []string) error {
 		return fmt.Errorf("gh auth setup-git failed: %w, stderr: %s", err, stderr.String())
 	}
 
-	log.Printf("Successfully set up git authentication")
+	log.Printf("Successfully set up git authentication for %s", githubHost)
 	return nil
 }

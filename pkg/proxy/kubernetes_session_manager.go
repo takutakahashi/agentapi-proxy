@@ -855,13 +855,11 @@ if [ -n "$GITHUB_APP_PEM" ]; then
     echo "GitHub App PEM file created at /github-app/app.pem"
 fi
 
-# Setup GitHub authentication (skip if GITHUB_TOKEN is already set, as gh CLI uses it automatically)
-if [ -z "$GITHUB_TOKEN" ]; then
-    echo "Setting up GitHub authentication..."
-    agentapi-proxy helpers setup-gh --repo-fullname "$AGENTAPI_REPO_FULLNAME"
-else
-    echo "GITHUB_TOKEN is set, skipping setup-gh (gh CLI uses it automatically)"
-fi
+# Setup GitHub authentication
+# Always run setup-gh to configure git credential helper properly
+# This is required for GitHub Enterprise Server (GHES) even when GITHUB_TOKEN is set
+echo "Setting up GitHub authentication..."
+agentapi-proxy helpers setup-gh --repo-fullname "$AGENTAPI_REPO_FULLNAME"
 
 # Clone or update repository
 if [ -d "$CLONE_DIR/.git" ]; then
