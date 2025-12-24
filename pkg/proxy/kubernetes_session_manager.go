@@ -140,6 +140,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
+	// Create GitHub token Secret if github_token is provided via params
+	if req.GithubToken != "" {
+		if err := m.createGithubTokenSecret(ctx, session, req.GithubToken); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create github token secret: %v", err)
+			// Continue anyway - will fall back to GitHub App authentication if available
+		}
+	}
+
 	// Create Deployment
 	if err := m.createDeployment(ctx, session, req); err != nil {
 		if m.isPVCEnabled() {
@@ -607,9 +615,46 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		workingDir = "/home/agentapi/workdir/repo"
 	}
 
-	// Build envFrom for GitHub secret (used for GitHub authentication in session)
+	// Build envFrom for GitHub secrets
+	// Two secrets are used:
+	// - GitHubSecretName: Contains GITHUB_TOKEN, GITHUB_APP_PEM, GITHUB_APP_ID, GITHUB_INSTALLATION_ID (authentication)
+	// - GitHubConfigSecretName: Contains GITHUB_API, GITHUB_URL (configuration for Enterprise Server)
 	var envFrom []corev1.EnvFromSource
-	if m.k8sConfig.GitHubSecretName != "" {
+
+	if req.GithubToken != "" {
+		// When params.github_token is provided:
+		// - Do NOT mount GitHubSecretName (to avoid exposing GITHUB_APP_PEM and other auth credentials)
+		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
+		// - Mount session-specific Secret for GITHUB_TOKEN
+
+		// Mount GitHub config Secret (GITHUB_API, GITHUB_URL) if available
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+			log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
+		}
+
+		// Mount session-specific Secret for GITHUB_TOKEN
+		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.serviceName)
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: githubTokenSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+		log.Printf("[K8S_SESSION] Using session-specific GitHub token Secret %s for session %s", githubTokenSecretName, session.id)
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		// When params.github_token is NOT provided:
+		// - Mount GitHubSecretName for full GitHub App authentication
+		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
@@ -618,6 +663,18 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				Optional: boolPtr(true),
 			},
 		})
+
+		// Mount GitHub config Secret if available (for any additional config)
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
 	}
 
 	// Add team-based credentials Secrets (agent-credentials-{org}-{team})
@@ -1200,6 +1257,42 @@ func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Contex
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete initial message secret: %w", err)
 	}
+	return nil
+}
+
+// createGithubTokenSecret creates a Secret containing the GitHub token
+// This is used when params.github_token is provided to override GITHUB_TOKEN
+// from GitHubSecretName. Other GitHub settings (GITHUB_API, GITHUB_URL) are
+// still read from GitHubSecretName.
+func (m *KubernetesSessionManager) createGithubTokenSecret(
+	ctx context.Context,
+	session *kubernetesSession,
+	token string,
+) error {
+	secretName := fmt.Sprintf("%s-github-token", session.serviceName)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(session.request.UserID),
+				"agentapi.proxy/resource":   "github-token",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"GITHUB_TOKEN": token,
+		},
+	}
+
+	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create github token secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created GitHub token Secret %s for session %s", secretName, session.id)
 	return nil
 }
 
