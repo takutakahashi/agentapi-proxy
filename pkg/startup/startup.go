@@ -561,6 +561,33 @@ func getGitHubURL() string {
 func SetupGitHubAuth(repoFullName string) error {
 	log.Printf("Setting up GitHub authentication for repository: %s", repoFullName)
 
+	// Check if GITHUB_TOKEN is already set in the environment
+	// If so, gh CLI will automatically use it for authentication
+	existingToken := os.Getenv("GITHUB_TOKEN")
+	if existingToken != "" {
+		log.Printf("GITHUB_TOKEN environment variable is already set, gh CLI will use it automatically")
+		log.Printf("Skipping gh auth login (not needed when GITHUB_TOKEN is set)")
+
+		// Set up environment for git setup
+		env := os.Environ()
+
+		// Determine GitHub host for Enterprise Server
+		if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+			githubHost := strings.TrimPrefix(githubAPI, "https://")
+			githubHost = strings.TrimPrefix(githubHost, "http://")
+			githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+		}
+
+		// Setup git authentication (this works even with GITHUB_TOKEN)
+		if err := performGHAuthSetupGit(env); err != nil {
+			return fmt.Errorf("failed to setup git authentication: %w", err)
+		}
+
+		log.Printf("Successfully set up GitHub authentication using existing GITHUB_TOKEN")
+		return nil
+	}
+
 	// Get GitHub token for authentication
 	token, err := GetGitHubToken(repoFullName)
 	if err != nil {
