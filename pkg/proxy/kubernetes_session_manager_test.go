@@ -1725,3 +1725,155 @@ func TestKubernetesSessionManager_CloneRepoInitContainerWithoutGitHubSecret(t *t
 		t.Errorf("Expected 0 envFrom when GitHubSecretName is empty, got %d", len(cloneRepoContainer.EnvFrom))
 	}
 }
+
+// TestKubernetesSessionManager_GithubTokenDoesNotMountGitHubSecretName tests that
+// when params.github_token is provided, clone-repo init container does not mount
+// GitHubSecretName but instead mounts the session-specific github-token Secret.
+func TestKubernetesSessionManager_GithubTokenDoesNotMountGitHubSecretName(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-github-token-override",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	// Create manager with GitHubSecretName AND GitHubConfigSecretName configured
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageClass:                 "",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
+			GitHubSecretName:                "github-session-secret", // Should NOT be mounted when GithubToken is provided
+			GitHubConfigSecretName:          "github-config-secret",  // Should still be mounted
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create session with RepoInfo AND GithubToken
+	sessionID := "test-github-token"
+	req := &RunServerRequest{
+		UserID: "test-user",
+		RepoInfo: &RepositoryInfo{
+			FullName: "owner/repo",
+			CloneDir: "/home/agentapi/workdir/test-github-token",
+		},
+		GithubToken: "ghp_test_token_12345", // This should trigger session-specific Secret usage
+	}
+
+	_, err = manager.CreateSession(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	// Get deployment
+	deploymentName := "agentapi-session-" + sessionID
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get deployment: %v", err)
+	}
+
+	podSpec := deployment.Spec.Template.Spec
+
+	// Find clone-repo init container
+	var cloneRepoContainer *corev1.Container
+	for i := range podSpec.InitContainers {
+		if podSpec.InitContainers[i].Name == "clone-repo" {
+			cloneRepoContainer = &podSpec.InitContainers[i]
+			break
+		}
+	}
+	if cloneRepoContainer == nil {
+		t.Fatal("Expected clone-repo init container")
+	}
+
+	// Verify clone-repo container does NOT mount GitHubSecretName
+	// It should have 2 envFrom: github-config-secret and session-specific github-token Secret
+	expectedEnvFromCount := 2
+	if len(cloneRepoContainer.EnvFrom) != expectedEnvFromCount {
+		t.Fatalf("Expected %d envFrom for clone-repo, got %d", expectedEnvFromCount, len(cloneRepoContainer.EnvFrom))
+	}
+
+	// Collect secret names from envFrom
+	envFromSecretNames := make(map[string]bool)
+	for _, ef := range cloneRepoContainer.EnvFrom {
+		if ef.SecretRef != nil {
+			envFromSecretNames[ef.SecretRef.Name] = true
+		}
+	}
+
+	// Verify GitHubSecretName is NOT mounted
+	if envFromSecretNames["github-session-secret"] {
+		t.Error("Expected github-session-secret (GitHubSecretName) to NOT be mounted when GithubToken is provided")
+	}
+
+	// Verify GitHubConfigSecretName IS mounted
+	if !envFromSecretNames["github-config-secret"] {
+		t.Error("Expected github-config-secret (GitHubConfigSecretName) to be mounted")
+	}
+
+	// Verify session-specific github-token Secret IS mounted
+	// serviceName format is "agentapi-session-{sessionID}-svc"
+	expectedSessionSecret := "agentapi-session-" + sessionID + "-svc-github-token"
+	if !envFromSecretNames[expectedSessionSecret] {
+		t.Errorf("Expected session-specific Secret %s to be mounted", expectedSessionSecret)
+	}
+
+	// Also verify the main agentapi container
+	var agentapiContainer *corev1.Container
+	for i := range podSpec.Containers {
+		if podSpec.Containers[i].Name == "agentapi" {
+			agentapiContainer = &podSpec.Containers[i]
+			break
+		}
+	}
+	if agentapiContainer == nil {
+		t.Fatal("Expected agentapi container")
+	}
+
+	// Collect secret names from main container envFrom
+	mainEnvFromSecretNames := make(map[string]bool)
+	for _, ef := range agentapiContainer.EnvFrom {
+		if ef.SecretRef != nil {
+			mainEnvFromSecretNames[ef.SecretRef.Name] = true
+		}
+	}
+
+	// Verify GitHubSecretName is NOT mounted in main container either
+	if mainEnvFromSecretNames["github-session-secret"] {
+		t.Error("Expected github-session-secret (GitHubSecretName) to NOT be mounted in main container when GithubToken is provided")
+	}
+}
