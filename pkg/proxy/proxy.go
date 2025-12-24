@@ -324,10 +324,12 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 		initialMessage = startReq.Params.Message
 	}
 
-	// Determine GitHub token from Params.GithubToken
-	var githubToken string
-	if startReq.Params != nil && startReq.Params.GithubToken != "" {
+	// Determine GitHub settings from Params
+	var githubToken, githubApi, githubUrl string
+	if startReq.Params != nil {
 		githubToken = startReq.Params.GithubToken
+		githubApi = startReq.Params.GithubApi
+		githubUrl = startReq.Params.GithubUrl
 	}
 
 	// Build run server request
@@ -339,6 +341,8 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 		InitialMessage: initialMessage,
 		Teams:          teams,
 		GithubToken:    githubToken,
+		GithubApi:      githubApi,
+		GithubUrl:      githubUrl,
 	}
 
 	// Delegate to session manager

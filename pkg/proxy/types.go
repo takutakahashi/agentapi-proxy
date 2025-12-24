@@ -6,6 +6,10 @@ type SessionParams struct {
 	Message string `json:"message,omitempty"`
 	// GithubToken is a GitHub token to use for authentication instead of GitHub App
 	GithubToken string `json:"github_token,omitempty"`
+	// GithubApi is the GitHub API URL for Enterprise Server (e.g., https://github.enterprise.com/api/v3)
+	GithubApi string `json:"github_api,omitempty"`
+	// GithubUrl is the GitHub URL for Enterprise Server (e.g., https://github.enterprise.com)
+	GithubUrl string `json:"github_url,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -32,4 +36,6 @@ type RunServerRequest struct {
 	InitialMessage string
 	Teams          []string // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
 	GithubToken    string   // GitHub token passed via params.github_token
+	GithubApi      string   // GitHub API URL passed via params.github_api
+	GithubUrl      string   // GitHub URL passed via params.github_url
 }

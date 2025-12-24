@@ -1224,14 +1224,26 @@ func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Contex
 	return nil
 }
 
-// createGithubTokenSecret creates a Secret containing the GitHub token
+// createGithubTokenSecret creates a Secret containing GitHub credentials
 // This is used when params.github_token is provided instead of GitHub App authentication
+// It also includes GITHUB_API and GITHUB_URL if provided for Enterprise Server support
 func (m *KubernetesSessionManager) createGithubTokenSecret(
 	ctx context.Context,
 	session *kubernetesSession,
 	token string,
 ) error {
 	secretName := fmt.Sprintf("%s-github-token", session.serviceName)
+
+	// Build secret data with GitHub token and optional API/URL settings
+	secretData := map[string]string{
+		"GITHUB_TOKEN": token,
+	}
+	if session.request.GithubApi != "" {
+		secretData["GITHUB_API"] = session.request.GithubApi
+	}
+	if session.request.GithubUrl != "" {
+		secretData["GITHUB_URL"] = session.request.GithubUrl
+	}
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1243,10 +1255,8 @@ func (m *KubernetesSessionManager) createGithubTokenSecret(
 				"agentapi.proxy/resource":   "github-token",
 			},
 		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"GITHUB_TOKEN": token,
-		},
+		Type:       corev1.SecretTypeOpaque,
+		StringData: secretData,
 	}
 
 	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
