@@ -140,6 +140,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
+	// Create GitHub token Secret if github_token is provided via params
+	if req.GithubToken != "" {
+		if err := m.createGithubTokenSecret(ctx, session, req.GithubToken); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create github token secret: %v", err)
+			// Continue anyway - will fall back to GitHub App authentication if available
+		}
+	}
+
 	// Create Deployment
 	if err := m.createDeployment(ctx, session, req); err != nil {
 		if m.isPVCEnabled() {
@@ -609,7 +617,20 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	// Build envFrom for GitHub secret (used for GitHub authentication in session)
 	var envFrom []corev1.EnvFromSource
-	if m.k8sConfig.GitHubSecretName != "" {
+	if req.GithubToken != "" {
+		// Use session-specific GitHub token Secret when params.github_token is provided
+		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.serviceName)
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: githubTokenSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+		log.Printf("[K8S_SESSION] Using session-specific GitHub token Secret %s for session %s", githubTokenSecretName, session.id)
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		// Fall back to GitHub App Secret when params.github_token is not provided
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
@@ -1200,6 +1221,40 @@ func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Contex
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete initial message secret: %w", err)
 	}
+	return nil
+}
+
+// createGithubTokenSecret creates a Secret containing the GitHub token
+// This is used when params.github_token is provided instead of GitHub App authentication
+func (m *KubernetesSessionManager) createGithubTokenSecret(
+	ctx context.Context,
+	session *kubernetesSession,
+	token string,
+) error {
+	secretName := fmt.Sprintf("%s-github-token", session.serviceName)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(session.request.UserID),
+				"agentapi.proxy/resource":   "github-token",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"GITHUB_TOKEN": token,
+		},
+	}
+
+	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create github token secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created GitHub token Secret %s for session %s", secretName, session.id)
 	return nil
 }
 
