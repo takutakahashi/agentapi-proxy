@@ -13,6 +13,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
+	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
+	"k8s.io/client-go/kubernetes"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 var (
@@ -67,6 +70,12 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
 
+	// Start schedule worker if enabled
+	var scheduleWorker *schedule.LeaderWorker
+	if configData.ScheduleWorker.Enabled {
+		scheduleWorker = startScheduleWorker(configData, proxyServer)
+	}
+
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Starting agentapi-proxy on port %s", port)
@@ -81,6 +90,12 @@ func runProxy(cmd *cobra.Command, args []string) {
 	<-quit
 
 	log.Println("Shutdown signal received, shutting down gracefully...")
+
+	// Stop schedule worker if running
+	if scheduleWorker != nil {
+		log.Printf("Stopping schedule worker...")
+		scheduleWorker.Stop()
+	}
 
 	// Create a context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -120,4 +135,88 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	log.Printf("Server shutdown complete")
+}
+
+// startScheduleWorker starts the schedule worker with leader election
+func startScheduleWorker(configData *config.Config, proxyServer *proxy.Proxy) *schedule.LeaderWorker {
+	log.Printf("[SCHEDULE_WORKER] Initializing schedule worker...")
+
+	// Create Kubernetes client
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[SCHEDULE_WORKER] Kubernetes config not available, schedule worker disabled: %v", err)
+		return nil
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[SCHEDULE_WORKER] Failed to create Kubernetes client, schedule worker disabled: %v", err)
+		return nil
+	}
+
+	// Determine namespace
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Create schedule manager
+	scheduleManager := schedule.NewKubernetesManager(client, namespace)
+
+	// Parse worker config durations
+	checkInterval, err := time.ParseDuration(configData.ScheduleWorker.CheckInterval)
+	if err != nil {
+		log.Printf("[SCHEDULE_WORKER] Invalid check_interval, using default 30s: %v", err)
+		checkInterval = 30 * time.Second
+	}
+
+	workerConfig := schedule.WorkerConfig{
+		CheckInterval: checkInterval,
+		Enabled:       true,
+	}
+
+	// Parse leader election config durations
+	leaseDuration, err := time.ParseDuration(configData.ScheduleWorker.LeaseDuration)
+	if err != nil {
+		log.Printf("[SCHEDULE_WORKER] Invalid lease_duration, using default 15s: %v", err)
+		leaseDuration = 15 * time.Second
+	}
+
+	renewDeadline, err := time.ParseDuration(configData.ScheduleWorker.RenewDeadline)
+	if err != nil {
+		log.Printf("[SCHEDULE_WORKER] Invalid renew_deadline, using default 10s: %v", err)
+		renewDeadline = 10 * time.Second
+	}
+
+	retryPeriod, err := time.ParseDuration(configData.ScheduleWorker.RetryPeriod)
+	if err != nil {
+		log.Printf("[SCHEDULE_WORKER] Invalid retry_period, using default 2s: %v", err)
+		retryPeriod = 2 * time.Second
+	}
+
+	electionConfig := schedule.LeaderElectionConfig{
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod:   retryPeriod,
+		LeaseName:     "agentapi-schedule-worker",
+		Namespace:     namespace,
+	}
+
+	// Create leader worker
+	leaderWorker := schedule.NewLeaderWorker(
+		scheduleManager,
+		proxyServer.GetSessionManager(),
+		client,
+		workerConfig,
+		electionConfig,
+	)
+
+	// Start leader worker in background
+	go leaderWorker.Run(context.Background())
+
+	log.Printf("[SCHEDULE_WORKER] Schedule worker started in namespace: %s", namespace)
+	return leaderWorker
 }
