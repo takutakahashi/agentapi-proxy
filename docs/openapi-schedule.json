@@ -1,0 +1,535 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AgentAPI Proxy - Schedule API",
+    "description": "API for managing scheduled agent sessions with delayed start and recurring execution support.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current server"
+    }
+  ],
+  "paths": {
+    "/schedules": {
+      "post": {
+        "summary": "Create a new schedule",
+        "description": "Creates a new schedule for delayed or recurring session execution.",
+        "operationId": "createSchedule",
+        "tags": ["Schedules"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScheduleRequest"
+              },
+              "examples": {
+                "one-time": {
+                  "summary": "One-time delayed execution",
+                  "value": {
+                    "name": "Code Review",
+                    "scheduled_at": "2025-01-15T14:00:00Z",
+                    "session_config": {
+                      "tags": {
+                        "repository": "org/repo"
+                      },
+                      "params": {
+                        "message": "Review PRs"
+                      }
+                    }
+                  }
+                },
+                "recurring": {
+                  "summary": "Recurring execution (cron)",
+                  "value": {
+                    "name": "Daily Standup",
+                    "cron_expr": "0 9 * * 1-5",
+                    "session_config": {
+                      "tags": {
+                        "repository": "org/standup-bot"
+                      },
+                      "params": {
+                        "message": "Generate daily standup"
+                      }
+                    }
+                  }
+                },
+                "scheduled-recurring": {
+                  "summary": "Recurring from a specific date",
+                  "value": {
+                    "name": "Weekly Report",
+                    "scheduled_at": "2025-02-01T00:00:00Z",
+                    "cron_expr": "0 18 * * 5",
+                    "session_config": {
+                      "tags": {
+                        "repository": "org/report-bot"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Schedule created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "summary": "List schedules",
+        "description": "Returns a list of schedules. Non-admin users can only see their own schedules.",
+        "operationId": "listSchedules",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by schedule status",
+            "schema": {
+              "$ref": "#/components/schemas/ScheduleStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of schedules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schedules": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ScheduleResponse"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/schedules/{id}": {
+      "get": {
+        "summary": "Get a schedule",
+        "description": "Returns a specific schedule by ID.",
+        "operationId": "getSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Schedule ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only access own schedules"
+          },
+          "404": {
+            "description": "Schedule not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a schedule",
+        "description": "Updates an existing schedule.",
+        "operationId": "updateSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Schedule ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateScheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Schedule updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Forbidden - can only update own schedules"
+          },
+          "404": {
+            "description": "Schedule not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a schedule",
+        "description": "Deletes a schedule by ID.",
+        "operationId": "deleteSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Schedule ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Schedule deleted successfully"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only delete own schedules"
+          },
+          "404": {
+            "description": "Schedule not found"
+          }
+        }
+      }
+    },
+    "/schedules/{id}/trigger": {
+      "post": {
+        "summary": "Manually trigger a schedule",
+        "description": "Immediately executes a schedule, creating a new session.",
+        "operationId": "triggerSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Schedule ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule triggered successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string",
+                      "description": "ID of the created session"
+                    },
+                    "triggered_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only trigger own schedules"
+          },
+          "404": {
+            "description": "Schedule not found"
+          },
+          "500": {
+            "description": "Failed to create session"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateScheduleRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the schedule"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When to execute (ISO8601). Either scheduled_at or cron_expr must be set."
+          },
+          "cron_expr": {
+            "type": "string",
+            "description": "Cron expression for recurring execution (e.g., '0 9 * * 1-5'). Either scheduled_at or cron_expr must be set.",
+            "example": "0 9 * * 1-5"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for the schedule (default: Asia/Tokyo)",
+            "example": "Asia/Tokyo"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/SessionConfig"
+          }
+        }
+      },
+      "UpdateScheduleRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the schedule"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduleStatus"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When to execute (ISO8601)"
+          },
+          "cron_expr": {
+            "type": "string",
+            "description": "Cron expression for recurring execution"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for the schedule"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/SessionConfig"
+          }
+        }
+      },
+      "ScheduleResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique schedule ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the schedule"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Owner user ID"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduleStatus"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Scheduled execution time"
+          },
+          "cron_expr": {
+            "type": "string",
+            "description": "Cron expression for recurring execution"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for the schedule"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/SessionConfig"
+          },
+          "next_execution_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Next scheduled execution time"
+          },
+          "execution_count": {
+            "type": "integer",
+            "description": "Number of times the schedule has been executed"
+          },
+          "last_execution": {
+            "$ref": "#/components/schemas/ExecutionRecord"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SessionConfig": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables for the session"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Tags for the session (e.g., repository info)"
+          },
+          "params": {
+            "$ref": "#/components/schemas/SessionParams"
+          }
+        }
+      },
+      "SessionParams": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Initial message to send to the agent after session starts"
+          },
+          "github_token": {
+            "type": "string",
+            "description": "GitHub token to use for authentication instead of GitHub App"
+          }
+        }
+      },
+      "ExecutionRecord": {
+        "type": "object",
+        "properties": {
+          "executed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "ID of the created session (if successful)"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["success", "failed", "skipped"],
+            "description": "Execution result status"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message (if failed or skipped)"
+          }
+        }
+      },
+      "ScheduleStatus": {
+        "type": "string",
+        "enum": ["active", "paused", "completed"],
+        "description": "Schedule status"
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "GitHub OAuth token or API key"
+      },
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Static API key"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Schedules",
+      "description": "Schedule management for delayed and recurring session execution"
+    }
+  ]
+}
