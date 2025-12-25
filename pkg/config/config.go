@@ -121,6 +121,22 @@ type Toleration struct {
 	TolerationSeconds *int64 `json:"toleration_seconds,omitempty" mapstructure:"toleration_seconds" yaml:"toleration_seconds"`
 }
 
+// ScheduleWorkerConfig represents schedule worker configuration
+type ScheduleWorkerConfig struct {
+	// Enabled enables the schedule worker
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// CheckInterval is how often to check for due schedules (e.g., "30s", "1m")
+	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
+	// Namespace is the Kubernetes namespace for schedule resources
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions
+	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
+}
+
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {
 	// Enabled enables Kubernetes-based session management
@@ -210,6 +226,8 @@ type Config struct {
 	RoleEnvFiles RoleEnvFilesConfig `json:"role_env_files" mapstructure:"role_env_files"`
 	// KubernetesSession is the configuration for Kubernetes-based session management
 	KubernetesSession KubernetesSessionConfig `json:"kubernetes_session" mapstructure:"kubernetes_session"`
+	// ScheduleWorker is the configuration for the schedule worker
+	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -429,6 +447,14 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.mcp_servers_base_secret", "AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_SECRET")
 	_ = v.BindEnv("kubernetes_session.mcp_servers_team_secret_prefix", "AGENTAPI_K8S_SESSION_MCP_SERVERS_TEAM_SECRET_PREFIX")
 	_ = v.BindEnv("kubernetes_session.mcp_servers_user_secret_prefix", "AGENTAPI_K8S_SESSION_MCP_SERVERS_USER_SECRET_PREFIX")
+
+	// Schedule worker configuration
+	_ = v.BindEnv("schedule_worker.enabled", "AGENTAPI_SCHEDULE_WORKER_ENABLED")
+	_ = v.BindEnv("schedule_worker.check_interval", "AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("schedule_worker.namespace", "AGENTAPI_SCHEDULE_WORKER_NAMESPACE")
+	_ = v.BindEnv("schedule_worker.lease_duration", "AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("schedule_worker.renew_deadline", "AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("schedule_worker.retry_period", "AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD")
 }
 
 // setDefaults sets default values for viper configuration
@@ -481,6 +507,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.mcp_servers_base_secret", "mcp-servers-base")
 	v.SetDefault("kubernetes_session.mcp_servers_team_secret_prefix", "mcp-servers")
 	v.SetDefault("kubernetes_session.mcp_servers_user_secret_prefix", "mcp-servers")
+
+	// Schedule worker defaults
+	v.SetDefault("schedule_worker.enabled", false)
+	v.SetDefault("schedule_worker.check_interval", "30s")
+	v.SetDefault("schedule_worker.namespace", "")
+	v.SetDefault("schedule_worker.lease_duration", "15s")
+	v.SetDefault("schedule_worker.renew_deadline", "10s")
+	v.SetDefault("schedule_worker.retry_period", "2s")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
