@@ -404,3 +404,26 @@ kubernetesSession:
     # - ${VAR} - expands to the value of VAR, empty if not set
     # - ${VAR:-default} - expands to VAR if set, otherwise "default"
 
+# Schedule Worker Configuration
+# Enables delayed start and recurring (cron-based) session scheduling
+scheduleWorker:
+  # Enable schedule worker
+  enabled: false
+
+  # How often to check for due schedules
+  checkInterval: "30s"
+
+  # Leader election configuration (for multi-replica deployments)
+  leaderElection:
+    # Lease duration (how long leader holds the lock)
+    leaseDuration: "15s"
+    # Renew deadline (how often leader refreshes the lock)
+    renewDeadline: "10s"
+    # Retry period (how often non-leaders try to acquire lock)
+    retryPeriod: "2s"
+
+  # Schedule storage configuration
+  storage:
+    # Secret name for schedule data
+    secretName: "agentapi-schedules"
+

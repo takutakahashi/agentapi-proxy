@@ -1,4 +1,4 @@
-{{- if .Values.kubernetesSession.enabled }}
+{{- if or .Values.kubernetesSession.enabled .Values.scheduleWorker.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -6,6 +6,7 @@ metadata:
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 rules:
+  {{- if .Values.kubernetesSession.enabled }}
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "delete"]
@@ -15,13 +16,20 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  {{- end }}
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "create", "update", "delete", "patch"]
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+  {{- if .Values.scheduleWorker.enabled }}
+  # Leader election for schedule worker
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
 {{- end }}
