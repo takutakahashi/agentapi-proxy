@@ -408,7 +408,7 @@ kubernetesSession:
 # Enables delayed start and recurring (cron-based) session scheduling
 scheduleWorker:
   # Enable schedule worker
-  enabled: false
+  enabled: true
 
   # How often to check for due schedules
   checkInterval: "30s"

@@ -509,7 +509,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.mcp_servers_user_secret_prefix", "mcp-servers")
 
 	// Schedule worker defaults
-	v.SetDefault("schedule_worker.enabled", false)
+	v.SetDefault("schedule_worker.enabled", true)
 	v.SetDefault("schedule_worker.check_interval", "30s")
 	v.SetDefault("schedule_worker.namespace", "")
 	v.SetDefault("schedule_worker.lease_duration", "15s")
