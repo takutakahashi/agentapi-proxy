@@ -142,10 +142,16 @@ func startScheduleWorker(configData *config.Config, proxyServer *proxy.Proxy) *s
 	log.Printf("[SCHEDULE_WORKER] Initializing schedule worker...")
 
 	// Create Kubernetes client
-	restConfig := ctrl.GetConfigOrDie()
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[SCHEDULE_WORKER] Kubernetes config not available, schedule worker disabled: %v", err)
+		return nil
+	}
+
 	client, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		log.Fatalf("[SCHEDULE_WORKER] Failed to create Kubernetes client: %v", err)
+		log.Printf("[SCHEDULE_WORKER] Failed to create Kubernetes client, schedule worker disabled: %v", err)
+		return nil
 	}
 
 	// Determine namespace
