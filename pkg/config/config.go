@@ -129,6 +129,8 @@ type ScheduleWorkerConfig struct {
 	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
 	// Namespace is the Kubernetes namespace for schedule resources
 	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// DefaultTimezone is the default timezone for schedules (e.g., "Asia/Tokyo")
+	DefaultTimezone string `json:"default_timezone" mapstructure:"default_timezone"`
 	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership
 	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
 	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up
@@ -452,6 +454,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("schedule_worker.enabled", "AGENTAPI_SCHEDULE_WORKER_ENABLED")
 	_ = v.BindEnv("schedule_worker.check_interval", "AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL")
 	_ = v.BindEnv("schedule_worker.namespace", "AGENTAPI_SCHEDULE_WORKER_NAMESPACE")
+	_ = v.BindEnv("schedule_worker.default_timezone", "AGENTAPI_SCHEDULE_WORKER_DEFAULT_TIMEZONE")
 	_ = v.BindEnv("schedule_worker.lease_duration", "AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION")
 	_ = v.BindEnv("schedule_worker.renew_deadline", "AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("schedule_worker.retry_period", "AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD")
@@ -512,6 +515,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("schedule_worker.enabled", true)
 	v.SetDefault("schedule_worker.check_interval", "30s")
 	v.SetDefault("schedule_worker.namespace", "")
+	v.SetDefault("schedule_worker.default_timezone", "Asia/Tokyo")
 	v.SetDefault("schedule_worker.lease_duration", "15s")
 	v.SetDefault("schedule_worker.renew_deadline", "10s")
 	v.SetDefault("schedule_worker.retry_period", "2s")

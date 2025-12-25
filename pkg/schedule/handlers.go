@@ -13,15 +13,26 @@ import (
 
 // Handlers handles schedule management endpoints
 type Handlers struct {
-	manager        Manager
-	sessionManager proxy.SessionManager
+	manager         Manager
+	sessionManager  proxy.SessionManager
+	defaultTimezone string
 }
 
 // NewHandlers creates a new Handlers instance
 func NewHandlers(manager Manager, sessionManager proxy.SessionManager) *Handlers {
 	return &Handlers{
-		manager:        manager,
-		sessionManager: sessionManager,
+		manager:         manager,
+		sessionManager:  sessionManager,
+		defaultTimezone: "Asia/Tokyo",
+	}
+}
+
+// NewHandlersWithTimezone creates a new Handlers instance with a custom default timezone
+func NewHandlersWithTimezone(manager Manager, sessionManager proxy.SessionManager, defaultTimezone string) *Handlers {
+	return &Handlers{
+		manager:         manager,
+		sessionManager:  sessionManager,
+		defaultTimezone: defaultTimezone,
 	}
 }
 
@@ -106,11 +117,15 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		}
 	}
 
-	// Validate timezone if provided
-	if req.Timezone != "" {
-		if _, err := time.LoadLocation(req.Timezone); err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid timezone: "+req.Timezone)
-		}
+	// Use default timezone if not provided
+	timezone := req.Timezone
+	if timezone == "" {
+		timezone = h.defaultTimezone
+	}
+
+	// Validate timezone
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid timezone: "+timezone)
 	}
 
 	// Get user from context
@@ -130,7 +145,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		Status:        ScheduleStatusActive,
 		ScheduledAt:   req.ScheduledAt,
 		CronExpr:      req.CronExpr,
-		Timezone:      req.Timezone,
+		Timezone:      timezone,
 		SessionConfig: req.SessionConfig,
 	}
 
