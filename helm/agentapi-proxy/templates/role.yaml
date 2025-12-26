@@ -1,4 +1,4 @@
-{{- if or .Values.kubernetesSession.enabled .Values.scheduleWorker.enabled }}
+{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) (and .Values.scheduleWorker .Values.scheduleWorker.enabled) }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 rules:
-  {{- if .Values.kubernetesSession.enabled }}
+  {{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "delete"]
@@ -26,7 +26,7 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create"]
-  {{- if .Values.scheduleWorker.enabled }}
+  {{- if and .Values.scheduleWorker .Values.scheduleWorker.enabled }}
   # Leader election for schedule worker
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
