@@ -76,6 +76,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 		scheduleWorker = startScheduleWorker(configData, proxyServer)
 	}
 
+	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
+	registerScheduleHandlers(configData, proxyServer)
+
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Starting agentapi-proxy on port %s", port)
@@ -135,6 +138,48 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	log.Printf("Server shutdown complete")
+}
+
+// registerScheduleHandlers registers schedule REST API handlers
+func registerScheduleHandlers(configData *config.Config, proxyServer *proxy.Proxy) {
+	log.Printf("[SCHEDULE_HANDLERS] Checking if schedule handlers should be registered...")
+
+	// Only register if Kubernetes mode is enabled
+	if !configData.KubernetesSession.Enabled {
+		log.Printf("[SCHEDULE_HANDLERS] Kubernetes mode not enabled, skipping schedule handlers")
+		return
+	}
+
+	// Create Kubernetes client
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[SCHEDULE_HANDLERS] Kubernetes config not available, skipping schedule handlers: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[SCHEDULE_HANDLERS] Failed to create Kubernetes client, skipping schedule handlers: %v", err)
+		return
+	}
+
+	// Determine namespace
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Create schedule manager
+	scheduleManager := schedule.NewKubernetesManager(client, namespace)
+
+	// Create and register schedule handlers
+	scheduleHandlers := schedule.NewHandlers(scheduleManager, proxyServer.GetSessionManager())
+	proxyServer.AddCustomHandler(scheduleHandlers)
+
+	log.Printf("[SCHEDULE_HANDLERS] Schedule handlers registered successfully")
 }
 
 // startScheduleWorker starts the schedule worker with leader election

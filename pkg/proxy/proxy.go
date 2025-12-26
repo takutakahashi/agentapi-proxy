@@ -41,6 +41,7 @@ type Proxy struct {
 	container          *di.Container                // Internal DI container
 	sessionManager     SessionManager               // Session lifecycle manager
 	settingsRepo       portrepos.SettingsRepository // Settings repository (Kubernetes mode only)
+	router             *Router                      // Router for custom handler registration
 }
 
 // NewProxy creates a new proxy instance
@@ -245,13 +246,24 @@ func (p *Proxy) loggingMiddleware() echo.MiddlewareFunc {
 // setupRoutes configures the router with all defined routes
 func (p *Proxy) setupRoutes() {
 	// Register non-auth routes using Router
-	router := NewRouter(p.echo, p)
-	if err := router.RegisterRoutes(); err != nil {
+	p.router = NewRouter(p.echo, p)
+	if err := p.router.RegisterRoutes(); err != nil {
 		log.Printf("Failed to register routes: %v", err)
 	}
 
 	// Register auth-related routes directly
 	p.setupAuthRoutes()
+}
+
+// AddCustomHandler adds a custom handler to the router
+func (p *Proxy) AddCustomHandler(handler CustomHandler) {
+	if p.router != nil {
+		p.router.AddCustomHandler(handler)
+		// Register routes immediately since router is already initialized
+		if err := handler.RegisterRoutes(p.echo, p); err != nil {
+			log.Printf("Failed to register custom handler %s: %v", handler.GetName(), err)
+		}
+	}
 }
 
 // setupAuthRoutes registers authentication-related routes
