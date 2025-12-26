@@ -811,7 +811,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "agentapi-proxy",
+					ServiceAccountName: m.k8sConfig.ServiceAccount,
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup:    int64Ptr(999),
 						RunAsUser:  int64Ptr(999),
