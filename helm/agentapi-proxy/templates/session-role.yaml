@@ -1,0 +1,16 @@
+{{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-session
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+rules:
+  # Minimal permissions for session pods
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+{{- end }}

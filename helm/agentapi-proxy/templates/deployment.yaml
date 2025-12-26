@@ -131,7 +131,7 @@ spec:
             - name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY
               value: {{ .Values.kubernetesSession.imagePullPolicy | quote }}
             - name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT
-              value: {{ .Values.kubernetesSession.serviceAccount | quote }}
+              value: {{ .Values.kubernetesSession.serviceAccount | default (printf "%s-session" (include "agentapi-proxy.fullname" .)) | quote }}
             - name: AGENTAPI_K8S_SESSION_BASE_PORT
               value: {{ .Values.kubernetesSession.basePort | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_REQUEST
