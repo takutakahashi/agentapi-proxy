@@ -1,4 +1,5 @@
-{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) (and .Values.scheduleWorker .Values.scheduleWorker.enabled) }}
+{{- $scheduleWorkerEnabled := ((.Values.scheduleWorker).enabled) | default true }}
+{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -29,8 +30,8 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create"]
-  {{- if and .Values.scheduleWorker .Values.scheduleWorker.enabled }}
-  # Leader election for schedule worker
+  {{- if $scheduleWorkerEnabled }}
+  # Leader election for schedule worker (enabled by default)
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

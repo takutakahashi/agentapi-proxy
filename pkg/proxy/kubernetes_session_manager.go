@@ -1158,10 +1158,11 @@ while [ $RETRY_COUNT -lt $MAX_READY_RETRIES ]; do
     sleep 0.5
 done
 
-# Check if messages already exist (Pod recreated case)
-MESSAGE_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
-if [ "$MESSAGE_COUNT" -gt 0 ]; then
-    echo "[INITIAL-MSG] Messages already exist (count: ${MESSAGE_COUNT}), skipping initial message"
+# Check if user messages already exist (Pod recreated case)
+# Only skip if there are messages from the user (role: "user"), not just agent welcome messages
+USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
+if [ "$USER_MSG_COUNT" -gt 0 ]; then
+    echo "[INITIAL-MSG] User messages already exist (count: ${USER_MSG_COUNT}), skipping initial message"
     touch "$SENT_FLAG"
     exec sleep infinity
 fi
@@ -1183,10 +1184,10 @@ while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
     sleep 1
 done
 
-# Double-check message count before sending (race condition prevention)
-MESSAGE_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
-if [ "$MESSAGE_COUNT" -gt 0 ]; then
-    echo "[INITIAL-MSG] Messages appeared during wait (count: ${MESSAGE_COUNT}), skipping"
+# Double-check user message count before sending (race condition prevention)
+USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
+if [ "$USER_MSG_COUNT" -gt 0 ]; then
+    echo "[INITIAL-MSG] User messages appeared during wait (count: ${USER_MSG_COUNT}), skipping"
     touch "$SENT_FLAG"
     exec sleep infinity
 fi
