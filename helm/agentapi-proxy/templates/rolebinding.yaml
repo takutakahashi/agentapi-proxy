@@ -1,4 +1,4 @@
-{{- if or .Values.kubernetesSession.enabled .Values.scheduleWorker.enabled }}
+{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) (and .Values.scheduleWorker .Values.scheduleWorker.enabled) }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
