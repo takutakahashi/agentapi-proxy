@@ -42,7 +42,8 @@ func (h *Handlers) GetName() string {
 }
 
 // RegisterRoutes registers schedule management routes
-func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
+// Implements the proxy.CustomHandler interface
+func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *proxy.Proxy) error {
 	g := e.Group("/schedules")
 
 	g.POST("", h.CreateSchedule)
