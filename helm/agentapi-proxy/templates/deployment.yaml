@@ -175,6 +175,35 @@ spec:
             - name: AGENTAPI_K8S_SESSION_MCP_SERVERS_USER_SECRET_PREFIX
               value: {{ .Values.kubernetesSession.mcpServers.userSecretPrefix | quote }}
             {{- end }}
+            # Schedule Worker configuration
+            {{- if .Values.scheduleWorker }}
+            - name: AGENTAPI_SCHEDULE_WORKER_ENABLED
+              value: {{ .Values.scheduleWorker.enabled | quote }}
+            {{- if .Values.scheduleWorker.checkInterval }}
+            - name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL
+              value: {{ .Values.scheduleWorker.checkInterval | quote }}
+            {{- end }}
+            {{- if .Values.scheduleWorker.namespace }}
+            - name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE
+              value: {{ .Values.scheduleWorker.namespace | quote }}
+            {{- end }}
+            {{- if .Values.scheduleWorker.defaultTimezone }}
+            - name: AGENTAPI_SCHEDULE_WORKER_DEFAULT_TIMEZONE
+              value: {{ .Values.scheduleWorker.defaultTimezone | quote }}
+            {{- end }}
+            {{- if .Values.scheduleWorker.leaseDuration }}
+            - name: AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION
+              value: {{ .Values.scheduleWorker.leaseDuration | quote }}
+            {{- end }}
+            {{- if .Values.scheduleWorker.renewDeadline }}
+            - name: AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE
+              value: {{ .Values.scheduleWorker.renewDeadline | quote }}
+            {{- end }}
+            {{- if .Values.scheduleWorker.retryPeriod }}
+            - name: AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD
+              value: {{ .Values.scheduleWorker.retryPeriod | quote }}
+            {{- end }}
+            {{- end }}
             {{- range .Values.env }}
             - name: {{ .name }}
               value: {{ .value | quote }}
