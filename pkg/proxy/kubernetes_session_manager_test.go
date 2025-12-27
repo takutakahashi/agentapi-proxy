@@ -838,9 +838,9 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 
 	// Verify pod spec
 	podSpec := deployment.Spec.Template.Spec
-	// ServiceAccount should come from config
-	if podSpec.ServiceAccountName != "custom-sa" {
-		t.Errorf("Expected service account 'custom-sa', got %s", podSpec.ServiceAccountName)
+	// ServiceAccount should be hardcoded to agentapi-proxy-session
+	if podSpec.ServiceAccountName != "agentapi-proxy-session" {
+		t.Errorf("Expected service account 'agentapi-proxy-session', got %s", podSpec.ServiceAccountName)
 	}
 
 	// Verify security context
