@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -66,62 +68,46 @@ func (s *KubernetesCredentialsSecretSyncer) Sync(ctx context.Context, settings *
 		Data: data,
 	}
 
-	// Try to get existing secret
-	existing, err := s.client.CoreV1().Secrets(s.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new secret
-			_, err = s.client.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to create credentials secret: %w", err)
-			}
-			log.Printf("[CREDENTIALS_SYNCER] Created credentials secret %s", secretName)
-			return nil
-		}
-		return fmt.Errorf("failed to get credentials secret: %w", err)
-	}
-
-	// Check if secret is managed by settings
-	if existing.Labels[LabelManagedBy] != "settings" {
-		// Secret exists but is not managed by settings, skip update
-		log.Printf("[CREDENTIALS_SYNCER] Skipping update for secret %s: not managed by settings", secretName)
+	// Try to create the secret first
+	_, err := s.client.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err == nil {
+		log.Printf("[CREDENTIALS_SYNCER] Created credentials secret %s", secretName)
 		return nil
 	}
 
-	// Update existing secret
-	secret.ResourceVersion = existing.ResourceVersion
-	_, err = s.client.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update credentials secret: %w", err)
-	}
-	log.Printf("[CREDENTIALS_SYNCER] Updated credentials secret %s", secretName)
+	// If secret already exists, update it using patch
+	if errors.IsAlreadyExists(err) {
+		patchData, patchErr := buildSecretPatch(secret)
+		if patchErr != nil {
+			return fmt.Errorf("failed to build patch data: %w", patchErr)
+		}
 
-	return nil
+		_, patchErr = s.client.CoreV1().Secrets(s.namespace).Patch(
+			ctx,
+			secretName,
+			types.MergePatchType,
+			patchData,
+			metav1.PatchOptions{},
+		)
+		if patchErr != nil {
+			return fmt.Errorf("failed to patch credentials secret: %w", patchErr)
+		}
+		log.Printf("[CREDENTIALS_SYNCER] Patched credentials secret %s", secretName)
+		return nil
+	}
+
+	return fmt.Errorf("failed to create credentials secret: %w", err)
 }
 
 // Delete removes the credentials secret for the given name
 func (s *KubernetesCredentialsSecretSyncer) Delete(ctx context.Context, name string) error {
 	secretName := s.secretName(name)
 
-	// Check if secret exists and is managed by settings
-	existing, err := s.client.CoreV1().Secrets(s.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	// Directly delete the secret without checking if it exists
+	err := s.client.CoreV1().Secrets(s.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Secret doesn't exist, nothing to delete
-			return nil
-		}
-		return fmt.Errorf("failed to get credentials secret: %w", err)
-	}
-
-	// Only delete if managed by settings
-	if existing.Labels[LabelManagedBy] != "settings" {
-		log.Printf("[CREDENTIALS_SYNCER] Skipping delete for secret %s: not managed by settings", secretName)
-		return nil
-	}
-
-	err = s.client.CoreV1().Secrets(s.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to delete credentials secret: %w", err)
@@ -201,4 +187,25 @@ func sanitizeLabelValue(s string) string {
 	// Ensure it ends with alphanumeric
 	sanitized = strings.TrimRight(sanitized, "-_.")
 	return sanitized
+}
+
+// secretPatch represents the patch data structure for updating a Secret
+type secretPatch struct {
+	Metadata metadataPatch     `json:"metadata"`
+	Data     map[string][]byte `json:"data"`
+}
+
+type metadataPatch struct {
+	Labels map[string]string `json:"labels"`
+}
+
+// buildSecretPatch creates a JSON merge patch for the given secret
+func buildSecretPatch(secret *corev1.Secret) ([]byte, error) {
+	patch := secretPatch{
+		Metadata: metadataPatch{
+			Labels: secret.Labels,
+		},
+		Data: secret.Data,
+	}
+	return json.Marshal(patch)
 }

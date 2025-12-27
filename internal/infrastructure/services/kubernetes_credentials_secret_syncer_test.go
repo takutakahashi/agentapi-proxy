@@ -173,52 +173,52 @@ func TestKubernetesCredentialsSecretSyncer_Sync_NilSettings(t *testing.T) {
 	}
 }
 
-func TestKubernetesCredentialsSecretSyncer_Sync_SkipsExternalSecret(t *testing.T) {
+func TestKubernetesCredentialsSecretSyncer_Sync_OverwritesExistingSecret(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
 	ctx := context.Background()
 
-	// Create an external secret (not managed by settings)
-	externalSecret := &corev1.Secret{
+	// Create an existing secret
+	existingSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "agent-credentials-external-user",
+			Name:      "agent-credentials-existing-user",
 			Namespace: "default",
 			Labels: map[string]string{
 				LabelCredentials: "true",
-				// No LabelManagedBy label
 			},
 		},
 		Data: map[string][]byte{
 			"CUSTOM_KEY": []byte("custom-value"),
 		},
 	}
-	_, err := client.CoreV1().Secrets("default").Create(ctx, externalSecret, metav1.CreateOptions{})
+	_, err := client.CoreV1().Secrets("default").Create(ctx, existingSecret, metav1.CreateOptions{})
 	if err != nil {
-		t.Fatalf("Failed to create external secret: %v", err)
+		t.Fatalf("Failed to create existing secret: %v", err)
 	}
 
-	// Try to sync settings for the same user
-	settings := entities.NewSettings("external-user")
+	// Sync settings for the same user
+	settings := entities.NewSettings("existing-user")
 	bedrock := entities.NewBedrockSettings(true)
 	settings.SetBedrock(bedrock)
 
 	err = syncer.Sync(ctx, settings)
 	if err != nil {
-		t.Fatalf("Sync should not fail for external secret: %v", err)
+		t.Fatalf("Sync should not fail: %v", err)
 	}
 
-	// Verify external secret was not modified
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-external-user", metav1.GetOptions{})
+	// Verify secret was updated with new data
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-existing-user", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
 
-	// External secret should still have original data
-	if string(secret.Data["CUSTOM_KEY"]) != "custom-value" {
-		t.Error("External secret should not be modified")
+	// Secret should have Bedrock data
+	if string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]) != "1" {
+		t.Error("Secret should have CLAUDE_CODE_USE_BEDROCK set to '1'")
 	}
-	if _, ok := secret.Data["CLAUDE_CODE_USE_BEDROCK"]; ok {
-		t.Error("External secret should not have Bedrock data")
+	// Secret should have LabelManagedBy set
+	if secret.Labels[LabelManagedBy] != "settings" {
+		t.Error("Secret should have LabelManagedBy set to 'settings'")
 	}
 }
 
@@ -268,40 +268,39 @@ func TestKubernetesCredentialsSecretSyncer_Delete_NotFound(t *testing.T) {
 	}
 }
 
-func TestKubernetesCredentialsSecretSyncer_Delete_SkipsExternalSecret(t *testing.T) {
+func TestKubernetesCredentialsSecretSyncer_Delete_DeletesAnySecret(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
 	ctx := context.Background()
 
-	// Create an external secret
-	externalSecret := &corev1.Secret{
+	// Create a secret without LabelManagedBy
+	existingSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "agent-credentials-external-delete",
+			Name:      "agent-credentials-any-delete",
 			Namespace: "default",
 			Labels: map[string]string{
 				LabelCredentials: "true",
-				// No LabelManagedBy = "settings"
 			},
 		},
 		Data: map[string][]byte{
 			"CUSTOM_KEY": []byte("custom-value"),
 		},
 	}
-	_, err := client.CoreV1().Secrets("default").Create(ctx, externalSecret, metav1.CreateOptions{})
+	_, err := client.CoreV1().Secrets("default").Create(ctx, existingSecret, metav1.CreateOptions{})
 	if err != nil {
-		t.Fatalf("Failed to create external secret: %v", err)
+		t.Fatalf("Failed to create secret: %v", err)
 	}
 
-	// Try to delete
-	err = syncer.Delete(ctx, "external-delete")
+	// Delete
+	err = syncer.Delete(ctx, "any-delete")
 	if err != nil {
 		t.Fatalf("Delete should not fail: %v", err)
 	}
 
-	// Verify external secret still exists
-	_, err = client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-external-delete", metav1.GetOptions{})
-	if err != nil {
-		t.Error("External secret should not be deleted")
+	// Verify secret was deleted
+	_, err = client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-any-delete", metav1.GetOptions{})
+	if err == nil {
+		t.Error("Secret should be deleted")
 	}
 }
 
