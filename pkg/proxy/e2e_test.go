@@ -131,6 +131,7 @@ func (s *e2eSession) UserID() string          { return s.userID }
 func (s *e2eSession) Tags() map[string]string { return s.tags }
 func (s *e2eSession) Status() string          { return s.status }
 func (s *e2eSession) StartedAt() time.Time    { return s.startedAt }
+func (s *e2eSession) Description() string     { return "" }
 func (s *e2eSession) Cancel() {
 	if s.cancel != nil {
 		s.cancel()

@@ -27,6 +27,10 @@ type Session interface {
 	// StartedAt returns when the session was started
 	StartedAt() time.Time
 
+	// Description returns the session description
+	// Returns tags["description"] if exists, otherwise returns InitialMessage
+	Description() string
+
 	// Cancel cancels the session context to trigger shutdown
 	Cancel()
 }
