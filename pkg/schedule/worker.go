@@ -146,6 +146,8 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 			w.updateNextExecution(ctx, schedule)
 			return
 		}
+		// Delete previous session if it's no longer active
+		w.deletePreviousSession(schedule.LastExecution.SessionID)
 	}
 
 	// Create session
@@ -235,6 +237,15 @@ func (w *Worker) isSessionActive(sessionID string) bool {
 	}
 	status := session.Status()
 	return status == "active" || status == "starting" || status == "creating"
+}
+
+// deletePreviousSession deletes the previous session if it exists
+func (w *Worker) deletePreviousSession(sessionID string) {
+	if err := w.sessionManager.DeleteSession(sessionID); err != nil {
+		log.Printf("[SCHEDULE_WORKER] Failed to delete previous session %s: %v", sessionID, err)
+	} else {
+		log.Printf("[SCHEDULE_WORKER] Deleted previous session %s", sessionID)
+	}
 }
 
 // recordExecution records an execution attempt
