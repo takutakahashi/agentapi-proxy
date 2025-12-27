@@ -29,10 +29,11 @@ const (
 
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
-	Name      string       `json:"name"`
-	Bedrock   *bedrockJSON `json:"bedrock,omitempty"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
+	Name       string                    `json:"name"`
+	Bedrock    *bedrockJSON              `json:"bedrock,omitempty"`
+	MCPServers map[string]*mcpServerJSON `json:"mcp_servers,omitempty"`
+	CreatedAt  time.Time                 `json:"created_at"`
+	UpdatedAt  time.Time                 `json:"updated_at"`
 }
 
 // bedrockJSON is the JSON representation of Bedrock settings
@@ -43,6 +44,16 @@ type bedrockJSON struct {
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
 	RoleARN         string `json:"role_arn,omitempty"`
 	Profile         string `json:"profile,omitempty"`
+}
+
+// mcpServerJSON is the JSON representation of a single MCP server
+type mcpServerJSON struct {
+	Type    string            `json:"type"`
+	URL     string            `json:"url,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
@@ -197,6 +208,20 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		}
 	}
 
+	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
+		sj.MCPServers = make(map[string]*mcpServerJSON)
+		for name, server := range mcpServers.Servers() {
+			sj.MCPServers[name] = &mcpServerJSON{
+				Type:    server.Type(),
+				URL:     server.URL(),
+				Command: server.Command(),
+				Args:    server.Args(),
+				Env:     server.Env(),
+				Headers: server.Headers(),
+			}
+		}
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -225,6 +250,22 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 		bedrock.SetProfile(sj.Bedrock.Profile)
 		settings.SetBedrock(bedrock)
 		// Reset updatedAt since SetBedrock updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if len(sj.MCPServers) > 0 {
+		mcpServers := entities.NewMCPServersSettings()
+		for name, serverJSON := range sj.MCPServers {
+			server := entities.NewMCPServer(name, serverJSON.Type)
+			server.SetURL(serverJSON.URL)
+			server.SetCommand(serverJSON.Command)
+			server.SetArgs(serverJSON.Args)
+			server.SetEnv(serverJSON.Env)
+			server.SetHeaders(serverJSON.Headers)
+			mcpServers.SetServer(name, server)
+		}
+		settings.SetMCPServers(mcpServers)
+		// Reset updatedAt since SetMCPServers updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 

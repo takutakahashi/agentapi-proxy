@@ -37,14 +37,23 @@ type CustomHandler interface {
 func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 	settingsHandlers := NewSettingsHandlers(proxy.settingsRepo)
 
-	// Set credentials secret syncer if Kubernetes mode is enabled
+	// Set credentials secret syncer and MCP secret syncer if Kubernetes mode is enabled
 	if k8sManager, ok := proxy.sessionManager.(*KubernetesSessionManager); ok {
-		syncer := services.NewKubernetesCredentialsSecretSyncer(
+		// Set credentials secret syncer
+		credSyncer := services.NewKubernetesCredentialsSecretSyncer(
 			k8sManager.GetClient(),
 			k8sManager.GetNamespace(),
 		)
-		settingsHandlers.SetCredentialsSecretSyncer(syncer)
+		settingsHandlers.SetCredentialsSecretSyncer(credSyncer)
 		log.Printf("[ROUTER] Credentials secret syncer configured for settings handlers")
+
+		// Set MCP secret syncer
+		mcpSyncer := services.NewKubernetesMCPSecretSyncer(
+			k8sManager.GetClient(),
+			k8sManager.GetNamespace(),
+		)
+		settingsHandlers.SetMCPSecretSyncer(mcpSyncer)
+		log.Printf("[ROUTER] MCP secret syncer configured for settings handlers")
 	}
 
 	return &Router{
