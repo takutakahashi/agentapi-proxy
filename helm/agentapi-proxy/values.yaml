@@ -301,9 +301,10 @@ kubernetesSession:
   # Image pull policy for session pods
   imagePullPolicy: "IfNotPresent"
 
-  # Service account for session pods
-  # When empty, uses the auto-created session service account (agentapi-proxy-session)
-  # This SA has minimal permissions (pods, configmaps read-only) and cannot access secrets
+  # Service account for session pods (deprecated - always uses agentapi-proxy-session)
+  # This setting is ignored. Session pods always use the hardcoded ServiceAccount name
+  # "agentapi-proxy-session" which has minimal permissions (pods, configmaps read-only)
+  # and cannot access secrets directly.
   serviceAccount: ""
 
   # Base port that agentapi listens on in session pods
