@@ -152,12 +152,13 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
 	for _, session := range matchingSessions {
 		sessionData := map[string]interface{}{
-			"session_id": session.ID(),
-			"user_id":    session.UserID(),
-			"status":     session.Status(),
-			"started_at": session.StartedAt(),
-			"addr":       session.Addr(),
-			"tags":       session.Tags(),
+			"session_id":  session.ID(),
+			"user_id":     session.UserID(),
+			"status":      session.Status(),
+			"started_at":  session.StartedAt(),
+			"addr":        session.Addr(),
+			"tags":        session.Tags(),
+			"description": session.Description(),
 		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}

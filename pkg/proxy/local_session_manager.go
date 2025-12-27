@@ -60,6 +60,20 @@ func (s *localSession) StartedAt() time.Time {
 	return s.startedAt
 }
 
+// Description returns the session description
+// Returns tags["description"] if exists, otherwise returns InitialMessage
+func (s *localSession) Description() string {
+	if s.request != nil && s.request.Tags != nil {
+		if desc, exists := s.request.Tags["description"]; exists && desc != "" {
+			return desc
+		}
+	}
+	if s.request != nil && s.request.InitialMessage != "" {
+		return s.request.InitialMessage
+	}
+	return ""
+}
+
 // Cancel cancels the session context to trigger shutdown
 func (s *localSession) Cancel() {
 	if s.cancel != nil {
