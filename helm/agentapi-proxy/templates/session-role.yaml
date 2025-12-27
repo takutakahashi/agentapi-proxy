@@ -13,4 +13,9 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list"]
+  # Permissions for credentials-sync sidecar to sync credentials.json to Secret
+  # Note: 'get' is intentionally not included - the sidecar uses patch-first approach
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "patch"]
 {{- end }}

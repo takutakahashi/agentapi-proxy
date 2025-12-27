@@ -980,6 +980,8 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *kubernet
 
 // credentialsSyncScript is the shell script for the credentials sync sidecar
 // It watches for changes to .credentials.json and syncs them to the Kubernetes Secret
+// Note: This script does NOT require secrets:get permission. It uses patch-first approach
+// and falls back to create if the secret doesn't exist.
 const credentialsSyncScript = `
 #!/bin/sh
 
@@ -1013,21 +1015,21 @@ sync_to_secret() {
     # Base64 encode the file content
     ENCODED=$(base64 -w0 "$CREDENTIALS_PATH")
 
-    # Check if secret exists
-    if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
-        # Patch existing secret - use add operation for upsert behavior
-        RESULT=$(kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
-            --type='merge' \
-            -p="{\"data\":{\"credentials.json\":\"$ENCODED\"}}" 2>&1)
+    # Try to patch the secret first (works if secret already exists)
+    # This approach avoids needing secrets:get permission
+    RESULT=$(kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
+        --type='merge' \
+        -p="{\"data\":{\"credentials.json\":\"$ENCODED\"}}" 2>&1)
+    PATCH_EXIT_CODE=$?
 
-        if [ $? -eq 0 ]; then
-            log "Successfully synced credentials to existing Secret"
-            LAST_HASH="$CURRENT_HASH"
-        else
-            log "ERROR: Failed to patch Secret: $RESULT"
-        fi
-    else
-        # Create new secret with labels
+    if [ $PATCH_EXIT_CODE -eq 0 ]; then
+        log "Successfully synced credentials to existing Secret"
+        LAST_HASH="$CURRENT_HASH"
+        return
+    fi
+
+    # Check if the error is "NotFound" - if so, create the secret
+    if echo "$RESULT" | grep -q "NotFound\|not found"; then
         log "Secret does not exist, creating..."
         RESULT=$(kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
             --from-file=credentials.json="$CREDENTIALS_PATH" 2>&1)
@@ -1035,14 +1037,16 @@ sync_to_secret() {
         if [ $? -eq 0 ]; then
             log "Successfully created Secret"
             # Add labels to the secret
-            kubectl label secret "$SECRET_NAME" -n "$NAMESPACE" \
-                app.kubernetes.io/name=agentapi-agent-credentials \
-                app.kubernetes.io/managed-by=agentapi-proxy \
-                --overwrite >/dev/null 2>&1 || true
+            kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
+                --type='merge' \
+                -p='{"metadata":{"labels":{"app.kubernetes.io/name":"agentapi-agent-credentials","app.kubernetes.io/managed-by":"agentapi-proxy"}}}' \
+                >/dev/null 2>&1 || true
             LAST_HASH="$CURRENT_HASH"
         else
             log "ERROR: Failed to create Secret: $RESULT"
         fi
+    else
+        log "ERROR: Failed to patch Secret: $RESULT"
     fi
 }
 
