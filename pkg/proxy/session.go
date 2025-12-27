@@ -24,6 +24,10 @@ type Session interface {
 	// Status returns the current status of the session
 	Status() string
 
+	// ErrorMessage returns the error message if the session failed
+	// Returns an empty string if there is no error
+	ErrorMessage() string
+
 	// StartedAt returns when the session was started
 	StartedAt() time.Time
 
