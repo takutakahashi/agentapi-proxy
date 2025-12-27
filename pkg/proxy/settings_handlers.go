@@ -15,8 +15,9 @@ import (
 
 // SettingsHandlers handles settings-related HTTP requests
 type SettingsHandlers struct {
-	repo   repositories.SettingsRepository
-	syncer services.CredentialsSecretSyncer
+	repo      repositories.SettingsRepository
+	syncer    services.CredentialsSecretSyncer
+	mcpSyncer services.MCPSecretSyncer
 }
 
 // NewSettingsHandlers creates new settings handlers
@@ -31,6 +32,11 @@ func (h *SettingsHandlers) SetCredentialsSecretSyncer(syncer services.Credential
 	h.syncer = syncer
 }
 
+// SetMCPSecretSyncer sets the MCP secret syncer
+func (h *SettingsHandlers) SetMCPSecretSyncer(syncer services.MCPSecretSyncer) {
+	h.mcpSyncer = syncer
+}
+
 // BedrockSettingsRequest is the request body for Bedrock settings
 type BedrockSettingsRequest struct {
 	Enabled         bool   `json:"enabled"`
@@ -41,9 +47,20 @@ type BedrockSettingsRequest struct {
 	Profile         string `json:"profile,omitempty"`
 }
 
+// MCPServerRequest is the request body for a single MCP server
+type MCPServerRequest struct {
+	Type    string            `json:"type"`              // "stdio", "http", "sse"
+	URL     string            `json:"url,omitempty"`     // for http/sse
+	Command string            `json:"command,omitempty"` // for stdio
+	Args    []string          `json:"args,omitempty"`    // for stdio
+	Env     map[string]string `json:"env,omitempty"`     // environment variables
+	Headers map[string]string `json:"headers,omitempty"` // for http/sse
+}
+
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
-	Bedrock *BedrockSettingsRequest `json:"bedrock"`
+	Bedrock    *BedrockSettingsRequest      `json:"bedrock"`
+	MCPServers map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -56,12 +73,23 @@ type BedrockSettingsResponse struct {
 	Profile         string `json:"profile,omitempty"`
 }
 
+// MCPServerResponse is the response body for a single MCP server
+type MCPServerResponse struct {
+	Type       string   `json:"type"`
+	URL        string   `json:"url,omitempty"`
+	Command    string   `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	EnvKeys    []string `json:"env_keys,omitempty"`    // only keys, not values
+	HeaderKeys []string `json:"header_keys,omitempty"` // only keys, not values
+}
+
 // SettingsResponse is the response body for settings
 type SettingsResponse struct {
-	Name      string                   `json:"name"`
-	Bedrock   *BedrockSettingsResponse `json:"bedrock,omitempty"`
-	CreatedAt string                   `json:"created_at"`
-	UpdatedAt string                   `json:"updated_at"`
+	Name       string                        `json:"name"`
+	Bedrock    *BedrockSettingsResponse      `json:"bedrock,omitempty"`
+	MCPServers map[string]*MCPServerResponse `json:"mcp_servers,omitempty"`
+	CreatedAt  string                        `json:"created_at"`
+	UpdatedAt  string                        `json:"updated_at"`
 }
 
 // GetSettings handles GET /settings/:name
@@ -156,6 +184,41 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 		settings.SetBedrock(bedrock)
 	}
 
+	// Update MCP servers settings
+	if req.MCPServers != nil {
+		// Get existing MCP servers for preserving secrets
+		existingMCPServers := settings.MCPServers()
+
+		mcpServers := entities.NewMCPServersSettings()
+		for serverName, serverReq := range req.MCPServers {
+			server := entities.NewMCPServer(serverName, serverReq.Type)
+			server.SetURL(serverReq.URL)
+			server.SetCommand(serverReq.Command)
+			server.SetArgs(serverReq.Args)
+
+			// Handle env: preserve existing values if new values are empty
+			env := serverReq.Env
+			if existingMCPServers != nil {
+				if existingServer := existingMCPServers.GetServer(serverName); existingServer != nil {
+					env = h.mergeSecrets(existingServer.Env(), serverReq.Env)
+				}
+			}
+			server.SetEnv(env)
+
+			// Handle headers: preserve existing values if new values are empty
+			headers := serverReq.Headers
+			if existingMCPServers != nil {
+				if existingServer := existingMCPServers.GetServer(serverName); existingServer != nil {
+					headers = h.mergeSecrets(existingServer.Headers(), serverReq.Headers)
+				}
+			}
+			server.SetHeaders(headers)
+
+			mcpServers.SetServer(serverName, server)
+		}
+		settings.SetMCPServers(mcpServers)
+	}
+
 	// Validate
 	if err := settings.Validate(); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -170,6 +233,14 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 	if h.syncer != nil {
 		if err := h.syncer.Sync(c.Request().Context(), settings); err != nil {
 			log.Printf("[SETTINGS] Failed to sync credentials secret for %s: %v", name, err)
+			// Don't fail the request, just log the error
+		}
+	}
+
+	// Sync MCP servers secret
+	if h.mcpSyncer != nil {
+		if err := h.mcpSyncer.Sync(c.Request().Context(), settings); err != nil {
+			log.Printf("[SETTINGS] Failed to sync MCP servers secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
@@ -206,6 +277,14 @@ func (h *SettingsHandlers) DeleteSettings(c echo.Context) error {
 	if h.syncer != nil {
 		if err := h.syncer.Delete(c.Request().Context(), name); err != nil {
 			log.Printf("[SETTINGS] Failed to delete credentials secret for %s: %v", name, err)
+			// Don't fail the request, just log the error
+		}
+	}
+
+	// Delete MCP servers secret
+	if h.mcpSyncer != nil {
+		if err := h.mcpSyncer.Delete(c.Request().Context(), name); err != nil {
+			log.Printf("[SETTINGS] Failed to delete MCP servers secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
@@ -301,5 +380,43 @@ func (h *SettingsHandlers) toResponse(settings *entities.Settings) *SettingsResp
 		}
 	}
 
+	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
+		resp.MCPServers = make(map[string]*MCPServerResponse)
+		for name, server := range mcpServers.Servers() {
+			resp.MCPServers[name] = &MCPServerResponse{
+				Type:       server.Type(),
+				URL:        server.URL(),
+				Command:    server.Command(),
+				Args:       server.Args(),
+				EnvKeys:    server.EnvKeys(),
+				HeaderKeys: server.HeaderKeys(),
+			}
+		}
+	}
+
 	return resp
+}
+
+// mergeSecrets merges existing and new secret maps
+// If a key exists in new but has empty value, use existing value
+func (h *SettingsHandlers) mergeSecrets(existing, new map[string]string) map[string]string {
+	if new == nil {
+		return existing
+	}
+	if existing == nil {
+		return new
+	}
+
+	result := make(map[string]string)
+	for k, v := range new {
+		if v == "" {
+			// Preserve existing value if new value is empty
+			if existingVal, ok := existing[k]; ok {
+				result[k] = existingVal
+			}
+		} else {
+			result[k] = v
+		}
+	}
+	return result
 }
