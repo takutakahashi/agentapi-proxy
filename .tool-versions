@@ -1,3 +1,4 @@
 golang        latest
 golangci-lint latest
 helm          latest
+kubectl       latest

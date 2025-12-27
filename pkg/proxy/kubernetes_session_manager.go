@@ -1015,38 +1015,41 @@ sync_to_secret() {
     # Base64 encode the file content
     ENCODED=$(base64 -w0 "$CREDENTIALS_PATH")
 
-    # Try to patch the secret first (works if secret already exists)
-    # This approach avoids needing secrets:get permission
-    RESULT=$(kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
-        --type='merge' \
-        -p="{\"data\":{\"credentials.json\":\"$ENCODED\"}}" 2>&1)
-    PATCH_EXIT_CODE=$?
+    # Generate Secret manifest
+    SECRET_YAML=$(cat <<EOFYAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $SECRET_NAME
+  namespace: $NAMESPACE
+  labels:
+    app.kubernetes.io/name: agentapi-agent-credentials
+    app.kubernetes.io/managed-by: agentapi-proxy
+type: Opaque
+data:
+  credentials.json: $ENCODED
+EOFYAML
+)
 
-    if [ $PATCH_EXIT_CODE -eq 0 ]; then
-        log "Successfully synced credentials to existing Secret"
+    # Try to create the secret first (works if secret does not exist)
+    RESULT=$(echo "$SECRET_YAML" | kubectl create -f - 2>&1)
+    if [ $? -eq 0 ]; then
+        log "Successfully created Secret"
         LAST_HASH="$CURRENT_HASH"
         return
     fi
 
-    # Check if the error is "NotFound" - if so, create the secret
-    if echo "$RESULT" | grep -q "NotFound\|not found"; then
-        log "Secret does not exist, creating..."
-        RESULT=$(kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
-            --from-file=credentials.json="$CREDENTIALS_PATH" 2>&1)
-
+    # Check if the error is "AlreadyExists" - if so, replace the secret
+    if echo "$RESULT" | grep -q "AlreadyExists\|already exists"; then
+        RESULT=$(echo "$SECRET_YAML" | kubectl replace -f - 2>&1)
         if [ $? -eq 0 ]; then
-            log "Successfully created Secret"
-            # Add labels to the secret
-            kubectl patch secret "$SECRET_NAME" -n "$NAMESPACE" \
-                --type='merge' \
-                -p='{"metadata":{"labels":{"app.kubernetes.io/name":"agentapi-agent-credentials","app.kubernetes.io/managed-by":"agentapi-proxy"}}}' \
-                >/dev/null 2>&1 || true
+            log "Successfully updated Secret"
             LAST_HASH="$CURRENT_HASH"
         else
-            log "ERROR: Failed to create Secret: $RESULT"
+            log "ERROR: Failed to replace Secret: $RESULT"
         fi
     else
-        log "ERROR: Failed to patch Secret: $RESULT"
+        log "ERROR: Failed to create Secret: $RESULT"
     fi
 }
 
