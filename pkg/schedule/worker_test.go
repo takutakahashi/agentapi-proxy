@@ -311,3 +311,73 @@ func TestWorker_RecurringScheduleNextExecution(t *testing.T) {
 		t.Errorf("expected status %q, got %q", ScheduleStatusActive, updated.Status)
 	}
 }
+
+func TestWorker_DeletePreviousInactiveSession(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	manager := NewKubernetesManager(client, "default")
+	sessionManager := newMockProxySessionManager()
+
+	ctx := context.Background()
+
+	// Create a previous session that is NOT active (stopped)
+	prevSession := &mockProxySession{
+		id:        "prev-session",
+		userID:    "test-user",
+		status:    "stopped", // Not active
+		addr:      "localhost:9000",
+		startedAt: time.Now().Add(-time.Hour),
+	}
+	sessionManager.sessions["prev-session"] = prevSession
+
+	// Create a due schedule with previous execution
+	now := time.Now()
+	past := now.Add(-time.Hour)
+	schedule := &Schedule{
+		ID:              "test-schedule",
+		Name:            "Test Schedule",
+		UserID:          "test-user",
+		Status:          ScheduleStatusActive,
+		CronExpr:        "* * * * *",
+		NextExecutionAt: &past,
+		LastExecution: &ExecutionRecord{
+			ExecutedAt: past,
+			SessionID:  "prev-session",
+			Status:     "success",
+		},
+		SessionConfig: SessionConfig{
+			Tags: map[string]string{"test": "true"},
+		},
+	}
+	if err := manager.Create(ctx, schedule); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	config := WorkerConfig{
+		CheckInterval: 100 * time.Millisecond,
+		Enabled:       true,
+	}
+
+	worker := NewWorker(manager, sessionManager, config)
+
+	// Process schedules
+	worker.processSchedules(ctx)
+
+	// Verify previous session was deleted
+	if _, exists := sessionManager.sessions["prev-session"]; exists {
+		t.Error("expected previous session to be deleted")
+	}
+
+	// Verify new session was created (should have 1 session, the new one)
+	if len(sessionManager.sessions) != 1 {
+		t.Errorf("expected 1 session (new one), got %d", len(sessionManager.sessions))
+	}
+
+	// Verify execution was recorded as success
+	updated, _ := manager.Get(ctx, "test-schedule")
+	if updated.LastExecution == nil {
+		t.Error("expected execution to be recorded")
+	}
+	if updated.LastExecution.Status != "success" {
+		t.Errorf("expected status 'success', got %q", updated.LastExecution.Status)
+	}
+}
