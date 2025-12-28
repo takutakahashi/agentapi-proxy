@@ -15,9 +15,10 @@ import (
 
 // SettingsHandlers handles settings-related HTTP requests
 type SettingsHandlers struct {
-	repo      repositories.SettingsRepository
-	syncer    services.CredentialsSecretSyncer
-	mcpSyncer services.MCPSecretSyncer
+	repo              repositories.SettingsRepository
+	syncer            services.CredentialsSecretSyncer
+	mcpSyncer         services.MCPSecretSyncer
+	marketplaceSyncer services.MarketplaceSecretSyncer
 }
 
 // NewSettingsHandlers creates new settings handlers
@@ -35,6 +36,11 @@ func (h *SettingsHandlers) SetCredentialsSecretSyncer(syncer services.Credential
 // SetMCPSecretSyncer sets the MCP secret syncer
 func (h *SettingsHandlers) SetMCPSecretSyncer(syncer services.MCPSecretSyncer) {
 	h.mcpSyncer = syncer
+}
+
+// SetMarketplaceSecretSyncer sets the marketplace secret syncer
+func (h *SettingsHandlers) SetMarketplaceSecretSyncer(syncer services.MarketplaceSecretSyncer) {
+	h.marketplaceSyncer = syncer
 }
 
 // BedrockSettingsRequest is the request body for Bedrock settings
@@ -57,10 +63,17 @@ type MCPServerRequest struct {
 	Headers map[string]string `json:"headers,omitempty"` // for http/sse
 }
 
+// MarketplaceRequest is the request body for a single marketplace
+type MarketplaceRequest struct {
+	URL            string   `json:"url"`
+	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
+}
+
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
-	Bedrock    *BedrockSettingsRequest      `json:"bedrock"`
-	MCPServers map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
+	Bedrock      *BedrockSettingsRequest        `json:"bedrock"`
+	MCPServers   map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
+	Marketplaces map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -83,13 +96,20 @@ type MCPServerResponse struct {
 	HeaderKeys []string `json:"header_keys,omitempty"` // only keys, not values
 }
 
+// MarketplaceResponse is the response body for a single marketplace
+type MarketplaceResponse struct {
+	URL            string   `json:"url"`
+	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
+}
+
 // SettingsResponse is the response body for settings
 type SettingsResponse struct {
-	Name       string                        `json:"name"`
-	Bedrock    *BedrockSettingsResponse      `json:"bedrock,omitempty"`
-	MCPServers map[string]*MCPServerResponse `json:"mcp_servers,omitempty"`
-	CreatedAt  string                        `json:"created_at"`
-	UpdatedAt  string                        `json:"updated_at"`
+	Name         string                          `json:"name"`
+	Bedrock      *BedrockSettingsResponse        `json:"bedrock,omitempty"`
+	MCPServers   map[string]*MCPServerResponse   `json:"mcp_servers,omitempty"`
+	Marketplaces map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
+	CreatedAt    string                          `json:"created_at"`
+	UpdatedAt    string                          `json:"updated_at"`
 }
 
 // GetSettings handles GET /settings/:name
@@ -219,6 +239,18 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 		settings.SetMCPServers(mcpServers)
 	}
 
+	// Update Marketplaces settings
+	if req.Marketplaces != nil {
+		marketplaces := entities.NewMarketplacesSettings()
+		for marketplaceName, marketplaceReq := range req.Marketplaces {
+			marketplace := entities.NewMarketplace(marketplaceName)
+			marketplace.SetURL(marketplaceReq.URL)
+			marketplace.SetEnabledPlugins(marketplaceReq.EnabledPlugins)
+			marketplaces.SetMarketplace(marketplaceName, marketplace)
+		}
+		settings.SetMarketplaces(marketplaces)
+	}
+
 	// Validate
 	if err := settings.Validate(); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -241,6 +273,14 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 	if h.mcpSyncer != nil {
 		if err := h.mcpSyncer.Sync(c.Request().Context(), settings); err != nil {
 			log.Printf("[SETTINGS] Failed to sync MCP servers secret for %s: %v", name, err)
+			// Don't fail the request, just log the error
+		}
+	}
+
+	// Sync marketplace secret
+	if h.marketplaceSyncer != nil {
+		if err := h.marketplaceSyncer.Sync(c.Request().Context(), settings); err != nil {
+			log.Printf("[SETTINGS] Failed to sync marketplace secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
@@ -285,6 +325,14 @@ func (h *SettingsHandlers) DeleteSettings(c echo.Context) error {
 	if h.mcpSyncer != nil {
 		if err := h.mcpSyncer.Delete(c.Request().Context(), name); err != nil {
 			log.Printf("[SETTINGS] Failed to delete MCP servers secret for %s: %v", name, err)
+			// Don't fail the request, just log the error
+		}
+	}
+
+	// Delete marketplace secret
+	if h.marketplaceSyncer != nil {
+		if err := h.marketplaceSyncer.Delete(c.Request().Context(), name); err != nil {
+			log.Printf("[SETTINGS] Failed to delete marketplace secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
@@ -390,6 +438,16 @@ func (h *SettingsHandlers) toResponse(settings *entities.Settings) *SettingsResp
 				Args:       server.Args(),
 				EnvKeys:    server.EnvKeys(),
 				HeaderKeys: server.HeaderKeys(),
+			}
+		}
+	}
+
+	if marketplaces := settings.Marketplaces(); marketplaces != nil && !marketplaces.IsEmpty() {
+		resp.Marketplaces = make(map[string]*MarketplaceResponse)
+		for name, marketplace := range marketplaces.Marketplaces() {
+			resp.Marketplaces[name] = &MarketplaceResponse{
+				URL:            marketplace.URL(),
+				EnabledPlugins: marketplace.EnabledPlugins(),
 			}
 		}
 	}

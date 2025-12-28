@@ -1120,14 +1120,22 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 	}
 
 	// Verify InitContainer exists
+	// We now have 2 init containers: setup-claude and setup-marketplaces
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 1 {
-		t.Fatalf("Expected 1 init container, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
 	}
 
-	initContainer := podSpec.InitContainers[0]
-	if initContainer.Name != "setup-claude" {
-		t.Errorf("Expected init container name 'setup-claude', got %s", initContainer.Name)
+	// Find setup-claude init container
+	var initContainer *corev1.Container
+	for i := range podSpec.InitContainers {
+		if podSpec.InitContainers[i].Name == "setup-claude" {
+			initContainer = &podSpec.InitContainers[i]
+			break
+		}
+	}
+	if initContainer == nil {
+		t.Fatal("Expected setup-claude init container to exist")
 	}
 	if initContainer.Image != "alpine:3.19" {
 		t.Errorf("Expected init container image 'alpine:3.19', got %s", initContainer.Image)
@@ -1315,12 +1323,23 @@ func TestKubernetesSessionManager_InitContainerImageDefault(t *testing.T) {
 	}
 
 	// Verify InitContainer uses the main image when InitContainerImage is empty
+	// We now have 2 init containers: setup-claude and setup-marketplaces
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 1 {
-		t.Fatalf("Expected 1 init container, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
 	}
 
-	initContainer := podSpec.InitContainers[0]
+	// Find setup-claude init container
+	var initContainer *corev1.Container
+	for i := range podSpec.InitContainers {
+		if podSpec.InitContainers[i].Name == "setup-claude" {
+			initContainer = &podSpec.InitContainers[i]
+			break
+		}
+	}
+	if initContainer == nil {
+		t.Fatal("Expected setup-claude init container to exist")
+	}
 	expectedImage := "ghcr.io/takutakahashi/agentapi-proxy:v1.2.3"
 	if initContainer.Image != expectedImage {
 		t.Errorf("Expected init container image '%s', got '%s'", expectedImage, initContainer.Image)
@@ -1491,10 +1510,10 @@ func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have 2 init containers: clone-repo and setup-claude
+	// Verify we have 3 init containers: clone-repo, setup-claude, and setup-marketplaces
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 2 {
-		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 3 {
+		t.Fatalf("Expected 3 init containers, got %d", len(podSpec.InitContainers))
 	}
 
 	// Verify first init container is clone-repo
@@ -1621,15 +1640,19 @@ func TestKubernetesSessionManager_CloneRepoInitContainerSkippedWithoutRepoInfo(t
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have only 1 init container (setup-claude)
+	// Verify we have 2 init containers (setup-claude and setup-marketplaces) when RepoInfo is nil
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 1 {
-		t.Fatalf("Expected 1 init container when RepoInfo is nil, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers when RepoInfo is nil, got %d", len(podSpec.InitContainers))
 	}
 
-	// Verify the init container is setup-claude (not clone-repo)
+	// Verify the first init container is setup-claude (not clone-repo)
 	if podSpec.InitContainers[0].Name != "setup-claude" {
-		t.Errorf("Expected init container name 'setup-claude', got %s", podSpec.InitContainers[0].Name)
+		t.Errorf("Expected first init container name 'setup-claude', got %s", podSpec.InitContainers[0].Name)
+	}
+	// Verify the second init container is setup-marketplaces
+	if podSpec.InitContainers[1].Name != "setup-marketplaces" {
+		t.Errorf("Expected second init container name 'setup-marketplaces', got %s", podSpec.InitContainers[1].Name)
 	}
 }
 
@@ -1708,10 +1731,10 @@ func TestKubernetesSessionManager_CloneRepoInitContainerWithoutGitHubSecret(t *t
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have 2 init containers
+	// Verify we have 3 init containers (clone-repo, setup-claude, setup-marketplaces)
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 2 {
-		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 3 {
+		t.Fatalf("Expected 3 init containers, got %d", len(podSpec.InitContainers))
 	}
 
 	// Verify first init container is clone-repo

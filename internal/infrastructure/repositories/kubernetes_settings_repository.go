@@ -29,11 +29,12 @@ const (
 
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
-	Name       string                    `json:"name"`
-	Bedrock    *bedrockJSON              `json:"bedrock,omitempty"`
-	MCPServers map[string]*mcpServerJSON `json:"mcp_servers,omitempty"`
-	CreatedAt  time.Time                 `json:"created_at"`
-	UpdatedAt  time.Time                 `json:"updated_at"`
+	Name         string                      `json:"name"`
+	Bedrock      *bedrockJSON                `json:"bedrock,omitempty"`
+	MCPServers   map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
+	Marketplaces map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
+	CreatedAt    time.Time                   `json:"created_at"`
+	UpdatedAt    time.Time                   `json:"updated_at"`
 }
 
 // bedrockJSON is the JSON representation of Bedrock settings
@@ -54,6 +55,12 @@ type mcpServerJSON struct {
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// marketplaceJSON is the JSON representation of a single marketplace
+type marketplaceJSON struct {
+	URL            string   `json:"url"`
+	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
 }
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
@@ -222,6 +229,16 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		}
 	}
 
+	if marketplaces := settings.Marketplaces(); marketplaces != nil && !marketplaces.IsEmpty() {
+		sj.Marketplaces = make(map[string]*marketplaceJSON)
+		for name, marketplace := range marketplaces.Marketplaces() {
+			sj.Marketplaces[name] = &marketplaceJSON{
+				URL:            marketplace.URL(),
+				EnabledPlugins: marketplace.EnabledPlugins(),
+			}
+		}
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -266,6 +283,19 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 		}
 		settings.SetMCPServers(mcpServers)
 		// Reset updatedAt since SetMCPServers updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if len(sj.Marketplaces) > 0 {
+		marketplaces := entities.NewMarketplacesSettings()
+		for name, mpJSON := range sj.Marketplaces {
+			marketplace := entities.NewMarketplace(name)
+			marketplace.SetURL(mpJSON.URL)
+			marketplace.SetEnabledPlugins(mpJSON.EnabledPlugins)
+			marketplaces.SetMarketplace(name, marketplace)
+		}
+		settings.SetMarketplaces(marketplaces)
+		// Reset updatedAt since SetMarketplaces updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
