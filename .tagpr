@@ -3,3 +3,5 @@
 
 [tagpr]
 releaseBranch = main
+# Always bump minor version (e.g., v0.1.0 -> v0.2.0)
+command = "git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' | awk -F. '{printf \"v%d.%d.0\", $1, $2+1}' || echo 'v0.1.0'"
