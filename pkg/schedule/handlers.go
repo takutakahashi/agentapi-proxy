@@ -375,6 +375,9 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		req.GithubToken = schedule.SessionConfig.Params.GithubToken
 	}
 
+	// Extract repository information from tags
+	req.RepoInfo = proxy.ExtractRepositoryInfo(req.Tags, sessionID)
+
 	session, err := h.sessionManager.CreateSession(c.Request().Context(), sessionID, req)
 	if err != nil {
 		log.Printf("Failed to trigger schedule %s: %v", id, err)

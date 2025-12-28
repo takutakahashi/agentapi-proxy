@@ -152,7 +152,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 
 	// Create session
 	sessionID := uuid.New().String()
-	req := w.buildRunServerRequest(schedule)
+	req := w.buildRunServerRequest(schedule, sessionID)
 
 	session, err := w.sessionManager.CreateSession(ctx, sessionID, req)
 	if err != nil {
@@ -207,7 +207,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 }
 
 // buildRunServerRequest builds a RunServerRequest from a schedule
-func (w *Worker) buildRunServerRequest(schedule *Schedule) *proxy.RunServerRequest {
+func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *proxy.RunServerRequest {
 	req := &proxy.RunServerRequest{
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
@@ -225,6 +225,9 @@ func (w *Worker) buildRunServerRequest(schedule *Schedule) *proxy.RunServerReque
 		req.InitialMessage = schedule.SessionConfig.Params.Message
 		req.GithubToken = schedule.SessionConfig.Params.GithubToken
 	}
+
+	// Extract repository information from tags
+	req.RepoInfo = proxy.ExtractRepositoryInfo(req.Tags, sessionID)
 
 	return req
 }
