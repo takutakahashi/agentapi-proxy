@@ -658,6 +658,12 @@
                       "env_keys": ["GITHUB_TOKEN"]
                     }
                   },
+                  "marketplaces": {
+                    "my-marketplace": {
+                      "url": "https://github.com/example/my-marketplace.git",
+                      "enabled_plugins": ["plugin1", "plugin2"]
+                    }
+                  },
                   "created_at": "2025-01-01T00:00:00Z",
                   "updated_at": "2025-01-02T00:00:00Z"
                 }
@@ -748,6 +754,21 @@
                         "env": {
                           "GITHUB_TOKEN": "ghp_xxxx"
                         }
+                      }
+                    }
+                  }
+                },
+                "marketplaces": {
+                  "summary": "Plugin marketplaces",
+                  "value": {
+                    "marketplaces": {
+                      "my-marketplace": {
+                        "url": "https://github.com/example/my-marketplace.git",
+                        "enabled_plugins": ["plugin1", "plugin2"]
+                      },
+                      "another-marketplace": {
+                        "url": "https://github.com/example/another-marketplace.git",
+                        "enabled_plugins": ["pluginA"]
                       }
                     }
                   }
@@ -1222,6 +1243,13 @@
               "$ref": "#/components/schemas/MCPServerRequest"
             },
             "description": "MCP server configurations keyed by server name"
+          },
+          "marketplaces": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MarketplaceRequest"
+            },
+            "description": "Claude Code plugin marketplace configurations keyed by marketplace name"
           }
         }
       },
@@ -1294,6 +1322,23 @@
           }
         }
       },
+      "MarketplaceRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Git repository URL of the marketplace"
+          },
+          "enabled_plugins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of plugin names to enable from this marketplace"
+          }
+        }
+      },
       "SettingsResponse": {
         "type": "object",
         "properties": {
@@ -1310,6 +1355,13 @@
               "$ref": "#/components/schemas/MCPServerResponse"
             },
             "description": "MCP server configurations"
+          },
+          "marketplaces": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MarketplaceResponse"
+            },
+            "description": "Claude Code plugin marketplace configurations"
           },
           "created_at": {
             "type": "string",
@@ -1371,6 +1423,22 @@
               "type": "string"
             },
             "description": "List of header keys (values are not returned)"
+          }
+        }
+      },
+      "MarketplaceResponse": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Git repository URL of the marketplace"
+          },
+          "enabled_plugins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of plugin names enabled from this marketplace"
           }
         }
       },
@@ -1522,7 +1590,7 @@
     },
     {
       "name": "Settings",
-      "description": "User and team settings management including Bedrock and MCP servers"
+      "description": "User and team settings management including Bedrock, MCP servers, and Claude Code plugin marketplaces"
     },
     {
       "name": "User",
