@@ -2175,25 +2175,35 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.Vol
 }
 
 // buildClaudeStartCommand builds the Claude start command with optional MCP config
+// Uses resume fallback pattern: "claude -c [args] || claude [args]"
+// This attempts to resume an existing session first, falling back to a new session if not available
 func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
 	// Base command that uses CLAUDE_ARGS if set
 	baseCmd := `
 # Start agentapi with Claude
-CLAUDE_CMD="claude"
+CLAUDE_ARGS_FULL=""
 
 # Add --mcp-config if MCP config file exists
 if [ -f /mcp-config/merged.json ]; then
-    CLAUDE_CMD="$CLAUDE_CMD --mcp-config /mcp-config/merged.json"
+    CLAUDE_ARGS_FULL="--mcp-config /mcp-config/merged.json"
     echo "[STARTUP] Using MCP config: /mcp-config/merged.json"
 fi
 
 # Add CLAUDE_ARGS if set
 if [ -n "$CLAUDE_ARGS" ]; then
-    CLAUDE_CMD="$CLAUDE_CMD $CLAUDE_ARGS"
+    CLAUDE_ARGS_FULL="$CLAUDE_ARGS_FULL $CLAUDE_ARGS"
 fi
 
-echo "[STARTUP] Starting agentapi with: $CLAUDE_CMD"
-exec agentapi server --allowed-hosts '*' --allowed-origins '*' --port $AGENTAPI_PORT -- $CLAUDE_CMD
+# Build command with resume fallback (claude -c || claude)
+# This attempts to resume an existing session first, falling back to a new session if not available
+if [ -n "$CLAUDE_ARGS_FULL" ]; then
+    CLAUDE_CMD="claude -c $CLAUDE_ARGS_FULL || claude $CLAUDE_ARGS_FULL"
+else
+    CLAUDE_CMD="claude -c || claude"
+fi
+
+echo "[STARTUP] Starting agentapi with resume fallback: $CLAUDE_CMD"
+exec agentapi server --allowed-hosts '*' --allowed-origins '*' --port $AGENTAPI_PORT -- sh -c "$CLAUDE_CMD"
 `
 	return baseCmd
 }
