@@ -207,12 +207,6 @@ type KubernetesSessionConfig struct {
 	// This Secret is applied to all sessions. Each key should be a JSON file name (e.g., "github.json")
 	// containing mcpServers configuration
 	MCPServersBaseSecret string `json:"mcp_servers_base_secret" mapstructure:"mcp_servers_base_secret"`
-	// MCPServersTeamSecretPrefix is the prefix for team-specific MCP server Secret names
-	// Full name will be: {prefix}-{org}-{team} (e.g., mcp-servers-myorg-backend)
-	MCPServersTeamSecretPrefix string `json:"mcp_servers_team_secret_prefix" mapstructure:"mcp_servers_team_secret_prefix"`
-	// MCPServersUserSecretPrefix is the prefix for user-specific MCP server Secret names
-	// Full name will be: {prefix}-{userID} (e.g., mcp-servers-johndoe)
-	MCPServersUserSecretPrefix string `json:"mcp_servers_user_secret_prefix" mapstructure:"mcp_servers_user_secret_prefix"`
 }
 
 // Config represents the proxy configuration

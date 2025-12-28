@@ -1586,9 +1586,9 @@ func (m *KubernetesSessionManager) buildMCPVolumes(session *kubernetesSession) [
 	}
 
 	// Add team MCP config Secrets
-	if m.k8sConfig.MCPServersTeamSecretPrefix != "" && session.request != nil {
+	if m.k8sConfig.MCPServersEnabled && session.request != nil {
 		for i, team := range session.request.Teams {
-			secretName := fmt.Sprintf("%s-%s", m.k8sConfig.MCPServersTeamSecretPrefix, sanitizeSecretName(team))
+			secretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(team))
 			projectedSources = append(projectedSources, corev1.VolumeProjection{
 				Secret: &corev1.SecretProjection{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -1607,8 +1607,8 @@ func (m *KubernetesSessionManager) buildMCPVolumes(session *kubernetesSession) [
 	}
 
 	// Add user MCP config Secret
-	if m.k8sConfig.MCPServersUserSecretPrefix != "" && session.request != nil && session.request.UserID != "" {
-		userSecretName := fmt.Sprintf("%s-%s", m.k8sConfig.MCPServersUserSecretPrefix, sanitizeSecretName(session.request.UserID))
+	if m.k8sConfig.MCPServersEnabled && session.request != nil && session.request.UserID != "" {
+		userSecretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(session.request.UserID))
 		projectedSources = append(projectedSources, corev1.VolumeProjection{
 			Secret: &corev1.SecretProjection{
 				LocalObjectReference: corev1.LocalObjectReference{

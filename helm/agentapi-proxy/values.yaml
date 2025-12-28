@@ -360,6 +360,11 @@ kubernetesSession:
   # Allows loading MCP servers from Kubernetes Secrets with 3-tier hierarchy:
   # base (organization-wide) -> team (team-specific) -> user (user-specific)
   # Later tiers override earlier ones for servers with the same name
+  #
+  # Secret naming convention:
+  # - Base: mcp-servers-base (configurable via baseSecret)
+  # - Team: mcp-servers-{team-name} (e.g., mcp-servers-myorg-backend-team)
+  # - User: mcp-servers-{user-id} (e.g., mcp-servers-johndoe)
   mcpServers:
     # Enable MCP server loading from Secrets
     enabled: true
@@ -368,16 +373,6 @@ kubernetesSession:
     # The Secret should contain a key 'mcp-servers.json' with the MCP server configuration
     # Format: {"mcpServers": {"server-name": {"type": "http|stdio|sse", ...}}}
     baseSecret: "mcp-servers-base"
-
-    # Prefix for team-specific MCP config Secrets
-    # Team secrets will be named: {prefix}-{team-name}
-    # e.g., mcp-servers-team-myorg-backend-team
-    teamSecretPrefix: "mcp-servers"
-
-    # Prefix for user-specific MCP config Secrets
-    # User secrets will be named: {prefix}-{user-id}
-    # e.g., mcp-servers-johndoe
-    userSecretPrefix: "mcp-servers"
 
     # Example Secret structure:
     # apiVersion: v1
