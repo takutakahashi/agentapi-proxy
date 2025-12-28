@@ -372,12 +372,12 @@ kubernetesSession:
     # Prefix for team-specific MCP config Secrets
     # Team secrets will be named: {prefix}-{team-name}
     # e.g., mcp-servers-team-myorg-backend-team
-    teamSecretPrefix: "mcp-servers-team"
+    teamSecretPrefix: "mcp-servers"
 
     # Prefix for user-specific MCP config Secrets
     # User secrets will be named: {prefix}-{user-id}
-    # e.g., mcp-servers-user-johndoe
-    userSecretPrefix: "mcp-servers-user"
+    # e.g., mcp-servers-johndoe
+    userSecretPrefix: "mcp-servers"
 
     # Example Secret structure:
     # apiVersion: v1

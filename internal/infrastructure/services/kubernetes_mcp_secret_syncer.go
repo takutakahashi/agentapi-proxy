@@ -18,7 +18,7 @@ import (
 
 const (
 	// MCPSecretPrefix is the prefix for MCP servers Secret names
-	// This matches the existing mcp_servers_team_secret_prefix and mcp_servers_user_secret_prefix
+	// This matches the existing mcp_servers_user_secret_prefix default value
 	MCPSecretPrefix = "mcp-servers-"
 	// MCPSecretDataKey is the key in the Secret data for MCP servers configuration
 	MCPSecretDataKey = "mcp-servers.json"
