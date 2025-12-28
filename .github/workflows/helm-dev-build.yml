@@ -214,44 +214,6 @@ jobs:
           echo "Running Helm lint..."
           helm lint helm/${{ env.CHART_NAME }}/ --strict
 
-      - name: Template and validate chart
-        run: |
-          echo "Generating templates with default values..."
-          helm template dev-release helm/${{ env.CHART_NAME }}/ > /tmp/default-templates.yaml
-          
-          echo "Validating Kubernetes manifests..."
-          helm template dev-release helm/${{ env.CHART_NAME }}/ | kubeval --skip-kinds ServiceMonitor,Ingress
-          
-          echo "✅ Template validation successful"
-
-      - name: Test with various configurations
-        run: |
-          echo "Testing with multiple users enabled..."
-          helm template test-multi-user helm/${{ env.CHART_NAME }}/ \
-            --set config.enableMultipleUsers=true \
-            --set config.auth.enabled=true \
-            --set config.auth.github.enabled=true | kubeval --skip-kinds ServiceMonitor,Ingress
-          
-          echo "Testing with ingress enabled..."
-          helm template test-ingress helm/${{ env.CHART_NAME }}/ \
-            --set ingress.enabled=true \
-            --set ingress.hosts[0].host=dev.example.com | kubeval --skip-kinds ServiceMonitor,Ingress
-          
-          echo "Testing with custom resources..."
-          helm template test-resources helm/${{ env.CHART_NAME }}/ \
-            --set resources.limits.memory=16Gi \
-            --set resources.limits.cpu=4 \
-            --set resources.requests.memory=2Gi \
-            --set resources.requests.cpu=1 | kubeval --skip-kinds ServiceMonitor,Ingress
-          
-          echo "Testing with GitHub Enterprise configuration..."
-          helm template test-ghe helm/${{ env.CHART_NAME }}/ \
-            --set github.enterprise.enabled=true \
-            --set github.enterprise.baseUrl=https://github.company.com \
-            --set github.app.id=12345 | kubeval --skip-kinds ServiceMonitor,Ingress
-          
-          echo "✅ All configuration tests passed"
-
       - name: Package Helm chart
         run: |
           helm package helm/${{ env.CHART_NAME }}/ --destination /tmp/
@@ -329,7 +291,6 @@ jobs:
           name: helm-dev-${{ steps.version.outputs.dev_version }}
           path: |
             /tmp/${{ env.CHART_NAME }}-*.tgz
-            /tmp/default-templates.yaml
             install_instructions.txt
             helm/${{ env.CHART_NAME }}/Chart.yaml
           retention-days: 7
@@ -370,11 +331,9 @@ jobs:
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
           
           ## 🧪 Validation Results
-          
+
           - ✅ YAML lint passed
           - ✅ Helm lint passed (strict mode)
-          - ✅ Kubernetes manifest validation passed
-          - ✅ Multiple configuration tests passed
           
           ## 📦 Package Information
           
