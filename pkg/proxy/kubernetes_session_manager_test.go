@@ -80,7 +80,7 @@ func TestKubernetesSessionManager_CreateSession(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -186,7 +186,7 @@ func TestKubernetesSessionManager_GetSession(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -263,7 +263,7 @@ func TestKubernetesSessionManager_ListSessions(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -365,7 +365,7 @@ func TestKubernetesSessionManager_DeleteSession(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -459,7 +459,7 @@ func TestKubernetesSessionManager_DeleteSession_GithubTokenSecret(t *testing.T) 
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -539,7 +539,7 @@ func TestKubernetesSessionManager_Shutdown(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -620,7 +620,7 @@ func TestKubernetesSessionManager_SessionLabels(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -718,7 +718,7 @@ func TestKubernetesSessionManager_SessionAddr(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -786,7 +786,7 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 			PVCStorageSize:                  "5Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -953,7 +953,7 @@ func TestKubernetesSessionManager_CredentialsVolumeConfiguration(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -1086,7 +1086,7 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -1157,25 +1157,25 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 		}
 	}
 
-	// Verify claude-config-base ConfigMap volume
-	var baseConfigMapVolume *corev1.Volume
+	// Verify claude-config-base Secret volume
+	var baseSecretVolume *corev1.Volume
 	for i, v := range podSpec.Volumes {
 		if v.Name == "claude-config-base" {
-			baseConfigMapVolume = &podSpec.Volumes[i]
+			baseSecretVolume = &podSpec.Volumes[i]
 			break
 		}
 	}
-	if baseConfigMapVolume == nil {
+	if baseSecretVolume == nil {
 		t.Fatal("Expected claude-config-base volume")
 	}
-	if baseConfigMapVolume.ConfigMap == nil {
-		t.Fatal("Expected claude-config-base to be a ConfigMap volume")
+	if baseSecretVolume.Secret == nil {
+		t.Fatal("Expected claude-config-base to be a Secret volume")
 	}
-	if baseConfigMapVolume.ConfigMap.Name != "claude-config-base" {
-		t.Errorf("Expected ConfigMap name 'claude-config-base', got %s", baseConfigMapVolume.ConfigMap.Name)
+	if baseSecretVolume.Secret.SecretName != "claude-config-base" {
+		t.Errorf("Expected Secret name 'claude-config-base', got %s", baseSecretVolume.Secret.SecretName)
 	}
-	if baseConfigMapVolume.ConfigMap.Optional == nil || !*baseConfigMapVolume.ConfigMap.Optional {
-		t.Error("Expected claude-config-base ConfigMap to be optional")
+	if baseSecretVolume.Secret.Optional == nil || !*baseSecretVolume.Secret.Optional {
+		t.Error("Expected claude-config-base Secret to be optional")
 	}
 
 	// Verify claude-config-user ConfigMap volume
@@ -1281,7 +1281,7 @@ func TestKubernetesSessionManager_InitContainerImageDefault(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "", // Empty - should use main Image
 		},
@@ -1363,7 +1363,7 @@ func TestKubernetesSessionManager_ClaudeConfigUserSanitization(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 		},
@@ -1453,7 +1453,7 @@ func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 			GitHubSecretName:                "github-credentials",
@@ -1586,7 +1586,7 @@ func TestKubernetesSessionManager_CloneRepoInitContainerSkippedWithoutRepoInfo(t
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 			GitHubSecretName:                "github-credentials",
@@ -1670,7 +1670,7 @@ func TestKubernetesSessionManager_CloneRepoInitContainerWithoutGitHubSecret(t *t
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 			GitHubSecretName:                "", // Empty - no GitHub secret
@@ -1766,7 +1766,7 @@ func TestKubernetesSessionManager_GithubTokenDoesNotMountGitHubSecretName(t *tes
 			PVCStorageSize:                  "1Gi",
 			PodStartTimeout:                 60,
 			PodStopTimeout:                  30,
-			ClaudeConfigBaseConfigMap:       "claude-config-base",
+			ClaudeConfigBaseSecret:          "claude-config-base",
 			ClaudeConfigUserConfigMapPrefix: "claude-config",
 			InitContainerImage:              "alpine:3.19",
 			GitHubSecretName:                "github-session-secret", // Should NOT be mounted when GithubToken is provided

@@ -154,8 +154,8 @@ func TestCreateInitialMessageSecret(t *testing.T) {
 func TestBuildVolumesWithInitialMessage(t *testing.T) {
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                   true,
-			ClaudeConfigBaseConfigMap: "claude-config-base",
+			Enabled:                true,
+			ClaudeConfigBaseSecret: "claude-config-base",
 		},
 	}
 	lgr := logger.NewLogger()
@@ -237,16 +237,16 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(ns)
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                   true,
-			Namespace:                 ns.Name,
-			Image:                     "test-image:latest",
-			BasePort:                  9000,
-			PVCEnabled:                boolPtrForTest(false),
-			ClaudeConfigBaseConfigMap: "claude-config-base",
-			CPURequest:                "100m",
-			CPULimit:                  "1",
-			MemoryRequest:             "128Mi",
-			MemoryLimit:               "512Mi",
+			Enabled:                true,
+			Namespace:              ns.Name,
+			Image:                  "test-image:latest",
+			BasePort:               9000,
+			PVCEnabled:             boolPtrForTest(false),
+			ClaudeConfigBaseSecret: "claude-config-base",
+			CPURequest:             "100m",
+			CPULimit:               "1",
+			MemoryRequest:          "128Mi",
+			MemoryLimit:            "512Mi",
 		},
 	}
 	lgr := logger.NewLogger()
