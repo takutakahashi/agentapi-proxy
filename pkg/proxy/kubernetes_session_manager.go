@@ -115,10 +115,10 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 
 	log.Printf("[K8S_SESSION] Creating session %s in namespace %s", id, m.namespace)
 
-	// Ensure Base ConfigMap exists (create if not present)
-	if err := m.ensureBaseConfigMap(ctx); err != nil {
+	// Ensure Base Secret exists (create if not present)
+	if err := m.ensureBaseSecret(ctx); err != nil {
 		m.cleanupSession(id)
-		return nil, fmt.Errorf("failed to ensure base ConfigMap: %w", err)
+		return nil, fmt.Errorf("failed to ensure base Secret: %w", err)
 	}
 
 	// Create PVC if enabled
@@ -412,28 +412,29 @@ const defaultSettingsJSON = `{
   }
 }`
 
-// ensureBaseConfigMap ensures the base ConfigMap exists, creating it if necessary
-func (m *KubernetesSessionManager) ensureBaseConfigMap(ctx context.Context) error {
-	configMapName := m.k8sConfig.ClaudeConfigBaseConfigMap
-	if configMapName == "" {
-		configMapName = "claude-config-base"
+// ensureBaseSecret ensures the base Secret exists, creating it if necessary
+func (m *KubernetesSessionManager) ensureBaseSecret(ctx context.Context) error {
+	secretName := m.k8sConfig.ClaudeConfigBaseSecret
+	if secretName == "" {
+		secretName = "claude-config-base"
 	}
 
-	// Check if ConfigMap already exists
-	_, err := m.client.CoreV1().ConfigMaps(m.namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	// Check if Secret already exists
+	_, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err == nil {
-		// ConfigMap already exists
+		// Secret already exists
 		return nil
 	}
 
 	if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check ConfigMap existence: %w", err)
+		return fmt.Errorf("failed to check Secret existence: %w", err)
 	}
 
-	// Create the base ConfigMap with default settings
-	configMap := &corev1.ConfigMap{
+	// Create the base Secret with default settings
+	// Note: GITHUB_TOKEN is added dynamically by init container per session
+	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
+			Name:      secretName,
 			Namespace: m.namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/name":       "agentapi-proxy",
@@ -441,22 +442,23 @@ func (m *KubernetesSessionManager) ensureBaseConfigMap(ctx context.Context) erro
 				"app.kubernetes.io/component":  "claude-config",
 			},
 		},
-		Data: map[string]string{
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
 			"claude.json":   defaultClaudeJSON,
 			"settings.json": defaultSettingsJSON,
 		},
 	}
 
-	_, err = m.client.CoreV1().ConfigMaps(m.namespace).Create(ctx, configMap, metav1.CreateOptions{})
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		// If another process created it concurrently, that's fine
 		if errors.IsAlreadyExists(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to create base ConfigMap: %w", err)
+		return fmt.Errorf("failed to create base Secret: %w", err)
 	}
 
-	log.Printf("[K8S_SESSION] Created base ConfigMap %s in namespace %s", configMapName, m.namespace)
+	log.Printf("[K8S_SESSION] Created base Secret %s in namespace %s", secretName, m.namespace)
 	return nil
 }
 
@@ -487,9 +489,21 @@ else
     cp /tmp/base.json /claude-config/.claude.json
 fi
 
-# Copy settings.json from base config
+# Copy settings.json from base config and add GITHUB_TOKEN if available
 if [ -f /claude-config-base/settings.json ]; then
-    cp /claude-config-base/settings.json /claude-config/.claude/settings.json
+    if [ -n "$GITHUB_TOKEN" ]; then
+        # Add GITHUB_TOKEN to settings.json env section using Node.js
+        node -e "
+const settings = JSON.parse(require('fs').readFileSync('/claude-config-base/settings.json', 'utf8'));
+if (!settings.env) settings.env = {};
+settings.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+require('fs').writeFileSync('/claude-config/.claude/settings.json', JSON.stringify(settings, null, 2));
+"
+        echo "settings.json copied with GITHUB_TOKEN"
+    else
+        cp /claude-config-base/settings.json /claude-config/.claude/settings.json
+        echo "settings.json copied"
+    fi
 fi
 
 # Copy CLAUDE.md from embedded location (from Docker image)
@@ -1443,15 +1457,13 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 	volumes := []corev1.Volume{
 		// Workdir volume (PVC or EmptyDir based on configuration)
 		workdirVolume,
-		// Base Claude configuration ConfigMap
+		// Base Claude configuration Secret (contains claude.json, settings.json with GITHUB_TOKEN)
 		{
 			Name: "claude-config-base",
 			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.ClaudeConfigBaseConfigMap,
-					},
-					Optional: boolPtr(true),
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: m.k8sConfig.ClaudeConfigBaseSecret,
+					Optional:   boolPtr(true),
 				},
 			},
 		},

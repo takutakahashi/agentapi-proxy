@@ -38,24 +38,32 @@ func SetupClaudeCode(homeDir string) error {
 		return fmt.Errorf("failed to create directory %s: %w", claudeConfigDir, err)
 	}
 
-	// Claude Code settings JSON
-	claudeCodeSettings := `{
-  "workspaceFolders": [],
-  "recentWorkspaces": [],
-  "settings": {
-    "mcp.enabled": true
-  }
-}`
+	// Build Claude Code settings as a map
+	settings := map[string]interface{}{
+		"workspaceFolders": []interface{}{},
+		"recentWorkspaces": []interface{}{},
+		"settings": map[string]interface{}{
+			"mcp.enabled": true,
+		},
+	}
 
-	// Validate that the embedded JSON is valid
-	var tempSettings interface{}
-	if err := json.Unmarshal([]byte(claudeCodeSettings), &tempSettings); err != nil {
-		return fmt.Errorf("invalid embedded settings JSON: %w", err)
+	// Try to get GitHub token and add to env if available
+	if githubToken, err := GetGitHubToken(""); err == nil && githubToken != "" {
+		settings["env"] = map[string]string{
+			"GITHUB_TOKEN": githubToken,
+		}
+		log.Printf("Added GITHUB_TOKEN to Claude Code settings")
+	}
+
+	// Marshal settings to JSON
+	claudeCodeSettingsBytes, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings JSON: %w", err)
 	}
 
 	// Write settings.json file
 	settingsPath := filepath.Join(claudeConfigDir, "settings.json")
-	if err := os.WriteFile(settingsPath, []byte(claudeCodeSettings), 0644); err != nil {
+	if err := os.WriteFile(settingsPath, claudeCodeSettingsBytes, 0644); err != nil {
 		return fmt.Errorf("failed to write settings file %s: %w", settingsPath, err)
 	}
 
