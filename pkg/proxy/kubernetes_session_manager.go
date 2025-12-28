@@ -589,6 +589,102 @@ agentapi-proxy helpers merge-mcp-config \
 echo "[MCP] MCP server configuration complete"
 `
 
+// setupMarketplacesScript is the shell script executed by the init container to setup plugin marketplaces
+// It clones marketplace repositories and updates settings.json with local paths
+const setupMarketplacesScript = `
+set -e
+
+MARKETPLACES_DIR="/marketplaces"
+mkdir -p "$MARKETPLACES_DIR"
+
+# Check if marketplace config exists
+if [ ! -f /marketplace-config/marketplaces.json ]; then
+    echo "[MARKETPLACE] No marketplace configuration found, skipping"
+    exit 0
+fi
+
+# Process marketplaces using Node.js
+node -e "
+const fs = require('fs');
+const { execSync } = require('child_process');
+const path = require('path');
+
+// Read marketplace config from mounted secret
+const config = JSON.parse(fs.readFileSync('/marketplace-config/marketplaces.json', 'utf8'));
+const marketplaces = config.marketplaces || {};
+const marketplacesDir = '/marketplaces';
+
+if (Object.keys(marketplaces).length === 0) {
+    console.log('[MARKETPLACE] No marketplaces configured');
+    process.exit(0);
+}
+
+const extraKnownMarketplaces = {};
+const enabledPlugins = [];
+
+for (const [name, marketplace] of Object.entries(marketplaces)) {
+    if (!marketplace.url) {
+        console.log('[MARKETPLACE] Skipping', name, '- no URL configured');
+        continue;
+    }
+
+    const targetDir = path.join(marketplacesDir, name);
+
+    // Clone repository
+    console.log('[MARKETPLACE] Cloning', marketplace.url, 'to', targetDir);
+    try {
+        execSync('git clone --depth 1 ' + marketplace.url + ' ' + targetDir, { stdio: 'inherit' });
+    } catch (err) {
+        console.error('[MARKETPLACE] Failed to clone', marketplace.url, ':', err.message);
+        continue;
+    }
+
+    // Add to extraKnownMarketplaces with local path
+    extraKnownMarketplaces[name] = {
+        source: {
+            source: 'local',
+            path: targetDir
+        }
+    };
+
+    // Add enabled plugins with marketplace qualifier
+    if (marketplace.enabled_plugins && Array.isArray(marketplace.enabled_plugins)) {
+        for (const plugin of marketplace.enabled_plugins) {
+            enabledPlugins.push(plugin + '@' + name);
+        }
+    }
+}
+
+// Read existing settings.json and merge
+const settingsPath = '/claude-config/.claude/settings.json';
+let settings = {};
+if (fs.existsSync(settingsPath)) {
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+}
+
+// Merge marketplace settings
+settings.extraKnownMarketplaces = {
+    ...(settings.extraKnownMarketplaces || {}),
+    ...extraKnownMarketplaces
+};
+
+// Merge enabled plugins (avoid duplicates)
+const existingPlugins = new Set(settings.enabledPlugins || []);
+for (const plugin of enabledPlugins) {
+    existingPlugins.add(plugin);
+}
+settings.enabledPlugins = Array.from(existingPlugins);
+
+// Write updated settings
+fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+console.log('[MARKETPLACE] Setup complete');
+console.log('[MARKETPLACE] Marketplaces:', Object.keys(extraKnownMarketplaces).join(', ') || 'none');
+console.log('[MARKETPLACE] Enabled plugins:', settings.enabledPlugins.join(', ') || 'none');
+"
+
+echo "[MARKETPLACE] Marketplace setup complete"
+`
+
 // createDeployment creates a Deployment for the session
 func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session *kubernetesSession, req *RunServerRequest) error {
 	labels := m.buildLabels(session)
@@ -622,6 +718,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		initContainers = append(initContainers, m.buildMCPSetupInitContainer(session, req))
 		log.Printf("[K8S_SESSION] Added MCP setup init container for session %s", session.id)
 	}
+
+	// Add marketplace setup init container
+	// This clones marketplace repositories and updates settings.json
+	initContainers = append(initContainers, m.buildMarketplaceSetupInitContainer(session, req))
+	log.Printf("[K8S_SESSION] Added marketplace setup init container for session %s", session.id)
 
 	// Determine working directory based on whether repository is specified
 	workingDir := "/home/agentapi/workdir"
@@ -1557,6 +1658,9 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 		volumes = append(volumes, m.buildMCPVolumes(session)...)
 	}
 
+	// Add marketplace configuration volumes
+	volumes = append(volumes, m.buildMarketplaceVolumes(session)...)
+
 	return volumes
 }
 
@@ -1648,6 +1752,84 @@ func (m *KubernetesSessionManager) buildMCPVolumes(session *kubernetesSession) [
 	// Add mcp-config EmptyDir for merged output
 	volumes = append(volumes, corev1.Volume{
 		Name: "mcp-config",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	})
+
+	return volumes
+}
+
+// buildMarketplaceVolumes builds the volumes for marketplace configuration
+func (m *KubernetesSessionManager) buildMarketplaceVolumes(session *kubernetesSession) []corev1.Volume {
+	volumes := []corev1.Volume{}
+
+	// Build projected volume sources for marketplace-config
+	var projectedSources []corev1.VolumeProjection
+
+	// Add team marketplace config Secrets
+	if session.request != nil {
+		for i, team := range session.request.Teams {
+			secretName := fmt.Sprintf("marketplaces-%s", sanitizeSecretName(team))
+			projectedSources = append(projectedSources, corev1.VolumeProjection{
+				Secret: &corev1.SecretProjection{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: secretName,
+					},
+					Items: []corev1.KeyToPath{
+						{
+							Key:  "marketplaces.json",
+							Path: fmt.Sprintf("team/%d/marketplaces.json", i),
+						},
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
+	}
+
+	// Add user marketplace config Secret
+	if session.request != nil && session.request.UserID != "" {
+		userSecretName := fmt.Sprintf("marketplaces-%s", sanitizeSecretName(session.request.UserID))
+		projectedSources = append(projectedSources, corev1.VolumeProjection{
+			Secret: &corev1.SecretProjection{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: userSecretName,
+				},
+				Items: []corev1.KeyToPath{
+					{
+						Key:  "marketplaces.json",
+						Path: "marketplaces.json",
+					},
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	// Add marketplace-config as projected volume
+	if len(projectedSources) > 0 {
+		volumes = append(volumes, corev1.Volume{
+			Name: "marketplace-config",
+			VolumeSource: corev1.VolumeSource{
+				Projected: &corev1.ProjectedVolumeSource{
+					Sources: projectedSources,
+				},
+			},
+		})
+	} else {
+		// Use an EmptyDir if no secrets configured
+		volumes = append(volumes, corev1.Volume{
+			Name: "marketplace-config",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+	}
+
+	// Add marketplaces EmptyDir for cloned repositories
+	volumes = append(volumes, corev1.Volume{
+		Name: "marketplaces",
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
@@ -2123,6 +2305,96 @@ func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *kubernete
 			{
 				Name:      "mcp-config",
 				MountPath: "/mcp-config",
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
+}
+
+// buildMarketplaceSetupInitContainer builds the init container for marketplace setup
+func (m *KubernetesSessionManager) buildMarketplaceSetupInitContainer(session *kubernetesSession, req *RunServerRequest) corev1.Container {
+	// Use the main container image if InitContainerImage is not specified
+	initImage := m.k8sConfig.InitContainerImage
+	if initImage == "" {
+		initImage = m.k8sConfig.Image
+	}
+
+	// Build envFrom for environment variables needed by marketplace cloning
+	var envFrom []corev1.EnvFromSource
+
+	if req.GithubToken != "" {
+		// When params.github_token is provided:
+		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
+		// - Mount session-specific Secret for GITHUB_TOKEN
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
+
+		// Mount session-specific Secret for GITHUB_TOKEN
+		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.serviceName)
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: githubTokenSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		// When params.github_token is NOT provided:
+		// - Mount GitHubSecretName for full GitHub App authentication
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.GitHubSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+
+		// Mount GitHub config Secret if available
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.GitHubConfigSecretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
+	}
+
+	return corev1.Container{
+		Name:            "setup-marketplaces",
+		Image:           initImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c"},
+		Args:            []string{setupMarketplacesScript},
+		EnvFrom:         envFrom,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "marketplace-config",
+				MountPath: "/marketplace-config",
+				ReadOnly:  true,
+			},
+			{
+				Name:      "marketplaces",
+				MountPath: "/marketplaces",
+			},
+			{
+				Name:      "claude-config",
+				MountPath: "/claude-config",
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
