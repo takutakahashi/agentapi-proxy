@@ -3,3 +3,5 @@
 
 [tagpr]
 releaseBranch = main
+	vPrefix = true
+	versionFile = -
