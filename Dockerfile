@@ -52,10 +52,6 @@ RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 g
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Lightpanda Browser
-RUN curl -L -o /usr/local/bin/lightpanda https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux && \
-    chmod +x /usr/local/bin/lightpanda
-
 # Create a non-root user
 RUN groupadd -r agentapi && useradd -r -g agentapi -d /home/agentapi -s /bin/bash agentapi && \
     mkdir -p /home/agentapi && \
@@ -70,6 +66,9 @@ COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
 
 # Copy agentapi binary from builder stage
 COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
+
+# Copy github-mcp-server binary from official image
+COPY --from=ghcr.io/github/github-mcp-server:v0.26.3 /server/github-mcp-server /usr/local/bin/
 
 # Switch to non-root user
 USER agentapi
@@ -99,10 +98,6 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 
 # Set combined PATH environment variable
 ENV PATH="/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
-
-# Setup Lightpanda Browser
-ENV LIGHTPANDA_BIN=/usr/local/bin/lightpanda
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
