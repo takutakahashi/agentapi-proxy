@@ -1,0 +1,1536 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AgentAPI Proxy",
+    "description": "API for managing agent sessions, schedules, and settings. AgentAPI Proxy provides a unified interface for running AI agents with Kubernetes-based session management.",
+    "version": "1.0.0",
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current server"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Returns the health status of the proxy server.",
+        "operationId": "healthCheck",
+        "tags": ["Health"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/start": {
+      "post": {
+        "summary": "Create a new session",
+        "description": "Creates a new session and starts an agentapi server instance. Returns the session ID for subsequent requests.",
+        "operationId": "createSession",
+        "tags": ["Sessions"],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRequest"
+              },
+              "examples": {
+                "basic": {
+                  "summary": "Basic session",
+                  "value": {
+                    "tags": {
+                      "repository": "org/repo",
+                      "branch": "main"
+                    }
+                  }
+                },
+                "with-environment": {
+                  "summary": "Session with environment variables",
+                  "value": {
+                    "environment": {
+                      "CUSTOM_VAR": "value"
+                    },
+                    "tags": {
+                      "repository": "org/repo"
+                    }
+                  }
+                },
+                "with-params": {
+                  "summary": "Session with initial message",
+                  "value": {
+                    "tags": {
+                      "repository": "org/repo"
+                    },
+                    "params": {
+                      "message": "Review the latest PRs"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string",
+                      "description": "Unique session identifier (UUID)"
+                    }
+                  },
+                  "required": ["session_id"]
+                },
+                "example": {
+                  "session_id": "abc123-def456-ghi789"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Failed to create session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/search": {
+      "get": {
+        "summary": "Search sessions",
+        "description": "Returns a list of sessions. Non-admin users can only see their own sessions. Supports filtering by status and tags.",
+        "operationId": "searchSessions",
+        "tags": ["Sessions"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by session status",
+            "schema": {
+              "$ref": "#/components/schemas/SessionStatus"
+            }
+          },
+          {
+            "name": "tag.{key}",
+            "in": "query",
+            "description": "Filter by tag value (e.g., tag.repository=org/repo)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionResponse"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}": {
+      "delete": {
+        "summary": "Delete a session",
+        "description": "Terminates and deletes a session. Users can only delete their own sessions.",
+        "operationId": "deleteSession",
+        "tags": ["Sessions"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Session terminated successfully"
+                    },
+                    "session_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "terminated"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Session ID is required"
+          },
+          "403": {
+            "description": "Forbidden - can only delete own sessions"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "500": {
+            "description": "Failed to delete session"
+          }
+        }
+      }
+    },
+    "/{sessionId}/{path}": {
+      "summary": "Proxy to session",
+      "description": "All requests to /{sessionId}/* are proxied to the corresponding agentapi server instance.",
+      "get": {
+        "summary": "Proxy GET request to session",
+        "operationId": "proxyGetToSession",
+        "tags": ["Session Proxy"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to forward to agentapi",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Response from agentapi server"
+          },
+          "403": {
+            "description": "Forbidden - can only access own sessions"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "502": {
+            "description": "Bad Gateway - agentapi server unavailable"
+          }
+        }
+      },
+      "post": {
+        "summary": "Proxy POST request to session",
+        "operationId": "proxyPostToSession",
+        "tags": ["Session Proxy"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to forward to agentapi",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Request body to forward to agentapi",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Response from agentapi server"
+          },
+          "403": {
+            "description": "Forbidden - can only access own sessions"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "502": {
+            "description": "Bad Gateway - agentapi server unavailable"
+          }
+        }
+      }
+    },
+    "/schedules": {
+      "post": {
+        "summary": "Create a new schedule",
+        "description": "Creates a new schedule for delayed or recurring session execution.",
+        "operationId": "createSchedule",
+        "tags": ["Schedules"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScheduleRequest"
+              },
+              "examples": {
+                "one-time": {
+                  "summary": "One-time delayed execution",
+                  "value": {
+                    "name": "Code Review",
+                    "scheduled_at": "2025-01-15T14:00:00Z",
+                    "session_config": {
+                      "tags": {
+                        "repository": "org/repo"
+                      },
+                      "params": {
+                        "message": "Review PRs"
+                      }
+                    }
+                  }
+                },
+                "recurring": {
+                  "summary": "Recurring execution (cron)",
+                  "value": {
+                    "name": "Daily Standup",
+                    "cron_expr": "0 9 * * 1-5",
+                    "session_config": {
+                      "tags": {
+                        "repository": "org/standup-bot"
+                      },
+                      "params": {
+                        "message": "Generate daily standup"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Schedule created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "summary": "List schedules",
+        "description": "Returns a list of schedules. Non-admin users can only see their own schedules.",
+        "operationId": "listSchedules",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by schedule status",
+            "schema": {
+              "$ref": "#/components/schemas/ScheduleStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of schedules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schedules": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ScheduleResponse"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/schedules/{id}": {
+      "get": {
+        "summary": "Get a schedule",
+        "description": "Returns a specific schedule by ID.",
+        "operationId": "getSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Schedule ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only access own schedules"
+          },
+          "404": {
+            "description": "Schedule not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a schedule",
+        "description": "Updates an existing schedule.",
+        "operationId": "updateSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Schedule ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateScheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Schedule updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Forbidden - can only update own schedules"
+          },
+          "404": {
+            "description": "Schedule not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a schedule",
+        "description": "Deletes a schedule by ID.",
+        "operationId": "deleteSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Schedule ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Schedule deleted successfully"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only delete own schedules"
+          },
+          "404": {
+            "description": "Schedule not found"
+          }
+        }
+      }
+    },
+    "/schedules/{id}/trigger": {
+      "post": {
+        "summary": "Manually trigger a schedule",
+        "description": "Immediately executes a schedule, creating a new session.",
+        "operationId": "triggerSchedule",
+        "tags": ["Schedules"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Schedule ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule triggered successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string",
+                      "description": "ID of the created session"
+                    },
+                    "triggered_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only trigger own schedules"
+          },
+          "404": {
+            "description": "Schedule not found"
+          },
+          "500": {
+            "description": "Failed to create session"
+          }
+        }
+      }
+    },
+    "/settings/{name}": {
+      "get": {
+        "summary": "Get settings",
+        "description": "Returns settings for a user or team. Users can access their own settings or settings of teams they belong to.",
+        "operationId": "getSettings",
+        "tags": ["Settings"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Settings name (user ID or team name like 'org-team')",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                },
+                "example": {
+                  "name": "myorg-backend",
+                  "bedrock": {
+                    "enabled": true,
+                    "model": "anthropic.claude-3-sonnet-20240229-v1:0",
+                    "role_arn": "arn:aws:iam::123456789012:role/bedrock-role"
+                  },
+                  "mcp_servers": {
+                    "github": {
+                      "type": "stdio",
+                      "command": "npx",
+                      "args": ["-y", "@modelcontextprotocol/server-github"],
+                      "env_keys": ["GITHUB_TOKEN"]
+                    }
+                  },
+                  "created_at": "2025-01-01T00:00:00Z",
+                  "updated_at": "2025-01-02T00:00:00Z"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - cannot access these settings"
+          },
+          "404": {
+            "description": "Settings not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update settings",
+        "description": "Creates or updates settings for a user or team. Users can modify their own settings or team settings if they have admin/maintainer role.",
+        "operationId": "updateSettings",
+        "tags": ["Settings"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Settings name (user ID or team name like 'org-team')",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSettingsRequest"
+              },
+              "examples": {
+                "bedrock": {
+                  "summary": "AWS Bedrock settings",
+                  "value": {
+                    "bedrock": {
+                      "enabled": true,
+                      "model": "anthropic.claude-3-sonnet-20240229-v1:0",
+                      "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+                      "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                      "role_arn": "arn:aws:iam::123456789012:role/bedrock-role"
+                    }
+                  }
+                },
+                "mcp-servers": {
+                  "summary": "MCP servers settings",
+                  "value": {
+                    "mcp_servers": {
+                      "github": {
+                        "type": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-github"],
+                        "env": {
+                          "GITHUB_TOKEN": "ghp_xxxx"
+                        }
+                      },
+                      "slack": {
+                        "type": "http",
+                        "url": "https://mcp.example.com/slack",
+                        "headers": {
+                          "Authorization": "Bearer xoxb-xxxx"
+                        }
+                      }
+                    }
+                  }
+                },
+                "combined": {
+                  "summary": "Both Bedrock and MCP servers",
+                  "value": {
+                    "bedrock": {
+                      "enabled": true,
+                      "model": "anthropic.claude-3-sonnet-20240229-v1:0"
+                    },
+                    "mcp_servers": {
+                      "github": {
+                        "type": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-github"],
+                        "env": {
+                          "GITHUB_TOKEN": "ghp_xxxx"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - cannot modify these settings"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete settings",
+        "description": "Deletes settings for a user or team. Also deletes associated credentials and MCP servers secrets.",
+        "operationId": "deleteSettings",
+        "tags": ["Settings"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Settings name (user ID or team name like 'org-team')",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - cannot delete these settings"
+          },
+          "404": {
+            "description": "Settings not found"
+          }
+        }
+      }
+    },
+    "/user/info": {
+      "get": {
+        "summary": "Get current user info",
+        "description": "Returns information about the currently authenticated user.",
+        "operationId": "getUserInfo",
+        "tags": ["User"],
+        "responses": {
+          "200": {
+            "description": "User information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserInfoResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/notification/subscribe": {
+      "post": {
+        "summary": "Subscribe to push notifications",
+        "description": "Registers a Web Push subscription for receiving notifications.",
+        "operationId": "subscribeNotification",
+        "tags": ["Notifications"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushSubscription"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subscription created successfully"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "summary": "Get push subscriptions",
+        "description": "Returns the current user's push notification subscriptions.",
+        "operationId": "getSubscriptions",
+        "tags": ["Notifications"],
+        "responses": {
+          "200": {
+            "description": "List of subscriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "subscriptions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PushSubscription"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Unsubscribe from push notifications",
+        "description": "Removes a Web Push subscription.",
+        "operationId": "unsubscribeNotification",
+        "tags": ["Notifications"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "description": "The push subscription endpoint to unsubscribe"
+                  }
+                },
+                "required": ["endpoint"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subscription deleted successfully"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/notifications/history": {
+      "get": {
+        "summary": "Get notification history",
+        "description": "Returns the history of notifications for the current user.",
+        "operationId": "getNotificationHistory",
+        "tags": ["Notifications"],
+        "responses": {
+          "200": {
+            "description": "Notification history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notifications": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Notification"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "StartRequest": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables for the session"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Tags for the session (e.g., repository, branch)"
+          },
+          "params": {
+            "$ref": "#/components/schemas/SessionParams"
+          }
+        }
+      },
+      "SessionParams": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Initial message to send to the agent after session starts"
+          },
+          "github_token": {
+            "type": "string",
+            "description": "GitHub token to use for authentication instead of GitHub App"
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "Unique session identifier"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Owner user ID"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the session was started"
+          },
+          "addr": {
+            "type": "string",
+            "description": "Address of the agentapi server (host:port)"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Session tags"
+          },
+          "description": {
+            "type": "string",
+            "description": "Session description (initial message or tags.description)"
+          }
+        }
+      },
+      "SessionStatus": {
+        "type": "string",
+        "enum": ["creating", "starting", "active", "unhealthy", "stopped", "unknown"],
+        "description": "Session status"
+      },
+      "CreateScheduleRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the schedule"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When to execute (ISO8601). Either scheduled_at or cron_expr must be set."
+          },
+          "cron_expr": {
+            "type": "string",
+            "description": "Cron expression for recurring execution (e.g., '0 9 * * 1-5')",
+            "example": "0 9 * * 1-5"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for the schedule (default: Asia/Tokyo)",
+            "example": "Asia/Tokyo"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/SessionConfig"
+          }
+        }
+      },
+      "UpdateScheduleRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the schedule"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduleStatus"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When to execute (ISO8601)"
+          },
+          "cron_expr": {
+            "type": "string",
+            "description": "Cron expression for recurring execution"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for the schedule"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/SessionConfig"
+          }
+        }
+      },
+      "ScheduleResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique schedule ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the schedule"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Owner user ID"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduleStatus"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Scheduled execution time"
+          },
+          "cron_expr": {
+            "type": "string",
+            "description": "Cron expression for recurring execution"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "Timezone for the schedule"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/SessionConfig"
+          },
+          "next_execution_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Next scheduled execution time"
+          },
+          "execution_count": {
+            "type": "integer",
+            "description": "Number of times the schedule has been executed"
+          },
+          "last_execution": {
+            "$ref": "#/components/schemas/ExecutionRecord"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SessionConfig": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables for the session"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Tags for the session"
+          },
+          "params": {
+            "$ref": "#/components/schemas/SessionParams"
+          }
+        }
+      },
+      "ExecutionRecord": {
+        "type": "object",
+        "properties": {
+          "executed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "ID of the created session (if successful)"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["success", "failed", "skipped"],
+            "description": "Execution result status"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message (if failed or skipped)"
+          }
+        }
+      },
+      "ScheduleStatus": {
+        "type": "string",
+        "enum": ["active", "paused", "completed"],
+        "description": "Schedule status"
+      },
+      "UpdateSettingsRequest": {
+        "type": "object",
+        "properties": {
+          "bedrock": {
+            "$ref": "#/components/schemas/BedrockSettingsRequest"
+          },
+          "mcp_servers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MCPServerRequest"
+            },
+            "description": "MCP server configurations keyed by server name"
+          }
+        }
+      },
+      "BedrockSettingsRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether Bedrock is enabled"
+          },
+          "model": {
+            "type": "string",
+            "description": "Bedrock model ID"
+          },
+          "access_key_id": {
+            "type": "string",
+            "description": "AWS Access Key ID"
+          },
+          "secret_access_key": {
+            "type": "string",
+            "description": "AWS Secret Access Key"
+          },
+          "role_arn": {
+            "type": "string",
+            "description": "AWS Role ARN for AssumeRole"
+          },
+          "profile": {
+            "type": "string",
+            "description": "AWS Profile name"
+          }
+        }
+      },
+      "MCPServerRequest": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["stdio", "http", "sse"],
+            "description": "Server type"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL for http/sse servers"
+          },
+          "command": {
+            "type": "string",
+            "description": "Command for stdio servers"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arguments for stdio servers"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables for the server"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Headers for http/sse servers"
+          }
+        }
+      },
+      "SettingsResponse": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Settings name (user ID or team name)"
+          },
+          "bedrock": {
+            "$ref": "#/components/schemas/BedrockSettingsResponse"
+          },
+          "mcp_servers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MCPServerResponse"
+            },
+            "description": "MCP server configurations"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BedrockSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "role_arn": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          }
+        },
+        "description": "Bedrock settings (credentials are not returned)"
+      },
+      "MCPServerResponse": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["stdio", "http", "sse"]
+          },
+          "url": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of environment variable keys (values are not returned)"
+          },
+          "header_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of header keys (values are not returned)"
+          }
+        }
+      },
+      "UserInfoResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "User ID"
+          },
+          "login": {
+            "type": "string",
+            "description": "GitHub login name"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name"
+          },
+          "email": {
+            "type": "string",
+            "description": "Email address"
+          },
+          "avatar_url": {
+            "type": "string",
+            "description": "Avatar URL"
+          },
+          "role": {
+            "type": "string",
+            "description": "User role (admin, user, etc.)"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "User permissions"
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamInfo"
+            },
+            "description": "Teams the user belongs to"
+          }
+        }
+      },
+      "TeamInfo": {
+        "type": "object",
+        "properties": {
+          "organization": {
+            "type": "string"
+          },
+          "team_slug": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "PushSubscription": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "description": "Push service endpoint URL"
+          },
+          "keys": {
+            "type": "object",
+            "properties": {
+              "p256dh": {
+                "type": "string"
+              },
+              "auth": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "GitHub OAuth token"
+      },
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Static API key"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health check endpoints"
+    },
+    {
+      "name": "Sessions",
+      "description": "Session lifecycle management"
+    },
+    {
+      "name": "Session Proxy",
+      "description": "Proxy requests to agentapi server instances"
+    },
+    {
+      "name": "Schedules",
+      "description": "Schedule management for delayed and recurring session execution"
+    },
+    {
+      "name": "Settings",
+      "description": "User and team settings management including Bedrock and MCP servers"
+    },
+    {
+      "name": "User",
+      "description": "User information"
+    },
+    {
+      "name": "Notifications",
+      "description": "Push notification management"
+    }
+  ]
+}
