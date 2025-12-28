@@ -1,5 +1,8 @@
 # Changelog
 
+## [v1.129.1](https://github.com/takutakahashi/agentapi-proxy/compare/v1.129.0...v1.129.1) - 2025-12-28
+- chore: tagpr のラベルを tagpr:minor に設定 by @takutakahashi in https://github.com/takutakahashi/agentapi-proxy/pull/390
+
 ## [v1.129.0](https://github.com/takutakahashi/agentapi-proxy/compare/v1.128.0...v1.129.0) - 2025-12-28
 - feat: Add Claude plugin marketplace support to Settings API by @takutakahashi in https://github.com/takutakahashi/agentapi-proxy/pull/388
 
