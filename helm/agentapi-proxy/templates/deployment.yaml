@@ -170,10 +170,6 @@ spec:
               value: "true"
             - name: AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_SECRET
               value: {{ .Values.kubernetesSession.mcpServers.baseSecret | quote }}
-            - name: AGENTAPI_K8S_SESSION_MCP_SERVERS_TEAM_SECRET_PREFIX
-              value: {{ .Values.kubernetesSession.mcpServers.teamSecretPrefix | quote }}
-            - name: AGENTAPI_K8S_SESSION_MCP_SERVERS_USER_SECRET_PREFIX
-              value: {{ .Values.kubernetesSession.mcpServers.userSecretPrefix | quote }}
             {{- end }}
             # Schedule Worker configuration (enabled by default)
             - name: AGENTAPI_SCHEDULE_WORKER_ENABLED
