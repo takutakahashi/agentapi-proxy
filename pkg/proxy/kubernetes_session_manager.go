@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -431,10 +430,8 @@ func (m *KubernetesSessionManager) ensureBaseSecret(ctx context.Context) error {
 		return fmt.Errorf("failed to check Secret existence: %w", err)
 	}
 
-	// Build settings.json with optional GITHUB_TOKEN
-	settingsJSON := m.buildSettingsJSON()
-
 	// Create the base Secret with default settings
+	// Note: GITHUB_TOKEN is added dynamically by init container per session
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
@@ -448,7 +445,7 @@ func (m *KubernetesSessionManager) ensureBaseSecret(ctx context.Context) error {
 		Type: corev1.SecretTypeOpaque,
 		StringData: map[string]string{
 			"claude.json":   defaultClaudeJSON,
-			"settings.json": settingsJSON,
+			"settings.json": defaultSettingsJSON,
 		},
 	}
 
@@ -463,37 +460,6 @@ func (m *KubernetesSessionManager) ensureBaseSecret(ctx context.Context) error {
 
 	log.Printf("[K8S_SESSION] Created base Secret %s in namespace %s", secretName, m.namespace)
 	return nil
-}
-
-// buildSettingsJSON builds the settings.json content with optional GITHUB_TOKEN
-func (m *KubernetesSessionManager) buildSettingsJSON() string {
-	// Check if GITHUB_TOKEN is available in environment
-	githubToken := os.Getenv("GITHUB_TOKEN")
-	if githubToken == "" {
-		// No token available, return default settings
-		return defaultSettingsJSON
-	}
-
-	// Build settings with GITHUB_TOKEN in env
-	settings := map[string]interface{}{
-		"workspaceFolders": []interface{}{},
-		"recentWorkspaces": []interface{}{},
-		"settings": map[string]interface{}{
-			"mcp.enabled": true,
-		},
-		"env": map[string]string{
-			"GITHUB_TOKEN": githubToken,
-		},
-	}
-
-	// Marshal to JSON with indentation
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		log.Printf("[K8S_SESSION] Warning: Failed to marshal settings JSON with GITHUB_TOKEN, using default: %v", err)
-		return defaultSettingsJSON
-	}
-
-	return string(data)
 }
 
 // setupClaudeScript is the shell script executed by the init container to set up Claude configuration
@@ -523,9 +489,21 @@ else
     cp /tmp/base.json /claude-config/.claude.json
 fi
 
-# Copy settings.json from base config
+# Copy settings.json from base config and add GITHUB_TOKEN if available
 if [ -f /claude-config-base/settings.json ]; then
-    cp /claude-config-base/settings.json /claude-config/.claude/settings.json
+    if [ -n "$GITHUB_TOKEN" ]; then
+        # Add GITHUB_TOKEN to settings.json env section using Node.js
+        node -e "
+const settings = JSON.parse(require('fs').readFileSync('/claude-config-base/settings.json', 'utf8'));
+if (!settings.env) settings.env = {};
+settings.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+require('fs').writeFileSync('/claude-config/.claude/settings.json', JSON.stringify(settings, null, 2));
+"
+        echo "settings.json copied with GITHUB_TOKEN"
+    else
+        cp /claude-config-base/settings.json /claude-config/.claude/settings.json
+        echo "settings.json copied"
+    fi
 fi
 
 # Copy CLAUDE.md from embedded location (from Docker image)
