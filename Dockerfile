@@ -71,6 +71,9 @@ COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
 # Copy agentapi binary from builder stage
 COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 
+# Copy github-mcp-server binary from official image
+COPY --from=ghcr.io/github/github-mcp-server:v0.26.3 /server/github-mcp-server /usr/local/bin/
+
 # Switch to non-root user
 USER agentapi
 
