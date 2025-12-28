@@ -378,7 +378,38 @@ func (p *Proxy) Shutdown(timeout time.Duration) error {
 	return p.sessionManager.Shutdown(timeout)
 }
 
-// extractRepositoryInfo extracts repository information from tags
+// ExtractRepositoryInfo extracts repository information from tags.
+// This is a public function that can be used by other packages (e.g., schedule).
+// The cloneDir parameter is typically the session ID.
+func ExtractRepositoryInfo(tags map[string]string, cloneDir string) *RepositoryInfo {
+	if tags == nil {
+		return nil
+	}
+
+	repoURL, exists := tags["repository"]
+	if !exists || repoURL == "" {
+		return nil
+	}
+
+	// Only process repository URLs that look like valid GitHub URLs
+	if !isValidRepositoryURL(repoURL) {
+		return nil
+	}
+
+	// Extract org/repo format from repository URL
+	repoFullName, err := extractRepoFullNameFromURL(repoURL)
+	if err != nil {
+		log.Printf("Failed to extract repository full name from URL %s: %v", repoURL, err)
+		return nil
+	}
+
+	return &RepositoryInfo{
+		FullName: repoFullName,
+		CloneDir: cloneDir,
+	}
+}
+
+// extractRepositoryInfo extracts repository information from tags (internal method with verbose logging)
 func (p *Proxy) extractRepositoryInfo(sessionID string, tags map[string]string) *RepositoryInfo {
 	if tags == nil {
 		return nil
@@ -401,21 +432,12 @@ func (p *Proxy) extractRepositoryInfo(sessionID string, tags map[string]string) 
 		log.Printf("Repository tag found: %s. Will pass to script as parameters.", repoURL)
 	}
 
-	// Extract org/repo format from repository URL
-	repoFullName, err := extractRepoFullNameFromURL(repoURL)
-	if err != nil {
-		log.Printf("Failed to extract repository full name from URL %s: %v", repoURL, err)
-		return nil
+	repoInfo := ExtractRepositoryInfo(tags, sessionID)
+	if repoInfo != nil && p.verbose {
+		log.Printf("Extracted repository info - FullName: %s, CloneDir: %s", repoInfo.FullName, sessionID)
 	}
 
-	if p.verbose {
-		log.Printf("Extracted repository info - FullName: %s, CloneDir: %s", repoFullName, sessionID)
-	}
-
-	return &RepositoryInfo{
-		FullName: repoFullName,
-		CloneDir: sessionID,
-	}
+	return repoInfo
 }
 
 // isValidRepositoryURL checks if a repository URL is valid for GitHub
