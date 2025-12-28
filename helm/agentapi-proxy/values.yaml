@@ -376,8 +376,8 @@ kubernetesSession:
 
     # Prefix for user-specific MCP config Secrets
     # User secrets will be named: {prefix}-{user-id}
-    # e.g., mcp-servers-user-johndoe
-    userSecretPrefix: "mcp-servers-user"
+    # e.g., mcp-servers-johndoe
+    userSecretPrefix: "mcp-servers"
 
     # Example Secret structure:
     # apiVersion: v1

@@ -18,8 +18,8 @@ import (
 
 const (
 	// MCPSecretPrefix is the prefix for MCP servers Secret names
-	// This matches the existing mcp_servers_user_secret_prefix in Helm values.yaml
-	MCPSecretPrefix = "mcp-servers-user-"
+	// This matches the existing mcp_servers_user_secret_prefix default value
+	MCPSecretPrefix = "mcp-servers-"
 	// MCPSecretDataKey is the key in the Secret data for MCP servers configuration
 	MCPSecretDataKey = "mcp-servers.json"
 	// LabelMCPServers is the label key for MCP servers resources
