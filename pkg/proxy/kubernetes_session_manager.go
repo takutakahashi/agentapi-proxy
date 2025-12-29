@@ -2215,6 +2215,12 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.Vol
 			MountPath: "/github-app",
 			ReadOnly:  true,
 		},
+		// Mount marketplaces directory (cloned by sync init container)
+		{
+			Name:      "marketplaces",
+			MountPath: "/marketplaces",
+			ReadOnly:  true,
+		},
 	}
 
 	// Add MCP config volume mount if enabled

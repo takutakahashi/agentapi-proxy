@@ -73,6 +73,13 @@ func Sync(opts SyncOptions) error {
 	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, marketplaces dir: %s",
 		opts.SettingsFile, opts.OutputDir, opts.MarketplacesDir)
 
+	// Setup GitHub authentication first (for marketplace cloning)
+	log.Printf("[SYNC] Setting up GitHub authentication")
+	if err := SetupGitHubAuth(""); err != nil {
+		// Warning only - continue even if auth setup fails (public repos may work)
+		log.Printf("[SYNC] Warning: GitHub auth setup failed: %v", err)
+	}
+
 	// Load settings from file (optional - file may not exist)
 	settings, err := loadSettingsFile(opts.SettingsFile)
 	if err != nil {
