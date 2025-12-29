@@ -15,6 +15,7 @@ type SyncOptions struct {
 	SettingsFile              string // Path to the mounted settings.json from Settings Secret
 	OutputDir                 string // Home directory (generates ~/.claude.json and ~/.claude/)
 	MarketplacesDir           string // Directory to clone marketplace repositories
+	MarketplacesSettingsPath  string // Path prefix for marketplaces in settings.json (defaults to MarketplacesDir)
 	CredentialsFile           string // Path to the mounted credentials.json from Credentials Secret (optional)
 	ClaudeMDFile              string // Path to CLAUDE.md file to copy (optional, default: /tmp/config/CLAUDE.md)
 	NotificationSubscriptions string // Path to notification subscriptions directory (optional)
@@ -204,6 +205,12 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		return fmt.Errorf("failed to create marketplaces directory: %w", err)
 	}
 
+	// Determine the path prefix for settings.json (may differ from clone directory)
+	marketplacesSettingsPath := opts.MarketplacesSettingsPath
+	if marketplacesSettingsPath == "" {
+		marketplacesSettingsPath = opts.MarketplacesDir
+	}
+
 	// Clone official plugins repository
 	officialPluginsDir := filepath.Join(opts.MarketplacesDir, OfficialPluginsDir)
 	log.Printf("[SYNC] Cloning official plugins from %s to %s", OfficialPluginsURL, officialPluginsDir)
@@ -261,10 +268,12 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 			nameMapping[aliasKey] = realName
 
 			// Add to extraKnownMarketplaces with real name
+			// Use marketplacesSettingsPath for the path in settings.json
+			settingsPath := filepath.Join(marketplacesSettingsPath, aliasKey)
 			extraKnownMarketplaces[realName] = extraKnownMarketplace{
 				Source: marketplaceSource{
 					Source: "directory",
-					Path:   targetDir,
+					Path:   settingsPath,
 				},
 			}
 

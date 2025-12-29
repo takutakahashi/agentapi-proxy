@@ -653,6 +653,7 @@ var (
 	syncSettingsFile              string
 	syncOutputDir                 string
 	syncMarketplacesDir           string
+	syncMarketplacesSettingsPath  string
 	syncCredentialsFile           string
 	syncClaudeMDFile              string
 	syncNotificationSubscriptions string
@@ -698,6 +699,8 @@ func init() {
 		"Output directory (home directory, defaults to $HOME)")
 	syncCmd.Flags().StringVar(&syncMarketplacesDir, "marketplaces-dir", "/home/agentapi/.claude/plugins/marketplaces",
 		"Directory to clone marketplace repositories")
+	syncCmd.Flags().StringVar(&syncMarketplacesSettingsPath, "marketplaces-settings-path", "",
+		"Path prefix for marketplaces in settings.json (defaults to marketplaces-dir)")
 	syncCmd.Flags().StringVar(&syncCredentialsFile, "credentials-file", "",
 		"Path to the mounted credentials.json from Credentials Secret (optional)")
 	syncCmd.Flags().StringVar(&syncClaudeMDFile, "claude-md-file", "",
@@ -724,6 +727,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		SettingsFile:              syncSettingsFile,
 		OutputDir:                 outputDir,
 		MarketplacesDir:           syncMarketplacesDir,
+		MarketplacesSettingsPath:  syncMarketplacesSettingsPath,
 		CredentialsFile:           syncCredentialsFile,
 		ClaudeMDFile:              syncClaudeMDFile,
 		NotificationSubscriptions: syncNotificationSubscriptions,

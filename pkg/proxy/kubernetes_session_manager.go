@@ -521,7 +521,7 @@ set -e
 echo "[SYNC] Starting Claude configuration sync"
 
 # Build sync command with required arguments
-SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /claude-config --marketplaces-dir /home/agentapi/.claude/plugins/marketplaces"
+SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /claude-config --marketplaces-dir /claude-config/.claude/plugins/marketplaces --marketplaces-settings-path /home/agentapi/.claude/plugins/marketplaces"
 
 # Add credentials file if it exists
 if [ -f "/credentials-config/credentials.json" ]; then
@@ -1592,14 +1592,6 @@ func (m *KubernetesSessionManager) buildSyncVolumes(session *kubernetesSession) 
 		})
 	}
 
-	// Add marketplaces EmptyDir for cloned repositories
-	volumes = append(volumes, corev1.Volume{
-		Name: "marketplaces",
-		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
-		},
-	})
-
 	return volumes
 }
 
@@ -2155,10 +2147,6 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *kubernetesSes
 				ReadOnly:  true,
 			},
 			{
-				Name:      "marketplaces",
-				MountPath: "/home/agentapi/.claude/plugins/marketplaces",
-			},
-			{
 				Name:      "claude-config",
 				MountPath: "/claude-config",
 			},
@@ -2213,12 +2201,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.Vol
 		{
 			Name:      "github-app",
 			MountPath: "/github-app",
-			ReadOnly:  true,
-		},
-		// Mount marketplaces directory (cloned by sync init container)
-		{
-			Name:      "marketplaces",
-			MountPath: "/home/agentapi/.claude/plugins/marketplaces",
 			ReadOnly:  true,
 		},
 	}
