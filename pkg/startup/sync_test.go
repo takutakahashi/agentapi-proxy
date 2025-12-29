@@ -34,6 +34,10 @@ func createTestGitRepo(t *testing.T, dir string, files map[string]string) {
 
 	for filename, content := range files {
 		filePath := filepath.Join(dir, filename)
+		// Create parent directories if needed
+		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			t.Fatalf("Failed to create parent directory for %s: %v", filename, err)
+		}
 		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 			t.Fatalf("Failed to write file %s: %v", filename, err)
 		}
@@ -805,7 +809,8 @@ func TestSyncMarketplaces(t *testing.T) {
 		// Create a local git repo as marketplace source
 		sourceDir := filepath.Join(tmpDir, "marketplace-source")
 		createTestGitRepo(t, sourceDir, map[string]string{
-			"README.md": "# Test Marketplace",
+			"README.md":                       "# Test Marketplace",
+			".claude-plugin/marketplace.json": `{"name": "no-plugins"}`,
 		})
 
 		settings := &settingsJSON{
@@ -903,7 +908,8 @@ func TestSyncMarketplaces(t *testing.T) {
 		// Create one valid marketplace
 		validSourceDir := filepath.Join(tmpDir, "valid-marketplace")
 		createTestGitRepo(t, validSourceDir, map[string]string{
-			"README.md": "# Valid Marketplace",
+			"README.md":                       "# Valid Marketplace",
+			".claude-plugin/marketplace.json": `{"name": "valid"}`,
 		})
 
 		settings := &settingsJSON{
@@ -944,7 +950,7 @@ func TestSyncMarketplaces(t *testing.T) {
 			t.Fatalf("Failed to parse settings.json: %v", err)
 		}
 
-		// Only valid marketplace should be in extraKnownMarketplaces
+		// Only valid marketplace should be in extraKnownMarketplaces (uses real name from marketplace.json)
 		extraKnown, ok := result["extraKnownMarketplaces"].(map[string]interface{})
 		if !ok {
 			t.Fatal("Expected extraKnownMarketplaces to exist")
@@ -952,11 +958,12 @@ func TestSyncMarketplaces(t *testing.T) {
 		if len(extraKnown) != 1 {
 			t.Errorf("Expected 1 marketplace in extraKnownMarketplaces, got %d", len(extraKnown))
 		}
+		// Real name from marketplace.json is "valid", which matches the alias in this case
 		if _, ok := extraKnown["valid"]; !ok {
 			t.Error("Expected 'valid' marketplace to exist")
 		}
 
-		// All enabled plugins should be in enabledPlugins (as object) - they are passed through
+		// All enabled plugins should be in enabledPlugins (as object) - plugin names are resolved
 		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
 		if !ok {
 			t.Fatal("Expected enabledPlugins to exist as object")
@@ -964,6 +971,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		if len(enabledPlugins) != 3 {
 			t.Errorf("Expected 3 enabled plugins, got %d", len(enabledPlugins))
 		}
+		// plugin1@valid is resolved (alias "valid" -> real name "valid")
 		if _, ok := enabledPlugins["plugin1@valid"]; !ok {
 			t.Error("Expected 'plugin1@valid' to exist in enabledPlugins")
 		}
@@ -982,7 +990,8 @@ func TestSyncMarketplaces(t *testing.T) {
 		// Create marketplace
 		sourceDir := filepath.Join(tmpDir, "marketplace")
 		createTestGitRepo(t, sourceDir, map[string]string{
-			"plugin.json": `{"name": "test"}`,
+			"plugin.json":                     `{"name": "test"}`,
+			".claude-plugin/marketplace.json": `{"name": "my-marketplace"}`,
 		})
 
 		// Set GITHUB_TOKEN for this test
@@ -1039,22 +1048,23 @@ func TestSyncMarketplaces(t *testing.T) {
 			t.Error("Expected mcp.enabled to be true")
 		}
 
-		// Verify extraKnownMarketplaces structure
+		// Verify extraKnownMarketplaces structure (uses real name from marketplace.json)
 		extraKnown := result["extraKnownMarketplaces"].(map[string]interface{})
-		mp := extraKnown["my-marketplace"].(map[string]interface{})
+		mp := extraKnown["my-marketplace"].(map[string]interface{}) // real name from marketplace.json
 		source := mp["source"].(map[string]interface{})
 		if source["source"] != "directory" {
 			t.Errorf("Expected source.source to be 'directory', got '%v'", source["source"])
 		}
+		// Path still uses alias key for directory name
 		expectedPath := filepath.Join(marketplacesDir, "my-marketplace")
 		if source["path"] != expectedPath {
 			t.Errorf("Expected path '%s', got '%s'", expectedPath, source["path"])
 		}
 
-		// Verify enabledPlugins format (as object with plugin names as keys)
+		// Verify enabledPlugins format (as object with plugin names as keys, resolved to real name)
 		plugins := result["enabledPlugins"].(map[string]interface{})
 		expectedPlugins := map[string]bool{
-			"plugin-a@my-marketplace": true,
+			"plugin-a@my-marketplace": true, // resolved from alias to real name
 			"plugin-b@my-marketplace": true,
 		}
 		if len(plugins) != len(expectedPlugins) {
@@ -1474,9 +1484,13 @@ func TestSync(t *testing.T) {
 			t.Fatalf("Failed to config git name: %v", err)
 		}
 
-		// Create marketplace.json
-		marketplaceJSON := filepath.Join(marketplaceSourceDir, "marketplace.json")
-		if err := os.WriteFile(marketplaceJSON, []byte(`{"name": "test-marketplace"}`), 0644); err != nil {
+		// Create .claude-plugin/marketplace.json with real name
+		pluginDir := filepath.Join(marketplaceSourceDir, ".claude-plugin")
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			t.Fatalf("Failed to create .claude-plugin directory: %v", err)
+		}
+		marketplaceJSONPath := filepath.Join(pluginDir, "marketplace.json")
+		if err := os.WriteFile(marketplaceJSONPath, []byte(`{"name": "test-mp-real-name"}`), 0644); err != nil {
 			t.Fatalf("Failed to write marketplace.json: %v", err)
 		}
 
@@ -1537,14 +1551,14 @@ func TestSync(t *testing.T) {
 			t.Fatalf("Failed to parse settings.json: %v", err)
 		}
 
-		// Check extraKnownMarketplaces
+		// Check extraKnownMarketplaces (uses real name from marketplace.json)
 		extraKnown, ok := result["extraKnownMarketplaces"].(map[string]interface{})
 		if !ok {
 			t.Fatal("Expected extraKnownMarketplaces to exist")
 		}
-		testMp, ok := extraKnown["test-mp"].(map[string]interface{})
+		testMp, ok := extraKnown["test-mp-real-name"].(map[string]interface{})
 		if !ok {
-			t.Fatal("Expected test-mp marketplace to exist")
+			t.Fatal("Expected test-mp-real-name marketplace to exist")
 		}
 		source, ok := testMp["source"].(map[string]interface{})
 		if !ok {
@@ -1553,12 +1567,13 @@ func TestSync(t *testing.T) {
 		if source["source"] != "directory" {
 			t.Errorf("Expected source.source to be 'directory', got '%v'", source["source"])
 		}
+		// Path still uses alias key for directory name
 		expectedPath := filepath.Join(marketplacesDir, "test-mp")
 		if source["path"] != expectedPath {
 			t.Errorf("Expected source.path to be '%s', got '%v'", expectedPath, source["path"])
 		}
 
-		// Check enabledPlugins (as object with plugin names as keys)
+		// Check enabledPlugins (as object with plugin names as keys, resolved to real name)
 		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
 		if !ok {
 			t.Fatal("Expected enabledPlugins to exist as object")
@@ -1566,10 +1581,10 @@ func TestSync(t *testing.T) {
 		if len(enabledPlugins) != 2 {
 			t.Errorf("Expected 2 enabled plugins, got %d", len(enabledPlugins))
 		}
-		// Check plugin format: plugin@marketplace
+		// Check plugin format: plugin@marketplace (resolved to real name)
 		expectedPlugins := map[string]bool{
-			"plugin1@test-mp": true,
-			"plugin2@test-mp": true,
+			"plugin1@test-mp-real-name": true,
+			"plugin2@test-mp-real-name": true,
 		}
 		for pluginName := range expectedPlugins {
 			if _, ok := enabledPlugins[pluginName]; !ok {
@@ -1654,7 +1669,8 @@ func TestSyncMarketplaces_EnabledPlugins(t *testing.T) {
 		// Create a local git repo as marketplace source
 		sourceDir := filepath.Join(tmpDir, "marketplace-source")
 		createTestGitRepo(t, sourceDir, map[string]string{
-			"README.md": "# Test Marketplace",
+			"README.md":                       "# Test Marketplace",
+			".claude-plugin/marketplace.json": `{"name": "custom-mp"}`,
 		})
 
 		settings := &settingsJSON{
@@ -1750,6 +1766,380 @@ func TestSyncMarketplaces_EnabledPlugins(t *testing.T) {
 		}
 		if settings.EnabledPlugins[0] != "context7@claude-plugins-official" {
 			t.Errorf("Expected first plugin to be 'context7@claude-plugins-official', got '%s'", settings.EnabledPlugins[0])
+		}
+	})
+}
+
+func TestReadMarketplaceName(t *testing.T) {
+	t.Run("reads name from valid marketplace.json", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		// Create .claude-plugin directory and marketplace.json
+		pluginDir := filepath.Join(tmpDir, ".claude-plugin")
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			t.Fatalf("Failed to create .claude-plugin directory: %v", err)
+		}
+
+		marketplaceJSON := `{"name": "my-awesome-marketplace", "description": "A test marketplace"}`
+		if err := os.WriteFile(filepath.Join(pluginDir, "marketplace.json"), []byte(marketplaceJSON), 0644); err != nil {
+			t.Fatalf("Failed to write marketplace.json: %v", err)
+		}
+
+		name, err := readMarketplaceName(tmpDir)
+		if err != nil {
+			t.Fatalf("readMarketplaceName failed: %v", err)
+		}
+
+		if name != "my-awesome-marketplace" {
+			t.Errorf("Expected name 'my-awesome-marketplace', got '%s'", name)
+		}
+	})
+
+	t.Run("returns error when marketplace.json not found", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		_, err := readMarketplaceName(tmpDir)
+		if err == nil {
+			t.Error("Expected error when marketplace.json does not exist")
+		}
+	})
+
+	t.Run("returns error when name field is empty", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		pluginDir := filepath.Join(tmpDir, ".claude-plugin")
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			t.Fatalf("Failed to create .claude-plugin directory: %v", err)
+		}
+
+		marketplaceJSON := `{"name": "", "description": "A test marketplace"}`
+		if err := os.WriteFile(filepath.Join(pluginDir, "marketplace.json"), []byte(marketplaceJSON), 0644); err != nil {
+			t.Fatalf("Failed to write marketplace.json: %v", err)
+		}
+
+		_, err := readMarketplaceName(tmpDir)
+		if err == nil {
+			t.Error("Expected error when name field is empty")
+		}
+	})
+
+	t.Run("returns error when marketplace.json is invalid JSON", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		pluginDir := filepath.Join(tmpDir, ".claude-plugin")
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			t.Fatalf("Failed to create .claude-plugin directory: %v", err)
+		}
+
+		if err := os.WriteFile(filepath.Join(pluginDir, "marketplace.json"), []byte("not valid json"), 0644); err != nil {
+			t.Fatalf("Failed to write marketplace.json: %v", err)
+		}
+
+		_, err := readMarketplaceName(tmpDir)
+		if err == nil {
+			t.Error("Expected error for invalid JSON")
+		}
+	})
+
+	t.Run("returns error when name field is missing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		pluginDir := filepath.Join(tmpDir, ".claude-plugin")
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			t.Fatalf("Failed to create .claude-plugin directory: %v", err)
+		}
+
+		marketplaceJSON := `{"description": "A test marketplace without name"}`
+		if err := os.WriteFile(filepath.Join(pluginDir, "marketplace.json"), []byte(marketplaceJSON), 0644); err != nil {
+			t.Fatalf("Failed to write marketplace.json: %v", err)
+		}
+
+		_, err := readMarketplaceName(tmpDir)
+		if err == nil {
+			t.Error("Expected error when name field is missing")
+		}
+	})
+}
+
+func TestResolvePluginName(t *testing.T) {
+	t.Run("resolves plugin name with matching alias", func(t *testing.T) {
+		nameMapping := map[string]string{
+			"my-alias":    "real-marketplace-name",
+			"other-alias": "other-real-name",
+		}
+
+		result := resolvePluginName("my-plugin@my-alias", nameMapping)
+		if result != "my-plugin@real-marketplace-name" {
+			t.Errorf("Expected 'my-plugin@real-marketplace-name', got '%s'", result)
+		}
+	})
+
+	t.Run("preserves plugin name when no matching alias", func(t *testing.T) {
+		nameMapping := map[string]string{
+			"my-alias": "real-marketplace-name",
+		}
+
+		result := resolvePluginName("my-plugin@claude-plugins-official", nameMapping)
+		if result != "my-plugin@claude-plugins-official" {
+			t.Errorf("Expected 'my-plugin@claude-plugins-official', got '%s'", result)
+		}
+	})
+
+	t.Run("preserves plugin without @ symbol", func(t *testing.T) {
+		nameMapping := map[string]string{
+			"my-alias": "real-marketplace-name",
+		}
+
+		result := resolvePluginName("my-plugin", nameMapping)
+		if result != "my-plugin" {
+			t.Errorf("Expected 'my-plugin', got '%s'", result)
+		}
+	})
+
+	t.Run("handles empty name mapping", func(t *testing.T) {
+		nameMapping := map[string]string{}
+
+		result := resolvePluginName("my-plugin@my-marketplace", nameMapping)
+		if result != "my-plugin@my-marketplace" {
+			t.Errorf("Expected 'my-plugin@my-marketplace', got '%s'", result)
+		}
+	})
+
+	t.Run("handles plugin name with multiple @ symbols", func(t *testing.T) {
+		nameMapping := map[string]string{
+			"email@domain.com": "real-name",
+		}
+
+		// Only split on first @
+		result := resolvePluginName("plugin@email@domain.com", nameMapping)
+		if result != "plugin@real-name" {
+			t.Errorf("Expected 'plugin@real-name', got '%s'", result)
+		}
+	})
+}
+
+func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
+	// Skip if git is not available
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	t.Run("uses real marketplace name from .claude-plugin/marketplace.json", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		outputDir := filepath.Join(tmpDir, "output")
+		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
+
+		// Create a local git repo as marketplace source with .claude-plugin/marketplace.json
+		sourceDir := filepath.Join(tmpDir, "marketplace-source")
+		pluginDir := filepath.Join(sourceDir, ".claude-plugin")
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			t.Fatalf("Failed to create .claude-plugin directory: %v", err)
+		}
+
+		// Create marketplace.json with real name
+		mpJSON := `{"name": "jlaswell-community-marketplace", "description": "A community marketplace"}`
+		createTestGitRepo(t, sourceDir, map[string]string{
+			".claude-plugin/marketplace.json": mpJSON,
+			"README.md":                       "# Test Marketplace",
+		})
+
+		settings := &settingsJSON{
+			Name: "test-user",
+			Marketplaces: map[string]*marketplaceJSON{
+				"my-alias": {
+					URL: sourceDir,
+				},
+			},
+			EnabledPlugins: []string{"skill-builder@my-alias", "context7@claude-plugins-official"},
+		}
+
+		opts := SyncOptions{
+			OutputDir:       outputDir,
+			MarketplacesDir: marketplacesDir,
+		}
+
+		err := syncMarketplaces(opts, settings)
+		if err != nil {
+			t.Fatalf("syncMarketplaces failed: %v", err)
+		}
+
+		// Verify settings.json
+		settingsPath := filepath.Join(outputDir, ".claude", "settings.json")
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("Failed to read settings.json: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to parse settings.json: %v", err)
+		}
+
+		// Check extraKnownMarketplaces uses real name
+		extraKnown, ok := result["extraKnownMarketplaces"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Expected extraKnownMarketplaces to exist")
+		}
+
+		// Should have real name, not alias
+		if _, ok := extraKnown["my-alias"]; ok {
+			t.Error("Expected alias 'my-alias' to NOT be used in extraKnownMarketplaces")
+		}
+		if _, ok := extraKnown["jlaswell-community-marketplace"]; !ok {
+			t.Error("Expected real name 'jlaswell-community-marketplace' to be used in extraKnownMarketplaces")
+		}
+
+		// Check enabledPlugins uses real name
+		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Expected enabledPlugins to exist")
+		}
+
+		// Plugin should be resolved to real name
+		if _, ok := enabledPlugins["skill-builder@my-alias"]; ok {
+			t.Error("Expected alias 'my-alias' to NOT be used in plugin name")
+		}
+		if _, ok := enabledPlugins["skill-builder@jlaswell-community-marketplace"]; !ok {
+			t.Error("Expected real name 'jlaswell-community-marketplace' to be used in plugin name")
+		}
+
+		// Official plugins should remain unchanged
+		if _, ok := enabledPlugins["context7@claude-plugins-official"]; !ok {
+			t.Error("Expected 'context7@claude-plugins-official' to remain unchanged")
+		}
+	})
+
+	t.Run("skips marketplace when marketplace.json is missing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		outputDir := filepath.Join(tmpDir, "output")
+		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
+
+		// Create a local git repo WITHOUT .claude-plugin/marketplace.json
+		sourceDir := filepath.Join(tmpDir, "marketplace-source")
+		createTestGitRepo(t, sourceDir, map[string]string{
+			"README.md": "# Test Marketplace without marketplace.json",
+		})
+
+		settings := &settingsJSON{
+			Name: "test-user",
+			Marketplaces: map[string]*marketplaceJSON{
+				"broken-marketplace": {
+					URL: sourceDir,
+				},
+			},
+			EnabledPlugins: []string{"plugin@broken-marketplace"},
+		}
+
+		opts := SyncOptions{
+			OutputDir:       outputDir,
+			MarketplacesDir: marketplacesDir,
+		}
+
+		// Should not fail, but marketplace should be skipped
+		err := syncMarketplaces(opts, settings)
+		if err != nil {
+			t.Fatalf("syncMarketplaces failed: %v", err)
+		}
+
+		// Verify settings.json
+		settingsPath := filepath.Join(outputDir, ".claude", "settings.json")
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("Failed to read settings.json: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to parse settings.json: %v", err)
+		}
+
+		// extraKnownMarketplaces should not exist (marketplace was skipped)
+		if _, ok := result["extraKnownMarketplaces"]; ok {
+			t.Error("Expected no extraKnownMarketplaces when marketplace.json is missing")
+		}
+
+		// enabledPlugins should still exist but plugin name is not resolved
+		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Expected enabledPlugins to exist")
+		}
+		// Plugin keeps original name since marketplace was skipped
+		if _, ok := enabledPlugins["plugin@broken-marketplace"]; !ok {
+			t.Error("Expected 'plugin@broken-marketplace' to exist (unresolved)")
+		}
+	})
+
+	t.Run("multiple marketplaces with different real names", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		outputDir := filepath.Join(tmpDir, "output")
+		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
+
+		// Create first marketplace
+		sourceDir1 := filepath.Join(tmpDir, "marketplace1")
+		createTestGitRepo(t, sourceDir1, map[string]string{
+			".claude-plugin/marketplace.json": `{"name": "first-real-name"}`,
+		})
+
+		// Create second marketplace
+		sourceDir2 := filepath.Join(tmpDir, "marketplace2")
+		createTestGitRepo(t, sourceDir2, map[string]string{
+			".claude-plugin/marketplace.json": `{"name": "second-real-name"}`,
+		})
+
+		settings := &settingsJSON{
+			Name: "test-user",
+			Marketplaces: map[string]*marketplaceJSON{
+				"alias1": {URL: sourceDir1},
+				"alias2": {URL: sourceDir2},
+			},
+			EnabledPlugins: []string{
+				"plugin-a@alias1",
+				"plugin-b@alias2",
+				"plugin-c@alias1",
+			},
+		}
+
+		opts := SyncOptions{
+			OutputDir:       outputDir,
+			MarketplacesDir: marketplacesDir,
+		}
+
+		err := syncMarketplaces(opts, settings)
+		if err != nil {
+			t.Fatalf("syncMarketplaces failed: %v", err)
+		}
+
+		settingsPath := filepath.Join(outputDir, ".claude", "settings.json")
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("Failed to read settings.json: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to parse settings.json: %v", err)
+		}
+
+		// Check extraKnownMarketplaces
+		extraKnown := result["extraKnownMarketplaces"].(map[string]interface{})
+		if _, ok := extraKnown["first-real-name"]; !ok {
+			t.Error("Expected 'first-real-name' in extraKnownMarketplaces")
+		}
+		if _, ok := extraKnown["second-real-name"]; !ok {
+			t.Error("Expected 'second-real-name' in extraKnownMarketplaces")
+		}
+
+		// Check enabledPlugins
+		enabledPlugins := result["enabledPlugins"].(map[string]interface{})
+		expectedPlugins := []string{
+			"plugin-a@first-real-name",
+			"plugin-b@second-real-name",
+			"plugin-c@first-real-name",
+		}
+		for _, plugin := range expectedPlugins {
+			if _, ok := enabledPlugins[plugin]; !ok {
+				t.Errorf("Expected '%s' in enabledPlugins", plugin)
+			}
 		}
 	})
 }
