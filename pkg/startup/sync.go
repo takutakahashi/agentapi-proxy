@@ -53,6 +53,7 @@ type mcpServerJSON struct {
 // marketplaceJSON represents a marketplace configuration
 type marketplaceJSON struct {
 	URL            string   `json:"url"`
+	Name           string   `json:"name,omitempty"` // Directory name for cloning (defaults to map key if not specified)
 	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
 }
 
@@ -212,10 +213,16 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		extraKnownMarketplaces := make(map[string]extraKnownMarketplace)
 		enabledPlugins := make(map[string]struct{})
 
-		for name, marketplace := range settings.Marketplaces {
+		for key, marketplace := range settings.Marketplaces {
 			if marketplace.URL == "" {
-				log.Printf("[SYNC] Skipping marketplace %s: no URL configured", name)
+				log.Printf("[SYNC] Skipping marketplace %s: no URL configured", key)
 				continue
+			}
+
+			// Use marketplace.Name if specified, otherwise fall back to map key
+			name := marketplace.Name
+			if name == "" {
+				name = key
 			}
 
 			targetDir := filepath.Join(opts.MarketplacesDir, name)
