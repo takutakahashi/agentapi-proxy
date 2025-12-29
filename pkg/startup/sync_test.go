@@ -499,9 +499,9 @@ func TestGenerateClaudeJSON(t *testing.T) {
 
 		// Create existing file with onboarding fields set to false
 		existingData := map[string]interface{}{
-			"hasCompletedOnboarding":       false,
+			"hasCompletedOnboarding":        false,
 			"bypassPermissionsModeAccepted": false,
-			"someOtherField":               "value",
+			"someOtherField":                "value",
 		}
 		data, _ := json.Marshal(existingData)
 		if err := os.WriteFile(claudeJSONPath, data, 0644); err != nil {
@@ -955,16 +955,16 @@ func TestSyncMarketplaces(t *testing.T) {
 			t.Error("Expected 'valid' marketplace to exist")
 		}
 
-		// Only valid marketplace's plugins should be in enabledPlugins
-		enabledPlugins, ok := result["enabledPlugins"].([]interface{})
+		// Only valid marketplace's plugins should be in enabledPlugins (as object)
+		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
 		if !ok {
-			t.Fatal("Expected enabledPlugins to exist")
+			t.Fatal("Expected enabledPlugins to exist as object")
 		}
 		if len(enabledPlugins) != 1 {
 			t.Errorf("Expected 1 enabled plugin, got %d", len(enabledPlugins))
 		}
-		if enabledPlugins[0] != "plugin1@valid" {
-			t.Errorf("Expected 'plugin1@valid', got '%v'", enabledPlugins[0])
+		if _, ok := enabledPlugins["plugin1@valid"]; !ok {
+			t.Error("Expected 'plugin1@valid' to exist in enabledPlugins")
 		}
 	})
 
@@ -1042,23 +1042,26 @@ func TestSyncMarketplaces(t *testing.T) {
 		extraKnown := result["extraKnownMarketplaces"].(map[string]interface{})
 		mp := extraKnown["my-marketplace"].(map[string]interface{})
 		source := mp["source"].(map[string]interface{})
-		if source["source"] != "local" {
-			t.Error("Expected source.source to be 'local'")
+		if source["source"] != "directory" {
+			t.Errorf("Expected source.source to be 'directory', got '%v'", source["source"])
 		}
 		expectedPath := filepath.Join(marketplacesDir, "my-marketplace")
 		if source["path"] != expectedPath {
 			t.Errorf("Expected path '%s', got '%s'", expectedPath, source["path"])
 		}
 
-		// Verify enabledPlugins format
-		plugins := result["enabledPlugins"].([]interface{})
+		// Verify enabledPlugins format (as object with plugin names as keys)
+		plugins := result["enabledPlugins"].(map[string]interface{})
 		expectedPlugins := map[string]bool{
 			"plugin-a@my-marketplace": true,
 			"plugin-b@my-marketplace": true,
 		}
-		for _, p := range plugins {
-			if !expectedPlugins[p.(string)] {
-				t.Errorf("Unexpected plugin: %s", p)
+		if len(plugins) != len(expectedPlugins) {
+			t.Errorf("Expected %d plugins, got %d", len(expectedPlugins), len(plugins))
+		}
+		for pluginName := range expectedPlugins {
+			if _, ok := plugins[pluginName]; !ok {
+				t.Errorf("Expected plugin '%s' to exist", pluginName)
 			}
 		}
 	})
@@ -1546,18 +1549,18 @@ func TestSync(t *testing.T) {
 		if !ok {
 			t.Fatal("Expected source to exist")
 		}
-		if source["source"] != "local" {
-			t.Errorf("Expected source.source to be 'local', got '%v'", source["source"])
+		if source["source"] != "directory" {
+			t.Errorf("Expected source.source to be 'directory', got '%v'", source["source"])
 		}
 		expectedPath := filepath.Join(marketplacesDir, "test-mp")
 		if source["path"] != expectedPath {
 			t.Errorf("Expected source.path to be '%s', got '%v'", expectedPath, source["path"])
 		}
 
-		// Check enabledPlugins
-		enabledPlugins, ok := result["enabledPlugins"].([]interface{})
+		// Check enabledPlugins (as object with plugin names as keys)
+		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
 		if !ok {
-			t.Fatal("Expected enabledPlugins to exist")
+			t.Fatal("Expected enabledPlugins to exist as object")
 		}
 		if len(enabledPlugins) != 2 {
 			t.Errorf("Expected 2 enabled plugins, got %d", len(enabledPlugins))
@@ -1567,14 +1570,9 @@ func TestSync(t *testing.T) {
 			"plugin1@test-mp": true,
 			"plugin2@test-mp": true,
 		}
-		for _, p := range enabledPlugins {
-			plugin, ok := p.(string)
-			if !ok {
-				t.Errorf("Expected plugin to be string, got %T", p)
-				continue
-			}
-			if !expectedPlugins[plugin] {
-				t.Errorf("Unexpected plugin: %s", plugin)
+		for pluginName := range expectedPlugins {
+			if _, ok := enabledPlugins[pluginName]; !ok {
+				t.Errorf("Expected plugin '%s' to exist", pluginName)
 			}
 		}
 	})

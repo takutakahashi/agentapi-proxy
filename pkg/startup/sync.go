@@ -53,6 +53,7 @@ type marketplaceJSON struct {
 }
 
 // marketplaceSource represents the source configuration for extraKnownMarketplaces
+// Source must be one of: 'url' | 'github' | 'git' | 'npm' | 'file' | 'directory'
 type marketplaceSource struct {
 	Source string `json:"source"`
 	Path   string `json:"path"`
@@ -172,7 +173,7 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	// Process marketplaces if available
 	if settings != nil && len(settings.Marketplaces) > 0 {
 		extraKnownMarketplaces := make(map[string]extraKnownMarketplace)
-		var enabledPlugins []string
+		enabledPlugins := make(map[string]struct{})
 
 		for name, marketplace := range settings.Marketplaces {
 			if marketplace.URL == "" {
@@ -192,14 +193,14 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 			// Add to extraKnownMarketplaces
 			extraKnownMarketplaces[name] = extraKnownMarketplace{
 				Source: marketplaceSource{
-					Source: "local",
+					Source: "directory",
 					Path:   targetDir,
 				},
 			}
 
-			// Add enabled plugins with marketplace qualifier
+			// Add enabled plugins with marketplace qualifier (as object keys)
 			for _, plugin := range marketplace.EnabledPlugins {
-				enabledPlugins = append(enabledPlugins, fmt.Sprintf("%s@%s", plugin, name))
+				enabledPlugins[fmt.Sprintf("%s@%s", plugin, name)] = struct{}{}
 			}
 
 			log.Printf("[SYNC] Successfully cloned marketplace %s", name)
