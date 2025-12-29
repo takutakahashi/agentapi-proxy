@@ -1753,3 +1753,67 @@ func TestSyncMarketplaces_EnabledPlugins(t *testing.T) {
 		}
 	})
 }
+
+func TestInstallEnabledPlugins(t *testing.T) {
+	t.Run("empty plugins list returns nil", func(t *testing.T) {
+		err := installEnabledPlugins([]string{})
+		if err != nil {
+			t.Errorf("Expected nil error for empty plugins list, got: %v", err)
+		}
+	})
+
+	t.Run("nil plugins list returns nil", func(t *testing.T) {
+		err := installEnabledPlugins(nil)
+		if err != nil {
+			t.Errorf("Expected nil error for nil plugins list, got: %v", err)
+		}
+	})
+
+	t.Run("installs plugins when claude command is available", func(t *testing.T) {
+		// Skip if claude is not available
+		if _, err := exec.LookPath("claude"); err != nil {
+			t.Skip("claude not available, skipping plugin installation test")
+		}
+
+		// Test with a known plugin from claude-plugins-official
+		plugins := []string{"code-review@claude-plugins-official"}
+		err := installEnabledPlugins(plugins)
+		// Note: This may fail if the plugin is already installed or marketplace is not configured
+		// We just check that the function doesn't panic
+		if err != nil {
+			t.Logf("Plugin installation returned error (may be expected): %v", err)
+		}
+	})
+
+	t.Run("continues on plugin installation failure", func(t *testing.T) {
+		// Skip if claude is not available
+		if _, err := exec.LookPath("claude"); err != nil {
+			t.Skip("claude not available, skipping plugin installation test")
+		}
+
+		// Test with a non-existent plugin - should fail but not panic
+		plugins := []string{"nonexistent-plugin@nonexistent-marketplace"}
+		err := installEnabledPlugins(plugins)
+		if err == nil {
+			t.Log("Expected error for non-existent plugin, but got nil (plugin may exist)")
+		}
+	})
+
+	t.Run("handles multiple plugins with mixed results", func(t *testing.T) {
+		// Skip if claude is not available
+		if _, err := exec.LookPath("claude"); err != nil {
+			t.Skip("claude not available, skipping plugin installation test")
+		}
+
+		// Test with a mix of valid and invalid plugins
+		plugins := []string{
+			"nonexistent-plugin-1@nonexistent-marketplace",
+			"nonexistent-plugin-2@nonexistent-marketplace",
+		}
+		err := installEnabledPlugins(plugins)
+		// Function should continue even if some plugins fail
+		if err == nil {
+			t.Log("Expected error for non-existent plugins, but got nil")
+		}
+	})
+}

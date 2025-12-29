@@ -123,6 +123,14 @@ func Sync(opts SyncOptions) error {
 		}
 	}
 
+	// Install enabled plugins
+	if settings != nil && len(settings.EnabledPlugins) > 0 {
+		if err := installEnabledPlugins(settings.EnabledPlugins); err != nil {
+			// Log warning but don't fail - plugin installation is optional
+			log.Printf("[SYNC] Warning: failed to install some plugins: %v", err)
+		}
+	}
+
 	log.Printf("[SYNC] Sync completed successfully")
 	return nil
 }
@@ -407,4 +415,34 @@ func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) er
 
 	log.Printf("[SYNC] Copied %d notification subscriptions to %s", copiedCount, notificationsDir)
 	return nil
+}
+
+// installEnabledPlugins installs plugins listed in enabledPlugins using claude plugin install
+func installEnabledPlugins(plugins []string) error {
+	if len(plugins) == 0 {
+		return nil
+	}
+
+	log.Printf("[SYNC] Installing %d enabled plugins", len(plugins))
+
+	var lastErr error
+	installedCount := 0
+
+	for _, plugin := range plugins {
+		log.Printf("[SYNC] Installing plugin: %s", plugin)
+
+		cmd := exec.Command("claude", "plugin", "install", plugin)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("[SYNC] Warning: failed to install plugin %s: %v, output: %s", plugin, err, string(output))
+			lastErr = err
+			continue
+		}
+
+		installedCount++
+		log.Printf("[SYNC] Successfully installed plugin: %s", plugin)
+	}
+
+	log.Printf("[SYNC] Installed %d/%d plugins", installedCount, len(plugins))
+	return lastErr
 }
