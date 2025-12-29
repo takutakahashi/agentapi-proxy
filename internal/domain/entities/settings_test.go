@@ -107,6 +107,38 @@ func TestSettings_SetBedrock(t *testing.T) {
 	}
 }
 
+func TestSettings_EnabledOfficialPlugins(t *testing.T) {
+	settings := NewSettings("test-user")
+
+	// Initially should be nil/empty
+	if len(settings.EnabledOfficialPlugins()) != 0 {
+		t.Error("Expected EnabledOfficialPlugins to be empty initially")
+	}
+
+	originalUpdatedAt := settings.UpdatedAt()
+
+	// Wait a bit to ensure time difference
+	time.Sleep(time.Millisecond)
+
+	// Set plugins
+	plugins := []string{"context7", "typescript", "python"}
+	settings.SetEnabledOfficialPlugins(plugins)
+
+	// Verify plugins are set
+	result := settings.EnabledOfficialPlugins()
+	if len(result) != 3 {
+		t.Errorf("Expected 3 plugins, got %d", len(result))
+	}
+	if result[0] != "context7" || result[1] != "typescript" || result[2] != "python" {
+		t.Errorf("Expected plugins [context7, typescript, python], got %v", result)
+	}
+
+	// Verify UpdatedAt is updated
+	if !settings.UpdatedAt().After(originalUpdatedAt) {
+		t.Error("Expected UpdatedAt to be updated")
+	}
+}
+
 func TestSettings_Validate(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -1250,6 +1250,13 @@
               "$ref": "#/components/schemas/MarketplaceRequest"
             },
             "description": "Claude Code plugin marketplace configurations keyed by marketplace name"
+          },
+          "enabled_official_plugins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of official plugin names to enable from claude-plugins-official marketplace"
           }
         }
       },
@@ -1362,6 +1369,13 @@
               "$ref": "#/components/schemas/MarketplaceResponse"
             },
             "description": "Claude Code plugin marketplace configurations"
+          },
+          "enabled_official_plugins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of enabled official plugin names from claude-plugins-official marketplace"
           },
           "created_at": {
             "type": "string",

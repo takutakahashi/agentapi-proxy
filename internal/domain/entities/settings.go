@@ -84,12 +84,13 @@ func (b *BedrockSettings) Validate() error {
 
 // Settings represents user or team settings
 type Settings struct {
-	name         string
-	bedrock      *BedrockSettings
-	mcpServers   *MCPServersSettings
-	marketplaces *MarketplacesSettings
-	createdAt    time.Time
-	updatedAt    time.Time
+	name                   string
+	bedrock                *BedrockSettings
+	mcpServers             *MCPServersSettings
+	marketplaces           *MarketplacesSettings
+	enabledOfficialPlugins []string
+	createdAt              time.Time
+	updatedAt              time.Time
 }
 
 // NewSettings creates a new Settings
@@ -147,6 +148,17 @@ func (s *Settings) Marketplaces() *MarketplacesSettings {
 // SetMarketplaces sets the marketplaces settings
 func (s *Settings) SetMarketplaces(marketplaces *MarketplacesSettings) {
 	s.marketplaces = marketplaces
+	s.updatedAt = time.Now()
+}
+
+// EnabledOfficialPlugins returns the list of enabled official plugins
+func (s *Settings) EnabledOfficialPlugins() []string {
+	return s.enabledOfficialPlugins
+}
+
+// SetEnabledOfficialPlugins sets the list of enabled official plugins
+func (s *Settings) SetEnabledOfficialPlugins(plugins []string) {
+	s.enabledOfficialPlugins = plugins
 	s.updatedAt = time.Now()
 }
 
