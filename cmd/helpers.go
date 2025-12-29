@@ -684,7 +684,7 @@ Examples:
   agentapi-proxy helpers sync \
     --settings-file /settings-config/settings.json \
     --output-dir /home/agentapi \
-    --marketplaces-dir /marketplaces \
+    --marketplaces-dir /home/agentapi/.claude/plugins/marketplaces \
     --credentials-file /credentials-config/credentials.json \
     --notification-subscriptions /notification-subscriptions-source \
     --notifications-dir /notifications`,
@@ -696,7 +696,7 @@ func init() {
 		"Path to the mounted settings.json from Settings Secret")
 	syncCmd.Flags().StringVar(&syncOutputDir, "output-dir", "",
 		"Output directory (home directory, defaults to $HOME)")
-	syncCmd.Flags().StringVar(&syncMarketplacesDir, "marketplaces-dir", "/marketplaces",
+	syncCmd.Flags().StringVar(&syncMarketplacesDir, "marketplaces-dir", "/home/agentapi/.claude/plugins/marketplaces",
 		"Directory to clone marketplace repositories")
 	syncCmd.Flags().StringVar(&syncCredentialsFile, "credentials-file", "",
 		"Path to the mounted credentials.json from Credentials Secret (optional)")

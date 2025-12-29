@@ -521,7 +521,7 @@ set -e
 echo "[SYNC] Starting Claude configuration sync"
 
 # Build sync command with required arguments
-SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /claude-config --marketplaces-dir /marketplaces"
+SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /claude-config --marketplaces-dir /home/agentapi/.claude/plugins/marketplaces"
 
 # Add credentials file if it exists
 if [ -f "/credentials-config/credentials.json" ]; then
@@ -2156,7 +2156,7 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *kubernetesSes
 			},
 			{
 				Name:      "marketplaces",
-				MountPath: "/marketplaces",
+				MountPath: "/home/agentapi/.claude/plugins/marketplaces",
 			},
 			{
 				Name:      "claude-config",
@@ -2218,7 +2218,7 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.Vol
 		// Mount marketplaces directory (cloned by sync init container)
 		{
 			Name:      "marketplaces",
-			MountPath: "/marketplaces",
+			MountPath: "/home/agentapi/.claude/plugins/marketplaces",
 			ReadOnly:  true,
 		},
 	}

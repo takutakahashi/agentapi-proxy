@@ -52,6 +52,12 @@ type mcpServerJSON struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
+// OfficialPluginsURL is the URL of the official Claude plugins repository
+const OfficialPluginsURL = "https://github.com/anthropics/claude-plugins-official"
+
+// OfficialPluginsDir is the directory name for the official plugins
+const OfficialPluginsDir = "claude-plugins-official"
+
 // marketplaceJSON represents a marketplace configuration
 type marketplaceJSON struct {
 	URL string `json:"url"`
@@ -196,6 +202,15 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 
 	if err := os.MkdirAll(opts.MarketplacesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create marketplaces directory: %w", err)
+	}
+
+	// Clone official plugins repository
+	officialPluginsDir := filepath.Join(opts.MarketplacesDir, OfficialPluginsDir)
+	log.Printf("[SYNC] Cloning official plugins from %s to %s", OfficialPluginsURL, officialPluginsDir)
+	if err := cloneMarketplace(OfficialPluginsURL, officialPluginsDir); err != nil {
+		log.Printf("[SYNC] Warning: failed to clone official plugins: %v", err)
+	} else {
+		log.Printf("[SYNC] Successfully cloned official plugins")
 	}
 
 	// Build settings.json content
