@@ -33,6 +33,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  setup-gh - Setup GitHub authentication using gh CLI")
 		fmt.Println("  send-notification - Send push notifications to registered subscriptions")
 		fmt.Println("  merge-mcp-config - Merge multiple MCP server configuration directories")
+		fmt.Println("  sync - Sync Claude configuration from Settings Secret")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
 }
@@ -644,5 +645,95 @@ func runMergeMCPConfig(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Successfully merged %d MCP server(s) to %s\n", serverCount, mcpOutputPath)
 	}
 
+	return nil
+}
+
+// sync command flags
+var (
+	syncSettingsFile              string
+	syncOutputDir                 string
+	syncMarketplacesDir           string
+	syncCredentialsFile           string
+	syncClaudeMDFile              string
+	syncNotificationSubscriptions string
+	syncNotificationsDir          string
+)
+
+var syncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Sync Claude configuration from Settings Secret",
+	Long: `Sync Claude configuration from a mounted Settings Secret.
+
+This command reads settings from a mounted Settings Secret and generates:
+- ~/.claude.json with onboarding settings
+- ~/.claude/settings.json with marketplace configuration
+- ~/.claude/.credentials.json (if credentials file is provided)
+- ~/.claude/CLAUDE.md (copied from Docker image)
+- Notification subscriptions (if provided)
+
+It also clones any configured marketplace repositories.
+
+The settings file should be the mounted settings.json from the agentapi-settings-{user} Secret.
+The credentials file should be the mounted credentials.json from the agentapi-agent-credentials-{user} Secret.
+
+Examples:
+  # Basic usage with defaults
+  agentapi-proxy helpers sync
+
+  # Specify all paths
+  agentapi-proxy helpers sync \
+    --settings-file /settings-config/settings.json \
+    --output-dir /home/agentapi \
+    --marketplaces-dir /marketplaces \
+    --credentials-file /credentials-config/credentials.json \
+    --notification-subscriptions /notification-subscriptions-source \
+    --notifications-dir /notifications`,
+	RunE: runSync,
+}
+
+func init() {
+	syncCmd.Flags().StringVar(&syncSettingsFile, "settings-file", "/settings-config/settings.json",
+		"Path to the mounted settings.json from Settings Secret")
+	syncCmd.Flags().StringVar(&syncOutputDir, "output-dir", "",
+		"Output directory (home directory, defaults to $HOME)")
+	syncCmd.Flags().StringVar(&syncMarketplacesDir, "marketplaces-dir", "/marketplaces",
+		"Directory to clone marketplace repositories")
+	syncCmd.Flags().StringVar(&syncCredentialsFile, "credentials-file", "",
+		"Path to the mounted credentials.json from Credentials Secret (optional)")
+	syncCmd.Flags().StringVar(&syncClaudeMDFile, "claude-md-file", "",
+		"Path to CLAUDE.md file to copy (optional, default: /tmp/config/CLAUDE.md)")
+	syncCmd.Flags().StringVar(&syncNotificationSubscriptions, "notification-subscriptions", "",
+		"Path to notification subscriptions directory (optional)")
+	syncCmd.Flags().StringVar(&syncNotificationsDir, "notifications-dir", "",
+		"Path to notifications output directory (optional)")
+
+	HelpersCmd.AddCommand(syncCmd)
+}
+
+func runSync(cmd *cobra.Command, args []string) error {
+	outputDir := syncOutputDir
+	if outputDir == "" {
+		var err error
+		outputDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	opts := startup.SyncOptions{
+		SettingsFile:              syncSettingsFile,
+		OutputDir:                 outputDir,
+		MarketplacesDir:           syncMarketplacesDir,
+		CredentialsFile:           syncCredentialsFile,
+		ClaudeMDFile:              syncClaudeMDFile,
+		NotificationSubscriptions: syncNotificationSubscriptions,
+		NotificationsDir:          syncNotificationsDir,
+	}
+
+	if err := startup.Sync(opts); err != nil {
+		return fmt.Errorf("sync failed: %w", err)
+	}
+
+	fmt.Println("Claude configuration sync completed successfully!")
 	return nil
 }
