@@ -513,19 +513,29 @@ echo "[MCP] MCP server configuration complete"
 `
 
 // syncScript is the shell script executed by the init container to sync Claude configuration
-// It reads from the Settings Secret and generates ~/.claude.json, ~/.claude/settings.json, and ~/.claude/.credentials.json
+// It reads from the Settings Secret and generates ~/.claude.json, ~/.claude/settings.json, ~/.claude/.credentials.json, and ~/.claude/CLAUDE.md
+// It also copies notification subscriptions to the notifications directory
 const syncScript = `
 set -e
 
 echo "[SYNC] Starting Claude configuration sync"
 
-# Build sync command with optional credentials file
+# Build sync command with required arguments
 SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /claude-config --marketplaces-dir /marketplaces"
 
 # Add credentials file if it exists
 if [ -f "/credentials-config/credentials.json" ]; then
     echo "[SYNC] Found credentials file, including in sync"
     SYNC_ARGS="$SYNC_ARGS --credentials-file /credentials-config/credentials.json"
+fi
+
+# Add CLAUDE.md file (default path in Docker image)
+SYNC_ARGS="$SYNC_ARGS --claude-md-file /tmp/config/CLAUDE.md"
+
+# Add notification subscriptions if source directory exists and has files
+if [ -d "/notification-subscriptions-source" ] && [ "$(ls -A /notification-subscriptions-source 2>/dev/null)" ]; then
+    echo "[SYNC] Found notification subscriptions, including in sync"
+    SYNC_ARGS="$SYNC_ARGS --notification-subscriptions /notification-subscriptions-source --notifications-dir /notifications"
 fi
 
 # Run sync command to generate Claude configuration
@@ -2157,6 +2167,17 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *kubernetesSes
 				Name:      "claude-credentials",
 				MountPath: "/credentials-config",
 				ReadOnly:  true,
+			},
+			{
+				// Mount notification subscriptions Secret (source for copying)
+				Name:      "notification-subscriptions-source",
+				MountPath: "/notification-subscriptions-source",
+				ReadOnly:  true,
+			},
+			{
+				// Mount notifications EmptyDir (destination for copying)
+				Name:      "notifications",
+				MountPath: "/notifications",
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{

@@ -11,10 +11,13 @@ import (
 
 // SyncOptions contains options for the sync command
 type SyncOptions struct {
-	SettingsFile    string // Path to the mounted settings.json from Settings Secret
-	OutputDir       string // Home directory (generates ~/.claude.json and ~/.claude/)
-	MarketplacesDir string // Directory to clone marketplace repositories
-	CredentialsFile string // Path to the mounted credentials.json from Credentials Secret (optional)
+	SettingsFile              string // Path to the mounted settings.json from Settings Secret
+	OutputDir                 string // Home directory (generates ~/.claude.json and ~/.claude/)
+	MarketplacesDir           string // Directory to clone marketplace repositories
+	CredentialsFile           string // Path to the mounted credentials.json from Credentials Secret (optional)
+	ClaudeMDFile              string // Path to CLAUDE.md file to copy (optional, default: /tmp/config/CLAUDE.md)
+	NotificationSubscriptions string // Path to notification subscriptions directory (optional)
+	NotificationsDir          string // Path to notifications output directory (optional)
 }
 
 // settingsJSON represents the structure of settings.json from Settings Secret
@@ -92,6 +95,24 @@ func Sync(opts SyncOptions) error {
 		if err := syncCredentials(opts.CredentialsFile, opts.OutputDir); err != nil {
 			// Log warning but don't fail - credentials are optional
 			log.Printf("[SYNC] Warning: failed to sync credentials: %v", err)
+		}
+	}
+
+	// Copy CLAUDE.md if available
+	claudeMDPath := opts.ClaudeMDFile
+	if claudeMDPath == "" {
+		claudeMDPath = "/tmp/config/CLAUDE.md" // Default path in Docker image
+	}
+	if err := syncClaudeMD(claudeMDPath, opts.OutputDir); err != nil {
+		// Log warning but don't fail - CLAUDE.md is optional
+		log.Printf("[SYNC] Warning: failed to sync CLAUDE.md: %v", err)
+	}
+
+	// Copy notification subscriptions if provided
+	if opts.NotificationSubscriptions != "" && opts.NotificationsDir != "" {
+		if err := syncNotificationSubscriptions(opts.NotificationSubscriptions, opts.NotificationsDir); err != nil {
+			// Log warning but don't fail - notifications are optional
+			log.Printf("[SYNC] Warning: failed to sync notification subscriptions: %v", err)
 		}
 	}
 
@@ -294,5 +315,89 @@ func syncCredentials(credentialsFile, outputDir string) error {
 	}
 
 	log.Printf("[SYNC] Copied credentials to %s", destPath)
+	return nil
+}
+
+// syncClaudeMD copies CLAUDE.md from the Docker image to ~/.claude/CLAUDE.md
+func syncClaudeMD(claudeMDPath, outputDir string) error {
+	// Check if source file exists
+	if _, err := os.Stat(claudeMDPath); os.IsNotExist(err) {
+		log.Printf("[SYNC] CLAUDE.md not found at %s, skipping", claudeMDPath)
+		return nil
+	}
+
+	// Read CLAUDE.md file
+	data, err := os.ReadFile(claudeMDPath)
+	if err != nil {
+		return fmt.Errorf("failed to read CLAUDE.md: %w", err)
+	}
+
+	// Create .claude directory if needed
+	claudeDir := filepath.Join(outputDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .claude directory: %w", err)
+	}
+
+	// Write to destination
+	destPath := filepath.Join(claudeDir, "CLAUDE.md")
+	if err := os.WriteFile(destPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write CLAUDE.md: %w", err)
+	}
+
+	log.Printf("[SYNC] Copied CLAUDE.md to %s", destPath)
+	return nil
+}
+
+// syncNotificationSubscriptions copies notification subscriptions from mounted Secret to notifications directory
+func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) error {
+	// Check if source directory exists
+	if _, err := os.Stat(subscriptionsDir); os.IsNotExist(err) {
+		log.Printf("[SYNC] Notification subscriptions directory not found at %s, skipping", subscriptionsDir)
+		return nil
+	}
+
+	// Create notifications directory if needed
+	if err := os.MkdirAll(notificationsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create notifications directory: %w", err)
+	}
+
+	// Read source directory
+	entries, err := os.ReadDir(subscriptionsDir)
+	if err != nil {
+		return fmt.Errorf("failed to read subscriptions directory: %w", err)
+	}
+
+	if len(entries) == 0 {
+		log.Printf("[SYNC] No notification subscriptions found, skipping")
+		return nil
+	}
+
+	// Copy each file (following symlinks since Secrets use symlinks)
+	copiedCount := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		srcPath := filepath.Join(subscriptionsDir, entry.Name())
+		destPath := filepath.Join(notificationsDir, entry.Name())
+
+		// Read file (follows symlinks)
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			log.Printf("[SYNC] Warning: failed to read subscription file %s: %v", srcPath, err)
+			continue
+		}
+
+		// Write to destination
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			log.Printf("[SYNC] Warning: failed to write subscription file %s: %v", destPath, err)
+			continue
+		}
+
+		copiedCount++
+	}
+
+	log.Printf("[SYNC] Copied %d notification subscriptions to %s", copiedCount, notificationsDir)
 	return nil
 }

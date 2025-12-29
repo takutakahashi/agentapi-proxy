@@ -650,10 +650,13 @@ func runMergeMCPConfig(cmd *cobra.Command, args []string) error {
 
 // sync command flags
 var (
-	syncSettingsFile    string
-	syncOutputDir       string
-	syncMarketplacesDir string
-	syncCredentialsFile string
+	syncSettingsFile              string
+	syncOutputDir                 string
+	syncMarketplacesDir           string
+	syncCredentialsFile           string
+	syncClaudeMDFile              string
+	syncNotificationSubscriptions string
+	syncNotificationsDir          string
 )
 
 var syncCmd = &cobra.Command{
@@ -665,6 +668,8 @@ This command reads settings from a mounted Settings Secret and generates:
 - ~/.claude.json with onboarding settings
 - ~/.claude/settings.json with marketplace configuration
 - ~/.claude/.credentials.json (if credentials file is provided)
+- ~/.claude/CLAUDE.md (copied from Docker image)
+- Notification subscriptions (if provided)
 
 It also clones any configured marketplace repositories.
 
@@ -680,7 +685,9 @@ Examples:
     --settings-file /settings-config/settings.json \
     --output-dir /home/agentapi \
     --marketplaces-dir /marketplaces \
-    --credentials-file /credentials-config/credentials.json`,
+    --credentials-file /credentials-config/credentials.json \
+    --notification-subscriptions /notification-subscriptions-source \
+    --notifications-dir /notifications`,
 	RunE: runSync,
 }
 
@@ -693,6 +700,12 @@ func init() {
 		"Directory to clone marketplace repositories")
 	syncCmd.Flags().StringVar(&syncCredentialsFile, "credentials-file", "",
 		"Path to the mounted credentials.json from Credentials Secret (optional)")
+	syncCmd.Flags().StringVar(&syncClaudeMDFile, "claude-md-file", "",
+		"Path to CLAUDE.md file to copy (optional, default: /tmp/config/CLAUDE.md)")
+	syncCmd.Flags().StringVar(&syncNotificationSubscriptions, "notification-subscriptions", "",
+		"Path to notification subscriptions directory (optional)")
+	syncCmd.Flags().StringVar(&syncNotificationsDir, "notifications-dir", "",
+		"Path to notifications output directory (optional)")
 
 	HelpersCmd.AddCommand(syncCmd)
 }
@@ -708,10 +721,13 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := startup.SyncOptions{
-		SettingsFile:    syncSettingsFile,
-		OutputDir:       outputDir,
-		MarketplacesDir: syncMarketplacesDir,
-		CredentialsFile: syncCredentialsFile,
+		SettingsFile:              syncSettingsFile,
+		OutputDir:                 outputDir,
+		MarketplacesDir:           syncMarketplacesDir,
+		CredentialsFile:           syncCredentialsFile,
+		ClaudeMDFile:              syncClaudeMDFile,
+		NotificationSubscriptions: syncNotificationSubscriptions,
+		NotificationsDir:          syncNotificationsDir,
 	}
 
 	if err := startup.Sync(opts); err != nil {
