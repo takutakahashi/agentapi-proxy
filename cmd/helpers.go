@@ -653,6 +653,7 @@ var (
 	syncSettingsFile    string
 	syncOutputDir       string
 	syncMarketplacesDir string
+	syncCredentialsFile string
 )
 
 var syncCmd = &cobra.Command{
@@ -663,10 +664,12 @@ var syncCmd = &cobra.Command{
 This command reads settings from a mounted Settings Secret and generates:
 - ~/.claude.json with onboarding settings
 - ~/.claude/settings.json with marketplace configuration
+- ~/.claude/.credentials.json (if credentials file is provided)
 
 It also clones any configured marketplace repositories.
 
 The settings file should be the mounted settings.json from the agentapi-settings-{user} Secret.
+The credentials file should be the mounted credentials.json from the agentapi-agent-credentials-{user} Secret.
 
 Examples:
   # Basic usage with defaults
@@ -676,7 +679,8 @@ Examples:
   agentapi-proxy helpers sync \
     --settings-file /settings-config/settings.json \
     --output-dir /home/agentapi \
-    --marketplaces-dir /marketplaces`,
+    --marketplaces-dir /marketplaces \
+    --credentials-file /credentials-config/credentials.json`,
 	RunE: runSync,
 }
 
@@ -687,6 +691,8 @@ func init() {
 		"Output directory (home directory, defaults to $HOME)")
 	syncCmd.Flags().StringVar(&syncMarketplacesDir, "marketplaces-dir", "/marketplaces",
 		"Directory to clone marketplace repositories")
+	syncCmd.Flags().StringVar(&syncCredentialsFile, "credentials-file", "",
+		"Path to the mounted credentials.json from Credentials Secret (optional)")
 
 	HelpersCmd.AddCommand(syncCmd)
 }
@@ -705,6 +711,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		SettingsFile:    syncSettingsFile,
 		OutputDir:       outputDir,
 		MarketplacesDir: syncMarketplacesDir,
+		CredentialsFile: syncCredentialsFile,
 	}
 
 	if err := startup.Sync(opts); err != nil {

@@ -14,6 +14,7 @@ type SyncOptions struct {
 	SettingsFile    string // Path to the mounted settings.json from Settings Secret
 	OutputDir       string // Home directory (generates ~/.claude.json and ~/.claude/)
 	MarketplacesDir string // Directory to clone marketplace repositories
+	CredentialsFile string // Path to the mounted credentials.json from Credentials Secret (optional)
 }
 
 // settingsJSON represents the structure of settings.json from Settings Secret
@@ -84,6 +85,14 @@ func Sync(opts SyncOptions) error {
 	// Clone marketplaces and generate ~/.claude/settings.json
 	if err := syncMarketplaces(opts, settings); err != nil {
 		return fmt.Errorf("failed to sync marketplaces: %w", err)
+	}
+
+	// Copy credentials.json if provided
+	if opts.CredentialsFile != "" {
+		if err := syncCredentials(opts.CredentialsFile, opts.OutputDir); err != nil {
+			// Log warning but don't fail - credentials are optional
+			log.Printf("[SYNC] Warning: failed to sync credentials: %v", err)
+		}
 	}
 
 	log.Printf("[SYNC] Sync completed successfully")
@@ -249,5 +258,41 @@ func cloneMarketplace(url, targetDir string) error {
 		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 	}
 
+	return nil
+}
+
+// syncCredentials copies credentials.json from the mounted Secret to ~/.claude/.credentials.json
+func syncCredentials(credentialsFile, outputDir string) error {
+	// Check if source file exists
+	if _, err := os.Stat(credentialsFile); os.IsNotExist(err) {
+		log.Printf("[SYNC] Credentials file not found at %s, skipping", credentialsFile)
+		return nil
+	}
+
+	// Read credentials file
+	data, err := os.ReadFile(credentialsFile)
+	if err != nil {
+		return fmt.Errorf("failed to read credentials file: %w", err)
+	}
+
+	// Validate that it's valid JSON
+	var jsonCheck interface{}
+	if err := json.Unmarshal(data, &jsonCheck); err != nil {
+		return fmt.Errorf("credentials file is not valid JSON: %w", err)
+	}
+
+	// Create .claude directory if needed
+	claudeDir := filepath.Join(outputDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .claude directory: %w", err)
+	}
+
+	// Write to destination
+	destPath := filepath.Join(claudeDir, ".credentials.json")
+	if err := os.WriteFile(destPath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write credentials file: %w", err)
+	}
+
+	log.Printf("[SYNC] Copied credentials to %s", destPath)
 	return nil
 }

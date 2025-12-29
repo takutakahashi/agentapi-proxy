@@ -513,17 +513,23 @@ echo "[MCP] MCP server configuration complete"
 `
 
 // syncScript is the shell script executed by the init container to sync Claude configuration
-// It reads from the Settings Secret and generates ~/.claude.json and ~/.claude/settings.json
+// It reads from the Settings Secret and generates ~/.claude.json, ~/.claude/settings.json, and ~/.claude/.credentials.json
 const syncScript = `
 set -e
 
 echo "[SYNC] Starting Claude configuration sync"
 
+# Build sync command with optional credentials file
+SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /claude-config --marketplaces-dir /marketplaces"
+
+# Add credentials file if it exists
+if [ -f "/credentials-config/credentials.json" ]; then
+    echo "[SYNC] Found credentials file, including in sync"
+    SYNC_ARGS="$SYNC_ARGS --credentials-file /credentials-config/credentials.json"
+fi
+
 # Run sync command to generate Claude configuration
-agentapi-proxy helpers sync \
-    --settings-file "/settings-config/settings.json" \
-    --output-dir "/claude-config" \
-    --marketplaces-dir "/marketplaces"
+agentapi-proxy helpers sync $SYNC_ARGS
 
 echo "[SYNC] Claude configuration sync complete"
 `
@@ -2145,6 +2151,12 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *kubernetesSes
 			{
 				Name:      "claude-config",
 				MountPath: "/claude-config",
+			},
+			{
+				// Mount claude-credentials Secret for copying credentials.json
+				Name:      "claude-credentials",
+				MountPath: "/credentials-config",
+				ReadOnly:  true,
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
