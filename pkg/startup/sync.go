@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // SyncOptions contains options for the sync command
@@ -54,6 +55,11 @@ type mcpServerJSON struct {
 // marketplaceJSON represents a marketplace configuration
 type marketplaceJSON struct {
 	URL string `json:"url"`
+}
+
+// marketplacePluginJSON represents .claude-plugin/marketplace.json in a marketplace repository
+type marketplacePluginJSON struct {
+	Name string `json:"name"`
 }
 
 // marketplaceSource represents the source configuration for extraKnownMarketplaces
@@ -207,34 +213,47 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		"mcp.enabled": true,
 	}
 
+	// nameMapping maps alias keys to real marketplace names
+	nameMapping := make(map[string]string)
+
 	// Process marketplaces if available
 	if settings != nil && len(settings.Marketplaces) > 0 {
 		extraKnownMarketplaces := make(map[string]extraKnownMarketplace)
 
-		for name, marketplace := range settings.Marketplaces {
+		for aliasKey, marketplace := range settings.Marketplaces {
 			if marketplace.URL == "" {
-				log.Printf("[SYNC] Skipping marketplace %s: no URL configured", name)
+				log.Printf("[SYNC] Skipping marketplace %s: no URL configured", aliasKey)
 				continue
 			}
 
-			targetDir := filepath.Join(opts.MarketplacesDir, name)
+			targetDir := filepath.Join(opts.MarketplacesDir, aliasKey)
 
 			// Clone repository
-			log.Printf("[SYNC] Cloning marketplace %s from %s to %s", name, marketplace.URL, targetDir)
+			log.Printf("[SYNC] Cloning marketplace %s from %s to %s", aliasKey, marketplace.URL, targetDir)
 			if err := cloneMarketplace(marketplace.URL, targetDir); err != nil {
-				log.Printf("[SYNC] Warning: failed to clone marketplace %s: %v", name, err)
+				log.Printf("[SYNC] Warning: failed to clone marketplace %s: %v", aliasKey, err)
 				continue
 			}
 
-			// Add to extraKnownMarketplaces
-			extraKnownMarketplaces[name] = extraKnownMarketplace{
+			// Read the real marketplace name from .claude-plugin/marketplace.json
+			realName, err := readMarketplaceName(targetDir)
+			if err != nil {
+				log.Printf("[SYNC] Error: failed to read marketplace name for %s: %v", aliasKey, err)
+				continue
+			}
+
+			// Store mapping for plugin name resolution
+			nameMapping[aliasKey] = realName
+
+			// Add to extraKnownMarketplaces with real name
+			extraKnownMarketplaces[realName] = extraKnownMarketplace{
 				Source: marketplaceSource{
 					Source: "directory",
 					Path:   targetDir,
 				},
 			}
 
-			log.Printf("[SYNC] Successfully cloned marketplace %s", name)
+			log.Printf("[SYNC] Successfully registered marketplace %s (alias: %s)", realName, aliasKey)
 		}
 
 		if len(extraKnownMarketplaces) > 0 {
@@ -242,14 +261,15 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		}
 	}
 
-	// Process enabled plugins (already in plugin@marketplace format)
+	// Process enabled plugins - resolve alias names to real marketplace names
 	if settings != nil && len(settings.EnabledPlugins) > 0 {
 		enabledPlugins := make(map[string]bool)
 		for _, plugin := range settings.EnabledPlugins {
-			enabledPlugins[plugin] = true
+			resolvedPlugin := resolvePluginName(plugin, nameMapping)
+			enabledPlugins[resolvedPlugin] = true
 		}
 		settingsContent["enabledPlugins"] = enabledPlugins
-		log.Printf("[SYNC] Added %d enabled plugins", len(settings.EnabledPlugins))
+		log.Printf("[SYNC] Added %d enabled plugins (with resolved marketplace names)", len(settings.EnabledPlugins))
 	}
 
 	// Write settings.json
@@ -287,6 +307,45 @@ func cloneMarketplace(url, targetDir string) error {
 	}
 
 	return nil
+}
+
+// readMarketplaceName reads the real marketplace name from .claude-plugin/marketplace.json
+func readMarketplaceName(targetDir string) (string, error) {
+	jsonPath := filepath.Join(targetDir, ".claude-plugin", "marketplace.json")
+
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read marketplace.json: %w", err)
+	}
+
+	var mp marketplacePluginJSON
+	if err := json.Unmarshal(data, &mp); err != nil {
+		return "", fmt.Errorf("failed to parse marketplace.json: %w", err)
+	}
+
+	if mp.Name == "" {
+		return "", fmt.Errorf("marketplace.json has empty name field")
+	}
+
+	return mp.Name, nil
+}
+
+// resolvePluginName replaces alias marketplace name with real name in plugin identifier
+// plugin format: "plugin-name@marketplace-name"
+func resolvePluginName(plugin string, nameMapping map[string]string) string {
+	parts := strings.SplitN(plugin, "@", 2)
+	if len(parts) != 2 {
+		return plugin
+	}
+
+	pluginName := parts[0]
+	marketplaceAlias := parts[1]
+
+	if realName, ok := nameMapping[marketplaceAlias]; ok {
+		return pluginName + "@" + realName
+	}
+
+	return plugin
 }
 
 // syncCredentials copies credentials.json from the mounted Secret to ~/.claude/.credentials.json
