@@ -29,13 +29,13 @@ const (
 
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
-	Name                   string                      `json:"name"`
-	Bedrock                *bedrockJSON                `json:"bedrock,omitempty"`
-	MCPServers             map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
-	Marketplaces           map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
-	EnabledOfficialPlugins []string                    `json:"enabled_official_plugins,omitempty"`
-	CreatedAt              time.Time                   `json:"created_at"`
-	UpdatedAt              time.Time                   `json:"updated_at"`
+	Name           string                      `json:"name"`
+	Bedrock        *bedrockJSON                `json:"bedrock,omitempty"`
+	MCPServers     map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
+	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
+	EnabledPlugins []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	CreatedAt      time.Time                   `json:"created_at"`
+	UpdatedAt      time.Time                   `json:"updated_at"`
 }
 
 // bedrockJSON is the JSON representation of Bedrock settings
@@ -60,8 +60,7 @@ type mcpServerJSON struct {
 
 // marketplaceJSON is the JSON representation of a single marketplace
 type marketplaceJSON struct {
-	URL            string   `json:"url"`
-	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
+	URL string `json:"url"`
 }
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
@@ -234,14 +233,13 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		sj.Marketplaces = make(map[string]*marketplaceJSON)
 		for name, marketplace := range marketplaces.Marketplaces() {
 			sj.Marketplaces[name] = &marketplaceJSON{
-				URL:            marketplace.URL(),
-				EnabledPlugins: marketplace.EnabledPlugins(),
+				URL: marketplace.URL(),
 			}
 		}
 	}
 
-	if plugins := settings.EnabledOfficialPlugins(); len(plugins) > 0 {
-		sj.EnabledOfficialPlugins = plugins
+	if plugins := settings.EnabledPlugins(); len(plugins) > 0 {
+		sj.EnabledPlugins = plugins
 	}
 
 	return json.Marshal(sj)
@@ -296,7 +294,6 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 		for name, mpJSON := range sj.Marketplaces {
 			marketplace := entities.NewMarketplace(name)
 			marketplace.SetURL(mpJSON.URL)
-			marketplace.SetEnabledPlugins(mpJSON.EnabledPlugins)
 			marketplaces.SetMarketplace(name, marketplace)
 		}
 		settings.SetMarketplaces(marketplaces)
@@ -304,9 +301,9 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
-	if len(sj.EnabledOfficialPlugins) > 0 {
-		settings.SetEnabledOfficialPlugins(sj.EnabledOfficialPlugins)
-		// Reset updatedAt since SetEnabledOfficialPlugins updates it
+	if len(sj.EnabledPlugins) > 0 {
+		settings.SetEnabledPlugins(sj.EnabledPlugins)
+		// Reset updatedAt since SetEnabledPlugins updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 

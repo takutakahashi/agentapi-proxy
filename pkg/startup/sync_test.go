@@ -60,10 +60,10 @@ func TestLoadSettingsFile(t *testing.T) {
 			"name": "test-user",
 			"marketplaces": {
 				"test-marketplace": {
-					"url": "https://github.com/example/marketplace",
-					"enabled_plugins": ["plugin1", "plugin2"]
+					"url": "https://github.com/example/marketplace"
 				}
 			},
+			"enabled_plugins": ["plugin1@test-marketplace", "plugin2@test-marketplace"],
 			"created_at": "2025-01-01T00:00:00Z",
 			"updated_at": "2025-01-01T00:00:00Z"
 		}`
@@ -89,8 +89,8 @@ func TestLoadSettingsFile(t *testing.T) {
 		if mp.URL != "https://github.com/example/marketplace" {
 			t.Errorf("Expected URL 'https://github.com/example/marketplace', got '%s'", mp.URL)
 		}
-		if len(mp.EnabledPlugins) != 2 {
-			t.Errorf("Expected 2 enabled plugins, got %d", len(mp.EnabledPlugins))
+		if len(settings.EnabledPlugins) != 2 {
+			t.Errorf("Expected 2 enabled plugins, got %d", len(settings.EnabledPlugins))
 		}
 	})
 
@@ -207,17 +207,16 @@ func TestLoadSettingsFile(t *testing.T) {
 			"name": "test-user",
 			"marketplaces": {
 				"marketplace1": {
-					"url": "https://github.com/org1/marketplace1",
-					"enabled_plugins": ["plugin-a"]
+					"url": "https://github.com/org1/marketplace1"
 				},
 				"marketplace2": {
-					"url": "https://github.com/org2/marketplace2",
-					"enabled_plugins": ["plugin-b", "plugin-c"]
+					"url": "https://github.com/org2/marketplace2"
 				},
 				"marketplace3": {
 					"url": "https://github.com/org3/marketplace3"
 				}
-			}
+			},
+			"enabled_plugins": ["plugin-a@marketplace1", "plugin-b@marketplace2", "plugin-c@marketplace2"]
 		}`
 		if err := os.WriteFile(settingsFile, []byte(settingsData), 0644); err != nil {
 			t.Fatalf("Failed to write settings file: %v", err)
@@ -233,18 +232,22 @@ func TestLoadSettingsFile(t *testing.T) {
 		}
 
 		mp1 := settings.Marketplaces["marketplace1"]
-		if mp1 == nil || len(mp1.EnabledPlugins) != 1 {
-			t.Error("marketplace1 should have 1 enabled plugin")
+		if mp1 == nil {
+			t.Error("marketplace1 should exist")
 		}
 
 		mp2 := settings.Marketplaces["marketplace2"]
-		if mp2 == nil || len(mp2.EnabledPlugins) != 2 {
-			t.Error("marketplace2 should have 2 enabled plugins")
+		if mp2 == nil {
+			t.Error("marketplace2 should exist")
 		}
 
 		mp3 := settings.Marketplaces["marketplace3"]
-		if mp3 == nil || len(mp3.EnabledPlugins) != 0 {
-			t.Error("marketplace3 should have 0 enabled plugins")
+		if mp3 == nil {
+			t.Error("marketplace3 should exist")
+		}
+
+		if len(settings.EnabledPlugins) != 3 {
+			t.Errorf("Expected 3 enabled plugins, got %d", len(settings.EnabledPlugins))
 		}
 	})
 
@@ -717,10 +720,10 @@ func TestSyncMarketplaces(t *testing.T) {
 			Name: "test-user",
 			Marketplaces: map[string]*marketplaceJSON{
 				"empty-url": {
-					URL:            "",
-					EnabledPlugins: []string{"plugin1"},
+					URL: "",
 				},
 			},
+			EnabledPlugins: []string{"plugin1@empty-url"},
 		}
 
 		opts := SyncOptions{
@@ -809,10 +812,10 @@ func TestSyncMarketplaces(t *testing.T) {
 			Name: "test-user",
 			Marketplaces: map[string]*marketplaceJSON{
 				"no-plugins": {
-					URL:            sourceDir,
-					EnabledPlugins: nil, // No plugins
+					URL: sourceDir,
 				},
 			},
+			EnabledPlugins: nil, // No plugins enabled
 		}
 
 		opts := SyncOptions{
@@ -842,7 +845,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		}
 		// But enabledPlugins should not
 		if _, ok := result["enabledPlugins"]; ok {
-			t.Error("Expected no enabledPlugins when marketplace has no plugins")
+			t.Error("Expected no enabledPlugins when no plugins are enabled")
 		}
 	})
 
@@ -907,18 +910,16 @@ func TestSyncMarketplaces(t *testing.T) {
 			Name: "test-user",
 			Marketplaces: map[string]*marketplaceJSON{
 				"valid": {
-					URL:            validSourceDir,
-					EnabledPlugins: []string{"plugin1"},
+					URL: validSourceDir,
 				},
 				"invalid": {
-					URL:            "https://invalid.example.com/nonexistent.git",
-					EnabledPlugins: []string{"plugin2"},
+					URL: "https://invalid.example.com/nonexistent.git",
 				},
 				"empty-url": {
-					URL:            "",
-					EnabledPlugins: []string{"plugin3"},
+					URL: "",
 				},
 			},
+			EnabledPlugins: []string{"plugin1@valid", "plugin2@invalid", "plugin3@empty-url"},
 		}
 
 		opts := SyncOptions{
@@ -955,13 +956,13 @@ func TestSyncMarketplaces(t *testing.T) {
 			t.Error("Expected 'valid' marketplace to exist")
 		}
 
-		// Only valid marketplace's plugins should be in enabledPlugins (as object)
+		// All enabled plugins should be in enabledPlugins (as object) - they are passed through
 		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
 		if !ok {
 			t.Fatal("Expected enabledPlugins to exist as object")
 		}
-		if len(enabledPlugins) != 1 {
-			t.Errorf("Expected 1 enabled plugin, got %d", len(enabledPlugins))
+		if len(enabledPlugins) != 3 {
+			t.Errorf("Expected 3 enabled plugins, got %d", len(enabledPlugins))
 		}
 		if _, ok := enabledPlugins["plugin1@valid"]; !ok {
 			t.Error("Expected 'plugin1@valid' to exist in enabledPlugins")
@@ -999,10 +1000,10 @@ func TestSyncMarketplaces(t *testing.T) {
 			Name: "test-user",
 			Marketplaces: map[string]*marketplaceJSON{
 				"my-marketplace": {
-					URL:            sourceDir,
-					EnabledPlugins: []string{"plugin-a", "plugin-b"},
+					URL: sourceDir,
 				},
 			},
+			EnabledPlugins: []string{"plugin-a@my-marketplace", "plugin-b@my-marketplace"},
 		}
 
 		opts := SyncOptions{
@@ -1496,10 +1497,10 @@ func TestSync(t *testing.T) {
 			"name": "test-user",
 			"marketplaces": {
 				"test-mp": {
-					"url": "` + marketplaceSourceDir + `",
-					"enabled_plugins": ["plugin1", "plugin2"]
+					"url": "` + marketplaceSourceDir + `"
 				}
 			},
+			"enabled_plugins": ["plugin1@test-mp", "plugin2@test-mp"],
 			"created_at": "2025-01-01T00:00:00Z",
 			"updated_at": "2025-01-01T00:00:00Z"
 		}`
@@ -1578,15 +1579,15 @@ func TestSync(t *testing.T) {
 	})
 }
 
-func TestSyncMarketplaces_OfficialPlugins(t *testing.T) {
-	t.Run("adds official plugins to enabledPlugins", func(t *testing.T) {
+func TestSyncMarketplaces_EnabledPlugins(t *testing.T) {
+	t.Run("adds plugins to enabledPlugins in plugin@marketplace format", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
 		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		settings := &settingsJSON{
-			Name:                   "test-user",
-			EnabledOfficialPlugins: []string{"context7", "typescript", "python"},
+			Name:           "test-user",
+			EnabledPlugins: []string{"context7@claude-plugins-official", "typescript@claude-plugins-official", "python@claude-plugins-official"},
 		}
 
 		opts := SyncOptions{
@@ -1599,7 +1600,7 @@ func TestSyncMarketplaces_OfficialPlugins(t *testing.T) {
 			t.Fatalf("syncMarketplaces failed: %v", err)
 		}
 
-		// Verify settings.json contains official plugins
+		// Verify settings.json contains plugins
 		settingsPath := filepath.Join(outputDir, ".claude", "settings.json")
 		data, err := os.ReadFile(settingsPath)
 		if err != nil {
@@ -1617,7 +1618,7 @@ func TestSyncMarketplaces_OfficialPlugins(t *testing.T) {
 			t.Fatal("Expected enabledPlugins to exist")
 		}
 
-		// Verify official plugins are in format: plugin@claude-plugins-official
+		// Verify plugins are in format: plugin@marketplace
 		expectedPlugins := []string{
 			"context7@claude-plugins-official",
 			"typescript@claude-plugins-official",
@@ -1636,7 +1637,7 @@ func TestSyncMarketplaces_OfficialPlugins(t *testing.T) {
 
 		// extraKnownMarketplaces should not exist (no custom marketplaces)
 		if _, ok := result["extraKnownMarketplaces"]; ok {
-			t.Error("Expected no extraKnownMarketplaces when only official plugins are set")
+			t.Error("Expected no extraKnownMarketplaces when no marketplaces are defined")
 		}
 	})
 
@@ -1657,13 +1658,17 @@ func TestSyncMarketplaces_OfficialPlugins(t *testing.T) {
 		})
 
 		settings := &settingsJSON{
-			Name:                   "test-user",
-			EnabledOfficialPlugins: []string{"context7", "typescript"},
+			Name: "test-user",
 			Marketplaces: map[string]*marketplaceJSON{
 				"custom-mp": {
-					URL:            sourceDir,
-					EnabledPlugins: []string{"custom-plugin1", "custom-plugin2"},
+					URL: sourceDir,
 				},
+			},
+			EnabledPlugins: []string{
+				"context7@claude-plugins-official",
+				"typescript@claude-plugins-official",
+				"custom-plugin1@custom-mp",
+				"custom-plugin2@custom-mp",
 			},
 		}
 
@@ -1722,12 +1727,12 @@ func TestSyncMarketplaces_OfficialPlugins(t *testing.T) {
 		}
 	})
 
-	t.Run("settings with enabled_official_plugins in JSON", func(t *testing.T) {
+	t.Run("settings with enabled_plugins in JSON", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		settingsFile := filepath.Join(tmpDir, "settings.json")
 		settingsData := `{
 			"name": "test-user",
-			"enabled_official_plugins": ["context7", "git", "python"],
+			"enabled_plugins": ["context7@claude-plugins-official", "git@claude-plugins-official", "my-plugin@my-marketplace"],
 			"created_at": "2025-01-01T00:00:00Z",
 			"updated_at": "2025-01-01T00:00:00Z"
 		}`
@@ -1740,11 +1745,11 @@ func TestSyncMarketplaces_OfficialPlugins(t *testing.T) {
 			t.Fatalf("loadSettingsFile failed: %v", err)
 		}
 
-		if len(settings.EnabledOfficialPlugins) != 3 {
-			t.Errorf("Expected 3 official plugins, got %d", len(settings.EnabledOfficialPlugins))
+		if len(settings.EnabledPlugins) != 3 {
+			t.Errorf("Expected 3 plugins, got %d", len(settings.EnabledPlugins))
 		}
-		if settings.EnabledOfficialPlugins[0] != "context7" {
-			t.Errorf("Expected first plugin to be 'context7', got '%s'", settings.EnabledOfficialPlugins[0])
+		if settings.EnabledPlugins[0] != "context7@claude-plugins-official" {
+			t.Errorf("Expected first plugin to be 'context7@claude-plugins-official', got '%s'", settings.EnabledPlugins[0])
 		}
 	})
 }
