@@ -462,83 +462,6 @@ func (m *KubernetesSessionManager) ensureBaseSecret(ctx context.Context) error {
 	return nil
 }
 
-// setupClaudeScript is the shell script executed by the init container to set up Claude configuration
-// Uses Node.js for JSON merging since it's available in the agentapi-proxy image
-const setupClaudeScript = `
-set -e
-
-# Create directory structure in EmptyDir
-mkdir -p /claude-config/.claude
-
-# Merge claude.json: base + user (user takes precedence)
-# Using Node.js for JSON merging
-if [ -f /claude-config-base/claude.json ]; then
-    cp /claude-config-base/claude.json /tmp/base.json
-else
-    echo '{}' > /tmp/base.json
-fi
-
-if [ -f /claude-config-user/claude.json ]; then
-    node -e "
-const base = JSON.parse(require('fs').readFileSync('/tmp/base.json', 'utf8'));
-const user = JSON.parse(require('fs').readFileSync('/claude-config-user/claude.json', 'utf8'));
-const merged = { ...base, ...user };
-require('fs').writeFileSync('/claude-config/.claude.json', JSON.stringify(merged, null, 2));
-"
-else
-    cp /tmp/base.json /claude-config/.claude.json
-fi
-
-# Copy settings.json from base config and add GITHUB_TOKEN if available
-if [ -f /claude-config-base/settings.json ]; then
-    if [ -n "$GITHUB_TOKEN" ]; then
-        # Add GITHUB_TOKEN to settings.json env section using Node.js
-        node -e "
-const settings = JSON.parse(require('fs').readFileSync('/claude-config-base/settings.json', 'utf8'));
-if (!settings.env) settings.env = {};
-settings.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-require('fs').writeFileSync('/claude-config/.claude/settings.json', JSON.stringify(settings, null, 2));
-"
-        echo "settings.json copied with GITHUB_TOKEN"
-    else
-        cp /claude-config-base/settings.json /claude-config/.claude/settings.json
-        echo "settings.json copied"
-    fi
-fi
-
-# Copy CLAUDE.md from embedded location (from Docker image)
-if [ -f /tmp/config/CLAUDE.md ]; then
-    cp /tmp/config/CLAUDE.md /claude-config/.claude/CLAUDE.md
-    chmod 644 /claude-config/.claude/CLAUDE.md
-    echo "CLAUDE.md copied from Docker image"
-fi
-
-# Copy credentials.json from Secret if exists
-if [ -f /claude-credentials/credentials.json ]; then
-    cp /claude-credentials/credentials.json /claude-config/.claude/.credentials.json
-    chmod 600 /claude-config/.claude/.credentials.json
-    echo "Credentials file copied"
-fi
-
-# Copy notification subscriptions from Secret to writable EmptyDir
-# Use -L to follow symlinks (Secret mounts use symlinks)
-# Use find to avoid glob expansion issues when directory is empty
-if [ -d /notification-subscriptions-source ]; then
-    file_count=$(find -L /notification-subscriptions-source -maxdepth 1 -type f 2>/dev/null | wc -l)
-    if [ "$file_count" -gt 0 ]; then
-        cp -rL /notification-subscriptions-source/* /notifications/
-        echo "Notification subscriptions copied"
-    fi
-fi
-
-# Set permissions (running as user 999)
-chmod 644 /claude-config/.claude.json
-chmod -R 755 /claude-config/.claude
-chmod 644 /claude-config/.claude/settings.json 2>/dev/null || true
-
-echo "Claude configuration setup complete"
-`
-
 // setupMCPServersScript is the shell script executed by the init container to merge MCP server configurations
 // It uses the agentapi-proxy helpers merge-mcp-config command to merge configurations from multiple directories
 const setupMCPServersScript = `
@@ -589,100 +512,20 @@ agentapi-proxy helpers merge-mcp-config \
 echo "[MCP] MCP server configuration complete"
 `
 
-// setupMarketplacesScript is the shell script executed by the init container to setup plugin marketplaces
-// It clones marketplace repositories and updates settings.json with local paths
-const setupMarketplacesScript = `
+// syncScript is the shell script executed by the init container to sync Claude configuration
+// It reads from the Settings Secret and generates ~/.claude.json and ~/.claude/settings.json
+const syncScript = `
 set -e
 
-MARKETPLACES_DIR="/marketplaces"
-mkdir -p "$MARKETPLACES_DIR"
+echo "[SYNC] Starting Claude configuration sync"
 
-# Check if marketplace config exists
-if [ ! -f /marketplace-config/marketplaces.json ]; then
-    echo "[MARKETPLACE] No marketplace configuration found, skipping"
-    exit 0
-fi
+# Run sync command to generate Claude configuration
+agentapi-proxy helpers sync \
+    --settings-file "/settings-config/settings.json" \
+    --output-dir "/claude-config" \
+    --marketplaces-dir "/marketplaces"
 
-# Process marketplaces using Node.js
-node -e "
-const fs = require('fs');
-const { execSync } = require('child_process');
-const path = require('path');
-
-// Read marketplace config from mounted secret
-const config = JSON.parse(fs.readFileSync('/marketplace-config/marketplaces.json', 'utf8'));
-const marketplaces = config.marketplaces || {};
-const marketplacesDir = '/marketplaces';
-
-if (Object.keys(marketplaces).length === 0) {
-    console.log('[MARKETPLACE] No marketplaces configured');
-    process.exit(0);
-}
-
-const extraKnownMarketplaces = {};
-const enabledPlugins = [];
-
-for (const [name, marketplace] of Object.entries(marketplaces)) {
-    if (!marketplace.url) {
-        console.log('[MARKETPLACE] Skipping', name, '- no URL configured');
-        continue;
-    }
-
-    const targetDir = path.join(marketplacesDir, name);
-
-    // Clone repository
-    console.log('[MARKETPLACE] Cloning', marketplace.url, 'to', targetDir);
-    try {
-        execSync('git clone --depth 1 ' + marketplace.url + ' ' + targetDir, { stdio: 'inherit' });
-    } catch (err) {
-        console.error('[MARKETPLACE] Failed to clone', marketplace.url, ':', err.message);
-        continue;
-    }
-
-    // Add to extraKnownMarketplaces with local path
-    extraKnownMarketplaces[name] = {
-        source: {
-            source: 'local',
-            path: targetDir
-        }
-    };
-
-    // Add enabled plugins with marketplace qualifier
-    if (marketplace.enabled_plugins && Array.isArray(marketplace.enabled_plugins)) {
-        for (const plugin of marketplace.enabled_plugins) {
-            enabledPlugins.push(plugin + '@' + name);
-        }
-    }
-}
-
-// Read existing settings.json and merge
-const settingsPath = '/claude-config/.claude/settings.json';
-let settings = {};
-if (fs.existsSync(settingsPath)) {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-}
-
-// Merge marketplace settings
-settings.extraKnownMarketplaces = {
-    ...(settings.extraKnownMarketplaces || {}),
-    ...extraKnownMarketplaces
-};
-
-// Merge enabled plugins (avoid duplicates)
-const existingPlugins = new Set(settings.enabledPlugins || []);
-for (const plugin of enabledPlugins) {
-    existingPlugins.add(plugin);
-}
-settings.enabledPlugins = Array.from(existingPlugins);
-
-// Write updated settings
-fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-console.log('[MARKETPLACE] Setup complete');
-console.log('[MARKETPLACE] Marketplaces:', Object.keys(extraKnownMarketplaces).join(', ') || 'none');
-console.log('[MARKETPLACE] Enabled plugins:', settings.enabledPlugins.join(', ') || 'none');
-"
-
-echo "[MARKETPLACE] Marketplace setup complete"
+echo "[SYNC] Claude configuration sync complete"
 `
 
 // createDeployment creates a Deployment for the session
@@ -710,19 +553,16 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		initContainers = append(initContainers, *cloneRepoInitContainer)
 	}
 
-	// Add Claude configuration setup init container
-	initContainers = append(initContainers, m.buildClaudeSetupInitContainer(session))
+	// Add sync init container
+	// This generates ~/.claude.json, ~/.claude/settings.json, and clones marketplace repositories
+	initContainers = append(initContainers, m.buildSyncInitContainer(session, req))
+	log.Printf("[K8S_SESSION] Added sync init container for session %s", session.id)
 
 	// Add MCP servers setup init container if enabled
 	if m.k8sConfig.MCPServersEnabled {
 		initContainers = append(initContainers, m.buildMCPSetupInitContainer(session, req))
 		log.Printf("[K8S_SESSION] Added MCP setup init container for session %s", session.id)
 	}
-
-	// Add marketplace setup init container
-	// This clones marketplace repositories and updates settings.json
-	initContainers = append(initContainers, m.buildMarketplaceSetupInitContainer(session, req))
-	log.Printf("[K8S_SESSION] Added marketplace setup init container for session %s", session.id)
 
 	// Determine working directory based on whether repository is specified
 	workingDir := "/home/agentapi/workdir"
@@ -1473,63 +1313,6 @@ func (m *KubernetesSessionManager) createGithubTokenSecret(
 	return nil
 }
 
-// buildClaudeSetupInitContainer builds the init container for Claude configuration setup
-func (m *KubernetesSessionManager) buildClaudeSetupInitContainer(session *kubernetesSession) corev1.Container {
-	// Use the main container image if InitContainerImage is not specified
-	initImage := m.k8sConfig.InitContainerImage
-	if initImage == "" {
-		initImage = m.k8sConfig.Image
-	}
-
-	volumeMounts := []corev1.VolumeMount{
-		{
-			Name:      "claude-config-base",
-			MountPath: "/claude-config-base",
-			ReadOnly:  true,
-		},
-		{
-			Name:      "claude-config-user",
-			MountPath: "/claude-config-user",
-			ReadOnly:  true,
-		},
-		{
-			Name:      "claude-config",
-			MountPath: "/claude-config",
-		},
-		// Credentials from user-level Secret (agentapi-agent-credentials-{userID})
-		// This Secret is optional and managed by credentials-sync sidecar
-		{
-			Name:      "claude-credentials",
-			MountPath: "/claude-credentials",
-			ReadOnly:  true,
-		},
-		// Notification subscriptions source (Secret, read-only)
-		{
-			Name:      "notification-subscriptions-source",
-			MountPath: "/notification-subscriptions-source",
-			ReadOnly:  true,
-		},
-		// Notifications directory (EmptyDir, writable)
-		{
-			Name:      "notifications",
-			MountPath: "/notifications",
-		},
-	}
-
-	return corev1.Container{
-		Name:            "setup-claude",
-		Image:           initImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"sh", "-c"},
-		Args:            []string{setupClaudeScript},
-		VolumeMounts:    volumeMounts,
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
-		},
-	}
-}
-
 // buildVolumes builds the volume configuration for the session pod
 func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, userConfigMapName string) []corev1.Volume {
 	// Credentials Secret name follows the pattern: agentapi-agent-credentials-{userID}
@@ -1658,8 +1441,8 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 		volumes = append(volumes, m.buildMCPVolumes(session)...)
 	}
 
-	// Add marketplace configuration volumes
-	volumes = append(volumes, m.buildMarketplaceVolumes(session)...)
+	// Add sync configuration volumes (settings secret + marketplaces)
+	volumes = append(volumes, m.buildSyncVolumes(session)...)
 
 	return volumes
 }
@@ -1760,67 +1543,33 @@ func (m *KubernetesSessionManager) buildMCPVolumes(session *kubernetesSession) [
 	return volumes
 }
 
-// buildMarketplaceVolumes builds the volumes for marketplace configuration
-func (m *KubernetesSessionManager) buildMarketplaceVolumes(session *kubernetesSession) []corev1.Volume {
+// buildSyncVolumes builds the volumes for sync configuration
+// This replaces buildMarketplaceVolumes and uses the Settings Secret directly
+func (m *KubernetesSessionManager) buildSyncVolumes(session *kubernetesSession) []corev1.Volume {
 	volumes := []corev1.Volume{}
 
-	// Build projected volume sources for marketplace-config
-	var projectedSources []corev1.VolumeProjection
-
-	// Add team marketplace config Secrets
-	if session.request != nil {
-		for i, team := range session.request.Teams {
-			secretName := fmt.Sprintf("marketplaces-%s", sanitizeSecretName(team))
-			projectedSources = append(projectedSources, corev1.VolumeProjection{
-				Secret: &corev1.SecretProjection{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: secretName,
-					},
+	// Add settings-config volume from agentapi-settings-{user} Secret
+	if session.request != nil && session.request.UserID != "" {
+		settingsSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(session.request.UserID))
+		volumes = append(volumes, corev1.Volume{
+			Name: "settings-config",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: settingsSecretName,
 					Items: []corev1.KeyToPath{
 						{
-							Key:  "marketplaces.json",
-							Path: fmt.Sprintf("team/%d/marketplaces.json", i),
+							Key:  "settings.json",
+							Path: "settings.json",
 						},
 					},
 					Optional: boolPtr(true),
 				},
-			})
-		}
-	}
-
-	// Add user marketplace config Secret
-	if session.request != nil && session.request.UserID != "" {
-		userSecretName := fmt.Sprintf("marketplaces-%s", sanitizeSecretName(session.request.UserID))
-		projectedSources = append(projectedSources, corev1.VolumeProjection{
-			Secret: &corev1.SecretProjection{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: userSecretName,
-				},
-				Items: []corev1.KeyToPath{
-					{
-						Key:  "marketplaces.json",
-						Path: "marketplaces.json",
-					},
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
-
-	// Add marketplace-config as projected volume
-	if len(projectedSources) > 0 {
-		volumes = append(volumes, corev1.Volume{
-			Name: "marketplace-config",
-			VolumeSource: corev1.VolumeSource{
-				Projected: &corev1.ProjectedVolumeSource{
-					Sources: projectedSources,
-				},
 			},
 		})
 	} else {
-		// Use an EmptyDir if no secrets configured
+		// Use an EmptyDir if no user configured
 		volumes = append(volumes, corev1.Volume{
-			Name: "marketplace-config",
+			Name: "settings-config",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
@@ -2314,15 +2063,16 @@ func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *kubernete
 	}
 }
 
-// buildMarketplaceSetupInitContainer builds the init container for marketplace setup
-func (m *KubernetesSessionManager) buildMarketplaceSetupInitContainer(session *kubernetesSession, req *RunServerRequest) corev1.Container {
+// buildSyncInitContainer builds the init container for syncing Claude configuration
+// This replaces both buildClaudeSetupInitContainer and buildMarketplaceSetupInitContainer
+func (m *KubernetesSessionManager) buildSyncInitContainer(session *kubernetesSession, req *RunServerRequest) corev1.Container {
 	// Use the main container image if InitContainerImage is not specified
 	initImage := m.k8sConfig.InitContainerImage
 	if initImage == "" {
 		initImage = m.k8sConfig.Image
 	}
 
-	// Build envFrom for environment variables needed by marketplace cloning
+	// Build envFrom for environment variables needed by sync (GITHUB_TOKEN for marketplace cloning)
 	var envFrom []corev1.EnvFromSource
 
 	if req.GithubToken != "" {
@@ -2376,16 +2126,16 @@ func (m *KubernetesSessionManager) buildMarketplaceSetupInitContainer(session *k
 	}
 
 	return corev1.Container{
-		Name:            "setup-marketplaces",
+		Name:            "sync-config",
 		Image:           initImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{"sh", "-c"},
-		Args:            []string{setupMarketplacesScript},
+		Args:            []string{syncScript},
 		EnvFrom:         envFrom,
 		VolumeMounts: []corev1.VolumeMount{
 			{
-				Name:      "marketplace-config",
-				MountPath: "/marketplace-config",
+				Name:      "settings-config",
+				MountPath: "/settings-config",
 				ReadOnly:  true,
 			},
 			{

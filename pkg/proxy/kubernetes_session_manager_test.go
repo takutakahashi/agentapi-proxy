@@ -1019,24 +1019,8 @@ func TestKubernetesSessionManager_CredentialsVolumeConfiguration(t *testing.T) {
 		t.Error("Expected claude-credentials volume to exist")
 	}
 
-	// Check initContainer has credentials volume mount
-	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
-	foundCredentialsMount := false
-	for _, mount := range initContainer.VolumeMounts {
-		if mount.Name == "claude-credentials" {
-			foundCredentialsMount = true
-			if mount.MountPath != "/claude-credentials" {
-				t.Errorf("Expected credentials mount path '/claude-credentials', got %s", mount.MountPath)
-			}
-			if !mount.ReadOnly {
-				t.Error("Expected credentials volume mount to be read-only")
-			}
-			break
-		}
-	}
-	if !foundCredentialsMount {
-		t.Error("Expected initContainer to have claude-credentials volume mount")
-	}
+	// Note: sync-config init container does not mount claude-credentials
+	// The main container mounts claude-credentials directly
 
 	// Verify credentials-sync sidecar is present
 	foundSidecar := false
@@ -1120,22 +1104,16 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 	}
 
 	// Verify InitContainer exists
-	// We now have 2 init containers: setup-claude and setup-marketplaces
+	// We have 1 init container: sync-config
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 2 {
-		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 1 {
+		t.Fatalf("Expected 1 init container, got %d", len(podSpec.InitContainers))
 	}
 
-	// Find setup-claude init container
-	var initContainer *corev1.Container
-	for i := range podSpec.InitContainers {
-		if podSpec.InitContainers[i].Name == "setup-claude" {
-			initContainer = &podSpec.InitContainers[i]
-			break
-		}
-	}
-	if initContainer == nil {
-		t.Fatal("Expected setup-claude init container to exist")
+	// Find sync-config init container
+	initContainer := podSpec.InitContainers[0]
+	if initContainer.Name != "sync-config" {
+		t.Fatalf("Expected sync-config init container, got %s", initContainer.Name)
 	}
 	if initContainer.Image != "alpine:3.19" {
 		t.Errorf("Expected init container image 'alpine:3.19', got %s", initContainer.Image)
@@ -1146,7 +1124,7 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 	for _, vm := range initContainer.VolumeMounts {
 		initVolumeMountNames[vm.Name] = true
 	}
-	expectedInitMounts := []string{"claude-config-base", "claude-config-user", "claude-config"}
+	expectedInitMounts := []string{"settings-config", "claude-config", "marketplaces"}
 	for _, name := range expectedInitMounts {
 		if !initVolumeMountNames[name] {
 			t.Errorf("Expected init container to have volume mount '%s'", name)
@@ -1158,7 +1136,7 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 	for _, v := range podSpec.Volumes {
 		volumeNames[v.Name] = true
 	}
-	expectedVolumes := []string{"workdir", "claude-config-base", "claude-config-user", "claude-config"}
+	expectedVolumes := []string{"workdir", "settings-config", "claude-config", "marketplaces"}
 	for _, name := range expectedVolumes {
 		if !volumeNames[name] {
 			t.Errorf("Expected volume '%s' to exist", name)
@@ -1323,22 +1301,16 @@ func TestKubernetesSessionManager_InitContainerImageDefault(t *testing.T) {
 	}
 
 	// Verify InitContainer uses the main image when InitContainerImage is empty
-	// We now have 2 init containers: setup-claude and setup-marketplaces
+	// We now have 1 init container: sync-config
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 2 {
-		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 1 {
+		t.Fatalf("Expected 1 init container, got %d", len(podSpec.InitContainers))
 	}
 
-	// Find setup-claude init container
-	var initContainer *corev1.Container
-	for i := range podSpec.InitContainers {
-		if podSpec.InitContainers[i].Name == "setup-claude" {
-			initContainer = &podSpec.InitContainers[i]
-			break
-		}
-	}
-	if initContainer == nil {
-		t.Fatal("Expected setup-claude init container to exist")
+	// Find sync-config init container
+	initContainer := &podSpec.InitContainers[0]
+	if initContainer.Name != "sync-config" {
+		t.Fatalf("Expected sync-config init container, got %s", initContainer.Name)
 	}
 	expectedImage := "ghcr.io/takutakahashi/agentapi-proxy:v1.2.3"
 	if initContainer.Image != expectedImage {
@@ -1510,10 +1482,10 @@ func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have 3 init containers: clone-repo, setup-claude, and setup-marketplaces
+	// Verify we have 2 init containers: clone-repo and sync-config
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 3 {
-		t.Fatalf("Expected 3 init containers, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
 	}
 
 	// Verify first init container is clone-repo
@@ -1561,10 +1533,10 @@ func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
 		t.Error("Expected clone-repo container to have workdir volume mount")
 	}
 
-	// Verify second init container is setup-claude
-	setupClaudeContainer := podSpec.InitContainers[1]
-	if setupClaudeContainer.Name != "setup-claude" {
-		t.Errorf("Expected second init container name 'setup-claude', got %s", setupClaudeContainer.Name)
+	// Verify second init container is sync-config
+	syncConfigContainer := podSpec.InitContainers[1]
+	if syncConfigContainer.Name != "sync-config" {
+		t.Errorf("Expected second init container name 'sync-config', got %s", syncConfigContainer.Name)
 	}
 }
 
@@ -1633,26 +1605,22 @@ func TestKubernetesSessionManager_CloneRepoInitContainerSkippedWithoutRepoInfo(t
 		_ = manager.DeleteSession(sessionID)
 	}()
 
-	// Get deployment and verify only setup-claude InitContainer exists
+	// Get deployment and verify only sync-config InitContainer exists (no clone-repo)
 	deploymentName := "agentapi-session-" + sessionID
 	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have 2 init containers (setup-claude and setup-marketplaces) when RepoInfo is nil
+	// Verify we have 1 init container (sync-config) when RepoInfo is nil
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 2 {
-		t.Fatalf("Expected 2 init containers when RepoInfo is nil, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 1 {
+		t.Fatalf("Expected 1 init container when RepoInfo is nil, got %d", len(podSpec.InitContainers))
 	}
 
-	// Verify the first init container is setup-claude (not clone-repo)
-	if podSpec.InitContainers[0].Name != "setup-claude" {
-		t.Errorf("Expected first init container name 'setup-claude', got %s", podSpec.InitContainers[0].Name)
-	}
-	// Verify the second init container is setup-marketplaces
-	if podSpec.InitContainers[1].Name != "setup-marketplaces" {
-		t.Errorf("Expected second init container name 'setup-marketplaces', got %s", podSpec.InitContainers[1].Name)
+	// Verify the first init container is sync-config (not clone-repo)
+	if podSpec.InitContainers[0].Name != "sync-config" {
+		t.Errorf("Expected first init container name 'sync-config', got %s", podSpec.InitContainers[0].Name)
 	}
 }
 
@@ -1731,10 +1699,10 @@ func TestKubernetesSessionManager_CloneRepoInitContainerWithoutGitHubSecret(t *t
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have 3 init containers (clone-repo, setup-claude, setup-marketplaces)
+	// Verify we have 2 init containers (clone-repo, sync-config)
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 3 {
-		t.Fatalf("Expected 3 init containers, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
 	}
 
 	// Verify first init container is clone-repo
