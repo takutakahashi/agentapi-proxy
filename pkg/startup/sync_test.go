@@ -1577,3 +1577,174 @@ func TestSync(t *testing.T) {
 		}
 	})
 }
+
+func TestSyncMarketplaces_OfficialPlugins(t *testing.T) {
+	t.Run("adds official plugins to enabledPlugins", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		outputDir := filepath.Join(tmpDir, "output")
+		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
+
+		settings := &settingsJSON{
+			Name:                   "test-user",
+			EnabledOfficialPlugins: []string{"context7", "typescript", "python"},
+		}
+
+		opts := SyncOptions{
+			OutputDir:       outputDir,
+			MarketplacesDir: marketplacesDir,
+		}
+
+		err := syncMarketplaces(opts, settings)
+		if err != nil {
+			t.Fatalf("syncMarketplaces failed: %v", err)
+		}
+
+		// Verify settings.json contains official plugins
+		settingsPath := filepath.Join(outputDir, ".claude", "settings.json")
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("Failed to read settings.json: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to parse settings.json: %v", err)
+		}
+
+		// Check enabledPlugins
+		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Expected enabledPlugins to exist")
+		}
+
+		// Verify official plugins are in format: plugin@claude-plugins-official
+		expectedPlugins := []string{
+			"context7@claude-plugins-official",
+			"typescript@claude-plugins-official",
+			"python@claude-plugins-official",
+		}
+		for _, pluginName := range expectedPlugins {
+			val, ok := enabledPlugins[pluginName]
+			if !ok {
+				t.Errorf("Expected plugin '%s' to exist", pluginName)
+			}
+			// Verify value is true (boolean)
+			if val != true {
+				t.Errorf("Expected plugin '%s' value to be true, got %v", pluginName, val)
+			}
+		}
+
+		// extraKnownMarketplaces should not exist (no custom marketplaces)
+		if _, ok := result["extraKnownMarketplaces"]; ok {
+			t.Error("Expected no extraKnownMarketplaces when only official plugins are set")
+		}
+	})
+
+	t.Run("combines official and marketplace plugins", func(t *testing.T) {
+		// Skip if git is not available
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("git not available")
+		}
+
+		tmpDir := t.TempDir()
+		outputDir := filepath.Join(tmpDir, "output")
+		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
+
+		// Create a local git repo as marketplace source
+		sourceDir := filepath.Join(tmpDir, "marketplace-source")
+		createTestGitRepo(t, sourceDir, map[string]string{
+			"README.md": "# Test Marketplace",
+		})
+
+		settings := &settingsJSON{
+			Name:                   "test-user",
+			EnabledOfficialPlugins: []string{"context7", "typescript"},
+			Marketplaces: map[string]*marketplaceJSON{
+				"custom-mp": {
+					URL:            sourceDir,
+					EnabledPlugins: []string{"custom-plugin1", "custom-plugin2"},
+				},
+			},
+		}
+
+		opts := SyncOptions{
+			OutputDir:       outputDir,
+			MarketplacesDir: marketplacesDir,
+		}
+
+		err := syncMarketplaces(opts, settings)
+		if err != nil {
+			t.Fatalf("syncMarketplaces failed: %v", err)
+		}
+
+		// Verify settings.json
+		settingsPath := filepath.Join(outputDir, ".claude", "settings.json")
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatalf("Failed to read settings.json: %v", err)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to parse settings.json: %v", err)
+		}
+
+		// Check enabledPlugins contains both official and custom plugins
+		enabledPlugins, ok := result["enabledPlugins"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Expected enabledPlugins to exist")
+		}
+
+		expectedPlugins := []string{
+			"context7@claude-plugins-official",
+			"typescript@claude-plugins-official",
+			"custom-plugin1@custom-mp",
+			"custom-plugin2@custom-mp",
+		}
+
+		if len(enabledPlugins) != len(expectedPlugins) {
+			t.Errorf("Expected %d plugins, got %d", len(expectedPlugins), len(enabledPlugins))
+		}
+
+		for _, pluginName := range expectedPlugins {
+			if _, ok := enabledPlugins[pluginName]; !ok {
+				t.Errorf("Expected plugin '%s' to exist", pluginName)
+			}
+		}
+
+		// Check extraKnownMarketplaces exists for custom marketplace
+		extraKnown, ok := result["extraKnownMarketplaces"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Expected extraKnownMarketplaces to exist")
+		}
+		if _, ok := extraKnown["custom-mp"]; !ok {
+			t.Error("Expected custom-mp to exist in extraKnownMarketplaces")
+		}
+	})
+
+	t.Run("settings with enabled_official_plugins in JSON", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		settingsFile := filepath.Join(tmpDir, "settings.json")
+		settingsData := `{
+			"name": "test-user",
+			"enabled_official_plugins": ["context7", "git", "python"],
+			"created_at": "2025-01-01T00:00:00Z",
+			"updated_at": "2025-01-01T00:00:00Z"
+		}`
+		if err := os.WriteFile(settingsFile, []byte(settingsData), 0644); err != nil {
+			t.Fatalf("Failed to write settings file: %v", err)
+		}
+
+		settings, err := loadSettingsFile(settingsFile)
+		if err != nil {
+			t.Fatalf("loadSettingsFile failed: %v", err)
+		}
+
+		if len(settings.EnabledOfficialPlugins) != 3 {
+			t.Errorf("Expected 3 official plugins, got %d", len(settings.EnabledOfficialPlugins))
+		}
+		if settings.EnabledOfficialPlugins[0] != "context7" {
+			t.Errorf("Expected first plugin to be 'context7', got '%s'", settings.EnabledOfficialPlugins[0])
+		}
+	})
+}

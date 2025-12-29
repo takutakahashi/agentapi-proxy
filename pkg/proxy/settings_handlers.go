@@ -71,9 +71,10 @@ type MarketplaceRequest struct {
 
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
-	Bedrock      *BedrockSettingsRequest        `json:"bedrock"`
-	MCPServers   map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
-	Marketplaces map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
+	Bedrock                *BedrockSettingsRequest        `json:"bedrock"`
+	MCPServers             map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
+	Marketplaces           map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
+	EnabledOfficialPlugins []string                       `json:"enabled_official_plugins,omitempty"`
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -104,12 +105,13 @@ type MarketplaceResponse struct {
 
 // SettingsResponse is the response body for settings
 type SettingsResponse struct {
-	Name         string                          `json:"name"`
-	Bedrock      *BedrockSettingsResponse        `json:"bedrock,omitempty"`
-	MCPServers   map[string]*MCPServerResponse   `json:"mcp_servers,omitempty"`
-	Marketplaces map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
-	CreatedAt    string                          `json:"created_at"`
-	UpdatedAt    string                          `json:"updated_at"`
+	Name                   string                          `json:"name"`
+	Bedrock                *BedrockSettingsResponse        `json:"bedrock,omitempty"`
+	MCPServers             map[string]*MCPServerResponse   `json:"mcp_servers,omitempty"`
+	Marketplaces           map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
+	EnabledOfficialPlugins []string                        `json:"enabled_official_plugins,omitempty"`
+	CreatedAt              string                          `json:"created_at"`
+	UpdatedAt              string                          `json:"updated_at"`
 }
 
 // GetSettings handles GET /settings/:name
@@ -249,6 +251,11 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 			marketplaces.SetMarketplace(marketplaceName, marketplace)
 		}
 		settings.SetMarketplaces(marketplaces)
+	}
+
+	// Update enabled official plugins
+	if req.EnabledOfficialPlugins != nil {
+		settings.SetEnabledOfficialPlugins(req.EnabledOfficialPlugins)
 	}
 
 	// Validate
@@ -450,6 +457,10 @@ func (h *SettingsHandlers) toResponse(settings *entities.Settings) *SettingsResp
 				EnabledPlugins: marketplace.EnabledPlugins(),
 			}
 		}
+	}
+
+	if plugins := settings.EnabledOfficialPlugins(); len(plugins) > 0 {
+		resp.EnabledOfficialPlugins = plugins
 	}
 
 	return resp

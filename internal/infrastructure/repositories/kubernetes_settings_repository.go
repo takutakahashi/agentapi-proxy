@@ -29,12 +29,13 @@ const (
 
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
-	Name         string                      `json:"name"`
-	Bedrock      *bedrockJSON                `json:"bedrock,omitempty"`
-	MCPServers   map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
-	Marketplaces map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
-	CreatedAt    time.Time                   `json:"created_at"`
-	UpdatedAt    time.Time                   `json:"updated_at"`
+	Name                   string                      `json:"name"`
+	Bedrock                *bedrockJSON                `json:"bedrock,omitempty"`
+	MCPServers             map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
+	Marketplaces           map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
+	EnabledOfficialPlugins []string                    `json:"enabled_official_plugins,omitempty"`
+	CreatedAt              time.Time                   `json:"created_at"`
+	UpdatedAt              time.Time                   `json:"updated_at"`
 }
 
 // bedrockJSON is the JSON representation of Bedrock settings
@@ -239,6 +240,10 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		}
 	}
 
+	if plugins := settings.EnabledOfficialPlugins(); len(plugins) > 0 {
+		sj.EnabledOfficialPlugins = plugins
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -296,6 +301,12 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 		}
 		settings.SetMarketplaces(marketplaces)
 		// Reset updatedAt since SetMarketplaces updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if len(sj.EnabledOfficialPlugins) > 0 {
+		settings.SetEnabledOfficialPlugins(sj.EnabledOfficialPlugins)
+		// Reset updatedAt since SetEnabledOfficialPlugins updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
