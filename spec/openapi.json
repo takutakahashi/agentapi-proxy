@@ -660,10 +660,10 @@
                   },
                   "marketplaces": {
                     "my-marketplace": {
-                      "url": "https://github.com/example/my-marketplace.git",
-                      "enabled_plugins": ["plugin1", "plugin2"]
+                      "url": "https://github.com/example/my-marketplace.git"
                     }
                   },
+                  "enabled_plugins": ["commit@claude-plugins-official", "plugin1@my-marketplace"],
                   "created_at": "2025-01-01T00:00:00Z",
                   "updated_at": "2025-01-02T00:00:00Z"
                 }
@@ -759,18 +759,17 @@
                   }
                 },
                 "marketplaces": {
-                  "summary": "Plugin marketplaces",
+                  "summary": "Plugin marketplaces with enabled plugins",
                   "value": {
                     "marketplaces": {
                       "my-marketplace": {
-                        "url": "https://github.com/example/my-marketplace.git",
-                        "enabled_plugins": ["plugin1", "plugin2"]
+                        "url": "https://github.com/example/my-marketplace.git"
                       },
                       "another-marketplace": {
-                        "url": "https://github.com/example/another-marketplace.git",
-                        "enabled_plugins": ["pluginA"]
+                        "url": "https://github.com/example/another-marketplace.git"
                       }
-                    }
+                    },
+                    "enabled_plugins": ["plugin1@my-marketplace", "plugin2@my-marketplace", "pluginA@another-marketplace"]
                   }
                 }
               }
@@ -1251,12 +1250,12 @@
             },
             "description": "Claude Code plugin marketplace configurations keyed by marketplace name"
           },
-          "enabled_official_plugins": {
+          "enabled_plugins": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "List of official plugin names to enable from claude-plugins-official marketplace"
+            "description": "List of enabled plugins in 'plugin@marketplace' format (e.g., 'commit@claude-plugins-official')"
           }
         }
       },
@@ -1336,13 +1335,6 @@
           "url": {
             "type": "string",
             "description": "Git repository URL of the marketplace"
-          },
-          "enabled_plugins": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "List of plugin names to enable from this marketplace"
           }
         }
       },
@@ -1370,12 +1362,12 @@
             },
             "description": "Claude Code plugin marketplace configurations"
           },
-          "enabled_official_plugins": {
+          "enabled_plugins": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "List of enabled official plugin names from claude-plugins-official marketplace"
+            "description": "List of enabled plugins in 'plugin@marketplace' format"
           },
           "created_at": {
             "type": "string",
@@ -1446,13 +1438,6 @@
           "url": {
             "type": "string",
             "description": "Git repository URL of the marketplace"
-          },
-          "enabled_plugins": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "List of plugin names enabled from this marketplace"
           }
         }
       },

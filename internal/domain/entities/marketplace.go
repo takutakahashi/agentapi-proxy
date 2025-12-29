@@ -4,16 +4,14 @@ import "errors"
 
 // Marketplace represents a plugin marketplace
 type Marketplace struct {
-	name           string
-	url            string   // Git repository URL
-	enabledPlugins []string // Plugin names (without marketplace qualifier)
+	name string
+	url  string // Git repository URL
 }
 
 // NewMarketplace creates a new Marketplace
 func NewMarketplace(name string) *Marketplace {
 	return &Marketplace{
-		name:           name,
-		enabledPlugins: []string{},
+		name: name,
 	}
 }
 
@@ -27,32 +25,9 @@ func (m *Marketplace) URL() string {
 	return m.url
 }
 
-// EnabledPlugins returns the list of enabled plugin names
-func (m *Marketplace) EnabledPlugins() []string {
-	return m.enabledPlugins
-}
-
 // SetURL sets the Git repository URL
 func (m *Marketplace) SetURL(url string) {
 	m.url = url
-}
-
-// SetEnabledPlugins sets the list of enabled plugin names
-func (m *Marketplace) SetEnabledPlugins(plugins []string) {
-	if plugins == nil {
-		m.enabledPlugins = []string{}
-	} else {
-		m.enabledPlugins = plugins
-	}
-}
-
-// QualifiedPluginNames returns plugin names in "plugin@marketplace" format
-func (m *Marketplace) QualifiedPluginNames() []string {
-	result := make([]string, len(m.enabledPlugins))
-	for i, plugin := range m.enabledPlugins {
-		result[i] = plugin + "@" + m.name
-	}
-	return result
 }
 
 // Validate validates the Marketplace configuration
@@ -101,16 +76,6 @@ func (s *MarketplacesSettings) RemoveMarketplace(name string) {
 // IsEmpty returns true if there are no marketplaces
 func (s *MarketplacesSettings) IsEmpty() bool {
 	return len(s.marketplaces) == 0
-}
-
-// AllEnabledPlugins returns all enabled plugins from all marketplaces
-// in "plugin@marketplace" format
-func (s *MarketplacesSettings) AllEnabledPlugins() []string {
-	var result []string
-	for _, m := range s.marketplaces {
-		result = append(result, m.QualifiedPluginNames()...)
-	}
-	return result
 }
 
 // Validate validates all marketplaces

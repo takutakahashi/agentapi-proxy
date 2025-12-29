@@ -34,8 +34,7 @@ type MarketplaceConfig struct {
 
 // MarketplaceServerConfig represents a single marketplace configuration
 type MarketplaceServerConfig struct {
-	URL            string   `json:"url"`
-	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
+	URL string `json:"url"`
 }
 
 // KubernetesMarketplaceSecretSyncer implements MarketplaceSecretSyncer using Kubernetes Secrets
@@ -174,11 +173,6 @@ func (s *KubernetesMarketplaceSecretSyncer) buildMarketplaceConfig(settings *ent
 		mpConfig := MarketplaceServerConfig{
 			URL: marketplace.URL(),
 		}
-
-		if len(marketplace.EnabledPlugins()) > 0 {
-			mpConfig.EnabledPlugins = marketplace.EnabledPlugins()
-		}
-
 		config.Marketplaces[name] = mpConfig
 	}
 

@@ -65,16 +65,15 @@ type MCPServerRequest struct {
 
 // MarketplaceRequest is the request body for a single marketplace
 type MarketplaceRequest struct {
-	URL            string   `json:"url"`
-	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
+	URL string `json:"url"`
 }
 
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
-	Bedrock                *BedrockSettingsRequest        `json:"bedrock"`
-	MCPServers             map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
-	Marketplaces           map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
-	EnabledOfficialPlugins []string                       `json:"enabled_official_plugins,omitempty"`
+	Bedrock        *BedrockSettingsRequest        `json:"bedrock"`
+	MCPServers     map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
+	Marketplaces   map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
+	EnabledPlugins []string                       `json:"enabled_plugins,omitempty"` // plugin@marketplace format
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -99,19 +98,18 @@ type MCPServerResponse struct {
 
 // MarketplaceResponse is the response body for a single marketplace
 type MarketplaceResponse struct {
-	URL            string   `json:"url"`
-	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
+	URL string `json:"url"`
 }
 
 // SettingsResponse is the response body for settings
 type SettingsResponse struct {
-	Name                   string                          `json:"name"`
-	Bedrock                *BedrockSettingsResponse        `json:"bedrock,omitempty"`
-	MCPServers             map[string]*MCPServerResponse   `json:"mcp_servers,omitempty"`
-	Marketplaces           map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
-	EnabledOfficialPlugins []string                        `json:"enabled_official_plugins,omitempty"`
-	CreatedAt              string                          `json:"created_at"`
-	UpdatedAt              string                          `json:"updated_at"`
+	Name           string                          `json:"name"`
+	Bedrock        *BedrockSettingsResponse        `json:"bedrock,omitempty"`
+	MCPServers     map[string]*MCPServerResponse   `json:"mcp_servers,omitempty"`
+	Marketplaces   map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
+	EnabledPlugins []string                        `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	CreatedAt      string                          `json:"created_at"`
+	UpdatedAt      string                          `json:"updated_at"`
 }
 
 // GetSettings handles GET /settings/:name
@@ -247,15 +245,14 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 		for marketplaceName, marketplaceReq := range req.Marketplaces {
 			marketplace := entities.NewMarketplace(marketplaceName)
 			marketplace.SetURL(marketplaceReq.URL)
-			marketplace.SetEnabledPlugins(marketplaceReq.EnabledPlugins)
 			marketplaces.SetMarketplace(marketplaceName, marketplace)
 		}
 		settings.SetMarketplaces(marketplaces)
 	}
 
-	// Update enabled official plugins
-	if req.EnabledOfficialPlugins != nil {
-		settings.SetEnabledOfficialPlugins(req.EnabledOfficialPlugins)
+	// Update enabled plugins
+	if req.EnabledPlugins != nil {
+		settings.SetEnabledPlugins(req.EnabledPlugins)
 	}
 
 	// Validate
@@ -453,14 +450,13 @@ func (h *SettingsHandlers) toResponse(settings *entities.Settings) *SettingsResp
 		resp.Marketplaces = make(map[string]*MarketplaceResponse)
 		for name, marketplace := range marketplaces.Marketplaces() {
 			resp.Marketplaces[name] = &MarketplaceResponse{
-				URL:            marketplace.URL(),
-				EnabledPlugins: marketplace.EnabledPlugins(),
+				URL: marketplace.URL(),
 			}
 		}
 	}
 
-	if plugins := settings.EnabledOfficialPlugins(); len(plugins) > 0 {
-		resp.EnabledOfficialPlugins = plugins
+	if plugins := settings.EnabledPlugins(); len(plugins) > 0 {
+		resp.EnabledPlugins = plugins
 	}
 
 	return resp

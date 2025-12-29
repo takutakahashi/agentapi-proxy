@@ -22,13 +22,13 @@ type SyncOptions struct {
 
 // settingsJSON represents the structure of settings.json from Settings Secret
 type settingsJSON struct {
-	Name                   string                      `json:"name"`
-	Bedrock                *bedrockJSON                `json:"bedrock,omitempty"`
-	MCPServers             map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
-	Marketplaces           map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
-	EnabledOfficialPlugins []string                    `json:"enabled_official_plugins,omitempty"`
-	CreatedAt              string                      `json:"created_at"`
-	UpdatedAt              string                      `json:"updated_at"`
+	Name           string                      `json:"name"`
+	Bedrock        *bedrockJSON                `json:"bedrock,omitempty"`
+	MCPServers     map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
+	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
+	EnabledPlugins []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	CreatedAt      string                      `json:"created_at"`
+	UpdatedAt      string                      `json:"updated_at"`
 }
 
 // bedrockJSON represents Bedrock settings (not used in sync, but part of structure)
@@ -53,8 +53,7 @@ type mcpServerJSON struct {
 
 // marketplaceJSON represents a marketplace configuration
 type marketplaceJSON struct {
-	URL            string   `json:"url"`
-	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
+	URL string `json:"url"`
 }
 
 // marketplaceSource represents the source configuration for extraKnownMarketplaces
@@ -208,17 +207,6 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		"mcp.enabled": true,
 	}
 
-	// Process enabled plugins (both official and from marketplaces)
-	enabledPlugins := make(map[string]bool)
-
-	// Add official plugins (from claude-plugins-official marketplace)
-	if settings != nil && len(settings.EnabledOfficialPlugins) > 0 {
-		for _, plugin := range settings.EnabledOfficialPlugins {
-			enabledPlugins[fmt.Sprintf("%s@claude-plugins-official", plugin)] = true
-		}
-		log.Printf("[SYNC] Added %d official plugins", len(settings.EnabledOfficialPlugins))
-	}
-
 	// Process marketplaces if available
 	if settings != nil && len(settings.Marketplaces) > 0 {
 		extraKnownMarketplaces := make(map[string]extraKnownMarketplace)
@@ -246,11 +234,6 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 				},
 			}
 
-			// Add enabled plugins with marketplace qualifier (as object keys)
-			for _, plugin := range marketplace.EnabledPlugins {
-				enabledPlugins[fmt.Sprintf("%s@%s", plugin, name)] = true
-			}
-
 			log.Printf("[SYNC] Successfully cloned marketplace %s", name)
 		}
 
@@ -259,8 +242,14 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		}
 	}
 
-	if len(enabledPlugins) > 0 {
+	// Process enabled plugins (already in plugin@marketplace format)
+	if settings != nil && len(settings.EnabledPlugins) > 0 {
+		enabledPlugins := make(map[string]bool)
+		for _, plugin := range settings.EnabledPlugins {
+			enabledPlugins[plugin] = true
+		}
 		settingsContent["enabledPlugins"] = enabledPlugins
+		log.Printf("[SYNC] Added %d enabled plugins", len(settings.EnabledPlugins))
 	}
 
 	// Write settings.json
