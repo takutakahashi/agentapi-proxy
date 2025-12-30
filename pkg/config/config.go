@@ -207,6 +207,21 @@ type KubernetesSessionConfig struct {
 	// This Secret is applied to all sessions. Each key should be a JSON file name (e.g., "github.json")
 	// containing mcpServers configuration
 	MCPServersBaseSecret string `json:"mcp_servers_base_secret" mapstructure:"mcp_servers_base_secret"`
+
+	// S3 Sync configuration for syncing messages to S3
+	// S3SyncEnabled enables S3 sync for session messages
+	S3SyncEnabled bool `json:"s3_sync_enabled" mapstructure:"s3_sync_enabled"`
+	// S3SyncBucket is the S3 bucket name for storing messages
+	S3SyncBucket string `json:"s3_sync_bucket" mapstructure:"s3_sync_bucket"`
+	// S3SyncRegion is the AWS region for the S3 bucket
+	S3SyncRegion string `json:"s3_sync_region" mapstructure:"s3_sync_region"`
+	// S3SyncPrefix is the prefix path in S3 bucket (e.g., "sessions")
+	S3SyncPrefix string `json:"s3_sync_prefix" mapstructure:"s3_sync_prefix"`
+	// S3SyncInterval is the sync interval in seconds
+	S3SyncInterval int `json:"s3_sync_interval" mapstructure:"s3_sync_interval"`
+	// S3SyncCredentialsSecret is the name of the Kubernetes Secret containing AWS credentials
+	// Expected keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+	S3SyncCredentialsSecret string `json:"s3_sync_credentials_secret" mapstructure:"s3_sync_credentials_secret"`
 }
 
 // Config represents the proxy configuration
@@ -445,6 +460,14 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.mcp_servers_team_secret_prefix", "AGENTAPI_K8S_SESSION_MCP_SERVERS_TEAM_SECRET_PREFIX")
 	_ = v.BindEnv("kubernetes_session.mcp_servers_user_secret_prefix", "AGENTAPI_K8S_SESSION_MCP_SERVERS_USER_SECRET_PREFIX")
 
+	// S3 sync configuration
+	_ = v.BindEnv("kubernetes_session.s3_sync_enabled", "AGENTAPI_K8S_SESSION_S3_SYNC_ENABLED")
+	_ = v.BindEnv("kubernetes_session.s3_sync_bucket", "AGENTAPI_K8S_SESSION_S3_SYNC_BUCKET")
+	_ = v.BindEnv("kubernetes_session.s3_sync_region", "AGENTAPI_K8S_SESSION_S3_SYNC_REGION")
+	_ = v.BindEnv("kubernetes_session.s3_sync_prefix", "AGENTAPI_K8S_SESSION_S3_SYNC_PREFIX")
+	_ = v.BindEnv("kubernetes_session.s3_sync_interval", "AGENTAPI_K8S_SESSION_S3_SYNC_INTERVAL")
+	_ = v.BindEnv("kubernetes_session.s3_sync_credentials_secret", "AGENTAPI_K8S_SESSION_S3_SYNC_CREDENTIALS_SECRET")
+
 	// Schedule worker configuration
 	_ = v.BindEnv("schedule_worker.enabled", "AGENTAPI_SCHEDULE_WORKER_ENABLED")
 	_ = v.BindEnv("schedule_worker.check_interval", "AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL")
@@ -505,6 +528,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.mcp_servers_base_secret", "mcp-servers-base")
 	v.SetDefault("kubernetes_session.mcp_servers_team_secret_prefix", "mcp-servers")
 	v.SetDefault("kubernetes_session.mcp_servers_user_secret_prefix", "mcp-servers")
+
+	// S3 sync defaults
+	v.SetDefault("kubernetes_session.s3_sync_enabled", false)
+	v.SetDefault("kubernetes_session.s3_sync_bucket", "")
+	v.SetDefault("kubernetes_session.s3_sync_region", "ap-northeast-1")
+	v.SetDefault("kubernetes_session.s3_sync_prefix", "sessions")
+	v.SetDefault("kubernetes_session.s3_sync_interval", 60)
+	v.SetDefault("kubernetes_session.s3_sync_credentials_secret", "aws-credentials")
 
 	// Schedule worker defaults
 	v.SetDefault("schedule_worker.enabled", true)
