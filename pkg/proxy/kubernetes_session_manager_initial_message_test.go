@@ -32,7 +32,7 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
 
-	t.Run("returns nil when no initial message", func(t *testing.T) {
+	t.Run("returns nil when no initial message and S3 sync disabled", func(t *testing.T) {
 		session := &kubernetesSession{
 			id:          "test-session",
 			serviceName: "test-service",
@@ -44,7 +44,7 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 
 		sidecar := manager.buildInitialMessageSenderSidecar(session)
 		if sidecar != nil {
-			t.Error("Expected nil sidecar when no initial message")
+			t.Error("Expected nil sidecar when no initial message and S3 sync disabled")
 		}
 	})
 
@@ -71,7 +71,7 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 			t.Errorf("Expected image 'test-image:latest', got %s", sidecar.Image)
 		}
 
-		// Verify volume mounts
+		// Verify volume mounts (initial-message-state + initial-message)
 		if len(sidecar.VolumeMounts) != 2 {
 			t.Errorf("Expected 2 volume mounts, got %d", len(sidecar.VolumeMounts))
 		}
@@ -88,6 +88,133 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 			t.Error("Expected AGENTAPI_PORT environment variable")
 		} else if portEnv.Value != "9000" {
 			t.Errorf("Expected AGENTAPI_PORT=9000, got %s", portEnv.Value)
+		}
+	})
+
+	t.Run("returns sidecar when S3 sync is enabled without initial message", func(t *testing.T) {
+		s3Cfg := &config.Config{
+			KubernetesSession: config.KubernetesSessionConfig{
+				Enabled:                 true,
+				Image:                   "test-image:latest",
+				BasePort:                9000,
+				S3SyncEnabled:           true,
+				S3SyncBucket:            "test-bucket",
+				S3SyncRegion:            "us-east-1",
+				S3SyncPrefix:            "sessions",
+				S3SyncInterval:          60,
+				S3SyncCredentialsSecret: "aws-credentials",
+			},
+		}
+		s3Manager, err := NewKubernetesSessionManagerWithClient(s3Cfg, false, lgr, k8sClient)
+		if err != nil {
+			t.Fatalf("Failed to create manager: %v", err)
+		}
+
+		session := &kubernetesSession{
+			id:          "test-session",
+			serviceName: "test-service",
+			request: &RunServerRequest{
+				UserID:         "test-user",
+				InitialMessage: "",
+			},
+		}
+
+		sidecar := s3Manager.buildInitialMessageSenderSidecar(session)
+		if sidecar == nil {
+			t.Fatal("Expected sidecar when S3 sync is enabled")
+		}
+
+		// Verify S3 sync environment variables
+		envVars := make(map[string]string)
+		for _, env := range sidecar.Env {
+			envVars[env.Name] = env.Value
+		}
+
+		if envVars["S3_SYNC_ENABLED"] != "true" {
+			t.Errorf("Expected S3_SYNC_ENABLED=true, got %s", envVars["S3_SYNC_ENABLED"])
+		}
+		if envVars["S3_BUCKET"] != "test-bucket" {
+			t.Errorf("Expected S3_BUCKET=test-bucket, got %s", envVars["S3_BUCKET"])
+		}
+		if envVars["S3_REGION"] != "us-east-1" {
+			t.Errorf("Expected S3_REGION=us-east-1, got %s", envVars["S3_REGION"])
+		}
+		if envVars["S3_PREFIX"] != "sessions" {
+			t.Errorf("Expected S3_PREFIX=sessions, got %s", envVars["S3_PREFIX"])
+		}
+		if envVars["S3_SYNC_INTERVAL"] != "60" {
+			t.Errorf("Expected S3_SYNC_INTERVAL=60, got %s", envVars["S3_SYNC_INTERVAL"])
+		}
+		if envVars["SESSION_ID"] != "test-session" {
+			t.Errorf("Expected SESSION_ID=test-session, got %s", envVars["SESSION_ID"])
+		}
+
+		// Verify AWS credentials volume mount
+		var hasAWSCredentials bool
+		for _, vm := range sidecar.VolumeMounts {
+			if vm.Name == "aws-credentials" {
+				hasAWSCredentials = true
+				if vm.MountPath != "/root/.aws" {
+					t.Errorf("Expected aws-credentials mount path '/root/.aws', got %s", vm.MountPath)
+				}
+			}
+		}
+		if !hasAWSCredentials {
+			t.Error("Expected aws-credentials volume mount")
+		}
+	})
+
+	t.Run("returns sidecar with both initial message and S3 sync", func(t *testing.T) {
+		s3Cfg := &config.Config{
+			KubernetesSession: config.KubernetesSessionConfig{
+				Enabled:                 true,
+				Image:                   "test-image:latest",
+				BasePort:                9000,
+				S3SyncEnabled:           true,
+				S3SyncBucket:            "test-bucket",
+				S3SyncRegion:            "us-east-1",
+				S3SyncPrefix:            "sessions",
+				S3SyncInterval:          60,
+				S3SyncCredentialsSecret: "aws-credentials",
+			},
+		}
+		s3Manager, err := NewKubernetesSessionManagerWithClient(s3Cfg, false, lgr, k8sClient)
+		if err != nil {
+			t.Fatalf("Failed to create manager: %v", err)
+		}
+
+		session := &kubernetesSession{
+			id:          "test-session",
+			serviceName: "test-service",
+			request: &RunServerRequest{
+				UserID:         "test-user",
+				InitialMessage: "Hello, this is the initial message",
+			},
+		}
+
+		sidecar := s3Manager.buildInitialMessageSenderSidecar(session)
+		if sidecar == nil {
+			t.Fatal("Expected sidecar when both initial message and S3 sync are enabled")
+		}
+
+		// Verify volume mounts (initial-message-state + initial-message + aws-credentials)
+		if len(sidecar.VolumeMounts) != 3 {
+			t.Errorf("Expected 3 volume mounts, got %d", len(sidecar.VolumeMounts))
+		}
+
+		// Verify all volume mounts are present
+		volumeNames := make(map[string]bool)
+		for _, vm := range sidecar.VolumeMounts {
+			volumeNames[vm.Name] = true
+		}
+		if !volumeNames["initial-message-state"] {
+			t.Error("Expected initial-message-state volume mount")
+		}
+		if !volumeNames["initial-message"] {
+			t.Error("Expected initial-message volume mount")
+		}
+		if !volumeNames["aws-credentials"] {
+			t.Error("Expected aws-credentials volume mount")
 		}
 	})
 }
@@ -204,7 +331,7 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 		}
 	})
 
-	t.Run("does not include initial message volumes when message is empty", func(t *testing.T) {
+	t.Run("does not include initial message volumes when message is empty and S3 sync disabled", func(t *testing.T) {
 		session := &kubernetesSession{
 			id:          "test-session",
 			serviceName: "agentapi-session-test-svc",
@@ -222,8 +349,61 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 				t.Error("initial-message volume should not be present when message is empty")
 			}
 			if vol.Name == "initial-message-state" {
-				t.Error("initial-message-state volume should not be present when message is empty")
+				t.Error("initial-message-state volume should not be present when message is empty and S3 sync disabled")
 			}
+			if vol.Name == "aws-credentials" {
+				t.Error("aws-credentials volume should not be present when S3 sync is disabled")
+			}
+		}
+	})
+
+	t.Run("includes S3 sync volumes when S3 sync is enabled", func(t *testing.T) {
+		s3Cfg := &config.Config{
+			KubernetesSession: config.KubernetesSessionConfig{
+				Enabled:                 true,
+				ClaudeConfigBaseSecret:  "claude-config-base",
+				S3SyncEnabled:           true,
+				S3SyncBucket:            "test-bucket",
+				S3SyncRegion:            "us-east-1",
+				S3SyncCredentialsSecret: "aws-credentials",
+			},
+		}
+		s3Manager, err := NewKubernetesSessionManagerWithClient(s3Cfg, false, lgr, k8sClient)
+		if err != nil {
+			t.Fatalf("Failed to create manager: %v", err)
+		}
+
+		session := &kubernetesSession{
+			id:          "test-session",
+			serviceName: "agentapi-session-test-svc",
+			request: &RunServerRequest{
+				UserID:         "test-user",
+				InitialMessage: "",
+			},
+		}
+
+		volumes := s3Manager.buildVolumes(session, "claude-config-user")
+
+		var hasInitialMessageState, hasAWSCredentials bool
+		for _, vol := range volumes {
+			if vol.Name == "initial-message-state" {
+				hasInitialMessageState = true
+			}
+			if vol.Name == "aws-credentials" {
+				hasAWSCredentials = true
+				if vol.Secret == nil {
+					t.Error("aws-credentials volume should be a Secret")
+				} else if vol.Secret.SecretName != "aws-credentials" {
+					t.Errorf("Expected secret name 'aws-credentials', got %s", vol.Secret.SecretName)
+				}
+			}
+		}
+
+		if !hasInitialMessageState {
+			t.Error("Expected initial-message-state volume when S3 sync is enabled")
+		}
+		if !hasAWSCredentials {
+			t.Error("Expected aws-credentials volume when S3 sync is enabled")
 		}
 	})
 }

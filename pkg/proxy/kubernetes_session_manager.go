@@ -746,11 +746,17 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Added credentials-sync sidecar for session %s", session.id)
 	}
 
-	// Add initial message sender sidecar
+	// Add initial message sender and S3 sync sidecar
 	// This sidecar sends the initial message to the agentapi server after it becomes ready
+	// and optionally syncs messages to S3
 	if sidecar := m.buildInitialMessageSenderSidecar(session); sidecar != nil {
 		containers = append(containers, *sidecar)
-		log.Printf("[K8S_SESSION] Added initial-message-sender sidecar for session %s", session.id)
+		s3SyncEnabled := m.k8sConfig.S3SyncEnabled && m.k8sConfig.S3SyncBucket != ""
+		if s3SyncEnabled {
+			log.Printf("[K8S_SESSION] Added initial-message-sender sidecar with S3 sync for session %s", session.id)
+		} else {
+			log.Printf("[K8S_SESSION] Added initial-message-sender sidecar for session %s", session.id)
+		}
 	}
 
 	// Convert config tolerations to corev1 tolerations
@@ -1096,8 +1102,9 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *kubernet
 	}
 }
 
-// initialMessageSenderScript is the shell script for the initial message sender sidecar
-// It waits for agentapi to be ready and sends the initial message from the mounted Secret
+// initialMessageSenderScript is the shell script for the initial message sender and S3 sync sidecar
+// It waits for agentapi to be ready, sends the initial message from the mounted Secret,
+// and optionally syncs messages to S3
 const initialMessageSenderScript = `
 #!/bin/sh
 set -e
@@ -1108,103 +1115,204 @@ SENT_FLAG="/initial-message-state/sent"
 MAX_READY_RETRIES=120
 MAX_STABLE_RETRIES=60
 
-echo "[INITIAL-MSG] Starting initial message sender sidecar"
+echo "[SIDECAR] Starting initial message sender and S3 sync sidecar"
 
-# Check if already sent (container restart case)
-if [ -f "$SENT_FLAG" ]; then
-    echo "[INITIAL-MSG] Initial message already sent (flag file exists), skipping"
-    exec sleep infinity
-fi
+# Function to sync messages to S3
+sync_to_s3() {
+    if [ "${S3_SYNC_ENABLED}" != "true" ]; then
+        return
+    fi
 
-# Check if message file exists
-if [ ! -f "$MESSAGE_FILE" ]; then
-    echo "[INITIAL-MSG] No initial message file found, nothing to send"
-    touch "$SENT_FLAG"
-    exec sleep infinity
-fi
+    # Get messages from agentapi
+    MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null) || {
+        echo "[S3-SYNC] Failed to fetch messages"
+        return
+    }
 
-echo "[INITIAL-MSG] Waiting for agentapi to be ready..."
+    # Upload to S3
+    TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    S3_PATH="s3://${S3_BUCKET}/${S3_PREFIX}/${SESSION_ID}/messages.json"
+
+    echo "$MESSAGES" | aws s3 cp - "$S3_PATH" --region "${S3_REGION}" 2>/dev/null && {
+        echo "[S3-SYNC] Synced messages to ${S3_PATH}"
+    } || {
+        echo "[S3-SYNC] Failed to upload to S3"
+    }
+}
+
+# Function to start S3 sync loop
+start_s3_sync_loop() {
+    if [ "${S3_SYNC_ENABLED}" != "true" ]; then
+        echo "[S3-SYNC] S3 sync is disabled"
+        return
+    fi
+
+    echo "[S3-SYNC] Starting S3 sync loop (interval: ${S3_SYNC_INTERVAL}s)"
+    while true; do
+        sync_to_s3
+        sleep "${S3_SYNC_INTERVAL}"
+    done
+}
 
 # Wait for agentapi server to respond
+echo "[SIDECAR] Waiting for agentapi to be ready..."
 RETRY_COUNT=0
 while [ $RETRY_COUNT -lt $MAX_READY_RETRIES ]; do
     if curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; then
-        echo "[INITIAL-MSG] agentapi is responding"
+        echo "[SIDECAR] agentapi is responding"
         break
     fi
     RETRY_COUNT=$((RETRY_COUNT + 1))
     if [ $RETRY_COUNT -eq $MAX_READY_RETRIES ]; then
-        echo "[INITIAL-MSG] ERROR: agentapi not ready after ${MAX_READY_RETRIES} retries"
+        echo "[SIDECAR] ERROR: agentapi not ready after ${MAX_READY_RETRIES} retries"
         exec sleep infinity
     fi
     sleep 0.5
 done
 
-# Check if user messages already exist (Pod recreated case)
-# Only skip if there are messages from the user (role: "user"), not just agent welcome messages
-USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
-if [ "$USER_MSG_COUNT" -gt 0 ]; then
-    echo "[INITIAL-MSG] User messages already exist (count: ${USER_MSG_COUNT}), skipping initial message"
-    touch "$SENT_FLAG"
-    exec sleep infinity
+# Check if already sent (container restart case)
+INITIAL_MSG_DONE=false
+if [ -f "$SENT_FLAG" ]; then
+    echo "[INITIAL-MSG] Initial message already sent (flag file exists), skipping"
+    INITIAL_MSG_DONE=true
 fi
 
-# Wait for agent status to be "stable"
-echo "[INITIAL-MSG] Waiting for agent status to be stable..."
-STABLE_COUNT=0
-while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
-    STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-    if [ "$STATUS" = "stable" ]; then
-        echo "[INITIAL-MSG] Agent is stable, ready to send message"
-        break
-    fi
-    STABLE_COUNT=$((STABLE_COUNT + 1))
-    if [ $STABLE_COUNT -eq $MAX_STABLE_RETRIES ]; then
-        echo "[INITIAL-MSG] ERROR: Agent not stable after ${MAX_STABLE_RETRIES} retries (status: ${STATUS})"
-        exec sleep infinity
-    fi
-    sleep 1
-done
-
-# Double-check user message count before sending (race condition prevention)
-USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
-if [ "$USER_MSG_COUNT" -gt 0 ]; then
-    echo "[INITIAL-MSG] User messages appeared during wait (count: ${USER_MSG_COUNT}), skipping"
+# Check if message file exists
+if [ "$INITIAL_MSG_DONE" = "false" ] && [ ! -f "$MESSAGE_FILE" ]; then
+    echo "[INITIAL-MSG] No initial message file found, nothing to send"
     touch "$SENT_FLAG"
-    exec sleep infinity
+    INITIAL_MSG_DONE=true
 fi
 
-# Read and send message
-echo "[INITIAL-MSG] Sending initial message..."
-MESSAGE_CONTENT=$(cat "$MESSAGE_FILE")
+# Process initial message if not done yet
+if [ "$INITIAL_MSG_DONE" = "false" ]; then
+    # Check if user messages already exist (Pod recreated case)
+    # Only skip if there are messages from the user (role: "user"), not just agent welcome messages
+    USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
+    if [ "$USER_MSG_COUNT" -gt 0 ]; then
+        echo "[INITIAL-MSG] User messages already exist (count: ${USER_MSG_COUNT}), skipping initial message"
+        touch "$SENT_FLAG"
+        INITIAL_MSG_DONE=true
+    fi
+fi
 
-# Build JSON payload with proper escaping using jq
-PAYLOAD=$(printf '%s' "$MESSAGE_CONTENT" | jq -Rs '{content: ., type: "user"}')
+if [ "$INITIAL_MSG_DONE" = "false" ]; then
+    # Wait for agent status to be "stable"
+    echo "[INITIAL-MSG] Waiting for agent status to be stable..."
+    STABLE_COUNT=0
+    while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
+        STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
+        if [ "$STATUS" = "stable" ]; then
+            echo "[INITIAL-MSG] Agent is stable, ready to send message"
+            break
+        fi
+        STABLE_COUNT=$((STABLE_COUNT + 1))
+        if [ $STABLE_COUNT -eq $MAX_STABLE_RETRIES ]; then
+            echo "[INITIAL-MSG] ERROR: Agent not stable after ${MAX_STABLE_RETRIES} retries (status: ${STATUS})"
+            touch "$SENT_FLAG"
+            INITIAL_MSG_DONE=true
+            break
+        fi
+        sleep 1
+    done
+fi
 
-RESPONSE=$(curl -sf -w "\n%{http_code}" -X POST "${AGENTAPI_URL}/message" \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD" 2>&1) || true
+if [ "$INITIAL_MSG_DONE" = "false" ]; then
+    # Double-check user message count before sending (race condition prevention)
+    USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
+    if [ "$USER_MSG_COUNT" -gt 0 ]; then
+        echo "[INITIAL-MSG] User messages appeared during wait (count: ${USER_MSG_COUNT}), skipping"
+        touch "$SENT_FLAG"
+        INITIAL_MSG_DONE=true
+    fi
+fi
 
-HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-BODY=$(echo "$RESPONSE" | sed '$d')
+if [ "$INITIAL_MSG_DONE" = "false" ]; then
+    # Read and send message
+    echo "[INITIAL-MSG] Sending initial message..."
+    MESSAGE_CONTENT=$(cat "$MESSAGE_FILE")
 
-if [ "$HTTP_CODE" = "200" ]; then
-    echo "[INITIAL-MSG] Initial message sent successfully"
-    touch "$SENT_FLAG"
+    # Build JSON payload with proper escaping using jq
+    PAYLOAD=$(printf '%s' "$MESSAGE_CONTENT" | jq -Rs '{content: ., type: "user"}')
+
+    RESPONSE=$(curl -sf -w "\n%{http_code}" -X POST "${AGENTAPI_URL}/message" \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD" 2>&1) || true
+
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+
+    if [ "$HTTP_CODE" = "200" ]; then
+        echo "[INITIAL-MSG] Initial message sent successfully"
+        touch "$SENT_FLAG"
+    else
+        echo "[INITIAL-MSG] ERROR: Failed to send initial message (HTTP ${HTTP_CODE})"
+        echo "[INITIAL-MSG] Response: ${BODY}"
+    fi
+fi
+
+# Start S3 sync loop (runs indefinitely)
+if [ "${S3_SYNC_ENABLED}" = "true" ]; then
+    start_s3_sync_loop
 else
-    echo "[INITIAL-MSG] ERROR: Failed to send initial message (HTTP ${HTTP_CODE})"
-    echo "[INITIAL-MSG] Response: ${BODY}"
+    # Keep container running (prevents restart loop)
+    exec sleep infinity
 fi
-
-# Keep container running (prevents restart loop)
-exec sleep infinity
 `
 
-// buildInitialMessageSenderSidecar builds the sidecar container for sending initial messages
+// buildInitialMessageSenderSidecar builds the sidecar container for sending initial messages and S3 sync
 func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *kubernetesSession) *corev1.Container {
-	// Only create sidecar if there's an initial message
-	if session.request.InitialMessage == "" {
+	hasInitialMessage := session.request.InitialMessage != ""
+	s3SyncEnabled := m.k8sConfig.S3SyncEnabled && m.k8sConfig.S3SyncBucket != ""
+
+	// Only create sidecar if there's an initial message or S3 sync is enabled
+	if !hasInitialMessage && !s3SyncEnabled {
 		return nil
+	}
+
+	// Build volume mounts
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "initial-message-state",
+			MountPath: "/initial-message-state",
+		},
+	}
+
+	// Add initial message volume mount if there's an initial message
+	if hasInitialMessage {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "initial-message",
+			MountPath: "/initial-message",
+			ReadOnly:  true,
+		})
+	}
+
+	// Add AWS credentials volume mount if S3 sync is enabled
+	if s3SyncEnabled {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "aws-credentials",
+			MountPath: "/root/.aws",
+			ReadOnly:  true,
+		})
+	}
+
+	// Build environment variables
+	env := []corev1.EnvVar{
+		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+		{Name: "SESSION_ID", Value: session.id},
+	}
+
+	// Add S3 sync environment variables
+	if s3SyncEnabled {
+		env = append(env,
+			corev1.EnvVar{Name: "S3_SYNC_ENABLED", Value: "true"},
+			corev1.EnvVar{Name: "S3_BUCKET", Value: m.k8sConfig.S3SyncBucket},
+			corev1.EnvVar{Name: "S3_REGION", Value: m.k8sConfig.S3SyncRegion},
+			corev1.EnvVar{Name: "S3_PREFIX", Value: m.k8sConfig.S3SyncPrefix},
+			corev1.EnvVar{Name: "S3_SYNC_INTERVAL", Value: fmt.Sprintf("%d", m.k8sConfig.S3SyncInterval)},
+		)
+	} else {
+		env = append(env, corev1.EnvVar{Name: "S3_SYNC_ENABLED", Value: "false"})
 	}
 
 	return &corev1.Container{
@@ -1221,22 +1329,10 @@ func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *kub
 				corev1.ResourceMemory: resource.MustParse("64Mi"),
 			},
 		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "initial-message",
-				MountPath: "/initial-message",
-				ReadOnly:  true,
-			},
-			{
-				Name:      "initial-message-state",
-				MountPath: "/initial-message-state",
-			},
-		},
-		Env: []corev1.EnvVar{
-			{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
-		},
-		Command: []string{"/bin/sh", "-c"},
-		Args:    []string{initialMessageSenderScript},
+		VolumeMounts: volumeMounts,
+		Env:          env,
+		Command:      []string{"/bin/sh", "-c"},
+		Args:         []string{initialMessageSenderScript},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:  int64Ptr(999),
 			RunAsGroup: int64Ptr(999),
@@ -1432,8 +1528,12 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 		},
 	})
 
+	// Check if sidecar is needed (initial message or S3 sync)
+	hasInitialMessage := session.request != nil && session.request.InitialMessage != ""
+	s3SyncEnabled := m.k8sConfig.S3SyncEnabled && m.k8sConfig.S3SyncBucket != ""
+
 	// Add initial message volumes if initial message is provided
-	if session.request != nil && session.request.InitialMessage != "" {
+	if hasInitialMessage {
 		initialMsgSecretName := fmt.Sprintf("%s-initial-message", session.serviceName)
 		volumes = append(volumes,
 			// Secret containing the initial message content
@@ -1446,6 +1546,12 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 					},
 				},
 			},
+		)
+	}
+
+	// Add state tracking volume if sidecar is needed (initial message or S3 sync)
+	if hasInitialMessage || s3SyncEnabled {
+		volumes = append(volumes,
 			// EmptyDir for tracking sent state (prevents double-send on container restart)
 			corev1.Volume{
 				Name: "initial-message-state",
@@ -1454,6 +1560,25 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 				},
 			},
 		)
+	}
+
+	// Add AWS credentials volume if S3 sync is enabled
+	if s3SyncEnabled && m.k8sConfig.S3SyncCredentialsSecret != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "aws-credentials",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: m.k8sConfig.S3SyncCredentialsSecret,
+					Optional:   boolPtr(true),
+					Items: []corev1.KeyToPath{
+						{
+							Key:  "credentials",
+							Path: "credentials",
+						},
+					},
+				},
+			},
+		})
 	}
 
 	// Add MCP server configuration volumes if enabled
