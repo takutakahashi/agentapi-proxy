@@ -86,8 +86,14 @@ ENV GOCACHE=/home/agentapi/.cache/go-build
 RUN curl https://mise.run | sh && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
 
-# Install claude code
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Install claude code and move to /opt/claude for persistence across volume mounts
+# The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
+# We copy with -L to follow the symlink and get the actual binary
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    sudo mkdir -p /opt/claude/bin && \
+    sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
+    sudo chown agentapi:agentapi /opt/claude/bin/claude && \
+    sudo chmod +x /opt/claude/bin/claude
 
 # Install Playwright MCP server via npm (Node.js is now installed directly)
 RUN sudo npm install -g @playwright/mcp@latest
@@ -96,8 +102,8 @@ RUN sudo npm install -g @playwright/mcp@latest
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc
 
-# Set combined PATH environment variable
-ENV PATH="/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
+# Set combined PATH environment variable (including /opt/claude/bin for claude CLI)
+ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md

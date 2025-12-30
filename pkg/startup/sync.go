@@ -14,11 +14,11 @@ import (
 type SyncOptions struct {
 	SettingsFile              string // Path to the mounted settings.json from Settings Secret
 	OutputDir                 string // Home directory (generates ~/.claude.json and ~/.claude/)
-	MarketplacesDir           string // Directory to clone marketplace repositories
 	CredentialsFile           string // Path to the mounted credentials.json from Credentials Secret (optional)
 	ClaudeMDFile              string // Path to CLAUDE.md file to copy (optional, default: /tmp/config/CLAUDE.md)
 	NotificationSubscriptions string // Path to notification subscriptions directory (optional)
 	NotificationsDir          string // Path to notifications output directory (optional)
+	RegisterMarketplaces      bool   // Register cloned marketplaces using claude CLI
 }
 
 // settingsJSON represents the structure of settings.json from Settings Secret
@@ -76,8 +76,8 @@ type extraKnownMarketplace struct {
 
 // Sync synchronizes settings from Settings Secret to Claude configuration files
 func Sync(opts SyncOptions) error {
-	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, marketplaces dir: %s",
-		opts.SettingsFile, opts.OutputDir, opts.MarketplacesDir)
+	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, register marketplaces: %v",
+		opts.SettingsFile, opts.OutputDir, opts.RegisterMarketplaces)
 
 	// Setup GitHub authentication first (for marketplace cloning)
 	log.Printf("[SYNC] Setting up GitHub authentication")
@@ -194,7 +194,9 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		return fmt.Errorf("failed to create .claude directory: %w", err)
 	}
 
-	if err := os.MkdirAll(opts.MarketplacesDir, 0755); err != nil {
+	// Marketplaces are cloned to .claude/plugins/marketplaces/<marketplace-name>
+	marketplacesDir := filepath.Join(claudeDir, "plugins", "marketplaces")
+	if err := os.MkdirAll(marketplacesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create marketplaces directory: %w", err)
 	}
 
@@ -226,19 +228,33 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 				continue
 			}
 
-			targetDir := filepath.Join(opts.MarketplacesDir, aliasKey)
+			// Clone to a temporary directory first to read the real marketplace name
+			tempDir := filepath.Join(marketplacesDir, ".tmp-"+aliasKey)
 
 			// Clone repository
-			log.Printf("[SYNC] Cloning marketplace %s from %s to %s", aliasKey, marketplace.URL, targetDir)
-			if err := cloneMarketplace(marketplace.URL, targetDir); err != nil {
+			log.Printf("[SYNC] Cloning marketplace %s from %s", aliasKey, marketplace.URL)
+			if err := cloneMarketplace(marketplace.URL, tempDir); err != nil {
 				log.Printf("[SYNC] Warning: failed to clone marketplace %s: %v", aliasKey, err)
 				continue
 			}
 
 			// Read the real marketplace name from .claude-plugin/marketplace.json
-			realName, err := readMarketplaceName(targetDir)
+			realName, err := readMarketplaceName(tempDir)
 			if err != nil {
 				log.Printf("[SYNC] Error: failed to read marketplace name for %s: %v", aliasKey, err)
+				if removeErr := os.RemoveAll(tempDir); removeErr != nil {
+					log.Printf("[SYNC] Warning: failed to remove temp dir %s: %v", tempDir, removeErr)
+				}
+				continue
+			}
+
+			// Rename to the real marketplace name
+			targetDir := filepath.Join(marketplacesDir, realName)
+			if err := os.Rename(tempDir, targetDir); err != nil {
+				log.Printf("[SYNC] Error: failed to rename marketplace dir from %s to %s: %v", tempDir, targetDir, err)
+				if removeErr := os.RemoveAll(tempDir); removeErr != nil {
+					log.Printf("[SYNC] Warning: failed to remove temp dir %s: %v", tempDir, removeErr)
+				}
 				continue
 			}
 
@@ -253,7 +269,7 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 				},
 			}
 
-			log.Printf("[SYNC] Successfully registered marketplace %s (alias: %s)", realName, aliasKey)
+			log.Printf("[SYNC] Successfully registered marketplace %s (alias: %s) at %s", realName, aliasKey, targetDir)
 		}
 
 		if len(extraKnownMarketplaces) > 0 {
@@ -284,6 +300,22 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	}
 
 	log.Printf("[SYNC] Generated %s", settingsPath)
+
+	// Register marketplaces using claude CLI if enabled
+	if opts.RegisterMarketplaces {
+		// Always register the official Anthropic marketplace
+		if err := registerOfficialMarketplace(opts.OutputDir); err != nil {
+			log.Printf("[SYNC] Warning: failed to register official marketplace: %v", err)
+		}
+
+		// Register custom cloned marketplaces if any
+		if settings != nil && len(settings.Marketplaces) > 0 {
+			if err := registerMarketplaces(opts.OutputDir, marketplacesDir); err != nil {
+				log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -346,6 +378,65 @@ func resolvePluginName(plugin string, nameMapping map[string]string) string {
 	}
 
 	return plugin
+}
+
+// officialMarketplace is the official Anthropic marketplace repository
+const officialMarketplace = "anthropics/claude-plugins-official"
+
+// claudeBinPath is the path to the claude CLI binary
+const claudeBinPath = "/opt/claude/bin/claude"
+
+// registerOfficialMarketplace registers the official Anthropic marketplace
+func registerOfficialMarketplace(outputDir string) error {
+	log.Printf("[SYNC] Registering official marketplace: %s", officialMarketplace)
+
+	cmd := exec.Command(claudeBinPath, "plugin", "marketplace", "add", officialMarketplace)
+	// Set HOME to outputDir so claude CLI writes to the correct location
+	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to register official marketplace: %w, output: %s", err, string(output))
+	}
+
+	log.Printf("[SYNC] Successfully registered official marketplace: %s", officialMarketplace)
+	return nil
+}
+
+// registerMarketplaces uses claude CLI to register cloned marketplaces
+func registerMarketplaces(outputDir string, marketplacesDir string) error {
+	// Read marketplace directories
+	entries, err := os.ReadDir(marketplacesDir)
+	if err != nil {
+		return fmt.Errorf("failed to read marketplaces directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Skip temp directories
+		if strings.HasPrefix(entry.Name(), ".tmp-") {
+			continue
+		}
+
+		marketplacePath := filepath.Join(marketplacesDir, entry.Name())
+
+		log.Printf("[SYNC] Registering marketplace at %s", marketplacePath)
+
+		cmd := exec.Command(claudeBinPath, "plugin", "marketplace", "add", marketplacePath)
+		// Set HOME to outputDir so claude CLI writes to the correct location
+		cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
+
+		if output, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("[SYNC] Warning: failed to register marketplace at %s: %v, output: %s",
+				marketplacePath, err, string(output))
+			continue
+		}
+
+		log.Printf("[SYNC] Successfully registered marketplace at %s", marketplacePath)
+	}
+	return nil
 }
 
 // syncCredentials copies credentials.json from the mounted Secret to ~/.claude/.credentials.json

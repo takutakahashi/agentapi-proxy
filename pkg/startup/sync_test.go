@@ -624,11 +624,9 @@ func TestSyncMarketplaces(t *testing.T) {
 	t.Run("creates directories and settings.json without marketplaces", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, nil)
@@ -640,6 +638,8 @@ func TestSyncMarketplaces(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(outputDir, ".claude")); os.IsNotExist(err) {
 			t.Error("Expected .claude directory to be created")
 		}
+		// Marketplaces directory is now at .claude/plugins/marketplaces
+		marketplacesDir := filepath.Join(outputDir, ".claude", "plugins", "marketplaces")
 		if _, err := os.Stat(marketplacesDir); os.IsNotExist(err) {
 			t.Error("Expected marketplaces directory to be created")
 		}
@@ -669,7 +669,6 @@ func TestSyncMarketplaces(t *testing.T) {
 	t.Run("includes GITHUB_TOKEN in env when set", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Set GITHUB_TOKEN
 		originalToken := os.Getenv("GITHUB_TOKEN")
@@ -685,8 +684,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		}()
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, nil)
@@ -718,7 +716,6 @@ func TestSyncMarketplaces(t *testing.T) {
 	t.Run("skips marketplace with empty URL", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		settings := &settingsJSON{
 			Name: "test-user",
@@ -731,8 +728,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, settings)
@@ -760,7 +756,6 @@ func TestSyncMarketplaces(t *testing.T) {
 	t.Run("empty marketplaces map", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		settings := &settingsJSON{
 			Name:         "test-user",
@@ -768,8 +763,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, settings)
@@ -804,7 +798,6 @@ func TestSyncMarketplaces(t *testing.T) {
 
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create a local git repo as marketplace source
 		sourceDir := filepath.Join(tmpDir, "marketplace-source")
@@ -824,8 +817,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, settings)
@@ -857,7 +849,6 @@ func TestSyncMarketplaces(t *testing.T) {
 	t.Run("no GITHUB_TOKEN set", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Save and clear GITHUB_TOKEN
 		originalToken := os.Getenv("GITHUB_TOKEN")
@@ -869,8 +860,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		}()
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, nil)
@@ -903,7 +893,6 @@ func TestSyncMarketplaces(t *testing.T) {
 
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create one valid marketplace
 		validSourceDir := filepath.Join(tmpDir, "valid-marketplace")
@@ -929,8 +918,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		// Should not fail even though some marketplaces fail
@@ -985,7 +973,6 @@ func TestSyncMarketplaces(t *testing.T) {
 
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create marketplace
 		sourceDir := filepath.Join(tmpDir, "marketplace")
@@ -1016,8 +1003,7 @@ func TestSyncMarketplaces(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, settings)
@@ -1055,8 +1041,8 @@ func TestSyncMarketplaces(t *testing.T) {
 		if source["source"] != "directory" {
 			t.Errorf("Expected source.source to be 'directory', got '%v'", source["source"])
 		}
-		// Path still uses alias key for directory name
-		expectedPath := filepath.Join(marketplacesDir, "my-marketplace")
+		// Path now uses real marketplace name under .claude/plugins/marketplaces
+		expectedPath := filepath.Join(outputDir, ".claude", "plugins", "marketplaces", "my-marketplace")
 		if source["path"] != expectedPath {
 			t.Errorf("Expected path '%s', got '%s'", expectedPath, source["path"])
 		}
@@ -1081,11 +1067,9 @@ func TestSyncMarketplaces(t *testing.T) {
 		tmpDir := t.TempDir()
 		// Use deeply nested paths
 		outputDir := filepath.Join(tmpDir, "a", "b", "c", "output")
-		marketplacesDir := filepath.Join(tmpDir, "x", "y", "z", "marketplaces")
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, nil)
@@ -1097,6 +1081,8 @@ func TestSyncMarketplaces(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(outputDir, ".claude")); os.IsNotExist(err) {
 			t.Error("Expected .claude directory to be created")
 		}
+		// Marketplaces directory is now at .claude/plugins/marketplaces
+		marketplacesDir := filepath.Join(outputDir, ".claude", "plugins", "marketplaces")
 		if _, err := os.Stat(marketplacesDir); os.IsNotExist(err) {
 			t.Error("Expected marketplaces directory to be created")
 		}
@@ -1369,7 +1355,6 @@ func TestSync(t *testing.T) {
 	t.Run("succeeds without settings file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create output directory (simulates home directory existing)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -1377,9 +1362,8 @@ func TestSync(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			SettingsFile:    "/non/existent/settings.json",
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			SettingsFile: "/non/existent/settings.json",
+			OutputDir:    outputDir,
 		}
 
 		err := Sync(opts)
@@ -1403,7 +1387,6 @@ func TestSync(t *testing.T) {
 	t.Run("succeeds with valid settings file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create output directory (simulates home directory existing)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -1423,9 +1406,8 @@ func TestSync(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			SettingsFile:    settingsFile,
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			SettingsFile: settingsFile,
+			OutputDir:    outputDir,
 		}
 
 		err := Sync(opts)
@@ -1454,7 +1436,6 @@ func TestSync(t *testing.T) {
 
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create output directory (simulates home directory existing)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -1523,9 +1504,8 @@ func TestSync(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			SettingsFile:    settingsFile,
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			SettingsFile: settingsFile,
+			OutputDir:    outputDir,
 		}
 
 		err := Sync(opts)
@@ -1533,8 +1513,8 @@ func TestSync(t *testing.T) {
 			t.Fatalf("Sync failed: %v", err)
 		}
 
-		// Verify marketplace was cloned
-		clonedMarketplace := filepath.Join(marketplacesDir, "test-mp")
+		// Verify marketplace was cloned (now uses real marketplace name)
+		clonedMarketplace := filepath.Join(outputDir, ".claude", "plugins", "marketplaces", "test-mp-real-name")
 		if _, err := os.Stat(filepath.Join(clonedMarketplace, ".git")); os.IsNotExist(err) {
 			t.Error("Expected marketplace to be cloned")
 		}
@@ -1567,8 +1547,8 @@ func TestSync(t *testing.T) {
 		if source["source"] != "directory" {
 			t.Errorf("Expected source.source to be 'directory', got '%v'", source["source"])
 		}
-		// Path still uses alias key for directory name
-		expectedPath := filepath.Join(marketplacesDir, "test-mp")
+		// Path now uses real marketplace name under .claude/plugins/marketplaces
+		expectedPath := filepath.Join(outputDir, ".claude", "plugins", "marketplaces", "test-mp-real-name")
 		if source["path"] != expectedPath {
 			t.Errorf("Expected source.path to be '%s', got '%v'", expectedPath, source["path"])
 		}
@@ -1598,7 +1578,6 @@ func TestSyncMarketplaces_EnabledPlugins(t *testing.T) {
 	t.Run("adds plugins to enabledPlugins in plugin@marketplace format", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		settings := &settingsJSON{
 			Name:           "test-user",
@@ -1606,8 +1585,7 @@ func TestSyncMarketplaces_EnabledPlugins(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, settings)
@@ -1664,7 +1642,6 @@ func TestSyncMarketplaces_EnabledPlugins(t *testing.T) {
 
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create a local git repo as marketplace source
 		sourceDir := filepath.Join(tmpDir, "marketplace-source")
@@ -1689,8 +1666,7 @@ func TestSyncMarketplaces_EnabledPlugins(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, settings)
@@ -1927,7 +1903,6 @@ func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
 	t.Run("uses real marketplace name from .claude-plugin/marketplace.json", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create a local git repo as marketplace source with .claude-plugin/marketplace.json
 		sourceDir := filepath.Join(tmpDir, "marketplace-source")
@@ -1954,8 +1929,7 @@ func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, settings)
@@ -2012,7 +1986,6 @@ func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
 	t.Run("skips marketplace when marketplace.json is missing", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create a local git repo WITHOUT .claude-plugin/marketplace.json
 		sourceDir := filepath.Join(tmpDir, "marketplace-source")
@@ -2031,8 +2004,7 @@ func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		// Should not fail, but marketplace should be skipped
@@ -2072,7 +2044,6 @@ func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
 	t.Run("multiple marketplaces with different real names", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		outputDir := filepath.Join(tmpDir, "output")
-		marketplacesDir := filepath.Join(tmpDir, "marketplaces")
 
 		// Create first marketplace
 		sourceDir1 := filepath.Join(tmpDir, "marketplace1")
@@ -2100,8 +2071,7 @@ func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
 		}
 
 		opts := SyncOptions{
-			OutputDir:       outputDir,
-			MarketplacesDir: marketplacesDir,
+			OutputDir: outputDir,
 		}
 
 		err := syncMarketplaces(opts, settings)
