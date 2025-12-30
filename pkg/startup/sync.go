@@ -383,12 +383,14 @@ func resolvePluginName(plugin string, nameMapping map[string]string) string {
 // officialMarketplace is the official Anthropic marketplace repository
 const officialMarketplace = "anthropics/claude-plugins-official"
 
+// claudeBinPath is the path to the claude CLI binary
+const claudeBinPath = "/opt/claude/bin/claude"
+
 // registerOfficialMarketplace registers the official Anthropic marketplace
 func registerOfficialMarketplace(outputDir string) error {
 	log.Printf("[SYNC] Registering official marketplace: %s", officialMarketplace)
 
-	claudeBin := filepath.Join(outputDir, ".local", "bin", "claude")
-	cmd := exec.Command(claudeBin, "plugin", "marketplace", "add", officialMarketplace)
+	cmd := exec.Command(claudeBinPath, "plugin", "marketplace", "add", officialMarketplace)
 	// Set HOME to outputDir so claude CLI writes to the correct location
 	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
 
@@ -422,8 +424,7 @@ func registerMarketplaces(outputDir string, marketplacesDir string) error {
 
 		log.Printf("[SYNC] Registering marketplace at %s", marketplacePath)
 
-		claudeBin := filepath.Join(outputDir, ".local", "bin", "claude")
-		cmd := exec.Command(claudeBin, "plugin", "marketplace", "add", marketplacePath)
+		cmd := exec.Command(claudeBinPath, "plugin", "marketplace", "add", marketplacePath)
 		// Set HOME to outputDir so claude CLI writes to the correct location
 		cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
 
