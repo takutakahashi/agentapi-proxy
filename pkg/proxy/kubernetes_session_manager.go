@@ -520,8 +520,12 @@ set -e
 
 echo "[SYNC] Starting Claude configuration sync"
 
+# Set HOME to /home/agentapi for claude CLI to work correctly
+export HOME=/home/agentapi
+
 # Build sync command with required arguments
-SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /claude-config --marketplaces-dir /claude-config/.claude/plugins/marketplaces --marketplaces-settings-path /home/agentapi/.claude/plugins/marketplaces"
+# Output to /home/agentapi so that claude plugin marketplace add can access ~/.claude
+SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /home/agentapi --marketplaces-dir /home/agentapi/.claude/plugins/marketplaces"
 
 # Add credentials file if it exists
 if [ -f "/credentials-config/credentials.json" ]; then
@@ -2147,8 +2151,11 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *kubernetesSes
 				ReadOnly:  true,
 			},
 			{
+				// Mount claude-config emptyDir at /home/agentapi so that:
+				// 1. sync creates .claude.json and .claude/ here
+				// 2. claude plugin marketplace add can access ~/.claude (HOME=/home/agentapi)
 				Name:      "claude-config",
-				MountPath: "/claude-config",
+				MountPath: "/home/agentapi",
 			},
 			{
 				// Mount claude-credentials Secret for copying credentials.json

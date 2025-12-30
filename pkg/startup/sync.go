@@ -66,6 +66,17 @@ type marketplacePluginJSON struct {
 	Name string `json:"name"`
 }
 
+// marketplaceSource represents the source of a marketplace for extraKnownMarketplaces
+type marketplaceSource struct {
+	Source string `json:"source"`
+	Path   string `json:"path"`
+}
+
+// extraKnownMarketplace represents an entry in extraKnownMarketplaces
+type extraKnownMarketplace struct {
+	Source marketplaceSource `json:"source"`
+}
+
 // Sync synchronizes settings from Settings Secret to Claude configuration files
 func Sync(opts SyncOptions) error {
 	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, marketplaces dir: %s",
@@ -222,6 +233,9 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	// nameMapping maps alias keys to real marketplace names
 	nameMapping := make(map[string]string)
 
+	// extraKnownMarketplaces stores marketplace configurations
+	extraKnownMarketplaces := make(map[string]extraKnownMarketplace)
+
 	// Process marketplaces if available
 	if settings != nil && len(settings.Marketplaces) > 0 {
 		for aliasKey, marketplace := range settings.Marketplaces {
@@ -257,8 +271,21 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 				continue
 			}
 
+			// Add to extraKnownMarketplaces using real name as key
+			extraKnownMarketplaces[realName] = extraKnownMarketplace{
+				Source: marketplaceSource{
+					Source: "directory",
+					Path:   settingsPath,
+				},
+			}
+
 			log.Printf("[SYNC] Successfully registered marketplace %s (alias: %s)", realName, aliasKey)
 		}
+	}
+
+	// Add extraKnownMarketplaces to settings if any were configured
+	if len(extraKnownMarketplaces) > 0 {
+		settingsContent["extraKnownMarketplaces"] = extraKnownMarketplaces
 	}
 
 	// Process enabled plugins - resolve alias names to real marketplace names
