@@ -1117,40 +1117,58 @@ MAX_STABLE_RETRIES=60
 
 echo "[SIDECAR] Starting initial message sender and S3 sync sidecar"
 
+# Function to check if S3 sync is properly configured
+is_s3_configured() {
+    if [ "${S3_SYNC_ENABLED}" != "true" ]; then
+        return 1
+    fi
+    if [ -z "${S3_BUCKET}" ]; then
+        return 1
+    fi
+    if [ -z "${S3_REGION}" ]; then
+        return 1
+    fi
+    if [ -z "${SESSION_ID}" ]; then
+        return 1
+    fi
+    return 0
+}
+
 # Function to sync messages to S3
 sync_to_s3() {
-    if [ "${S3_SYNC_ENABLED}" != "true" ]; then
-        return
+    if ! is_s3_configured; then
+        return 0
     fi
 
     # Get messages from agentapi
     MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null) || {
         echo "[S3-SYNC] Failed to fetch messages"
-        return
+        return 0
     }
 
     # Upload to S3
-    TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     S3_PATH="s3://${S3_BUCKET}/${S3_PREFIX}/${SESSION_ID}/messages.json"
 
     echo "$MESSAGES" | aws s3 cp - "$S3_PATH" --region "${S3_REGION}" 2>/dev/null && {
         echo "[S3-SYNC] Synced messages to ${S3_PATH}"
     } || {
-        echo "[S3-SYNC] Failed to upload to S3"
+        echo "[S3-SYNC] Failed to upload to S3 (this is not fatal)"
     }
+    return 0
 }
 
 # Function to start S3 sync loop
 start_s3_sync_loop() {
-    if [ "${S3_SYNC_ENABLED}" != "true" ]; then
-        echo "[S3-SYNC] S3 sync is disabled"
-        return
+    if ! is_s3_configured; then
+        echo "[S3-SYNC] S3 sync is disabled or not properly configured"
+        return 0
     fi
 
-    echo "[S3-SYNC] Starting S3 sync loop (interval: ${S3_SYNC_INTERVAL}s)"
+    INTERVAL="${S3_SYNC_INTERVAL:-60}"
+    echo "[S3-SYNC] Starting S3 sync loop (interval: ${INTERVAL}s)"
     while true; do
         sync_to_s3
-        sleep "${S3_SYNC_INTERVAL}"
+        sleep "${INTERVAL}"
     done
 }
 
@@ -1251,13 +1269,13 @@ if [ "$INITIAL_MSG_DONE" = "false" ]; then
     fi
 fi
 
-# Start S3 sync loop (runs indefinitely)
-if [ "${S3_SYNC_ENABLED}" = "true" ]; then
+# Start S3 sync loop if configured, otherwise just keep running
+if is_s3_configured; then
     start_s3_sync_loop
-else
-    # Keep container running (prevents restart loop)
-    exec sleep infinity
 fi
+
+# Keep container running (prevents restart loop)
+exec sleep infinity
 `
 
 // buildInitialMessageSenderSidecar builds the sidecar container for sending initial messages and S3 sync
