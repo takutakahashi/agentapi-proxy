@@ -272,9 +272,22 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		log.Printf("[SYNC] Added %d enabled plugins (with resolved marketplace names)", len(settings.EnabledPlugins))
 	}
 
-	// Write settings.json
+	// Read existing settings.json (created by claude plugin marketplace add) and merge
 	settingsPath := filepath.Join(claudeDir, "settings.json")
-	data, err := json.MarshalIndent(settingsContent, "", "  ")
+	existingContent := make(map[string]interface{})
+	if existingData, err := os.ReadFile(settingsPath); err == nil {
+		if err := json.Unmarshal(existingData, &existingContent); err != nil {
+			log.Printf("[SYNC] Warning: failed to parse existing settings.json, will overwrite: %v", err)
+		}
+	}
+
+	// Merge our content into existing content (our content takes precedence)
+	for key, value := range settingsContent {
+		existingContent[key] = value
+	}
+
+	// Write merged settings.json
+	data, err := json.MarshalIndent(existingContent, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal settings.json: %w", err)
 	}
