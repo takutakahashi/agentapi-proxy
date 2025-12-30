@@ -539,8 +539,8 @@ if [ -d "/notification-subscriptions-source" ] && [ "$(ls -A /notification-subsc
     SYNC_ARGS="$SYNC_ARGS --notification-subscriptions /notification-subscriptions-source --notifications-dir /notifications"
 fi
 
-# Enable plugin installation
-SYNC_ARGS="$SYNC_ARGS --install-plugins"
+# Enable marketplace registration
+SYNC_ARGS="$SYNC_ARGS --register-marketplaces"
 
 # Run sync command to generate Claude configuration
 agentapi-proxy helpers sync $SYNC_ARGS

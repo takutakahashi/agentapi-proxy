@@ -18,7 +18,7 @@ type SyncOptions struct {
 	ClaudeMDFile              string // Path to CLAUDE.md file to copy (optional, default: /tmp/config/CLAUDE.md)
 	NotificationSubscriptions string // Path to notification subscriptions directory (optional)
 	NotificationsDir          string // Path to notifications output directory (optional)
-	InstallPlugins            bool   // Install enabled plugins using claude CLI
+	RegisterMarketplaces      bool   // Register cloned marketplaces using claude CLI
 }
 
 // settingsJSON represents the structure of settings.json from Settings Secret
@@ -76,8 +76,8 @@ type extraKnownMarketplace struct {
 
 // Sync synchronizes settings from Settings Secret to Claude configuration files
 func Sync(opts SyncOptions) error {
-	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, install plugins: %v",
-		opts.SettingsFile, opts.OutputDir, opts.InstallPlugins)
+	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, register marketplaces: %v",
+		opts.SettingsFile, opts.OutputDir, opts.RegisterMarketplaces)
 
 	// Setup GitHub authentication first (for marketplace cloning)
 	log.Printf("[SYNC] Setting up GitHub authentication")
@@ -301,10 +301,10 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 
 	log.Printf("[SYNC] Generated %s", settingsPath)
 
-	// Install plugins using claude CLI if enabled
-	if opts.InstallPlugins && settings != nil && len(settings.EnabledPlugins) > 0 {
-		if err := installPlugins(opts.OutputDir, settings.EnabledPlugins, nameMapping); err != nil {
-			log.Printf("[SYNC] Warning: failed to install plugins: %v", err)
+	// Register marketplaces using claude CLI if enabled
+	if opts.RegisterMarketplaces && settings != nil && len(settings.Marketplaces) > 0 {
+		if err := registerMarketplaces(opts.OutputDir, marketplacesDir); err != nil {
+			log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
 		}
 	}
 
@@ -372,32 +372,39 @@ func resolvePluginName(plugin string, nameMapping map[string]string) string {
 	return plugin
 }
 
-// installPlugins uses claude CLI to install plugins from marketplaces
-func installPlugins(outputDir string, plugins []string, nameMapping map[string]string) error {
-	for _, plugin := range plugins {
-		resolvedPlugin := resolvePluginName(plugin, nameMapping)
-		parts := strings.SplitN(resolvedPlugin, "@", 2)
-		if len(parts) != 2 {
-			log.Printf("[SYNC] Skipping invalid plugin format: %s", plugin)
+// registerMarketplaces uses claude CLI to register cloned marketplaces
+func registerMarketplaces(outputDir string, marketplacesDir string) error {
+	// Read marketplace directories
+	entries, err := os.ReadDir(marketplacesDir)
+	if err != nil {
+		return fmt.Errorf("failed to read marketplaces directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
 
-		pluginName := parts[0]
-		marketplaceName := parts[1]
+		// Skip temp directories
+		if strings.HasPrefix(entry.Name(), ".tmp-") {
+			continue
+		}
 
-		log.Printf("[SYNC] Installing plugin %s from marketplace %s", pluginName, marketplaceName)
+		marketplacePath := filepath.Join(marketplacesDir, entry.Name())
 
-		cmd := exec.Command("claude", "plugin", "marketplace", "add", marketplaceName, pluginName)
+		log.Printf("[SYNC] Registering marketplace at %s", marketplacePath)
+
+		cmd := exec.Command("claude", "plugin", "marketplace", "add", marketplacePath)
 		// Set HOME to outputDir so claude CLI writes to the correct location
 		cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
 
 		if output, err := cmd.CombinedOutput(); err != nil {
-			log.Printf("[SYNC] Warning: failed to add plugin %s@%s: %v, output: %s",
-				pluginName, marketplaceName, err, string(output))
+			log.Printf("[SYNC] Warning: failed to register marketplace at %s: %v, output: %s",
+				marketplacePath, err, string(output))
 			continue
 		}
 
-		log.Printf("[SYNC] Successfully installed plugin %s@%s", pluginName, marketplaceName)
+		log.Printf("[SYNC] Successfully registered marketplace at %s", marketplacePath)
 	}
 	return nil
 }

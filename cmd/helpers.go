@@ -656,7 +656,7 @@ var (
 	syncClaudeMDFile              string
 	syncNotificationSubscriptions string
 	syncNotificationsDir          string
-	syncInstallPlugins            bool
+	syncRegisterMarketplaces      bool
 )
 
 var syncCmd = &cobra.Command{
@@ -673,7 +673,7 @@ This command reads settings from a mounted Settings Secret and generates:
 - Notification subscriptions (if provided)
 
 It also clones any configured marketplace repositories to ~/.claude/plugins/marketplaces/
-and optionally installs enabled plugins using the claude CLI.
+and optionally registers them using the claude CLI.
 
 The settings file should be the mounted settings.json from the agentapi-settings-{user} Secret.
 The credentials file should be the mounted credentials.json from the agentapi-agent-credentials-{user} Secret.
@@ -682,14 +682,14 @@ Examples:
   # Basic usage with defaults
   agentapi-proxy helpers sync
 
-  # Specify all paths and install plugins
+  # Specify all paths and register marketplaces
   agentapi-proxy helpers sync \
     --settings-file /settings-config/settings.json \
     --output-dir /home/agentapi \
     --credentials-file /credentials-config/credentials.json \
     --notification-subscriptions /notification-subscriptions-source \
     --notifications-dir /notifications \
-    --install-plugins`,
+    --register-marketplaces`,
 	RunE: runSync,
 }
 
@@ -706,8 +706,8 @@ func init() {
 		"Path to notification subscriptions directory (optional)")
 	syncCmd.Flags().StringVar(&syncNotificationsDir, "notifications-dir", "",
 		"Path to notifications output directory (optional)")
-	syncCmd.Flags().BoolVar(&syncInstallPlugins, "install-plugins", false,
-		"Install enabled plugins using claude CLI")
+	syncCmd.Flags().BoolVar(&syncRegisterMarketplaces, "register-marketplaces", false,
+		"Register cloned marketplaces using claude CLI")
 
 	HelpersCmd.AddCommand(syncCmd)
 }
@@ -729,7 +729,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		ClaudeMDFile:              syncClaudeMDFile,
 		NotificationSubscriptions: syncNotificationSubscriptions,
 		NotificationsDir:          syncNotificationsDir,
-		InstallPlugins:            syncInstallPlugins,
+		RegisterMarketplaces:      syncRegisterMarketplaces,
 	}
 
 	if err := startup.Sync(opts); err != nil {
