@@ -53,11 +53,8 @@ type mcpServerJSON struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// OfficialPluginsURL is the URL of the official Claude plugins repository
-const OfficialPluginsURL = "https://github.com/anthropics/claude-plugins-official"
-
-// OfficialPluginsDir is the directory name for the official plugins
-const OfficialPluginsDir = "claude-plugins-official"
+// OfficialPluginsMarketplace is the marketplace identifier for official plugins
+const OfficialPluginsMarketplace = "anthropics/claude-plugins-official"
 
 // marketplaceJSON represents a marketplace configuration
 type marketplaceJSON struct {
@@ -67,18 +64,6 @@ type marketplaceJSON struct {
 // marketplacePluginJSON represents .claude-plugin/marketplace.json in a marketplace repository
 type marketplacePluginJSON struct {
 	Name string `json:"name"`
-}
-
-// marketplaceSource represents the source configuration for extraKnownMarketplaces
-// Source must be one of: 'url' | 'github' | 'git' | 'npm' | 'file' | 'directory'
-type marketplaceSource struct {
-	Source string `json:"source"`
-	Path   string `json:"path"`
-}
-
-// extraKnownMarketplace represents an entry in extraKnownMarketplaces
-type extraKnownMarketplace struct {
-	Source marketplaceSource `json:"source"`
 }
 
 // Sync synchronizes settings from Settings Secret to Claude configuration files
@@ -193,7 +178,7 @@ func generateClaudeJSON(outputDir string) error {
 	return nil
 }
 
-// syncMarketplaces clones marketplace repositories and generates settings.json
+// syncMarketplaces clones marketplace repositories and registers them via claude command
 func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	// Create directories
 	claudeDir := filepath.Join(opts.OutputDir, ".claude")
@@ -205,19 +190,18 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		return fmt.Errorf("failed to create marketplaces directory: %w", err)
 	}
 
-	// Determine the path prefix for settings.json (may differ from clone directory)
+	// Determine the path prefix for claude command (may differ from clone directory)
 	marketplacesSettingsPath := opts.MarketplacesSettingsPath
 	if marketplacesSettingsPath == "" {
 		marketplacesSettingsPath = opts.MarketplacesDir
 	}
 
-	// Clone official plugins repository
-	officialPluginsDir := filepath.Join(opts.MarketplacesDir, OfficialPluginsDir)
-	log.Printf("[SYNC] Cloning official plugins from %s to %s", OfficialPluginsURL, officialPluginsDir)
-	if err := cloneMarketplace(OfficialPluginsURL, officialPluginsDir); err != nil {
-		log.Printf("[SYNC] Warning: failed to clone official plugins: %v", err)
+	// Add official plugins marketplace via claude command (no git clone needed)
+	log.Printf("[SYNC] Adding official plugins marketplace: %s", OfficialPluginsMarketplace)
+	if err := AddMarketplaceFunc(OfficialPluginsMarketplace); err != nil {
+		log.Printf("[SYNC] Warning: failed to add official plugins marketplace: %v", err)
 	} else {
-		log.Printf("[SYNC] Successfully cloned official plugins")
+		log.Printf("[SYNC] Successfully added official plugins marketplace")
 	}
 
 	// Build settings.json content
@@ -240,8 +224,6 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 
 	// Process marketplaces if available
 	if settings != nil && len(settings.Marketplaces) > 0 {
-		extraKnownMarketplaces := make(map[string]extraKnownMarketplace)
-
 		for aliasKey, marketplace := range settings.Marketplaces {
 			if marketplace.URL == "" {
 				log.Printf("[SYNC] Skipping marketplace %s: no URL configured", aliasKey)
@@ -267,21 +249,15 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 			// Store mapping for plugin name resolution
 			nameMapping[aliasKey] = realName
 
-			// Add to extraKnownMarketplaces with real name
-			// Use marketplacesSettingsPath for the path in settings.json
+			// Add marketplace via claude command using the settings path
 			settingsPath := filepath.Join(marketplacesSettingsPath, aliasKey)
-			extraKnownMarketplaces[realName] = extraKnownMarketplace{
-				Source: marketplaceSource{
-					Source: "directory",
-					Path:   settingsPath,
-				},
+			log.Printf("[SYNC] Adding marketplace %s via claude command: %s", aliasKey, settingsPath)
+			if err := AddMarketplaceFunc(settingsPath); err != nil {
+				log.Printf("[SYNC] Warning: failed to add marketplace %s: %v", aliasKey, err)
+				continue
 			}
 
 			log.Printf("[SYNC] Successfully registered marketplace %s (alias: %s)", realName, aliasKey)
-		}
-
-		if len(extraKnownMarketplaces) > 0 {
-			settingsContent["extraKnownMarketplaces"] = extraKnownMarketplaces
 		}
 	}
 
@@ -308,6 +284,18 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	}
 
 	log.Printf("[SYNC] Generated %s", settingsPath)
+	return nil
+}
+
+// AddMarketplaceFunc is the function used to add marketplaces (can be overridden in tests)
+var AddMarketplaceFunc = addMarketplaceDefault
+
+// addMarketplaceDefault adds a marketplace using the claude CLI command
+func addMarketplaceDefault(marketplacePath string) error {
+	cmd := exec.Command("claude", "plugin", "marketplace", "add", marketplacePath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("claude plugin marketplace add failed: %w, output: %s", err, string(output))
+	}
 	return nil
 }
 
