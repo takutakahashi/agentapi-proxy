@@ -86,10 +86,13 @@ ENV GOCACHE=/home/agentapi/.cache/go-build
 RUN curl https://mise.run | sh && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
 
-# Install claude code and move to /opt/claude/bin for persistence across volume mounts
+# Install claude code and move to /opt/claude for persistence across volume mounts
+# The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
     sudo mkdir -p /opt/claude/bin && \
-    sudo mv /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
+    sudo cp -rL /home/agentapi/.local/share/claude /opt/claude/share && \
+    CLAUDE_VERSION=$(ls /opt/claude/share/versions/ | head -1) && \
+    sudo ln -sf /opt/claude/share/versions/${CLAUDE_VERSION} /opt/claude/bin/claude && \
     sudo chmod +x /opt/claude/bin/claude
 
 # Install Playwright MCP server via npm (Node.js is now installed directly)
