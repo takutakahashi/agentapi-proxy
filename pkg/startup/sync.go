@@ -396,7 +396,13 @@ func registerMarketplaces(outputDir string, marketplacesDir string) error {
 
 		cmd := exec.Command("claude", "plugin", "marketplace", "add", marketplacePath)
 		// Set HOME to outputDir so claude CLI writes to the correct location
-		cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
+		// Add ~/.local/bin to PATH for claude CLI
+		currentPath := os.Getenv("PATH")
+		newPath := filepath.Join(outputDir, ".local", "bin") + ":" + currentPath
+		cmd.Env = append(os.Environ(),
+			fmt.Sprintf("HOME=%s", outputDir),
+			fmt.Sprintf("PATH=%s", newPath),
+		)
 
 		if output, err := cmd.CombinedOutput(); err != nil {
 			log.Printf("[SYNC] Warning: failed to register marketplace at %s: %v, output: %s",
