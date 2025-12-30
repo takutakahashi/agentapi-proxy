@@ -41,6 +41,7 @@ type Proxy struct {
 	container          *di.Container                // Internal DI container
 	sessionManager     SessionManager               // Session lifecycle manager
 	settingsRepo       portrepos.SettingsRepository // Settings repository (Kubernetes mode only)
+	shareRepo          ShareRepository              // Share repository for session sharing
 	router             *Router                      // Router for custom handler registration
 }
 
@@ -72,6 +73,10 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			// These routes handle CORS manually in the proxy
 			path := c.Request().URL.Path
 			pathParts := strings.Split(path, "/")
+			// Skip CORS for shared session routes (/s/:shareToken/*)
+			if len(pathParts) >= 3 && pathParts[1] == "s" {
+				return true
+			}
 			// Skip CORS only for proxy routes that match /:sessionId/* pattern
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
@@ -118,12 +123,14 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Initialize session manager based on configuration
 	var sessionManager SessionManager
 	var settingsRepo portrepos.SettingsRepository
+	var shareRepo ShareRepository
 	if cfg.KubernetesSession.Enabled {
 		log.Printf("[PROXY] Kubernetes session management enabled")
 		k8sSessionManager, err := NewKubernetesSessionManager(cfg, verbose, lgr)
 		if err != nil {
 			log.Printf("[PROXY] Failed to initialize Kubernetes session manager: %v, falling back to local", err)
 			sessionManager = NewLocalSessionManager(cfg, verbose, lgr, cfg.StartPort)
+			shareRepo = NewMemoryShareRepository()
 		} else {
 			sessionManager = k8sSessionManager
 			log.Printf("[PROXY] Kubernetes session manager initialized successfully")
@@ -135,10 +142,18 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 			// Set settings repository in session manager for Bedrock integration
 			k8sSessionManager.SetSettingsRepository(settingsRepo)
 			log.Printf("[PROXY] Settings repository initialized for Kubernetes mode")
+			// Initialize share repository for Kubernetes mode
+			shareRepo = NewKubernetesShareRepository(
+				k8sSessionManager.GetClient(),
+				k8sSessionManager.GetNamespace(),
+			)
+			log.Printf("[PROXY] Share repository initialized for Kubernetes mode")
 		}
 	} else {
 		log.Printf("[PROXY] Using local session management")
 		sessionManager = NewLocalSessionManager(cfg, verbose, lgr, cfg.StartPort)
+		shareRepo = NewMemoryShareRepository()
+		log.Printf("[PROXY] Share repository initialized for local mode")
 	}
 
 	p := &Proxy{
@@ -150,6 +165,7 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		container:      container,
 		sessionManager: sessionManager,
 		settingsRepo:   settingsRepo,
+		shareRepo:      shareRepo,
 	}
 
 	// Add logging middleware if verbose
