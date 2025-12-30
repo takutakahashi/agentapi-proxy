@@ -652,11 +652,11 @@ func runMergeMCPConfig(cmd *cobra.Command, args []string) error {
 var (
 	syncSettingsFile              string
 	syncOutputDir                 string
-	syncMarketplacesDir           string
 	syncCredentialsFile           string
 	syncClaudeMDFile              string
 	syncNotificationSubscriptions string
 	syncNotificationsDir          string
+	syncInstallPlugins            bool
 )
 
 var syncCmd = &cobra.Command{
@@ -667,11 +667,13 @@ var syncCmd = &cobra.Command{
 This command reads settings from a mounted Settings Secret and generates:
 - ~/.claude.json with onboarding settings
 - ~/.claude/settings.json with marketplace configuration
+- ~/.claude/plugins/marketplaces/ (cloned marketplace repositories)
 - ~/.claude/.credentials.json (if credentials file is provided)
 - ~/.claude/CLAUDE.md (copied from Docker image)
 - Notification subscriptions (if provided)
 
-It also clones any configured marketplace repositories.
+It also clones any configured marketplace repositories to ~/.claude/plugins/marketplaces/
+and optionally installs enabled plugins using the claude CLI.
 
 The settings file should be the mounted settings.json from the agentapi-settings-{user} Secret.
 The credentials file should be the mounted credentials.json from the agentapi-agent-credentials-{user} Secret.
@@ -680,14 +682,14 @@ Examples:
   # Basic usage with defaults
   agentapi-proxy helpers sync
 
-  # Specify all paths
+  # Specify all paths and install plugins
   agentapi-proxy helpers sync \
     --settings-file /settings-config/settings.json \
     --output-dir /home/agentapi \
-    --marketplaces-dir /marketplaces \
     --credentials-file /credentials-config/credentials.json \
     --notification-subscriptions /notification-subscriptions-source \
-    --notifications-dir /notifications`,
+    --notifications-dir /notifications \
+    --install-plugins`,
 	RunE: runSync,
 }
 
@@ -696,8 +698,6 @@ func init() {
 		"Path to the mounted settings.json from Settings Secret")
 	syncCmd.Flags().StringVar(&syncOutputDir, "output-dir", "",
 		"Output directory (home directory, defaults to $HOME)")
-	syncCmd.Flags().StringVar(&syncMarketplacesDir, "marketplaces-dir", "/marketplaces",
-		"Directory to clone marketplace repositories")
 	syncCmd.Flags().StringVar(&syncCredentialsFile, "credentials-file", "",
 		"Path to the mounted credentials.json from Credentials Secret (optional)")
 	syncCmd.Flags().StringVar(&syncClaudeMDFile, "claude-md-file", "",
@@ -706,6 +706,8 @@ func init() {
 		"Path to notification subscriptions directory (optional)")
 	syncCmd.Flags().StringVar(&syncNotificationsDir, "notifications-dir", "",
 		"Path to notifications output directory (optional)")
+	syncCmd.Flags().BoolVar(&syncInstallPlugins, "install-plugins", false,
+		"Install enabled plugins using claude CLI")
 
 	HelpersCmd.AddCommand(syncCmd)
 }
@@ -723,11 +725,11 @@ func runSync(cmd *cobra.Command, args []string) error {
 	opts := startup.SyncOptions{
 		SettingsFile:              syncSettingsFile,
 		OutputDir:                 outputDir,
-		MarketplacesDir:           syncMarketplacesDir,
 		CredentialsFile:           syncCredentialsFile,
 		ClaudeMDFile:              syncClaudeMDFile,
 		NotificationSubscriptions: syncNotificationSubscriptions,
 		NotificationsDir:          syncNotificationsDir,
+		InstallPlugins:            syncInstallPlugins,
 	}
 
 	if err := startup.Sync(opts); err != nil {

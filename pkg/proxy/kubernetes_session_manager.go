@@ -514,6 +514,7 @@ echo "[MCP] MCP server configuration complete"
 
 // syncScript is the shell script executed by the init container to sync Claude configuration
 // It reads from the Settings Secret and generates ~/.claude.json, ~/.claude/settings.json, ~/.claude/.credentials.json, and ~/.claude/CLAUDE.md
+// It also clones marketplaces to ~/.claude/plugins/marketplaces/ and installs enabled plugins
 // It also copies notification subscriptions to the notifications directory
 const syncScript = `
 set -e
@@ -521,7 +522,7 @@ set -e
 echo "[SYNC] Starting Claude configuration sync"
 
 # Build sync command with required arguments
-SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /claude-config --marketplaces-dir /marketplaces"
+SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /home/agentapi"
 
 # Add credentials file if it exists
 if [ -f "/credentials-config/credentials.json" ]; then
@@ -537,6 +538,9 @@ if [ -d "/notification-subscriptions-source" ] && [ "$(ls -A /notification-subsc
     echo "[SYNC] Found notification subscriptions, including in sync"
     SYNC_ARGS="$SYNC_ARGS --notification-subscriptions /notification-subscriptions-source --notifications-dir /notifications"
 fi
+
+# Enable plugin installation
+SYNC_ARGS="$SYNC_ARGS --install-plugins"
 
 # Run sync command to generate Claude configuration
 agentapi-proxy helpers sync $SYNC_ARGS
@@ -1457,7 +1461,7 @@ func (m *KubernetesSessionManager) buildVolumes(session *kubernetesSession, user
 		volumes = append(volumes, m.buildMCPVolumes(session)...)
 	}
 
-	// Add sync configuration volumes (settings secret + marketplaces)
+	// Add sync configuration volumes (settings secret)
 	volumes = append(volumes, m.buildSyncVolumes(session)...)
 
 	return volumes
@@ -1591,14 +1595,6 @@ func (m *KubernetesSessionManager) buildSyncVolumes(session *kubernetesSession) 
 			},
 		})
 	}
-
-	// Add marketplaces EmptyDir for cloned repositories
-	volumes = append(volumes, corev1.Volume{
-		Name: "marketplaces",
-		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
-		},
-	})
 
 	return volumes
 }
@@ -2155,12 +2151,10 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *kubernetesSes
 				ReadOnly:  true,
 			},
 			{
-				Name:      "marketplaces",
-				MountPath: "/marketplaces",
-			},
-			{
+				// Mount claude-config EmptyDir to /home/agentapi
+				// Sync generates .claude.json and .claude/ directory here
 				Name:      "claude-config",
-				MountPath: "/claude-config",
+				MountPath: "/home/agentapi",
 			},
 			{
 				// Mount claude-credentials Secret for copying credentials.json
@@ -2213,12 +2207,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.Vol
 		{
 			Name:      "github-app",
 			MountPath: "/github-app",
-			ReadOnly:  true,
-		},
-		// Mount marketplaces directory (cloned by sync init container)
-		{
-			Name:      "marketplaces",
-			MountPath: "/marketplaces",
 			ReadOnly:  true,
 		},
 	}
