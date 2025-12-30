@@ -387,15 +387,10 @@ const officialMarketplace = "anthropics/claude-plugins-official"
 func registerOfficialMarketplace(outputDir string) error {
 	log.Printf("[SYNC] Registering official marketplace: %s", officialMarketplace)
 
-	cmd := exec.Command("claude", "plugin", "marketplace", "add", officialMarketplace)
+	claudeBin := filepath.Join(outputDir, ".local", "bin", "claude")
+	cmd := exec.Command(claudeBin, "plugin", "marketplace", "add", officialMarketplace)
 	// Set HOME to outputDir so claude CLI writes to the correct location
-	// Add ~/.local/bin to PATH for claude CLI
-	currentPath := os.Getenv("PATH")
-	newPath := filepath.Join(outputDir, ".local", "bin") + ":" + currentPath
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("HOME=%s", outputDir),
-		fmt.Sprintf("PATH=%s", newPath),
-	)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to register official marketplace: %w, output: %s", err, string(output))
@@ -427,15 +422,10 @@ func registerMarketplaces(outputDir string, marketplacesDir string) error {
 
 		log.Printf("[SYNC] Registering marketplace at %s", marketplacePath)
 
-		cmd := exec.Command("claude", "plugin", "marketplace", "add", marketplacePath)
+		claudeBin := filepath.Join(outputDir, ".local", "bin", "claude")
+		cmd := exec.Command(claudeBin, "plugin", "marketplace", "add", marketplacePath)
 		// Set HOME to outputDir so claude CLI writes to the correct location
-		// Add ~/.local/bin to PATH for claude CLI
-		currentPath := os.Getenv("PATH")
-		newPath := filepath.Join(outputDir, ".local", "bin") + ":" + currentPath
-		cmd.Env = append(os.Environ(),
-			fmt.Sprintf("HOME=%s", outputDir),
-			fmt.Sprintf("PATH=%s", newPath),
-		)
+		cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
 
 		if output, err := cmd.CombinedOutput(); err != nil {
 			log.Printf("[SYNC] Warning: failed to register marketplace at %s: %v, output: %s",
