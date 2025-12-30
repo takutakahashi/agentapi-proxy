@@ -88,12 +88,11 @@ RUN curl https://mise.run | sh && \
 
 # Install claude code and move to /opt/claude for persistence across volume mounts
 # The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
+# We copy with -L to follow the symlink and get the actual binary
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
     sudo mkdir -p /opt/claude/bin && \
-    sudo cp -rL /home/agentapi/.local/share/claude /opt/claude/share && \
-    CLAUDE_VERSION=$(ls /opt/claude/share/versions/ | head -1) && \
-    sudo ln -sf /opt/claude/share/versions/${CLAUDE_VERSION} /opt/claude/bin/claude && \
-    sudo chown -R agentapi:agentapi /opt/claude && \
+    sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
+    sudo chown agentapi:agentapi /opt/claude/bin/claude && \
     sudo chmod +x /opt/claude/bin/claude
 
 # Install Playwright MCP server via npm (Node.js is now installed directly)
