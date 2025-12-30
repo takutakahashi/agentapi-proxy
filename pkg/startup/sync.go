@@ -302,9 +302,17 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	log.Printf("[SYNC] Generated %s", settingsPath)
 
 	// Register marketplaces using claude CLI if enabled
-	if opts.RegisterMarketplaces && settings != nil && len(settings.Marketplaces) > 0 {
-		if err := registerMarketplaces(opts.OutputDir, marketplacesDir); err != nil {
-			log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
+	if opts.RegisterMarketplaces {
+		// Always register the official Anthropic marketplace
+		if err := registerOfficialMarketplace(opts.OutputDir); err != nil {
+			log.Printf("[SYNC] Warning: failed to register official marketplace: %v", err)
+		}
+
+		// Register custom cloned marketplaces if any
+		if settings != nil && len(settings.Marketplaces) > 0 {
+			if err := registerMarketplaces(opts.OutputDir, marketplacesDir); err != nil {
+				log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
+			}
 		}
 	}
 
@@ -370,6 +378,31 @@ func resolvePluginName(plugin string, nameMapping map[string]string) string {
 	}
 
 	return plugin
+}
+
+// officialMarketplace is the official Anthropic marketplace repository
+const officialMarketplace = "anthropics/claude-plugins-official"
+
+// registerOfficialMarketplace registers the official Anthropic marketplace
+func registerOfficialMarketplace(outputDir string) error {
+	log.Printf("[SYNC] Registering official marketplace: %s", officialMarketplace)
+
+	cmd := exec.Command("claude", "plugin", "marketplace", "add", officialMarketplace)
+	// Set HOME to outputDir so claude CLI writes to the correct location
+	// Add ~/.local/bin to PATH for claude CLI
+	currentPath := os.Getenv("PATH")
+	newPath := filepath.Join(outputDir, ".local", "bin") + ":" + currentPath
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("HOME=%s", outputDir),
+		fmt.Sprintf("PATH=%s", newPath),
+	)
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to register official marketplace: %w, output: %s", err, string(output))
+	}
+
+	log.Printf("[SYNC] Successfully registered official marketplace: %s", officialMarketplace)
+	return nil
 }
 
 // registerMarketplaces uses claude CLI to register cloned marketplaces
