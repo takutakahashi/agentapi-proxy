@@ -122,6 +122,15 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/sessions/:sessionId/share", r.handlers.shareHandlers.CreateShare)
 		r.echo.GET("/sessions/:sessionId/share", r.handlers.shareHandlers.GetShare)
 		r.echo.DELETE("/sessions/:sessionId/share", r.handlers.shareHandlers.DeleteShare)
+		// Add OPTIONS handler for session share endpoints (CORS preflight)
+		r.echo.OPTIONS("/sessions/:sessionId/share", func(c echo.Context) error {
+			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+			c.Response().Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
+			c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
+			c.Response().Header().Set("Access-Control-Max-Age", "86400")
+			return c.NoContent(http.StatusNoContent)
+		})
 		// Shared session access route (read-only)
 		r.echo.Any("/s/:shareToken/*", r.handlers.shareHandlers.RouteToSharedSession)
 		r.echo.OPTIONS("/s/:shareToken/*", func(c echo.Context) error {
