@@ -295,3 +295,79 @@ func TestProxyShutdown(t *testing.T) {
 	}
 	mockManager.mu.Unlock()
 }
+
+func TestDeleteSessionByID_DeletesShareLink(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
+	proxy := NewProxy(cfg, false)
+
+	// Set custom session manager
+	mockManager := newMockSessionManager()
+	proxy.SetSessionManager(mockManager)
+
+	// Create a session
+	sessionID := "test-session-with-share"
+	_, err := proxy.CreateSession(sessionID, StartRequest{
+		Environment: map[string]string{"TEST": "value"},
+	}, "test-user", "user", nil)
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+
+	// Create a share link for the session
+	shareRepo := proxy.GetShareRepository()
+	share := NewSessionShare(sessionID, "test-user")
+	err = shareRepo.Save(share)
+	if err != nil {
+		t.Fatalf("Failed to save share: %v", err)
+	}
+
+	// Verify share exists
+	_, err = shareRepo.FindBySessionID(sessionID)
+	if err != nil {
+		t.Fatalf("Share should exist before session deletion: %v", err)
+	}
+
+	// Delete the session
+	err = proxy.DeleteSessionByID(sessionID)
+	if err != nil {
+		t.Fatalf("DeleteSessionByID failed: %v", err)
+	}
+
+	// Verify share is also deleted
+	_, err = shareRepo.FindBySessionID(sessionID)
+	if err == nil {
+		t.Error("Share should be deleted when session is deleted")
+	}
+}
+
+func TestDeleteSessionByID_NoShareExists(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
+	proxy := NewProxy(cfg, false)
+
+	// Set custom session manager
+	mockManager := newMockSessionManager()
+	proxy.SetSessionManager(mockManager)
+
+	// Create a session without a share link
+	sessionID := "test-session-no-share"
+	_, err := proxy.CreateSession(sessionID, StartRequest{
+		Environment: map[string]string{"TEST": "value"},
+	}, "test-user", "user", nil)
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+
+	// Delete the session (should not error even without share)
+	err = proxy.DeleteSessionByID(sessionID)
+	if err != nil {
+		t.Fatalf("DeleteSessionByID should not fail when no share exists: %v", err)
+	}
+
+	mockManager.mu.Lock()
+	if !mockManager.deleteCalled {
+		t.Error("Mock session manager DeleteSession was not called")
+	}
+	mockManager.mu.Unlock()
+}

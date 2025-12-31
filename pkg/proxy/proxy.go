@@ -319,6 +319,16 @@ func (p *Proxy) SetSessionManager(manager SessionManager) {
 	p.sessionManager = manager
 }
 
+// GetShareRepository returns the share repository
+func (p *Proxy) GetShareRepository() ShareRepository {
+	return p.shareRepo
+}
+
+// SetShareRepository allows configuration of a custom share repository (for testing)
+func (p *Proxy) SetShareRepository(repo ShareRepository) {
+	p.shareRepo = repo
+}
+
 // GetContainer returns the DI container
 func (p *Proxy) GetContainer() *di.Container {
 	return p.container
@@ -380,6 +390,11 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 
 // DeleteSessionByID deletes a session by ID
 func (p *Proxy) DeleteSessionByID(sessionID string) error {
+	// Delete associated share link if exists (ignore errors as share may not exist)
+	if p.shareRepo != nil {
+		_ = p.shareRepo.Delete(sessionID)
+	}
+
 	return p.sessionManager.DeleteSession(sessionID)
 }
 
