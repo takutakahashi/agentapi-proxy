@@ -24,6 +24,7 @@ type HandlerRegistry struct {
 	sessionHandlers      *SessionHandlers
 	settingsHandlers     *SettingsHandlers
 	userHandlers         *UserHandlers
+	shareHandlers        *ShareHandlers
 	customHandlers       []CustomHandler
 }
 
@@ -56,6 +57,13 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 		log.Printf("[ROUTER] MCP secret syncer configured for settings handlers")
 	}
 
+	// Initialize share handlers
+	var shareHandlers *ShareHandlers
+	if proxy.shareRepo != nil {
+		shareHandlers = NewShareHandlers(proxy, proxy.shareRepo)
+		log.Printf("[ROUTER] Share handlers initialized")
+	}
+
 	return &Router{
 		echo:  e,
 		proxy: proxy,
@@ -65,6 +73,7 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 			sessionHandlers:      NewSessionHandlers(proxy),
 			settingsHandlers:     settingsHandlers,
 			userHandlers:         NewUserHandlers(proxy),
+			shareHandlers:        shareHandlers,
 			customHandlers:       make([]CustomHandler, 0),
 		},
 	}
@@ -106,6 +115,25 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.POST("/start", r.handlers.sessionHandlers.StartSession)
 	r.echo.GET("/search", r.handlers.sessionHandlers.SearchSessions)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionHandlers.DeleteSession)
+
+	// Session sharing routes
+	if r.handlers.shareHandlers != nil {
+		log.Printf("[ROUTES] Registering session sharing endpoints...")
+		r.echo.POST("/sessions/:sessionId/share", r.handlers.shareHandlers.CreateShare)
+		r.echo.GET("/sessions/:sessionId/share", r.handlers.shareHandlers.GetShare)
+		r.echo.DELETE("/sessions/:sessionId/share", r.handlers.shareHandlers.DeleteShare)
+		// Shared session access route (read-only)
+		r.echo.Any("/s/:shareToken/*", r.handlers.shareHandlers.RouteToSharedSession)
+		r.echo.OPTIONS("/s/:shareToken/*", func(c echo.Context) error {
+			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+			c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
+			c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
+			c.Response().Header().Set("Access-Control-Max-Age", "86400")
+			return c.NoContent(http.StatusNoContent)
+		})
+		log.Printf("[ROUTES] Session sharing endpoints registered")
+	}
 
 	// Session proxy route
 	r.echo.Any("/:sessionId/*", r.handlers.sessionHandlers.RouteToSession)
