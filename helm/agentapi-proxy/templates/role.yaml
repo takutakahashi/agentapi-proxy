@@ -29,7 +29,7 @@ rules:
     verbs: ["get", "list", "create", "update", "delete", "patch"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "create"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   {{- if $scheduleWorkerEnabled }}
   # Leader election for schedule worker (enabled by default)
   - apiGroups: ["coordination.k8s.io"]
