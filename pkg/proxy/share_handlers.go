@@ -185,8 +185,8 @@ func (h *ShareHandlers) RouteToSharedSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
-	// Only allow GET requests for shared sessions
-	if c.Request().Method != http.MethodGet && c.Request().Method != http.MethodOptions {
+	// Only allow read-only methods (GET, HEAD) for shared sessions
+	if c.Request().Method != http.MethodGet && c.Request().Method != http.MethodHead && c.Request().Method != http.MethodOptions {
 		return echo.NewHTTPError(http.StatusForbidden, "Shared sessions are read-only")
 	}
 

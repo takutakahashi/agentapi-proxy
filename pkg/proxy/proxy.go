@@ -238,6 +238,11 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	// Start cleanup goroutine for defunct processes
 	go p.cleanupDefunctProcesses()
 
+	// Start cleanup goroutine for expired shares
+	if p.shareRepo != nil {
+		go p.cleanupExpiredShares()
+	}
+
 	p.setupRoutes()
 
 	return p
@@ -551,6 +556,23 @@ func (p *Proxy) cleanupDefunctProcessesOnce() {
 		// This is a best-effort approach
 		if defunctCount > 10 {
 			log.Printf("High number of defunct processes detected (%d). Consider investigating process management.", defunctCount)
+		}
+	}
+}
+
+// cleanupExpiredShares periodically removes expired session shares
+func (p *Proxy) cleanupExpiredShares() {
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if p.shareRepo != nil {
+			count, err := p.shareRepo.CleanupExpired()
+			if err != nil {
+				log.Printf("Failed to cleanup expired shares: %v", err)
+			} else if count > 0 {
+				log.Printf("Cleaned up %d expired session shares", count)
+			}
 		}
 	}
 }

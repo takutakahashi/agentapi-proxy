@@ -78,8 +78,9 @@ func (s *SessionShare) IsExpired() bool {
 func generateShareToken() string {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		// Fallback to timestamp-based token if crypto/rand fails
-		return hex.EncodeToString([]byte(time.Now().String()))[:32]
+		// crypto/rand.Read should never fail on a properly configured system
+		// If it does, it indicates a critical system issue - fail loudly
+		panic("crypto/rand.Read failed: " + err.Error())
 	}
 	return hex.EncodeToString(bytes)
 }
@@ -100,4 +101,7 @@ type ShareRepository interface {
 
 	// DeleteByToken removes a share by token
 	DeleteByToken(token string) error
+
+	// CleanupExpired removes all expired shares and returns the count of deleted shares
+	CleanupExpired() (int, error)
 }

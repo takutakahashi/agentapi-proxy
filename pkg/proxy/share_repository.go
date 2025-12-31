@@ -126,6 +126,27 @@ func (r *MemoryShareRepository) DeleteByToken(token string) error {
 	return nil
 }
 
+// CleanupExpired removes all expired shares
+func (r *MemoryShareRepository) CleanupExpired() (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var toDelete []string
+	for token, share := range r.shares {
+		if share.IsExpired() {
+			toDelete = append(toDelete, token)
+		}
+	}
+
+	for _, token := range toDelete {
+		share := r.shares[token]
+		delete(r.sessionToToken, share.SessionID())
+		delete(r.shares, token)
+	}
+
+	return len(toDelete), nil
+}
+
 // KubernetesShareRepository implements ShareRepository using Kubernetes ConfigMap
 type KubernetesShareRepository struct {
 	client    kubernetes.Interface
@@ -261,6 +282,43 @@ func (r *KubernetesShareRepository) DeleteByToken(token string) error {
 	delete(data.Shares, token)
 
 	return r.saveData(ctx, data)
+}
+
+// CleanupExpired removes all expired shares
+func (r *KubernetesShareRepository) CleanupExpired() (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	ctx := context.Background()
+	data, err := r.loadData(ctx)
+	if err != nil {
+		// No data means no shares to clean up
+		return 0, nil
+	}
+
+	var toDelete []string
+	now := time.Now()
+	for token, sj := range data.Shares {
+		if sj.ExpiresAt != nil && now.After(*sj.ExpiresAt) {
+			toDelete = append(toDelete, token)
+		}
+	}
+
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+
+	for _, token := range toDelete {
+		sj := data.Shares[token]
+		delete(data.SessionToToken, sj.SessionID)
+		delete(data.Shares, token)
+	}
+
+	if err := r.saveData(ctx, data); err != nil {
+		return 0, err
+	}
+
+	return len(toDelete), nil
 }
 
 // loadData loads share data from ConfigMap

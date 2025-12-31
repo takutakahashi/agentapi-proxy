@@ -173,3 +173,48 @@ func TestGenerateShareToken_Uniqueness(t *testing.T) {
 		tokens[token] = true
 	}
 }
+
+func TestMemoryShareRepository_CleanupExpired(t *testing.T) {
+	repo := NewMemoryShareRepository()
+
+	// Create a non-expired share
+	share1 := NewSessionShare("session-1", "user-1")
+	err := repo.Save(share1)
+	require.NoError(t, err)
+
+	// Create an expired share
+	share2 := NewSessionShare("session-2", "user-2")
+	past := time.Now().Add(-time.Hour)
+	share2.SetExpiresAt(&past)
+	err = repo.Save(share2)
+	require.NoError(t, err)
+
+	// Create another expired share
+	share3 := NewSessionShare("session-3", "user-3")
+	pastAgain := time.Now().Add(-time.Minute)
+	share3.SetExpiresAt(&pastAgain)
+	err = repo.Save(share3)
+	require.NoError(t, err)
+
+	// Cleanup should remove 2 expired shares
+	count, err := repo.CleanupExpired()
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	// Non-expired share should still be accessible
+	found, err := repo.FindByToken(share1.Token())
+	require.NoError(t, err)
+	assert.Equal(t, "session-1", found.SessionID())
+
+	// Expired shares should be gone
+	_, err = repo.FindByToken(share2.Token())
+	assert.Error(t, err)
+
+	_, err = repo.FindByToken(share3.Token())
+	assert.Error(t, err)
+
+	// Running cleanup again should return 0
+	count, err = repo.CleanupExpired()
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
