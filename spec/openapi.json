@@ -233,6 +233,233 @@
         }
       }
     },
+    "/sessions/{sessionId}/share": {
+      "post": {
+        "summary": "Create a share URL",
+        "description": "Creates a shareable URL for the session. Only the session owner can create a share URL.",
+        "operationId": "createSessionShare",
+        "tags": ["Session Sharing"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionShareResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Share created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionShareResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Session ID is required"
+          },
+          "403": {
+            "description": "Forbidden - only session owner can create share URL"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "500": {
+            "description": "Failed to create share"
+          }
+        }
+      },
+      "get": {
+        "summary": "Get share status",
+        "description": "Returns the share status for a session. Only the session owner can view the share status.",
+        "operationId": "getSessionShare",
+        "tags": ["Session Sharing"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionShareStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Session ID is required"
+          },
+          "403": {
+            "description": "Forbidden - only session owner can view share status"
+          },
+          "404": {
+            "description": "Session or share not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Revoke share URL",
+        "description": "Revokes/deletes the share URL for a session. Only the session owner can revoke the share.",
+        "operationId": "deleteSessionShare",
+        "tags": ["Session Sharing"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share revoked successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Share revoked successfully"
+                    },
+                    "session_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Session ID is required"
+          },
+          "403": {
+            "description": "Forbidden - only session owner can revoke share URL"
+          },
+          "404": {
+            "description": "Session or share not found"
+          }
+        }
+      }
+    },
+    "/s/{shareToken}/{path}": {
+      "summary": "Access shared session (read-only)",
+      "description": "All GET/HEAD requests to /s/{shareToken}/* are proxied to the corresponding agentapi server instance in read-only mode.",
+      "get": {
+        "summary": "Access shared session",
+        "description": "Proxy GET request to a shared session. Only GET and HEAD methods are allowed for shared sessions.",
+        "operationId": "accessSharedSession",
+        "tags": ["Session Sharing"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "shareToken",
+            "in": "path",
+            "required": true,
+            "description": "Share token (32-character hex string)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to forward to agentapi",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Response from agentapi server"
+          },
+          "403": {
+            "description": "Shared sessions are read-only (POST/PUT/DELETE not allowed)"
+          },
+          "404": {
+            "description": "Invalid share token or session not found"
+          },
+          "410": {
+            "description": "Share link has expired"
+          },
+          "502": {
+            "description": "Bad Gateway - agentapi server unavailable"
+          }
+        }
+      },
+      "head": {
+        "summary": "HEAD request to shared session",
+        "description": "Proxy HEAD request to a shared session.",
+        "operationId": "headSharedSession",
+        "tags": ["Session Sharing"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "shareToken",
+            "in": "path",
+            "required": true,
+            "description": "Share token (32-character hex string)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "description": "Path to forward to agentapi",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Response headers from agentapi server"
+          },
+          "404": {
+            "description": "Invalid share token or session not found"
+          },
+          "410": {
+            "description": "Share link has expired"
+          },
+          "502": {
+            "description": "Bad Gateway - agentapi server unavailable"
+          }
+        }
+      }
+    },
     "/{sessionId}/{path}": {
       "summary": "Proxy to session",
       "description": "All requests to /{sessionId}/* are proxied to the corresponding agentapi server instance.",
@@ -1546,6 +1773,70 @@
             "type": "string"
           }
         }
+      },
+      "SessionShareResponse": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Share token (32-character hex string)"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Session ID"
+          },
+          "share_url": {
+            "type": "string",
+            "description": "Relative URL for accessing the shared session (e.g., /s/{token}/)"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the share was created"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the share expires (null if no expiration)"
+          }
+        }
+      },
+      "SessionShareStatusResponse": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Share token"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Session ID"
+          },
+          "share_url": {
+            "type": "string",
+            "description": "Relative URL for accessing the shared session"
+          },
+          "created_by": {
+            "type": "string",
+            "description": "User ID who created the share"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the share was created"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When the share expires (null if no expiration)"
+          },
+          "is_expired": {
+            "type": "boolean",
+            "description": "Whether the share has expired"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -1582,6 +1873,10 @@
     {
       "name": "Session Proxy",
       "description": "Proxy requests to agentapi server instances"
+    },
+    {
+      "name": "Session Sharing",
+      "description": "Session sharing for read-only access via shareable URLs"
     },
     {
       "name": "Schedules",
