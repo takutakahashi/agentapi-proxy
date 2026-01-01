@@ -512,6 +512,55 @@ agentapi-proxy helpers merge-mcp-config \
 echo "[MCP] MCP server configuration complete"
 `
 
+// mergeSettingsScript is the shell script executed by the init container to merge settings configurations
+// It uses the agentapi-proxy helpers merge-settings-config command to merge configurations from multiple directories
+const mergeSettingsScript = `
+set -e
+
+# Check if any settings config directories exist
+SETTINGS_DIRS=""
+if [ -d "/settings-config-source/base" ] && [ "$(ls -A /settings-config-source/base 2>/dev/null)" ]; then
+    SETTINGS_DIRS="/settings-config-source/base"
+fi
+
+# Add team directories (numbered: /settings-config-source/team/0, /settings-config-source/team/1, etc.)
+for team_dir in /settings-config-source/team/*/; do
+    if [ -d "$team_dir" ] && [ "$(ls -A "$team_dir" 2>/dev/null)" ]; then
+        if [ -n "$SETTINGS_DIRS" ]; then
+            SETTINGS_DIRS="$SETTINGS_DIRS,$team_dir"
+        else
+            SETTINGS_DIRS="$team_dir"
+        fi
+    fi
+done
+
+if [ -d "/settings-config-source/user" ] && [ "$(ls -A /settings-config-source/user 2>/dev/null)" ]; then
+    if [ -n "$SETTINGS_DIRS" ]; then
+        SETTINGS_DIRS="$SETTINGS_DIRS,/settings-config-source/user"
+    else
+        SETTINGS_DIRS="/settings-config-source/user"
+    fi
+fi
+
+if [ -z "$SETTINGS_DIRS" ]; then
+    echo "[SETTINGS] No settings configurations found, skipping merge"
+    exit 0
+fi
+
+echo "[SETTINGS] Merging settings from: $SETTINGS_DIRS"
+
+# Create output directory
+mkdir -p /settings-config
+
+# Merge settings configurations using agentapi-proxy helper
+agentapi-proxy helpers merge-settings-config \
+    --input-dirs "$SETTINGS_DIRS" \
+    --output /settings-config/settings.json \
+    --verbose
+
+echo "[SETTINGS] Settings configuration merge complete"
+`
+
 // syncScript is the shell script executed by the init container to sync Claude configuration
 // It reads from the Settings Secret and generates ~/.claude.json, ~/.claude/settings.json, ~/.claude/.credentials.json, and ~/.claude/CLAUDE.md
 // It also clones marketplaces to ~/.claude/plugins/marketplaces/ and installs enabled plugins
@@ -572,6 +621,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	if cloneRepoInitContainer := m.buildCloneRepoInitContainer(session, req); cloneRepoInitContainer != nil {
 		initContainers = append(initContainers, *cloneRepoInitContainer)
 	}
+
+	// Add settings merge init container
+	// This merges base, team, and user settings into a single configuration
+	initContainers = append(initContainers, m.buildSettingsMergeInitContainer(session))
+	log.Printf("[K8S_SESSION] Added settings merge init container for session %s", session.id)
 
 	// Add sync init container
 	// This generates ~/.claude.json, ~/.claude/settings.json, and clones marketplace repositories
@@ -1564,37 +1618,98 @@ func (m *KubernetesSessionManager) buildMCPVolumes(session *kubernetesSession) [
 }
 
 // buildSyncVolumes builds the volumes for sync configuration
-// This replaces buildMarketplaceVolumes and uses the Settings Secret directly
+// Uses projected volume to merge base, team, and user settings
 func (m *KubernetesSessionManager) buildSyncVolumes(session *kubernetesSession) []corev1.Volume {
 	volumes := []corev1.Volume{}
 
-	// Add settings-config volume from agentapi-settings-{user} Secret
-	if session.request != nil && session.request.UserID != "" {
-		settingsSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(session.request.UserID))
-		volumes = append(volumes, corev1.Volume{
-			Name: "settings-config",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: settingsSecretName,
+	// Build projected volume sources for settings-config-source
+	var projectedSources []corev1.VolumeProjection
+
+	// Add base settings Secret (if configured)
+	if m.k8sConfig.SettingsBaseSecret != "" {
+		projectedSources = append(projectedSources, corev1.VolumeProjection{
+			Secret: &corev1.SecretProjection{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.SettingsBaseSecret,
+				},
+				Items: []corev1.KeyToPath{
+					{
+						Key:  "settings.json",
+						Path: "base/settings.json",
+					},
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	// Add team settings Secrets
+	if session.request != nil {
+		for i, team := range session.request.Teams {
+			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
+			projectedSources = append(projectedSources, corev1.VolumeProjection{
+				Secret: &corev1.SecretProjection{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: secretName,
+					},
 					Items: []corev1.KeyToPath{
 						{
 							Key:  "settings.json",
-							Path: "settings.json",
+							Path: fmt.Sprintf("team/%d/settings.json", i),
 						},
 					},
 					Optional: boolPtr(true),
 				},
+			})
+		}
+	}
+
+	// Add user settings Secret
+	if session.request != nil && session.request.UserID != "" {
+		userSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(session.request.UserID))
+		projectedSources = append(projectedSources, corev1.VolumeProjection{
+			Secret: &corev1.SecretProjection{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: userSecretName,
+				},
+				Items: []corev1.KeyToPath{
+					{
+						Key:  "settings.json",
+						Path: "user/settings.json",
+					},
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	// Add settings-config-source as projected volume
+	if len(projectedSources) > 0 {
+		volumes = append(volumes, corev1.Volume{
+			Name: "settings-config-source",
+			VolumeSource: corev1.VolumeSource{
+				Projected: &corev1.ProjectedVolumeSource{
+					Sources: projectedSources,
+				},
 			},
 		})
 	} else {
-		// Use an EmptyDir if no user configured
+		// Use an EmptyDir if no secrets configured
 		volumes = append(volumes, corev1.Volume{
-			Name: "settings-config",
+			Name: "settings-config-source",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		})
 	}
+
+	// Add settings-config EmptyDir for merged output
+	volumes = append(volumes, corev1.Volume{
+		Name: "settings-config",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	})
 
 	return volumes
 }
@@ -2172,6 +2287,39 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *kubernetesSes
 				// Mount notifications EmptyDir (destination for copying)
 				Name:      "notifications",
 				MountPath: "/notifications",
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
+}
+
+// buildSettingsMergeInitContainer builds the init container for merging settings configurations
+// It merges base, team, and user settings into a single configuration
+func (m *KubernetesSessionManager) buildSettingsMergeInitContainer(session *kubernetesSession) corev1.Container {
+	// Use the main container image if InitContainerImage is not specified
+	initImage := m.k8sConfig.InitContainerImage
+	if initImage == "" {
+		initImage = m.k8sConfig.Image
+	}
+
+	return corev1.Container{
+		Name:            "merge-settings",
+		Image:           initImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c"},
+		Args:            []string{mergeSettingsScript},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "settings-config-source",
+				MountPath: "/settings-config-source",
+				ReadOnly:  true,
+			},
+			{
+				Name:      "settings-config",
+				MountPath: "/settings-config",
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{

@@ -1104,14 +1104,14 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 	}
 
 	// Verify InitContainer exists
-	// We have 1 init container: sync-config
+	// We have 2 init containers: merge-settings, sync-config
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 1 {
-		t.Fatalf("Expected 1 init container, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
 	}
 
-	// Find sync-config init container
-	initContainer := podSpec.InitContainers[0]
+	// Find sync-config init container (second one)
+	initContainer := podSpec.InitContainers[1]
 	if initContainer.Name != "sync-config" {
 		t.Fatalf("Expected sync-config init container, got %s", initContainer.Name)
 	}
@@ -1301,14 +1301,14 @@ func TestKubernetesSessionManager_InitContainerImageDefault(t *testing.T) {
 	}
 
 	// Verify InitContainer uses the main image when InitContainerImage is empty
-	// We now have 1 init container: sync-config
+	// We now have 2 init containers: merge-settings, sync-config
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 1 {
-		t.Fatalf("Expected 1 init container, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
 	}
 
-	// Find sync-config init container
-	initContainer := &podSpec.InitContainers[0]
+	// Find sync-config init container (second one)
+	initContainer := &podSpec.InitContainers[1]
 	if initContainer.Name != "sync-config" {
 		t.Fatalf("Expected sync-config init container, got %s", initContainer.Name)
 	}
@@ -1482,10 +1482,10 @@ func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have 2 init containers: clone-repo and sync-config
+	// Verify we have 3 init containers: clone-repo, merge-settings, and sync-config
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 2 {
-		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 3 {
+		t.Fatalf("Expected 3 init containers, got %d", len(podSpec.InitContainers))
 	}
 
 	// Verify first init container is clone-repo
@@ -1533,10 +1533,16 @@ func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
 		t.Error("Expected clone-repo container to have workdir volume mount")
 	}
 
-	// Verify second init container is sync-config
-	syncConfigContainer := podSpec.InitContainers[1]
+	// Verify second init container is merge-settings
+	mergeSettingsContainer := podSpec.InitContainers[1]
+	if mergeSettingsContainer.Name != "merge-settings" {
+		t.Errorf("Expected second init container name 'merge-settings', got %s", mergeSettingsContainer.Name)
+	}
+
+	// Verify third init container is sync-config
+	syncConfigContainer := podSpec.InitContainers[2]
 	if syncConfigContainer.Name != "sync-config" {
-		t.Errorf("Expected second init container name 'sync-config', got %s", syncConfigContainer.Name)
+		t.Errorf("Expected third init container name 'sync-config', got %s", syncConfigContainer.Name)
 	}
 }
 
@@ -1612,15 +1618,20 @@ func TestKubernetesSessionManager_CloneRepoInitContainerSkippedWithoutRepoInfo(t
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have 1 init container (sync-config) when RepoInfo is nil
+	// Verify we have 2 init containers (merge-settings, sync-config) when RepoInfo is nil
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 1 {
-		t.Fatalf("Expected 1 init container when RepoInfo is nil, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 2 {
+		t.Fatalf("Expected 2 init containers when RepoInfo is nil, got %d", len(podSpec.InitContainers))
 	}
 
-	// Verify the first init container is sync-config (not clone-repo)
-	if podSpec.InitContainers[0].Name != "sync-config" {
-		t.Errorf("Expected first init container name 'sync-config', got %s", podSpec.InitContainers[0].Name)
+	// Verify the first init container is merge-settings (not clone-repo)
+	if podSpec.InitContainers[0].Name != "merge-settings" {
+		t.Errorf("Expected first init container name 'merge-settings', got %s", podSpec.InitContainers[0].Name)
+	}
+
+	// Verify the second init container is sync-config
+	if podSpec.InitContainers[1].Name != "sync-config" {
+		t.Errorf("Expected second init container name 'sync-config', got %s", podSpec.InitContainers[1].Name)
 	}
 }
 
@@ -1699,10 +1710,10 @@ func TestKubernetesSessionManager_CloneRepoInitContainerWithoutGitHubSecret(t *t
 		t.Fatalf("Failed to get deployment: %v", err)
 	}
 
-	// Verify we have 2 init containers (clone-repo, sync-config)
+	// Verify we have 3 init containers (clone-repo, merge-settings, sync-config)
 	podSpec := deployment.Spec.Template.Spec
-	if len(podSpec.InitContainers) != 2 {
-		t.Fatalf("Expected 2 init containers, got %d", len(podSpec.InitContainers))
+	if len(podSpec.InitContainers) != 3 {
+		t.Fatalf("Expected 3 init containers, got %d", len(podSpec.InitContainers))
 	}
 
 	// Verify first init container is clone-repo
