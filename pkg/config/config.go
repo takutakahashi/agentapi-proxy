@@ -207,6 +207,12 @@ type KubernetesSessionConfig struct {
 	// This Secret is applied to all sessions. Each key should be a JSON file name (e.g., "github.json")
 	// containing mcpServers configuration
 	MCPServersBaseSecret string `json:"mcp_servers_base_secret" mapstructure:"mcp_servers_base_secret"`
+
+	// Settings configuration
+	// SettingsBaseSecret is the name of the Kubernetes Secret containing base settings configurations
+	// This Secret is applied to all sessions and contains marketplaces and enabled_plugins settings
+	// Team and user settings can override these base settings
+	SettingsBaseSecret string `json:"settings_base_secret" mapstructure:"settings_base_secret"`
 }
 
 // Config represents the proxy configuration

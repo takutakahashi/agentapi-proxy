@@ -18,6 +18,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/github"
 	"github.com/takutakahashi/agentapi-proxy/pkg/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
+	"github.com/takutakahashi/agentapi-proxy/pkg/settings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
 
@@ -33,6 +34,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  setup-gh - Setup GitHub authentication using gh CLI")
 		fmt.Println("  send-notification - Send push notifications to registered subscriptions")
 		fmt.Println("  merge-mcp-config - Merge multiple MCP server configuration directories")
+		fmt.Println("  merge-settings-config - Merge multiple settings configuration directories")
 		fmt.Println("  sync - Sync Claude configuration from Settings Secret")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
@@ -737,5 +739,111 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Claude configuration sync completed successfully!")
+	return nil
+}
+
+// merge-settings-config command flags
+var (
+	settingsInputDirs    string
+	settingsOutputPath   string
+	settingsMergeVerbose bool
+)
+
+var mergeSettingsConfigCmd = &cobra.Command{
+	Use:   "merge-settings-config",
+	Short: "Merge multiple settings configuration directories",
+	Long: `Merge multiple settings configuration directories into a single JSON file.
+
+This command reads settings configurations (marketplaces and enabled plugins) from
+multiple directories and merges them into a single configuration file.
+
+For marketplaces, later directories take precedence over earlier ones (last wins).
+For enabled plugins, all unique plugins from all directories are merged (union).
+
+This allows for base/team/user layered configuration where:
+- Base settings provide organization-wide defaults
+- Team settings can override or extend base settings
+- User settings have the highest priority
+
+Each directory should contain one or more JSON files with the settings structure:
+{
+  "name": "settings-name",
+  "marketplaces": {
+    "marketplace-name": {
+      "url": "https://github.com/org/marketplace"
+    }
+  },
+  "enabled_plugins": [
+    "plugin-name@marketplace-name"
+  ]
+}
+
+Examples:
+  # Merge base, team, and user configs
+  agentapi-proxy helpers merge-settings-config \
+    --input-dirs /settings-config/base,/settings-config/team/0,/settings-config/user \
+    --output /settings-config/settings.json
+
+  # With verbose output
+  agentapi-proxy helpers merge-settings-config \
+    --input-dirs /settings-config/base,/settings-config/user \
+    --output /settings-config/settings.json \
+    --verbose`,
+	RunE: runMergeSettingsConfig,
+}
+
+func init() {
+	mergeSettingsConfigCmd.Flags().StringVar(&settingsInputDirs, "input-dirs", "",
+		"Comma-separated list of input directories (in priority order, later takes precedence)")
+	mergeSettingsConfigCmd.Flags().StringVarP(&settingsOutputPath, "output", "o", "",
+		"Output file path for merged configuration")
+	mergeSettingsConfigCmd.Flags().BoolVarP(&settingsMergeVerbose, "verbose", "v", false,
+		"Verbose output")
+
+	if err := mergeSettingsConfigCmd.MarkFlagRequired("input-dirs"); err != nil {
+		panic(err)
+	}
+	if err := mergeSettingsConfigCmd.MarkFlagRequired("output"); err != nil {
+		panic(err)
+	}
+
+	HelpersCmd.AddCommand(mergeSettingsConfigCmd)
+}
+
+func runMergeSettingsConfig(cmd *cobra.Command, args []string) error {
+	dirs := strings.Split(settingsInputDirs, ",")
+
+	// Trim whitespace
+	for i := range dirs {
+		dirs[i] = strings.TrimSpace(dirs[i])
+	}
+
+	opts := settings.MergeOptions{
+		Verbose: settingsMergeVerbose,
+	}
+
+	if settingsMergeVerbose {
+		opts.Logger = func(format string, args ...interface{}) {
+			fmt.Printf(format+"\n", args...)
+		}
+	}
+
+	config, err := settings.MergeConfigs(dirs, opts)
+	if err != nil {
+		return fmt.Errorf("failed to merge settings configs: %w", err)
+	}
+
+	if err := settings.WriteConfig(config, settingsOutputPath); err != nil {
+		return fmt.Errorf("failed to write output: %w", err)
+	}
+
+	marketplaceCount := len(config.Marketplaces)
+	pluginCount := len(config.EnabledPlugins)
+	if settingsMergeVerbose {
+		fmt.Printf("[SETTINGS] Merged %d marketplace(s) and %d plugin(s) to %s\n", marketplaceCount, pluginCount, settingsOutputPath)
+	} else {
+		fmt.Printf("Successfully merged %d marketplace(s) and %d plugin(s) to %s\n", marketplaceCount, pluginCount, settingsOutputPath)
+	}
+
 	return nil
 }
