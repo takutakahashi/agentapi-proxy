@@ -46,6 +46,7 @@ type AuthConfig struct {
 	Enabled bool              `json:"enabled" mapstructure:"enabled"`
 	Static  *StaticAuthConfig `json:"static,omitempty" mapstructure:"static"`
 	GitHub  *GitHubAuthConfig `json:"github,omitempty" mapstructure:"github"`
+	AWS     *AWSAuthConfig    `json:"aws,omitempty" mapstructure:"aws"`
 }
 
 // StaticAuthConfig represents static API key authentication
@@ -85,6 +86,25 @@ type TeamRoleRule struct {
 	Role        string   `json:"role" mapstructure:"role" yaml:"role"`
 	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
 	EnvFile     string   `json:"env_file,omitempty" mapstructure:"env_file" yaml:"env_file"`
+}
+
+// AWSAuthConfig represents AWS IAM authentication configuration
+type AWSAuthConfig struct {
+	Enabled        bool           `json:"enabled" mapstructure:"enabled"`
+	Region         string         `json:"region" mapstructure:"region"`
+	AccountID      string         `json:"account_id" mapstructure:"account_id"`
+	TeamTagKey     string         `json:"team_tag_key" mapstructure:"team_tag_key"`
+	RequiredTagKey string         `json:"required_tag_key" mapstructure:"required_tag_key"`     // Tag key that must exist (e.g., "agentapi-proxy")
+	RequiredTagVal string         `json:"required_tag_value" mapstructure:"required_tag_value"` // Expected tag value (e.g., "enabled")
+	CacheTTL       string         `json:"cache_ttl" mapstructure:"cache_ttl"`
+	UserMapping    AWSUserMapping `json:"user_mapping" mapstructure:"user_mapping"`
+}
+
+// AWSUserMapping represents AWS user role mapping configuration
+type AWSUserMapping struct {
+	DefaultRole        string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
+	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
+	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
 }
 
 // RoleEnvFilesConfig represents role-based environment files configuration
@@ -301,6 +321,12 @@ func LoadConfig(filename string) (*Config, error) {
 	if config.Auth.GitHub != nil {
 		log.Printf("[CONFIG] GitHub OAuth configured: %v", config.Auth.GitHub.OAuth != nil)
 	}
+	log.Printf("[CONFIG] AWS auth enabled: %v", config.Auth.AWS != nil && config.Auth.AWS.Enabled)
+	if config.Auth.AWS != nil && config.Auth.AWS.Enabled {
+		log.Printf("[CONFIG] AWS region: %s", config.Auth.AWS.Region)
+		log.Printf("[CONFIG] AWS account ID: %s", config.Auth.AWS.AccountID)
+		log.Printf("[CONFIG] AWS team tag key: %s", config.Auth.AWS.TeamTagKey)
+	}
 	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
@@ -351,6 +377,22 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 			log.Printf("[CONFIG] OAuth ClientID from env: %v", clientID != "")
 			log.Printf("[CONFIG] OAuth ClientSecret from env: %v", clientSecret != "")
 		}
+	}
+
+	// Initialize Auth.AWS if environment variables are set
+	if config.Auth.AWS == nil && (v.GetBool("auth.aws.enabled") || v.GetString("auth.aws.region") != "" || v.GetString("auth.aws.account_id") != "") {
+		config.Auth.AWS = &AWSAuthConfig{
+			Enabled:    v.GetBool("auth.aws.enabled"),
+			Region:     v.GetString("auth.aws.region"),
+			AccountID:  v.GetString("auth.aws.account_id"),
+			TeamTagKey: v.GetString("auth.aws.team_tag_key"),
+			CacheTTL:   v.GetString("auth.aws.cache_ttl"),
+			UserMapping: AWSUserMapping{
+				DefaultRole:        v.GetString("auth.aws.user_mapping.default_role"),
+				DefaultPermissions: v.GetStringSlice("auth.aws.user_mapping.default_permissions"),
+			},
+		}
+		log.Printf("[CONFIG] Initialized AWS auth config from environment variables")
 	}
 
 	// Override fields if environment variables are set (even if structures already exist)
@@ -411,6 +453,15 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth.github.oauth.client_secret")
 	_ = v.BindEnv("auth.github.oauth.scope")
 	_ = v.BindEnv("auth.github.oauth.base_url")
+
+	// AWS auth configuration
+	_ = v.BindEnv("auth.aws.enabled")
+	_ = v.BindEnv("auth.aws.region")
+	_ = v.BindEnv("auth.aws.account_id")
+	_ = v.BindEnv("auth.aws.team_tag_key")
+	_ = v.BindEnv("auth.aws.cache_ttl")
+	_ = v.BindEnv("auth.aws.user_mapping.default_role")
+	_ = v.BindEnv("auth.aws.user_mapping.default_permissions")
 
 	// Other configuration
 	_ = v.BindEnv("start_port")
@@ -477,6 +528,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.github.oauth.scope", "read:user read:org")
 	v.SetDefault("auth.github.oauth.base_url", "")
 
+	// AWS auth defaults
+	v.SetDefault("auth.aws.enabled", false)
+	v.SetDefault("auth.aws.region", "ap-northeast-1")
+	v.SetDefault("auth.aws.account_id", "")
+	v.SetDefault("auth.aws.team_tag_key", "Team")
+	v.SetDefault("auth.aws.cache_ttl", "1h")
+
 	// Multiple users default
 	v.SetDefault("enable_multiple_users", false)
 
@@ -538,6 +596,17 @@ func applyConfigDefaults(config *Config) {
 		}
 		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
 			config.Auth.GitHub.OAuth.Scope = "read:user read:org"
+		}
+	}
+	if config.Auth.AWS != nil {
+		if config.Auth.AWS.Region == "" {
+			config.Auth.AWS.Region = "ap-northeast-1"
+		}
+		if config.Auth.AWS.TeamTagKey == "" {
+			config.Auth.AWS.TeamTagKey = "Team"
+		}
+		if config.Auth.AWS.CacheTTL == "" {
+			config.Auth.AWS.CacheTTL = "1h"
 		}
 	}
 }
