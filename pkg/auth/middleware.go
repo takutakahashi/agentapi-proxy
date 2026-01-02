@@ -75,6 +75,16 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				log.Printf("GitHub authentication failed: %v from %s", err, c.RealIP())
 			}
 
+			// Try AWS authentication via Basic Auth
+			if cfg.Auth.AWS != nil && cfg.Auth.AWS.Enabled {
+				if user, err = tryInternalAWSAuth(c, cfg, authService); err == nil {
+					c.Set("internal_user", user)
+					log.Printf("AWS authentication successful: user %s (type: %s)", user.ID(), user.UserType())
+					return next(c)
+				}
+				log.Printf("AWS authentication failed: %v from %s", err, c.RealIP())
+			}
+
 			log.Printf("Authentication failed: no valid credentials provided from %s", c.RealIP())
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
@@ -249,4 +259,50 @@ func extractAPIKeyFromAuthHeader(header string) string {
 
 	// Handle raw token
 	return header
+}
+
+// tryInternalAWSAuth attempts AWS authentication using Basic Auth
+func tryInternalAWSAuth(c echo.Context, cfg *config.Config, authService services.AuthService) (*entities.User, error) {
+	// Extract AWS credentials from Basic Auth
+	creds, ok := ExtractAWSCredentialsFromBasicAuth(c.Request())
+	if !ok {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "AWS credentials required")
+	}
+
+	// Create AWS auth provider
+	awsProvider, err := NewAWSAuthProvider(cfg.Auth.AWS)
+	if err != nil {
+		log.Printf("Failed to create AWS auth provider: %v", err)
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "AWS authentication not available")
+	}
+
+	// Authenticate using AWS credentials
+	userCtx, err := awsProvider.Authenticate(c.Request().Context(), creds)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "AWS authentication failed: "+err.Error())
+	}
+
+	// Convert UserContext to entities.User
+	user := entities.NewAWSUser(
+		entities.UserID(userCtx.UserID),
+		userCtx.UserID,
+		nil, // AWSUserInfo will be set if needed
+	)
+
+	// Set role and permissions
+	if userCtx.Role != "" {
+		_ = user.SetRoles([]entities.Role{entities.Role(userCtx.Role)})
+	}
+
+	permissions := make([]entities.Permission, 0, len(userCtx.Permissions))
+	for _, p := range userCtx.Permissions {
+		permissions = append(permissions, entities.Permission(p))
+	}
+	user.SetPermissions(permissions)
+
+	if userCtx.EnvFile != "" {
+		user.SetEnvFile(userCtx.EnvFile)
+	}
+
+	return user, nil
 }

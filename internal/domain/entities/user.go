@@ -16,6 +16,7 @@ type UserType string
 const (
 	UserTypeAPIKey  UserType = "api_key"
 	UserTypeGitHub  UserType = "github"
+	UserTypeAWS     UserType = "aws"
 	UserTypeRegular UserType = "regular"
 	UserTypeAdmin   UserType = "admin"
 )
@@ -66,6 +67,7 @@ type User struct {
 	createdAt   time.Time
 	lastUsedAt  *time.Time
 	githubInfo  *GitHubUserInfo
+	awsInfo     *AWSUserInfo
 }
 
 // GitHubUserInfo contains GitHub-specific user information
@@ -189,6 +191,22 @@ func NewGitHubUser(id UserID, username, email string, githubInfo *GitHubUserInfo
 	}
 }
 
+// NewAWSUser creates a new AWS IAM user
+func NewAWSUser(id UserID, username string, awsInfo *AWSUserInfo) *User {
+	now := time.Now()
+	return &User{
+		id:          id,
+		userType:    UserTypeAWS,
+		username:    username,
+		status:      UserStatusActive,
+		roles:       []Role{RoleUser},
+		permissions: []Permission{PermissionSessionCreate, PermissionSessionRead},
+		createdAt:   now,
+		lastUsedAt:  &now,
+		awsInfo:     awsInfo,
+	}
+}
+
 // ID returns the user ID
 func (u *User) ID() UserID {
 	return u.id
@@ -266,6 +284,11 @@ func (u *User) IsActive() bool {
 // GitHubInfo returns GitHub-specific information
 func (u *User) GitHubInfo() *GitHubUserInfo {
 	return u.githubInfo
+}
+
+// AWSInfo returns AWS IAM-specific information
+func (u *User) AWSInfo() *AWSUserInfo {
+	return u.awsInfo
 }
 
 // SetEmail sets the user email
@@ -411,6 +434,11 @@ func (u *User) SetGitHubInfo(info *GitHubUserInfo, teams []GitHubTeamMembership)
 	}
 }
 
+// SetAWSInfo sets AWS IAM information for the user
+func (u *User) SetAWSInfo(info *AWSUserInfo) {
+	u.awsInfo = info
+}
+
 // GetDisplayName returns a display-friendly name
 func (u *User) GetDisplayName() string {
 	if u.githubInfo != nil && u.githubInfo.Name() != "" {
@@ -437,7 +465,7 @@ func (u *User) Validate() error {
 	}
 
 	// Validate user type
-	validTypes := []UserType{UserTypeAPIKey, UserTypeGitHub}
+	validTypes := []UserType{UserTypeAPIKey, UserTypeGitHub, UserTypeAWS}
 	typeValid := false
 	for _, validType := range validTypes {
 		if u.userType == validType {
