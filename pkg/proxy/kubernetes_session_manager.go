@@ -237,6 +237,28 @@ func (m *KubernetesSessionManager) ListSessions(filter SessionFilter) []Session 
 		return []Session{}
 	}
 
+	// Batch fetch all deployments to avoid N+1 API calls
+	deployments, err := m.client.AppsV1().Deployments(m.namespace).List(
+		context.Background(),
+		metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+		})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to list deployments: %v", err)
+		// Continue without deployment info - sessions will have "unknown" status
+	}
+
+	// Build deployment map by session ID for O(1) lookup
+	deploymentMap := make(map[string]*appsv1.Deployment)
+	if deployments != nil {
+		for i := range deployments.Items {
+			dep := &deployments.Items[i]
+			if sessionID := dep.Labels["agentapi.proxy/session-id"]; sessionID != "" {
+				deploymentMap[sessionID] = dep
+			}
+		}
+	}
+
 	var result []Session
 	for i := range services.Items {
 		svc := &services.Items[i]
@@ -254,8 +276,8 @@ func (m *KubernetesSessionManager) ListSessions(filter SessionFilter) []Session 
 			continue
 		}
 
-		// Get or restore session
-		session := m.getOrRestoreSession(svc)
+		// Get or restore session using pre-fetched deployment
+		session := m.getOrRestoreSessionWithDeployment(svc, deploymentMap[sessionID])
 		if session == nil {
 			continue
 		}
@@ -286,8 +308,9 @@ func (m *KubernetesSessionManager) ListSessions(filter SessionFilter) []Session 
 	return result
 }
 
-// getOrRestoreSession gets a session from memory or restores it from Service
-func (m *KubernetesSessionManager) getOrRestoreSession(svc *corev1.Service) *kubernetesSession {
+// getOrRestoreSessionWithDeployment gets a session from memory or restores it from Service
+// using a pre-fetched deployment to avoid additional API calls
+func (m *KubernetesSessionManager) getOrRestoreSessionWithDeployment(svc *corev1.Service, deployment *appsv1.Deployment) *kubernetesSession {
 	sessionID := svc.Labels["agentapi.proxy/session-id"]
 
 	// Check if session exists in memory
@@ -299,8 +322,8 @@ func (m *KubernetesSessionManager) getOrRestoreSession(svc *corev1.Service) *kub
 		return session
 	}
 
-	// Restore session from Service
-	return m.restoreSessionFromService(svc)
+	// Restore session from Service with pre-fetched deployment
+	return m.restoreSessionFromServiceWithDeployment(svc, deployment)
 }
 
 // DeleteSession stops and removes a session
@@ -2463,4 +2486,79 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
 
 	return session
+}
+
+// restoreSessionFromServiceWithDeployment restores a session from Kubernetes Service
+// using a pre-fetched deployment to avoid additional API calls
+func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *corev1.Service, deployment *appsv1.Deployment) *kubernetesSession {
+	sessionID := svc.Labels["agentapi.proxy/session-id"]
+	userID := svc.Labels["agentapi.proxy/user-id"]
+
+	// Restore tags from labels
+	tags := make(map[string]string)
+	for k, v := range svc.Labels {
+		if strings.HasPrefix(k, "agentapi.proxy/tag-") {
+			tagKey := strings.TrimPrefix(k, "agentapi.proxy/tag-")
+			tags[tagKey] = v
+		}
+	}
+
+	// Parse created-at from annotations
+	createdAt := time.Now()
+	if createdAtStr, ok := svc.Annotations["agentapi.proxy/created-at"]; ok {
+		if parsed, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+			createdAt = parsed
+		}
+	}
+
+	// Extract service port
+	servicePort := m.k8sConfig.BasePort
+	if len(svc.Spec.Ports) > 0 {
+		servicePort = int(svc.Spec.Ports[0].Port)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	session := &kubernetesSession{
+		id:             sessionID,
+		deploymentName: fmt.Sprintf("agentapi-session-%s", sessionID),
+		serviceName:    svc.Name,
+		pvcName:        fmt.Sprintf("agentapi-session-%s-pvc", sessionID),
+		servicePort:    servicePort,
+		namespace:      m.namespace,
+		startedAt:      createdAt,
+		status:         m.getStatusFromDeploymentObject(deployment),
+		cancelFunc:     cancel,
+		request: &RunServerRequest{
+			UserID: userID,
+			Tags:   tags,
+		},
+	}
+
+	// Add to memory map
+	m.mutex.Lock()
+	m.sessions[sessionID] = session
+	m.mutex.Unlock()
+
+	// Start watching deployment status
+	go m.watchDeploymentStatus(ctx, session)
+
+	log.Printf("[K8S_SESSION] Restored session %s from Service (with pre-fetched deployment)", sessionID)
+
+	return session
+}
+
+// getStatusFromDeploymentObject determines session status from a pre-fetched Deployment object
+func (m *KubernetesSessionManager) getStatusFromDeploymentObject(deployment *appsv1.Deployment) string {
+	if deployment == nil {
+		return "stopped"
+	}
+
+	if deployment.Status.ReadyReplicas > 0 {
+		return "active"
+	}
+	if deployment.Status.Replicas > 0 {
+		return "starting"
+	}
+	return "unhealthy"
 }
