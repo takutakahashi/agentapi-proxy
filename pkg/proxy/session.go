@@ -18,6 +18,12 @@ type Session interface {
 	// UserID returns the user ID that owns this session
 	UserID() string
 
+	// Scope returns the resource scope ("user" or "team")
+	Scope() ResourceScope
+
+	// TeamID returns the team ID when Scope is "team"
+	TeamID() string
+
 	// Tags returns the session tags
 	Tags() map[string]string
 
@@ -37,9 +43,12 @@ type Session interface {
 
 // SessionFilter defines filter criteria for listing sessions
 type SessionFilter struct {
-	UserID string
-	Status string
-	Tags   map[string]string
+	UserID  string
+	Status  string
+	Tags    map[string]string
+	Scope   ResourceScope // Filter by scope ("user" or "team")
+	TeamID  string        // Filter by specific team ID
+	TeamIDs []string      // Filter by multiple team IDs (user's teams)
 }
 
 // SessionManager manages the lifecycle of sessions

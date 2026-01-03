@@ -38,6 +38,19 @@ func (s *kubernetesSession) UserID() string {
 	return s.request.UserID
 }
 
+// Scope returns the resource scope ("user" or "team")
+func (s *kubernetesSession) Scope() ResourceScope {
+	if s.request.Scope == "" {
+		return ScopeUser
+	}
+	return s.request.Scope
+}
+
+// TeamID returns the team ID when Scope is "team"
+func (s *kubernetesSession) TeamID() string {
+	return s.request.TeamID
+}
+
 // Tags returns the session tags
 func (s *kubernetesSession) Tags() map[string]string {
 	return s.request.Tags

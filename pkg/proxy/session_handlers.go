@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -88,10 +89,26 @@ func (h *SessionHandlers) StartSession(c echo.Context) error {
 		userRole = "guest"
 	}
 
+	// Validate team scope: user must be a member of the team
+	if startReq.Scope == ScopeTeam {
+		if startReq.TeamID == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required when scope is 'team'")
+		}
+		if user == nil {
+			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required for team-scoped sessions")
+		}
+		if !user.IsMemberOfTeam(startReq.TeamID) {
+			log.Printf("User %s is not a member of team %s", userID, startReq.TeamID)
+			return echo.NewHTTPError(http.StatusForbidden, "You are not a member of this team")
+		}
+	}
+
 	session, err := h.proxy.CreateSession(sessionID, StartRequest{
 		Environment: startReq.Environment,
 		Tags:        startReq.Tags,
 		Params:      startReq.Params,
+		Scope:       startReq.Scope,
+		TeamID:      startReq.TeamID,
 	}, userID, userRole, teams)
 	if err != nil {
 		log.Printf("Failed to create session: %v", err)
@@ -110,10 +127,20 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 
 	user := auth.GetUserFromContext(c)
 	status := c.QueryParam("status")
+	scopeFilter := c.QueryParam("scope")
+	teamIDFilter := c.QueryParam("team_id")
 
 	var userID string
+	var userTeamIDs []string
 	if user != nil && !user.IsAdmin() {
 		userID = string(user.ID())
+		// Extract user's team IDs for filtering team-scoped sessions
+		if githubInfo := user.GitHubInfo(); githubInfo != nil {
+			for _, team := range githubInfo.Teams() {
+				teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+				userTeamIDs = append(userTeamIDs, teamSlug)
+			}
+		}
 	}
 
 	tagFilters := make(map[string]string)
@@ -124,24 +151,54 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 		}
 	}
 
-	// Build filter
+	// Build filter (without UserID to get all sessions, we'll filter by authorization below)
 	filter := SessionFilter{
-		UserID: userID,
-		Status: status,
-		Tags:   tagFilters,
+		Status:  status,
+		Tags:    tagFilters,
+		Scope:   ResourceScope(scopeFilter),
+		TeamID:  teamIDFilter,
+		TeamIDs: userTeamIDs,
+	}
+
+	// For non-admin users, set UserID filter only if not filtering by team
+	if user != nil && !user.IsAdmin() && scopeFilter != "team" && teamIDFilter == "" {
+		filter.UserID = userID
 	}
 
 	// Get sessions from session manager
 	sessions := h.proxy.GetSessionManager().ListSessions(filter)
 
-	// Filter by user authorization
+	// Check if auth is enabled
+	cfg := auth.GetConfigFromContext(c)
+	authEnabled := cfg != nil && cfg.Auth.Enabled
+
+	// Filter by user authorization (supports both user-scoped and team-scoped)
 	matchingSessions := make([]Session, 0)
 	for _, session := range sessions {
-		// User authorization check
-		if user != nil && !user.IsAdmin() && session.UserID() != string(user.ID()) {
+		// If auth is not enabled, return all sessions
+		if !authEnabled {
+			matchingSessions = append(matchingSessions, session)
 			continue
 		}
-		matchingSessions = append(matchingSessions, session)
+
+		// Admin can see all sessions
+		if user != nil && user.IsAdmin() {
+			matchingSessions = append(matchingSessions, session)
+			continue
+		}
+
+		// Check authorization based on scope
+		if session.Scope() == ScopeTeam {
+			// Team-scoped: user must be a member of the team
+			if user != nil && user.IsMemberOfTeam(session.TeamID()) {
+				matchingSessions = append(matchingSessions, session)
+			}
+		} else {
+			// User-scoped: only owner can see
+			if user != nil && session.UserID() == string(user.ID()) {
+				matchingSessions = append(matchingSessions, session)
+			}
+		}
 	}
 
 	// Sort by start time (newest first)
@@ -154,6 +211,8 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 		sessionData := map[string]interface{}{
 			"session_id":  session.ID(),
 			"user_id":     session.UserID(),
+			"scope":       session.Scope(),
+			"team_id":     session.TeamID(),
 			"status":      session.Status(),
 			"started_at":  session.StartedAt(),
 			"addr":        session.Addr(),
@@ -189,9 +248,23 @@ func (h *SessionHandlers) DeleteSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
-	if !auth.UserOwnsSession(c, session.UserID()) {
-		log.Printf("Delete session failed: user does not own session %s (requested by %s)", sessionID, clientIP)
-		return echo.NewHTTPError(http.StatusForbidden, "You can only delete your own sessions")
+	// Check authorization based on scope
+	user := auth.GetUserFromContext(c)
+	canAccess := false
+	if user != nil {
+		canAccess = user.CanAccessResource(
+			entities.UserID(session.UserID()),
+			string(session.Scope()),
+			session.TeamID(),
+		)
+	} else {
+		// Fall back to legacy check if no user
+		canAccess = auth.UserOwnsSession(c, session.UserID())
+	}
+
+	if !canAccess {
+		log.Printf("Delete session failed: user does not have access to session %s (requested by %s)", sessionID, clientIP)
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to delete this session")
 	}
 
 	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
@@ -224,9 +297,19 @@ func (h *SessionHandlers) RouteToSession(c echo.Context) error {
 	if c.Request().Method != "OPTIONS" {
 		cfg := auth.GetConfigFromContext(c)
 		if cfg != nil && cfg.Auth.Enabled {
-			if !auth.UserOwnsSession(c, session.UserID()) {
+			// Check authorization based on scope
+			user := auth.GetUserFromContext(c)
+			canAccess := false
+			if user != nil {
+				canAccess = user.CanAccessResource(
+					entities.UserID(session.UserID()),
+					string(session.Scope()),
+					session.TeamID(),
+				)
+			}
+			if !canAccess {
 				log.Printf("User does not have access to session %s", sessionID)
-				return echo.NewHTTPError(http.StatusForbidden, "You can only access your own sessions")
+				return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
 			}
 		}
 	}

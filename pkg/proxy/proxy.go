@@ -382,6 +382,8 @@ func (p *Proxy) CreateSession(sessionID string, startReq StartRequest, userID, u
 		InitialMessage: initialMessage,
 		Teams:          teams,
 		GithubToken:    githubToken,
+		Scope:          startReq.Scope,
+		TeamID:         startReq.TeamID,
 	}
 
 	// Delegate to session manager
