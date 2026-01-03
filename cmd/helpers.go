@@ -463,7 +463,12 @@ var (
 )
 
 func runSendNotification(cmd *cobra.Command, args []string) error {
-	// Extract session ID from working directory if not provided
+	// Get session ID from environment variable if not provided via flag
+	if notifySessionID == "" {
+		notifySessionID = os.Getenv("AGENTAPI_SESSION_ID")
+	}
+
+	// Fallback: extract session ID from working directory if still not set
 	if notifySessionID == "" {
 		cwd, err := os.Getwd()
 		if err == nil {
@@ -475,7 +480,7 @@ func runSendNotification(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Also try to extract session ID from URL if still not set
+	// Fallback: try to extract session ID from URL if still not set
 	if notifySessionID == "" && notifyURL != "" {
 		uuidRegex := regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`)
 		if match := uuidRegex.FindString(notifyURL); match != "" {
