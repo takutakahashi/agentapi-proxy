@@ -475,6 +475,14 @@ func runSendNotification(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Also try to extract session ID from URL if still not set
+	if notifySessionID == "" && notifyURL != "" {
+		uuidRegex := regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`)
+		if match := uuidRegex.FindString(notifyURL); match != "" {
+			notifySessionID = match
+		}
+	}
+
 	// Validate VAPID configuration
 	vapidPublicKey := os.Getenv("VAPID_PUBLIC_KEY")
 	vapidPrivateKey := os.Getenv("VAPID_PRIVATE_KEY")
