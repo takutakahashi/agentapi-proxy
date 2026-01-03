@@ -154,13 +154,13 @@ func TestExtractAWSCredentialsFromBasicAuth_NoAuth(t *testing.T) {
 
 func TestNewAWSAuthProvider(t *testing.T) {
 	cfg := &config.AWSAuthConfig{
-		Enabled:        true,
-		Region:         "us-west-2",
-		AccountID:      "123456789012",
-		TeamTagKey:     "Team",
-		RequiredTagKey: "agentapi-proxy",
-		RequiredTagVal: "enabled",
-		CacheTTL:       "30m",
+		Enabled:           true,
+		Region:            "us-west-2",
+		AllowedAccountIDs: []string{"123456789012"},
+		TeamTagKey:        "Team",
+		RequiredTagKey:    "agentapi-proxy",
+		RequiredTagVal:    "enabled",
+		CacheTTL:          "30m",
 		UserMapping: config.AWSUserMapping{
 			DefaultRole:        "user",
 			DefaultPermissions: []string{"read"},
@@ -546,5 +546,66 @@ func TestAWSUserInfo(t *testing.T) {
 	gotTeams := info.Teams()
 	if len(gotTeams) != 2 {
 		t.Errorf("len(Teams()) = %d, want 2", len(gotTeams))
+	}
+}
+
+func TestIsAccountAllowed(t *testing.T) {
+	tests := []struct {
+		name              string
+		allowedAccountIDs []string
+		accountID         string
+		expected          bool
+	}{
+		{
+			name:              "empty allowed list denies all",
+			allowedAccountIDs: []string{},
+			accountID:         "123456789012",
+			expected:          false,
+		},
+		{
+			name:              "nil allowed list denies all",
+			allowedAccountIDs: nil,
+			accountID:         "123456789012",
+			expected:          false,
+		},
+		{
+			name:              "account in allowed list",
+			allowedAccountIDs: []string{"123456789012", "987654321098"},
+			accountID:         "123456789012",
+			expected:          true,
+		},
+		{
+			name:              "account not in allowed list",
+			allowedAccountIDs: []string{"111111111111", "222222222222"},
+			accountID:         "123456789012",
+			expected:          false,
+		},
+		{
+			name:              "single allowed account matches",
+			allowedAccountIDs: []string{"123456789012"},
+			accountID:         "123456789012",
+			expected:          true,
+		},
+		{
+			name:              "single allowed account does not match",
+			allowedAccountIDs: []string{"111111111111"},
+			accountID:         "123456789012",
+			expected:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &AWSAuthProvider{
+				config: &config.AWSAuthConfig{
+					AllowedAccountIDs: tt.allowedAccountIDs,
+				},
+			}
+
+			result := provider.isAccountAllowed(tt.accountID)
+			if result != tt.expected {
+				t.Errorf("isAccountAllowed(%q) = %v, want %v", tt.accountID, result, tt.expected)
+			}
+		})
 	}
 }

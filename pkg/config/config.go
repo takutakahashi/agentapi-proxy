@@ -90,14 +90,14 @@ type TeamRoleRule struct {
 
 // AWSAuthConfig represents AWS IAM authentication configuration
 type AWSAuthConfig struct {
-	Enabled        bool           `json:"enabled" mapstructure:"enabled"`
-	Region         string         `json:"region" mapstructure:"region"`
-	AccountID      string         `json:"account_id" mapstructure:"account_id"`
-	TeamTagKey     string         `json:"team_tag_key" mapstructure:"team_tag_key"`
-	RequiredTagKey string         `json:"required_tag_key" mapstructure:"required_tag_key"`     // Tag key that must exist (e.g., "agentapi-proxy")
-	RequiredTagVal string         `json:"required_tag_value" mapstructure:"required_tag_value"` // Expected tag value (e.g., "enabled")
-	CacheTTL       string         `json:"cache_ttl" mapstructure:"cache_ttl"`
-	UserMapping    AWSUserMapping `json:"user_mapping" mapstructure:"user_mapping"`
+	Enabled           bool           `json:"enabled" mapstructure:"enabled"`
+	Region            string         `json:"region" mapstructure:"region"`
+	AllowedAccountIDs []string       `json:"allowed_account_ids" mapstructure:"allowed_account_ids"` // Required: list of allowed AWS account IDs (empty = deny all)
+	TeamTagKey        string         `json:"team_tag_key" mapstructure:"team_tag_key"`
+	RequiredTagKey    string         `json:"required_tag_key" mapstructure:"required_tag_key"`     // Tag key that must exist (e.g., "agentapi-proxy")
+	RequiredTagVal    string         `json:"required_tag_value" mapstructure:"required_tag_value"` // Expected tag value (e.g., "enabled")
+	CacheTTL          string         `json:"cache_ttl" mapstructure:"cache_ttl"`
+	UserMapping       AWSUserMapping `json:"user_mapping" mapstructure:"user_mapping"`
 }
 
 // AWSUserMapping represents AWS user role mapping configuration
@@ -324,7 +324,7 @@ func LoadConfig(filename string) (*Config, error) {
 	log.Printf("[CONFIG] AWS auth enabled: %v", config.Auth.AWS != nil && config.Auth.AWS.Enabled)
 	if config.Auth.AWS != nil && config.Auth.AWS.Enabled {
 		log.Printf("[CONFIG] AWS region: %s", config.Auth.AWS.Region)
-		log.Printf("[CONFIG] AWS account ID: %s", config.Auth.AWS.AccountID)
+		log.Printf("[CONFIG] AWS allowed account IDs: %v", config.Auth.AWS.AllowedAccountIDs)
 		log.Printf("[CONFIG] AWS team tag key: %s", config.Auth.AWS.TeamTagKey)
 	}
 	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
@@ -380,13 +380,13 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	}
 
 	// Initialize Auth.AWS if environment variables are set
-	if config.Auth.AWS == nil && (v.GetBool("auth.aws.enabled") || v.GetString("auth.aws.region") != "" || v.GetString("auth.aws.account_id") != "") {
+	if config.Auth.AWS == nil && (v.GetBool("auth.aws.enabled") || v.GetString("auth.aws.region") != "" || len(v.GetStringSlice("auth.aws.allowed_account_ids")) > 0) {
 		config.Auth.AWS = &AWSAuthConfig{
-			Enabled:    v.GetBool("auth.aws.enabled"),
-			Region:     v.GetString("auth.aws.region"),
-			AccountID:  v.GetString("auth.aws.account_id"),
-			TeamTagKey: v.GetString("auth.aws.team_tag_key"),
-			CacheTTL:   v.GetString("auth.aws.cache_ttl"),
+			Enabled:           v.GetBool("auth.aws.enabled"),
+			Region:            v.GetString("auth.aws.region"),
+			AllowedAccountIDs: v.GetStringSlice("auth.aws.allowed_account_ids"),
+			TeamTagKey:        v.GetString("auth.aws.team_tag_key"),
+			CacheTTL:          v.GetString("auth.aws.cache_ttl"),
 			UserMapping: AWSUserMapping{
 				DefaultRole:        v.GetString("auth.aws.user_mapping.default_role"),
 				DefaultPermissions: v.GetStringSlice("auth.aws.user_mapping.default_permissions"),
@@ -457,7 +457,7 @@ func bindEnvVars(v *viper.Viper) {
 	// AWS auth configuration
 	_ = v.BindEnv("auth.aws.enabled")
 	_ = v.BindEnv("auth.aws.region")
-	_ = v.BindEnv("auth.aws.account_id")
+	_ = v.BindEnv("auth.aws.allowed_account_ids")
 	_ = v.BindEnv("auth.aws.team_tag_key")
 	_ = v.BindEnv("auth.aws.cache_ttl")
 	_ = v.BindEnv("auth.aws.user_mapping.default_role")
@@ -531,7 +531,7 @@ func setDefaults(v *viper.Viper) {
 	// AWS auth defaults
 	v.SetDefault("auth.aws.enabled", false)
 	v.SetDefault("auth.aws.region", "ap-northeast-1")
-	v.SetDefault("auth.aws.account_id", "")
+	v.SetDefault("auth.aws.allowed_account_ids", []string{})
 	v.SetDefault("auth.aws.team_tag_key", "Team")
 	v.SetDefault("auth.aws.cache_ttl", "1h")
 

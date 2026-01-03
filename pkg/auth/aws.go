@@ -105,9 +105,9 @@ func (p *AWSAuthProvider) Authenticate(ctx context.Context, creds *AWSCredential
 		return nil, fmt.Errorf("failed to lookup user: %w", err)
 	}
 
-	// Verify account ID if configured
-	if p.config.AccountID != "" && userInfo.AccountID() != p.config.AccountID {
-		return nil, fmt.Errorf("account %s is not allowed (expected %s)", userInfo.AccountID(), p.config.AccountID)
+	// Verify account ID is in allowed list (empty list = deny all)
+	if !p.isAccountAllowed(userInfo.AccountID()) {
+		return nil, fmt.Errorf("account %s is not in allowed account IDs list", userInfo.AccountID())
 	}
 
 	// Check required tag
@@ -303,6 +303,21 @@ func (p *AWSAuthProvider) mapUserPermissions(teams []string) (string, []string, 
 func (p *AWSAuthProvider) cacheKey(accessKeyID string) string {
 	h := sha256.Sum256([]byte(accessKeyID))
 	return fmt.Sprintf("aws:%s", hex.EncodeToString(h[:]))
+}
+
+// isAccountAllowed checks if the given account ID is in the allowed list
+// Returns false if the allowed list is empty (deny by default)
+func (p *AWSAuthProvider) isAccountAllowed(accountID string) bool {
+	if len(p.config.AllowedAccountIDs) == 0 {
+		return false
+	}
+
+	for _, allowed := range p.config.AllowedAccountIDs {
+		if accountID == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // isHigherRole checks if role1 has higher priority than role2
