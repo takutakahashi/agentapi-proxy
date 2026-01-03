@@ -99,17 +99,16 @@ func (u *CLIUtils) matchesFilter(sub Subscription, userID, userType, username, s
 
 // SendNotifications sends notifications to multiple subscriptions
 func (u *CLIUtils) SendNotifications(subscriptions []Subscription, title, body, url, icon, badge string, ttl int, urgency string, sessionID string, vapidPublicKey, vapidPrivateKey, vapidContactEmail string) ([]NotificationResult, error) {
-	// Check if notification was recently sent for this session
-	if sessionID != "" {
-		hasRecent, err := u.hasRecentNotificationForSession(sessionID, 3)
-		if err != nil {
-			// Log warning but continue
-			fmt.Printf("Warning: failed to check recent notifications: %v\n", err)
-		} else if hasRecent {
-			fmt.Printf("Notification already sent to session %s in the last 3 minutes. Skipping.\n", sessionID)
-			return []NotificationResult{}, nil
-		}
+	// Check if notification was recently sent (throttle: 3 minutes)
+	hasRecent, err := u.hasRecentNotification(3)
+	if err != nil {
+		// Log warning but continue
+		fmt.Printf("Warning: failed to check recent notifications: %v\n", err)
+	} else if hasRecent {
+		fmt.Printf("Notification already sent in the last 3 minutes. Skipping.\n")
+		return []NotificationResult{}, nil
 	}
+
 	var results []NotificationResult
 
 	for _, sub := range subscriptions {
@@ -255,12 +254,8 @@ func (u *CLIUtils) generateNotificationID() string {
 	return fmt.Sprintf("notif_%d_%s", time.Now().Unix(), randomHex)
 }
 
-// hasRecentNotificationForSession checks if a notification was sent to this session in the last N minutes
-func (u *CLIUtils) hasRecentNotificationForSession(sessionID string, minutes int) (bool, error) {
-	if sessionID == "" {
-		return false, nil
-	}
-
+// hasRecentNotification checks if any notification was sent in the last N minutes
+func (u *CLIUtils) hasRecentNotification(minutes int) (bool, error) {
 	homeDir := os.Getenv("HOME")
 	if homeDir == "" {
 		homeDir = "/home/agentapi"
@@ -292,8 +287,8 @@ func (u *CLIUtils) hasRecentNotificationForSession(sessionID string, minutes int
 			break
 		}
 
-		// Check if this notification matches our criteria
-		if history.SessionID == sessionID && history.SentAt.After(cutoffTime) && history.Delivered {
+		// Check if any delivered notification was sent after cutoff time
+		if history.SentAt.After(cutoffTime) && history.Delivered {
 			return true, nil
 		}
 	}

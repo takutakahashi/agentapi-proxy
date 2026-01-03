@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -463,31 +462,6 @@ var (
 )
 
 func runSendNotification(cmd *cobra.Command, args []string) error {
-	// Get session ID from environment variable if not provided via flag
-	if notifySessionID == "" {
-		notifySessionID = os.Getenv("AGENTAPI_SESSION_ID")
-	}
-
-	// Fallback: extract session ID from working directory if still not set
-	if notifySessionID == "" {
-		cwd, err := os.Getwd()
-		if err == nil {
-			// Extract UUID pattern from path
-			uuidRegex := regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`)
-			if match := uuidRegex.FindString(cwd); match != "" {
-				notifySessionID = match
-			}
-		}
-	}
-
-	// Fallback: try to extract session ID from URL if still not set
-	if notifySessionID == "" && notifyURL != "" {
-		uuidRegex := regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`)
-		if match := uuidRegex.FindString(notifyURL); match != "" {
-			notifySessionID = match
-		}
-	}
-
 	// Validate VAPID configuration
 	vapidPublicKey := os.Getenv("VAPID_PUBLIC_KEY")
 	vapidPrivateKey := os.Getenv("VAPID_PRIVATE_KEY")
