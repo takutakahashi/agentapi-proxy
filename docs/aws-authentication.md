@@ -53,7 +53,7 @@ Client                    agentapi-proxy                    AWS IAM
     "aws": {
       "enabled": true,
       "region": "ap-northeast-1",
-      "account_id": "123456789012",
+      "allowed_account_ids": ["123456789012", "987654321098"],
       "team_tag_key": "Team",
       "required_tag_key": "agentapi-proxy",
       "required_tag_value": "enabled",
@@ -84,7 +84,7 @@ Client                    agentapi-proxy                    AWS IAM
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable AWS authentication |
 | `region` | string | `ap-northeast-1` | AWS region for IAM API calls |
-| `account_id` | string | (optional) | Restrict to specific AWS account ID |
+| `allowed_account_ids` | []string | `[]` (deny all) | List of allowed AWS account IDs. **Required**: empty list denies all accounts |
 | `team_tag_key` | string | `Team` | IAM tag key used to identify team membership |
 | `required_tag_key` | string | (optional) | Tag key that must exist on the user (e.g., "agentapi-proxy") |
 | `required_tag_value` | string | (optional) | Expected value for the required tag (e.g., "enabled") |
@@ -99,7 +99,7 @@ Client                    agentapi-proxy                    AWS IAM
 export AGENTAPI_AUTH_ENABLED=true
 export AGENTAPI_AUTH_AWS_ENABLED=true
 export AGENTAPI_AUTH_AWS_REGION=ap-northeast-1
-export AGENTAPI_AUTH_AWS_ACCOUNT_ID=123456789012
+export AGENTAPI_AUTH_AWS_ALLOWED_ACCOUNT_IDS="123456789012,987654321098"
 export AGENTAPI_AUTH_AWS_TEAM_TAG_KEY=Team
 export AGENTAPI_AUTH_AWS_REQUIRED_TAG_KEY=agentapi-proxy
 export AGENTAPI_AUTH_AWS_REQUIRED_TAG_VALUE=enabled
@@ -215,7 +215,7 @@ Client users only need their Access Key ID. They do not need any specific IAM pe
 
 1. **Proxy-Side Verification**: The proxy verifies users using its own IAM permissions, not the client's secret key
 2. **Required Tag**: Use `required_tag_key` to restrict access to authorized users only
-3. **Account Restriction**: Configure `account_id` to restrict access to your AWS account
+3. **Account Allow List**: Configure `allowed_account_ids` to restrict access to specific AWS accounts. **Note**: An empty list denies all accounts (deny by default)
 4. **Tag Management**: Control who can modify IAM tags to prevent unauthorized access
 5. **HTTPS Required**: Always use HTTPS to protect the Access Key ID in transit
 6. **Credential Rotation**: Regularly rotate AWS access keys
@@ -252,5 +252,6 @@ User information is cached to reduce IAM API calls. The cache key is derived fro
 
 ### Authentication Failed: Account Not Allowed
 
-1. Verify the user belongs to the configured `account_id`
+1. Verify the user's account ID is in the `allowed_account_ids` list
 2. Check the ARN in proxy logs to confirm the account ID
+3. If `allowed_account_ids` is empty, all accounts are denied by default
