@@ -417,6 +417,39 @@ func (u *User) CanAccessSession(sessionUserID UserID) bool {
 	return u.id == sessionUserID
 }
 
+// IsMemberOfTeam checks if the user is a member of the specified team
+// teamID should be in the format "org/team-slug"
+func (u *User) IsMemberOfTeam(teamID string) bool {
+	if u.githubInfo == nil {
+		return false
+	}
+	for _, team := range u.githubInfo.Teams() {
+		fullTeamID := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+		if fullTeamID == teamID {
+			return true
+		}
+	}
+	return false
+}
+
+// CanAccessResource checks if the user can access a resource based on its scope
+// For user-scoped resources, only the owner or admin can access
+// For team-scoped resources, any team member or admin can access
+func (u *User) CanAccessResource(ownerUserID UserID, scope string, teamID string) bool {
+	// Admin can access all resources
+	if u.IsAdmin() {
+		return true
+	}
+
+	// Team-scoped: check team membership
+	if scope == "team" && teamID != "" {
+		return u.IsMemberOfTeam(teamID)
+	}
+
+	// Default (user-scoped): only owner can access
+	return u.id == ownerUserID
+}
+
 // UpdateGitHubInfo updates GitHub-specific information
 func (u *User) UpdateGitHubInfo(githubInfo *GitHubUserInfo) error {
 	if u.userType != UserTypeGitHub {

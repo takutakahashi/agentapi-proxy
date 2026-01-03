@@ -26,6 +26,10 @@ type Schedule struct {
 	Name string `json:"name"`
 	// UserID is the ID of the user who created the schedule
 	UserID string `json:"user_id"`
+	// Scope defines the ownership scope ("user" or "team"). Defaults to "user".
+	Scope proxy.ResourceScope `json:"scope,omitempty"`
+	// TeamID is the team identifier (e.g., "org/team-slug") when Scope is "team"
+	TeamID string `json:"team_id,omitempty"`
 	// Status is the current status of the schedule
 	Status ScheduleStatus `json:"status"`
 

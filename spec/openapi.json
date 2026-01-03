@@ -131,7 +131,7 @@
     "/search": {
       "get": {
         "summary": "Search sessions",
-        "description": "Returns a list of sessions. Non-admin users can only see their own sessions. Supports filtering by status and tags.",
+        "description": "Returns a list of sessions. Non-admin users can see their own sessions and team-scoped sessions they have access to. Supports filtering by status, scope, team, and tags.",
         "operationId": "searchSessions",
         "tags": ["Sessions"],
         "parameters": [
@@ -141,6 +141,22 @@
             "description": "Filter by session status",
             "schema": {
               "$ref": "#/components/schemas/SessionStatus"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by resource scope",
+            "schema": {
+              "$ref": "#/components/schemas/ResourceScope"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter by team ID (e.g., 'org/team-slug')",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -628,7 +644,7 @@
       },
       "get": {
         "summary": "List schedules",
-        "description": "Returns a list of schedules. Non-admin users can only see their own schedules.",
+        "description": "Returns a list of schedules. Non-admin users can see their own schedules and team-scoped schedules they have access to.",
         "operationId": "listSchedules",
         "tags": ["Schedules"],
         "parameters": [
@@ -638,6 +654,22 @@
             "description": "Filter by schedule status",
             "schema": {
               "$ref": "#/components/schemas/ScheduleStatus"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by resource scope",
+            "schema": {
+              "$ref": "#/components/schemas/ResourceScope"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter by team ID (e.g., 'org/team-slug')",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -1239,6 +1271,14 @@
           },
           "params": {
             "$ref": "#/components/schemas/SessionParams"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope",
+            "description": "Ownership scope of the session (default: user)"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
           }
         }
       },
@@ -1265,6 +1305,14 @@
           "user_id": {
             "type": "string",
             "description": "Owner user ID"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope",
+            "description": "Ownership scope of the session"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier when scope is 'team'"
           },
           "status": {
             "$ref": "#/components/schemas/SessionStatus"
@@ -1303,6 +1351,14 @@
           "name": {
             "type": "string",
             "description": "Name of the schedule"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope",
+            "description": "Ownership scope of the schedule (default: user)"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
           },
           "scheduled_at": {
             "type": "string",
@@ -1366,6 +1422,14 @@
           "user_id": {
             "type": "string",
             "description": "Owner user ID"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope",
+            "description": "Ownership scope of the schedule"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier when scope is 'team'"
           },
           "status": {
             "$ref": "#/components/schemas/ScheduleStatus"
@@ -1456,6 +1520,12 @@
         "type": "string",
         "enum": ["active", "paused", "completed"],
         "description": "Schedule status"
+      },
+      "ResourceScope": {
+        "type": "string",
+        "enum": ["user", "team"],
+        "default": "user",
+        "description": "Ownership scope. 'user' for personal resources, 'team' for team-shared resources"
       },
       "UpdateSettingsRequest": {
         "type": "object",

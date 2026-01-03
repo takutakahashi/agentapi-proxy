@@ -1,12 +1,14 @@
 package schedule
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
@@ -59,11 +61,13 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *proxy.Proxy) error {
 
 // CreateScheduleRequest represents the request body for creating a schedule
 type CreateScheduleRequest struct {
-	Name          string        `json:"name"`
-	ScheduledAt   *time.Time    `json:"scheduled_at,omitempty"`
-	CronExpr      string        `json:"cron_expr,omitempty"`
-	Timezone      string        `json:"timezone,omitempty"`
-	SessionConfig SessionConfig `json:"session_config"`
+	Name          string              `json:"name"`
+	Scope         proxy.ResourceScope `json:"scope,omitempty"`
+	TeamID        string              `json:"team_id,omitempty"`
+	ScheduledAt   *time.Time          `json:"scheduled_at,omitempty"`
+	CronExpr      string              `json:"cron_expr,omitempty"`
+	Timezone      string              `json:"timezone,omitempty"`
+	SessionConfig SessionConfig       `json:"session_config"`
 }
 
 // UpdateScheduleRequest represents the request body for updating a schedule
@@ -78,19 +82,21 @@ type UpdateScheduleRequest struct {
 
 // ScheduleResponse represents the response for a schedule
 type ScheduleResponse struct {
-	ID              string           `json:"id"`
-	Name            string           `json:"name"`
-	UserID          string           `json:"user_id"`
-	Status          ScheduleStatus   `json:"status"`
-	ScheduledAt     *time.Time       `json:"scheduled_at,omitempty"`
-	CronExpr        string           `json:"cron_expr,omitempty"`
-	Timezone        string           `json:"timezone,omitempty"`
-	SessionConfig   SessionConfig    `json:"session_config"`
-	NextExecutionAt *time.Time       `json:"next_execution_at,omitempty"`
-	ExecutionCount  int              `json:"execution_count"`
-	LastExecution   *ExecutionRecord `json:"last_execution,omitempty"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	ID              string              `json:"id"`
+	Name            string              `json:"name"`
+	UserID          string              `json:"user_id"`
+	Scope           proxy.ResourceScope `json:"scope,omitempty"`
+	TeamID          string              `json:"team_id,omitempty"`
+	Status          ScheduleStatus      `json:"status"`
+	ScheduledAt     *time.Time          `json:"scheduled_at,omitempty"`
+	CronExpr        string              `json:"cron_expr,omitempty"`
+	Timezone        string              `json:"timezone,omitempty"`
+	SessionConfig   SessionConfig       `json:"session_config"`
+	NextExecutionAt *time.Time          `json:"next_execution_at,omitempty"`
+	ExecutionCount  int                 `json:"execution_count"`
+	LastExecution   *ExecutionRecord    `json:"last_execution,omitempty"`
+	CreatedAt       time.Time           `json:"created_at"`
+	UpdatedAt       time.Time           `json:"updated_at"`
 }
 
 // CreateSchedule handles POST /schedules
@@ -138,11 +144,27 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		userID = "anonymous"
 	}
 
+	// Validate team scope: user must be a member of the team
+	if req.Scope == proxy.ScopeTeam {
+		if req.TeamID == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required when scope is 'team'")
+		}
+		if user == nil {
+			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required for team-scoped schedules")
+		}
+		if !user.IsMemberOfTeam(req.TeamID) {
+			log.Printf("User %s is not a member of team %s", userID, req.TeamID)
+			return echo.NewHTTPError(http.StatusForbidden, "You are not a member of this team")
+		}
+	}
+
 	// Create schedule
 	schedule := &Schedule{
 		ID:            uuid.New().String(),
 		Name:          req.Name,
 		UserID:        userID,
+		Scope:         req.Scope,
+		TeamID:        req.TeamID,
 		Status:        ScheduleStatusActive,
 		ScheduledAt:   req.ScheduledAt,
 		CronExpr:      req.CronExpr,
@@ -172,18 +194,37 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 	h.setCORSHeaders(c)
 
 	user := auth.GetUserFromContext(c)
+	scopeFilter := c.QueryParam("scope")
+	teamIDFilter := c.QueryParam("team_id")
+
 	var userID string
+	var userTeamIDs []string
 	if user != nil && !user.IsAdmin() {
 		userID = string(user.ID())
+		// Extract user's team IDs for filtering team-scoped schedules
+		if githubInfo := user.GitHubInfo(); githubInfo != nil {
+			for _, team := range githubInfo.Teams() {
+				teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+				userTeamIDs = append(userTeamIDs, teamSlug)
+			}
+		}
 	}
 
+	// Build filter (without UserID to get all schedules, we'll filter by authorization below)
 	filter := ScheduleFilter{
-		UserID: userID,
+		Scope:   proxy.ResourceScope(scopeFilter),
+		TeamID:  teamIDFilter,
+		TeamIDs: userTeamIDs,
 	}
 
 	// Filter by status if provided
 	if status := c.QueryParam("status"); status != "" {
 		filter.Status = ScheduleStatus(status)
+	}
+
+	// For non-admin users, set UserID filter only if not filtering by team
+	if user != nil && !user.IsAdmin() && scopeFilter != "team" && teamIDFilter == "" {
+		filter.UserID = userID
 	}
 
 	schedules, err := h.manager.List(c.Request().Context(), filter)
@@ -192,9 +233,37 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to list schedules")
 	}
 
+	// Check if auth is enabled
+	cfg := auth.GetConfigFromContext(c)
+	authEnabled := cfg != nil && cfg.Auth.Enabled
+
+	// Filter by user authorization (supports both user-scoped and team-scoped)
 	responses := make([]ScheduleResponse, 0, len(schedules))
 	for _, s := range schedules {
-		responses = append(responses, h.toResponse(s))
+		// If auth is not enabled, return all schedules
+		if !authEnabled {
+			responses = append(responses, h.toResponse(s))
+			continue
+		}
+
+		// Admin can see all schedules
+		if user != nil && user.IsAdmin() {
+			responses = append(responses, h.toResponse(s))
+			continue
+		}
+
+		// Check authorization based on scope
+		if s.Scope == proxy.ScopeTeam {
+			// Team-scoped: user must be a member of the team
+			if user != nil && user.IsMemberOfTeam(s.TeamID) {
+				responses = append(responses, h.toResponse(s))
+			}
+		} else {
+			// User-scoped: only owner can see
+			if user != nil && s.UserID == string(user.ID()) {
+				responses = append(responses, h.toResponse(s))
+			}
+		}
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
@@ -221,8 +290,8 @@ func (h *Handlers) GetSchedule(c echo.Context) error {
 	}
 
 	// Check authorization
-	if !h.userOwnsSchedule(c, schedule.UserID) {
-		return echo.NewHTTPError(http.StatusForbidden, "You can only access your own schedules")
+	if !h.userCanAccessSchedule(c, schedule) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this schedule")
 	}
 
 	return c.JSON(http.StatusOK, h.toResponse(schedule))
@@ -246,8 +315,8 @@ func (h *Handlers) UpdateSchedule(c echo.Context) error {
 	}
 
 	// Check authorization
-	if !h.userOwnsSchedule(c, schedule.UserID) {
-		return echo.NewHTTPError(http.StatusForbidden, "You can only update your own schedules")
+	if !h.userCanAccessSchedule(c, schedule) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to update this schedule")
 	}
 
 	var req UpdateScheduleRequest
@@ -324,8 +393,8 @@ func (h *Handlers) DeleteSchedule(c echo.Context) error {
 	}
 
 	// Check authorization
-	if !h.userOwnsSchedule(c, schedule.UserID) {
-		return echo.NewHTTPError(http.StatusForbidden, "You can only delete your own schedules")
+	if !h.userCanAccessSchedule(c, schedule) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to delete this schedule")
 	}
 
 	if err := h.manager.Delete(c.Request().Context(), id); err != nil {
@@ -359,16 +428,18 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	}
 
 	// Check authorization
-	if !h.userOwnsSchedule(c, schedule.UserID) {
-		return echo.NewHTTPError(http.StatusForbidden, "You can only trigger your own schedules")
+	if !h.userCanAccessSchedule(c, schedule) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to trigger this schedule")
 	}
 
-	// Create session
+	// Create session with schedule's scope
 	sessionID := uuid.New().String()
 	req := &proxy.RunServerRequest{
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
+		Scope:       schedule.Scope,
+		TeamID:      schedule.TeamID,
 	}
 	if schedule.SessionConfig.Params != nil {
 		req.InitialMessage = schedule.SessionConfig.Params.Message
@@ -417,6 +488,8 @@ func (h *Handlers) toResponse(s *Schedule) ScheduleResponse {
 		ID:              s.ID,
 		Name:            s.Name,
 		UserID:          s.UserID,
+		Scope:           s.Scope,
+		TeamID:          s.TeamID,
 		Status:          s.Status,
 		ScheduledAt:     s.ScheduledAt,
 		CronExpr:        s.CronExpr,
@@ -430,8 +503,10 @@ func (h *Handlers) toResponse(s *Schedule) ScheduleResponse {
 	}
 }
 
-// userOwnsSchedule checks if the current user owns the schedule
-func (h *Handlers) userOwnsSchedule(c echo.Context, scheduleUserID string) bool {
+// userCanAccessSchedule checks if the current user can access the schedule
+// For team-scoped schedules, all team members have access
+// For user-scoped schedules, only the owner has access
+func (h *Handlers) userCanAccessSchedule(c echo.Context, schedule *Schedule) bool {
 	user := auth.GetUserFromContext(c)
 	if user == nil {
 		// If no auth is configured, allow access
@@ -441,10 +516,11 @@ func (h *Handlers) userOwnsSchedule(c echo.Context, scheduleUserID string) bool 
 		}
 		return false
 	}
-	if user.IsAdmin() {
-		return true
-	}
-	return string(user.ID()) == scheduleUserID
+	return user.CanAccessResource(
+		entities.UserID(schedule.UserID),
+		string(schedule.Scope),
+		schedule.TeamID,
+	)
 }
 
 // setCORSHeaders sets CORS headers for all schedule endpoints

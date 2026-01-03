@@ -45,6 +45,19 @@ func (s *localSession) UserID() string {
 	return s.request.UserID
 }
 
+// Scope returns the resource scope ("user" or "team")
+func (s *localSession) Scope() ResourceScope {
+	if s.request.Scope == "" {
+		return ScopeUser
+	}
+	return s.request.Scope
+}
+
+// TeamID returns the team ID when Scope is "team"
+func (s *localSession) TeamID() string {
+	return s.request.TeamID
+}
+
 // Tags returns the session tags
 func (s *localSession) Tags() map[string]string {
 	return s.request.Tags

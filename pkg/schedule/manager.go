@@ -3,6 +3,8 @@ package schedule
 import (
 	"context"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
 
 // ScheduleFilter defines filter criteria for listing schedules
@@ -11,6 +13,12 @@ type ScheduleFilter struct {
 	UserID string
 	// Status filters by schedule status
 	Status ScheduleStatus
+	// Scope filters by resource scope
+	Scope proxy.ResourceScope
+	// TeamID filters by team ID (for team-scoped schedules)
+	TeamID string
+	// TeamIDs filters by multiple team IDs (returns schedules for any of these teams)
+	TeamIDs []string
 }
 
 // Manager defines the interface for schedule management
