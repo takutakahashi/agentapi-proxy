@@ -1,4 +1,4 @@
-package proxy
+package controllers
 
 import (
 	"fmt"
@@ -10,50 +10,60 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
-// ShareHandlers handles session sharing endpoints
-type ShareHandlers struct {
-	proxy     *Proxy
-	shareRepo ShareRepository
+// ShareController handles session sharing endpoints
+type ShareController struct {
+	sessionManagerProvider SessionManagerProvider
+	shareRepo              repositories.ShareRepository
 }
 
-// NewShareHandlers creates a new ShareHandlers instance
-func NewShareHandlers(proxy *Proxy, shareRepo ShareRepository) *ShareHandlers {
-	return &ShareHandlers{
-		proxy:     proxy,
-		shareRepo: shareRepo,
+// NewShareController creates a new ShareController instance
+func NewShareController(
+	sessionManagerProvider SessionManagerProvider,
+	shareRepo repositories.ShareRepository,
+) *ShareController {
+	return &ShareController{
+		sessionManagerProvider: sessionManagerProvider,
+		shareRepo:              shareRepo,
 	}
 }
 
+// getSessionManager returns the current session manager
+func (c *ShareController) getSessionManager() repositories.SessionManager {
+	return c.sessionManagerProvider.GetSessionManager()
+}
+
 // GetName returns the name of this handler for logging
-func (h *ShareHandlers) GetName() string {
-	return "ShareHandlers"
+func (c *ShareController) GetName() string {
+	return "ShareController"
 }
 
 // CreateShare handles POST /sessions/:sessionId/share to create a share URL
-func (h *ShareHandlers) CreateShare(c echo.Context) error {
-	h.setCORSHeaders(c)
+func (c *ShareController) CreateShare(ctx echo.Context) error {
+	c.setCORSHeaders(ctx)
 
-	sessionID := c.Param("sessionId")
+	sessionID := ctx.Param("sessionId")
 	if sessionID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
 	}
 
 	// Verify session exists
-	session := h.proxy.GetSessionManager().GetSession(sessionID)
+	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
 	// Only session owner or admin can create share
-	if !auth.UserOwnsSession(c, session.UserID()) {
+	if !auth.UserOwnsSession(ctx, session.UserID()) {
 		return echo.NewHTTPError(http.StatusForbidden, "Only session owner can create share URL")
 	}
 
 	// Get user info
-	user := auth.GetUserFromContext(c)
+	user := auth.GetUserFromContext(ctx)
 	var userID string
 	if user != nil {
 		userID = string(user.ID())
@@ -62,10 +72,10 @@ func (h *ShareHandlers) CreateShare(c echo.Context) error {
 	}
 
 	// Check if share already exists
-	existingShare, err := h.shareRepo.FindBySessionID(sessionID)
+	existingShare, err := c.shareRepo.FindBySessionID(sessionID)
 	if err == nil && existingShare != nil {
 		// Return existing share
-		return c.JSON(http.StatusOK, map[string]interface{}{
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"token":      existingShare.Token(),
 			"session_id": existingShare.SessionID(),
 			"share_url":  fmt.Sprintf("/s/%s/", existingShare.Token()),
@@ -75,17 +85,17 @@ func (h *ShareHandlers) CreateShare(c echo.Context) error {
 	}
 
 	// Create new share
-	share := NewSessionShare(sessionID, userID)
+	share := entities.NewSessionShare(sessionID, userID)
 
 	// Save share
-	if err := h.shareRepo.Save(share); err != nil {
+	if err := c.shareRepo.Save(share); err != nil {
 		log.Printf("Failed to save share for session %s: %v", sessionID, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create share")
 	}
 
 	log.Printf("Created share for session %s by user %s, token: %s", sessionID, userID, share.Token())
 
-	return c.JSON(http.StatusCreated, map[string]interface{}{
+	return ctx.JSON(http.StatusCreated, map[string]interface{}{
 		"token":      share.Token(),
 		"session_id": share.SessionID(),
 		"share_url":  fmt.Sprintf("/s/%s/", share.Token()),
@@ -95,32 +105,32 @@ func (h *ShareHandlers) CreateShare(c echo.Context) error {
 }
 
 // GetShare handles GET /sessions/:sessionId/share to get share status
-func (h *ShareHandlers) GetShare(c echo.Context) error {
-	h.setCORSHeaders(c)
+func (c *ShareController) GetShare(ctx echo.Context) error {
+	c.setCORSHeaders(ctx)
 
-	sessionID := c.Param("sessionId")
+	sessionID := ctx.Param("sessionId")
 	if sessionID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
 	}
 
 	// Verify session exists
-	session := h.proxy.GetSessionManager().GetSession(sessionID)
+	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
 	// Only session owner or admin can view share status
-	if !auth.UserOwnsSession(c, session.UserID()) {
+	if !auth.UserOwnsSession(ctx, session.UserID()) {
 		return echo.NewHTTPError(http.StatusForbidden, "Only session owner can view share status")
 	}
 
 	// Get share
-	share, err := h.shareRepo.FindBySessionID(sessionID)
+	share, err := c.shareRepo.FindBySessionID(sessionID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Share not found for this session")
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"token":      share.Token(),
 		"session_id": share.SessionID(),
 		"share_url":  fmt.Sprintf("/s/%s/", share.Token()),
@@ -132,44 +142,44 @@ func (h *ShareHandlers) GetShare(c echo.Context) error {
 }
 
 // DeleteShare handles DELETE /sessions/:sessionId/share to revoke share
-func (h *ShareHandlers) DeleteShare(c echo.Context) error {
-	h.setCORSHeaders(c)
+func (c *ShareController) DeleteShare(ctx echo.Context) error {
+	c.setCORSHeaders(ctx)
 
-	sessionID := c.Param("sessionId")
+	sessionID := ctx.Param("sessionId")
 	if sessionID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
 	}
 
 	// Verify session exists
-	session := h.proxy.GetSessionManager().GetSession(sessionID)
+	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
 	// Only session owner or admin can delete share
-	if !auth.UserOwnsSession(c, session.UserID()) {
+	if !auth.UserOwnsSession(ctx, session.UserID()) {
 		return echo.NewHTTPError(http.StatusForbidden, "Only session owner can revoke share URL")
 	}
 
 	// Delete share
-	if err := h.shareRepo.Delete(sessionID); err != nil {
+	if err := c.shareRepo.Delete(sessionID); err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Share not found for this session")
 	}
 
 	log.Printf("Deleted share for session %s", sessionID)
 
-	return c.JSON(http.StatusOK, map[string]interface{}{
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Share revoked successfully",
 		"session_id": sessionID,
 	})
 }
 
 // RouteToSharedSession handles ANY /s/:shareToken/* to access shared session
-func (h *ShareHandlers) RouteToSharedSession(c echo.Context) error {
-	shareToken := c.Param("shareToken")
+func (c *ShareController) RouteToSharedSession(ctx echo.Context) error {
+	shareToken := ctx.Param("shareToken")
 
 	// Find share by token
-	share, err := h.shareRepo.FindByToken(shareToken)
+	share, err := c.shareRepo.FindByToken(shareToken)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Invalid share token")
 	}
@@ -180,20 +190,20 @@ func (h *ShareHandlers) RouteToSharedSession(c echo.Context) error {
 	}
 
 	// Get session
-	session := h.proxy.GetSessionManager().GetSession(share.SessionID())
+	session := c.getSessionManager().GetSession(share.SessionID())
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
 	// Only allow read-only methods (GET, HEAD) for shared sessions
-	if c.Request().Method != http.MethodGet && c.Request().Method != http.MethodHead && c.Request().Method != http.MethodOptions {
+	if ctx.Request().Method != http.MethodGet && ctx.Request().Method != http.MethodHead && ctx.Request().Method != http.MethodOptions {
 		return echo.NewHTTPError(http.StatusForbidden, "Shared sessions are read-only")
 	}
 
 	// Skip auth check for OPTIONS requests
-	if c.Request().Method == http.MethodOptions {
-		h.setCORSHeaders(c)
-		return c.NoContent(http.StatusNoContent)
+	if ctx.Request().Method == http.MethodOptions {
+		c.setCORSHeaders(ctx)
+		return ctx.NoContent(http.StatusNoContent)
 	}
 
 	// Determine target URL using session address
@@ -203,8 +213,8 @@ func (h *ShareHandlers) RouteToSharedSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))
 	}
 
-	req := c.Request()
-	w := c.Response()
+	req := ctx.Request()
+	w := ctx.Response()
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = time.Millisecond * 100
@@ -224,9 +234,9 @@ func (h *ShareHandlers) RouteToSharedSession(c echo.Context) error {
 		}
 
 		// Set forwarded headers
-		originalHost := c.Request().Host
+		originalHost := ctx.Request().Host
 		if originalHost == "" {
-			originalHost = c.Request().Header.Get("Host")
+			originalHost = ctx.Request().Header.Get("Host")
 		}
 		req.Header.Set("X-Forwarded-Host", originalHost)
 		req.Header.Set("X-Forwarded-Proto", "http")
@@ -270,10 +280,10 @@ func (h *ShareHandlers) RouteToSharedSession(c echo.Context) error {
 }
 
 // setCORSHeaders sets CORS headers for share endpoints
-func (h *ShareHandlers) setCORSHeaders(c echo.Context) {
-	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
-	c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
-	c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
-	c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
-	c.Response().Header().Set("Access-Control-Max-Age", "86400")
+func (c *ShareController) setCORSHeaders(ctx echo.Context) {
+	ctx.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	ctx.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
+	ctx.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
+	ctx.Response().Header().Set("Access-Control-Allow-Credentials", "true")
+	ctx.Response().Header().Set("Access-Control-Max-Age", "86400")
 }

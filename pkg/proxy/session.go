@@ -1,10 +1,8 @@
 package proxy
 
 import (
-	"context"
-	"time"
-
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 // Type aliases for backward compatibility
@@ -16,20 +14,6 @@ type Session = entities.Session
 // SessionFilter defines filter criteria for listing sessions
 type SessionFilter = entities.SessionFilter
 
-// SessionManager manages the lifecycle of sessions
-type SessionManager interface {
-	// CreateSession creates a new session and starts it
-	CreateSession(ctx context.Context, id string, req *RunServerRequest) (Session, error)
-
-	// GetSession returns a session by ID, nil if not found
-	GetSession(id string) Session
-
-	// ListSessions returns all sessions matching the filter
-	ListSessions(filter SessionFilter) []Session
-
-	// DeleteSession stops and removes a session
-	DeleteSession(id string) error
-
-	// Shutdown gracefully stops all sessions
-	Shutdown(timeout time.Duration) error
-}
+// SessionManager is an alias to the repositories.SessionManager interface
+// for backward compatibility
+type SessionManager = repositories.SessionManager

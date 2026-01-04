@@ -1,4 +1,4 @@
-package proxy
+package controllers
 
 import (
 	"bytes"
@@ -219,7 +219,7 @@ func TestUpdateSettings_PreserveExistingCredentials(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			h := NewSettingsHandlers(repo)
+			h := NewSettingsController(repo)
 
 			body, err := json.Marshal(tt.requestBody)
 			require.NoError(t, err)

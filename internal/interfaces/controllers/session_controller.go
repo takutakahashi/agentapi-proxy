@@ -1,4 +1,4 @@
-package proxy
+package controllers
 
 import (
 	"bytes"
@@ -16,53 +16,78 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
-// SessionHandlers handles session management endpoints without persistence
-type SessionHandlers struct {
-	proxy *Proxy
+// SessionCreator is an interface for creating sessions
+type SessionCreator interface {
+	CreateSession(sessionID string, req entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error)
+	DeleteSessionByID(sessionID string) error
 }
 
-// NewSessionHandlers creates a new SessionHandlers instance
-func NewSessionHandlers(proxy *Proxy) *SessionHandlers {
-	return &SessionHandlers{
-		proxy: proxy,
+// SessionManagerProvider provides access to the session manager
+// This allows the session manager to be swapped at runtime (e.g., for testing)
+type SessionManagerProvider interface {
+	GetSessionManager() repositories.SessionManager
+}
+
+// SessionController handles session management endpoints
+type SessionController struct {
+	sessionManagerProvider SessionManagerProvider
+	sessionCreator         SessionCreator
+	validateTeamUC         *sessionuc.ValidateTeamAccessUseCase
+}
+
+// NewSessionController creates a new SessionController instance
+func NewSessionController(
+	sessionManagerProvider SessionManagerProvider,
+	sessionCreator SessionCreator,
+) *SessionController {
+	return &SessionController{
+		sessionManagerProvider: sessionManagerProvider,
+		sessionCreator:         sessionCreator,
+		validateTeamUC:         sessionuc.NewValidateTeamAccessUseCase(),
 	}
 }
 
+// getSessionManager returns the current session manager
+func (c *SessionController) getSessionManager() repositories.SessionManager {
+	return c.sessionManagerProvider.GetSessionManager()
+}
+
 // GetName returns the name of this handler for logging
-func (h *SessionHandlers) GetName() string {
-	return "SessionHandlers"
+func (c *SessionController) GetName() string {
+	return "SessionController"
 }
 
 // RegisterRoutes registers session management routes
-func (h *SessionHandlers) RegisterRoutes(e *echo.Echo, proxy *Proxy) error {
+func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	// Session management routes
-	e.POST("/start", h.StartSession)
-	e.GET("/search", h.SearchSessions)
-	e.DELETE("/sessions/:sessionId", h.DeleteSession)
+	e.POST("/start", c.StartSession)
+	e.GET("/search", c.SearchSessions)
+	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
-	e.Any("/:sessionId/*", h.RouteToSession)
+	e.Any("/:sessionId/*", c.RouteToSession)
 
 	log.Printf("Registered session management routes")
 	return nil
 }
 
 // StartSession handles POST /start requests to start a new agentapi server
-func (h *SessionHandlers) StartSession(c echo.Context) error {
-	// Set CORS headers
-	h.setCORSHeaders(c)
+func (c *SessionController) StartSession(ctx echo.Context) error {
+	c.setCORSHeaders(ctx)
 
 	sessionID := uuid.New().String()
 
-	var startReq StartRequest
-	if err := c.Bind(&startReq); err != nil {
+	var startReq entities.StartRequest
+	if err := ctx.Bind(&startReq); err != nil {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
 	}
 
-	user := auth.GetUserFromContext(c)
+	user := auth.GetUserFromContext(ctx)
 	var userID, userRole string
 	var teams []string
 	if user != nil {
@@ -89,46 +114,41 @@ func (h *SessionHandlers) StartSession(c echo.Context) error {
 		userRole = "guest"
 	}
 
-	// Validate team scope: user must be a member of the team
-	if startReq.Scope == ScopeTeam {
-		if startReq.TeamID == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required when scope is 'team'")
+	// Validate team scope using use case
+	if err := c.validateTeamUC.ValidateTeamScope(
+		startReq.Scope,
+		startReq.TeamID,
+		teams,
+		user != nil,
+	); err != nil {
+		if strings.Contains(err.Error(), "team_id is required") {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
-		if user == nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required for team-scoped sessions")
+		if strings.Contains(err.Error(), "authentication required") {
+			return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
 		}
-		if !user.IsMemberOfTeam(startReq.TeamID) {
-			log.Printf("User %s is not a member of team %s", userID, startReq.TeamID)
-			return echo.NewHTTPError(http.StatusForbidden, "You are not a member of this team")
-		}
+		return echo.NewHTTPError(http.StatusForbidden, err.Error())
 	}
 
-	session, err := h.proxy.CreateSession(sessionID, StartRequest{
-		Environment: startReq.Environment,
-		Tags:        startReq.Tags,
-		Params:      startReq.Params,
-		Scope:       startReq.Scope,
-		TeamID:      startReq.TeamID,
-	}, userID, userRole, teams)
+	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
 	if err != nil {
 		log.Printf("Failed to create session: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
 }
 
-// SearchSessions handles GET /search requests to list and filter active sessions (memory only)
-func (h *SessionHandlers) SearchSessions(c echo.Context) error {
-	// Set CORS headers
-	h.setCORSHeaders(c)
+// SearchSessions handles GET /search requests to list and filter active sessions
+func (c *SessionController) SearchSessions(ctx echo.Context) error {
+	c.setCORSHeaders(ctx)
 
-	user := auth.GetUserFromContext(c)
-	status := c.QueryParam("status")
-	scopeFilter := c.QueryParam("scope")
-	teamIDFilter := c.QueryParam("team_id")
+	user := auth.GetUserFromContext(ctx)
+	status := ctx.QueryParam("status")
+	scopeFilter := ctx.QueryParam("scope")
+	teamIDFilter := ctx.QueryParam("team_id")
 
 	var userID string
 	var userTeamIDs []string
@@ -144,18 +164,18 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 	}
 
 	tagFilters := make(map[string]string)
-	for paramName, paramValues := range c.QueryParams() {
+	for paramName, paramValues := range ctx.QueryParams() {
 		if strings.HasPrefix(paramName, "tag.") && len(paramValues) > 0 {
 			tagKey := strings.TrimPrefix(paramName, "tag.")
 			tagFilters[tagKey] = paramValues[0]
 		}
 	}
 
-	// Build filter (without UserID to get all sessions, we'll filter by authorization below)
-	filter := SessionFilter{
+	// Build filter
+	filter := entities.SessionFilter{
 		Status:  status,
 		Tags:    tagFilters,
-		Scope:   ResourceScope(scopeFilter),
+		Scope:   entities.ResourceScope(scopeFilter),
 		TeamID:  teamIDFilter,
 		TeamIDs: userTeamIDs,
 	}
@@ -166,36 +186,28 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 	}
 
 	// Get sessions from session manager
-	sessions := h.proxy.GetSessionManager().ListSessions(filter)
+	sessions := c.getSessionManager().ListSessions(filter)
 
 	// Check if auth is enabled
-	cfg := auth.GetConfigFromContext(c)
+	cfg := auth.GetConfigFromContext(ctx)
 	authEnabled := cfg != nil && cfg.Auth.Enabled
 
-	// Filter by user authorization (supports both user-scoped and team-scoped)
-	// IMPORTANT: Resources are isolated by scope - team scope resources are only visible
-	// when explicitly filtering by scope=team, and user scope resources are only visible
-	// when filtering by scope=user or no scope filter (default to user scope)
-	matchingSessions := make([]Session, 0)
+	// Filter by user authorization
+	matchingSessions := make([]entities.Session, 0)
 	for _, session := range sessions {
-		// If auth is not enabled, return all sessions
 		if !authEnabled {
 			matchingSessions = append(matchingSessions, session)
 			continue
 		}
 
-		// Scope isolation: resources are only visible within their respective scope
-		// - scope=team filter: only show team-scoped resources
-		// - scope=user filter or no filter: only show user-scoped resources
+		// Scope isolation
 		sessionScope := session.Scope()
-		if scopeFilter == string(ScopeTeam) {
-			// Only show team-scoped sessions
-			if sessionScope != ScopeTeam {
+		if scopeFilter == string(entities.ScopeTeam) {
+			if sessionScope != entities.ScopeTeam {
 				continue
 			}
 		} else {
-			// Default to user scope: only show user-scoped sessions
-			if sessionScope == ScopeTeam {
+			if sessionScope == entities.ScopeTeam {
 				continue
 			}
 		}
@@ -207,13 +219,11 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 		}
 
 		// Check authorization based on scope
-		if sessionScope == ScopeTeam {
-			// Team-scoped: user must be a member of the team
+		if sessionScope == entities.ScopeTeam {
 			if user != nil && user.IsMemberOfTeam(session.TeamID()) {
 				matchingSessions = append(matchingSessions, session)
 			}
 		} else {
-			// User-scoped: only owner can see
 			if user != nil && session.UserID() == string(user.ID()) {
 				matchingSessions = append(matchingSessions, session)
 			}
@@ -241,18 +251,17 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 		filteredSessions = append(filteredSessions, sessionData)
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"sessions": filteredSessions,
 	})
 }
 
 // DeleteSession handles DELETE /sessions/:sessionId requests to terminate a session
-func (h *SessionHandlers) DeleteSession(c echo.Context) error {
-	// Set CORS headers
-	h.setCORSHeaders(c)
+func (c *SessionController) DeleteSession(ctx echo.Context) error {
+	c.setCORSHeaders(ctx)
 
-	sessionID := c.Param("sessionId")
-	clientIP := c.RealIP()
+	sessionID := ctx.Param("sessionId")
+	clientIP := ctx.RealIP()
 
 	log.Printf("Request: DELETE /sessions/%s from %s", sessionID, clientIP)
 
@@ -261,14 +270,14 @@ func (h *SessionHandlers) DeleteSession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
 	}
 
-	session := h.proxy.GetSessionManager().GetSession(sessionID)
+	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
 		log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
 	// Check authorization based on scope
-	user := auth.GetUserFromContext(c)
+	user := auth.GetUserFromContext(ctx)
 	canAccess := false
 	if user != nil {
 		canAccess = user.CanAccessResource(
@@ -277,8 +286,7 @@ func (h *SessionHandlers) DeleteSession(c echo.Context) error {
 			session.TeamID(),
 		)
 	} else {
-		// Fall back to legacy check if no user
-		canAccess = auth.UserOwnsSession(c, session.UserID())
+		canAccess = auth.UserOwnsSession(ctx, session.UserID())
 	}
 
 	if !canAccess {
@@ -289,14 +297,14 @@ func (h *SessionHandlers) DeleteSession(c echo.Context) error {
 	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
 		sessionID, session.Status(), session.UserID(), clientIP)
 
-	if err := h.proxy.DeleteSessionByID(sessionID); err != nil {
+	if err := c.sessionCreator.DeleteSessionByID(sessionID); err != nil {
 		log.Printf("Failed to delete session %s: %v", sessionID, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session")
 	}
 
 	log.Printf("Session %s deletion completed successfully", sessionID)
 
-	return c.JSON(http.StatusOK, map[string]interface{}{
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
 		"session_id": sessionID,
 		"status":     "terminated",
@@ -304,20 +312,19 @@ func (h *SessionHandlers) DeleteSession(c echo.Context) error {
 }
 
 // RouteToSession routes requests to the appropriate agentapi server instance
-func (h *SessionHandlers) RouteToSession(c echo.Context) error {
-	sessionID := c.Param("sessionId")
+func (c *SessionController) RouteToSession(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
 
-	session := h.proxy.GetSessionManager().GetSession(sessionID)
+	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
 	// Skip auth check for OPTIONS requests
-	if c.Request().Method != "OPTIONS" {
-		cfg := auth.GetConfigFromContext(c)
+	if ctx.Request().Method != "OPTIONS" {
+		cfg := auth.GetConfigFromContext(ctx)
 		if cfg != nil && cfg.Auth.Enabled {
-			// Check authorization based on scope
-			user := auth.GetUserFromContext(c)
+			user := auth.GetUserFromContext(ctx)
 			canAccess := false
 			if user != nil {
 				canAccess = user.CanAccessResource(
@@ -341,12 +348,12 @@ func (h *SessionHandlers) RouteToSession(c echo.Context) error {
 	}
 
 	// Capture first message for session description
-	if c.Request().Method == "POST" && strings.HasSuffix(c.Request().URL.Path, "/message") {
-		h.captureFirstMessage(c, session)
+	if ctx.Request().Method == "POST" && strings.HasSuffix(ctx.Request().URL.Path, "/message") {
+		c.captureFirstMessage(ctx, session)
 	}
 
-	req := c.Request()
-	w := c.Response()
+	req := ctx.Request()
+	w := ctx.Response()
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = time.Millisecond * 100
@@ -365,9 +372,9 @@ func (h *SessionHandlers) RouteToSession(c echo.Context) error {
 		}
 
 		// Set forwarded headers
-		originalHost := c.Request().Host
+		originalHost := ctx.Request().Host
 		if originalHost == "" {
-			originalHost = c.Request().Header.Get("Host")
+			originalHost = ctx.Request().Header.Get("Host")
 		}
 		req.Header.Set("X-Forwarded-Host", originalHost)
 		req.Header.Set("X-Forwarded-Proto", "http")
@@ -408,7 +415,7 @@ func (h *SessionHandlers) RouteToSession(c echo.Context) error {
 }
 
 // captureFirstMessage captures the first message content for session description
-func (h *SessionHandlers) captureFirstMessage(c echo.Context, session Session) {
+func (c *SessionController) captureFirstMessage(ctx echo.Context, session entities.Session) {
 	// Skip if description already exists
 	if session.Tags() != nil {
 		if _, exists := session.Tags()["description"]; exists {
@@ -416,26 +423,25 @@ func (h *SessionHandlers) captureFirstMessage(c echo.Context, session Session) {
 		}
 	}
 
-	body, err := io.ReadAll(c.Request().Body)
+	body, err := io.ReadAll(ctx.Request().Body)
 	if err != nil {
 		return
 	}
 
 	// Restore the request body for further processing
-	c.Request().Body = io.NopCloser(bytes.NewBuffer(body))
+	ctx.Request().Body = io.NopCloser(bytes.NewBuffer(body))
 
 	var messageReq map[string]interface{}
 	if err := json.Unmarshal(body, &messageReq); err != nil {
 		return
 	}
-
 }
 
 // setCORSHeaders sets CORS headers for all session management endpoints
-func (h *SessionHandlers) setCORSHeaders(c echo.Context) {
-	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
-	c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
-	c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
-	c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
-	c.Response().Header().Set("Access-Control-Max-Age", "86400")
+func (c *SessionController) setCORSHeaders(ctx echo.Context) {
+	ctx.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	ctx.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS")
+	ctx.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
+	ctx.Response().Header().Set("Access-Control-Allow-Credentials", "true")
+	ctx.Response().Header().Set("Access-Control-Max-Age", "86400")
 }

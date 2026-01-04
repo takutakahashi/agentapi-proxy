@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -20,11 +21,11 @@ type Router struct {
 // HandlerRegistry contains all handlers
 type HandlerRegistry struct {
 	notificationHandlers *NotificationHandlers
-	healthHandlers       *HealthHandlers
-	sessionHandlers      *SessionHandlers
-	settingsHandlers     *SettingsHandlers
-	userHandlers         *UserHandlers
-	shareHandlers        *ShareHandlers
+	healthController     *controllers.HealthController
+	sessionController    *controllers.SessionController
+	settingsController   *controllers.SettingsController
+	userController       *controllers.UserController
+	shareController      *controllers.ShareController
 	customHandlers       []CustomHandler
 }
 
@@ -36,7 +37,8 @@ type CustomHandler interface {
 
 // NewRouter creates a new Router instance
 func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
-	settingsHandlers := NewSettingsHandlers(proxy.settingsRepo)
+	// Create settings controller
+	settingsController := controllers.NewSettingsController(proxy.settingsRepo)
 
 	// Set credentials secret syncer and MCP secret syncer if Kubernetes mode is enabled
 	if k8sManager, ok := proxy.sessionManager.(*KubernetesSessionManager); ok {
@@ -45,23 +47,33 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 			k8sManager.GetClient(),
 			k8sManager.GetNamespace(),
 		)
-		settingsHandlers.SetCredentialsSecretSyncer(credSyncer)
-		log.Printf("[ROUTER] Credentials secret syncer configured for settings handlers")
+		settingsController.SetCredentialsSecretSyncer(credSyncer)
+		log.Printf("[ROUTER] Credentials secret syncer configured for settings controller")
 
 		// Set MCP secret syncer
 		mcpSyncer := services.NewKubernetesMCPSecretSyncer(
 			k8sManager.GetClient(),
 			k8sManager.GetNamespace(),
 		)
-		settingsHandlers.SetMCPSecretSyncer(mcpSyncer)
-		log.Printf("[ROUTER] MCP secret syncer configured for settings handlers")
+		settingsController.SetMCPSecretSyncer(mcpSyncer)
+		log.Printf("[ROUTER] MCP secret syncer configured for settings controller")
 	}
 
-	// Initialize share handlers
-	var shareHandlers *ShareHandlers
+	// Create session controller with proper dependencies
+	// proxy implements SessionManagerProvider interface via GetSessionManager()
+	sessionController := controllers.NewSessionController(
+		proxy, // Proxy implements SessionManagerProvider interface
+		proxy, // Proxy implements SessionCreator interface
+	)
+
+	// Create share controller if share repository is available
+	var shareController *controllers.ShareController
 	if proxy.shareRepo != nil {
-		shareHandlers = NewShareHandlers(proxy, proxy.shareRepo)
-		log.Printf("[ROUTER] Share handlers initialized")
+		shareController = controllers.NewShareController(
+			proxy, // Proxy implements SessionManagerProvider interface
+			proxy.shareRepo,
+		)
+		log.Printf("[ROUTER] Share controller initialized")
 	}
 
 	return &Router{
@@ -69,11 +81,11 @@ func NewRouter(e *echo.Echo, proxy *Proxy) *Router {
 		proxy: proxy,
 		handlers: &HandlerRegistry{
 			notificationHandlers: NewNotificationHandlers(proxy.notificationSvc),
-			healthHandlers:       NewHealthHandlers(),
-			sessionHandlers:      NewSessionHandlers(proxy),
-			settingsHandlers:     settingsHandlers,
-			userHandlers:         NewUserHandlers(proxy),
-			shareHandlers:        shareHandlers,
+			healthController:     controllers.NewHealthController(),
+			sessionController:    sessionController,
+			settingsController:   settingsController,
+			userController:       controllers.NewUserController(),
+			shareController:      shareController,
 			customHandlers:       make([]CustomHandler, 0),
 		},
 	}
@@ -108,20 +120,20 @@ func (r *Router) RegisterRoutes() error {
 // registerCoreRoutes registers the core routes that are always available
 func (r *Router) registerCoreRoutes() error {
 	// Health check endpoint
-	r.echo.GET("/health", r.handlers.healthHandlers.HealthCheck)
+	r.echo.GET("/health", r.handlers.healthController.HealthCheck)
 
 	// Session management routes
 	log.Printf("[ROUTES] Registering session management endpoints...")
-	r.echo.POST("/start", r.handlers.sessionHandlers.StartSession)
-	r.echo.GET("/search", r.handlers.sessionHandlers.SearchSessions)
-	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionHandlers.DeleteSession)
+	r.echo.POST("/start", r.handlers.sessionController.StartSession)
+	r.echo.GET("/search", r.handlers.sessionController.SearchSessions)
+	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 
 	// Session sharing routes
-	if r.handlers.shareHandlers != nil {
+	if r.handlers.shareController != nil {
 		log.Printf("[ROUTES] Registering session sharing endpoints...")
-		r.echo.POST("/sessions/:sessionId/share", r.handlers.shareHandlers.CreateShare)
-		r.echo.GET("/sessions/:sessionId/share", r.handlers.shareHandlers.GetShare)
-		r.echo.DELETE("/sessions/:sessionId/share", r.handlers.shareHandlers.DeleteShare)
+		r.echo.POST("/sessions/:sessionId/share", r.handlers.shareController.CreateShare)
+		r.echo.GET("/sessions/:sessionId/share", r.handlers.shareController.GetShare)
+		r.echo.DELETE("/sessions/:sessionId/share", r.handlers.shareController.DeleteShare)
 		// Add OPTIONS handler for session share endpoints (CORS preflight)
 		r.echo.OPTIONS("/sessions/:sessionId/share", func(c echo.Context) error {
 			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
@@ -132,7 +144,7 @@ func (r *Router) registerCoreRoutes() error {
 			return c.NoContent(http.StatusNoContent)
 		})
 		// Shared session access route (read-only)
-		r.echo.Any("/s/:shareToken/*", r.handlers.shareHandlers.RouteToSharedSession)
+		r.echo.Any("/s/:shareToken/*", r.handlers.shareController.RouteToSharedSession)
 		r.echo.OPTIONS("/s/:shareToken/*", func(c echo.Context) error {
 			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
 			c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
@@ -145,7 +157,7 @@ func (r *Router) registerCoreRoutes() error {
 	}
 
 	// Session proxy route
-	r.echo.Any("/:sessionId/*", r.handlers.sessionHandlers.RouteToSession)
+	r.echo.Any("/:sessionId/*", r.handlers.sessionController.RouteToSession)
 	log.Printf("[ROUTES] Session management endpoints registered")
 
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
@@ -171,7 +183,7 @@ func (r *Router) registerCoreRoutes() error {
 func (r *Router) registerConditionalRoutes() error {
 	// User info endpoint (requires authentication)
 	log.Printf("[ROUTES] Registering user info endpoint...")
-	r.echo.GET("/user/info", r.handlers.userHandlers.GetUserInfo, auth.RequirePermission(entities.PermissionSessionRead, r.proxy.container.AuthService))
+	r.echo.GET("/user/info", r.handlers.userController.GetUserInfo, auth.RequirePermission(entities.PermissionSessionRead, r.proxy.container.AuthService))
 	log.Printf("[ROUTES] User info endpoint registered")
 
 	// Add notification routes if service is available
@@ -191,11 +203,11 @@ func (r *Router) registerConditionalRoutes() error {
 	}
 
 	// Add settings routes if settings repository is available (Kubernetes mode only)
-	if r.proxy.settingsRepo != nil && r.handlers.settingsHandlers != nil {
+	if r.proxy.settingsRepo != nil && r.handlers.settingsController != nil {
 		log.Printf("[ROUTES] Registering settings endpoints...")
-		r.echo.GET("/settings/:name", r.handlers.settingsHandlers.GetSettings, auth.RequirePermission(entities.PermissionSessionRead, r.proxy.container.AuthService))
-		r.echo.PUT("/settings/:name", r.handlers.settingsHandlers.UpdateSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.proxy.container.AuthService))
-		r.echo.DELETE("/settings/:name", r.handlers.settingsHandlers.DeleteSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.proxy.container.AuthService))
+		r.echo.GET("/settings/:name", r.handlers.settingsController.GetSettings, auth.RequirePermission(entities.PermissionSessionRead, r.proxy.container.AuthService))
+		r.echo.PUT("/settings/:name", r.handlers.settingsController.UpdateSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.proxy.container.AuthService))
+		r.echo.DELETE("/settings/:name", r.handlers.settingsController.DeleteSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.proxy.container.AuthService))
 		log.Printf("[ROUTES] Settings endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Settings repository not available, skipping settings routes")
