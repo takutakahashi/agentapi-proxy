@@ -17,10 +17,6 @@ func TestNewContainer(t *testing.T) {
 	}
 
 	// Test services are initialized
-	if container.AgentService == nil {
-		t.Error("AgentService should not be nil")
-	}
-
 	if container.AuthService == nil {
 		t.Error("AuthService should not be nil")
 	}

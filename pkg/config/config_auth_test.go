@@ -208,7 +208,6 @@ func TestLoadConfigWithAuthConfigFile(t *testing.T) {
 
 	// Create main config with path to auth config
 	mainConfigWithPath := `{
-  "start_port": 8080,
   "auth_config_file": "` + authConfigPath + `",
   "auth": {
     "enabled": true,
@@ -232,10 +231,6 @@ func TestLoadConfigWithAuthConfigFile(t *testing.T) {
 	}
 
 	// Validate
-	if config.StartPort != 8080 {
-		t.Errorf("Expected start_port 8080, got %d", config.StartPort)
-	}
-
 	if config.AuthConfigFile != authConfigPath {
 		t.Errorf("Expected auth_config_file %s, got %s", authConfigPath, config.AuthConfigFile)
 	}

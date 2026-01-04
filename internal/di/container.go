@@ -21,7 +21,6 @@ type Container struct {
 	NotificationRepo repositories_ports.NotificationRepository
 
 	// Services
-	AgentService        services_ports.AgentService
 	AuthService         services_ports.AuthService
 	NotificationService services_ports.NotificationService
 	ProxyService        services_ports.ProxyService
@@ -79,7 +78,6 @@ func (c *Container) initRepositories() {
 
 // initServices initializes all service dependencies
 func (c *Container) initServices() {
-	c.AgentService = services.NewLocalAgentService()
 	c.AuthService = services.NewSimpleAuthService()
 	c.NotificationService = services.NewSimpleNotificationService()
 

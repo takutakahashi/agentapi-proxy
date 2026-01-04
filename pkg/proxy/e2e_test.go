@@ -268,7 +268,6 @@ func TestE2ESessionLifecycle(t *testing.T) {
 	// Create proxy with minimal config
 	cfg := config.DefaultConfig()
 	cfg.Auth.Enabled = false
-	cfg.StartPort = 19000
 	proxy := NewProxy(cfg, false)
 
 	// Set up e2e session manager
@@ -466,7 +465,6 @@ func TestE2EConcurrentSessions(t *testing.T) {
 	// Create proxy with minimal config
 	cfg := config.DefaultConfig()
 	cfg.Auth.Enabled = false
-	cfg.StartPort = 20000
 	proxy := NewProxy(cfg, false)
 
 	// Set up e2e session manager

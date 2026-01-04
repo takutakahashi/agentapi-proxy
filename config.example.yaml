@@ -1,10 +1,6 @@
 # Example configuration file for agentapi-proxy
 # This file demonstrates all available configuration options
 # Values can be overridden by environment variables with AGENTAPI_ prefix
-# Example: AGENTAPI_START_PORT=8080
-
-# Starting port for agentapi servers
-start_port: 9000
 
 # Authentication configuration
 auth:
@@ -35,6 +31,3 @@ auth:
       client_secret: "${AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET}"
       scope: "read:user read:org"
       base_url: ""  # Defaults to auth.github.base_url
-
-# Enable user-specific directory isolation
-enable_multiple_users: false

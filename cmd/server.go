@@ -142,13 +142,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 // registerScheduleHandlers registers schedule REST API handlers
 func registerScheduleHandlers(configData *config.Config, proxyServer *proxy.Proxy) {
-	log.Printf("[SCHEDULE_HANDLERS] Checking if schedule handlers should be registered...")
-
-	// Only register if Kubernetes mode is enabled
-	if !configData.KubernetesSession.Enabled {
-		log.Printf("[SCHEDULE_HANDLERS] Kubernetes mode not enabled, skipping schedule handlers")
-		return
-	}
+	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
 
 	// Create Kubernetes client
 	restConfig, err := ctrl.GetConfig()

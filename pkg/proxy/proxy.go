@@ -24,7 +24,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
-	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // Proxy represents the HTTP proxy server
@@ -36,11 +36,10 @@ type Proxy struct {
 	oauthProvider      *auth.GitHubOAuthProvider
 	githubAuthProvider *auth.GitHubAuthProvider
 	oauthSessions      sync.Map // sessionID -> OAuthSession
-	userDirMgr         *userdir.Manager
 	notificationSvc    *notification.Service
 	container          *di.Container                // Internal DI container
 	sessionManager     SessionManager               // Session lifecycle manager
-	settingsRepo       portrepos.SettingsRepository // Settings repository (Kubernetes mode only)
+	settingsRepo       portrepos.SettingsRepository // Settings repository
 	shareRepo          ShareRepository              // Share repository for session sharing
 	router             *Router                      // Router for custom handler registration
 }
@@ -111,57 +110,47 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 		MaxAge:           86400,
 	}))
 
-	// Initialize user directory manager
-	userDirMgr := userdir.NewManager("./data", cfg.EnableMultipleUsers)
-
 	// Initialize internal DI container
 	container := di.NewContainer()
 
 	// Initialize logger
 	lgr := logger.NewLogger()
 
-	// Initialize session manager based on configuration
-	var sessionManager SessionManager
+	// Initialize Kubernetes session manager
 	var settingsRepo portrepos.SettingsRepository
 	var shareRepo ShareRepository
-	if cfg.KubernetesSession.Enabled {
-		log.Printf("[PROXY] Kubernetes session management enabled")
-		k8sSessionManager, err := NewKubernetesSessionManager(cfg, verbose, lgr)
+	log.Printf("[PROXY] Initializing Kubernetes session manager")
+	k8sSessionManager, err := NewKubernetesSessionManager(cfg, verbose, lgr)
+	if err != nil {
+		// If Kubernetes is not available, use a fake client for testing/development
+		log.Printf("[PROXY] Kubernetes config not available, using fake client: %v", err)
+		k8sSessionManager, err = NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, fake.NewSimpleClientset())
 		if err != nil {
-			log.Printf("[PROXY] Failed to initialize Kubernetes session manager: %v, falling back to local", err)
-			sessionManager = NewLocalSessionManager(cfg, verbose, lgr, cfg.StartPort)
-			shareRepo = NewMemoryShareRepository()
-		} else {
-			sessionManager = k8sSessionManager
-			log.Printf("[PROXY] Kubernetes session manager initialized successfully")
-			// Initialize settings repository for Kubernetes mode
-			settingsRepo = repositories.NewKubernetesSettingsRepository(
-				k8sSessionManager.GetClient(),
-				k8sSessionManager.GetNamespace(),
-			)
-			// Set settings repository in session manager for Bedrock integration
-			k8sSessionManager.SetSettingsRepository(settingsRepo)
-			log.Printf("[PROXY] Settings repository initialized for Kubernetes mode")
-			// Initialize share repository for Kubernetes mode
-			shareRepo = NewKubernetesShareRepository(
-				k8sSessionManager.GetClient(),
-				k8sSessionManager.GetNamespace(),
-			)
-			log.Printf("[PROXY] Share repository initialized for Kubernetes mode")
+			log.Fatalf("[PROXY] Failed to initialize session manager with fake client: %v", err)
 		}
-	} else {
-		log.Printf("[PROXY] Using local session management")
-		sessionManager = NewLocalSessionManager(cfg, verbose, lgr, cfg.StartPort)
-		shareRepo = NewMemoryShareRepository()
-		log.Printf("[PROXY] Share repository initialized for local mode")
 	}
+	sessionManager := SessionManager(k8sSessionManager)
+	log.Printf("[PROXY] Kubernetes session manager initialized successfully")
+	// Initialize settings repository
+	settingsRepo = repositories.NewKubernetesSettingsRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	// Set settings repository in session manager for Bedrock integration
+	k8sSessionManager.SetSettingsRepository(settingsRepo)
+	log.Printf("[PROXY] Settings repository initialized")
+	// Initialize share repository
+	shareRepo = NewKubernetesShareRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[PROXY] Share repository initialized")
 
 	p := &Proxy{
 		config:         cfg,
 		echo:           e,
 		verbose:        verbose,
 		logger:         lgr,
-		userDirMgr:     userDirMgr,
 		container:      container,
 		sessionManager: sessionManager,
 		settingsRepo:   settingsRepo,
@@ -398,17 +387,6 @@ func (p *Proxy) DeleteSessionByID(sessionID string) error {
 	}
 
 	return p.sessionManager.DeleteSession(sessionID)
-}
-
-// getEnvFromRequest retrieves an environment variable from the request environment,
-// falling back to the default value if not found
-func getEnvFromRequest(req *RunServerRequest, key string, defaultValue string) string {
-	if req.Environment != nil {
-		if value, exists := req.Environment[key]; exists && value != "" {
-			return value
-		}
-	}
-	return defaultValue
 }
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate

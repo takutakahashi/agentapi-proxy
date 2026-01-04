@@ -46,7 +46,10 @@ func NewKubernetesSessionManager(
 	lgr *logger.Logger,
 ) (*KubernetesSessionManager, error) {
 	// Get config using controller-runtime (supports in-cluster and kubeconfig)
-	restConfig := ctrl.GetConfigOrDie()
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kubernetes config: %w", err)
+	}
 
 	client, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
