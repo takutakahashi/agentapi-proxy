@@ -330,6 +330,147 @@ func TestKubernetesSessionManager_ListSessions(t *testing.T) {
 	}
 }
 
+func TestKubernetesSessionManager_ListSessions_ScopeFilter(t *testing.T) {
+	k8sClient, cleanup := setupEnvTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test namespace
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-list-sessions-scope",
+		},
+	}
+	_, err := k8sClient.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+	defer func() {
+		_ = k8sClient.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{})
+	}()
+
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Enabled:                         true,
+			Namespace:                       ns.Name,
+			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
+			ImagePullPolicy:                 "IfNotPresent",
+			ServiceAccount:                  "default",
+			BasePort:                        9000,
+			CPURequest:                      "100m",
+			CPULimit:                        "500m",
+			MemoryRequest:                   "128Mi",
+			MemoryLimit:                     "512Mi",
+			PVCStorageSize:                  "1Gi",
+			PodStartTimeout:                 60,
+			PodStopTimeout:                  30,
+			ClaudeConfigBaseSecret:          "claude-config-base",
+			ClaudeConfigUserConfigMapPrefix: "claude-config",
+			InitContainerImage:              "alpine:3.19",
+		},
+	}
+
+	lgr := logger.NewLogger()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	// Create sessions with different scopes
+	sessions := []struct {
+		id     string
+		userID string
+		scope  ResourceScope
+		teamID string
+	}{
+		{"session-user-1", "user-a", ScopeUser, ""},
+		{"session-user-2", "user-b", ScopeUser, ""},
+		{"session-team-1", "user-a", ScopeTeam, "org/team-alpha"},
+		{"session-team-2", "user-b", ScopeTeam, "org/team-alpha"},
+		{"session-team-3", "user-c", ScopeTeam, "org/team-beta"},
+	}
+
+	for _, s := range sessions {
+		req := &RunServerRequest{
+			UserID: s.userID,
+			Scope:  s.scope,
+			TeamID: s.teamID,
+		}
+		_, err := manager.CreateSession(ctx, s.id, req)
+		if err != nil {
+			t.Fatalf("Failed to create session %s: %v", s.id, err)
+		}
+	}
+	defer func() {
+		for _, s := range sessions {
+			_ = manager.DeleteSession(s.id)
+		}
+	}()
+
+	// Test: List all sessions
+	allSessions := manager.ListSessions(SessionFilter{})
+	if len(allSessions) != 5 {
+		t.Errorf("Expected 5 sessions, got %d", len(allSessions))
+	}
+
+	// Test: Filter by scope=user
+	userScopedSessions := manager.ListSessions(SessionFilter{Scope: ScopeUser})
+	if len(userScopedSessions) != 2 {
+		t.Errorf("Expected 2 user-scoped sessions, got %d", len(userScopedSessions))
+	}
+
+	// Test: Filter by scope=team
+	teamScopedSessions := manager.ListSessions(SessionFilter{Scope: ScopeTeam})
+	if len(teamScopedSessions) != 3 {
+		t.Errorf("Expected 3 team-scoped sessions, got %d", len(teamScopedSessions))
+	}
+
+	// Test: Filter by specific team_id
+	teamAlphaSessions := manager.ListSessions(SessionFilter{TeamID: "org/team-alpha"})
+	if len(teamAlphaSessions) != 2 {
+		t.Errorf("Expected 2 sessions for org/team-alpha, got %d", len(teamAlphaSessions))
+	}
+
+	// Test: Filter by TeamIDs (user's teams)
+	// TeamIDs filter only applies to team-scoped sessions
+	// User-scoped sessions are not filtered out by TeamIDs
+	userTeamsSessions := manager.ListSessions(SessionFilter{
+		TeamIDs: []string{"org/team-alpha", "org/team-gamma"},
+	})
+	// Should return: 2 user-scoped + 2 team-alpha sessions = 4
+	// (team-beta is filtered out)
+	if len(userTeamsSessions) != 4 {
+		t.Errorf("Expected 4 sessions for user's teams filter, got %d", len(userTeamsSessions))
+	}
+
+	// Test: Combined filter - scope=team and team_id
+	teamAlphaTeamScoped := manager.ListSessions(SessionFilter{
+		Scope:  ScopeTeam,
+		TeamID: "org/team-alpha",
+	})
+	if len(teamAlphaTeamScoped) != 2 {
+		t.Errorf("Expected 2 team-scoped sessions for org/team-alpha, got %d", len(teamAlphaTeamScoped))
+	}
+
+	// Verify session scope and team_id are correctly stored
+	for _, session := range allSessions {
+		if session.ID() == "session-team-1" {
+			if session.Scope() != ScopeTeam {
+				t.Errorf("Expected session-team-1 to have scope 'team', got '%s'", session.Scope())
+			}
+			if session.TeamID() != "org/team-alpha" {
+				t.Errorf("Expected session-team-1 to have team_id 'org/team-alpha', got '%s'", session.TeamID())
+			}
+		}
+		if session.ID() == "session-user-1" {
+			if session.Scope() != ScopeUser {
+				t.Errorf("Expected session-user-1 to have scope 'user', got '%s'", session.Scope())
+			}
+		}
+	}
+}
+
 func TestKubernetesSessionManager_DeleteSession(t *testing.T) {
 	k8sClient, cleanup := setupEnvTest(t)
 	defer cleanup()

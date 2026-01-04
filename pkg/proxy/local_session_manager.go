@@ -210,6 +210,30 @@ func (m *LocalSessionManager) ListSessions(filter SessionFilter) []Session {
 			continue
 		}
 
+		// Scope filter
+		if filter.Scope != "" && session.request.Scope != filter.Scope {
+			continue
+		}
+
+		// TeamID filter
+		if filter.TeamID != "" && session.request.TeamID != filter.TeamID {
+			continue
+		}
+
+		// TeamIDs filter (for team-scoped sessions, check if session's team is in user's teams)
+		if len(filter.TeamIDs) > 0 && session.request.Scope == ScopeTeam {
+			teamMatch := false
+			for _, teamID := range filter.TeamIDs {
+				if session.request.TeamID == teamID {
+					teamMatch = true
+					break
+				}
+			}
+			if !teamMatch {
+				continue
+			}
+		}
+
 		// Tag filters
 		if len(filter.Tags) > 0 {
 			matchAllTags := true

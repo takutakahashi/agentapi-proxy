@@ -287,6 +287,30 @@ func (m *KubernetesSessionManager) ListSessions(filter SessionFilter) []Session 
 			continue
 		}
 
+		// Apply Scope filter
+		if filter.Scope != "" && session.Scope() != filter.Scope {
+			continue
+		}
+
+		// Apply TeamID filter
+		if filter.TeamID != "" && session.TeamID() != filter.TeamID {
+			continue
+		}
+
+		// Apply TeamIDs filter (for team-scoped sessions, check if session's team is in user's teams)
+		if len(filter.TeamIDs) > 0 && session.Scope() == ScopeTeam {
+			teamMatch := false
+			for _, teamID := range filter.TeamIDs {
+				if session.TeamID() == teamID {
+					teamMatch = true
+					break
+				}
+			}
+			if !teamMatch {
+				continue
+			}
+		}
+
 		// Apply Tag filters
 		if len(filter.Tags) > 0 {
 			matchAllTags := true
@@ -1924,6 +1948,14 @@ func (m *KubernetesSessionManager) buildLabels(session *kubernetesSession) map[s
 		"agentapi.proxy/user-id":       sanitizeLabelValue(session.request.UserID),
 	}
 
+	// Add scope and team_id labels for filtering
+	if session.request.Scope != "" {
+		labels["agentapi.proxy/scope"] = string(session.request.Scope)
+	}
+	if session.request.TeamID != "" {
+		labels["agentapi.proxy/team-id"] = sanitizeLabelValue(session.request.TeamID)
+	}
+
 	// Add tags as labels (sanitized for Kubernetes)
 	for k, v := range session.request.Tags {
 		labelKey := fmt.Sprintf("agentapi.proxy/tag-%s", sanitizeLabelKey(k))
@@ -2443,6 +2475,13 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		}
 	}
 
+	// Restore scope and team_id from labels
+	scope := ResourceScope(svc.Labels["agentapi.proxy/scope"])
+	if scope == "" {
+		scope = ScopeUser // Default to user scope for backward compatibility
+	}
+	teamID := svc.Labels["agentapi.proxy/team-id"]
+
 	// Parse created-at from annotations
 	createdAt := time.Now()
 	if createdAtStr, ok := svc.Annotations["agentapi.proxy/created-at"]; ok {
@@ -2472,6 +2511,8 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		request: &RunServerRequest{
 			UserID: userID,
 			Tags:   tags,
+			Scope:  scope,
+			TeamID: teamID,
 		},
 	}
 
@@ -2503,6 +2544,13 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 		}
 	}
 
+	// Restore scope and team_id from labels
+	scope := ResourceScope(svc.Labels["agentapi.proxy/scope"])
+	if scope == "" {
+		scope = ScopeUser // Default to user scope for backward compatibility
+	}
+	teamID := svc.Labels["agentapi.proxy/team-id"]
+
 	// Parse created-at from annotations
 	createdAt := time.Now()
 	if createdAtStr, ok := svc.Annotations["agentapi.proxy/created-at"]; ok {
@@ -2532,6 +2580,8 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 		request: &RunServerRequest{
 			UserID: userID,
 			Tags:   tags,
+			Scope:  scope,
+			TeamID: teamID,
 		},
 	}
 
