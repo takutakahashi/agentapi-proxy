@@ -24,6 +24,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // Proxy represents the HTTP proxy server
@@ -121,7 +122,12 @@ func NewProxy(cfg *config.Config, verbose bool) *Proxy {
 	log.Printf("[PROXY] Initializing Kubernetes session manager")
 	k8sSessionManager, err := NewKubernetesSessionManager(cfg, verbose, lgr)
 	if err != nil {
-		log.Fatalf("[PROXY] Failed to initialize Kubernetes session manager: %v", err)
+		// If Kubernetes is not available, use a fake client for testing/development
+		log.Printf("[PROXY] Kubernetes config not available, using fake client: %v", err)
+		k8sSessionManager, err = NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, fake.NewSimpleClientset())
+		if err != nil {
+			log.Fatalf("[PROXY] Failed to initialize session manager with fake client: %v", err)
+		}
 	}
 	sessionManager := SessionManager(k8sSessionManager)
 	log.Printf("[PROXY] Kubernetes session manager initialized successfully")
