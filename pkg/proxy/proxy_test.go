@@ -373,3 +373,126 @@ func TestDeleteSessionByID_NoShareExists(t *testing.T) {
 	}
 	mockManager.mu.Unlock()
 }
+
+func TestLocalSessionManager_ListSessions_ScopeFilter(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
+
+	manager := NewLocalSessionManager(cfg, false, nil, 9000)
+
+	// Manually add sessions with different scopes to the internal map
+	manager.mutex.Lock()
+	manager.sessions["session-user-1"] = &localSession{
+		id:        "session-user-1",
+		startedAt: time.Now(),
+		status:    "active",
+		request: &RunServerRequest{
+			UserID: "user-a",
+			Scope:  ScopeUser,
+			TeamID: "",
+		},
+	}
+	manager.sessions["session-user-2"] = &localSession{
+		id:        "session-user-2",
+		startedAt: time.Now(),
+		status:    "active",
+		request: &RunServerRequest{
+			UserID: "user-b",
+			Scope:  ScopeUser,
+			TeamID: "",
+		},
+	}
+	manager.sessions["session-team-1"] = &localSession{
+		id:        "session-team-1",
+		startedAt: time.Now(),
+		status:    "active",
+		request: &RunServerRequest{
+			UserID: "user-a",
+			Scope:  ScopeTeam,
+			TeamID: "org/team-alpha",
+		},
+	}
+	manager.sessions["session-team-2"] = &localSession{
+		id:        "session-team-2",
+		startedAt: time.Now(),
+		status:    "active",
+		request: &RunServerRequest{
+			UserID: "user-b",
+			Scope:  ScopeTeam,
+			TeamID: "org/team-alpha",
+		},
+	}
+	manager.sessions["session-team-3"] = &localSession{
+		id:        "session-team-3",
+		startedAt: time.Now(),
+		status:    "active",
+		request: &RunServerRequest{
+			UserID: "user-c",
+			Scope:  ScopeTeam,
+			TeamID: "org/team-beta",
+		},
+	}
+	manager.mutex.Unlock()
+
+	// Test: List all sessions
+	allSessions := manager.ListSessions(SessionFilter{})
+	if len(allSessions) != 5 {
+		t.Errorf("Expected 5 sessions, got %d", len(allSessions))
+	}
+
+	// Test: Filter by scope=user
+	userScopedSessions := manager.ListSessions(SessionFilter{Scope: ScopeUser})
+	if len(userScopedSessions) != 2 {
+		t.Errorf("Expected 2 user-scoped sessions, got %d", len(userScopedSessions))
+	}
+
+	// Test: Filter by scope=team
+	teamScopedSessions := manager.ListSessions(SessionFilter{Scope: ScopeTeam})
+	if len(teamScopedSessions) != 3 {
+		t.Errorf("Expected 3 team-scoped sessions, got %d", len(teamScopedSessions))
+	}
+
+	// Test: Filter by specific team_id
+	teamAlphaSessions := manager.ListSessions(SessionFilter{TeamID: "org/team-alpha"})
+	if len(teamAlphaSessions) != 2 {
+		t.Errorf("Expected 2 sessions for org/team-alpha, got %d", len(teamAlphaSessions))
+	}
+
+	// Test: Filter by TeamIDs (user's teams)
+	// TeamIDs filter only applies to team-scoped sessions
+	// User-scoped sessions are not filtered out by TeamIDs
+	userTeamsSessions := manager.ListSessions(SessionFilter{
+		TeamIDs: []string{"org/team-alpha", "org/team-gamma"},
+	})
+	// Should return: 2 user-scoped + 2 team-alpha sessions = 4
+	// (team-beta is filtered out)
+	if len(userTeamsSessions) != 4 {
+		t.Errorf("Expected 4 sessions for user's teams filter, got %d", len(userTeamsSessions))
+	}
+
+	// Test: Combined filter - scope=team and team_id
+	teamAlphaTeamScoped := manager.ListSessions(SessionFilter{
+		Scope:  ScopeTeam,
+		TeamID: "org/team-alpha",
+	})
+	if len(teamAlphaTeamScoped) != 2 {
+		t.Errorf("Expected 2 team-scoped sessions for org/team-alpha, got %d", len(teamAlphaTeamScoped))
+	}
+
+	// Verify session scope and team_id are correctly stored
+	for _, session := range allSessions {
+		if session.ID() == "session-team-1" {
+			if session.Scope() != ScopeTeam {
+				t.Errorf("Expected session-team-1 to have scope 'team', got '%s'", session.Scope())
+			}
+			if session.TeamID() != "org/team-alpha" {
+				t.Errorf("Expected session-team-1 to have team_id 'org/team-alpha', got '%s'", session.TeamID())
+			}
+		}
+		if session.ID() == "session-user-1" {
+			if session.Scope() != ScopeUser {
+				t.Errorf("Expected session-user-1 to have scope 'user', got '%s'", session.Scope())
+			}
+		}
+	}
+}
