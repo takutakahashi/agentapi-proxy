@@ -1952,8 +1952,11 @@ func (m *KubernetesSessionManager) buildLabelSelector(filter SessionFilter) stri
 		selector += ",agentapi.proxy/user-id=" + sanitizeLabelValue(filter.UserID)
 	}
 
-	// Add Scope filter
-	if filter.Scope != "" {
+	// Add Scope filter (only for team scope to maintain backward compatibility)
+	// Note: scope=user is not added to LabelSelector because old sessions may not have
+	// the scope label set. These sessions should be treated as user-scoped by default.
+	// Go-level filtering handles scope=user cases properly via session.Scope() method.
+	if filter.Scope == ScopeTeam {
 		selector += ",agentapi.proxy/scope=" + string(filter.Scope)
 	}
 
