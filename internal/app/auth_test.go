@@ -1,4 +1,4 @@
-package proxy
+package app
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
-func setupTestProxyWithOAuth(t *testing.T) (*Proxy, *httptest.Server) {
+func setupTestServerWithOAuth(t *testing.T) (*Server, *httptest.Server) {
 	// Clear environment variable that might interfere with redirect URI validation
 	oldRedirectURIs := os.Getenv("OAUTH_ALLOWED_REDIRECT_URIS")
 	_ = os.Unsetenv("OAUTH_ALLOWED_REDIRECT_URIS")
@@ -66,12 +66,12 @@ func setupTestProxyWithOAuth(t *testing.T) (*Proxy, *httptest.Server) {
 		},
 	}
 
-	proxy := NewProxy(cfg, false)
-	return proxy, mockServer
+	server := NewServer(cfg, false)
+	return server, mockServer
 }
 
 func TestHandleOAuthLogin(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	e := echo.New()
@@ -99,7 +99,7 @@ func TestHandleOAuthLogin(t *testing.T) {
 }
 
 func TestHandleOAuthLogin_InvalidRequest(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	e := echo.New()
@@ -120,7 +120,7 @@ func TestHandleOAuthLogin_InvalidRequest(t *testing.T) {
 }
 
 func TestHandleOAuthCallback(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	e := echo.New()
@@ -148,7 +148,7 @@ func TestHandleOAuthCallback(t *testing.T) {
 }
 
 func TestHandleOAuthCallback_MissingParameters(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	e := echo.New()
@@ -166,7 +166,7 @@ func TestHandleOAuthCallback_MissingParameters(t *testing.T) {
 }
 
 func TestHandleOAuthLogout(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	e := echo.New()
@@ -199,7 +199,7 @@ func TestHandleOAuthLogout(t *testing.T) {
 }
 
 func TestHandleOAuthRefresh(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	e := echo.New()
@@ -234,7 +234,7 @@ func TestHandleOAuthRefresh(t *testing.T) {
 }
 
 func TestValidateOAuthSession(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	e := echo.New()

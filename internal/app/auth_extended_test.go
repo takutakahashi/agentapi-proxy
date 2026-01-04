@@ -1,4 +1,4 @@
-package proxy
+package app
 
 import (
 	"bytes"
@@ -62,7 +62,7 @@ func TestHandleOAuthLogin_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxy, mockServer := setupTestProxyWithOAuth(t)
+			proxy, mockServer := setupTestServerWithOAuth(t)
 			defer mockServer.Close()
 
 			e := echo.New()
@@ -99,7 +99,7 @@ func TestHandleOAuthCallback_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name           string
 		queryParams    map[string]string
-		setupFunc      func(*Proxy) string
+		setupFunc      func(*Server) string
 		expectedStatus int
 		expectedError  bool
 		errorMessage   string
@@ -131,7 +131,7 @@ func TestHandleOAuthCallback_EdgeCases(t *testing.T) {
 			queryParams: map[string]string{
 				"code": "test-code",
 			},
-			setupFunc: func(p *Proxy) string {
+			setupFunc: func(p *Server) string {
 				// Generate an expired state
 				return generateExpiredOAuthState(t)
 			},
@@ -145,7 +145,7 @@ func TestHandleOAuthCallback_EdgeCases(t *testing.T) {
 				"code":  "",
 				"state": "valid-state",
 			},
-			setupFunc: func(p *Proxy) string {
+			setupFunc: func(p *Server) string {
 				_, state, _ := p.oauthProvider.GenerateAuthURL("http://localhost:3000/callback")
 				return state
 			},
@@ -157,7 +157,7 @@ func TestHandleOAuthCallback_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxy, mockServer := setupTestProxyWithOAuth(t)
+			proxy, mockServer := setupTestServerWithOAuth(t)
 			defer mockServer.Close()
 
 			e := echo.New()
@@ -191,7 +191,7 @@ func TestHandleOAuthCallback_EdgeCases(t *testing.T) {
 }
 
 func TestOAuthSessionManagement(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	t.Run("concurrent session creation", func(t *testing.T) {
@@ -333,7 +333,7 @@ func TestHandleOAuthLogout_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			proxy, mockServer := setupTestProxyWithOAuth(t)
+			proxy, mockServer := setupTestServerWithOAuth(t)
 			defer mockServer.Close()
 
 			e := echo.New()
@@ -399,7 +399,7 @@ func TestOAuthProviderErrors(t *testing.T) {
 			},
 		}
 
-		proxy := NewProxy(cfg, false)
+		proxy := NewServer(cfg, false)
 		e := echo.New()
 
 		_, state, _ := proxy.oauthProvider.GenerateAuthURL("http://localhost:3000/callback")
@@ -443,7 +443,7 @@ func TestOAuthProviderErrors(t *testing.T) {
 			},
 		}
 
-		proxy := NewProxy(cfg, false)
+		proxy := NewServer(cfg, false)
 		e := echo.New()
 
 		_, state, _ := proxy.oauthProvider.GenerateAuthURL("http://localhost:3000/callback")
@@ -458,7 +458,7 @@ func TestOAuthProviderErrors(t *testing.T) {
 }
 
 func TestOAuthRateLimiting(t *testing.T) {
-	proxy, mockServer := setupTestProxyWithOAuth(t)
+	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
 
 	e := echo.New()
@@ -508,7 +508,7 @@ func generateExpiredOAuthState(t *testing.T) string {
 
 func TestOAuthProviderIntegration(t *testing.T) {
 	t.Run("complete OAuth flow", func(t *testing.T) {
-		proxy, mockServer := setupTestProxyWithOAuth(t)
+		proxy, mockServer := setupTestServerWithOAuth(t)
 		defer mockServer.Close()
 
 		e := echo.New()
