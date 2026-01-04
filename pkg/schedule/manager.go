@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
 // ScheduleFilter defines filter criteria for listing schedules
@@ -14,7 +14,7 @@ type ScheduleFilter struct {
 	// Status filters by schedule status
 	Status ScheduleStatus
 	// Scope filters by resource scope
-	Scope proxy.ResourceScope
+	Scope entities.ResourceScope
 	// TeamID filters by team ID (for team-scoped schedules)
 	TeamID string
 	// TeamIDs filters by multiple team IDs (returns schedules for any of these teams)

@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
+	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 // WorkerConfig contains configuration for the schedule worker
@@ -29,7 +31,7 @@ func DefaultWorkerConfig() WorkerConfig {
 // Worker processes scheduled sessions
 type Worker struct {
 	manager        Manager
-	sessionManager proxy.SessionManager
+	sessionManager portrepos.SessionManager
 	config         WorkerConfig
 	logger         *log.Logger
 
@@ -41,7 +43,7 @@ type Worker struct {
 }
 
 // NewWorker creates a new schedule worker
-func NewWorker(manager Manager, sessionManager proxy.SessionManager, config WorkerConfig) *Worker {
+func NewWorker(manager Manager, sessionManager portrepos.SessionManager, config WorkerConfig) *Worker {
 	return &Worker{
 		manager:        manager,
 		sessionManager: sessionManager,
@@ -207,8 +209,8 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 }
 
 // buildRunServerRequest builds a RunServerRequest from a schedule
-func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *proxy.RunServerRequest {
-	req := &proxy.RunServerRequest{
+func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *entities.RunServerRequest {
+	req := &entities.RunServerRequest{
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
@@ -227,7 +229,7 @@ func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *pr
 	}
 
 	// Extract repository information from tags
-	req.RepoInfo = proxy.ExtractRepositoryInfo(req.Tags, sessionID)
+	req.RepoInfo = app.ExtractRepositoryInfo(req.Tags, sessionID)
 
 	return req
 }

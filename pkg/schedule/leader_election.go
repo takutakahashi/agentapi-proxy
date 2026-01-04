@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/leaderelection"
@@ -115,7 +115,7 @@ type LeaderWorker struct {
 // NewLeaderWorker creates a new LeaderWorker
 func NewLeaderWorker(
 	manager Manager,
-	sessionManager proxy.SessionManager,
+	sessionManager portrepos.SessionManager,
 	client kubernetes.Interface,
 	workerConfig WorkerConfig,
 	electionConfig LeaderElectionConfig,
