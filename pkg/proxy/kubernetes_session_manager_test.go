@@ -66,7 +66,6 @@ func TestKubernetesSessionManager_CreateSession(t *testing.T) {
 	// Create manager
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -173,7 +172,6 @@ func TestKubernetesSessionManager_GetSession(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -250,7 +248,6 @@ func TestKubernetesSessionManager_ListSessions(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -352,7 +349,6 @@ func TestKubernetesSessionManager_ListSessions_ScopeFilter(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -493,7 +489,6 @@ func TestKubernetesSessionManager_DeleteSession(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -587,7 +582,6 @@ func TestKubernetesSessionManager_DeleteSession_GithubTokenSecret(t *testing.T) 
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -667,7 +661,6 @@ func TestKubernetesSessionManager_Shutdown(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -748,7 +741,6 @@ func TestKubernetesSessionManager_SessionLabels(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -846,7 +838,6 @@ func TestKubernetesSessionManager_SessionAddr(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -914,7 +905,6 @@ func TestKubernetesSessionManager_DeploymentSpec(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:v1.0.0",
 			ImagePullPolicy:                 "Always",
@@ -1080,7 +1070,6 @@ func TestKubernetesSessionManager_CredentialsVolumeConfiguration(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -1197,7 +1186,6 @@ func TestKubernetesSessionManager_ClaudeConfigSetup(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -1394,7 +1382,6 @@ func TestKubernetesSessionManager_InitContainerImageDefault(t *testing.T) {
 	// Should default to using the main Image
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:v1.2.3",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -1481,7 +1468,6 @@ func TestKubernetesSessionManager_ClaudeConfigUserSanitization(t *testing.T) {
 
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -1571,7 +1557,6 @@ func TestKubernetesSessionManager_CloneRepoInitContainer(t *testing.T) {
 	// Create manager with GitHubSecretName configured
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -1710,7 +1695,6 @@ func TestKubernetesSessionManager_CloneRepoInitContainerSkippedWithoutRepoInfo(t
 	// Create manager with GitHubSecretName configured
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -1799,7 +1783,6 @@ func TestKubernetesSessionManager_CloneRepoInitContainerWithoutGitHubSecret(t *t
 	// Create manager WITHOUT GitHubSecretName configured
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",
@@ -1895,7 +1878,6 @@ func TestKubernetesSessionManager_GithubTokenDoesNotMountGitHubSecretName(t *tes
 	// Create manager with GitHubSecretName AND GitHubConfigSecretName configured
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                         true,
 			Namespace:                       ns.Name,
 			Image:                           "ghcr.io/takutakahashi/agentapi-proxy:latest",
 			ImagePullPolicy:                 "IfNotPresent",

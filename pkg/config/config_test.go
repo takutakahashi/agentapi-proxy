@@ -39,18 +39,9 @@ func TestDefaultConfig(t *testing.T) {
 		t.Fatal("DefaultConfig returned nil")
 	}
 
-	if config.StartPort == 0 {
-		t.Error("StartPort should not be zero")
-	}
-
-	expectedStartPort := 9000
-	if config.StartPort != expectedStartPort {
-		t.Errorf("Expected StartPort to be %d, got %d", expectedStartPort, config.StartPort)
-	}
-
-	// Test default EnableMultipleUsers value
-	if config.EnableMultipleUsers != false {
-		t.Errorf("Expected EnableMultipleUsers to be false, got %t", config.EnableMultipleUsers)
+	// Verify default auth config
+	if config.Auth.Enabled {
+		t.Error("Auth should be disabled by default")
 	}
 }
 
@@ -59,7 +50,9 @@ func TestLoadConfig(t *testing.T) {
 
 	// Create a temporary config file
 	tempConfig := &Config{
-		StartPort: 8000,
+		Auth: AuthConfig{
+			Enabled: false,
+		},
 	}
 
 	configData, err := json.Marshal(tempConfig)
@@ -85,48 +78,9 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	// Expected config after loading (with defaults applied)
-	expectedConfig := &Config{
-		StartPort: 8000,
-		Auth: AuthConfig{
-			Enabled: false,
-			Static: &StaticAuthConfig{
-				Enabled:    false,
-				HeaderName: "X-API-Key",
-				APIKeys:    []APIKey{},
-				KeysFile:   "",
-			},
-			GitHub: &GitHubAuthConfig{
-				Enabled:     false,
-				BaseURL:     "https://api.github.com",
-				TokenHeader: "Authorization",
-				UserMapping: GitHubUserMapping{
-					DefaultRole:        "",
-					DefaultPermissions: []string{},
-					TeamRoleMapping:    map[string]TeamRoleRule{},
-				},
-				OAuth: &GitHubOAuthConfig{
-					ClientID:     "",
-					ClientSecret: "",
-					Scope:        "read:user read:org",
-					BaseURL:      "",
-				},
-			},
-		},
-		EnableMultipleUsers: false, // Default value
-	}
-
-	// Compare basic fields
-	if loadedConfig.StartPort != expectedConfig.StartPort {
-		t.Errorf("StartPort mismatch: expected %d, got %d", expectedConfig.StartPort, loadedConfig.StartPort)
-	}
-	if loadedConfig.EnableMultipleUsers != expectedConfig.EnableMultipleUsers {
-		t.Errorf("EnableMultipleUsers mismatch: expected %t, got %t", expectedConfig.EnableMultipleUsers, loadedConfig.EnableMultipleUsers)
-	}
-
 	// Compare auth config values (not pointer equality)
-	if loadedConfig.Auth.Enabled != expectedConfig.Auth.Enabled {
-		t.Errorf("Auth.Enabled mismatch: expected %t, got %t", expectedConfig.Auth.Enabled, loadedConfig.Auth.Enabled)
+	if loadedConfig.Auth.Enabled {
+		t.Errorf("Auth.Enabled mismatch: expected false, got %t", loadedConfig.Auth.Enabled)
 	}
 
 	// Verify static auth config is properly initialized with defaults
@@ -287,43 +241,6 @@ func TestAPIKey_HasPermission_Wildcard(t *testing.T) {
 	assert.True(t, apiKey.HasPermission("any:permission"))
 }
 
-func TestLoadConfig_EnableMultipleUsers(t *testing.T) {
-	clearAGENTAPIEnvVars(t)
-
-	// Test with EnableMultipleUsers enabled
-	tempConfig := &Config{
-		StartPort:           8000,
-		EnableMultipleUsers: true,
-	}
-
-	configData, err := json.Marshal(tempConfig)
-	if err != nil {
-		t.Fatalf("Failed to marshal config: %v", err)
-	}
-
-	// Write to temporary file
-	tmpfile, err := os.CreateTemp("", "config*.json")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	defer func() { _ = os.Remove(tmpfile.Name()) }()
-
-	if _, err := tmpfile.Write(configData); err != nil {
-		t.Fatalf("Failed to write config file: %v", err)
-	}
-	_ = tmpfile.Close()
-
-	// Load the config
-	loadedConfig, err := LoadConfig(tmpfile.Name())
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	if !loadedConfig.EnableMultipleUsers {
-		t.Errorf("Expected EnableMultipleUsers to be true, got %t", loadedConfig.EnableMultipleUsers)
-	}
-}
-
 func TestExpandEnvVars(t *testing.T) {
 	// Set up test environment variables
 	_ = os.Setenv("TEST_VAR", "test_value")
@@ -393,7 +310,6 @@ func TestLoadConfigWithEnvVarExpansion(t *testing.T) {
 
 	// Create config with environment variable references
 	configJSON := `{
-		"start_port": 8000,
 		"auth": {
 			"enabled": true,
 			"github": {
@@ -444,7 +360,6 @@ func TestLoadConfigWithYAML(t *testing.T) {
 
 	// Create YAML config
 	yamlConfig := `
-start_port: 8000
 auth:
   enabled: true
   github:
@@ -453,7 +368,6 @@ auth:
       client_id: "yaml_client_id"
       client_secret: "yaml_client_secret"
       scope: "read:user read:org"
-enable_multiple_users: true
 `
 
 	// Write to temporary YAML file
@@ -475,14 +389,6 @@ enable_multiple_users: true
 	}
 
 	// Verify YAML was loaded correctly
-	if loadedConfig.StartPort != 8000 {
-		t.Errorf("Expected StartPort to be 8000, got %d", loadedConfig.StartPort)
-	}
-
-	if !loadedConfig.EnableMultipleUsers {
-		t.Errorf("Expected EnableMultipleUsers to be true, got %t", loadedConfig.EnableMultipleUsers)
-	}
-
 	if loadedConfig.Auth.GitHub == nil || loadedConfig.Auth.GitHub.OAuth == nil {
 		t.Fatal("GitHub OAuth config should not be nil")
 	}
@@ -494,18 +400,14 @@ enable_multiple_users: true
 
 func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 	// Set up test environment variables (viper format)
-	_ = os.Setenv("AGENTAPI_START_PORT", "9999")
 	_ = os.Setenv("AGENTAPI_AUTH_ENABLED", "true")
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID", "env_client_id")
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET", "env_client_secret")
-	_ = os.Setenv("AGENTAPI_ENABLE_MULTIPLE_USERS", "true")
 
 	defer func() {
-		_ = os.Unsetenv("AGENTAPI_START_PORT")
 		_ = os.Unsetenv("AGENTAPI_AUTH_ENABLED")
 		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID")
 		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET")
-		_ = os.Unsetenv("AGENTAPI_ENABLE_MULTIPLE_USERS")
 	}()
 
 	// Load config without specifying a file (should use env vars and defaults)
@@ -515,16 +417,8 @@ func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 	}
 
 	// Verify environment variables were loaded
-	if loadedConfig.StartPort != 9999 {
-		t.Errorf("Expected StartPort to be 9999, got %d", loadedConfig.StartPort)
-	}
-
 	if !loadedConfig.Auth.Enabled {
 		t.Errorf("Expected Auth.Enabled to be true, got %t", loadedConfig.Auth.Enabled)
-	}
-
-	if !loadedConfig.EnableMultipleUsers {
-		t.Errorf("Expected EnableMultipleUsers to be true, got %t", loadedConfig.EnableMultipleUsers)
 	}
 
 	if loadedConfig.Auth.GitHub == nil || loadedConfig.Auth.GitHub.OAuth == nil {
@@ -652,7 +546,6 @@ func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *test
 
 	// Create config with existing auth structures
 	configJSON := `{
-		"start_port": 8000,
 		"auth": {
 			"enabled": false,
 			"static": {
@@ -721,7 +614,6 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 
 	// Set up comprehensive environment variables
 	envVars := map[string]string{
-		"AGENTAPI_START_PORT":                            "7777",
 		"AGENTAPI_AUTH_ENABLED":                          "true",
 		"AGENTAPI_AUTH_STATIC_ENABLED":                   "true",
 		"AGENTAPI_AUTH_STATIC_HEADER_NAME":               "X-Full-Test-Key",
@@ -734,7 +626,6 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 		"AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET":       "full_secret_456",
 		"AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE":               "read:user read:org admin:repo",
 		"AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL":            "https://full.test.github.com",
-		"AGENTAPI_ENABLE_MULTIPLE_USERS":                 "true",
 	}
 
 	// Set all environment variables
@@ -756,9 +647,7 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 	}
 
 	// Verify all settings were loaded from environment variables
-	assert.Equal(t, 7777, loadedConfig.StartPort)
 	assert.True(t, loadedConfig.Auth.Enabled)
-	assert.True(t, loadedConfig.EnableMultipleUsers)
 
 	// Static auth verification
 	if assert.NotNil(t, loadedConfig.Auth.Static) {

@@ -429,22 +429,6 @@ func (h *SessionHandlers) captureFirstMessage(c echo.Context, session Session) {
 		return
 	}
 
-	// Extract description from user message content
-	if msgType, ok := messageReq["type"].(string); ok && msgType == "user" {
-		if content, ok := messageReq["content"].(string); ok && content != "" {
-			// Get the local session manager to update tags
-			if lsm, ok := h.proxy.GetSessionManager().(*LocalSessionManager); ok {
-				if localSess := lsm.GetLocalSession(session.ID()); localSess != nil {
-					tags := localSess.Tags()
-					if tags == nil {
-						tags = make(map[string]string)
-					}
-					tags["description"] = content
-					localSess.SetTags(tags)
-				}
-			}
-		}
-	}
 }
 
 // setCORSHeaders sets CORS headers for all session management endpoints

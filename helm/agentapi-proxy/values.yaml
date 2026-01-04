@@ -68,15 +68,6 @@ resources:
     memory: "8Gi"
     cpu: 8
 
-# Persistent Volume for myclaudes directory
-# Note: Automatically disabled when kubernetesSession.enabled is true,
-# as credentials are stored in Kubernetes Secrets instead.
-myclaudesPersistence:
-  enabled: true
-  storageClassName: ""
-  accessMode: ReadWriteOnce
-  size: 3Gi
-
 # GitHub configuration
 github:
   # GitHub Personal Access Token (GitHub App を使わない場合)
@@ -111,12 +102,6 @@ github:
 config:
   # ホスト名設定 (例: agentapi.example.com)
   hostname: ""
-
-  # サーバー設定
-  startPort: 9000
-
-  # マルチユーザー設定
-  enableMultipleUsers: false
 
   # 認証設定
   auth:
@@ -283,12 +268,9 @@ roleEnvFiles:
   #       key: "development.env"
 
 # Kubernetes Session Management
-# When enabled, sessions are created as separate Kubernetes Deployments instead of local processes
+# Sessions are created as separate Kubernetes Deployments
 kubernetesSession:
-  # Enable Kubernetes-based session management
-  enabled: false
-
-  # Number of replicas for the agentapi-proxy Deployment (only used when kubernetesSession is enabled)
+  # Number of replicas for the agentapi-proxy Deployment
   replicaCount: 3
 
   # Namespace for session resources (defaults to release namespace if empty)

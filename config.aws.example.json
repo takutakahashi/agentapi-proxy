@@ -1,5 +1,4 @@
 {
-  "start_port": 9000,
   "auth": {
     "enabled": true,
     "aws": {
@@ -34,6 +33,5 @@
         }
       }
     }
-  },
-  "enable_multiple_users": true
+  }
 }

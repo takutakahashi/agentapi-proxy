@@ -46,7 +46,6 @@ func setupTestProxyWithOAuth(t *testing.T) (*Proxy, *httptest.Server) {
 	}))
 
 	cfg := &config.Config{
-		StartPort: 9000,
 		Auth: config.AuthConfig{
 			Enabled: true,
 			GitHub: &config.GitHubAuthConfig{

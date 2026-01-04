@@ -20,7 +20,6 @@ func boolPtrForTest(b bool) *bool {
 func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:  true,
 			Image:    "test-image:latest",
 			BasePort: 9000,
 		},
@@ -95,7 +94,6 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 func TestCreateInitialMessageSecret(t *testing.T) {
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:   true,
 			Namespace: "test-ns",
 		},
 	}
@@ -154,7 +152,6 @@ func TestCreateInitialMessageSecret(t *testing.T) {
 func TestBuildVolumesWithInitialMessage(t *testing.T) {
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                true,
 			ClaudeConfigBaseSecret: "claude-config-base",
 		},
 	}
@@ -237,7 +234,6 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(ns)
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Enabled:                true,
 			Namespace:              ns.Name,
 			Image:                  "test-image:latest",
 			BasePort:               9000,

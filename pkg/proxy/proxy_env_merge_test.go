@@ -19,7 +19,6 @@ func TestEnvironmentVariableMerging(t *testing.T) {
 		{
 			name: "Only request env vars",
 			cfg: &config.Config{
-				StartPort: 9000,
 				Auth: config.AuthConfig{
 					Enabled: false,
 				},
@@ -28,7 +27,6 @@ func TestEnvironmentVariableMerging(t *testing.T) {
 		{
 			name: "Team env file only",
 			cfg: &config.Config{
-				StartPort: 9001,
 				Auth: config.AuthConfig{
 					Enabled: false,
 				},
@@ -41,7 +39,6 @@ func TestEnvironmentVariableMerging(t *testing.T) {
 		{
 			name: "Team + request env vars (request has highest priority)",
 			cfg: &config.Config{
-				StartPort: 9002,
 				Auth: config.AuthConfig{
 					Enabled: false,
 				},
@@ -54,7 +51,6 @@ func TestEnvironmentVariableMerging(t *testing.T) {
 		{
 			name: "Request env vars only",
 			cfg: &config.Config{
-				StartPort: 9003,
 				Auth: config.AuthConfig{
 					Enabled: false,
 				},
@@ -83,7 +79,6 @@ func TestEnvironmentVariableMerging(t *testing.T) {
 
 func TestEnvironmentVariableMergingWithNonexistentFiles(t *testing.T) {
 	cfg := &config.Config{
-		StartPort: 9004,
 		Auth: config.AuthConfig{
 			Enabled: false,
 		},

@@ -161,8 +161,6 @@ type ScheduleWorkerConfig struct {
 
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {
-	// Enabled enables Kubernetes-based session management
-	Enabled bool `json:"enabled" mapstructure:"enabled"`
 	// Namespace is the Kubernetes namespace where session resources are created
 	Namespace string `json:"namespace" mapstructure:"namespace"`
 	// Image is the container image for session pods
@@ -237,12 +235,8 @@ type KubernetesSessionConfig struct {
 
 // Config represents the proxy configuration
 type Config struct {
-	// StartPort is the starting port for agentapi servers
-	StartPort int `json:"start_port" mapstructure:"start_port"`
 	// Auth represents authentication configuration
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
-	// EnableMultipleUsers enables user-specific directory isolation
-	EnableMultipleUsers bool `json:"enable_multiple_users" mapstructure:"enable_multiple_users"`
 	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
 	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
 	// RoleEnvFiles is the configuration for role-based environment files
@@ -327,7 +321,6 @@ func LoadConfig(filename string) (*Config, error) {
 		log.Printf("[CONFIG] AWS allowed account IDs: %v", config.Auth.AWS.AllowedAccountIDs)
 		log.Printf("[CONFIG] AWS team tag key: %s", config.Auth.AWS.TeamTagKey)
 	}
-	log.Printf("[CONFIG] Multiple users enabled: %v", config.EnableMultipleUsers)
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
 	return &config, nil
@@ -464,8 +457,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth.aws.user_mapping.default_permissions")
 
 	// Other configuration
-	_ = v.BindEnv("start_port")
-	_ = v.BindEnv("enable_multiple_users")
 	_ = v.BindEnv("auth_config_file")
 
 	// Role-based environment files configuration
@@ -474,7 +465,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("role_env_files.load_default")
 
 	// Kubernetes session configuration
-	_ = v.BindEnv("kubernetes_session.enabled", "AGENTAPI_K8S_SESSION_ENABLED")
 	_ = v.BindEnv("kubernetes_session.namespace", "AGENTAPI_K8S_SESSION_NAMESPACE")
 	_ = v.BindEnv("kubernetes_session.image", "AGENTAPI_K8S_SESSION_IMAGE")
 	_ = v.BindEnv("kubernetes_session.image_pull_policy", "AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY")
@@ -514,8 +504,6 @@ func bindEnvVars(v *viper.Viper) {
 
 // setDefaults sets default values for viper configuration
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("start_port", 9000)
-
 	// Auth defaults
 	v.SetDefault("auth.enabled", false)
 	v.SetDefault("auth.static.enabled", false)
@@ -535,16 +523,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.aws.team_tag_key", "Team")
 	v.SetDefault("auth.aws.cache_ttl", "1h")
 
-	// Multiple users default
-	v.SetDefault("enable_multiple_users", false)
-
 	// Role-based environment files defaults
 	v.SetDefault("role_env_files.enabled", false)
 	v.SetDefault("role_env_files.path", "/etc/agentapi/env")
 	v.SetDefault("role_env_files.load_default", true)
 
 	// Kubernetes session defaults
-	v.SetDefault("kubernetes_session.enabled", false)
 	v.SetDefault("kubernetes_session.namespace", "")
 	v.SetDefault("kubernetes_session.image", "")
 	v.SetDefault("kubernetes_session.image_pull_policy", "IfNotPresent")
@@ -681,11 +665,6 @@ func LoadConfigLegacy(filename string) (*Config, error) {
 		return nil, err
 	}
 
-	// Set default values if not specified
-	if config.StartPort == 0 {
-		config.StartPort = 9000
-	}
-
 	// Apply post-processing
 	if err := postProcessConfig(&config); err != nil {
 		return nil, err
@@ -720,7 +699,6 @@ func expandEnvVars(s string) string {
 // DefaultConfig returns a default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		StartPort: 9000,
 		Auth: AuthConfig{
 			Enabled: false,
 			Static: &StaticAuthConfig{
@@ -729,7 +707,6 @@ func DefaultConfig() *Config {
 				APIKeys:    []APIKey{},
 			},
 		},
-		EnableMultipleUsers: false,
 	}
 }
 
