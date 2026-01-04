@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -1773,6 +1775,7 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *k
 			Labels:    m.buildLabels(session),
 			Annotations: map[string]string{
 				"agentapi.proxy/created-at": session.startedAt.Format(time.RFC3339),
+				"agentapi.proxy/team-id":    session.request.TeamID, // Store original team_id (unsanitized)
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -1960,9 +1963,9 @@ func (m *KubernetesSessionManager) buildLabelSelector(filter SessionFilter) stri
 		selector += ",agentapi.proxy/scope=" + string(filter.Scope)
 	}
 
-	// Add TeamID filter
+	// Add TeamID filter using sha256 hash for consistent matching
 	if filter.TeamID != "" {
-		selector += ",agentapi.proxy/team-id=" + sanitizeLabelValue(filter.TeamID)
+		selector += ",agentapi.proxy/team-id-hash=" + hashTeamID(filter.TeamID)
 	}
 
 	return selector
@@ -1986,7 +1989,9 @@ func (m *KubernetesSessionManager) buildLabels(session *kubernetesSession) map[s
 	}
 	labels["agentapi.proxy/scope"] = string(scope)
 	if session.request.TeamID != "" {
-		labels["agentapi.proxy/team-id"] = sanitizeLabelValue(session.request.TeamID)
+		// Use sha256 hash for team-id label to avoid sanitization issues with "/" in team IDs
+		// The original team_id is stored in annotations for restoration
+		labels["agentapi.proxy/team-id-hash"] = hashTeamID(session.request.TeamID)
 	}
 
 	// Add tags as labels (sanitized for Kubernetes)
@@ -2080,6 +2085,22 @@ func sanitizeLabelValue(s string) string {
 	// Trim non-alphanumeric characters from start and end
 	sanitized = strings.Trim(sanitized, "-_.")
 	return sanitized
+}
+
+// hashTeamID creates a sha256 hash of the team ID for use as a Kubernetes label value
+// This allows querying by team_id without sanitization issues (e.g., "/" in team IDs)
+// The hash is truncated to 63 characters to fit within Kubernetes label value limits
+func hashTeamID(teamID string) string {
+	if teamID == "" {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(teamID))
+	hexHash := hex.EncodeToString(hash[:])
+	// Truncate to 63 characters (Kubernetes label value limit)
+	if len(hexHash) > 63 {
+		hexHash = hexHash[:63]
+	}
+	return hexHash
 }
 
 // sanitizeSecretName sanitizes a string to be used as a Kubernetes Secret name
@@ -2508,12 +2529,14 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		}
 	}
 
-	// Restore scope and team_id from labels
+	// Restore scope from labels
 	scope := ResourceScope(svc.Labels["agentapi.proxy/scope"])
 	if scope == "" {
 		scope = ScopeUser // Default to user scope for backward compatibility
 	}
-	teamID := svc.Labels["agentapi.proxy/team-id"]
+	// Restore team_id from annotations (original unsanitized value)
+	// Labels contain only the hash for querying purposes
+	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
 	// Parse created-at from annotations
 	createdAt := time.Now()
@@ -2577,12 +2600,14 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 		}
 	}
 
-	// Restore scope and team_id from labels
+	// Restore scope from labels
 	scope := ResourceScope(svc.Labels["agentapi.proxy/scope"])
 	if scope == "" {
 		scope = ScopeUser // Default to user scope for backward compatibility
 	}
-	teamID := svc.Labels["agentapi.proxy/team-id"]
+	// Restore team_id from annotations (original unsanitized value)
+	// Labels contain only the hash for querying purposes
+	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
 	// Parse created-at from annotations
 	createdAt := time.Now()
