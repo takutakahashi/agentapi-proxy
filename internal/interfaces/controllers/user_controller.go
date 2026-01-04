@@ -1,4 +1,4 @@
-package proxy
+package controllers
 
 import (
 	"fmt"
@@ -8,10 +8,8 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
-// UserHandlers handles user-related endpoints
-type UserHandlers struct {
-	proxy *Proxy
-}
+// UserController handles user-related endpoints
+type UserController struct{}
 
 // UserInfoResponse represents the response for /user/info endpoint
 type UserInfoResponse struct {
@@ -19,16 +17,19 @@ type UserInfoResponse struct {
 	Teams    []string `json:"teams"`
 }
 
-// NewUserHandlers creates a new UserHandlers instance
-func NewUserHandlers(proxy *Proxy) *UserHandlers {
-	return &UserHandlers{
-		proxy: proxy,
-	}
+// NewUserController creates a new UserController instance
+func NewUserController() *UserController {
+	return &UserController{}
+}
+
+// GetName returns the name of this controller for logging
+func (c *UserController) GetName() string {
+	return "UserController"
 }
 
 // GetUserInfo handles GET /user/info requests
-func (h *UserHandlers) GetUserInfo(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+func (c *UserController) GetUserInfo(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
@@ -45,5 +46,5 @@ func (h *UserHandlers) GetUserInfo(c echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, response)
+	return ctx.JSON(http.StatusOK, response)
 }

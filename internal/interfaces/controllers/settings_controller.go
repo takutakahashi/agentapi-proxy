@@ -1,4 +1,4 @@
-package proxy
+package controllers
 
 import (
 	"log"
@@ -13,34 +13,39 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
-// SettingsHandlers handles settings-related HTTP requests
-type SettingsHandlers struct {
+// SettingsController handles settings-related HTTP requests
+type SettingsController struct {
 	repo              repositories.SettingsRepository
 	syncer            services.CredentialsSecretSyncer
 	mcpSyncer         services.MCPSecretSyncer
 	marketplaceSyncer services.MarketplaceSecretSyncer
 }
 
-// NewSettingsHandlers creates new settings handlers
-func NewSettingsHandlers(repo repositories.SettingsRepository) *SettingsHandlers {
-	return &SettingsHandlers{
+// NewSettingsController creates new settings controller
+func NewSettingsController(repo repositories.SettingsRepository) *SettingsController {
+	return &SettingsController{
 		repo: repo,
 	}
 }
 
 // SetCredentialsSecretSyncer sets the credentials secret syncer
-func (h *SettingsHandlers) SetCredentialsSecretSyncer(syncer services.CredentialsSecretSyncer) {
-	h.syncer = syncer
+func (c *SettingsController) SetCredentialsSecretSyncer(syncer services.CredentialsSecretSyncer) {
+	c.syncer = syncer
 }
 
 // SetMCPSecretSyncer sets the MCP secret syncer
-func (h *SettingsHandlers) SetMCPSecretSyncer(syncer services.MCPSecretSyncer) {
-	h.mcpSyncer = syncer
+func (c *SettingsController) SetMCPSecretSyncer(syncer services.MCPSecretSyncer) {
+	c.mcpSyncer = syncer
 }
 
 // SetMarketplaceSecretSyncer sets the marketplace secret syncer
-func (h *SettingsHandlers) SetMarketplaceSecretSyncer(syncer services.MarketplaceSecretSyncer) {
-	h.marketplaceSyncer = syncer
+func (c *SettingsController) SetMarketplaceSecretSyncer(syncer services.MarketplaceSecretSyncer) {
+	c.marketplaceSyncer = syncer
+}
+
+// GetName returns the name of this controller for logging
+func (c *SettingsController) GetName() string {
+	return "SettingsController"
 }
 
 // BedrockSettingsRequest is the request body for Bedrock settings
@@ -113,23 +118,23 @@ type SettingsResponse struct {
 }
 
 // GetSettings handles GET /settings/:name
-func (h *SettingsHandlers) GetSettings(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+func (c *SettingsController) GetSettings(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	name := c.Param("name")
+	name := ctx.Param("name")
 	if name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Name is required")
 	}
 
 	// Check access permission
-	if !h.canAccess(user, name) {
+	if !c.canAccess(user, name) {
 		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
 	}
 
-	settings, err := h.repo.FindByName(c.Request().Context(), name)
+	settings, err := c.repo.FindByName(ctx.Request().Context(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return echo.NewHTTPError(http.StatusNotFound, "Settings not found")
@@ -137,33 +142,33 @@ func (h *SettingsHandlers) GetSettings(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get settings")
 	}
 
-	return c.JSON(http.StatusOK, h.toResponse(settings))
+	return ctx.JSON(http.StatusOK, c.toResponse(settings))
 }
 
 // UpdateSettings handles PUT /settings/:name
-func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	name := c.Param("name")
+	name := ctx.Param("name")
 	if name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Name is required")
 	}
 
 	// Check modify permission
-	if !h.canModify(user, name) {
+	if !c.canModify(user, name) {
 		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
 	}
 
 	var req UpdateSettingsRequest
-	if err := c.Bind(&req); err != nil {
+	if err := ctx.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
 	}
 
 	// Get existing settings or create new one
-	settings, err := h.repo.FindByName(c.Request().Context(), name)
+	settings, err := c.repo.FindByName(ctx.Request().Context(), name)
 	if err != nil {
 		// Create new settings if not exists
 		settings = entities.NewSettings(name)
@@ -220,7 +225,7 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 			env := serverReq.Env
 			if existingMCPServers != nil {
 				if existingServer := existingMCPServers.GetServer(serverName); existingServer != nil {
-					env = h.mergeSecrets(existingServer.Env(), serverReq.Env)
+					env = c.mergeSecrets(existingServer.Env(), serverReq.Env)
 				}
 			}
 			server.SetEnv(env)
@@ -229,7 +234,7 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 			headers := serverReq.Headers
 			if existingMCPServers != nil {
 				if existingServer := existingMCPServers.GetServer(serverName); existingServer != nil {
-					headers = h.mergeSecrets(existingServer.Headers(), serverReq.Headers)
+					headers = c.mergeSecrets(existingServer.Headers(), serverReq.Headers)
 				}
 			}
 			server.SetHeaders(headers)
@@ -261,55 +266,55 @@ func (h *SettingsHandlers) UpdateSettings(c echo.Context) error {
 	}
 
 	// Save
-	if err := h.repo.Save(c.Request().Context(), settings); err != nil {
+	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 
 	// Sync credentials secret
-	if h.syncer != nil {
-		if err := h.syncer.Sync(c.Request().Context(), settings); err != nil {
+	if c.syncer != nil {
+		if err := c.syncer.Sync(ctx.Request().Context(), settings); err != nil {
 			log.Printf("[SETTINGS] Failed to sync credentials secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
 
 	// Sync MCP servers secret
-	if h.mcpSyncer != nil {
-		if err := h.mcpSyncer.Sync(c.Request().Context(), settings); err != nil {
+	if c.mcpSyncer != nil {
+		if err := c.mcpSyncer.Sync(ctx.Request().Context(), settings); err != nil {
 			log.Printf("[SETTINGS] Failed to sync MCP servers secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
 
 	// Sync marketplace secret
-	if h.marketplaceSyncer != nil {
-		if err := h.marketplaceSyncer.Sync(c.Request().Context(), settings); err != nil {
+	if c.marketplaceSyncer != nil {
+		if err := c.marketplaceSyncer.Sync(ctx.Request().Context(), settings); err != nil {
 			log.Printf("[SETTINGS] Failed to sync marketplace secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
 
-	return c.JSON(http.StatusOK, h.toResponse(settings))
+	return ctx.JSON(http.StatusOK, c.toResponse(settings))
 }
 
 // DeleteSettings handles DELETE /settings/:name
-func (h *SettingsHandlers) DeleteSettings(c echo.Context) error {
-	user := auth.GetUserFromContext(c)
+func (c *SettingsController) DeleteSettings(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	name := c.Param("name")
+	name := ctx.Param("name")
 	if name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Name is required")
 	}
 
 	// Check modify permission
-	if !h.canModify(user, name) {
+	if !c.canModify(user, name) {
 		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
 	}
 
-	err := h.repo.Delete(c.Request().Context(), name)
+	err := c.repo.Delete(ctx.Request().Context(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return echo.NewHTTPError(http.StatusNotFound, "Settings not found")
@@ -318,43 +323,43 @@ func (h *SettingsHandlers) DeleteSettings(c echo.Context) error {
 	}
 
 	// Delete credentials secret
-	if h.syncer != nil {
-		if err := h.syncer.Delete(c.Request().Context(), name); err != nil {
+	if c.syncer != nil {
+		if err := c.syncer.Delete(ctx.Request().Context(), name); err != nil {
 			log.Printf("[SETTINGS] Failed to delete credentials secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
 
 	// Delete MCP servers secret
-	if h.mcpSyncer != nil {
-		if err := h.mcpSyncer.Delete(c.Request().Context(), name); err != nil {
+	if c.mcpSyncer != nil {
+		if err := c.mcpSyncer.Delete(ctx.Request().Context(), name); err != nil {
 			log.Printf("[SETTINGS] Failed to delete MCP servers secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
 
 	// Delete marketplace secret
-	if h.marketplaceSyncer != nil {
-		if err := h.marketplaceSyncer.Delete(c.Request().Context(), name); err != nil {
+	if c.marketplaceSyncer != nil {
+		if err := c.marketplaceSyncer.Delete(ctx.Request().Context(), name); err != nil {
 			log.Printf("[SETTINGS] Failed to delete marketplace secret for %s: %v", name, err)
 			// Don't fail the request, just log the error
 		}
 	}
 
-	return c.JSON(http.StatusOK, map[string]bool{
+	return ctx.JSON(http.StatusOK, map[string]bool{
 		"success": true,
 	})
 }
 
 // canAccess checks if the user can access settings for the given name
-func (h *SettingsHandlers) canAccess(user *entities.User, name string) bool {
+func (c *SettingsController) canAccess(user *entities.User, name string) bool {
 	// Admin can access all settings
 	if user.IsAdmin() {
 		return true
 	}
 
 	// Check if it's the user's own settings
-	if h.sanitizeName(string(user.ID())) == name {
+	if c.sanitizeName(string(user.ID())) == name {
 		return true
 	}
 
@@ -362,7 +367,7 @@ func (h *SettingsHandlers) canAccess(user *entities.User, name string) bool {
 	if user.GitHubInfo() != nil {
 		for _, team := range user.GitHubInfo().Teams() {
 			teamName := team.Organization + "/" + team.TeamSlug
-			if h.sanitizeName(teamName) == name {
+			if c.sanitizeName(teamName) == name {
 				return true
 			}
 		}
@@ -372,14 +377,14 @@ func (h *SettingsHandlers) canAccess(user *entities.User, name string) bool {
 }
 
 // canModify checks if the user can modify settings for the given name
-func (h *SettingsHandlers) canModify(user *entities.User, name string) bool {
+func (c *SettingsController) canModify(user *entities.User, name string) bool {
 	// Admin can modify all settings
 	if user.IsAdmin() {
 		return true
 	}
 
 	// Check if it's the user's own settings
-	if h.sanitizeName(string(user.ID())) == name {
+	if c.sanitizeName(string(user.ID())) == name {
 		return true
 	}
 
@@ -387,7 +392,7 @@ func (h *SettingsHandlers) canModify(user *entities.User, name string) bool {
 	if user.GitHubInfo() != nil {
 		for _, team := range user.GitHubInfo().Teams() {
 			teamName := team.Organization + "/" + team.TeamSlug
-			if h.sanitizeName(teamName) == name {
+			if c.sanitizeName(teamName) == name {
 				// Allow if user has admin or maintainer role in the team
 				if team.Role == "admin" || team.Role == "maintainer" {
 					return true
@@ -400,7 +405,7 @@ func (h *SettingsHandlers) canModify(user *entities.User, name string) bool {
 }
 
 // sanitizeName sanitizes a name for comparison
-func (h *SettingsHandlers) sanitizeName(s string) string {
+func (c *SettingsController) sanitizeName(s string) string {
 	// Convert to lowercase
 	sanitized := strings.ToLower(s)
 	// Replace non-alphanumeric characters (except dash) with dash
@@ -415,7 +420,7 @@ func (h *SettingsHandlers) sanitizeName(s string) string {
 }
 
 // toResponse converts Settings entity to response
-func (h *SettingsHandlers) toResponse(settings *entities.Settings) *SettingsResponse {
+func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsResponse {
 	resp := &SettingsResponse{
 		Name:      settings.Name(),
 		CreatedAt: settings.CreatedAt().Format("2006-01-02T15:04:05Z07:00"),
@@ -464,7 +469,7 @@ func (h *SettingsHandlers) toResponse(settings *entities.Settings) *SettingsResp
 
 // mergeSecrets merges existing and new secret maps
 // If a key exists in new but has empty value, use existing value
-func (h *SettingsHandlers) mergeSecrets(existing, new map[string]string) map[string]string {
+func (c *SettingsController) mergeSecrets(existing, new map[string]string) map[string]string {
 	if new == nil {
 		return existing
 	}

@@ -1,4 +1,4 @@
-package proxy
+package services
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 )
@@ -32,14 +33,19 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 	}
 
 	t.Run("returns nil when no initial message", func(t *testing.T) {
-		session := &kubernetesSession{
-			id:          "test-session",
-			serviceName: "test-service",
-			request: &RunServerRequest{
+		session := NewKubernetesSession(
+			"test-session",
+			&entities.RunServerRequest{
 				UserID:         "test-user",
 				InitialMessage: "",
 			},
-		}
+			"test-deploy",
+			"test-service",
+			"test-pvc",
+			"test-ns",
+			9000,
+			nil,
+		)
 
 		sidecar := manager.buildInitialMessageSenderSidecar(session)
 		if sidecar != nil {
@@ -48,14 +54,19 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 	})
 
 	t.Run("returns sidecar when initial message is provided", func(t *testing.T) {
-		session := &kubernetesSession{
-			id:          "test-session",
-			serviceName: "test-service",
-			request: &RunServerRequest{
+		session := NewKubernetesSession(
+			"test-session",
+			&entities.RunServerRequest{
 				UserID:         "test-user",
 				InitialMessage: "Hello, this is the initial message",
 			},
-		}
+			"test-deploy",
+			"test-service",
+			"test-pvc",
+			"test-ns",
+			9000,
+			nil,
+		)
 
 		sidecar := manager.buildInitialMessageSenderSidecar(session)
 		if sidecar == nil {
@@ -114,13 +125,18 @@ func TestCreateInitialMessageSecret(t *testing.T) {
 		t.Fatalf("Failed to create namespace: %v", err)
 	}
 
-	session := &kubernetesSession{
-		id:          "test-session",
-		serviceName: "agentapi-session-test-svc",
-		request: &RunServerRequest{
+	session := NewKubernetesSession(
+		"test-session",
+		&entities.RunServerRequest{
 			UserID: "test-user",
 		},
-	}
+		"test-deploy",
+		"agentapi-session-test-svc",
+		"test-pvc",
+		"test-ns",
+		9000,
+		nil,
+	)
 
 	message := "This is a test initial message"
 	err = manager.createInitialMessageSecret(context.Background(), session, message)
@@ -163,14 +179,19 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 	}
 
 	t.Run("includes initial message volumes when message is provided", func(t *testing.T) {
-		session := &kubernetesSession{
-			id:          "test-session",
-			serviceName: "agentapi-session-test-svc",
-			request: &RunServerRequest{
+		session := NewKubernetesSession(
+			"test-session",
+			&entities.RunServerRequest{
 				UserID:         "test-user",
 				InitialMessage: "Hello, initial message",
 			},
-		}
+			"test-deploy",
+			"agentapi-session-test-svc",
+			"test-pvc",
+			"test-ns",
+			9000,
+			nil,
+		)
 
 		volumes := manager.buildVolumes(session, "claude-config-user")
 
@@ -202,14 +223,19 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 	})
 
 	t.Run("does not include initial message volumes when message is empty", func(t *testing.T) {
-		session := &kubernetesSession{
-			id:          "test-session",
-			serviceName: "agentapi-session-test-svc",
-			request: &RunServerRequest{
+		session := NewKubernetesSession(
+			"test-session",
+			&entities.RunServerRequest{
 				UserID:         "test-user",
 				InitialMessage: "",
 			},
-		}
+			"test-deploy",
+			"agentapi-session-test-svc",
+			"test-pvc",
+			"test-ns",
+			9000,
+			nil,
+		)
 
 		volumes := manager.buildVolumes(session, "claude-config-user")
 
@@ -255,7 +281,7 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	sessionID := "initial-msg-test"
 	initialMessage := "Hello, this is the initial message for testing"
 
-	req := &RunServerRequest{
+	req := &entities.RunServerRequest{
 		Port:           9000,
 		UserID:         "test-user",
 		InitialMessage: initialMessage,

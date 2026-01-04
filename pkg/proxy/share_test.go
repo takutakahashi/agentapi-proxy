@@ -49,11 +49,12 @@ func TestNewSessionShareWithToken(t *testing.T) {
 	assert.Equal(t, &expiresAt, share.ExpiresAt())
 }
 
-func TestGenerateShareToken_Uniqueness(t *testing.T) {
+func TestShareToken_Uniqueness(t *testing.T) {
 	tokens := make(map[string]bool)
 
 	for i := 0; i < 100; i++ {
-		token := generateShareToken()
+		share := NewSessionShare("session", "user")
+		token := share.Token()
 		assert.Equal(t, 32, len(token))
 		assert.False(t, tokens[token], "Token should be unique")
 		tokens[token] = true
