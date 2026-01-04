@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -65,7 +65,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	proxyServer := proxy.NewProxy(configData, verbose)
+	proxyServer := app.NewServer(configData, verbose)
 
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
@@ -141,7 +141,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 }
 
 // registerScheduleHandlers registers schedule REST API handlers
-func registerScheduleHandlers(configData *config.Config, proxyServer *proxy.Proxy) {
+func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
 
 	// Create Kubernetes client
@@ -177,7 +177,7 @@ func registerScheduleHandlers(configData *config.Config, proxyServer *proxy.Prox
 }
 
 // startScheduleWorker starts the schedule worker with leader election
-func startScheduleWorker(configData *config.Config, proxyServer *proxy.Proxy) *schedule.LeaderWorker {
+func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *schedule.LeaderWorker {
 	log.Printf("[SCHEDULE_WORKER] Initializing schedule worker...")
 
 	// Create Kubernetes client
