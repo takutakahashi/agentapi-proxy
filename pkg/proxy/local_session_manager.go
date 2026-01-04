@@ -210,8 +210,8 @@ func (m *LocalSessionManager) ListSessions(filter SessionFilter) []Session {
 			continue
 		}
 
-		// Scope filter
-		if filter.Scope != "" && session.request.Scope != filter.Scope {
+		// Scope filter (use Scope() method to handle default value)
+		if filter.Scope != "" && session.Scope() != filter.Scope {
 			continue
 		}
 

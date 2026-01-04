@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -226,22 +228,25 @@ func (m *KubernetesSessionManager) GetSession(id string) Session {
 // ListSessions returns all sessions matching the filter
 // Sessions are retrieved from Kubernetes Services to survive proxy restarts
 func (m *KubernetesSessionManager) ListSessions(filter SessionFilter) []Session {
+	// Build label selector for Kubernetes API filtering
+	labelSelector := m.buildLabelSelector(filter)
+
 	// Get services from Kubernetes API
 	services, err := m.client.CoreV1().Services(m.namespace).List(
 		context.Background(),
 		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+			LabelSelector: labelSelector,
 		})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list services: %v", err)
 		return []Session{}
 	}
 
-	// Batch fetch all deployments to avoid N+1 API calls
+	// Batch fetch all deployments to avoid N+1 API calls (using same filter)
 	deployments, err := m.client.AppsV1().Deployments(m.namespace).List(
 		context.Background(),
 		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+			LabelSelector: labelSelector,
 		})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list deployments: %v", err)
@@ -1770,6 +1775,7 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *k
 			Labels:    m.buildLabels(session),
 			Annotations: map[string]string{
 				"agentapi.proxy/created-at": session.startedAt.Format(time.RFC3339),
+				"agentapi.proxy/team-id":    session.request.TeamID, // Store original team_id (unsanitized)
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -1938,6 +1944,33 @@ func (m *KubernetesSessionManager) cleanupSession(id string) {
 	delete(m.sessions, id)
 }
 
+// buildLabelSelector builds a Kubernetes label selector string from SessionFilter
+// This allows filtering at the API level for better performance
+func (m *KubernetesSessionManager) buildLabelSelector(filter SessionFilter) string {
+	// Base selector for agentapi sessions
+	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"
+
+	// Add UserID filter
+	if filter.UserID != "" {
+		selector += ",agentapi.proxy/user-id=" + sanitizeLabelValue(filter.UserID)
+	}
+
+	// Add Scope filter (only for team scope to maintain backward compatibility)
+	// Note: scope=user is not added to LabelSelector because old sessions may not have
+	// the scope label set. These sessions should be treated as user-scoped by default.
+	// Go-level filtering handles scope=user cases properly via session.Scope() method.
+	if filter.Scope == ScopeTeam {
+		selector += ",agentapi.proxy/scope=" + string(filter.Scope)
+	}
+
+	// Add TeamID filter using sha256 hash for consistent matching
+	if filter.TeamID != "" {
+		selector += ",agentapi.proxy/team-id-hash=" + hashTeamID(filter.TeamID)
+	}
+
+	return selector
+}
+
 // buildLabels creates standard labels for Kubernetes resources
 func (m *KubernetesSessionManager) buildLabels(session *kubernetesSession) map[string]string {
 	labels := map[string]string{
@@ -1949,11 +1982,16 @@ func (m *KubernetesSessionManager) buildLabels(session *kubernetesSession) map[s
 	}
 
 	// Add scope and team_id labels for filtering
-	if session.request.Scope != "" {
-		labels["agentapi.proxy/scope"] = string(session.request.Scope)
+	// Always set scope label (default to "user" if not specified)
+	scope := session.request.Scope
+	if scope == "" {
+		scope = ScopeUser
 	}
+	labels["agentapi.proxy/scope"] = string(scope)
 	if session.request.TeamID != "" {
-		labels["agentapi.proxy/team-id"] = sanitizeLabelValue(session.request.TeamID)
+		// Use sha256 hash for team-id label to avoid sanitization issues with "/" in team IDs
+		// The original team_id is stored in annotations for restoration
+		labels["agentapi.proxy/team-id-hash"] = hashTeamID(session.request.TeamID)
 	}
 
 	// Add tags as labels (sanitized for Kubernetes)
@@ -2047,6 +2085,22 @@ func sanitizeLabelValue(s string) string {
 	// Trim non-alphanumeric characters from start and end
 	sanitized = strings.Trim(sanitized, "-_.")
 	return sanitized
+}
+
+// hashTeamID creates a sha256 hash of the team ID for use as a Kubernetes label value
+// This allows querying by team_id without sanitization issues (e.g., "/" in team IDs)
+// The hash is truncated to 63 characters to fit within Kubernetes label value limits
+func hashTeamID(teamID string) string {
+	if teamID == "" {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(teamID))
+	hexHash := hex.EncodeToString(hash[:])
+	// Truncate to 63 characters (Kubernetes label value limit)
+	if len(hexHash) > 63 {
+		hexHash = hexHash[:63]
+	}
+	return hexHash
 }
 
 // sanitizeSecretName sanitizes a string to be used as a Kubernetes Secret name
@@ -2475,12 +2529,14 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		}
 	}
 
-	// Restore scope and team_id from labels
+	// Restore scope from labels
 	scope := ResourceScope(svc.Labels["agentapi.proxy/scope"])
 	if scope == "" {
 		scope = ScopeUser // Default to user scope for backward compatibility
 	}
-	teamID := svc.Labels["agentapi.proxy/team-id"]
+	// Restore team_id from annotations (original unsanitized value)
+	// Labels contain only the hash for querying purposes
+	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
 	// Parse created-at from annotations
 	createdAt := time.Now()
@@ -2544,12 +2600,14 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 		}
 	}
 
-	// Restore scope and team_id from labels
+	// Restore scope from labels
 	scope := ResourceScope(svc.Labels["agentapi.proxy/scope"])
 	if scope == "" {
 		scope = ScopeUser // Default to user scope for backward compatibility
 	}
-	teamID := svc.Labels["agentapi.proxy/team-id"]
+	// Restore team_id from annotations (original unsanitized value)
+	// Labels contain only the hash for querying purposes
+	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
 	// Parse created-at from annotations
 	createdAt := time.Now()

@@ -11,6 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
 
 const (
@@ -114,6 +116,27 @@ func (m *KubernetesManager) List(ctx context.Context, filter ScheduleFilter) ([]
 		}
 		if filter.Status != "" && s.Status != filter.Status {
 			continue
+		}
+		// Scope filter (use GetScope() to handle default value)
+		if filter.Scope != "" && s.GetScope() != filter.Scope {
+			continue
+		}
+		// TeamID filter
+		if filter.TeamID != "" && s.TeamID != filter.TeamID {
+			continue
+		}
+		// TeamIDs filter (for team-scoped schedules, check if schedule's team is in user's teams)
+		if len(filter.TeamIDs) > 0 && s.GetScope() == proxy.ScopeTeam {
+			teamMatch := false
+			for _, teamID := range filter.TeamIDs {
+				if s.TeamID == teamID {
+					teamMatch = true
+					break
+				}
+			}
+			if !teamMatch {
+				continue
+			}
 		}
 		result = append(result, s)
 	}

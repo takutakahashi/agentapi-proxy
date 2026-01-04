@@ -87,6 +87,14 @@ type ExecutionRecord struct {
 	Error string `json:"error,omitempty"`
 }
 
+// GetScope returns the resource scope, defaulting to "user" if not set
+func (s *Schedule) GetScope() proxy.ResourceScope {
+	if s.Scope == "" {
+		return proxy.ScopeUser
+	}
+	return s.Scope
+}
+
 // IsOneTime returns true if this is a one-time schedule (no recurring)
 func (s *Schedule) IsOneTime() bool {
 	return s.ScheduledAt != nil && s.CronExpr == ""
