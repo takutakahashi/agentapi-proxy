@@ -1949,9 +1949,12 @@ func (m *KubernetesSessionManager) buildLabels(session *kubernetesSession) map[s
 	}
 
 	// Add scope and team_id labels for filtering
-	if session.request.Scope != "" {
-		labels["agentapi.proxy/scope"] = string(session.request.Scope)
+	// Always set scope label (default to "user" if not specified)
+	scope := session.request.Scope
+	if scope == "" {
+		scope = ScopeUser
 	}
+	labels["agentapi.proxy/scope"] = string(scope)
 	if session.request.TeamID != "" {
 		labels["agentapi.proxy/team-id"] = sanitizeLabelValue(session.request.TeamID)
 	}
