@@ -120,6 +120,11 @@ func (s *KubernetesSession) SetStatus(status string) {
 	s.status = status
 }
 
+// SetStartedAt sets the session start time (used for restored sessions)
+func (s *KubernetesSession) SetStartedAt(t time.Time) {
+	s.startedAt = t
+}
+
 // ServiceDNS returns the Kubernetes Service DNS name for this session
 func (s *KubernetesSession) ServiceDNS() string {
 	return s.serviceName + "." + s.namespace + ".svc.cluster.local"

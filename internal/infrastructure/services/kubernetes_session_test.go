@@ -1,8 +1,10 @@
-package proxy
+package services
 
 import (
 	"testing"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
 func TestSanitizeLabelFunctions(t *testing.T) {
@@ -61,21 +63,23 @@ func TestSanitizeLabelFunctions(t *testing.T) {
 }
 
 func TestKubernetesSession_Methods(t *testing.T) {
-	// Test that kubernetesSession implements Session interface
-	var _ Session = &kubernetesSession{}
+	// Test that KubernetesSession implements entities.Session interface
+	var _ entities.Session = &KubernetesSession{}
 
-	session := &kubernetesSession{
-		id:          "test-session",
-		serviceName: "test-svc",
-		namespace:   "test-ns",
-		servicePort: 9000,
-		startedAt:   time.Now(),
-		status:      "active",
-		request: &RunServerRequest{
+	session := NewKubernetesSession(
+		"test-session",
+		&entities.RunServerRequest{
 			UserID: "test-user",
 			Tags:   map[string]string{"key": "value"},
 		},
-	}
+		"test-deploy",
+		"test-svc",
+		"test-pvc",
+		"test-ns",
+		9000,
+		nil,
+	)
+	session.SetStatus("active")
 
 	// Test ID
 	if session.ID() != "test-session" {
@@ -103,8 +107,8 @@ func TestKubernetesSession_Methods(t *testing.T) {
 		t.Errorf("Expected status 'active', got %s", session.Status())
 	}
 
-	// Test setStatus
-	session.setStatus("stopped")
+	// Test SetStatus
+	session.SetStatus("stopped")
 	if session.Status() != "stopped" {
 		t.Errorf("Expected status 'stopped', got %s", session.Status())
 	}
@@ -113,5 +117,12 @@ func TestKubernetesSession_Methods(t *testing.T) {
 	expectedDNS := "test-svc.test-ns.svc.cluster.local"
 	if session.ServiceDNS() != expectedDNS {
 		t.Errorf("Expected ServiceDNS %s, got %s", expectedDNS, session.ServiceDNS())
+	}
+
+	// Test StartedAt
+	now := time.Now()
+	session.SetStartedAt(now)
+	if session.StartedAt() != now {
+		t.Errorf("Expected StartedAt %v, got %v", now, session.StartedAt())
 	}
 }
