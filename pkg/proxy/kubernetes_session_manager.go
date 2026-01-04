@@ -226,22 +226,25 @@ func (m *KubernetesSessionManager) GetSession(id string) Session {
 // ListSessions returns all sessions matching the filter
 // Sessions are retrieved from Kubernetes Services to survive proxy restarts
 func (m *KubernetesSessionManager) ListSessions(filter SessionFilter) []Session {
+	// Build label selector for Kubernetes API filtering
+	labelSelector := m.buildLabelSelector(filter)
+
 	// Get services from Kubernetes API
 	services, err := m.client.CoreV1().Services(m.namespace).List(
 		context.Background(),
 		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+			LabelSelector: labelSelector,
 		})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list services: %v", err)
 		return []Session{}
 	}
 
-	// Batch fetch all deployments to avoid N+1 API calls
+	// Batch fetch all deployments to avoid N+1 API calls (using same filter)
 	deployments, err := m.client.AppsV1().Deployments(m.namespace).List(
 		context.Background(),
 		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+			LabelSelector: labelSelector,
 		})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list deployments: %v", err)
@@ -1936,6 +1939,30 @@ func (m *KubernetesSessionManager) cleanupSession(id string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	delete(m.sessions, id)
+}
+
+// buildLabelSelector builds a Kubernetes label selector string from SessionFilter
+// This allows filtering at the API level for better performance
+func (m *KubernetesSessionManager) buildLabelSelector(filter SessionFilter) string {
+	// Base selector for agentapi sessions
+	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"
+
+	// Add UserID filter
+	if filter.UserID != "" {
+		selector += ",agentapi.proxy/user-id=" + sanitizeLabelValue(filter.UserID)
+	}
+
+	// Add Scope filter
+	if filter.Scope != "" {
+		selector += ",agentapi.proxy/scope=" + string(filter.Scope)
+	}
+
+	// Add TeamID filter
+	if filter.TeamID != "" {
+		selector += ",agentapi.proxy/team-id=" + sanitizeLabelValue(filter.TeamID)
+	}
+
+	return selector
 }
 
 // buildLabels creates standard labels for Kubernetes resources
