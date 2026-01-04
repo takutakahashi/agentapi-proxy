@@ -238,6 +238,9 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 	authEnabled := cfg != nil && cfg.Auth.Enabled
 
 	// Filter by user authorization (supports both user-scoped and team-scoped)
+	// IMPORTANT: Resources are isolated by scope - team scope resources are only visible
+	// when explicitly filtering by scope=team, and user scope resources are only visible
+	// when filtering by scope=user or no scope filter (default to user scope)
 	responses := make([]ScheduleResponse, 0, len(schedules))
 	for _, s := range schedules {
 		// If auth is not enabled, return all schedules
@@ -246,14 +249,30 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 			continue
 		}
 
-		// Admin can see all schedules
+		// Scope isolation: resources are only visible within their respective scope
+		// - scope=team filter: only show team-scoped resources
+		// - scope=user filter or no filter: only show user-scoped resources
+		scheduleScope := s.Scope
+		if scopeFilter == string(proxy.ScopeTeam) {
+			// Only show team-scoped schedules
+			if scheduleScope != proxy.ScopeTeam {
+				continue
+			}
+		} else {
+			// Default to user scope: only show user-scoped schedules
+			if scheduleScope == proxy.ScopeTeam {
+				continue
+			}
+		}
+
+		// Admin can see all schedules within the filtered scope
 		if user != nil && user.IsAdmin() {
 			responses = append(responses, h.toResponse(s))
 			continue
 		}
 
 		// Check authorization based on scope
-		if s.Scope == proxy.ScopeTeam {
+		if scheduleScope == proxy.ScopeTeam {
 			// Team-scoped: user must be a member of the team
 			if user != nil && user.IsMemberOfTeam(s.TeamID) {
 				responses = append(responses, h.toResponse(s))

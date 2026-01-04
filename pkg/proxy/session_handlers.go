@@ -173,6 +173,9 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 	authEnabled := cfg != nil && cfg.Auth.Enabled
 
 	// Filter by user authorization (supports both user-scoped and team-scoped)
+	// IMPORTANT: Resources are isolated by scope - team scope resources are only visible
+	// when explicitly filtering by scope=team, and user scope resources are only visible
+	// when filtering by scope=user or no scope filter (default to user scope)
 	matchingSessions := make([]Session, 0)
 	for _, session := range sessions {
 		// If auth is not enabled, return all sessions
@@ -181,14 +184,30 @@ func (h *SessionHandlers) SearchSessions(c echo.Context) error {
 			continue
 		}
 
-		// Admin can see all sessions
+		// Scope isolation: resources are only visible within their respective scope
+		// - scope=team filter: only show team-scoped resources
+		// - scope=user filter or no filter: only show user-scoped resources
+		sessionScope := session.Scope()
+		if scopeFilter == string(ScopeTeam) {
+			// Only show team-scoped sessions
+			if sessionScope != ScopeTeam {
+				continue
+			}
+		} else {
+			// Default to user scope: only show user-scoped sessions
+			if sessionScope == ScopeTeam {
+				continue
+			}
+		}
+
+		// Admin can see all sessions within the filtered scope
 		if user != nil && user.IsAdmin() {
 			matchingSessions = append(matchingSessions, session)
 			continue
 		}
 
 		// Check authorization based on scope
-		if session.Scope() == ScopeTeam {
+		if sessionScope == ScopeTeam {
 			// Team-scoped: user must be a member of the team
 			if user != nil && user.IsMemberOfTeam(session.TeamID()) {
 				matchingSessions = append(matchingSessions, session)
