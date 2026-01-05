@@ -760,33 +760,54 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		}
 	}
 
-	// Add team-based credentials Secrets (agent-credentials-{org}-{team})
-	for _, team := range req.Teams {
-		secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(team))
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: secretName,
+	// Add credentials Secrets based on scope
+	// For team-scoped sessions: only mount the team's secret (not user secrets)
+	// For user-scoped sessions: mount all team secrets and user secret
+	if req.Scope == entities.ScopeTeam {
+		// Team-scoped: only mount the specific team's credentials
+		if req.TeamID != "" {
+			secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.TeamID))
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: secretName,
+					},
+					Optional: boolPtr(true),
 				},
-				Optional: boolPtr(true), // Secret may not exist for all teams
-			},
-		})
-		log.Printf("[K8S_SESSION] Adding team credentials Secret %s for session %s", secretName, session.id)
-	}
+			})
+			log.Printf("[K8S_SESSION] Adding team credentials Secret %s for team-scoped session %s", secretName, session.id)
+		}
+		// Note: user-specific credentials are NOT mounted for team-scoped sessions
+	} else {
+		// User-scoped (or unspecified): mount all team secrets and user secret
+		// Add team-based credentials Secrets (agent-credentials-{org}-{team})
+		for _, team := range req.Teams {
+			secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(team))
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: secretName,
+					},
+					Optional: boolPtr(true), // Secret may not exist for all teams
+				},
+			})
+			log.Printf("[K8S_SESSION] Adding team credentials Secret %s for session %s", secretName, session.id)
+		}
 
-	// Add user-specific credentials Secret (agent-credentials-{user-id})
-	// This is added last so user-specific values override team values
-	if req.UserID != "" {
-		userSecretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.UserID))
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: userSecretName,
+		// Add user-specific credentials Secret (agent-credentials-{user-id})
+		// This is added last so user-specific values override team values
+		if req.UserID != "" {
+			userSecretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.UserID))
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: userSecretName,
+					},
+					Optional: boolPtr(true), // Secret may not exist for all users
 				},
-				Optional: boolPtr(true), // Secret may not exist for all users
-			},
-		})
-		log.Printf("[K8S_SESSION] Adding user credentials Secret %s for session %s", userSecretName, session.id)
+			})
+			log.Printf("[K8S_SESSION] Adding user credentials Secret %s for session %s", userSecretName, session.id)
+		}
 	}
 
 	// Build container spec
@@ -1487,9 +1508,6 @@ func (m *KubernetesSessionManager) createGithubTokenSecret(
 
 // buildVolumes builds the volume configuration for the session pod
 func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, userConfigMapName string) []corev1.Volume {
-	// Credentials Secret name follows the pattern: agentapi-agent-credentials-{userID}
-	credentialsSecretName := fmt.Sprintf("agentapi-agent-credentials-%s", sanitizeLabelValue(session.Request().UserID))
-
 	// Build workdir volume - use PVC if enabled, otherwise EmptyDir
 	var workdirVolume corev1.Volume
 	if m.isPVCEnabled() {
@@ -1506,6 +1524,34 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 			Name: "workdir",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+	}
+
+	// Build credentials volume based on scope
+	// For team-scoped sessions: use EmptyDir (no user credentials)
+	// For user-scoped sessions: mount user's credentials Secret
+	var credentialsVolume corev1.Volume
+	if session.Request().Scope == entities.ScopeTeam {
+		// Team-scoped: do not mount user credentials, use EmptyDir
+		credentialsVolume = corev1.Volume{
+			Name: "claude-credentials",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+		log.Printf("[K8S_SESSION] Using EmptyDir for credentials volume (team-scoped session %s)", session.id)
+	} else {
+		// User-scoped: mount user's credentials Secret
+		// Credentials Secret name follows the pattern: agentapi-agent-credentials-{userID}
+		credentialsSecretName := fmt.Sprintf("agentapi-agent-credentials-%s", sanitizeLabelValue(session.Request().UserID))
+		credentialsVolume = corev1.Volume{
+			Name: "claude-credentials",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: credentialsSecretName,
+					Optional:   boolPtr(true), // Optional - user may not have logged in yet
+				},
 			},
 		}
 	}
@@ -1542,17 +1588,9 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-		// User credentials Secret (per-user, not per-session)
-		// This Secret is managed by the credentials-sync sidecar
-		{
-			Name: "claude-credentials",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: credentialsSecretName,
-					Optional:   boolPtr(true), // Optional - user may not have logged in yet
-				},
-			},
-		},
+		// Credentials volume (Secret for user-scoped, EmptyDir for team-scoped)
+		// This Secret is managed by the credentials-sync sidecar for user-scoped sessions
+		credentialsVolume,
 	}
 
 	// Add notification subscription Secret volume (source for init container)
