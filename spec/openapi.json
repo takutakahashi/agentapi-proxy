@@ -888,7 +888,7 @@
             "name": "name",
             "in": "path",
             "required": true,
-            "description": "Settings name (user ID or team name like 'org-team')",
+            "description": "Settings name. For personal settings, use your user ID. For team settings, use '{org}/{team-slug}' format (e.g., 'myorg/backend-team').",
             "schema": {
               "type": "string"
             }
@@ -950,7 +950,7 @@
             "name": "name",
             "in": "path",
             "required": true,
-            "description": "Settings name (user ID or team name like 'org-team')",
+            "description": "Settings name. For personal settings, use your user ID. For team settings, use '{org}/{team-slug}' format (e.g., 'myorg/backend-team').",
             "schema": {
               "type": "string"
             }
@@ -1074,7 +1074,7 @@
             "name": "name",
             "in": "path",
             "required": true,
-            "description": "Settings name (user ID or team name like 'org-team')",
+            "description": "Settings name. For personal settings, use your user ID. For team settings, use '{org}/{team-slug}' format (e.g., 'myorg/backend-team').",
             "schema": {
               "type": "string"
             }

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -160,6 +161,11 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Check modify permission
 	if !c.canModify(user, name) {
 		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
+	}
+
+	// Validate team settings name format
+	if err := c.validateTeamSettingsName(user, name); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	var req UpdateSettingsRequest
@@ -417,6 +423,39 @@ func (c *SettingsController) sanitizeName(s string) string {
 	re = regexp.MustCompile(`-+`)
 	sanitized = re.ReplaceAllString(sanitized, "-")
 	return sanitized
+}
+
+// validateTeamSettingsName validates that team settings use the correct {org}/{team-slug} format.
+// If a user tries to create settings with just the team-slug (without org prefix),
+// returns an error suggesting the correct format.
+func (c *SettingsController) validateTeamSettingsName(user *entities.User, name string) error {
+	// Skip validation for non-GitHub users or users without team membership
+	if user == nil || user.GitHubInfo() == nil {
+		return nil
+	}
+
+	teams := user.GitHubInfo().Teams()
+	if len(teams) == 0 {
+		return nil
+	}
+
+	// If name already contains a slash, it's likely in the correct format
+	if strings.Contains(name, "/") {
+		return nil
+	}
+
+	// Check if the name matches any team slug without the org prefix
+	sanitizedName := c.sanitizeName(name)
+	for _, team := range teams {
+		sanitizedSlug := c.sanitizeName(team.TeamSlug)
+		if sanitizedName == sanitizedSlug {
+			// User is trying to use team-slug only format
+			correctFormat := team.Organization + "/" + team.TeamSlug
+			return fmt.Errorf("team settings should use format '{org}/{team-slug}'. Use '%s' instead of '%s'", correctFormat, name)
+		}
+	}
+
+	return nil
 }
 
 // toResponse converts Settings entity to response
