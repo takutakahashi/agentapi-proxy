@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
 
 func TestHealthCheck(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Auth.Enabled = false
-	proxyServer := proxy.NewProxy(cfg, true)
+	proxyServer := app.NewServer(cfg, true)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
 			t.Logf("Failed to shutdown proxy: %v", err)
@@ -39,7 +39,7 @@ func TestHealthCheck(t *testing.T) {
 func TestNotificationEndpoints(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Auth.Enabled = false
-	proxyServer := proxy.NewProxy(cfg, true)
+	proxyServer := app.NewServer(cfg, true)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
 			t.Logf("Failed to shutdown proxy: %v", err)
@@ -61,7 +61,7 @@ func TestNotificationEndpoints(t *testing.T) {
 func TestCORSHeaders(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Auth.Enabled = false
-	proxyServer := proxy.NewProxy(cfg, true)
+	proxyServer := app.NewServer(cfg, true)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
 			t.Logf("Failed to shutdown proxy: %v", err)

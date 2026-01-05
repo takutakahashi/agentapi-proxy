@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
 const (
@@ -126,7 +126,7 @@ func (m *KubernetesManager) List(ctx context.Context, filter ScheduleFilter) ([]
 			continue
 		}
 		// TeamIDs filter (for team-scoped schedules, check if schedule's team is in user's teams)
-		if len(filter.TeamIDs) > 0 && s.GetScope() == proxy.ScopeTeam {
+		if len(filter.TeamIDs) > 0 && s.GetScope() == entities.ScopeTeam {
 			teamMatch := false
 			for _, teamID := range filter.TeamIDs {
 				if s.TeamID == teamID {

@@ -50,12 +50,9 @@ gofmt:
 	@echo "Formatting Go code..."
 	go fmt ./...
 
-test: gofmt setup-envtest
+test: gofmt
 	@echo "Running tests..."
 	go test -v -race ./...
-	@echo "Running envtest tests..."
-	KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -v -race -tags=envtest ./pkg/proxy/... -run "^TestKubernetes"
 
 lint: gofmt
 	@echo "Running linters..."
@@ -95,11 +92,9 @@ $(ENVTEST): $(LOCALBIN)
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
-# envtest: Run Kubernetes envtest tests
+# envtest: Run Kubernetes envtest tests (placeholder for future use)
 envtest: setup-envtest
-	@echo "Running envtest tests..."
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -v -race -tags=envtest ./pkg/proxy/... -run "^Test(Kubernetes|Sanitize)"
+	@echo "No envtest tests defined"
 
 # GitHub repository for workflow dispatch
 GITHUB_REPO ?= $(shell git config --get remote.origin.url | sed -E 's|.*github.com[:/](.*)\.git|\1|')

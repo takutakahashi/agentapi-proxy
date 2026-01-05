@@ -3,7 +3,7 @@ package schedule
 import (
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
 // ScheduleStatus defines the current status of a schedule
@@ -27,7 +27,7 @@ type Schedule struct {
 	// UserID is the ID of the user who created the schedule
 	UserID string `json:"user_id"`
 	// Scope defines the ownership scope ("user" or "team"). Defaults to "user".
-	Scope proxy.ResourceScope `json:"scope,omitempty"`
+	Scope entities.ResourceScope `json:"scope,omitempty"`
 	// TeamID is the team identifier (e.g., "org/team-slug") when Scope is "team"
 	TeamID string `json:"team_id,omitempty"`
 	// Status is the current status of the schedule
@@ -72,7 +72,7 @@ type SessionConfig struct {
 	// Tags for the session (including repository info)
 	Tags map[string]string `json:"tags,omitempty"`
 	// Params contains session parameters like initial message
-	Params *proxy.SessionParams `json:"params,omitempty"`
+	Params *entities.SessionParams `json:"params,omitempty"`
 }
 
 // ExecutionRecord represents a single execution attempt
@@ -88,9 +88,9 @@ type ExecutionRecord struct {
 }
 
 // GetScope returns the resource scope, defaulting to "user" if not set
-func (s *Schedule) GetScope() proxy.ResourceScope {
+func (s *Schedule) GetScope() entities.ResourceScope {
 	if s.Scope == "" {
-		return proxy.ScopeUser
+		return entities.ScopeUser
 	}
 	return s.Scope
 }

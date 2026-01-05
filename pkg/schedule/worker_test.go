@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// mockProxySessionManager implements proxy.SessionManager for testing
+// mockProxySessionManager implements portrepos.SessionManager for testing
 type mockProxySessionManager struct {
 	sessions map[string]*mockProxySession
 }
@@ -23,22 +23,22 @@ type mockProxySession struct {
 	startedAt time.Time
 }
 
-func (s *mockProxySession) ID() string                 { return s.id }
-func (s *mockProxySession) Addr() string               { return s.addr }
-func (s *mockProxySession) UserID() string             { return s.userID }
-func (s *mockProxySession) Tags() map[string]string    { return s.tags }
-func (s *mockProxySession) Status() string             { return s.status }
-func (s *mockProxySession) StartedAt() time.Time       { return s.startedAt }
-func (s *mockProxySession) Description() string        { return "" }
-func (s *mockProxySession) Scope() proxy.ResourceScope { return proxy.ScopeUser }
-func (s *mockProxySession) TeamID() string             { return "" }
-func (s *mockProxySession) Cancel()                    {}
+func (s *mockProxySession) ID() string                    { return s.id }
+func (s *mockProxySession) Addr() string                  { return s.addr }
+func (s *mockProxySession) UserID() string                { return s.userID }
+func (s *mockProxySession) Tags() map[string]string       { return s.tags }
+func (s *mockProxySession) Status() string                { return s.status }
+func (s *mockProxySession) StartedAt() time.Time          { return s.startedAt }
+func (s *mockProxySession) Description() string           { return "" }
+func (s *mockProxySession) Scope() entities.ResourceScope { return entities.ScopeUser }
+func (s *mockProxySession) TeamID() string                { return "" }
+func (s *mockProxySession) Cancel()                       {}
 
 func newMockProxySessionManager() *mockProxySessionManager {
 	return &mockProxySessionManager{sessions: make(map[string]*mockProxySession)}
 }
 
-func (m *mockProxySessionManager) CreateSession(ctx context.Context, id string, req *proxy.RunServerRequest) (proxy.Session, error) {
+func (m *mockProxySessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest) (entities.Session, error) {
 	session := &mockProxySession{
 		id:        id,
 		userID:    req.UserID,
@@ -51,7 +51,7 @@ func (m *mockProxySessionManager) CreateSession(ctx context.Context, id string, 
 	return session, nil
 }
 
-func (m *mockProxySessionManager) GetSession(id string) proxy.Session {
+func (m *mockProxySessionManager) GetSession(id string) entities.Session {
 	s, ok := m.sessions[id]
 	if !ok {
 		return nil
@@ -59,8 +59,8 @@ func (m *mockProxySessionManager) GetSession(id string) proxy.Session {
 	return s
 }
 
-func (m *mockProxySessionManager) ListSessions(filter proxy.SessionFilter) []proxy.Session {
-	var result []proxy.Session
+func (m *mockProxySessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
+	var result []entities.Session
 	for _, s := range m.sessions {
 		result = append(result, s)
 	}

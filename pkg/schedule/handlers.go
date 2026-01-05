@@ -8,20 +8,21 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	"github.com/takutakahashi/agentapi-proxy/pkg/proxy"
 )
 
 // Handlers handles schedule management endpoints
 type Handlers struct {
 	manager         Manager
-	sessionManager  proxy.SessionManager
+	sessionManager  portrepos.SessionManager
 	defaultTimezone string
 }
 
 // NewHandlers creates a new Handlers instance
-func NewHandlers(manager Manager, sessionManager proxy.SessionManager) *Handlers {
+func NewHandlers(manager Manager, sessionManager portrepos.SessionManager) *Handlers {
 	return &Handlers{
 		manager:         manager,
 		sessionManager:  sessionManager,
@@ -30,7 +31,7 @@ func NewHandlers(manager Manager, sessionManager proxy.SessionManager) *Handlers
 }
 
 // NewHandlersWithTimezone creates a new Handlers instance with a custom default timezone
-func NewHandlersWithTimezone(manager Manager, sessionManager proxy.SessionManager, defaultTimezone string) *Handlers {
+func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionManager, defaultTimezone string) *Handlers {
 	return &Handlers{
 		manager:         manager,
 		sessionManager:  sessionManager,
@@ -44,8 +45,8 @@ func (h *Handlers) GetName() string {
 }
 
 // RegisterRoutes registers schedule management routes
-// Implements the proxy.CustomHandler interface
-func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *proxy.Proxy) error {
+// Implements the app.CustomHandler interface
+func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
 	g := e.Group("/schedules")
 
 	g.POST("", h.CreateSchedule)
@@ -61,13 +62,13 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *proxy.Proxy) error {
 
 // CreateScheduleRequest represents the request body for creating a schedule
 type CreateScheduleRequest struct {
-	Name          string              `json:"name"`
-	Scope         proxy.ResourceScope `json:"scope,omitempty"`
-	TeamID        string              `json:"team_id,omitempty"`
-	ScheduledAt   *time.Time          `json:"scheduled_at,omitempty"`
-	CronExpr      string              `json:"cron_expr,omitempty"`
-	Timezone      string              `json:"timezone,omitempty"`
-	SessionConfig SessionConfig       `json:"session_config"`
+	Name          string                 `json:"name"`
+	Scope         entities.ResourceScope `json:"scope,omitempty"`
+	TeamID        string                 `json:"team_id,omitempty"`
+	ScheduledAt   *time.Time             `json:"scheduled_at,omitempty"`
+	CronExpr      string                 `json:"cron_expr,omitempty"`
+	Timezone      string                 `json:"timezone,omitempty"`
+	SessionConfig SessionConfig          `json:"session_config"`
 }
 
 // UpdateScheduleRequest represents the request body for updating a schedule
@@ -82,21 +83,21 @@ type UpdateScheduleRequest struct {
 
 // ScheduleResponse represents the response for a schedule
 type ScheduleResponse struct {
-	ID              string              `json:"id"`
-	Name            string              `json:"name"`
-	UserID          string              `json:"user_id"`
-	Scope           proxy.ResourceScope `json:"scope,omitempty"`
-	TeamID          string              `json:"team_id,omitempty"`
-	Status          ScheduleStatus      `json:"status"`
-	ScheduledAt     *time.Time          `json:"scheduled_at,omitempty"`
-	CronExpr        string              `json:"cron_expr,omitempty"`
-	Timezone        string              `json:"timezone,omitempty"`
-	SessionConfig   SessionConfig       `json:"session_config"`
-	NextExecutionAt *time.Time          `json:"next_execution_at,omitempty"`
-	ExecutionCount  int                 `json:"execution_count"`
-	LastExecution   *ExecutionRecord    `json:"last_execution,omitempty"`
-	CreatedAt       time.Time           `json:"created_at"`
-	UpdatedAt       time.Time           `json:"updated_at"`
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	UserID          string                 `json:"user_id"`
+	Scope           entities.ResourceScope `json:"scope,omitempty"`
+	TeamID          string                 `json:"team_id,omitempty"`
+	Status          ScheduleStatus         `json:"status"`
+	ScheduledAt     *time.Time             `json:"scheduled_at,omitempty"`
+	CronExpr        string                 `json:"cron_expr,omitempty"`
+	Timezone        string                 `json:"timezone,omitempty"`
+	SessionConfig   SessionConfig          `json:"session_config"`
+	NextExecutionAt *time.Time             `json:"next_execution_at,omitempty"`
+	ExecutionCount  int                    `json:"execution_count"`
+	LastExecution   *ExecutionRecord       `json:"last_execution,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
 // CreateSchedule handles POST /schedules
@@ -145,7 +146,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 	}
 
 	// Validate team scope: user must be a member of the team
-	if req.Scope == proxy.ScopeTeam {
+	if req.Scope == entities.ScopeTeam {
 		if req.TeamID == "" {
 			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required when scope is 'team'")
 		}
@@ -212,7 +213,7 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 
 	// Build filter (without UserID to get all schedules, we'll filter by authorization below)
 	filter := ScheduleFilter{
-		Scope:   proxy.ResourceScope(scopeFilter),
+		Scope:   entities.ResourceScope(scopeFilter),
 		TeamID:  teamIDFilter,
 		TeamIDs: userTeamIDs,
 	}
@@ -253,14 +254,14 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 		// - scope=team filter: only show team-scoped resources
 		// - scope=user filter or no filter: only show user-scoped resources
 		scheduleScope := s.Scope
-		if scopeFilter == string(proxy.ScopeTeam) {
+		if scopeFilter == string(entities.ScopeTeam) {
 			// Only show team-scoped schedules
-			if scheduleScope != proxy.ScopeTeam {
+			if scheduleScope != entities.ScopeTeam {
 				continue
 			}
 		} else {
 			// Default to user scope: only show user-scoped schedules
-			if scheduleScope == proxy.ScopeTeam {
+			if scheduleScope == entities.ScopeTeam {
 				continue
 			}
 		}
@@ -272,7 +273,7 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 		}
 
 		// Check authorization based on scope
-		if scheduleScope == proxy.ScopeTeam {
+		if scheduleScope == entities.ScopeTeam {
 			// Team-scoped: user must be a member of the team
 			if user != nil && user.IsMemberOfTeam(s.TeamID) {
 				responses = append(responses, h.toResponse(s))
@@ -453,7 +454,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 	// Create session with schedule's scope
 	sessionID := uuid.New().String()
-	req := &proxy.RunServerRequest{
+	req := &entities.RunServerRequest{
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
@@ -466,7 +467,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	}
 
 	// Extract repository information from tags
-	req.RepoInfo = proxy.ExtractRepositoryInfo(req.Tags, sessionID)
+	req.RepoInfo = app.ExtractRepositoryInfo(req.Tags, sessionID)
 
 	session, err := h.sessionManager.CreateSession(c.Request().Context(), sessionID, req)
 	if err != nil {
