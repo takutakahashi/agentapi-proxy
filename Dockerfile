@@ -99,6 +99,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
+# Create npx alias script that uses claude x with BUN_BE_BUN=1
+RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
+    sudo chmod +x /usr/local/bin/npx
+
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI)
 ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
