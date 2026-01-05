@@ -1289,19 +1289,63 @@ MESSAGE_CONTENT=$(cat "$MESSAGE_FILE")
 # Build JSON payload with proper escaping using jq
 PAYLOAD=$(printf '%s' "$MESSAGE_CONTENT" | jq -Rs '{content: ., type: "user"}')
 
-RESPONSE=$(curl -sf -w "\n%{http_code}" -X POST "${AGENTAPI_URL}/message" \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD" 2>&1) || true
+MAX_SEND_RETRIES=5
+SEND_RETRY_INTERVAL=3
+SEND_SUCCESS=false
 
-HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-BODY=$(echo "$RESPONSE" | sed '$d')
+SEND_COUNT=0
+while [ $SEND_COUNT -lt $MAX_SEND_RETRIES ]; do
+    SEND_COUNT=$((SEND_COUNT + 1))
+    echo "[INITIAL-MSG] Send attempt ${SEND_COUNT}/${MAX_SEND_RETRIES}"
 
-if [ "$HTTP_CODE" = "200" ]; then
-    echo "[INITIAL-MSG] Initial message sent successfully"
+    RESPONSE=$(curl -sf -w "\n%{http_code}" -X POST "${AGENTAPI_URL}/message" \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD" 2>&1) || true
+
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+
+    if [ "$HTTP_CODE" = "200" ]; then
+        echo "[INITIAL-MSG] Initial message sent successfully (HTTP 200)"
+        SEND_SUCCESS=true
+        break
+    fi
+
+    echo "[INITIAL-MSG] Send failed (HTTP ${HTTP_CODE}), response: ${BODY}"
+
+    if [ $SEND_COUNT -lt $MAX_SEND_RETRIES ]; then
+        echo "[INITIAL-MSG] Retrying in ${SEND_RETRY_INTERVAL} seconds..."
+        sleep $SEND_RETRY_INTERVAL
+
+        # Re-check agent status before retry
+        STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
+        if [ "$STATUS" != "stable" ]; then
+            echo "[INITIAL-MSG] Agent status is '${STATUS}', waiting for stable..."
+            WAIT_COUNT=0
+            while [ $WAIT_COUNT -lt 30 ] && [ "$STATUS" != "stable" ]; do
+                sleep 1
+                STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
+                WAIT_COUNT=$((WAIT_COUNT + 1))
+            done
+            if [ "$STATUS" != "stable" ]; then
+                echo "[INITIAL-MSG] Agent not stable after waiting (status: ${STATUS})"
+            fi
+        fi
+    fi
+done
+
+if [ "$SEND_SUCCESS" = "true" ]; then
     touch "$SENT_FLAG"
+    # Verify the message was actually stored
+    sleep 1
+    USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
+    if [ "$USER_MSG_COUNT" -gt 0 ]; then
+        echo "[INITIAL-MSG] Verified: user message exists (count: ${USER_MSG_COUNT})"
+    else
+        echo "[INITIAL-MSG] WARNING: Message sent but verification shows no user messages"
+    fi
 else
-    echo "[INITIAL-MSG] ERROR: Failed to send initial message (HTTP ${HTTP_CODE})"
-    echo "[INITIAL-MSG] Response: ${BODY}"
+    echo "[INITIAL-MSG] ERROR: Failed to send initial message after ${MAX_SEND_RETRIES} attempts"
 fi
 
 # Keep container running (prevents restart loop)
