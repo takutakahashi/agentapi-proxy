@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+
+# Documentation (not needed for build)
+docs/
+*.md
+!config/*.md
+
+# Examples and test files
+examples/
+test/
+*_test.go
+integration_test.go
+
+# GitHub and CI configurations
+.github/
+
+# Helm charts (not needed for container build)
+helm/
+
+# Misc files
+misc/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Example configuration files
+*.example.*
+config.*.example.*
+
+# Netlify
+netlify/
+netlify.toml
+
+# Serena
+.serena/
+
+# Goreleaser
+.goreleaser.yml
+
+# Tagpr
+.tagpr
+
+# Tool versions
+.tool-versions

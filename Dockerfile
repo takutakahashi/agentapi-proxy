@@ -16,8 +16,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN go build -o bin/agentapi-proxy main.go
+# Build the application with optimizations
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
 
 # Build agentapi from source stage
 FROM golang:1.25-alpine AS agentapi-builder
@@ -41,15 +41,13 @@ RUN set -ex && \
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install ca-certificates, curl, and bash for mise installation, plus GitHub CLI, make, tmux, sudo, and Node.js
-RUN apt-get update && apt-get install -y ca-certificates curl bash git python3 gcc make procps tmux sudo jq && \
+# Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, and GitHub CLI
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
     apt-get install -y gh && \
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
-    apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
@@ -88,19 +86,18 @@ RUN curl https://mise.run | sh && \
 
 # Install claude code and move to /opt/claude for persistence across volume mounts
 # The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
-# We copy with -L to follow the symlink and get the actual binary
+# We copy with -L to follow the symlink and get the actual binary, then clean up
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
     sudo mkdir -p /opt/claude/bin && \
     sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
     sudo chown agentapi:agentapi /opt/claude/bin/claude && \
-    sudo chmod +x /opt/claude/bin/claude
+    sudo chmod +x /opt/claude/bin/claude && \
+    rm -rf /home/agentapi/.local/share/claude/versions /home/agentapi/.local/bin/claude 2>/dev/null || true
 
-# Install Playwright MCP server via npm (Node.js is now installed directly)
-RUN sudo npm install -g @playwright/mcp@latest
-
-# Install uv for Python package management (enables uvx)
+# Install uv for Python package management (enables uvx) and clean cache
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc
+    echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
+    rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI)
 ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
