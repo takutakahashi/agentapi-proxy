@@ -214,6 +214,14 @@ func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *en
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
+		Scope:       schedule.Scope,
+		TeamID:      schedule.TeamID,
+	}
+
+	// For team-scoped schedules, only include the team's credentials
+	// (not all teams the creating user belongs to)
+	if schedule.Scope == entities.ScopeTeam && schedule.TeamID != "" {
+		req.Teams = []string{schedule.TeamID}
 	}
 
 	// Add schedule metadata to tags
@@ -225,7 +233,10 @@ func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *en
 
 	if schedule.SessionConfig.Params != nil {
 		req.InitialMessage = schedule.SessionConfig.Params.Message
-		req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		// For team-scoped schedules, do not use the creator's github_token
+		if schedule.Scope != entities.ScopeTeam {
+			req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		}
 	}
 
 	// Extract repository information from tags
