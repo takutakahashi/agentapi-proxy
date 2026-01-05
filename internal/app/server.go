@@ -336,8 +336,9 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	}
 
 	// Determine GitHub token from Params.GithubToken
+	// Note: github_token is not passed for team-scoped sessions (use GitHub App auth instead)
 	var githubToken string
-	if startReq.Params != nil && startReq.Params.GithubToken != "" {
+	if startReq.Params != nil && startReq.Params.GithubToken != "" && startReq.Scope != entities.ScopeTeam {
 		githubToken = startReq.Params.GithubToken
 	}
 
