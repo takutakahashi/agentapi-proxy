@@ -358,8 +358,11 @@ func (c *SettingsController) canAccess(user *entities.User, name string) bool {
 		return true
 	}
 
+	// Sanitize the input name for consistent comparison
+	sanitizedInputName := c.sanitizeName(name)
+
 	// Check if it's the user's own settings
-	if c.sanitizeName(string(user.ID())) == name {
+	if c.sanitizeName(string(user.ID())) == sanitizedInputName {
 		return true
 	}
 
@@ -367,7 +370,7 @@ func (c *SettingsController) canAccess(user *entities.User, name string) bool {
 	if user.GitHubInfo() != nil {
 		for _, team := range user.GitHubInfo().Teams() {
 			teamName := team.Organization + "/" + team.TeamSlug
-			if c.sanitizeName(teamName) == name {
+			if c.sanitizeName(teamName) == sanitizedInputName {
 				return true
 			}
 		}
@@ -383,8 +386,11 @@ func (c *SettingsController) canModify(user *entities.User, name string) bool {
 		return true
 	}
 
+	// Sanitize the input name for consistent comparison
+	sanitizedInputName := c.sanitizeName(name)
+
 	// Check if it's the user's own settings
-	if c.sanitizeName(string(user.ID())) == name {
+	if c.sanitizeName(string(user.ID())) == sanitizedInputName {
 		return true
 	}
 
@@ -392,7 +398,7 @@ func (c *SettingsController) canModify(user *entities.User, name string) bool {
 	if user.GitHubInfo() != nil {
 		for _, team := range user.GitHubInfo().Teams() {
 			teamName := team.Organization + "/" + team.TeamSlug
-			if c.sanitizeName(teamName) == name {
+			if c.sanitizeName(teamName) == sanitizedInputName {
 				// Allow if user has admin or maintainer role in the team
 				if team.Role == "admin" || team.Role == "maintainer" {
 					return true
