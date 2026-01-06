@@ -416,7 +416,7 @@ func (c *SettingsController) canModify(user *entities.User, name string) bool {
 		return true
 	}
 
-	// Check if user has developer/admin role in the team
+	// Check if user belongs to the team (any team member can modify)
 	if user.GitHubInfo() != nil {
 		teams := user.GitHubInfo().Teams()
 		log.Printf("[SETTINGS_MODIFY] User has %d teams", len(teams))
@@ -425,12 +425,8 @@ func (c *SettingsController) canModify(user *entities.User, name string) bool {
 			sanitizedTeamName := c.sanitizeName(teamName)
 			log.Printf("[SETTINGS_MODIFY] Checking team: original=%q, sanitized=%q, role=%s", teamName, sanitizedTeamName, team.Role)
 			if sanitizedTeamName == sanitizedInputName {
-				// Allow if user has admin or maintainer role in the team
-				if team.Role == "admin" || team.Role == "maintainer" {
-					log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s has role %s in team %s", user.ID(), team.Role, teamName)
-					return true
-				}
-				log.Printf("[SETTINGS_MODIFY] Team matched but role=%s is not admin/maintainer", team.Role)
+				log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s is member of team %s", user.ID(), teamName)
+				return true
 			}
 		}
 	} else {
