@@ -353,54 +353,87 @@ func (c *SettingsController) DeleteSettings(ctx echo.Context) error {
 
 // canAccess checks if the user can access settings for the given name
 func (c *SettingsController) canAccess(user *entities.User, name string) bool {
+	log.Printf("[SETTINGS_ACCESS] Checking access for user=%s, userType=%s, requestedName=%s", user.ID(), user.UserType(), name)
+
 	// Admin can access all settings
 	if user.IsAdmin() {
+		log.Printf("[SETTINGS_ACCESS] GRANTED: user=%s is admin", user.ID())
 		return true
 	}
 
+	// Sanitize the input name for consistent comparison
+	sanitizedInputName := c.sanitizeName(name)
+	sanitizedUserID := c.sanitizeName(string(user.ID()))
+
+	log.Printf("[SETTINGS_ACCESS] Comparison: sanitizedInputName=%q, sanitizedUserID=%q", sanitizedInputName, sanitizedUserID)
+
 	// Check if it's the user's own settings
-	if c.sanitizeName(string(user.ID())) == name {
+	if sanitizedUserID == sanitizedInputName {
+		log.Printf("[SETTINGS_ACCESS] GRANTED: user=%s owns settings (userID match)", user.ID())
 		return true
 	}
 
 	// Check if user belongs to the team
 	if user.GitHubInfo() != nil {
-		for _, team := range user.GitHubInfo().Teams() {
+		teams := user.GitHubInfo().Teams()
+		log.Printf("[SETTINGS_ACCESS] User has %d teams", len(teams))
+		for _, team := range teams {
 			teamName := team.Organization + "/" + team.TeamSlug
-			if c.sanitizeName(teamName) == name {
+			sanitizedTeamName := c.sanitizeName(teamName)
+			log.Printf("[SETTINGS_ACCESS] Checking team: original=%q, sanitized=%q, role=%s", teamName, sanitizedTeamName, team.Role)
+			if sanitizedTeamName == sanitizedInputName {
+				log.Printf("[SETTINGS_ACCESS] GRANTED: user=%s is member of team %s", user.ID(), teamName)
 				return true
 			}
 		}
+	} else {
+		log.Printf("[SETTINGS_ACCESS] User has no GitHubInfo")
 	}
 
+	log.Printf("[SETTINGS_ACCESS] DENIED: user=%s has no access to settings %q", user.ID(), name)
 	return false
 }
 
 // canModify checks if the user can modify settings for the given name
 func (c *SettingsController) canModify(user *entities.User, name string) bool {
+	log.Printf("[SETTINGS_MODIFY] Checking modify permission for user=%s, userType=%s, requestedName=%s", user.ID(), user.UserType(), name)
+
 	// Admin can modify all settings
 	if user.IsAdmin() {
+		log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s is admin", user.ID())
 		return true
 	}
+
+	// Sanitize the input name for consistent comparison
+	sanitizedInputName := c.sanitizeName(name)
+	sanitizedUserID := c.sanitizeName(string(user.ID()))
+
+	log.Printf("[SETTINGS_MODIFY] Comparison: sanitizedInputName=%q, sanitizedUserID=%q", sanitizedInputName, sanitizedUserID)
 
 	// Check if it's the user's own settings
-	if c.sanitizeName(string(user.ID())) == name {
+	if sanitizedUserID == sanitizedInputName {
+		log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s owns settings (userID match)", user.ID())
 		return true
 	}
 
-	// Check if user has developer/admin role in the team
+	// Check if user belongs to the team (any team member can modify)
 	if user.GitHubInfo() != nil {
-		for _, team := range user.GitHubInfo().Teams() {
+		teams := user.GitHubInfo().Teams()
+		log.Printf("[SETTINGS_MODIFY] User has %d teams", len(teams))
+		for _, team := range teams {
 			teamName := team.Organization + "/" + team.TeamSlug
-			if c.sanitizeName(teamName) == name {
-				// Allow if user has admin or maintainer role in the team
-				if team.Role == "admin" || team.Role == "maintainer" {
-					return true
-				}
+			sanitizedTeamName := c.sanitizeName(teamName)
+			log.Printf("[SETTINGS_MODIFY] Checking team: original=%q, sanitized=%q, role=%s", teamName, sanitizedTeamName, team.Role)
+			if sanitizedTeamName == sanitizedInputName {
+				log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s is member of team %s", user.ID(), teamName)
+				return true
 			}
 		}
+	} else {
+		log.Printf("[SETTINGS_MODIFY] User has no GitHubInfo")
 	}
 
+	log.Printf("[SETTINGS_MODIFY] DENIED: user=%s has no modify permission for settings %q", user.ID(), name)
 	return false
 }
 
