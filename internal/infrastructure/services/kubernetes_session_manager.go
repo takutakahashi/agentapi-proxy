@@ -1460,6 +1460,20 @@ func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Contex
 	return nil
 }
 
+// getInitialMessageFromSecret retrieves the initial message from Secret for session restoration
+func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) string {
+	secretName := fmt.Sprintf("%s-initial-message", serviceName)
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		// Secret may not exist if no initial message was provided
+		return ""
+	}
+	if message, ok := secret.Data["message"]; ok {
+		return string(message)
+	}
+	return ""
+}
+
 // deleteGithubTokenSecret deletes the GitHub token Secret for a session
 func (m *KubernetesSessionManager) deleteGithubTokenSecret(ctx context.Context, session *KubernetesSession) error {
 	secretName := fmt.Sprintf("%s-github-token", session.ServiceName())
@@ -2585,6 +2599,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Labels contain only the hash for querying purposes
 	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
+	// Restore initial message from Secret
+	initialMessage := m.getInitialMessageFromSecret(context.Background(), svc.Name)
+
 	// Parse created-at from annotations
 	createdAt := time.Now()
 	if createdAtStr, ok := svc.Annotations["agentapi.proxy/created-at"]; ok {
@@ -2605,10 +2622,11 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	session := NewKubernetesSession(
 		sessionID,
 		&entities.RunServerRequest{
-			UserID: userID,
-			Tags:   tags,
-			Scope:  scope,
-			TeamID: teamID,
+			UserID:         userID,
+			Tags:           tags,
+			Scope:          scope,
+			TeamID:         teamID,
+			InitialMessage: initialMessage,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -2658,6 +2676,9 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	// Labels contain only the hash for querying purposes
 	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
+	// Restore initial message from Secret
+	initialMessage := m.getInitialMessageFromSecret(context.Background(), svc.Name)
+
 	// Parse created-at from annotations
 	createdAt := time.Now()
 	if createdAtStr, ok := svc.Annotations["agentapi.proxy/created-at"]; ok {
@@ -2678,10 +2699,11 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	session := NewKubernetesSession(
 		sessionID,
 		&entities.RunServerRequest{
-			UserID: userID,
-			Tags:   tags,
-			Scope:  scope,
-			TeamID: teamID,
+			UserID:         userID,
+			Tags:           tags,
+			Scope:          scope,
+			TeamID:         teamID,
+			InitialMessage: initialMessage,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
