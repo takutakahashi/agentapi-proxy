@@ -877,6 +877,368 @@
         }
       }
     },
+    "/webhooks": {
+      "post": {
+        "summary": "Create a new webhook",
+        "description": "Creates a new webhook configuration for receiving GitHub events.",
+        "operationId": "createWebhook",
+        "tags": ["Webhooks"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookRequest"
+              },
+              "examples": {
+                "github-pr": {
+                  "summary": "GitHub PR review webhook",
+                  "value": {
+                    "name": "PR Review Bot",
+                    "type": "github",
+                    "github": {
+                      "allowed_events": ["pull_request"],
+                      "allowed_repositories": ["myorg/*"]
+                    },
+                    "triggers": [
+                      {
+                        "name": "Review PR on open",
+                        "conditions": {
+                          "github": {
+                            "events": ["pull_request"],
+                            "actions": ["opened", "synchronize"],
+                            "base_branches": ["main"]
+                          }
+                        },
+                        "session_config": {
+                          "initial_message_template": "Review PR #{{.pull_request.Number}} in {{.repository.FullName}}"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Webhook created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "summary": "List webhooks",
+        "description": "Returns a list of webhooks. Non-admin users can see their own webhooks and team-scoped webhooks they have access to.",
+        "operationId": "listWebhooks",
+        "tags": ["Webhooks"],
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Filter by webhook type",
+            "schema": {
+              "$ref": "#/components/schemas/WebhookType"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by webhook status",
+            "schema": {
+              "$ref": "#/components/schemas/WebhookStatus"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by resource scope",
+            "schema": {
+              "$ref": "#/components/schemas/ResourceScope"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter by team ID (e.g., 'org/team-slug')",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of webhooks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "webhooks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookResponse"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}": {
+      "get": {
+        "summary": "Get a webhook",
+        "description": "Returns a specific webhook by ID.",
+        "operationId": "getWebhook",
+        "tags": ["Webhooks"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhook details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only access own webhooks"
+          },
+          "404": {
+            "description": "Webhook not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a webhook",
+        "description": "Updates an existing webhook.",
+        "operationId": "updateWebhook",
+        "tags": ["Webhooks"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Forbidden - can only update own webhooks"
+          },
+          "404": {
+            "description": "Webhook not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a webhook",
+        "description": "Deletes a webhook by ID.",
+        "operationId": "deleteWebhook",
+        "tags": ["Webhooks"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhook deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Webhook deleted successfully"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only delete own webhooks"
+          },
+          "404": {
+            "description": "Webhook not found"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/regenerate-secret": {
+      "post": {
+        "summary": "Regenerate webhook secret",
+        "description": "Generates a new secret for signature verification.",
+        "operationId": "regenerateWebhookSecret",
+        "tags": ["Webhooks"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret regenerated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "secret": {
+                      "type": "string",
+                      "description": "New secret (shown only once)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Webhook not found"
+          }
+        }
+      }
+    },
+    "/hooks/github": {
+      "post": {
+        "summary": "Receive GitHub webhook",
+        "description": "Receives webhook payloads from GitHub/GHES. Matches the payload against configured webhooks by repository and verifies the signature.",
+        "operationId": "handleGitHubWebhook",
+        "tags": ["Webhooks"],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "GitHub webhook payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook processed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "session_id": {
+                      "type": "string",
+                      "description": "Created session ID (if trigger matched)"
+                    },
+                    "webhook_id": {
+                      "type": "string"
+                    },
+                    "trigger_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or missing headers"
+          },
+          "401": {
+            "description": "Signature verification failed"
+          }
+        }
+      }
+    },
     "/settings/{name}": {
       "get": {
         "summary": "Get settings",
@@ -1521,6 +1883,341 @@
         "enum": ["active", "paused", "completed"],
         "description": "Schedule status"
       },
+      "WebhookType": {
+        "type": "string",
+        "enum": ["github", "custom"],
+        "description": "Webhook source type"
+      },
+      "WebhookStatus": {
+        "type": "string",
+        "enum": ["active", "paused"],
+        "description": "Webhook status"
+      },
+      "CreateWebhookRequest": {
+        "type": "object",
+        "required": ["name", "type", "triggers"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the webhook"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope",
+            "description": "Ownership scope of the webhook (default: user)"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
+          },
+          "type": {
+            "$ref": "#/components/schemas/WebhookType"
+          },
+          "github": {
+            "$ref": "#/components/schemas/GitHubWebhookConfig"
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookTrigger"
+            },
+            "description": "Trigger rules for starting sessions"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/WebhookSessionConfig"
+          }
+        }
+      },
+      "UpdateWebhookRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WebhookStatus"
+          },
+          "github": {
+            "$ref": "#/components/schemas/GitHubWebhookConfig"
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookTrigger"
+            }
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/WebhookSessionConfig"
+          }
+        }
+      },
+      "WebhookResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique webhook ID"
+          },
+          "name": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope"
+          },
+          "team_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WebhookStatus"
+          },
+          "type": {
+            "$ref": "#/components/schemas/WebhookType"
+          },
+          "secret": {
+            "type": "string",
+            "description": "Masked secret (last 4 chars visible)"
+          },
+          "webhook_url": {
+            "type": "string",
+            "description": "URL to configure in GitHub/external service"
+          },
+          "github": {
+            "$ref": "#/components/schemas/GitHubWebhookConfig"
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookTrigger"
+            }
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/WebhookSessionConfig"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_delivery": {
+            "$ref": "#/components/schemas/WebhookDeliveryRecord"
+          },
+          "delivery_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "GitHubWebhookConfig": {
+        "type": "object",
+        "properties": {
+          "enterprise_url": {
+            "type": "string",
+            "description": "GitHub Enterprise Server URL (empty for github.com)"
+          },
+          "allowed_events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of allowed GitHub events (empty = all)"
+          },
+          "allowed_repositories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Repository filter (e.g., 'owner/repo' or 'owner/*')"
+          }
+        }
+      },
+      "WebhookTrigger": {
+        "type": "object",
+        "required": ["name", "conditions"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "default": 100,
+            "description": "Lower = higher priority"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "conditions": {
+            "$ref": "#/components/schemas/TriggerConditions"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/WebhookSessionConfig"
+          },
+          "stop_on_match": {
+            "type": "boolean",
+            "default": true,
+            "description": "Skip subsequent triggers when matched"
+          }
+        }
+      },
+      "TriggerConditions": {
+        "type": "object",
+        "properties": {
+          "github": {
+            "$ref": "#/components/schemas/GitHubConditions"
+          },
+          "jsonpath": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JSONPathCondition"
+            },
+            "description": "JSONPath conditions for custom webhooks"
+          }
+        }
+      },
+      "GitHubConditions": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "GitHub event types (push, pull_request, etc.)"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Event actions (opened, synchronize, etc.)"
+          },
+          "branches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Branch patterns (supports glob)"
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Issue/PR labels"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "File path patterns"
+          },
+          "base_branches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "PR base branches"
+          },
+          "draft": {
+            "type": "boolean",
+            "description": "PR draft status"
+          },
+          "sender": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "GitHub usernames"
+          }
+        }
+      },
+      "JSONPathCondition": {
+        "type": "object",
+        "required": ["path", "operator", "value"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "JSONPath expression (e.g., $.event.type)"
+          },
+          "operator": {
+            "type": "string",
+            "enum": ["eq", "ne", "contains", "matches", "in", "exists"],
+            "description": "Comparison operator"
+          },
+          "value": {
+            "description": "Value to compare against"
+          }
+        }
+      },
+      "WebhookSessionConfig": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "initial_message_template": {
+            "type": "string",
+            "description": "Go template for initial message (e.g., 'Review PR #{{.pull_request.Number}}')"
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "github_token": {
+                "type": "string",
+                "description": "GitHub token for the session"
+              }
+            }
+          }
+        }
+      },
+      "WebhookDeliveryRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["processed", "skipped", "failed"]
+          },
+          "matched_trigger": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "ResourceScope": {
         "type": "string",
         "enum": ["user", "team"],
@@ -1951,6 +2648,10 @@
     {
       "name": "Schedules",
       "description": "Schedule management for delayed and recurring session execution"
+    },
+    {
+      "name": "Webhooks",
+      "description": "Webhook management for receiving GitHub events and triggering sessions"
     },
     {
       "name": "Settings",
