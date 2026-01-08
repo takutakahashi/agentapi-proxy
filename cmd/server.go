@@ -12,8 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
+	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -78,6 +80,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
 	registerScheduleHandlers(configData, proxyServer)
+
+	// Register webhook handlers (requires Kubernetes mode)
+	registerWebhookHandlers(configData, proxyServer)
 
 	// Start server in a goroutine
 	go func() {
@@ -258,4 +263,40 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 
 	log.Printf("[SCHEDULE_WORKER] Schedule worker started in namespace: %s", namespace)
 	return leaderWorker
+}
+
+// registerWebhookHandlers registers webhook REST API handlers
+func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[WEBHOOK_HANDLERS] Registering webhook handlers...")
+
+	// Create Kubernetes client
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[WEBHOOK_HANDLERS] Kubernetes config not available, skipping webhook handlers: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[WEBHOOK_HANDLERS] Failed to create Kubernetes client, skipping webhook handlers: %v", err)
+		return
+	}
+
+	// Determine namespace
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Create webhook repository (clean architecture)
+	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
+
+	// Create and register webhook handlers
+	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetSessionManager())
+	proxyServer.AddCustomHandler(webhookHandlers)
+
+	log.Printf("[WEBHOOK_HANDLERS] Webhook handlers registered successfully")
 }
