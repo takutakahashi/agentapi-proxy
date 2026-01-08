@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
@@ -290,11 +291,11 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 		namespace = "default"
 	}
 
-	// Create webhook manager
-	webhookManager := webhook.NewKubernetesManager(client, namespace)
+	// Create webhook repository (clean architecture)
+	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
 
 	// Create and register webhook handlers
-	webhookHandlers := webhook.NewHandlers(webhookManager, proxyServer.GetSessionManager())
+	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetSessionManager())
 	proxyServer.AddCustomHandler(webhookHandlers)
 
 	log.Printf("[WEBHOOK_HANDLERS] Webhook handlers registered successfully")
