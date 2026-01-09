@@ -654,7 +654,12 @@ func generateWebhookSecret(length int) (string, error) {
 func normalizeEnterpriseURL(url string) string {
 	url = strings.TrimSpace(url)
 	url = strings.TrimSuffix(url, "/")
-	return strings.ToLower(url)
+	url = strings.ToLower(url)
+	// Remove URL scheme (https:// or http://) to match GitHub Enterprise Host header
+	// GitHub sends only the hostname in X-GitHub-Enterprise-Host header
+	url = strings.TrimPrefix(url, "https://")
+	url = strings.TrimPrefix(url, "http://")
+	return url
 }
 
 func matchWebhookRepository(pattern, repository string) bool {
