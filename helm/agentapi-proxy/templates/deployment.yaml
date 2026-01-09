@@ -116,6 +116,14 @@ spec:
             - name: NOTIFICATION_BASE_URL
               value: {{ printf "https://%s" .Values.config.hostname | quote }}
             {{- end }}
+            # Webhook configuration
+            {{- if .Values.config.webhook.baseUrl }}
+            - name: AGENTAPI_WEBHOOK_BASE_URL
+              value: {{ .Values.config.webhook.baseUrl | quote }}
+            {{- else if .Values.config.hostname }}
+            - name: AGENTAPI_WEBHOOK_BASE_URL
+              value: {{ printf "https://%s" .Values.config.hostname | quote }}
+            {{- end }}
             # Kubernetes Session Management configuration
             - name: AGENTAPI_K8S_SESSION_ENABLED
               value: "true"
