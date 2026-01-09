@@ -136,6 +136,10 @@ config:
     # Webhook URL のベースURL (例: https://example.com)
     # 設定しない場合はリクエストヘッダーから自動検出
     baseUrl: ""
+    # GitHub Enterprise Server のデフォルトホスト名
+    # webhook に enterprise_url が設定されていない場合、このホスト名でマッチング
+    # 例: github.company.com (https:// なし)
+    githubEnterpriseHost: ""
 
 # Environment variables
 env: []

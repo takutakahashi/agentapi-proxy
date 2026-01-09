@@ -106,9 +106,10 @@ type webhookDeliveryRecordJSON struct {
 
 // KubernetesWebhookRepository implements WebhookRepository using Kubernetes Secrets
 type KubernetesWebhookRepository struct {
-	client    kubernetes.Interface
-	namespace string
-	mu        sync.RWMutex
+	client                      kubernetes.Interface
+	namespace                   string
+	defaultGitHubEnterpriseHost string
+	mu                          sync.RWMutex
 }
 
 // NewKubernetesWebhookRepository creates a new KubernetesWebhookRepository
@@ -117,6 +118,12 @@ func NewKubernetesWebhookRepository(client kubernetes.Interface, namespace strin
 		client:    client,
 		namespace: namespace,
 	}
+}
+
+// SetDefaultGitHubEnterpriseHost sets the default GitHub Enterprise host for webhook matching
+// When set, webhooks without explicit enterprise_url will match against this host
+func (r *KubernetesWebhookRepository) SetDefaultGitHubEnterpriseHost(host string) {
+	r.defaultGitHubEnterpriseHost = host
 }
 
 // Create creates a new webhook
@@ -313,9 +320,14 @@ func (r *KubernetesWebhookRepository) FindByGitHubRepository(ctx context.Context
 		github := w.GitHub()
 		if github != nil {
 			// Check enterprise URL match
-			webhookEnterpriseURL := normalizeEnterpriseURL(github.EnterpriseURL())
-			matcherEnterpriseURL := normalizeEnterpriseURL(matcher.EnterpriseURL)
-			if webhookEnterpriseURL != matcherEnterpriseURL {
+			// Use webhook's explicit enterprise_url if set, otherwise use the default from config
+			webhookEnterpriseURL := github.EnterpriseURL()
+			if webhookEnterpriseURL == "" && r.defaultGitHubEnterpriseHost != "" {
+				webhookEnterpriseURL = r.defaultGitHubEnterpriseHost
+			}
+			normalizedWebhookURL := normalizeEnterpriseURL(webhookEnterpriseURL)
+			normalizedMatcherURL := normalizeEnterpriseURL(matcher.EnterpriseURL)
+			if normalizedWebhookURL != normalizedMatcherURL {
 				continue
 			}
 
@@ -654,7 +666,12 @@ func generateWebhookSecret(length int) (string, error) {
 func normalizeEnterpriseURL(url string) string {
 	url = strings.TrimSpace(url)
 	url = strings.TrimSuffix(url, "/")
-	return strings.ToLower(url)
+	url = strings.ToLower(url)
+	// Remove URL scheme (https:// or http://) to match GitHub Enterprise Host header
+	// GitHub sends only the hostname in X-GitHub-Enterprise-Host header
+	url = strings.TrimPrefix(url, "https://")
+	url = strings.TrimPrefix(url, "http://")
+	return url
 }
 
 func matchWebhookRepository(pattern, repository string) bool {

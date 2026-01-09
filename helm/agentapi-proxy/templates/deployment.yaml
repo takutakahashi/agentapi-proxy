@@ -124,6 +124,13 @@ spec:
             - name: AGENTAPI_WEBHOOK_BASE_URL
               value: {{ printf "https://%s" .Values.config.hostname | quote }}
             {{- end }}
+            {{- if .Values.config.webhook.githubEnterpriseHost }}
+            - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST
+              value: {{ .Values.config.webhook.githubEnterpriseHost | quote }}
+            {{- else if and .Values.github.enterprise.enabled .Values.github.enterprise.baseUrl }}
+            - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST
+              value: {{ .Values.github.enterprise.baseUrl | trimPrefix "https://" | trimPrefix "http://" | trimSuffix "/" | quote }}
+            {{- end }}
             # Kubernetes Session Management configuration
             - name: AGENTAPI_K8S_SESSION_ENABLED
               value: "true"

@@ -21,6 +21,7 @@
 //	AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE=user
 //	AGENTAPI_ENABLE_MULTIPLE_USERS=true
 //	AGENTAPI_WEBHOOK_BASE_URL=https://example.com
+//	AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST=github.enterprise.com
 //
 // Configuration file search paths:
 //   - Current directory
@@ -165,6 +166,10 @@ type WebhookConfig struct {
 	// BaseURL is the base URL for webhook endpoints (e.g., "https://example.com")
 	// If not set, the URL will be auto-detected from incoming request headers
 	BaseURL string `json:"base_url" mapstructure:"base_url"`
+	// GitHubEnterpriseHost is the default GitHub Enterprise host for webhook matching
+	// When set, webhooks without explicit enterprise_url will match against this host
+	// Example: "github.enterprise.com" (hostname only, without https://)
+	GitHubEnterpriseHost string `json:"github_enterprise_host" mapstructure:"github_enterprise_host"`
 }
 
 // KubernetesSessionConfig represents Kubernetes session manager configuration
@@ -513,6 +518,7 @@ func bindEnvVars(v *viper.Viper) {
 
 	// Webhook configuration
 	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
+	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
 }
 
 // setDefaults sets default values for viper configuration
@@ -578,6 +584,7 @@ func setDefaults(v *viper.Viper) {
 
 	// Webhook defaults
 	v.SetDefault("webhook.base_url", "")
+	v.SetDefault("webhook.github_enterprise_host", "")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
