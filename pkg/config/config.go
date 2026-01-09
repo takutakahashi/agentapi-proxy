@@ -20,6 +20,7 @@
 //	AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE=read:user read:org
 //	AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE=user
 //	AGENTAPI_ENABLE_MULTIPLE_USERS=true
+//	AGENTAPI_WEBHOOK_BASE_URL=https://example.com
 //
 // Configuration file search paths:
 //   - Current directory
@@ -159,6 +160,13 @@ type ScheduleWorkerConfig struct {
 	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
 }
 
+// WebhookConfig represents webhook configuration
+type WebhookConfig struct {
+	// BaseURL is the base URL for webhook endpoints (e.g., "https://example.com")
+	// If not set, the URL will be auto-detected from incoming request headers
+	BaseURL string `json:"base_url" mapstructure:"base_url"`
+}
+
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {
 	// Namespace is the Kubernetes namespace where session resources are created
@@ -245,6 +253,8 @@ type Config struct {
 	KubernetesSession KubernetesSessionConfig `json:"kubernetes_session" mapstructure:"kubernetes_session"`
 	// ScheduleWorker is the configuration for the schedule worker
 	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
+	// Webhook is the configuration for webhook functionality
+	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -500,6 +510,9 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("schedule_worker.lease_duration", "AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION")
 	_ = v.BindEnv("schedule_worker.renew_deadline", "AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("schedule_worker.retry_period", "AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD")
+
+	// Webhook configuration
+	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
 }
 
 // setDefaults sets default values for viper configuration
@@ -562,6 +575,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("schedule_worker.lease_duration", "15s")
 	v.SetDefault("schedule_worker.renew_deadline", "10s")
 	v.SetDefault("schedule_worker.retry_period", "2s")
+
+	// Webhook defaults
+	v.SetDefault("webhook.base_url", "")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields

@@ -294,9 +294,14 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 	// Create webhook repository (clean architecture)
 	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
 
-	// Create and register webhook handlers
-	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetSessionManager())
+	// Create and register webhook handlers with baseURL from config
+	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetSessionManager(), configData.Webhook.BaseURL)
 	proxyServer.AddCustomHandler(webhookHandlers)
 
+	if configData.Webhook.BaseURL != "" {
+		log.Printf("[WEBHOOK_HANDLERS] Webhook base URL configured: %s", configData.Webhook.BaseURL)
+	} else {
+		log.Printf("[WEBHOOK_HANDLERS] Webhook base URL not configured, will auto-detect from request headers")
+	}
 	log.Printf("[WEBHOOK_HANDLERS] Webhook handlers registered successfully")
 }
