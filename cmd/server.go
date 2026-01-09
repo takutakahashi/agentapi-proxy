@@ -294,6 +294,12 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 	// Create webhook repository (clean architecture)
 	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
 
+	// Set default GitHub Enterprise host if configured
+	if configData.Webhook.GitHubEnterpriseHost != "" {
+		webhookRepo.SetDefaultGitHubEnterpriseHost(configData.Webhook.GitHubEnterpriseHost)
+		log.Printf("[WEBHOOK_HANDLERS] Default GitHub Enterprise host configured: %s", configData.Webhook.GitHubEnterpriseHost)
+	}
+
 	// Create and register webhook handlers with baseURL from config
 	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetSessionManager(), configData.Webhook.BaseURL)
 	proxyServer.AddCustomHandler(webhookHandlers)
