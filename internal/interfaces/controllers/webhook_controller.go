@@ -594,7 +594,7 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 		TeamID:        w.TeamID(),
 		Status:        w.Status(),
 		Type:          w.WebhookType(),
-		Secret:        w.MaskSecret(),
+		Secret:        w.Secret(),
 		WebhookURL:    c.getWebhookURL(ctx, w),
 		CreatedAt:     w.CreatedAt().Format(time.RFC3339),
 		UpdatedAt:     w.UpdatedAt().Format(time.RFC3339),
