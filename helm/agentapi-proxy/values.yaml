@@ -131,6 +131,12 @@ config:
     # 末尾のスラッシュは含めない
     baseUrl: ""
 
+  # Webhook 設定
+  webhook:
+    # Webhook URL のベースURL (例: https://example.com)
+    # 設定しない場合はリクエストヘッダーから自動検出
+    baseUrl: ""
+
 # Environment variables
 env: []
 # - name: GITHUB_TOKEN
