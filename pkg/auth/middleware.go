@@ -53,6 +53,12 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				return next(c)
 			}
 
+			// Skip auth for webhook receiver endpoints (they use HMAC signature verification)
+			if isWebhookReceiverEndpoint(path) {
+				log.Printf("Skipping auth for webhook receiver endpoint: %s", path)
+				return next(c)
+			}
+
 			var user *entities.User
 			var err error
 
@@ -244,6 +250,13 @@ func isOAuthEndpoint(path string) bool {
 		}
 	}
 	return false
+}
+
+// isWebhookReceiverEndpoint checks if the given path is a webhook receiver endpoint
+// These endpoints use HMAC signature verification instead of standard authentication
+func isWebhookReceiverEndpoint(path string) bool {
+	// Webhook receiver endpoints (not management endpoints)
+	return strings.HasPrefix(path, "/hooks/")
 }
 
 // extractAPIKeyFromAuthHeader extracts API key from Authorization header
