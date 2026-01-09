@@ -700,7 +700,7 @@ func (c *WebhookController) getWebhookURL(ctx echo.Context, w *entities.Webhook)
 
 	switch w.WebhookType() {
 	case entities.WebhookTypeGitHub:
-		return fmt.Sprintf("%s/hooks/github", baseURL)
+		return fmt.Sprintf("%s/hooks/github/%s", baseURL, w.ID())
 	default:
 		return fmt.Sprintf("%s/hooks/custom/%s", baseURL, w.ID())
 	}
