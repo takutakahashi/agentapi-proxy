@@ -332,12 +332,15 @@ func (c *WebhookGitHubController) matchTriggers(triggers []entities.WebhookTrigg
 func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger, event string, payload *GitHubPayload) bool {
 	cond := trigger.Conditions().GitHub()
 	if cond == nil {
+		log.Printf("[WEBHOOK] Trigger %s (%s): no GitHub conditions defined", trigger.ID(), trigger.Name())
 		return false
 	}
 
 	// Check event type
 	if len(cond.Events()) > 0 {
 		if !containsString(cond.Events(), event) {
+			log.Printf("[WEBHOOK] Trigger %s (%s): event mismatch - received=%s, allowed=%v",
+				trigger.ID(), trigger.Name(), event, cond.Events())
 			return false
 		}
 	}
@@ -345,6 +348,8 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 	// Check action
 	if len(cond.Actions()) > 0 {
 		if payload.Action == "" || !containsString(cond.Actions(), payload.Action) {
+			log.Printf("[WEBHOOK] Trigger %s (%s): action mismatch - received=%s, allowed=%v",
+				trigger.ID(), trigger.Name(), payload.Action, cond.Actions())
 			return false
 		}
 	}
@@ -377,14 +382,15 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 		}
 	}
 
-	// Check base branches (for PR)
+	// Check base branches (for PR only - skip if not a PR event)
 	if len(cond.BaseBranches()) > 0 {
-		if payload.PullRequest == nil || payload.PullRequest.Base == nil {
-			return false
+		// Only apply base branch filter when PR information is available
+		if payload.PullRequest != nil && payload.PullRequest.Base != nil {
+			if !matchPatterns(cond.BaseBranches(), payload.PullRequest.Base.Ref) {
+				return false
+			}
 		}
-		if !matchPatterns(cond.BaseBranches(), payload.PullRequest.Base.Ref) {
-			return false
-		}
+		// If no PR info, skip this check (allows non-PR events to pass)
 	}
 
 	// Check draft status
