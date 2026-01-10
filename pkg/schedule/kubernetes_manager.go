@@ -2,8 +2,6 @@ package schedule
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 const (
@@ -47,13 +46,6 @@ type schedulesData struct {
 // scheduleSecretName returns the Secret name for a given schedule ID
 func scheduleSecretName(id string) string {
 	return ScheduleSecretPrefix + id
-}
-
-// hashLabelValue returns a SHA256 hash of the value for use as a Kubernetes label value.
-// This is necessary because Kubernetes label values cannot contain characters like '/'.
-func hashLabelValue(value string) string {
-	hash := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(hash[:])[:16] // Use first 16 chars for brevity
 }
 
 // KubernetesManager implements Manager using Kubernetes Secrets
@@ -320,10 +312,10 @@ func (m *KubernetesManager) saveSchedule(ctx context.Context, schedule *Schedule
 		LabelSchedule:       "true",
 		LabelScheduleID:     schedule.ID,
 		LabelScheduleScope:  string(schedule.GetScope()),
-		LabelScheduleUserID: hashLabelValue(schedule.UserID), // Hash to ensure valid label value
+		LabelScheduleUserID: services.HashLabelValue(schedule.UserID),
 	}
 	if schedule.TeamID != "" {
-		labels[LabelScheduleTeamID] = hashLabelValue(schedule.TeamID) // Hash to ensure valid label value
+		labels[LabelScheduleTeamID] = services.HashLabelValue(schedule.TeamID)
 	}
 
 	secret := &corev1.Secret{

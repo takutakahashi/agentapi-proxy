@@ -37,6 +37,17 @@ func SanitizeLabelValue(s string) string {
 	return sanitized
 }
 
+// HashLabelValue creates a sha256 hash of a value for use as a Kubernetes label value
+// This allows querying by values that may contain invalid characters (e.g., "/" in team IDs)
+// The hash is truncated to 16 characters for brevity while maintaining uniqueness
+func HashLabelValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(hash[:])[:16]
+}
+
 // HashTeamID creates a sha256 hash of the team ID for use as a Kubernetes label value
 // This allows querying by team_id without sanitization issues (e.g., "/" in team IDs)
 // The hash is truncated to 63 characters to fit within Kubernetes label value limits

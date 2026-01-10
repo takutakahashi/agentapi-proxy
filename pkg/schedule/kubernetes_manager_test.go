@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 func TestKubernetesManager_Create(t *testing.T) {
@@ -526,7 +527,7 @@ func TestKubernetesManager_MigrateFromLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get secret error = %v", err)
 	}
-	expectedTeamIDHash := hashLabelValue("org/team-x")
+	expectedTeamIDHash := services.HashLabelValue("org/team-x")
 	if secret2.Labels[LabelScheduleTeamID] != expectedTeamIDHash {
 		t.Errorf("got team_id label = %v, want '%s'", secret2.Labels[LabelScheduleTeamID], expectedTeamIDHash)
 	}
@@ -586,7 +587,7 @@ func TestKubernetesManager_MigrateFromLegacy_Idempotent(t *testing.T) {
 				LabelSchedule:       "true",
 				LabelScheduleID:     "schedule-to-migrate",
 				LabelScheduleScope:  string(entities.ScopeUser),
-				LabelScheduleUserID: hashLabelValue("user-1"), // Use hashed value
+				LabelScheduleUserID: services.HashLabelValue("user-1"),
 			},
 		},
 		Data: map[string][]byte{
