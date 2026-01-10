@@ -87,12 +87,15 @@ RUN curl https://mise.run | sh && \
 # Install claude code and move to /opt/claude for persistence across volume mounts
 # The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
 # We copy with -L to follow the symlink and get the actual binary, then clean up
+# Then create a symlink at ~/.local/bin/claude -> /opt/claude/bin/claude for volume mount compatibility
 RUN curl -fsSL https://claude.ai/install.sh | bash && \
     sudo mkdir -p /opt/claude/bin && \
     sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
     sudo chown agentapi:agentapi /opt/claude/bin/claude && \
     sudo chmod +x /opt/claude/bin/claude && \
-    rm -rf /home/agentapi/.local/share/claude/versions /home/agentapi/.local/bin/claude 2>/dev/null || true
+    rm -rf /home/agentapi/.local/share/claude/versions /home/agentapi/.local/bin/claude 2>/dev/null || true && \
+    mkdir -p /home/agentapi/.local/bin && \
+    ln -sf /opt/claude/bin/claude /home/agentapi/.local/bin/claude
 
 # Install uv for Python package management (enables uvx) and clean cache
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
