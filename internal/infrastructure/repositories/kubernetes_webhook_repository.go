@@ -24,6 +24,12 @@ const (
 	LabelWebhook = "agentapi.proxy/webhook"
 	// LabelWebhookID is the label key for webhook ID
 	LabelWebhookID = "agentapi.proxy/webhook-id"
+	// LabelWebhookScope is the label key for webhook scope (user or team)
+	LabelWebhookScope = "agentapi.proxy/webhook-scope"
+	// LabelWebhookUserID is the label key for webhook user ID
+	LabelWebhookUserID = "agentapi.proxy/webhook-user-id"
+	// LabelWebhookTeamID is the label key for webhook team ID
+	LabelWebhookTeamID = "agentapi.proxy/webhook-team-id"
 	// SecretKeyWebhook is the key in the Secret data for webhook JSON
 	SecretKeyWebhook = "webhook.json"
 	// WebhookSecretPrefix is the prefix for webhook Secret names
@@ -415,14 +421,21 @@ func (r *KubernetesWebhookRepository) saveWebhook(ctx context.Context, webhook *
 	}
 
 	secretName := webhookSecretName(webhook.ID())
+	labels := map[string]string{
+		LabelWebhook:       "true",
+		LabelWebhookID:     webhook.ID(),
+		LabelWebhookScope:  string(webhook.Scope()),
+		LabelWebhookUserID: webhook.UserID(),
+	}
+	if webhook.TeamID() != "" {
+		labels[LabelWebhookTeamID] = webhook.TeamID()
+	}
+
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: r.namespace,
-			Labels: map[string]string{
-				LabelWebhook:   "true",
-				LabelWebhookID: webhook.ID(),
-			},
+			Labels:    labels,
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
@@ -441,11 +454,7 @@ func (r *KubernetesWebhookRepository) saveWebhook(ctx context.Context, webhook *
 
 			existing.Data[SecretKeyWebhook] = data
 			// Ensure labels are set
-			if existing.Labels == nil {
-				existing.Labels = make(map[string]string)
-			}
-			existing.Labels[LabelWebhook] = "true"
-			existing.Labels[LabelWebhookID] = webhook.ID()
+			existing.Labels = labels
 
 			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, existing, metav1.UpdateOptions{})
 			if err != nil {
