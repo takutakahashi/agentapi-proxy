@@ -458,7 +458,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
-		Scope:       schedule.Scope,
+		Scope:       schedule.GetScope(), // Use GetScope() to handle default value
 		TeamID:      schedule.TeamID,
 	}
 	if schedule.SessionConfig.Params != nil {
@@ -508,7 +508,7 @@ func (h *Handlers) toResponse(s *Schedule) ScheduleResponse {
 		ID:              s.ID,
 		Name:            s.Name,
 		UserID:          s.UserID,
-		Scope:           s.Scope,
+		Scope:           s.GetScope(), // Use GetScope() to handle default value
 		TeamID:          s.TeamID,
 		Status:          s.Status,
 		ScheduledAt:     s.ScheduledAt,
@@ -538,7 +538,7 @@ func (h *Handlers) userCanAccessSchedule(c echo.Context, schedule *Schedule) boo
 	}
 	return user.CanAccessResource(
 		entities.UserID(schedule.UserID),
-		string(schedule.Scope),
+		string(schedule.GetScope()), // Use GetScope() to handle default value
 		schedule.TeamID,
 	)
 }
