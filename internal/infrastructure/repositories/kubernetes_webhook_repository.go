@@ -22,16 +22,13 @@ import (
 const (
 	// LabelWebhook is the label key for webhook resources
 	LabelWebhook = "agentapi.proxy/webhook"
-	// SecretKeyWebhooks is the key in the Secret data for webhooks JSON
-	SecretKeyWebhooks = "webhooks.json"
-	// WebhookSecretName is the name of the Secret containing all webhooks
-	WebhookSecretName = "agentapi-webhooks"
+	// LabelWebhookID is the label key for webhook ID
+	LabelWebhookID = "agentapi.proxy/webhook-id"
+	// SecretKeyWebhook is the key in the Secret data for webhook JSON
+	SecretKeyWebhook = "webhook.json"
+	// WebhookSecretPrefix is the prefix for webhook Secret names
+	WebhookSecretPrefix = "agentapi-webhook-"
 )
-
-// webhookStorageData is the JSON structure stored in the Secret
-type webhookStorageData struct {
-	Webhooks []*webhookJSON `json:"webhooks"`
-}
 
 // webhookJSON is the JSON representation for storage
 type webhookJSON struct {
@@ -126,6 +123,11 @@ func (r *KubernetesWebhookRepository) SetDefaultGitHubEnterpriseHost(host string
 	r.defaultGitHubEnterpriseHost = host
 }
 
+// webhookSecretName returns the Secret name for a given webhook ID
+func webhookSecretName(id string) string {
+	return WebhookSecretPrefix + id
+}
+
 // Create creates a new webhook
 func (r *KubernetesWebhookRepository) Create(ctx context.Context, webhook *entities.Webhook) error {
 	if err := webhook.Validate(); err != nil {
@@ -135,16 +137,14 @@ func (r *KubernetesWebhookRepository) Create(ctx context.Context, webhook *entit
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	webhooks, err := r.loadWebhooks(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load webhooks: %w", err)
+	// Check if webhook already exists
+	secretName := webhookSecretName(webhook.ID())
+	_, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil {
+		return fmt.Errorf("webhook already exists: %s", webhook.ID())
 	}
-
-	// Check for duplicate ID
-	for _, w := range webhooks {
-		if w.ID() == webhook.ID() {
-			return fmt.Errorf("webhook already exists: %s", webhook.ID())
-		}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check webhook existence: %w", err)
 	}
 
 	// Generate secret if not provided
@@ -156,10 +156,9 @@ func (r *KubernetesWebhookRepository) Create(ctx context.Context, webhook *entit
 		webhook.SetSecret(secret)
 	}
 
-	webhooks = append(webhooks, webhook)
-
-	if err := r.saveWebhooks(ctx, webhooks); err != nil {
-		return fmt.Errorf("failed to save webhooks: %w", err)
+	// Save webhook to its own Secret
+	if err := r.saveWebhook(ctx, webhook); err != nil {
+		return fmt.Errorf("failed to save webhook: %w", err)
 	}
 
 	return nil
@@ -170,18 +169,7 @@ func (r *KubernetesWebhookRepository) Get(ctx context.Context, id string) (*enti
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	webhooks, err := r.loadWebhooks(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load webhooks: %w", err)
-	}
-
-	for _, w := range webhooks {
-		if w.ID() == id {
-			return w, nil
-		}
-	}
-
-	return nil, entities.ErrWebhookNotFound{ID: id}
+	return r.loadWebhook(ctx, id)
 }
 
 // List retrieves webhooks matching the filter
@@ -189,7 +177,7 @@ func (r *KubernetesWebhookRepository) List(ctx context.Context, filter repositor
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	webhooks, err := r.loadWebhooks(ctx)
+	webhooks, err := r.loadAllWebhooks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load webhooks: %w", err)
 	}
@@ -238,27 +226,20 @@ func (r *KubernetesWebhookRepository) Update(ctx context.Context, webhook *entit
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	webhooks, err := r.loadWebhooks(ctx)
+	// Check if webhook exists
+	secretName := webhookSecretName(webhook.ID())
+	_, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to load webhooks: %w", err)
-	}
-
-	found := false
-	for i, w := range webhooks {
-		if w.ID() == webhook.ID() {
-			webhook.SetUpdatedAt(time.Now())
-			webhooks[i] = webhook
-			found = true
-			break
+		if errors.IsNotFound(err) {
+			return entities.ErrWebhookNotFound{ID: webhook.ID()}
 		}
+		return fmt.Errorf("failed to get webhook: %w", err)
 	}
 
-	if !found {
-		return entities.ErrWebhookNotFound{ID: webhook.ID()}
-	}
+	webhook.SetUpdatedAt(time.Now())
 
-	if err := r.saveWebhooks(ctx, webhooks); err != nil {
-		return fmt.Errorf("failed to save webhooks: %w", err)
+	if err := r.saveWebhook(ctx, webhook); err != nil {
+		return fmt.Errorf("failed to save webhook: %w", err)
 	}
 
 	return nil
@@ -269,27 +250,13 @@ func (r *KubernetesWebhookRepository) Delete(ctx context.Context, id string) err
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	webhooks, err := r.loadWebhooks(ctx)
+	secretName := webhookSecretName(id)
+	err := r.client.CoreV1().Secrets(r.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to load webhooks: %w", err)
-	}
-
-	found := false
-	var newWebhooks []*entities.Webhook
-	for _, w := range webhooks {
-		if w.ID() == id {
-			found = true
-			continue
+		if errors.IsNotFound(err) {
+			return entities.ErrWebhookNotFound{ID: id}
 		}
-		newWebhooks = append(newWebhooks, w)
-	}
-
-	if !found {
-		return entities.ErrWebhookNotFound{ID: id}
-	}
-
-	if err := r.saveWebhooks(ctx, newWebhooks); err != nil {
-		return fmt.Errorf("failed to save webhooks: %w", err)
+		return fmt.Errorf("failed to delete webhook secret: %w", err)
 	}
 
 	return nil
@@ -300,7 +267,7 @@ func (r *KubernetesWebhookRepository) FindByGitHubRepository(ctx context.Context
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	webhooks, err := r.loadWebhooks(ctx)
+	webhooks, err := r.loadAllWebhooks(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load webhooks: %w", err)
 	}
@@ -371,87 +338,95 @@ func (r *KubernetesWebhookRepository) RecordDelivery(ctx context.Context, id str
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	webhooks, err := r.loadWebhooks(ctx)
+	webhook, err := r.loadWebhook(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to load webhooks: %w", err)
+		return err
 	}
 
-	found := false
-	for _, w := range webhooks {
-		if w.ID() == id {
-			w.SetLastDelivery(record)
-			w.IncrementDeliveryCount()
-			found = true
-			break
-		}
-	}
+	webhook.SetLastDelivery(record)
+	webhook.IncrementDeliveryCount()
 
-	if !found {
-		return entities.ErrWebhookNotFound{ID: id}
-	}
-
-	if err := r.saveWebhooks(ctx, webhooks); err != nil {
-		return fmt.Errorf("failed to save webhooks: %w", err)
+	if err := r.saveWebhook(ctx, webhook); err != nil {
+		return fmt.Errorf("failed to save webhook: %w", err)
 	}
 
 	return nil
 }
 
-// loadWebhooks loads webhooks from the Kubernetes Secret
-func (r *KubernetesWebhookRepository) loadWebhooks(ctx context.Context) ([]*entities.Webhook, error) {
-	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, WebhookSecretName, metav1.GetOptions{})
+// loadWebhook loads a single webhook from its Kubernetes Secret
+func (r *KubernetesWebhookRepository) loadWebhook(ctx context.Context, id string) (*entities.Webhook, error) {
+	secretName := webhookSecretName(id)
+	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return []*entities.Webhook{}, nil
+			return nil, entities.ErrWebhookNotFound{ID: id}
 		}
-		return nil, fmt.Errorf("failed to get webhooks secret: %w", err)
+		return nil, fmt.Errorf("failed to get webhook secret: %w", err)
 	}
 
-	data, ok := secret.Data[SecretKeyWebhooks]
+	data, ok := secret.Data[SecretKeyWebhook]
 	if !ok {
-		return []*entities.Webhook{}, nil
+		return nil, fmt.Errorf("webhook secret missing data key: %s", SecretKeyWebhook)
 	}
 
-	var wd webhookStorageData
-	if err := json.Unmarshal(data, &wd); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal webhooks: %w", err)
+	var wj webhookJSON
+	if err := json.Unmarshal(data, &wj); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal webhook: %w", err)
 	}
 
-	// Convert JSON to entities
-	result := make([]*entities.Webhook, 0, len(wd.Webhooks))
-	for _, wj := range wd.Webhooks {
-		webhook := r.jsonToEntity(wj)
+	return r.jsonToEntity(&wj), nil
+}
+
+// loadAllWebhooks loads all webhooks from Kubernetes Secrets
+func (r *KubernetesWebhookRepository) loadAllWebhooks(ctx context.Context) ([]*entities.Webhook, error) {
+	labelSelector := fmt.Sprintf("%s=true", LabelWebhook)
+	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list webhook secrets: %w", err)
+	}
+
+	result := make([]*entities.Webhook, 0, len(secrets.Items))
+	for _, secret := range secrets.Items {
+		data, ok := secret.Data[SecretKeyWebhook]
+		if !ok {
+			continue
+		}
+
+		var wj webhookJSON
+		if err := json.Unmarshal(data, &wj); err != nil {
+			continue
+		}
+
+		webhook := r.jsonToEntity(&wj)
 		result = append(result, webhook)
 	}
 
 	return result, nil
 }
 
-// saveWebhooks saves webhooks to the Kubernetes Secret
-func (r *KubernetesWebhookRepository) saveWebhooks(ctx context.Context, webhooks []*entities.Webhook) error {
-	// Convert entities to JSON
-	jsonWebhooks := make([]*webhookJSON, 0, len(webhooks))
-	for _, w := range webhooks {
-		jsonWebhooks = append(jsonWebhooks, r.entityToJSON(w))
-	}
-
-	wd := webhookStorageData{Webhooks: jsonWebhooks}
-	data, err := json.Marshal(wd)
+// saveWebhook saves a webhook to its own Kubernetes Secret
+func (r *KubernetesWebhookRepository) saveWebhook(ctx context.Context, webhook *entities.Webhook) error {
+	wj := r.entityToJSON(webhook)
+	data, err := json.Marshal(wj)
 	if err != nil {
-		return fmt.Errorf("failed to marshal webhooks: %w", err)
+		return fmt.Errorf("failed to marshal webhook: %w", err)
 	}
 
+	secretName := webhookSecretName(webhook.ID())
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      WebhookSecretName,
+			Name:      secretName,
 			Namespace: r.namespace,
 			Labels: map[string]string{
-				LabelWebhook: "true",
+				LabelWebhook:   "true",
+				LabelWebhookID: webhook.ID(),
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			SecretKeyWebhooks: data,
+			SecretKeyWebhook: data,
 		},
 	}
 
@@ -459,19 +434,26 @@ func (r *KubernetesWebhookRepository) saveWebhooks(ctx context.Context, webhooks
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			existing, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, WebhookSecretName, metav1.GetOptions{})
+			existing, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
 			if getErr != nil {
 				return fmt.Errorf("failed to get existing secret: %w", getErr)
 			}
 
-			existing.Data[SecretKeyWebhooks] = data
+			existing.Data[SecretKeyWebhook] = data
+			// Ensure labels are set
+			if existing.Labels == nil {
+				existing.Labels = make(map[string]string)
+			}
+			existing.Labels[LabelWebhook] = "true"
+			existing.Labels[LabelWebhookID] = webhook.ID()
+
 			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, existing, metav1.UpdateOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to update webhooks secret: %w", err)
+				return fmt.Errorf("failed to update webhook secret: %w", err)
 			}
 			return nil
 		}
-		return fmt.Errorf("failed to create webhooks secret: %w", err)
+		return fmt.Errorf("failed to create webhook secret: %w", err)
 	}
 
 	return nil
