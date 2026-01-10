@@ -46,7 +46,7 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
 
 	// Receiver endpoints
 	hooks := e.Group("/hooks")
-	hooks.POST("/github", h.githubController.HandleGitHubWebhook)
+	hooks.POST("/github/:id", h.githubController.HandleGitHubWebhook)
 
 	log.Printf("Registered webhook management routes")
 	return nil

@@ -1186,13 +1186,24 @@
         }
       }
     },
-    "/hooks/github": {
+    "/hooks/github/{id}": {
       "post": {
         "summary": "Receive GitHub webhook",
-        "description": "Receives webhook payloads from GitHub/GHES. Matches the payload against configured webhooks by repository and verifies the signature.",
+        "description": "Receives webhook payloads from GitHub/GHES. Uses the webhook ID from the URL to identify the webhook and verifies the signature using the webhook's secret.",
         "operationId": "handleGitHubWebhook",
         "tags": ["Webhooks"],
         "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1235,6 +1246,9 @@
           },
           "401": {
             "description": "Signature verification failed"
+          },
+          "404": {
+            "description": "Webhook not found"
           }
         }
       }

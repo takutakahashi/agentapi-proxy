@@ -138,8 +138,15 @@ type GitHubCommitAuthor struct {
 	Username string `json:"username,omitempty"`
 }
 
-// HandleGitHubWebhook handles POST /hooks/github
+// HandleGitHubWebhook handles POST /hooks/github/:id
 func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
+	// Get webhook ID from URL path
+	webhookID := ctx.Param("id")
+	if webhookID == "" {
+		log.Printf("[WEBHOOK] Missing webhook ID in URL path")
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Missing webhook ID"})
+	}
+
 	// Read the raw body for signature verification
 	body, err := io.ReadAll(ctx.Request().Body)
 	if err != nil {
@@ -152,19 +159,33 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 	event := ctx.Request().Header.Get("X-GitHub-Event")
 	deliveryID := ctx.Request().Header.Get("X-GitHub-Delivery")
 	signature := ctx.Request().Header.Get("X-Hub-Signature-256")
-	enterpriseHost := ctx.Request().Header.Get("X-GitHub-Enterprise-Host")
 
 	if event == "" {
 		log.Printf("[WEBHOOK] Missing X-GitHub-Event header")
 		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Missing X-GitHub-Event header"})
 	}
 
-	log.Printf("[WEBHOOK] Received GitHub webhook: event=%s, delivery=%s, enterprise=%s", event, deliveryID, enterpriseHost)
+	log.Printf("[WEBHOOK] Received GitHub webhook: webhook_id=%s, event=%s, delivery=%s", webhookID, event, deliveryID)
+
+	// Get the webhook by ID
+	matchedWebhook, err := c.repo.Get(ctx.Request().Context(), webhookID)
+	if err != nil {
+		log.Printf("[WEBHOOK] Failed to get webhook %s: %v", webhookID, err)
+		return ctx.JSON(http.StatusNotFound, map[string]string{"error": "Webhook not found"})
+	}
+
+	// Verify signature using the webhook's secret
+	if !c.verifyGitHubSignature(body, signature, matchedWebhook.Secret()) {
+		log.Printf("[WEBHOOK] Signature verification failed for webhook %s", webhookID)
+		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Signature verification failed"})
+	}
+
+	log.Printf("[WEBHOOK] Signature verified for webhook %s (%s)", matchedWebhook.ID(), matchedWebhook.Name())
 
 	// Handle ping event
 	if event == "ping" {
 		log.Printf("[WEBHOOK] Received ping event, responding with pong")
-		return ctx.JSON(http.StatusOK, map[string]string{"message": "pong"})
+		return ctx.JSON(http.StatusOK, map[string]string{"message": "pong", "webhook_id": matchedWebhook.ID()})
 	}
 
 	// Parse payload to extract repository info
@@ -184,41 +205,6 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 	if payload.Repository == nil {
 		log.Printf("[WEBHOOK] Payload missing repository information")
 		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Payload missing repository information"})
-	}
-
-	// Find matching webhooks
-	matcher := repositories.GitHubMatcher{
-		Repository:    payload.Repository.FullName,
-		EnterpriseURL: enterpriseHost,
-		Event:         event,
-	}
-
-	webhooks, err := c.repo.FindByGitHubRepository(ctx.Request().Context(), matcher)
-	if err != nil {
-		log.Printf("[WEBHOOK] Failed to find matching webhooks: %v", err)
-		return ctx.JSON(http.StatusInternalServerError, map[string]string{"error": "Internal server error"})
-	}
-
-	if len(webhooks) == 0 {
-		log.Printf("[WEBHOOK] No matching webhooks found for repository %s", payload.Repository.FullName)
-		return ctx.JSON(http.StatusOK, map[string]string{"message": "No matching webhooks"})
-	}
-
-	log.Printf("[WEBHOOK] Found %d candidate webhooks for repository %s", len(webhooks), payload.Repository.FullName)
-
-	// Try to verify signature against each webhook's secret
-	var matchedWebhook *entities.Webhook
-	for _, webhook := range webhooks {
-		if c.verifyGitHubSignature(body, signature, webhook.Secret()) {
-			matchedWebhook = webhook
-			log.Printf("[WEBHOOK] Signature verified for webhook %s (%s)", webhook.ID(), webhook.Name())
-			break
-		}
-	}
-
-	if matchedWebhook == nil {
-		log.Printf("[WEBHOOK] Signature verification failed for all candidate webhooks")
-		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Signature verification failed"})
 	}
 
 	// Match triggers
