@@ -526,8 +526,9 @@ func TestKubernetesManager_MigrateFromLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get secret error = %v", err)
 	}
-	if secret2.Labels[LabelScheduleTeamID] != "org/team-x" {
-		t.Errorf("got team_id label = %v, want 'org/team-x'", secret2.Labels[LabelScheduleTeamID])
+	expectedTeamIDHash := hashLabelValue("org/team-x")
+	if secret2.Labels[LabelScheduleTeamID] != expectedTeamIDHash {
+		t.Errorf("got team_id label = %v, want '%s'", secret2.Labels[LabelScheduleTeamID], expectedTeamIDHash)
 	}
 }
 
@@ -585,7 +586,7 @@ func TestKubernetesManager_MigrateFromLegacy_Idempotent(t *testing.T) {
 				LabelSchedule:       "true",
 				LabelScheduleID:     "schedule-to-migrate",
 				LabelScheduleScope:  string(entities.ScopeUser),
-				LabelScheduleUserID: "user-1",
+				LabelScheduleUserID: hashLabelValue("user-1"), // Use hashed value
 			},
 		},
 		Data: map[string][]byte{
