@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -18,17 +19,32 @@ import (
 const (
 	// LabelSchedule is the label key for schedule resources
 	LabelSchedule = "agentapi.proxy/schedule"
+	// LabelScheduleID is the label key for schedule ID
+	LabelScheduleID = "agentapi.proxy/schedule-id"
+	// LabelScheduleScope is the label key for schedule scope (user or team)
+	LabelScheduleScope = "agentapi.proxy/schedule-scope"
 	// LabelScheduleUserID is the label key for schedule user ID
 	LabelScheduleUserID = "agentapi.proxy/schedule-user-id"
-	// SecretKeySchedules is the key in the Secret data for schedules JSON
-	SecretKeySchedules = "schedules.json"
-	// ScheduleSecretName is the name of the Secret containing all schedules
-	ScheduleSecretName = "agentapi-schedules"
+	// LabelScheduleTeamID is the label key for schedule team ID
+	LabelScheduleTeamID = "agentapi.proxy/schedule-team-id"
+	// SecretKeySchedule is the key in the Secret data for single schedule JSON
+	SecretKeySchedule = "schedule.json"
+	// ScheduleSecretPrefix is the prefix for schedule Secret names
+	ScheduleSecretPrefix = "agentapi-schedule-"
+	// LegacyScheduleSecretName is the name of the legacy Secret containing all schedules
+	LegacyScheduleSecretName = "agentapi-schedules"
+	// LegacySecretKeySchedules is the key in the legacy Secret data for schedules JSON
+	LegacySecretKeySchedules = "schedules.json"
 )
 
-// schedulesData is the JSON structure stored in the Secret
+// schedulesData is the JSON structure stored in the legacy Secret
 type schedulesData struct {
 	Schedules []*Schedule `json:"schedules"`
+}
+
+// scheduleSecretName returns the Secret name for a given schedule ID
+func scheduleSecretName(id string) string {
+	return ScheduleSecretPrefix + id
 }
 
 // KubernetesManager implements Manager using Kubernetes Secrets
@@ -55,26 +71,22 @@ func (m *KubernetesManager) Create(ctx context.Context, schedule *Schedule) erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	schedules, err := m.loadSchedules(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load schedules: %w", err)
+	// Check if schedule already exists
+	secretName := scheduleSecretName(schedule.ID)
+	_, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil {
+		return fmt.Errorf("schedule already exists: %s", schedule.ID)
 	}
-
-	// Check for duplicate ID
-	for _, s := range schedules {
-		if s.ID == schedule.ID {
-			return fmt.Errorf("schedule already exists: %s", schedule.ID)
-		}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check schedule existence: %w", err)
 	}
 
 	now := time.Now()
 	schedule.CreatedAt = now
 	schedule.UpdatedAt = now
 
-	schedules = append(schedules, schedule)
-
-	if err := m.saveSchedules(ctx, schedules); err != nil {
-		return fmt.Errorf("failed to save schedules: %w", err)
+	if err := m.saveSchedule(ctx, schedule); err != nil {
+		return fmt.Errorf("failed to save schedule: %w", err)
 	}
 
 	return nil
@@ -85,18 +97,7 @@ func (m *KubernetesManager) Get(ctx context.Context, id string) (*Schedule, erro
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	schedules, err := m.loadSchedules(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load schedules: %w", err)
-	}
-
-	for _, s := range schedules {
-		if s.ID == id {
-			return s, nil
-		}
-	}
-
-	return nil, ErrScheduleNotFound{ID: id}
+	return m.loadSchedule(ctx, id)
 }
 
 // List retrieves schedules matching the filter
@@ -104,7 +105,7 @@ func (m *KubernetesManager) List(ctx context.Context, filter ScheduleFilter) ([]
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	schedules, err := m.loadSchedules(ctx)
+	schedules, err := m.loadAllSchedules(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load schedules: %w", err)
 	}
@@ -153,27 +154,20 @@ func (m *KubernetesManager) Update(ctx context.Context, schedule *Schedule) erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	schedules, err := m.loadSchedules(ctx)
+	// Check if schedule exists
+	secretName := scheduleSecretName(schedule.ID)
+	_, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to load schedules: %w", err)
-	}
-
-	found := false
-	for i, s := range schedules {
-		if s.ID == schedule.ID {
-			schedule.UpdatedAt = time.Now()
-			schedules[i] = schedule
-			found = true
-			break
+		if errors.IsNotFound(err) {
+			return ErrScheduleNotFound{ID: schedule.ID}
 		}
+		return fmt.Errorf("failed to get schedule: %w", err)
 	}
 
-	if !found {
-		return ErrScheduleNotFound{ID: schedule.ID}
-	}
+	schedule.UpdatedAt = time.Now()
 
-	if err := m.saveSchedules(ctx, schedules); err != nil {
-		return fmt.Errorf("failed to save schedules: %w", err)
+	if err := m.saveSchedule(ctx, schedule); err != nil {
+		return fmt.Errorf("failed to save schedule: %w", err)
 	}
 
 	return nil
@@ -184,30 +178,7 @@ func (m *KubernetesManager) Delete(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	schedules, err := m.loadSchedules(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load schedules: %w", err)
-	}
-
-	found := false
-	var newSchedules []*Schedule
-	for _, s := range schedules {
-		if s.ID == id {
-			found = true
-			continue
-		}
-		newSchedules = append(newSchedules, s)
-	}
-
-	if !found {
-		return ErrScheduleNotFound{ID: id}
-	}
-
-	if err := m.saveSchedules(ctx, newSchedules); err != nil {
-		return fmt.Errorf("failed to save schedules: %w", err)
-	}
-
-	return nil
+	return m.deleteScheduleSecret(ctx, id)
 }
 
 // GetDueSchedules returns schedules that are due for execution
@@ -215,7 +186,7 @@ func (m *KubernetesManager) GetDueSchedules(ctx context.Context, now time.Time) 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	schedules, err := m.loadSchedules(ctx)
+	schedules, err := m.loadAllSchedules(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load schedules: %w", err)
 	}
@@ -235,28 +206,17 @@ func (m *KubernetesManager) RecordExecution(ctx context.Context, id string, reco
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	schedules, err := m.loadSchedules(ctx)
+	schedule, err := m.loadSchedule(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to load schedules: %w", err)
+		return err
 	}
 
-	found := false
-	for _, s := range schedules {
-		if s.ID == id {
-			s.LastExecution = &record
-			s.ExecutionCount++
-			s.UpdatedAt = time.Now()
-			found = true
-			break
-		}
-	}
+	schedule.LastExecution = &record
+	schedule.ExecutionCount++
+	schedule.UpdatedAt = time.Now()
 
-	if !found {
-		return ErrScheduleNotFound{ID: id}
-	}
-
-	if err := m.saveSchedules(ctx, schedules); err != nil {
-		return fmt.Errorf("failed to save schedules: %w", err)
+	if err := m.saveSchedule(ctx, schedule); err != nil {
+		return fmt.Errorf("failed to save schedule: %w", err)
 	}
 
 	return nil
@@ -267,74 +227,105 @@ func (m *KubernetesManager) UpdateNextExecution(ctx context.Context, id string, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	schedules, err := m.loadSchedules(ctx)
+	schedule, err := m.loadSchedule(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to load schedules: %w", err)
+		return err
 	}
 
-	found := false
-	for _, s := range schedules {
-		if s.ID == id {
-			s.NextExecutionAt = &nextAt
-			s.UpdatedAt = time.Now()
-			found = true
-			break
-		}
-	}
+	schedule.NextExecutionAt = &nextAt
+	schedule.UpdatedAt = time.Now()
 
-	if !found {
-		return ErrScheduleNotFound{ID: id}
-	}
-
-	if err := m.saveSchedules(ctx, schedules); err != nil {
-		return fmt.Errorf("failed to save schedules: %w", err)
+	if err := m.saveSchedule(ctx, schedule); err != nil {
+		return fmt.Errorf("failed to save schedule: %w", err)
 	}
 
 	return nil
 }
 
-// loadSchedules loads schedules from the Kubernetes Secret
-func (m *KubernetesManager) loadSchedules(ctx context.Context) ([]*Schedule, error) {
-	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, ScheduleSecretName, metav1.GetOptions{})
+// loadSchedule loads a single schedule from its Kubernetes Secret
+func (m *KubernetesManager) loadSchedule(ctx context.Context, id string) (*Schedule, error) {
+	secretName := scheduleSecretName(id)
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return []*Schedule{}, nil
+			return nil, ErrScheduleNotFound{ID: id}
 		}
-		return nil, fmt.Errorf("failed to get schedules secret: %w", err)
+		return nil, fmt.Errorf("failed to get schedule secret: %w", err)
 	}
 
-	data, ok := secret.Data[SecretKeySchedules]
+	data, ok := secret.Data[SecretKeySchedule]
 	if !ok {
-		return []*Schedule{}, nil
+		return nil, fmt.Errorf("schedule secret missing data key: %s", SecretKeySchedule)
 	}
 
-	var sd schedulesData
-	if err := json.Unmarshal(data, &sd); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal schedules: %w", err)
+	var schedule Schedule
+	if err := json.Unmarshal(data, &schedule); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal schedule: %w", err)
 	}
 
-	return sd.Schedules, nil
+	return &schedule, nil
 }
 
-// saveSchedules saves schedules to the Kubernetes Secret
-func (m *KubernetesManager) saveSchedules(ctx context.Context, schedules []*Schedule) error {
-	sd := schedulesData{Schedules: schedules}
-	data, err := json.Marshal(sd)
+// loadAllSchedules loads all schedules from Kubernetes Secrets using label selector
+func (m *KubernetesManager) loadAllSchedules(ctx context.Context) ([]*Schedule, error) {
+	labelSelector := fmt.Sprintf("%s=true", LabelSchedule)
+	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to marshal schedules: %w", err)
+		return nil, fmt.Errorf("failed to list schedule secrets: %w", err)
+	}
+
+	result := make([]*Schedule, 0, len(secrets.Items))
+	for _, secret := range secrets.Items {
+		// Skip legacy secret
+		if secret.Name == LegacyScheduleSecretName {
+			continue
+		}
+
+		data, ok := secret.Data[SecretKeySchedule]
+		if !ok {
+			continue
+		}
+
+		var schedule Schedule
+		if err := json.Unmarshal(data, &schedule); err != nil {
+			continue
+		}
+
+		result = append(result, &schedule)
+	}
+
+	return result, nil
+}
+
+// saveSchedule saves a schedule to its own Kubernetes Secret
+func (m *KubernetesManager) saveSchedule(ctx context.Context, schedule *Schedule) error {
+	data, err := json.Marshal(schedule)
+	if err != nil {
+		return fmt.Errorf("failed to marshal schedule: %w", err)
+	}
+
+	secretName := scheduleSecretName(schedule.ID)
+	labels := map[string]string{
+		LabelSchedule:       "true",
+		LabelScheduleID:     schedule.ID,
+		LabelScheduleScope:  string(schedule.GetScope()),
+		LabelScheduleUserID: schedule.UserID,
+	}
+	if schedule.TeamID != "" {
+		labels[LabelScheduleTeamID] = schedule.TeamID
 	}
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      ScheduleSecretName,
+			Name:      secretName,
 			Namespace: m.namespace,
-			Labels: map[string]string{
-				LabelSchedule: "true",
-			},
+			Labels:    labels,
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			SecretKeySchedules: data,
+			SecretKeySchedule: data,
 		},
 	}
 
@@ -342,21 +333,109 @@ func (m *KubernetesManager) saveSchedules(ctx context.Context, schedules []*Sche
 	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			// Get existing secret to preserve any other data
-			existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, ScheduleSecretName, metav1.GetOptions{})
+			existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
 			if getErr != nil {
 				return fmt.Errorf("failed to get existing secret: %w", getErr)
 			}
 
-			existing.Data[SecretKeySchedules] = data
+			existing.Data[SecretKeySchedule] = data
+			existing.Labels = labels
+
 			_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, existing, metav1.UpdateOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to update schedules secret: %w", err)
+				return fmt.Errorf("failed to update schedule secret: %w", err)
 			}
 			return nil
 		}
-		return fmt.Errorf("failed to create schedules secret: %w", err)
+		return fmt.Errorf("failed to create schedule secret: %w", err)
 	}
+
+	return nil
+}
+
+// deleteScheduleSecret deletes a schedule's Kubernetes Secret
+func (m *KubernetesManager) deleteScheduleSecret(ctx context.Context, id string) error {
+	secretName := scheduleSecretName(id)
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return ErrScheduleNotFound{ID: id}
+		}
+		return fmt.Errorf("failed to delete schedule secret: %w", err)
+	}
+	return nil
+}
+
+// MigrateFromLegacy migrates schedules from the legacy single-Secret format
+// to individual Secrets per schedule. This is idempotent - schedules that
+// already exist as individual Secrets are skipped. The legacy Secret is
+// preserved after migration for backup purposes.
+func (m *KubernetesManager) MigrateFromLegacy(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check if legacy Secret exists
+	legacySecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, LegacyScheduleSecretName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Printf("[SCHEDULE_MIGRATION] No legacy secret found, skipping migration")
+			return nil
+		}
+		return fmt.Errorf("failed to get legacy secret: %w", err)
+	}
+
+	// Parse legacy schedules
+	data, ok := legacySecret.Data[LegacySecretKeySchedules]
+	if !ok {
+		log.Printf("[SCHEDULE_MIGRATION] Legacy secret has no schedules data, skipping migration")
+		return nil
+	}
+
+	var sd schedulesData
+	if err := json.Unmarshal(data, &sd); err != nil {
+		return fmt.Errorf("failed to unmarshal legacy schedules: %w", err)
+	}
+
+	if len(sd.Schedules) == 0 {
+		log.Printf("[SCHEDULE_MIGRATION] No schedules in legacy secret, skipping migration")
+		return nil
+	}
+
+	log.Printf("[SCHEDULE_MIGRATION] Found %d schedules in legacy secret, starting migration", len(sd.Schedules))
+
+	migratedCount := 0
+	skippedCount := 0
+	errorCount := 0
+
+	for _, schedule := range sd.Schedules {
+		// Check if individual Secret already exists
+		secretName := scheduleSecretName(schedule.ID)
+		_, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+		if err == nil {
+			// Schedule already migrated
+			log.Printf("[SCHEDULE_MIGRATION] Schedule %s already exists, skipping", schedule.ID)
+			skippedCount++
+			continue
+		}
+		if !errors.IsNotFound(err) {
+			log.Printf("[SCHEDULE_MIGRATION] Error checking schedule %s: %v, continuing", schedule.ID, err)
+			errorCount++
+			continue
+		}
+
+		// Migrate schedule to individual Secret
+		if err := m.saveSchedule(ctx, schedule); err != nil {
+			log.Printf("[SCHEDULE_MIGRATION] Failed to migrate schedule %s: %v, continuing", schedule.ID, err)
+			errorCount++
+			continue
+		}
+
+		log.Printf("[SCHEDULE_MIGRATION] Migrated schedule %s (%s)", schedule.ID, schedule.Name)
+		migratedCount++
+	}
+
+	log.Printf("[SCHEDULE_MIGRATION] Migration complete: %d migrated, %d skipped, %d errors",
+		migratedCount, skippedCount, errorCount)
 
 	return nil
 }

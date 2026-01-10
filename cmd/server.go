@@ -174,6 +174,12 @@ func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server
 	// Create schedule manager
 	scheduleManager := schedule.NewKubernetesManager(client, namespace)
 
+	// Run migration from legacy single-Secret format to individual Secrets
+	if err := scheduleManager.MigrateFromLegacy(context.Background()); err != nil {
+		log.Printf("[SCHEDULE_HANDLERS] Migration from legacy format failed: %v", err)
+		// Continue even if migration fails - existing individual Secrets will still work
+	}
+
 	// Create and register schedule handlers
 	scheduleHandlers := schedule.NewHandlers(scheduleManager, proxyServer.GetSessionManager())
 	proxyServer.AddCustomHandler(scheduleHandlers)
