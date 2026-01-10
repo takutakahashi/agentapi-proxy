@@ -253,7 +253,7 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 		// Scope isolation: resources are only visible within their respective scope
 		// - scope=team filter: only show team-scoped resources
 		// - scope=user filter or no filter: only show user-scoped resources
-		scheduleScope := s.Scope
+		scheduleScope := s.GetScope() // Use GetScope() to handle default value
 		if scopeFilter == string(entities.ScopeTeam) {
 			// Only show team-scoped schedules
 			if scheduleScope != entities.ScopeTeam {
