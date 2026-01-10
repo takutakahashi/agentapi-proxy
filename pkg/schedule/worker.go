@@ -210,17 +210,18 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 
 // buildRunServerRequest builds a RunServerRequest from a schedule
 func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *entities.RunServerRequest {
+	scheduleScope := schedule.GetScope() // Use GetScope() to handle default value
 	req := &entities.RunServerRequest{
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
-		Scope:       schedule.Scope,
+		Scope:       scheduleScope,
 		TeamID:      schedule.TeamID,
 	}
 
 	// For team-scoped schedules, only include the team's credentials
 	// (not all teams the creating user belongs to)
-	if schedule.Scope == entities.ScopeTeam && schedule.TeamID != "" {
+	if scheduleScope == entities.ScopeTeam && schedule.TeamID != "" {
 		req.Teams = []string{schedule.TeamID}
 	}
 
@@ -234,7 +235,7 @@ func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *en
 	if schedule.SessionConfig.Params != nil {
 		req.InitialMessage = schedule.SessionConfig.Params.Message
 		// For team-scoped schedules, do not use the creator's github_token
-		if schedule.Scope != entities.ScopeTeam {
+		if scheduleScope != entities.ScopeTeam {
 			req.GithubToken = schedule.SessionConfig.Params.GithubToken
 		}
 	}
