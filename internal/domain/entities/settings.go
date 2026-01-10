@@ -5,6 +5,16 @@ import (
 	"time"
 )
 
+// AuthMode represents the authentication mode for Claude Code
+type AuthMode string
+
+const (
+	// AuthModeOAuth uses Claude Code OAuth token
+	AuthModeOAuth AuthMode = "oauth"
+	// AuthModeBedrock uses AWS Bedrock
+	AuthModeBedrock AuthMode = "bedrock"
+)
+
 // BedrockSettings represents AWS Bedrock configuration
 type BedrockSettings struct {
 	enabled         bool
@@ -84,13 +94,15 @@ func (b *BedrockSettings) Validate() error {
 
 // Settings represents user or team settings
 type Settings struct {
-	name           string
-	bedrock        *BedrockSettings
-	mcpServers     *MCPServersSettings
-	marketplaces   *MarketplacesSettings
-	enabledPlugins []string // plugin@marketplace format (e.g., "commit@claude-plugins-official")
-	createdAt      time.Time
-	updatedAt      time.Time
+	name                 string
+	bedrock              *BedrockSettings
+	mcpServers           *MCPServersSettings
+	marketplaces         *MarketplacesSettings
+	claudeCodeOAuthToken string   // Claude Code OAuth token
+	authMode             AuthMode // Authentication mode (oauth or bedrock)
+	enabledPlugins       []string // plugin@marketplace format (e.g., "commit@claude-plugins-official")
+	createdAt            time.Time
+	updatedAt            time.Time
 }
 
 // NewSettings creates a new Settings
@@ -170,6 +182,33 @@ func (s *Settings) SetCreatedAt(t time.Time) {
 // SetUpdatedAt sets the update time (for loading from storage)
 func (s *Settings) SetUpdatedAt(t time.Time) {
 	s.updatedAt = t
+}
+
+// ClaudeCodeOAuthToken returns the Claude Code OAuth token
+func (s *Settings) ClaudeCodeOAuthToken() string {
+	return s.claudeCodeOAuthToken
+}
+
+// SetClaudeCodeOAuthToken sets the Claude Code OAuth token
+func (s *Settings) SetClaudeCodeOAuthToken(token string) {
+	s.claudeCodeOAuthToken = token
+	s.updatedAt = time.Now()
+}
+
+// HasClaudeCodeOAuthToken returns true if a Claude Code OAuth token is set
+func (s *Settings) HasClaudeCodeOAuthToken() bool {
+	return s.claudeCodeOAuthToken != ""
+}
+
+// AuthMode returns the authentication mode
+func (s *Settings) AuthMode() AuthMode {
+	return s.authMode
+}
+
+// SetAuthMode sets the authentication mode
+func (s *Settings) SetAuthMode(mode AuthMode) {
+	s.authMode = mode
+	s.updatedAt = time.Now()
 }
 
 // Validate validates the Settings

@@ -75,10 +75,12 @@ type MarketplaceRequest struct {
 
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
-	Bedrock        *BedrockSettingsRequest        `json:"bedrock"`
-	MCPServers     map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
-	Marketplaces   map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
-	EnabledPlugins []string                       `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	Bedrock              *BedrockSettingsRequest        `json:"bedrock"`
+	MCPServers           map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
+	Marketplaces         map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
+	ClaudeCodeOAuthToken *string                        `json:"claude_code_oauth_token,omitempty"`
+	AuthMode             *string                        `json:"auth_mode,omitempty"`       // "oauth" or "bedrock"
+	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"` // plugin@marketplace format
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -108,13 +110,15 @@ type MarketplaceResponse struct {
 
 // SettingsResponse is the response body for settings
 type SettingsResponse struct {
-	Name           string                          `json:"name"`
-	Bedrock        *BedrockSettingsResponse        `json:"bedrock,omitempty"`
-	MCPServers     map[string]*MCPServerResponse   `json:"mcp_servers,omitempty"`
-	Marketplaces   map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
-	EnabledPlugins []string                        `json:"enabled_plugins,omitempty"` // plugin@marketplace format
-	CreatedAt      string                          `json:"created_at"`
-	UpdatedAt      string                          `json:"updated_at"`
+	Name                    string                          `json:"name"`
+	Bedrock                 *BedrockSettingsResponse        `json:"bedrock,omitempty"`
+	MCPServers              map[string]*MCPServerResponse   `json:"mcp_servers,omitempty"`
+	Marketplaces            map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
+	HasClaudeCodeOAuthToken bool                            `json:"has_claude_code_oauth_token"`
+	AuthMode                string                          `json:"auth_mode,omitempty"`
+	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	CreatedAt               string                          `json:"created_at"`
+	UpdatedAt               string                          `json:"updated_at"`
 }
 
 // GetSettings handles GET /settings/:name
@@ -259,6 +263,15 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	if req.EnabledPlugins != nil {
 		settings.SetEnabledPlugins(req.EnabledPlugins)
 	}
+
+	// Update Claude Code OAuth Token
+	if req.ClaudeCodeOAuthToken != nil {
+		settings.SetClaudeCodeOAuthToken(*req.ClaudeCodeOAuthToken)
+	}
+
+	// Determine and set auth_mode
+	authMode := c.determineAuthMode(settings, req.AuthMode)
+	settings.SetAuthMode(authMode)
 
 	// Validate
 	if err := settings.Validate(); err != nil {
@@ -452,12 +465,44 @@ func (c *SettingsController) sanitizeName(s string) string {
 	return sanitized
 }
 
+// determineAuthMode determines the auth mode based on request and available credentials
+func (c *SettingsController) determineAuthMode(settings *entities.Settings, requestedMode *string) entities.AuthMode {
+	// 1. If explicitly specified, use that mode (if credentials are available)
+	if requestedMode != nil && *requestedMode != "" {
+		mode := entities.AuthMode(*requestedMode)
+		switch mode {
+		case entities.AuthModeOAuth:
+			if settings.HasClaudeCodeOAuthToken() {
+				return entities.AuthModeOAuth
+			}
+		case entities.AuthModeBedrock:
+			if bedrock := settings.Bedrock(); bedrock != nil && bedrock.Enabled() {
+				return entities.AuthModeBedrock
+			}
+		}
+		// Requested mode's credentials not available, fall through to auto-detection
+	}
+
+	// 2. Auto-detect: OAuth takes priority
+	if settings.HasClaudeCodeOAuthToken() {
+		return entities.AuthModeOAuth
+	}
+	if bedrock := settings.Bedrock(); bedrock != nil && bedrock.Enabled() {
+		return entities.AuthModeBedrock
+	}
+
+	// 3. No credentials available
+	return ""
+}
+
 // toResponse converts Settings entity to response
 func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsResponse {
 	resp := &SettingsResponse{
-		Name:      settings.Name(),
-		CreatedAt: settings.CreatedAt().Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt: settings.UpdatedAt().Format("2006-01-02T15:04:05Z07:00"),
+		Name:                    settings.Name(),
+		HasClaudeCodeOAuthToken: settings.HasClaudeCodeOAuthToken(),
+		AuthMode:                string(settings.AuthMode()),
+		CreatedAt:               settings.CreatedAt().Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:               settings.UpdatedAt().Format("2006-01-02T15:04:05Z07:00"),
 	}
 
 	if bedrock := settings.Bedrock(); bedrock != nil {

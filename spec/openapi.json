@@ -2258,6 +2258,15 @@
             },
             "description": "Claude Code plugin marketplace configurations keyed by marketplace name"
           },
+          "claude_code_oauth_token": {
+            "type": "string",
+            "description": "Claude Code OAuth token for authentication. Set to empty string to remove."
+          },
+          "auth_mode": {
+            "type": "string",
+            "enum": ["oauth", "bedrock"],
+            "description": "Authentication mode. If not set, oauth is preferred when both credentials are available."
+          },
           "enabled_plugins": {
             "type": "array",
             "items": {
@@ -2369,6 +2378,15 @@
               "$ref": "#/components/schemas/MarketplaceResponse"
             },
             "description": "Claude Code plugin marketplace configurations"
+          },
+          "has_claude_code_oauth_token": {
+            "type": "boolean",
+            "description": "Whether a Claude Code OAuth token is configured"
+          },
+          "auth_mode": {
+            "type": "string",
+            "enum": ["oauth", "bedrock", ""],
+            "description": "The determined authentication mode being used"
           },
           "enabled_plugins": {
             "type": "array",
