@@ -136,32 +136,53 @@ func (s *KubernetesCredentialsSecretSyncer) secretName(name string) string {
 	return CredentialsSecretPrefix + sanitizeSecretName(name)
 }
 
-// buildSecretData builds the secret data from settings
+// buildSecretData builds the secret data from settings based on auth_mode
 func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.Settings) map[string][]byte {
 	data := make(map[string][]byte)
 
-	bedrock := settings.Bedrock()
-	if bedrock != nil && bedrock.Enabled() {
-		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
+	// Build secret data based on the configured auth_mode
+	switch settings.AuthMode() {
+	case entities.AuthModeOAuth:
+		data["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(settings.ClaudeCodeOAuthToken())
+		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
 
-		if bedrock.Model() != "" {
-			data["ANTHROPIC_MODEL"] = []byte(bedrock.Model())
-		}
-		if bedrock.AccessKeyID() != "" {
-			data["AWS_ACCESS_KEY_ID"] = []byte(bedrock.AccessKeyID())
-		}
-		if bedrock.SecretAccessKey() != "" {
-			data["AWS_SECRET_ACCESS_KEY"] = []byte(bedrock.SecretAccessKey())
-		}
-		if bedrock.RoleARN() != "" {
-			data["AWS_ROLE_ARN"] = []byte(bedrock.RoleARN())
-		}
-		if bedrock.Profile() != "" {
-			data["AWS_PROFILE"] = []byte(bedrock.Profile())
+	case entities.AuthModeBedrock:
+		s.addBedrockCredentials(data, settings.Bedrock())
+
+	default:
+		// Fallback: legacy behavior - use Bedrock if enabled (for backward compatibility)
+		bedrock := settings.Bedrock()
+		if bedrock != nil && bedrock.Enabled() {
+			s.addBedrockCredentials(data, bedrock)
 		}
 	}
 
 	return data
+}
+
+// addBedrockCredentials adds Bedrock-related credentials to the secret data
+func (s *KubernetesCredentialsSecretSyncer) addBedrockCredentials(data map[string][]byte, bedrock *entities.BedrockSettings) {
+	if bedrock == nil {
+		return
+	}
+
+	data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
+
+	if bedrock.Model() != "" {
+		data["ANTHROPIC_MODEL"] = []byte(bedrock.Model())
+	}
+	if bedrock.AccessKeyID() != "" {
+		data["AWS_ACCESS_KEY_ID"] = []byte(bedrock.AccessKeyID())
+	}
+	if bedrock.SecretAccessKey() != "" {
+		data["AWS_SECRET_ACCESS_KEY"] = []byte(bedrock.SecretAccessKey())
+	}
+	if bedrock.RoleARN() != "" {
+		data["AWS_ROLE_ARN"] = []byte(bedrock.RoleARN())
+	}
+	if bedrock.Profile() != "" {
+		data["AWS_PROFILE"] = []byte(bedrock.Profile())
+	}
 }
 
 // sanitizeSecretName sanitizes a string to be used as a Kubernetes Secret name

@@ -23,6 +23,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync(t *testing.T) {
 	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
 	bedrock.SetSecretAccessKey("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
 	settings.SetBedrock(bedrock)
+	settings.SetAuthMode(entities.AuthModeBedrock) // Set auth mode to enable credential syncing
 
 	err := syncer.Sync(ctx, settings)
 	if err != nil {
@@ -68,6 +69,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_Update(t *testing.T) {
 	bedrock := entities.NewBedrockSettings(true)
 	bedrock.SetAccessKeyID("INITIAL_KEY")
 	settings.SetBedrock(bedrock)
+	settings.SetAuthMode(entities.AuthModeBedrock)
 
 	err := syncer.Sync(ctx, settings)
 	if err != nil {
@@ -78,6 +80,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_Update(t *testing.T) {
 	newBedrock := entities.NewBedrockSettings(true)
 	newBedrock.SetAccessKeyID("UPDATED_KEY")
 	settings.SetBedrock(newBedrock)
+	settings.SetAuthMode(entities.AuthModeBedrock)
 
 	err = syncer.Sync(ctx, settings)
 	if err != nil {
@@ -108,6 +111,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_AllFields(t *testing.T) {
 	bedrock.SetRoleARN("arn:aws:iam::123456789012:role/ExampleRole")
 	bedrock.SetProfile("production")
 	settings.SetBedrock(bedrock)
+	settings.SetAuthMode(entities.AuthModeBedrock)
 
 	err := syncer.Sync(ctx, settings)
 	if err != nil {
@@ -135,30 +139,102 @@ func TestKubernetesCredentialsSecretSyncer_Sync_AllFields(t *testing.T) {
 	}
 }
 
-func TestKubernetesCredentialsSecretSyncer_Sync_DisabledBedrock(t *testing.T) {
+func TestKubernetesCredentialsSecretSyncer_Sync_LegacyBedrockWithoutAuthMode(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
 	ctx := context.Background()
 
-	// Create settings with disabled Bedrock
-	settings := entities.NewSettings("disabled-bedrock")
-	bedrock := entities.NewBedrockSettings(false)
+	// Create settings with Bedrock enabled but without auth_mode set (legacy behavior)
+	settings := entities.NewSettings("legacy-bedrock")
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("anthropic.claude-sonnet-4-20250514-v1:0")
+	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
+	bedrock.SetSecretAccessKey("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
 	settings.SetBedrock(bedrock)
+	// Note: auth_mode is NOT set - this tests backward compatibility
 
 	err := syncer.Sync(ctx, settings)
 	if err != nil {
 		t.Fatalf("Failed to sync: %v", err)
 	}
 
-	// Secret should be created but with no Bedrock data
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-disabled-bedrock", metav1.GetOptions{})
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-legacy-bedrock", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
 
-	// Should not have CLAUDE_CODE_USE_BEDROCK key
+	// Should have Bedrock credentials due to legacy fallback behavior
+	if string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]) != "1" {
+		t.Errorf("Expected CLAUDE_CODE_USE_BEDROCK to be '1' for legacy behavior, got '%s'", string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]))
+	}
+	if string(secret.Data["ANTHROPIC_MODEL"]) != "anthropic.claude-sonnet-4-20250514-v1:0" {
+		t.Errorf("Expected ANTHROPIC_MODEL to match, got '%s'", string(secret.Data["ANTHROPIC_MODEL"]))
+	}
+	if string(secret.Data["AWS_ACCESS_KEY_ID"]) != "AKIAIOSFODNN7EXAMPLE" {
+		t.Errorf("Expected AWS_ACCESS_KEY_ID to match, got '%s'", string(secret.Data["AWS_ACCESS_KEY_ID"]))
+	}
+	if string(secret.Data["AWS_SECRET_ACCESS_KEY"]) != "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" {
+		t.Errorf("Expected AWS_SECRET_ACCESS_KEY to match, got '%s'", string(secret.Data["AWS_SECRET_ACCESS_KEY"]))
+	}
+}
+
+func TestKubernetesCredentialsSecretSyncer_Sync_NoAuthModeDisabledBedrock(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
+	ctx := context.Background()
+
+	// Create settings with Bedrock disabled and no auth_mode
+	settings := entities.NewSettings("no-auth-disabled")
+	bedrock := entities.NewBedrockSettings(false) // Bedrock disabled
+	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
+	settings.SetBedrock(bedrock)
+	// Note: auth_mode is not set
+
+	err := syncer.Sync(ctx, settings)
+	if err != nil {
+		t.Fatalf("Failed to sync: %v", err)
+	}
+
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-no-auth-disabled", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get secret: %v", err)
+	}
+
+	// Should not have any credential keys when Bedrock is disabled and no auth_mode
 	if _, ok := secret.Data["CLAUDE_CODE_USE_BEDROCK"]; ok {
-		t.Error("Expected no CLAUDE_CODE_USE_BEDROCK key for disabled bedrock")
+		t.Error("Expected no CLAUDE_CODE_USE_BEDROCK key when Bedrock is disabled")
+	}
+	if _, ok := secret.Data["CLAUDE_CODE_OAUTH_TOKEN"]; ok {
+		t.Error("Expected no CLAUDE_CODE_OAUTH_TOKEN key when no OAuth token is set")
+	}
+}
+
+func TestKubernetesCredentialsSecretSyncer_Sync_OAuthMode(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
+	ctx := context.Background()
+
+	// Create settings with OAuth token
+	settings := entities.NewSettings("oauth-user")
+	settings.SetClaudeCodeOAuthToken("sk-ant-oauth-token-example")
+	settings.SetAuthMode(entities.AuthModeOAuth)
+
+	err := syncer.Sync(ctx, settings)
+	if err != nil {
+		t.Fatalf("Failed to sync: %v", err)
+	}
+
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-oauth-user", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get secret: %v", err)
+	}
+
+	// Verify OAuth token is set and Bedrock is disabled
+	if string(secret.Data["CLAUDE_CODE_OAUTH_TOKEN"]) != "sk-ant-oauth-token-example" {
+		t.Errorf("Expected CLAUDE_CODE_OAUTH_TOKEN to be 'sk-ant-oauth-token-example', got '%s'", string(secret.Data["CLAUDE_CODE_OAUTH_TOKEN"]))
+	}
+	if string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]) != "0" {
+		t.Errorf("Expected CLAUDE_CODE_USE_BEDROCK to be '0', got '%s'", string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]))
 	}
 }
 
@@ -201,6 +277,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_SkipsExternalSecret(t *testing.T
 	settings := entities.NewSettings("external-user")
 	bedrock := entities.NewBedrockSettings(true)
 	settings.SetBedrock(bedrock)
+	settings.SetAuthMode(entities.AuthModeBedrock)
 
 	err = syncer.Sync(ctx, settings)
 	if err != nil {
@@ -231,6 +308,7 @@ func TestKubernetesCredentialsSecretSyncer_Delete(t *testing.T) {
 	settings := entities.NewSettings("delete-user")
 	bedrock := entities.NewBedrockSettings(true)
 	settings.SetBedrock(bedrock)
+	settings.SetAuthMode(entities.AuthModeBedrock)
 
 	err := syncer.Sync(ctx, settings)
 	if err != nil {

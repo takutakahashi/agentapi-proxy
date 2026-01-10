@@ -29,13 +29,15 @@ const (
 
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
-	Name           string                      `json:"name"`
-	Bedrock        *bedrockJSON                `json:"bedrock,omitempty"`
-	MCPServers     map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
-	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
-	EnabledPlugins []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
-	CreatedAt      time.Time                   `json:"created_at"`
-	UpdatedAt      time.Time                   `json:"updated_at"`
+	Name                 string                      `json:"name"`
+	Bedrock              *bedrockJSON                `json:"bedrock,omitempty"`
+	MCPServers           map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
+	Marketplaces         map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
+	ClaudeCodeOAuthToken string                      `json:"claude_code_oauth_token,omitempty"`
+	AuthMode             string                      `json:"auth_mode,omitempty"`
+	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	CreatedAt            time.Time                   `json:"created_at"`
+	UpdatedAt            time.Time                   `json:"updated_at"`
 }
 
 // bedrockJSON is the JSON representation of Bedrock settings
@@ -199,9 +201,11 @@ func (r *KubernetesSettingsRepository) secretName(name string) string {
 // toJSON converts Settings entity to JSON bytes
 func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]byte, error) {
 	sj := &settingsJSON{
-		Name:      settings.Name(),
-		CreatedAt: settings.CreatedAt(),
-		UpdatedAt: settings.UpdatedAt(),
+		Name:                 settings.Name(),
+		ClaudeCodeOAuthToken: settings.ClaudeCodeOAuthToken(),
+		AuthMode:             string(settings.AuthMode()),
+		CreatedAt:            settings.CreatedAt(),
+		UpdatedAt:            settings.UpdatedAt(),
 	}
 
 	if bedrock := settings.Bedrock(); bedrock != nil {
@@ -304,6 +308,18 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if len(sj.EnabledPlugins) > 0 {
 		settings.SetEnabledPlugins(sj.EnabledPlugins)
 		// Reset updatedAt since SetEnabledPlugins updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.ClaudeCodeOAuthToken != "" {
+		settings.SetClaudeCodeOAuthToken(sj.ClaudeCodeOAuthToken)
+		// Reset updatedAt since SetClaudeCodeOAuthToken updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.AuthMode != "" {
+		settings.SetAuthMode(entities.AuthMode(sj.AuthMode))
+		// Reset updatedAt since SetAuthMode updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
