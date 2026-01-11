@@ -1253,6 +1253,73 @@
         }
       }
     },
+    "/hooks/custom/{id}": {
+      "post": {
+        "summary": "Receive custom webhook",
+        "description": "Receives webhook payloads from custom services (Slack, Datadog, PagerDuty, etc.). Uses the webhook ID from the URL to identify the webhook and verifies the signature using the webhook's secret. Triggers are matched using JSONPath conditions.",
+        "operationId": "handleCustomWebhook",
+        "tags": ["Webhooks"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Custom webhook payload (arbitrary JSON structure)"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook processed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "session_id": {
+                      "type": "string",
+                      "description": "Created session ID (if trigger matched)"
+                    },
+                    "webhook_id": {
+                      "type": "string"
+                    },
+                    "trigger_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload"
+          },
+          "401": {
+            "description": "Signature verification failed"
+          },
+          "404": {
+            "description": "Webhook not found"
+          }
+        }
+      }
+    },
     "/settings/{name}": {
       "get": {
         "summary": "Get settings",
@@ -1907,6 +1974,11 @@
         "enum": ["active", "paused"],
         "description": "Webhook status"
       },
+      "WebhookSignatureType": {
+        "type": "string",
+        "enum": ["hmac", "static", "none"],
+        "description": "Signature verification type: hmac (HMAC-based signature verification, default), static (simple token comparison), none (no verification, for development/testing)"
+      },
       "CreateWebhookRequest": {
         "type": "object",
         "required": ["name", "type", "triggers"],
@@ -1938,6 +2010,14 @@
           },
           "session_config": {
             "$ref": "#/components/schemas/WebhookSessionConfig"
+          },
+          "signature_header": {
+            "type": "string",
+            "description": "Name of the HTTP header containing the signature (default: X-Signature). Useful for services that use different header names like X-Slack-Signature or X-Hub-Signature-256",
+            "default": "X-Signature"
+          },
+          "signature_type": {
+            "$ref": "#/components/schemas/WebhookSignatureType"
           }
         }
       },
@@ -1961,6 +2041,13 @@
           },
           "session_config": {
             "$ref": "#/components/schemas/WebhookSessionConfig"
+          },
+          "signature_header": {
+            "type": "string",
+            "description": "Name of the HTTP header containing the signature (default: X-Signature)"
+          },
+          "signature_type": {
+            "$ref": "#/components/schemas/WebhookSignatureType"
           }
         }
       },
@@ -1992,6 +2079,13 @@
           "secret": {
             "type": "string",
             "description": "Masked secret (last 4 chars visible)"
+          },
+          "signature_header": {
+            "type": "string",
+            "description": "Name of the HTTP header containing the signature (default: X-Signature)"
+          },
+          "signature_type": {
+            "$ref": "#/components/schemas/WebhookSignatureType"
           },
           "webhook_url": {
             "type": "string",

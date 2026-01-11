@@ -13,6 +13,7 @@ import (
 type Handlers struct {
 	controller       *controllers.WebhookController
 	githubController *controllers.WebhookGitHubController
+	customController *controllers.WebhookCustomController
 }
 
 // NewHandlers creates a new Handlers instance
@@ -24,6 +25,7 @@ func NewHandlers(repo repositories.WebhookRepository, sessionManager repositorie
 	return &Handlers{
 		controller:       controller,
 		githubController: controllers.NewWebhookGitHubController(repo, sessionManager),
+		customController: controllers.NewWebhookCustomController(repo, sessionManager),
 	}
 }
 
@@ -47,7 +49,8 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
 	// Receiver endpoints
 	hooks := e.Group("/hooks")
 	hooks.POST("/github/:id", h.githubController.HandleGitHubWebhook)
+	hooks.POST("/custom/:id", h.customController.HandleCustomWebhook)
 
-	log.Printf("Registered webhook management routes")
+	log.Printf("Registered webhook management and receiver routes")
 	return nil
 }
