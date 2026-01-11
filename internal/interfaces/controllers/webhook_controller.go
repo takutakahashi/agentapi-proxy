@@ -672,11 +672,8 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 		Tags:                   sc.Tags(),
 		InitialMessageTemplate: sc.InitialMessageTemplate(),
 	}
-	if params := sc.Params(); params != nil {
-		resp.Params = &SessionParamsResponse{
-			GithubToken: params.GithubToken(),
-		}
-	}
+	// GitHubトークンは機密情報なのでレスポンスに含めない
+	// params フィールドは意図的に省略
 	return resp
 }
 

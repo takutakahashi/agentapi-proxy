@@ -2007,7 +2007,7 @@
             }
           },
           "session_config": {
-            "$ref": "#/components/schemas/WebhookSessionConfig"
+            "$ref": "#/components/schemas/WebhookSessionConfigResponse"
           },
           "created_at": {
             "type": "string",
@@ -2201,11 +2201,33 @@
             "properties": {
               "github_token": {
                 "type": "string",
-                "description": "GitHub token for the session"
+                "description": "GitHub token for the session (used in requests only)"
               }
             }
           }
         }
+      },
+      "WebhookSessionConfigResponse": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "initial_message_template": {
+            "type": "string",
+            "description": "Go template for initial message (e.g., 'Review PR #{{.pull_request.Number}}')"
+          }
+        },
+        "description": "Session configuration in responses (sensitive params like github_token are excluded)"
       },
       "WebhookDeliveryRecord": {
         "type": "object",
