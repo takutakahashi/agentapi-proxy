@@ -47,12 +47,24 @@ func SetupClaudeCode(homeDir string) error {
 		},
 	}
 
+	// Build env map for tokens
+	envMap := make(map[string]string)
+
 	// Try to get GitHub token and add to env if available
 	if githubToken, err := GetGitHubToken(""); err == nil && githubToken != "" {
-		settings["env"] = map[string]string{
-			"GITHUB_TOKEN": githubToken,
-		}
+		envMap["GITHUB_TOKEN"] = githubToken
 		log.Printf("Added GITHUB_TOKEN to Claude Code settings")
+	}
+
+	// Add Claude Code OAuth token if available in environment
+	if oauthToken := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); oauthToken != "" {
+		envMap["CLAUDE_CODE_OAUTH_TOKEN"] = oauthToken
+		log.Printf("Added CLAUDE_CODE_OAUTH_TOKEN to Claude Code settings")
+	}
+
+	// Add env to settings if any tokens are available
+	if len(envMap) > 0 {
+		settings["env"] = envMap
 	}
 
 	// Marshal settings to JSON

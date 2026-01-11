@@ -2309,30 +2309,47 @@ func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *Kubernete
 		}
 	}
 
-	// Add team-based credentials Secrets (for environment variable expansion)
-	for _, team := range req.Teams {
-		secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(team))
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: secretName,
+	// Add credentials Secrets based on scope (similar to main container logic)
+	if req.Scope == entities.ScopeTeam {
+		// Team-scoped: only mount the specific team's credentials
+		if req.TeamID != "" {
+			secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.TeamID))
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: secretName,
+					},
+					Optional: boolPtr(true),
 				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
+			})
+		}
+	} else {
+		// User-scoped (or unspecified): mount all team secrets and user secret
+		// Add team-based credentials Secrets (for environment variable expansion)
+		for _, team := range req.Teams {
+			secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(team))
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: secretName,
+					},
+					Optional: boolPtr(true),
+				},
+			})
+		}
 
-	// Add user-specific credentials Secret
-	if req.UserID != "" {
-		userSecretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.UserID))
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: userSecretName,
+		// Add user-specific credentials Secret
+		if req.UserID != "" {
+			userSecretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.UserID))
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: userSecretName,
+					},
+					Optional: boolPtr(true),
 				},
-				Optional: boolPtr(true),
-			},
-		})
+			})
+		}
 	}
 
 	return corev1.Container{
