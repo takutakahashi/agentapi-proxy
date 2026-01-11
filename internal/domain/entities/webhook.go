@@ -423,6 +423,15 @@ func (c *WebhookJSONPathCondition) Operator() WebhookConditionOperator { return 
 // Value returns the value
 func (c *WebhookJSONPathCondition) Value() interface{} { return c.value }
 
+// NewWebhookJSONPathCondition creates a new JSONPath condition
+func NewWebhookJSONPathCondition(path string, operator string, value interface{}) WebhookJSONPathCondition {
+	return WebhookJSONPathCondition{
+		path:     path,
+		operator: WebhookConditionOperator(operator),
+		value:    value,
+	}
+}
+
 // WebhookConditionOperator defines the comparison operator for conditions
 type WebhookConditionOperator string
 
