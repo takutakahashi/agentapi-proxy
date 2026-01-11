@@ -24,6 +24,18 @@ const (
 	WebhookStatusPaused WebhookStatus = "paused"
 )
 
+// WebhookSignatureType defines the signature verification type
+type WebhookSignatureType string
+
+const (
+	// WebhookSignatureTypeHMAC indicates HMAC signature verification (default)
+	WebhookSignatureTypeHMAC WebhookSignatureType = "hmac"
+	// WebhookSignatureTypeStatic indicates static token comparison
+	WebhookSignatureTypeStatic WebhookSignatureType = "static"
+	// WebhookSignatureTypeNone indicates no signature verification (for development/testing)
+	WebhookSignatureTypeNone WebhookSignatureType = "none"
+)
+
 // DeliveryStatus defines the status of a webhook delivery
 type DeliveryStatus string
 
@@ -38,21 +50,23 @@ const (
 
 // Webhook represents a webhook configuration entity
 type Webhook struct {
-	id            string
-	name          string
-	userID        string
-	scope         ResourceScope
-	teamID        string
-	status        WebhookStatus
-	webhookType   WebhookType
-	secret        string
-	github        *WebhookGitHubConfig
-	triggers      []WebhookTrigger
-	sessionConfig *WebhookSessionConfig
-	createdAt     time.Time
-	updatedAt     time.Time
-	lastDelivery  *WebhookDeliveryRecord
-	deliveryCount int64
+	id              string
+	name            string
+	userID          string
+	scope           ResourceScope
+	teamID          string
+	status          WebhookStatus
+	webhookType     WebhookType
+	secret          string
+	signatureHeader string
+	signatureType   WebhookSignatureType
+	github          *WebhookGitHubConfig
+	triggers        []WebhookTrigger
+	sessionConfig   *WebhookSessionConfig
+	createdAt       time.Time
+	updatedAt       time.Time
+	lastDelivery    *WebhookDeliveryRecord
+	deliveryCount   int64
 }
 
 // NewWebhook creates a new Webhook entity
@@ -135,6 +149,34 @@ func (w *Webhook) MaskSecret() string {
 		return "****"
 	}
 	return "****" + w.secret[len(w.secret)-4:]
+}
+
+// SignatureHeader returns the signature header name (defaults to "X-Signature")
+func (w *Webhook) SignatureHeader() string {
+	if w.signatureHeader == "" {
+		return "X-Signature"
+	}
+	return w.signatureHeader
+}
+
+// SetSignatureHeader sets the signature header name
+func (w *Webhook) SetSignatureHeader(header string) {
+	w.signatureHeader = header
+	w.updatedAt = time.Now()
+}
+
+// SignatureType returns the signature verification type (defaults to "hmac")
+func (w *Webhook) SignatureType() WebhookSignatureType {
+	if w.signatureType == "" {
+		return WebhookSignatureTypeHMAC
+	}
+	return w.signatureType
+}
+
+// SetSignatureType sets the signature verification type
+func (w *Webhook) SetSignatureType(sigType WebhookSignatureType) {
+	w.signatureType = sigType
+	w.updatedAt = time.Now()
 }
 
 // GitHub returns the GitHub configuration
@@ -422,6 +464,15 @@ func (c *WebhookJSONPathCondition) Operator() WebhookConditionOperator { return 
 
 // Value returns the value
 func (c *WebhookJSONPathCondition) Value() interface{} { return c.value }
+
+// NewWebhookJSONPathCondition creates a new JSONPath condition
+func NewWebhookJSONPathCondition(path string, operator string, value interface{}) WebhookJSONPathCondition {
+	return WebhookJSONPathCondition{
+		path:     path,
+		operator: WebhookConditionOperator(operator),
+		value:    value,
+	}
+}
 
 // WebhookConditionOperator defines the comparison operator for conditions
 type WebhookConditionOperator string
