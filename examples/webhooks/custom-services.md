@@ -17,6 +17,7 @@ curl -X POST https://your-agentapi-server.com/webhooks \
   -d '{
     "name": "Custom Service Webhook",
     "type": "custom",
+    "signature_header": "X-Signature",
     "triggers": [
       {
         "name": "Event Trigger",
@@ -39,6 +40,21 @@ curl -X POST https://your-agentapi-server.com/webhooks \
       }
     ]
   }'
+```
+
+**署名ヘッダーのカスタマイズ:**
+
+サービスが独自の署名ヘッダー名を使用する場合、`signature_header`フィールドで指定できます：
+
+- GitLab: `X-Gitlab-Token` または `X-Gitlab-Event`
+- GitHub Actions: `X-Hub-Signature-256`
+- その他カスタムヘッダー: 任意の名前を指定可能
+
+例：
+```json
+{
+  "signature_header": "X-Custom-Signature"
+}
 ```
 
 ## CI/CD統合

@@ -23,6 +23,7 @@ curl -X POST https://your-agentapi-server.com/webhooks \
   -d '{
     "name": "PagerDuty Incident Response",
     "type": "custom",
+    "signature_header": "X-Signature",
     "triggers": [
       {
         "name": "High Priority Incident Triggered",
@@ -157,7 +158,16 @@ PagerDutyはwebhook v3で署名をサポートしています。
 
 **署名の検証方法:**
 
-PagerDutyは`X-PagerDuty-Signature`ヘッダーで署名を送信します。agentapi-proxyの`X-Signature`形式に変換する必要がある場合があります。
+PagerDutyは`X-PagerDuty-Signature`ヘッダーで署名を送信します。webhook作成時に`signature_header: "X-PagerDuty-Signature"`を指定することで、プロキシを挟まずに直接PagerDutyからのwebhookを受信できます：
+
+```json
+{
+  "name": "PagerDuty Webhook",
+  "type": "custom",
+  "signature_header": "X-PagerDuty-Signature",
+  "triggers": [...]
+}
+```
 
 **署名計算（Python例）:**
 
@@ -176,6 +186,8 @@ def verify_pagerduty_signature(secret, payload, signature):
     ).hexdigest()
     return f'sha256={expected}'
 ```
+
+**重要**: `signature_header`フィールドを使用することで、PagerDutyの`X-PagerDuty-Signature`ヘッダーを直接使用でき、ヘッダー変換やプロキシは不要です。
 
 ### 4. テストペイロード送信
 

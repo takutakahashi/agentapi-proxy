@@ -23,6 +23,7 @@ curl -X POST https://your-agentapi-server.com/webhooks \
   -d '{
     "name": "Datadog Performance Alerts",
     "type": "custom",
+    "signature_header": "X-Signature",
     "triggers": [
       {
         "name": "High CPU Alert",
@@ -194,9 +195,14 @@ curl -X POST https://your-agentapi-server.com/webhooks \
 2. **Say what's happening** セクションで `@webhook-agentapi-proxy` を追加
 3. モニターを保存
 
-### 3. 署名の計算（オプション）
+### 3. 署名の計算
 
 Datadogは標準的なwebhook署名を提供していないため、agentapi-proxyのsecretを使用してカスタム署名を計算する必要があります。
+
+**署名の追加方法:**
+
+1. **Lambda/Cloud Functions経由**（推奨）: Datadogからのwebhookを受け取り、署名を追加してagentapi-proxyに転送
+2. **カスタムヘッダー名の使用**: Datadogが独自の署名ヘッダーを使用する場合、`signature_header`フィールドで指定
 
 **Node.jsでの署名計算例:**
 
@@ -221,7 +227,7 @@ const signature = generateDatadogSignature(secret, payload);
 console.log('X-Signature:', signature);
 ```
 
-**注意**: Datadogから直接webhook送信する場合、署名を追加するには中間プロキシ（AWS Lambda、Cloud Functionsなど）が必要です。
+**ヒント**: Datadogが独自の署名ヘッダー（例: `X-Datadog-Signature`）を使用する場合、webhook作成時に`"signature_header": "X-Datadog-Signature"`を指定することで、プロキシなしで直接受信できます。
 
 ### 4. テストペイロード送信
 

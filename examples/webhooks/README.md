@@ -75,6 +75,7 @@ curl -X POST https://your-agentapi-server.com/webhooks \
   -d '{
     "name": "My First Webhook",
     "type": "custom",
+    "signature_header": "X-Signature",
     "triggers": [
       {
         "name": "Test Trigger",
@@ -198,6 +199,28 @@ const signature = crypto
   .update(payload)
   .digest('hex');
 ```
+
+**署名ヘッダーのカスタマイズ:**
+
+デフォルトでは`X-Signature`ヘッダーを使用しますが、サービスによって異なるヘッダー名を使用する場合があります。webhook作成時に`signature_header`フィールドで指定できます：
+
+```json
+{
+  "name": "Slack Webhook",
+  "type": "custom",
+  "signature_header": "X-Slack-Signature",
+  "triggers": [...]
+}
+```
+
+**サポートされるヘッダー例:**
+- `X-Signature` (デフォルト)
+- `X-Slack-Signature` (Slack)
+- `X-Hub-Signature-256` (GitHub)
+- `X-Datadog-Signature` (Datadog)
+- その他任意のカスタムヘッダー名
+
+これにより、プロキシを挟まずに直接各サービスからのwebhookを受信できます。
 
 ### 初期メッセージテンプレート
 

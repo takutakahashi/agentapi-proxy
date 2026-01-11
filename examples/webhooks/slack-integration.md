@@ -23,6 +23,7 @@ curl -X POST https://your-agentapi-server.com/webhooks \
   -d '{
     "name": "Slack Incident Response",
     "type": "custom",
+    "signature_header": "X-Slack-Signature",
     "triggers": [
       {
         "name": "Critical Incident Alert",
@@ -147,7 +148,7 @@ curl -X POST https://your-agentapi-server.com/webhooks \
 
 ### 3. 署名検証の実装
 
-Slackは`X-Slack-Signature`ヘッダーで署名を送信します。これを`X-Signature`形式に変換する必要がある場合があります。
+Slackは`X-Slack-Signature`ヘッダーで署名を送信します。webhook作成時に`signature_header: "X-Slack-Signature"`を指定することで、プロキシを挟まずに直接Slackからのwebhookを受信できます。
 
 **署名計算（Slack Signing Secret使用）:**
 
@@ -172,7 +173,7 @@ def generate_slack_signature(webhook_secret, timestamp, body):
     return f'sha256={signature}'
 ```
 
-**注意**: Slackアプリから直接webhookを送信する場合は、Slackの署名をagentapi-proxy形式に変換するプロキシを挟むか、agentapi-proxyの署名検証を調整する必要があります。
+**重要**: `signature_header`フィールドを指定することで、Slackの`X-Slack-Signature`ヘッダーを直接使用できます。プロキシやヘッダー変換は不要です。
 
 ### 4. テストペイロード送信
 
