@@ -766,7 +766,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	if req.Scope == entities.ScopeTeam {
 		// Team-scoped: only mount the specific team's credentials
 		if req.TeamID != "" {
-			secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.TeamID))
+			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.TeamID))
 			envFrom = append(envFrom, corev1.EnvFromSource{
 				SecretRef: &corev1.SecretEnvSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -780,9 +780,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		// Note: user-specific credentials are NOT mounted for team-scoped sessions
 	} else {
 		// User-scoped (or unspecified): mount all team secrets and user secret
-		// Add team-based credentials Secrets (agent-credentials-{org}-{team})
+		// Add team-based credentials Secrets (agent-env-{org}-{team})
 		for _, team := range req.Teams {
-			secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(team))
+			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(team))
 			envFrom = append(envFrom, corev1.EnvFromSource{
 				SecretRef: &corev1.SecretEnvSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -794,10 +794,10 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			log.Printf("[K8S_SESSION] Adding team credentials Secret %s for session %s", secretName, session.id)
 		}
 
-		// Add user-specific credentials Secret (agent-credentials-{user-id})
+		// Add user-specific credentials Secret (agent-env-{user-id})
 		// This is added last so user-specific values override team values
 		if req.UserID != "" {
-			userSecretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.UserID))
+			userSecretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.UserID))
 			envFrom = append(envFrom, corev1.EnvFromSource{
 				SecretRef: &corev1.SecretEnvSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -1178,8 +1178,8 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *Kubernet
 	sidecarImage := credentialsSyncSidecarImage
 
 	// Secret name is per-user, not per-session
-	// Format: agentapi-agent-credentials-{userID}
-	credentialsSecretName := fmt.Sprintf("agentapi-agent-credentials-%s", sanitizeLabelValue(session.Request().UserID))
+	// Format: agentapi-agent-env-{userID}
+	credentialsSecretName := fmt.Sprintf("agentapi-agent-env-%s", sanitizeLabelValue(session.Request().UserID))
 
 	return &corev1.Container{
 		Name:            "credentials-sync",
@@ -1557,8 +1557,8 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 		log.Printf("[K8S_SESSION] Using EmptyDir for credentials volume (team-scoped session %s)", session.id)
 	} else {
 		// User-scoped: mount user's credentials Secret
-		// Credentials Secret name follows the pattern: agentapi-agent-credentials-{userID}
-		credentialsSecretName := fmt.Sprintf("agentapi-agent-credentials-%s", sanitizeLabelValue(session.Request().UserID))
+		// Credentials Secret name follows the pattern: agentapi-agent-env-{userID}
+		credentialsSecretName := fmt.Sprintf("agentapi-agent-env-%s", sanitizeLabelValue(session.Request().UserID))
 		credentialsVolume = corev1.Volume{
 			Name: "claude-credentials",
 			VolumeSource: corev1.VolumeSource{
@@ -2149,7 +2149,7 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		}
 	}
 
-	// Note: Bedrock settings are now loaded via envFrom from agent-credentials-{name} Secret
+	// Note: Bedrock settings are now loaded via envFrom from agent-env-{name} Secret
 	// which is synced by CredentialsSecretSyncer when settings are updated via API
 
 	return envVars
@@ -2311,7 +2311,7 @@ func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *Kubernete
 
 	// Add team-based credentials Secrets (for environment variable expansion)
 	for _, team := range req.Teams {
-		secretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(team))
+		secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(team))
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
@@ -2324,7 +2324,7 @@ func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *Kubernete
 
 	// Add user-specific credentials Secret
 	if req.UserID != "" {
-		userSecretName := fmt.Sprintf("agent-credentials-%s", sanitizeSecretName(req.UserID))
+		userSecretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.UserID))
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
