@@ -31,14 +31,14 @@ func TestKubernetesCredentialsSecretSyncer_Sync(t *testing.T) {
 	}
 
 	// Verify Secret was created
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-test-user", metav1.GetOptions{})
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-test-user", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
 
 	// Verify labels
-	if secret.Labels[LabelCredentials] != "true" {
-		t.Errorf("Expected label %s to be 'true'", LabelCredentials)
+	if secret.Labels[LabelEnv] != "true" {
+		t.Errorf("Expected label %s to be 'true'", LabelEnv)
 	}
 	if secret.Labels[LabelManagedBy] != "settings" {
 		t.Errorf("Expected label %s to be 'settings'", LabelManagedBy)
@@ -88,7 +88,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_Update(t *testing.T) {
 	}
 
 	// Verify Secret was updated
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-update-user", metav1.GetOptions{})
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-update-user", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_AllFields(t *testing.T) {
 		t.Fatalf("Failed to sync: %v", err)
 	}
 
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-all-fields", metav1.GetOptions{})
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-all-fields", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_LegacyBedrockWithoutAuthMode(t *
 		t.Fatalf("Failed to sync: %v", err)
 	}
 
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-legacy-bedrock", metav1.GetOptions{})
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-legacy-bedrock", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_NoAuthModeDisabledBedrock(t *tes
 		t.Fatalf("Failed to sync: %v", err)
 	}
 
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-no-auth-disabled", metav1.GetOptions{})
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-no-auth-disabled", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_OAuthMode(t *testing.T) {
 		t.Fatalf("Failed to sync: %v", err)
 	}
 
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-oauth-user", metav1.GetOptions{})
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-oauth-user", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
@@ -257,10 +257,10 @@ func TestKubernetesCredentialsSecretSyncer_Sync_SkipsExternalSecret(t *testing.T
 	// Create an external secret (not managed by settings)
 	externalSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "agent-credentials-external-user",
+			Name:      "agent-env-external-user",
 			Namespace: "default",
 			Labels: map[string]string{
-				LabelCredentials: "true",
+				LabelEnv: "true",
 				// No LabelManagedBy label
 			},
 		},
@@ -285,7 +285,7 @@ func TestKubernetesCredentialsSecretSyncer_Sync_SkipsExternalSecret(t *testing.T
 	}
 
 	// Verify external secret was not modified
-	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-external-user", metav1.GetOptions{})
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-external-user", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get secret: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestKubernetesCredentialsSecretSyncer_Delete(t *testing.T) {
 	}
 
 	// Verify Secret exists
-	_, err = client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-delete-user", metav1.GetOptions{})
+	_, err = client.CoreV1().Secrets("default").Get(ctx, "agent-env-delete-user", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Secret should exist: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestKubernetesCredentialsSecretSyncer_Delete(t *testing.T) {
 	}
 
 	// Verify Secret was deleted
-	_, err = client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-delete-user", metav1.GetOptions{})
+	_, err = client.CoreV1().Secrets("default").Get(ctx, "agent-env-delete-user", metav1.GetOptions{})
 	if err == nil {
 		t.Error("Secret should be deleted")
 	}
@@ -354,10 +354,10 @@ func TestKubernetesCredentialsSecretSyncer_Delete_SkipsExternalSecret(t *testing
 	// Create an external secret
 	externalSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "agent-credentials-external-delete",
+			Name:      "agent-env-external-delete",
 			Namespace: "default",
 			Labels: map[string]string{
-				LabelCredentials: "true",
+				LabelEnv: "true",
 				// No LabelManagedBy = "settings"
 			},
 		},
@@ -377,7 +377,7 @@ func TestKubernetesCredentialsSecretSyncer_Delete_SkipsExternalSecret(t *testing
 	}
 
 	// Verify external secret still exists
-	_, err = client.CoreV1().Secrets("default").Get(ctx, "agent-credentials-external-delete", metav1.GetOptions{})
+	_, err = client.CoreV1().Secrets("default").Get(ctx, "agent-env-external-delete", metav1.GetOptions{})
 	if err != nil {
 		t.Error("External secret should not be deleted")
 	}

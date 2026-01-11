@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	// CredentialsSecretPrefix is the prefix for credentials Secret names
-	CredentialsSecretPrefix = "agent-credentials-"
-	// LabelCredentials is the label key for credentials resources
-	LabelCredentials = "agentapi.proxy/credentials"
-	// LabelCredentialsName is the label key for credentials name
-	LabelCredentialsName = "agentapi.proxy/credentials-name"
+	// EnvSecretPrefix is the prefix for environment variable Secret names
+	EnvSecretPrefix = "agent-env-"
+	// LabelEnv is the label key for environment variable resources
+	LabelEnv = "agentapi.proxy/env"
+	// LabelEnvName is the label key for environment variable name
+	LabelEnvName = "agentapi.proxy/env-name"
 	// LabelManagedBy is the label key for managed-by
 	LabelManagedBy = "agentapi.proxy/managed-by"
 )
@@ -40,7 +40,7 @@ func NewKubernetesCredentialsSecretSyncer(client kubernetes.Interface, namespace
 	}
 }
 
-// Sync creates or updates the credentials secret based on settings
+// Sync creates or updates the environment secret based on settings
 func (s *KubernetesCredentialsSecretSyncer) Sync(ctx context.Context, settings *entities.Settings) error {
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
@@ -57,9 +57,9 @@ func (s *KubernetesCredentialsSecretSyncer) Sync(ctx context.Context, settings *
 			Name:      secretName,
 			Namespace: s.namespace,
 			Labels: map[string]string{
-				LabelCredentials:     "true",
-				LabelCredentialsName: labelValue,
-				LabelManagedBy:       "settings",
+				LabelEnv:       "true",
+				LabelEnvName:   labelValue,
+				LabelManagedBy: "settings",
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -73,18 +73,18 @@ func (s *KubernetesCredentialsSecretSyncer) Sync(ctx context.Context, settings *
 			// Create new secret
 			_, err = s.client.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{})
 			if err != nil {
-				return fmt.Errorf("failed to create credentials secret: %w", err)
+				return fmt.Errorf("failed to create environment secret: %w", err)
 			}
-			log.Printf("[CREDENTIALS_SYNCER] Created credentials secret %s", secretName)
+			log.Printf("[ENV_SYNCER] Created environment secret %s", secretName)
 			return nil
 		}
-		return fmt.Errorf("failed to get credentials secret: %w", err)
+		return fmt.Errorf("failed to get environment secret: %w", err)
 	}
 
 	// Check if secret is managed by settings
 	if existing.Labels[LabelManagedBy] != "settings" {
 		// Secret exists but is not managed by settings, skip update
-		log.Printf("[CREDENTIALS_SYNCER] Skipping update for secret %s: not managed by settings", secretName)
+		log.Printf("[ENV_SYNCER] Skipping update for secret %s: not managed by settings", secretName)
 		return nil
 	}
 
@@ -92,14 +92,14 @@ func (s *KubernetesCredentialsSecretSyncer) Sync(ctx context.Context, settings *
 	secret.ResourceVersion = existing.ResourceVersion
 	_, err = s.client.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to update credentials secret: %w", err)
+		return fmt.Errorf("failed to update environment secret: %w", err)
 	}
-	log.Printf("[CREDENTIALS_SYNCER] Updated credentials secret %s", secretName)
+	log.Printf("[ENV_SYNCER] Updated environment secret %s", secretName)
 
 	return nil
 }
 
-// Delete removes the credentials secret for the given name
+// Delete removes the environment secret for the given name
 func (s *KubernetesCredentialsSecretSyncer) Delete(ctx context.Context, name string) error {
 	secretName := s.secretName(name)
 
@@ -110,12 +110,12 @@ func (s *KubernetesCredentialsSecretSyncer) Delete(ctx context.Context, name str
 			// Secret doesn't exist, nothing to delete
 			return nil
 		}
-		return fmt.Errorf("failed to get credentials secret: %w", err)
+		return fmt.Errorf("failed to get environment secret: %w", err)
 	}
 
 	// Only delete if managed by settings
 	if existing.Labels[LabelManagedBy] != "settings" {
-		log.Printf("[CREDENTIALS_SYNCER] Skipping delete for secret %s: not managed by settings", secretName)
+		log.Printf("[ENV_SYNCER] Skipping delete for secret %s: not managed by settings", secretName)
 		return nil
 	}
 
@@ -124,36 +124,143 @@ func (s *KubernetesCredentialsSecretSyncer) Delete(ctx context.Context, name str
 		if errors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to delete credentials secret: %w", err)
+		return fmt.Errorf("failed to delete environment secret: %w", err)
 	}
-	log.Printf("[CREDENTIALS_SYNCER] Deleted credentials secret %s", secretName)
+	log.Printf("[ENV_SYNCER] Deleted environment secret %s", secretName)
+
+	return nil
+}
+
+// MigrateSecrets migrates old agent-credentials-* secrets to agent-env-* secrets
+// This function is idempotent and safe to run multiple times
+func (s *KubernetesCredentialsSecretSyncer) MigrateSecrets(ctx context.Context) error {
+	// List all secrets with the old prefix in the namespace
+	oldPrefix := "agent-credentials-"
+
+	listOptions := metav1.ListOptions{
+		LabelSelector: LabelManagedBy + "=settings",
+	}
+
+	secrets, err := s.client.CoreV1().Secrets(s.namespace).List(ctx, listOptions)
+	if err != nil {
+		return fmt.Errorf("failed to list secrets for migration: %w", err)
+	}
+
+	migratedCount := 0
+	skippedCount := 0
+
+	for _, secret := range secrets.Items {
+		// Only migrate secrets with the old prefix
+		if !strings.HasPrefix(secret.Name, oldPrefix) {
+			continue
+		}
+
+		// Extract the name part after the prefix
+		namePart := strings.TrimPrefix(secret.Name, oldPrefix)
+		newSecretName := EnvSecretPrefix + namePart
+
+		// Check if the new secret already exists
+		_, err := s.client.CoreV1().Secrets(s.namespace).Get(ctx, newSecretName, metav1.GetOptions{})
+		if err == nil {
+			// New secret already exists, skip migration but log it
+			log.Printf("[ENV_SYNCER] Migration: Secret %s already exists as %s, skipping", secret.Name, newSecretName)
+			skippedCount++
+
+			// Delete the old secret since new one exists
+			err = s.client.CoreV1().Secrets(s.namespace).Delete(ctx, secret.Name, metav1.DeleteOptions{})
+			if err != nil && !errors.IsNotFound(err) {
+				log.Printf("[ENV_SYNCER] Migration: Warning - failed to delete old secret %s: %v", secret.Name, err)
+			} else {
+				log.Printf("[ENV_SYNCER] Migration: Deleted old secret %s", secret.Name)
+			}
+			continue
+		}
+		if err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to check if new secret exists: %w", err)
+		}
+
+		// Preserve original label value if it exists, otherwise use sanitized name
+		labelValue := secret.Labels["agentapi.proxy/credentials-name"]
+		if labelValue == "" {
+			labelValue = sanitizeLabelValue(namePart)
+		}
+
+		// Create new secret with updated labels
+		newSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      newSecretName,
+				Namespace: s.namespace,
+				Labels: map[string]string{
+					LabelEnv:       "true",
+					LabelEnvName:   labelValue,
+					LabelManagedBy: "settings",
+				},
+				Annotations: secret.Annotations, // Preserve annotations
+			},
+			Type: secret.Type,
+			Data: secret.Data, // Copy data as-is
+		}
+
+		// Create the new secret
+		_, err = s.client.CoreV1().Secrets(s.namespace).Create(ctx, newSecret, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create new secret %s: %w", newSecretName, err)
+		}
+		log.Printf("[ENV_SYNCER] Migration: Created new secret %s from %s", newSecretName, secret.Name)
+
+		// Delete the old secret
+		err = s.client.CoreV1().Secrets(s.namespace).Delete(ctx, secret.Name, metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			log.Printf("[ENV_SYNCER] Migration: Warning - created new secret but failed to delete old secret %s: %v", secret.Name, err)
+		} else {
+			log.Printf("[ENV_SYNCER] Migration: Deleted old secret %s", secret.Name)
+		}
+
+		migratedCount++
+	}
+
+	if migratedCount > 0 || skippedCount > 0 {
+		log.Printf("[ENV_SYNCER] Migration complete: migrated %d secrets, skipped %d secrets", migratedCount, skippedCount)
+	}
 
 	return nil
 }
 
 // secretName returns the Secret name for the given settings name
 func (s *KubernetesCredentialsSecretSyncer) secretName(name string) string {
-	return CredentialsSecretPrefix + sanitizeSecretName(name)
+	return EnvSecretPrefix + sanitizeSecretName(name)
 }
 
-// buildSecretData builds the secret data from settings based on auth_mode
+// buildSecretData builds the secret data from settings
+// Both OAuth token and Bedrock credentials are stored if they are set
 func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.Settings) map[string][]byte {
 	data := make(map[string][]byte)
 
-	// Build secret data based on the configured auth_mode
+	// Add OAuth token if it exists
+	if settings.HasClaudeCodeOAuthToken() {
+		data["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(settings.ClaudeCodeOAuthToken())
+	}
+
+	// Add Bedrock credentials if they exist
+	bedrock := settings.Bedrock()
+	if bedrock != nil && (bedrock.Enabled() || bedrock.AccessKeyID() != "" || bedrock.SecretAccessKey() != "") {
+		s.addBedrockCredentials(data, bedrock)
+	}
+
+	// Set CLAUDE_CODE_USE_BEDROCK based on auth_mode for backward compatibility
+	// This flag indicates which authentication method should be used by default
 	switch settings.AuthMode() {
 	case entities.AuthModeOAuth:
-		data["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(settings.ClaudeCodeOAuthToken())
 		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
-
 	case entities.AuthModeBedrock:
-		s.addBedrockCredentials(data, settings.Bedrock())
-
+		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
 	default:
-		// Fallback: legacy behavior - use Bedrock if enabled (for backward compatibility)
-		bedrock := settings.Bedrock()
-		if bedrock != nil && bedrock.Enabled() {
-			s.addBedrockCredentials(data, bedrock)
+		// If auth_mode is not set, determine based on what credentials exist
+		// OAuth takes priority if both exist
+		if settings.HasClaudeCodeOAuthToken() {
+			data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
+		} else if bedrock != nil && bedrock.Enabled() {
+			data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
 		}
 	}
 
@@ -161,12 +268,11 @@ func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.S
 }
 
 // addBedrockCredentials adds Bedrock-related credentials to the secret data
+// Note: CLAUDE_CODE_USE_BEDROCK flag is set by buildSecretData(), not here
 func (s *KubernetesCredentialsSecretSyncer) addBedrockCredentials(data map[string][]byte, bedrock *entities.BedrockSettings) {
 	if bedrock == nil {
 		return
 	}
-
-	data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
 
 	if bedrock.Model() != "" {
 		data["ANTHROPIC_MODEL"] = []byte(bedrock.Model())
@@ -199,7 +305,7 @@ func sanitizeSecretName(s string) string {
 	re = regexp.MustCompile(`-+`)
 	sanitized = re.ReplaceAllString(sanitized, "-")
 	// Truncate to 253 characters (max Secret name length is 253)
-	maxLen := 253 - len(CredentialsSecretPrefix)
+	maxLen := 253 - len(EnvSecretPrefix)
 	if len(sanitized) > maxLen {
 		sanitized = sanitized[:maxLen]
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
@@ -71,6 +72,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
+
+	// Run credentials secret migration (from agent-credentials-* to agent-env-*)
+	runCredentialsSecretMigration(configData)
 
 	// Start schedule worker if enabled
 	var scheduleWorker *schedule.LeaderWorker
@@ -316,4 +320,40 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 		log.Printf("[WEBHOOK_HANDLERS] Webhook base URL not configured, will auto-detect from request headers")
 	}
 	log.Printf("[WEBHOOK_HANDLERS] Webhook handlers registered successfully")
+}
+
+// runCredentialsSecretMigration migrates old agent-credentials-* secrets to agent-env-* secrets
+func runCredentialsSecretMigration(configData *config.Config) {
+	log.Printf("[ENV_MIGRATION] Running credentials secret migration...")
+
+	// Create Kubernetes client
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[ENV_MIGRATION] Kubernetes config not available, skipping migration: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[ENV_MIGRATION] Failed to create Kubernetes client, skipping migration: %v", err)
+		return
+	}
+
+	// Determine namespace
+	namespace := configData.KubernetesSession.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Create credentials secret syncer
+	syncer := services.NewKubernetesCredentialsSecretSyncer(client, namespace)
+
+	// Run migration
+	if err := syncer.MigrateSecrets(context.Background()); err != nil {
+		log.Printf("[ENV_MIGRATION] Migration failed: %v", err)
+		// Continue even if migration fails - we don't want to prevent server startup
+		return
+	}
+
+	log.Printf("[ENV_MIGRATION] Credentials secret migration completed successfully")
 }
