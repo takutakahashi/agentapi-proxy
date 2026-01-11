@@ -76,22 +76,68 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Webhook is not a custom webhook"})
 	}
 
-	// Verify signature using the webhook's secret
-	// Use the configured signature header (defaults to X-Signature)
-	headerName := matchedWebhook.SignatureHeader()
-	signatureHeader := ctx.Request().Header.Get(headerName)
+	// Verify signature based on the configured signature type
+	sigType := matchedWebhook.SignatureType()
 
-	if signatureHeader == "" {
-		log.Printf("[WEBHOOK_CUSTOM] Missing signature header '%s' for webhook %s", headerName, webhookID)
-		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": fmt.Sprintf("Missing signature header: %s", headerName)})
+	switch sigType {
+	case entities.WebhookSignatureTypeHMAC:
+		// HMAC signature verification (default)
+		headerName := matchedWebhook.SignatureHeader()
+		signatureHeader := ctx.Request().Header.Get(headerName)
+
+		if signatureHeader == "" {
+			log.Printf("[WEBHOOK_CUSTOM] Missing signature header '%s' for webhook %s", headerName, webhookID)
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": fmt.Sprintf("Missing signature header: %s", headerName)})
+		}
+
+		if !c.verifySignature(body, signatureHeader, matchedWebhook.Secret()) {
+			log.Printf("[WEBHOOK_CUSTOM] Signature verification failed for webhook %s (header: %s)", webhookID, headerName)
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Signature verification failed"})
+		}
+
+		log.Printf("[WEBHOOK_CUSTOM] HMAC signature verified for webhook %s (%s)", matchedWebhook.ID(), matchedWebhook.Name())
+
+	case entities.WebhookSignatureTypeStatic:
+		// Static token comparison
+		headerName := matchedWebhook.SignatureHeader()
+		token := ctx.Request().Header.Get(headerName)
+
+		if token == "" {
+			log.Printf("[WEBHOOK_CUSTOM] Missing token header '%s' for webhook %s", headerName, webhookID)
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": fmt.Sprintf("Missing token header: %s", headerName)})
+		}
+
+		if token != matchedWebhook.Secret() {
+			log.Printf("[WEBHOOK_CUSTOM] Token verification failed for webhook %s (header: %s)", webhookID, headerName)
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Token verification failed"})
+		}
+
+		log.Printf("[WEBHOOK_CUSTOM] Static token verified for webhook %s (%s)", matchedWebhook.ID(), matchedWebhook.Name())
+
+	case entities.WebhookSignatureTypeNone:
+		// No signature verification (for development/testing only)
+		log.Printf("[WEBHOOK_CUSTOM] WARNING: No signature verification for webhook %s (%s) - signature_type is 'none'",
+			matchedWebhook.ID(), matchedWebhook.Name())
+
+	default:
+		log.Printf("[WEBHOOK_CUSTOM] Unknown signature type '%s' for webhook %s, defaulting to HMAC", sigType, webhookID)
+
+		// Default to HMAC verification
+		headerName := matchedWebhook.SignatureHeader()
+		signatureHeader := ctx.Request().Header.Get(headerName)
+
+		if signatureHeader == "" {
+			log.Printf("[WEBHOOK_CUSTOM] Missing signature header '%s' for webhook %s", headerName, webhookID)
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": fmt.Sprintf("Missing signature header: %s", headerName)})
+		}
+
+		if !c.verifySignature(body, signatureHeader, matchedWebhook.Secret()) {
+			log.Printf("[WEBHOOK_CUSTOM] Signature verification failed for webhook %s (header: %s)", webhookID, headerName)
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Signature verification failed"})
+		}
+
+		log.Printf("[WEBHOOK_CUSTOM] Signature verified for webhook %s (%s)", matchedWebhook.ID(), matchedWebhook.Name())
 	}
-
-	if !c.verifySignature(body, signatureHeader, matchedWebhook.Secret()) {
-		log.Printf("[WEBHOOK_CUSTOM] Signature verification failed for webhook %s (header: %s)", webhookID, headerName)
-		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Signature verification failed"})
-	}
-
-	log.Printf("[WEBHOOK_CUSTOM] Signature verified for webhook %s (%s)", matchedWebhook.ID(), matchedWebhook.Name())
 
 	// Parse payload as JSON
 	var payload map[string]interface{}

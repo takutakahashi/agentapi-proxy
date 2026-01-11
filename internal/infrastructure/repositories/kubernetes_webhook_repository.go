@@ -38,22 +38,23 @@ const (
 
 // webhookJSON is the JSON representation for storage
 type webhookJSON struct {
-	ID              string                     `json:"id"`
-	Name            string                     `json:"name"`
-	UserID          string                     `json:"user_id"`
-	Scope           entities.ResourceScope     `json:"scope,omitempty"`
-	TeamID          string                     `json:"team_id,omitempty"`
-	Status          entities.WebhookStatus     `json:"status"`
-	Type            entities.WebhookType       `json:"type"`
-	Secret          string                     `json:"secret"`
-	SignatureHeader string                     `json:"signature_header,omitempty"`
-	GitHub          *webhookGitHubConfigJSON   `json:"github,omitempty"`
-	Triggers        []webhookTriggerJSON       `json:"triggers"`
-	SessionConfig   *webhookSessionConfigJSON  `json:"session_config,omitempty"`
-	CreatedAt       time.Time                  `json:"created_at"`
-	UpdatedAt       time.Time                  `json:"updated_at"`
-	LastDelivery    *webhookDeliveryRecordJSON `json:"last_delivery,omitempty"`
-	DeliveryCount   int64                      `json:"delivery_count"`
+	ID              string                        `json:"id"`
+	Name            string                        `json:"name"`
+	UserID          string                        `json:"user_id"`
+	Scope           entities.ResourceScope        `json:"scope,omitempty"`
+	TeamID          string                        `json:"team_id,omitempty"`
+	Status          entities.WebhookStatus        `json:"status"`
+	Type            entities.WebhookType          `json:"type"`
+	Secret          string                        `json:"secret"`
+	SignatureHeader string                        `json:"signature_header,omitempty"`
+	SignatureType   entities.WebhookSignatureType `json:"signature_type,omitempty"`
+	GitHub          *webhookGitHubConfigJSON      `json:"github,omitempty"`
+	Triggers        []webhookTriggerJSON          `json:"triggers"`
+	SessionConfig   *webhookSessionConfigJSON     `json:"session_config,omitempty"`
+	CreatedAt       time.Time                     `json:"created_at"`
+	UpdatedAt       time.Time                     `json:"updated_at"`
+	LastDelivery    *webhookDeliveryRecordJSON    `json:"last_delivery,omitempty"`
+	DeliveryCount   int64                         `json:"delivery_count"`
 }
 
 type webhookGitHubConfigJSON struct {
@@ -479,6 +480,9 @@ func (r *KubernetesWebhookRepository) jsonToEntity(wj *webhookJSON) *entities.We
 	if wj.SignatureHeader != "" {
 		webhook.SetSignatureHeader(wj.SignatureHeader)
 	}
+	if wj.SignatureType != "" {
+		webhook.SetSignatureType(wj.SignatureType)
+	}
 
 	// GitHub config
 	if wj.GitHub != nil {
@@ -552,6 +556,7 @@ func (r *KubernetesWebhookRepository) entityToJSON(w *entities.Webhook) *webhook
 		Type:            w.WebhookType(),
 		Secret:          w.Secret(),
 		SignatureHeader: w.SignatureHeader(),
+		SignatureType:   w.SignatureType(),
 		CreatedAt:       w.CreatedAt(),
 		UpdatedAt:       w.UpdatedAt(),
 		DeliveryCount:   w.DeliveryCount(),

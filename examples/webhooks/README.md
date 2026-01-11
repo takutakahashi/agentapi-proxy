@@ -222,6 +222,62 @@ const signature = crypto
 
 これにより、プロキシを挟まずに直接各サービスからのwebhookを受信できます。
 
+**署名検証タイプ:**
+
+webhook作成時に`signature_type`フィールドで署名検証の方式を指定できます：
+
+1. **`hmac`（デフォルト）**: HMAC-SHA256署名検証
+   - 最もセキュアな方式
+   - 本番環境で推奨
+
+   ```json
+   {
+     "name": "Production Webhook",
+     "type": "custom",
+     "signature_type": "hmac",
+     "signature_header": "X-Signature",
+     "triggers": [...]
+   }
+   ```
+
+2. **`static`**: 静的トークン比較
+   - シンプルなトークン照合
+   - HMAC署名を生成できないサービス向け
+   - ヘッダー値とシークレットを直接比較
+
+   ```json
+   {
+     "name": "Simple Token Webhook",
+     "type": "custom",
+     "signature_type": "static",
+     "signature_header": "Authorization",
+     "triggers": [...]
+   }
+   ```
+
+   リクエスト例：
+   ```bash
+   curl -X POST https://your-server.com/hooks/custom/webhook-123 \
+     -H "Authorization: your-webhook-secret" \
+     -H "Content-Type: application/json" \
+     -d '{"event": "test"}'
+   ```
+
+3. **`none`**: 署名検証なし
+   - 開発・テスト環境専用
+   - 本番環境では使用しないでください
+
+   ```json
+   {
+     "name": "Development Webhook",
+     "type": "custom",
+     "signature_type": "none",
+     "triggers": [...]
+   }
+   ```
+
+   ⚠️ **警告**: `signature_type: "none"`は開発・テスト環境でのみ使用してください。本番環境では必ず`hmac`または`static`を使用してください。
+
 ### 初期メッセージテンプレート
 
 Goのtext/templateを使用して、ペイロードデータから動的にメッセージを生成できます。

@@ -38,14 +38,15 @@ func (c *WebhookController) GetName() string {
 
 // CreateWebhookRequest represents the request body for creating a webhook
 type CreateWebhookRequest struct {
-	Name            string                 `json:"name"`
-	Scope           entities.ResourceScope `json:"scope,omitempty"`
-	TeamID          string                 `json:"team_id,omitempty"`
-	Type            entities.WebhookType   `json:"type"`
-	SignatureHeader string                 `json:"signature_header,omitempty"`
-	GitHub          *GitHubConfigRequest   `json:"github,omitempty"`
-	Triggers        []TriggerRequest       `json:"triggers"`
-	SessionConfig   *SessionConfigRequest  `json:"session_config,omitempty"`
+	Name            string                        `json:"name"`
+	Scope           entities.ResourceScope        `json:"scope,omitempty"`
+	TeamID          string                        `json:"team_id,omitempty"`
+	Type            entities.WebhookType          `json:"type"`
+	SignatureHeader string                        `json:"signature_header,omitempty"`
+	SignatureType   entities.WebhookSignatureType `json:"signature_type,omitempty"`
+	GitHub          *GitHubConfigRequest          `json:"github,omitempty"`
+	Triggers        []TriggerRequest              `json:"triggers"`
+	SessionConfig   *SessionConfigRequest         `json:"session_config,omitempty"`
 }
 
 // GitHubConfigRequest represents GitHub-specific configuration in requests
@@ -99,33 +100,35 @@ type SessionParamsRequest struct {
 
 // UpdateWebhookRequest represents the request body for updating a webhook
 type UpdateWebhookRequest struct {
-	Name            *string                 `json:"name,omitempty"`
-	Status          *entities.WebhookStatus `json:"status,omitempty"`
-	SignatureHeader *string                 `json:"signature_header,omitempty"`
-	GitHub          *GitHubConfigRequest    `json:"github,omitempty"`
-	Triggers        []TriggerRequest        `json:"triggers,omitempty"`
-	SessionConfig   *SessionConfigRequest   `json:"session_config,omitempty"`
+	Name            *string                        `json:"name,omitempty"`
+	Status          *entities.WebhookStatus        `json:"status,omitempty"`
+	SignatureHeader *string                        `json:"signature_header,omitempty"`
+	SignatureType   *entities.WebhookSignatureType `json:"signature_type,omitempty"`
+	GitHub          *GitHubConfigRequest           `json:"github,omitempty"`
+	Triggers        []TriggerRequest               `json:"triggers,omitempty"`
+	SessionConfig   *SessionConfigRequest          `json:"session_config,omitempty"`
 }
 
 // WebhookResponse represents the response for a webhook
 type WebhookResponse struct {
-	ID              string                  `json:"id"`
-	Name            string                  `json:"name"`
-	UserID          string                  `json:"user_id"`
-	Scope           entities.ResourceScope  `json:"scope,omitempty"`
-	TeamID          string                  `json:"team_id,omitempty"`
-	Status          entities.WebhookStatus  `json:"status"`
-	Type            entities.WebhookType    `json:"type"`
-	Secret          string                  `json:"secret"`
-	SignatureHeader string                  `json:"signature_header,omitempty"`
-	WebhookURL      string                  `json:"webhook_url"`
-	GitHub          *GitHubConfigResponse   `json:"github,omitempty"`
-	Triggers        []TriggerResponse       `json:"triggers"`
-	SessionConfig   *SessionConfigResponse  `json:"session_config,omitempty"`
-	CreatedAt       string                  `json:"created_at"`
-	UpdatedAt       string                  `json:"updated_at"`
-	LastDelivery    *DeliveryRecordResponse `json:"last_delivery,omitempty"`
-	DeliveryCount   int64                   `json:"delivery_count"`
+	ID              string                        `json:"id"`
+	Name            string                        `json:"name"`
+	UserID          string                        `json:"user_id"`
+	Scope           entities.ResourceScope        `json:"scope,omitempty"`
+	TeamID          string                        `json:"team_id,omitempty"`
+	Status          entities.WebhookStatus        `json:"status"`
+	Type            entities.WebhookType          `json:"type"`
+	Secret          string                        `json:"secret"`
+	SignatureHeader string                        `json:"signature_header,omitempty"`
+	SignatureType   entities.WebhookSignatureType `json:"signature_type,omitempty"`
+	WebhookURL      string                        `json:"webhook_url"`
+	GitHub          *GitHubConfigResponse         `json:"github,omitempty"`
+	Triggers        []TriggerResponse             `json:"triggers"`
+	SessionConfig   *SessionConfigResponse        `json:"session_config,omitempty"`
+	CreatedAt       string                        `json:"created_at"`
+	UpdatedAt       string                        `json:"updated_at"`
+	LastDelivery    *DeliveryRecordResponse       `json:"last_delivery,omitempty"`
+	DeliveryCount   int64                         `json:"delivery_count"`
 }
 
 // GitHubConfigResponse represents GitHub-specific configuration in responses
@@ -239,6 +242,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	webhook.SetTeamID(req.TeamID)
 	if req.SignatureHeader != "" {
 		webhook.SetSignatureHeader(req.SignatureHeader)
+	}
+	if req.SignatureType != "" {
+		webhook.SetSignatureType(req.SignatureType)
 	}
 
 	// Set GitHub config
@@ -450,6 +456,9 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 	if req.SignatureHeader != nil {
 		webhook.SetSignatureHeader(*req.SignatureHeader)
 	}
+	if req.SignatureType != nil {
+		webhook.SetSignatureType(*req.SignatureType)
+	}
 	if req.GitHub != nil {
 		github := entities.NewWebhookGitHubConfig()
 		github.SetEnterpriseURL(req.GitHub.EnterpriseURL)
@@ -605,6 +614,7 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 		Type:            w.WebhookType(),
 		Secret:          w.Secret(),
 		SignatureHeader: w.SignatureHeader(),
+		SignatureType:   w.SignatureType(),
 		WebhookURL:      c.getWebhookURL(ctx, w),
 		CreatedAt:       w.CreatedAt().Format(time.RFC3339),
 		UpdatedAt:       w.UpdatedAt().Format(time.RFC3339),

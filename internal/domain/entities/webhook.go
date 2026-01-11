@@ -24,6 +24,18 @@ const (
 	WebhookStatusPaused WebhookStatus = "paused"
 )
 
+// WebhookSignatureType defines the signature verification type
+type WebhookSignatureType string
+
+const (
+	// WebhookSignatureTypeHMAC indicates HMAC signature verification (default)
+	WebhookSignatureTypeHMAC WebhookSignatureType = "hmac"
+	// WebhookSignatureTypeStatic indicates static token comparison
+	WebhookSignatureTypeStatic WebhookSignatureType = "static"
+	// WebhookSignatureTypeNone indicates no signature verification (for development/testing)
+	WebhookSignatureTypeNone WebhookSignatureType = "none"
+)
+
 // DeliveryStatus defines the status of a webhook delivery
 type DeliveryStatus string
 
@@ -47,6 +59,7 @@ type Webhook struct {
 	webhookType     WebhookType
 	secret          string
 	signatureHeader string
+	signatureType   WebhookSignatureType
 	github          *WebhookGitHubConfig
 	triggers        []WebhookTrigger
 	sessionConfig   *WebhookSessionConfig
@@ -149,6 +162,20 @@ func (w *Webhook) SignatureHeader() string {
 // SetSignatureHeader sets the signature header name
 func (w *Webhook) SetSignatureHeader(header string) {
 	w.signatureHeader = header
+	w.updatedAt = time.Now()
+}
+
+// SignatureType returns the signature verification type (defaults to "hmac")
+func (w *Webhook) SignatureType() WebhookSignatureType {
+	if w.signatureType == "" {
+		return WebhookSignatureTypeHMAC
+	}
+	return w.signatureType
+}
+
+// SetSignatureType sets the signature verification type
+func (w *Webhook) SetSignatureType(sigType WebhookSignatureType) {
+	w.signatureType = sigType
 	w.updatedAt = time.Now()
 }
 

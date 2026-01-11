@@ -1974,6 +1974,11 @@
         "enum": ["active", "paused"],
         "description": "Webhook status"
       },
+      "WebhookSignatureType": {
+        "type": "string",
+        "enum": ["hmac", "static", "none"],
+        "description": "Signature verification type: hmac (HMAC-based signature verification, default), static (simple token comparison), none (no verification, for development/testing)"
+      },
       "CreateWebhookRequest": {
         "type": "object",
         "required": ["name", "type", "triggers"],
@@ -2010,6 +2015,9 @@
             "type": "string",
             "description": "Name of the HTTP header containing the signature (default: X-Signature). Useful for services that use different header names like X-Slack-Signature or X-Hub-Signature-256",
             "default": "X-Signature"
+          },
+          "signature_type": {
+            "$ref": "#/components/schemas/WebhookSignatureType"
           }
         }
       },
@@ -2037,6 +2045,9 @@
           "signature_header": {
             "type": "string",
             "description": "Name of the HTTP header containing the signature (default: X-Signature)"
+          },
+          "signature_type": {
+            "$ref": "#/components/schemas/WebhookSignatureType"
           }
         }
       },
@@ -2072,6 +2083,9 @@
           "signature_header": {
             "type": "string",
             "description": "Name of the HTTP header containing the signature (default: X-Signature)"
+          },
+          "signature_type": {
+            "$ref": "#/components/schemas/WebhookSignatureType"
           },
           "webhook_url": {
             "type": "string",
