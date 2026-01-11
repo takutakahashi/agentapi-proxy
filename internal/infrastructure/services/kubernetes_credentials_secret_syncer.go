@@ -164,15 +164,8 @@ func (s *KubernetesCredentialsSecretSyncer) MigrateSecrets(ctx context.Context) 
 		if err == nil {
 			// New secret already exists, skip migration but log it
 			log.Printf("[ENV_SYNCER] Migration: Secret %s already exists as %s, skipping", secret.Name, newSecretName)
+			log.Printf("[ENV_SYNCER] Migration: Old secret %s is preserved for backward compatibility", secret.Name)
 			skippedCount++
-
-			// Delete the old secret since new one exists
-			err = s.client.CoreV1().Secrets(s.namespace).Delete(ctx, secret.Name, metav1.DeleteOptions{})
-			if err != nil && !errors.IsNotFound(err) {
-				log.Printf("[ENV_SYNCER] Migration: Warning - failed to delete old secret %s: %v", secret.Name, err)
-			} else {
-				log.Printf("[ENV_SYNCER] Migration: Deleted old secret %s", secret.Name)
-			}
 			continue
 		}
 		if err != nil && !errors.IsNotFound(err) {
@@ -208,13 +201,10 @@ func (s *KubernetesCredentialsSecretSyncer) MigrateSecrets(ctx context.Context) 
 		}
 		log.Printf("[ENV_SYNCER] Migration: Created new secret %s from %s", newSecretName, secret.Name)
 
-		// Delete the old secret
-		err = s.client.CoreV1().Secrets(s.namespace).Delete(ctx, secret.Name, metav1.DeleteOptions{})
-		if err != nil && !errors.IsNotFound(err) {
-			log.Printf("[ENV_SYNCER] Migration: Warning - created new secret but failed to delete old secret %s: %v", secret.Name, err)
-		} else {
-			log.Printf("[ENV_SYNCER] Migration: Deleted old secret %s", secret.Name)
-		}
+		// NOTE: We intentionally DO NOT delete the old secret here to ensure backward compatibility
+		// during rolling updates. Old secrets can be manually cleaned up after confirming
+		// all pods are using the new secret names.
+		log.Printf("[ENV_SYNCER] Migration: Old secret %s is preserved for backward compatibility", secret.Name)
 
 		migratedCount++
 	}
