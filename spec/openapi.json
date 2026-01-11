@@ -2005,6 +2005,11 @@
           },
           "session_config": {
             "$ref": "#/components/schemas/WebhookSessionConfig"
+          },
+          "signature_header": {
+            "type": "string",
+            "description": "Name of the HTTP header containing the signature (default: X-Signature). Useful for services that use different header names like X-Slack-Signature or X-Hub-Signature-256",
+            "default": "X-Signature"
           }
         }
       },
@@ -2028,6 +2033,10 @@
           },
           "session_config": {
             "$ref": "#/components/schemas/WebhookSessionConfig"
+          },
+          "signature_header": {
+            "type": "string",
+            "description": "Name of the HTTP header containing the signature (default: X-Signature)"
           }
         }
       },
@@ -2059,6 +2068,10 @@
           "secret": {
             "type": "string",
             "description": "Masked secret (last 4 chars visible)"
+          },
+          "signature_header": {
+            "type": "string",
+            "description": "Name of the HTTP header containing the signature (default: X-Signature)"
           },
           "webhook_url": {
             "type": "string",

@@ -77,18 +77,17 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 	}
 
 	// Verify signature using the webhook's secret
-	// Default to X-Signature header with SHA256
-	signatureHeader := ctx.Request().Header.Get("X-Signature")
+	// Use the configured signature header (defaults to X-Signature)
+	headerName := matchedWebhook.SignatureHeader()
+	signatureHeader := ctx.Request().Header.Get(headerName)
+
 	if signatureHeader == "" {
-		// Try alternative common header names
-		signatureHeader = ctx.Request().Header.Get("X-Hub-Signature-256")
-		if signatureHeader == "" {
-			signatureHeader = ctx.Request().Header.Get("X-Hub-Signature")
-		}
+		log.Printf("[WEBHOOK_CUSTOM] Missing signature header '%s' for webhook %s", headerName, webhookID)
+		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": fmt.Sprintf("Missing signature header: %s", headerName)})
 	}
 
 	if !c.verifySignature(body, signatureHeader, matchedWebhook.Secret()) {
-		log.Printf("[WEBHOOK_CUSTOM] Signature verification failed for webhook %s", webhookID)
+		log.Printf("[WEBHOOK_CUSTOM] Signature verification failed for webhook %s (header: %s)", webhookID, headerName)
 		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Signature verification failed"})
 	}
 

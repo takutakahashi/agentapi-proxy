@@ -38,21 +38,22 @@ const (
 
 // Webhook represents a webhook configuration entity
 type Webhook struct {
-	id            string
-	name          string
-	userID        string
-	scope         ResourceScope
-	teamID        string
-	status        WebhookStatus
-	webhookType   WebhookType
-	secret        string
-	github        *WebhookGitHubConfig
-	triggers      []WebhookTrigger
-	sessionConfig *WebhookSessionConfig
-	createdAt     time.Time
-	updatedAt     time.Time
-	lastDelivery  *WebhookDeliveryRecord
-	deliveryCount int64
+	id              string
+	name            string
+	userID          string
+	scope           ResourceScope
+	teamID          string
+	status          WebhookStatus
+	webhookType     WebhookType
+	secret          string
+	signatureHeader string
+	github          *WebhookGitHubConfig
+	triggers        []WebhookTrigger
+	sessionConfig   *WebhookSessionConfig
+	createdAt       time.Time
+	updatedAt       time.Time
+	lastDelivery    *WebhookDeliveryRecord
+	deliveryCount   int64
 }
 
 // NewWebhook creates a new Webhook entity
@@ -135,6 +136,20 @@ func (w *Webhook) MaskSecret() string {
 		return "****"
 	}
 	return "****" + w.secret[len(w.secret)-4:]
+}
+
+// SignatureHeader returns the signature header name (defaults to "X-Signature")
+func (w *Webhook) SignatureHeader() string {
+	if w.signatureHeader == "" {
+		return "X-Signature"
+	}
+	return w.signatureHeader
+}
+
+// SetSignatureHeader sets the signature header name
+func (w *Webhook) SetSignatureHeader(header string) {
+	w.signatureHeader = header
+	w.updatedAt = time.Now()
 }
 
 // GitHub returns the GitHub configuration
