@@ -19,10 +19,11 @@ import (
 
 // WebhookCustomController handles custom webhook reception
 type WebhookCustomController struct {
-	repo              repositories.WebhookRepository
-	sessionManager    repositories.SessionManager
-	signatureVerifier *webhook.SignatureVerifier
-	jsonpathEvaluator *webhook.JSONPathEvaluator
+	repo                repositories.WebhookRepository
+	sessionManager      repositories.SessionManager
+	signatureVerifier   *webhook.SignatureVerifier
+	jsonpathEvaluator   *webhook.JSONPathEvaluator
+	gotemplateEvaluator *webhook.GoTemplateEvaluator
 }
 
 // NewWebhookCustomController creates a new custom webhook controller
@@ -31,10 +32,11 @@ func NewWebhookCustomController(
 	sessionManager repositories.SessionManager,
 ) *WebhookCustomController {
 	return &WebhookCustomController{
-		repo:              repo,
-		sessionManager:    sessionManager,
-		signatureVerifier: webhook.NewSignatureVerifier(),
-		jsonpathEvaluator: webhook.NewJSONPathEvaluator(),
+		repo:                repo,
+		sessionManager:      sessionManager,
+		signatureVerifier:   webhook.NewSignatureVerifier(),
+		jsonpathEvaluator:   webhook.NewJSONPathEvaluator(),
+		gotemplateEvaluator: webhook.NewGoTemplateEvaluator(),
 	}
 }
 
@@ -259,34 +261,57 @@ func (c *WebhookCustomController) matchTriggers(
 	return nil
 }
 
-// matchTrigger checks if a single trigger matches the payload using JSONPath conditions
+// matchTrigger checks if a single trigger matches the payload using JSONPath and/or GoTemplate conditions
 func (c *WebhookCustomController) matchTrigger(
 	trigger *entities.WebhookTrigger,
 	payload map[string]interface{},
 ) bool {
 	cond := trigger.Conditions()
 
-	// Get JSONPath conditions
+	// Get both condition types
 	jsonPathConditions := cond.JSONPath()
-	if len(jsonPathConditions) == 0 {
-		log.Printf("[WEBHOOK_CUSTOM] Trigger %s (%s): no JSONPath conditions defined", trigger.ID(), trigger.Name())
+	goTemplateCondition := cond.GoTemplate()
+
+	// At least one condition type must be defined
+	if len(jsonPathConditions) == 0 && goTemplateCondition == "" {
+		log.Printf("[WEBHOOK_CUSTOM] Trigger %s (%s): no conditions defined", trigger.ID(), trigger.Name())
 		return false
 	}
 
-	// Evaluate all JSONPath conditions (AND logic)
-	matched, err := c.jsonpathEvaluator.Evaluate(payload, jsonPathConditions)
-	if err != nil {
-		log.Printf("[WEBHOOK_CUSTOM] Trigger %s (%s): JSONPath evaluation error: %v",
-			trigger.ID(), trigger.Name(), err)
-		return false
+	// Evaluate JSONPath conditions if present
+	jsonPathMatched := true
+	if len(jsonPathConditions) > 0 {
+		matched, err := c.jsonpathEvaluator.Evaluate(payload, jsonPathConditions)
+		if err != nil {
+			log.Printf("[WEBHOOK_CUSTOM] Trigger %s (%s): JSONPath evaluation error: %v",
+				trigger.ID(), trigger.Name(), err)
+			return false
+		}
+		jsonPathMatched = matched
+		if !matched {
+			log.Printf("[WEBHOOK_CUSTOM] Trigger %s (%s): JSONPath conditions not met",
+				trigger.ID(), trigger.Name())
+		}
 	}
 
-	if !matched {
-		log.Printf("[WEBHOOK_CUSTOM] Trigger %s (%s): JSONPath conditions not met",
-			trigger.ID(), trigger.Name())
+	// Evaluate GoTemplate condition if present
+	goTemplateMatched := true
+	if goTemplateCondition != "" {
+		matched, err := c.gotemplateEvaluator.Evaluate(payload, goTemplateCondition)
+		if err != nil {
+			log.Printf("[WEBHOOK_CUSTOM] Trigger %s (%s): GoTemplate evaluation error: %v",
+				trigger.ID(), trigger.Name(), err)
+			return false
+		}
+		goTemplateMatched = matched
+		if !matched {
+			log.Printf("[WEBHOOK_CUSTOM] Trigger %s (%s): GoTemplate condition not met",
+				trigger.ID(), trigger.Name())
+		}
 	}
 
-	return matched
+	// Both conditions must match (AND logic)
+	return jsonPathMatched && goTemplateMatched
 }
 
 // createSessionFromWebhook creates a session based on webhook and trigger configuration

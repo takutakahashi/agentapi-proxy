@@ -2186,6 +2186,10 @@
               "$ref": "#/components/schemas/JSONPathCondition"
             },
             "description": "JSONPath conditions for custom webhooks"
+          },
+          "go_template": {
+            "type": "string",
+            "description": "Go template expression that evaluates to 'true' or 'false'. Example: {{ eq .event.type \"push\" }}"
           }
         }
       },

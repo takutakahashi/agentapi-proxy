@@ -74,8 +74,9 @@ type webhookTriggerJSON struct {
 }
 
 type webhookTriggerConditionsJSON struct {
-	GitHub   *webhookGitHubConditionsJSON   `json:"github,omitempty"`
-	JSONPath []webhookJSONPathConditionJSON `json:"jsonpath,omitempty"`
+	GitHub     *webhookGitHubConditionsJSON   `json:"github,omitempty"`
+	JSONPath   []webhookJSONPathConditionJSON `json:"jsonpath,omitempty"`
+	GoTemplate string                         `json:"go_template,omitempty"`
 }
 
 type webhookJSONPathConditionJSON struct {
@@ -534,6 +535,9 @@ func (r *KubernetesWebhookRepository) jsonToEntity(wj *webhookJSON) *entities.We
 			}
 			conditions.SetJSONPath(jsonPathConditions)
 		}
+		if tj.Conditions.GoTemplate != "" {
+			conditions.SetGoTemplate(tj.Conditions.GoTemplate)
+		}
 		trigger.SetConditions(conditions)
 
 		// Session config
@@ -625,6 +629,9 @@ func (r *KubernetesWebhookRepository) entityToJSON(w *entities.Webhook) *webhook
 					Value:    jp.Value(),
 				})
 			}
+		}
+		if goTemplate := cond.GoTemplate(); goTemplate != "" {
+			tj.Conditions.GoTemplate = goTemplate
 		}
 
 		// Session config
