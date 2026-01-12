@@ -355,8 +355,9 @@ func (t *WebhookTrigger) SetStopOnMatch(stop bool) { t.stopOnMatch = stop }
 
 // WebhookTriggerConditions defines the conditions for a trigger to match
 type WebhookTriggerConditions struct {
-	github   *WebhookGitHubConditions
-	jsonPath []WebhookJSONPathCondition
+	github     *WebhookGitHubConditions
+	jsonPath   []WebhookJSONPathCondition
+	goTemplate string
 }
 
 // GitHub returns the GitHub conditions
@@ -371,6 +372,14 @@ func (c WebhookTriggerConditions) JSONPath() []WebhookJSONPathCondition { return
 // SetJSONPath sets the JSONPath conditions
 func (c *WebhookTriggerConditions) SetJSONPath(jsonPath []WebhookJSONPathCondition) {
 	c.jsonPath = jsonPath
+}
+
+// GoTemplate returns the Go template condition
+func (c WebhookTriggerConditions) GoTemplate() string { return c.goTemplate }
+
+// SetGoTemplate sets the Go template condition
+func (c *WebhookTriggerConditions) SetGoTemplate(goTemplate string) {
+	c.goTemplate = goTemplate
 }
 
 // WebhookGitHubConditions defines GitHub-specific trigger conditions
