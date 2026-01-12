@@ -116,11 +116,6 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 
 		log.Printf("[WEBHOOK_CUSTOM] Static token verified for webhook %s (%s)", matchedWebhook.ID(), matchedWebhook.Name())
 
-	case entities.WebhookSignatureTypeNone:
-		// No signature verification (for development/testing only)
-		log.Printf("[WEBHOOK_CUSTOM] WARNING: No signature verification for webhook %s (%s) - signature_type is 'none'",
-			matchedWebhook.ID(), matchedWebhook.Name())
-
 	default:
 		log.Printf("[WEBHOOK_CUSTOM] Unknown signature type '%s' for webhook %s, defaulting to HMAC", sigType, webhookID)
 

@@ -263,21 +263,6 @@ webhook作成時に`signature_type`フィールドで署名検証の方式を指
      -d '{"event": "test"}'
    ```
 
-3. **`none`**: 署名検証なし
-   - 開発・テスト環境専用
-   - 本番環境では使用しないでください
-
-   ```json
-   {
-     "name": "Development Webhook",
-     "type": "custom",
-     "signature_type": "none",
-     "triggers": [...]
-   }
-   ```
-
-   ⚠️ **警告**: `signature_type: "none"`は開発・テスト環境でのみ使用してください。本番環境では必ず`hmac`または`static`を使用してください。
-
 ### 初期メッセージテンプレート
 
 Goのtext/templateを使用して、ペイロードデータから動的にメッセージを生成できます。

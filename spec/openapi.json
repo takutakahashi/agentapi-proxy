@@ -1976,8 +1976,8 @@
       },
       "WebhookSignatureType": {
         "type": "string",
-        "enum": ["hmac", "static", "none"],
-        "description": "Signature verification type: hmac (HMAC-based signature verification, default), static (simple token comparison), none (no verification, for development/testing)"
+        "enum": ["hmac", "static"],
+        "description": "Signature verification type: hmac (HMAC-based signature verification, default), static (simple token comparison)"
       },
       "CreateWebhookRequest": {
         "type": "object",
