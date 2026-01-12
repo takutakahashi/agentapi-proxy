@@ -142,6 +142,8 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 			log.Printf("[K8S_SESSION] Warning: failed to create initial message secret: %v", err)
 			// Continue anyway - sidecar will handle missing secret gracefully
 		}
+		// Cache initial message as description
+		session.SetDescription(req.InitialMessage)
 	}
 
 	// Create GitHub token Secret if github_token is provided via params
@@ -2638,6 +2640,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
+	session.SetDescription(initialMessage) // Cache initial message as description
 
 	// Add to memory map
 	m.mutex.Lock()
@@ -2715,6 +2718,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetStatus(m.getStatusFromDeploymentObject(deployment))
+	session.SetDescription(initialMessage) // Cache initial message as description
 
 	// Add to memory map
 	m.mutex.Lock()

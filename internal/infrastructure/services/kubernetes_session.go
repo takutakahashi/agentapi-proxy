@@ -22,6 +22,7 @@ type KubernetesSession struct {
 	status         string
 	cancelFunc     context.CancelFunc
 	mutex          sync.RWMutex
+	description    string // Preserved description from Secret (not truncated by label limits)
 }
 
 // NewKubernetesSession creates a new KubernetesSession
@@ -92,14 +93,13 @@ func (s *KubernetesSession) StartedAt() time.Time {
 	return s.startedAt
 }
 
-// Description returns the session description
-// Returns tags["description"] if exists, otherwise returns InitialMessage
+// Description returns the session description (cached initial message)
 func (s *KubernetesSession) Description() string {
-	if s.request != nil && s.request.Tags != nil {
-		if desc, exists := s.request.Tags["description"]; exists && desc != "" {
-			return desc
-		}
+	// Return cached description if available
+	if s.description != "" {
+		return s.description
 	}
+	// Fall back to InitialMessage
 	if s.request != nil && s.request.InitialMessage != "" {
 		return s.request.InitialMessage
 	}
@@ -123,6 +123,11 @@ func (s *KubernetesSession) SetStatus(status string) {
 // SetStartedAt sets the session start time (used for restored sessions)
 func (s *KubernetesSession) SetStartedAt(t time.Time) {
 	s.startedAt = t
+}
+
+// SetDescription sets the session description (used for restored sessions from Secret)
+func (s *KubernetesSession) SetDescription(desc string) {
+	s.description = desc
 }
 
 // ServiceDNS returns the Kubernetes Service DNS name for this session
