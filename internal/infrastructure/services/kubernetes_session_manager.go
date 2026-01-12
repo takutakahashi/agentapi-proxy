@@ -142,6 +142,8 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 			log.Printf("[K8S_SESSION] Warning: failed to create initial message secret: %v", err)
 			// Continue anyway - sidecar will handle missing secret gracefully
 		}
+		// Cache initial message as description
+		session.SetDescription(req.InitialMessage)
 	}
 
 	// Create GitHub token Secret if github_token is provided via params
@@ -1417,21 +1419,13 @@ func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *Kub
 	}
 }
 
-// createInitialMessageSecret creates a Secret containing the initial message and description
+// createInitialMessageSecret creates a Secret containing the initial message
 func (m *KubernetesSessionManager) createInitialMessageSecret(
 	ctx context.Context,
 	session *KubernetesSession,
 	message string,
 ) error {
 	secretName := fmt.Sprintf("%s-initial-message", session.ServiceName())
-
-	// Extract description from tags if available
-	description := ""
-	if session.Request() != nil && session.Request().Tags != nil {
-		if desc, exists := session.Request().Tags["description"]; exists {
-			description = desc
-		}
-	}
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1445,8 +1439,7 @@ func (m *KubernetesSessionManager) createInitialMessageSecret(
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			"message":     []byte(message),
-			"description": []byte(description),
+			"message": []byte(message),
 		},
 	}
 
@@ -1469,27 +1462,18 @@ func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Contex
 	return nil
 }
 
-// getInitialMessageFromSecret retrieves the initial message and description from Secret for session restoration
-// Returns (message, description)
-func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) (string, string) {
+// getInitialMessageFromSecret retrieves the initial message from Secret for session restoration
+func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) string {
 	secretName := fmt.Sprintf("%s-initial-message", serviceName)
 	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		// Secret may not exist if no initial message was provided
-		return "", ""
+		return ""
 	}
-
-	message := ""
-	if msg, ok := secret.Data["message"]; ok {
-		message = string(msg)
+	if message, ok := secret.Data["message"]; ok {
+		return string(message)
 	}
-
-	description := ""
-	if desc, ok := secret.Data["description"]; ok {
-		description = string(desc)
-	}
-
-	return message, description
+	return ""
 }
 
 // deleteGithubTokenSecret deletes the GitHub token Secret for a session
@@ -2617,8 +2601,8 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Labels contain only the hash for querying purposes
 	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
-	// Restore initial message and description from Secret
-	initialMessage, description := m.getInitialMessageFromSecret(context.Background(), svc.Name)
+	// Restore initial message from Secret
+	initialMessage := m.getInitialMessageFromSecret(context.Background(), svc.Name)
 
 	// Parse created-at from annotations
 	createdAt := time.Now()
@@ -2656,7 +2640,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
-	session.SetDescription(description)
+	session.SetDescription(initialMessage) // Cache initial message as description
 
 	// Add to memory map
 	m.mutex.Lock()
@@ -2695,8 +2679,8 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	// Labels contain only the hash for querying purposes
 	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
-	// Restore initial message and description from Secret
-	initialMessage, description := m.getInitialMessageFromSecret(context.Background(), svc.Name)
+	// Restore initial message from Secret
+	initialMessage := m.getInitialMessageFromSecret(context.Background(), svc.Name)
 
 	// Parse created-at from annotations
 	createdAt := time.Now()
@@ -2734,7 +2718,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetStatus(m.getStatusFromDeploymentObject(deployment))
-	session.SetDescription(description)
+	session.SetDescription(initialMessage) // Cache initial message as description
 
 	// Add to memory map
 	m.mutex.Lock()

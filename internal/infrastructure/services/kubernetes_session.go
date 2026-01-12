@@ -93,20 +93,13 @@ func (s *KubernetesSession) StartedAt() time.Time {
 	return s.startedAt
 }
 
-// Description returns the session description
-// Priority: 1) description field from Secret, 2) tags["description"], 3) InitialMessage
+// Description returns the session description (cached initial message)
 func (s *KubernetesSession) Description() string {
-	// Priority 1: Check description field (from Secret, no length limit)
+	// Return cached description if available
 	if s.description != "" {
 		return s.description
 	}
-	// Priority 2: Check tags["description"] (legacy, may be truncated)
-	if s.request != nil && s.request.Tags != nil {
-		if desc, exists := s.request.Tags["description"]; exists && desc != "" {
-			return desc
-		}
-	}
-	// Priority 3: Fall back to InitialMessage
+	// Fall back to InitialMessage
 	if s.request != nil && s.request.InitialMessage != "" {
 		return s.request.InitialMessage
 	}
