@@ -74,7 +74,14 @@ type webhookTriggerJSON struct {
 }
 
 type webhookTriggerConditionsJSON struct {
-	GitHub *webhookGitHubConditionsJSON `json:"github,omitempty"`
+	GitHub   *webhookGitHubConditionsJSON   `json:"github,omitempty"`
+	JSONPath []webhookJSONPathConditionJSON `json:"jsonpath,omitempty"`
+}
+
+type webhookJSONPathConditionJSON struct {
+	Path     string      `json:"path"`
+	Operator string      `json:"operator"`
+	Value    interface{} `json:"value"`
 }
 
 type webhookGitHubConditionsJSON struct {
@@ -516,6 +523,17 @@ func (r *KubernetesWebhookRepository) jsonToEntity(wj *webhookJSON) *entities.We
 			ghCond.SetSender(tj.Conditions.GitHub.Sender)
 			conditions.SetGitHub(ghCond)
 		}
+		if len(tj.Conditions.JSONPath) > 0 {
+			jsonPathConditions := make([]entities.WebhookJSONPathCondition, 0, len(tj.Conditions.JSONPath))
+			for _, jp := range tj.Conditions.JSONPath {
+				jsonPathConditions = append(jsonPathConditions, entities.NewWebhookJSONPathCondition(
+					jp.Path,
+					jp.Operator,
+					jp.Value,
+				))
+			}
+			conditions.SetJSONPath(jsonPathConditions)
+		}
 		trigger.SetConditions(conditions)
 
 		// Session config
@@ -596,6 +614,16 @@ func (r *KubernetesWebhookRepository) entityToJSON(w *entities.Webhook) *webhook
 				BaseBranches: ghCond.BaseBranches(),
 				Draft:        ghCond.Draft(),
 				Sender:       ghCond.Sender(),
+			}
+		}
+		if jsonPathConds := cond.JSONPath(); len(jsonPathConds) > 0 {
+			tj.Conditions.JSONPath = make([]webhookJSONPathConditionJSON, 0, len(jsonPathConds))
+			for _, jp := range jsonPathConds {
+				tj.Conditions.JSONPath = append(tj.Conditions.JSONPath, webhookJSONPathConditionJSON{
+					Path:     jp.Path(),
+					Operator: string(jp.Operator()),
+					Value:    jp.Value(),
+				})
 			}
 		}
 

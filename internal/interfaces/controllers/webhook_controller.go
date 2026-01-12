@@ -69,7 +69,15 @@ type TriggerRequest struct {
 
 // TriggerConditionsRequest represents trigger conditions in requests
 type TriggerConditionsRequest struct {
-	GitHub *GitHubConditionsRequest `json:"github,omitempty"`
+	GitHub   *GitHubConditionsRequest   `json:"github,omitempty"`
+	JSONPath []JSONPathConditionRequest `json:"jsonpath,omitempty"`
+}
+
+// JSONPathConditionRequest represents a JSONPath condition in requests
+type JSONPathConditionRequest struct {
+	Path     string      `json:"path"`
+	Operator string      `json:"operator"`
+	Value    interface{} `json:"value"`
 }
 
 // GitHubConditionsRequest represents GitHub-specific conditions in requests
@@ -151,7 +159,15 @@ type TriggerResponse struct {
 
 // TriggerConditionsResponse represents trigger conditions in responses
 type TriggerConditionsResponse struct {
-	GitHub *GitHubConditionsResponse `json:"github,omitempty"`
+	GitHub   *GitHubConditionsResponse   `json:"github,omitempty"`
+	JSONPath []JSONPathConditionResponse `json:"jsonpath,omitempty"`
+}
+
+// JSONPathConditionResponse represents a JSONPath condition in responses
+type JSONPathConditionResponse struct {
+	Path     string      `json:"path"`
+	Operator string      `json:"operator"`
+	Value    interface{} `json:"value"`
 }
 
 // GitHubConditionsResponse represents GitHub-specific conditions in responses
@@ -206,8 +222,8 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	if req.Type == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "type is required")
 	}
-	if req.Type != entities.WebhookTypeGitHub {
-		return echo.NewHTTPError(http.StatusBadRequest, "currently only 'github' type is supported")
+	if req.Type != entities.WebhookTypeGitHub && req.Type != entities.WebhookTypeCustom {
+		return echo.NewHTTPError(http.StatusBadRequest, "type must be 'github' or 'custom'")
 	}
 	if len(req.Triggers) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one trigger is required")
@@ -282,6 +298,17 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 			ghCond.SetDraft(t.Conditions.GitHub.Draft)
 			ghCond.SetSender(t.Conditions.GitHub.Sender)
 			conditions.SetGitHub(ghCond)
+		}
+		if t.Conditions.JSONPath != nil {
+			jsonPathConditions := make([]entities.WebhookJSONPathCondition, 0, len(t.Conditions.JSONPath))
+			for _, jp := range t.Conditions.JSONPath {
+				jsonPathConditions = append(jsonPathConditions, entities.NewWebhookJSONPathCondition(
+					jp.Path,
+					jp.Operator,
+					jp.Value,
+				))
+			}
+			conditions.SetJSONPath(jsonPathConditions)
 		}
 		trigger.SetConditions(conditions)
 
@@ -492,6 +519,17 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 				ghCond.SetSender(t.Conditions.GitHub.Sender)
 				conditions.SetGitHub(ghCond)
 			}
+			if t.Conditions.JSONPath != nil {
+				jsonPathConditions := make([]entities.WebhookJSONPathCondition, 0, len(t.Conditions.JSONPath))
+				for _, jp := range t.Conditions.JSONPath {
+					jsonPathConditions = append(jsonPathConditions, entities.NewWebhookJSONPathCondition(
+						jp.Path,
+						jp.Operator,
+						jp.Value,
+					))
+				}
+				conditions.SetJSONPath(jsonPathConditions)
+			}
 			trigger.SetConditions(conditions)
 
 			if t.SessionConfig != nil {
@@ -655,6 +693,16 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 				BaseBranches: ghCond.BaseBranches(),
 				Draft:        ghCond.Draft(),
 				Sender:       ghCond.Sender(),
+			}
+		}
+		if jsonPathConds := cond.JSONPath(); len(jsonPathConds) > 0 {
+			tr.Conditions.JSONPath = make([]JSONPathConditionResponse, 0, len(jsonPathConds))
+			for _, jp := range jsonPathConds {
+				tr.Conditions.JSONPath = append(tr.Conditions.JSONPath, JSONPathConditionResponse{
+					Path:     jp.Path(),
+					Operator: string(jp.Operator()),
+					Value:    jp.Value(),
+				})
 			}
 		}
 
