@@ -61,7 +61,6 @@ type OAuthSession struct {
 func (s *Server) setupAuthRoutes() {
 	// Add authentication info routes
 	authInfoController := controllers.NewAuthInfoController(s.config)
-	s.echo.GET("/auth/types", authInfoController.GetAuthTypes)
 	s.echo.GET("/auth/status", authInfoController.GetAuthStatus)
 
 	// Add OAuth routes if OAuth is configured
