@@ -32,8 +32,6 @@ const (
 	WebhookSignatureTypeHMAC WebhookSignatureType = "hmac"
 	// WebhookSignatureTypeStatic indicates static token comparison
 	WebhookSignatureTypeStatic WebhookSignatureType = "static"
-	// WebhookSignatureTypeNone indicates no signature verification (for development/testing)
-	WebhookSignatureTypeNone WebhookSignatureType = "none"
 )
 
 // DeliveryStatus defines the status of a webhook delivery
