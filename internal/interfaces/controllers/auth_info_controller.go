@@ -9,19 +9,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
-// AuthTypesResponse represents the response for available auth types
-type AuthTypesResponse struct {
-	Enabled bool       `json:"enabled"`
-	Types   []AuthType `json:"types"`
-}
-
-// AuthType represents a single authentication type
-type AuthType struct {
-	Type      string `json:"type"`
-	Name      string `json:"name"`
-	Available bool   `json:"available"`
-}
-
 // AuthStatusResponse represents the response for auth status
 type AuthStatusResponse struct {
 	Authenticated bool                 `json:"authenticated"`
@@ -40,45 +27,6 @@ type AuthInfoController struct {
 // NewAuthInfoController creates a new AuthInfoController
 func NewAuthInfoController(cfg *config.Config) *AuthInfoController {
 	return &AuthInfoController{cfg: cfg}
-}
-
-// GetAuthTypes returns available authentication types
-func (c *AuthInfoController) GetAuthTypes(ctx echo.Context) error {
-	response := AuthTypesResponse{
-		Enabled: c.cfg.Auth.Enabled,
-		Types:   []AuthType{},
-	}
-
-	if !c.cfg.Auth.Enabled {
-		return ctx.JSON(http.StatusOK, response)
-	}
-
-	if c.cfg.Auth.Static != nil && c.cfg.Auth.Static.Enabled {
-		response.Types = append(response.Types, AuthType{
-			Type:      "api_key",
-			Name:      "API Key",
-			Available: true,
-		})
-	}
-
-	if c.cfg.Auth.GitHub != nil && c.cfg.Auth.GitHub.Enabled {
-		githubAuth := AuthType{
-			Type:      "github",
-			Name:      "GitHub",
-			Available: true,
-		}
-
-		if c.cfg.Auth.GitHub.OAuth != nil &&
-			c.cfg.Auth.GitHub.OAuth.ClientID != "" &&
-			c.cfg.Auth.GitHub.OAuth.ClientSecret != "" {
-			githubAuth.Type = "github_oauth"
-			githubAuth.Name = "GitHub OAuth"
-		}
-
-		response.Types = append(response.Types, githubAuth)
-	}
-
-	return ctx.JSON(http.StatusOK, response)
 }
 
 // GetAuthStatus returns current authentication status
