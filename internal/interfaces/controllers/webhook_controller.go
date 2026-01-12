@@ -69,8 +69,9 @@ type TriggerRequest struct {
 
 // TriggerConditionsRequest represents trigger conditions in requests
 type TriggerConditionsRequest struct {
-	GitHub   *GitHubConditionsRequest   `json:"github,omitempty"`
-	JSONPath []JSONPathConditionRequest `json:"jsonpath,omitempty"`
+	GitHub     *GitHubConditionsRequest   `json:"github,omitempty"`
+	JSONPath   []JSONPathConditionRequest `json:"jsonpath,omitempty"`
+	GoTemplate string                     `json:"go_template,omitempty"`
 }
 
 // JSONPathConditionRequest represents a JSONPath condition in requests
@@ -159,8 +160,9 @@ type TriggerResponse struct {
 
 // TriggerConditionsResponse represents trigger conditions in responses
 type TriggerConditionsResponse struct {
-	GitHub   *GitHubConditionsResponse   `json:"github,omitempty"`
-	JSONPath []JSONPathConditionResponse `json:"jsonpath,omitempty"`
+	GitHub     *GitHubConditionsResponse   `json:"github,omitempty"`
+	JSONPath   []JSONPathConditionResponse `json:"jsonpath,omitempty"`
+	GoTemplate string                      `json:"go_template,omitempty"`
 }
 
 // JSONPathConditionResponse represents a JSONPath condition in responses
@@ -309,6 +311,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 				))
 			}
 			conditions.SetJSONPath(jsonPathConditions)
+		}
+		if t.Conditions.GoTemplate != "" {
+			conditions.SetGoTemplate(t.Conditions.GoTemplate)
 		}
 		trigger.SetConditions(conditions)
 
@@ -530,6 +535,9 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 				}
 				conditions.SetJSONPath(jsonPathConditions)
 			}
+			if t.Conditions.GoTemplate != "" {
+				conditions.SetGoTemplate(t.Conditions.GoTemplate)
+			}
 			trigger.SetConditions(conditions)
 
 			if t.SessionConfig != nil {
@@ -704,6 +712,9 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 					Value:    jp.Value(),
 				})
 			}
+		}
+		if goTemplate := cond.GoTemplate(); goTemplate != "" {
+			tr.Conditions.GoTemplate = goTemplate
 		}
 
 		// Session config
