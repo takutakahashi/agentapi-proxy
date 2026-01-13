@@ -162,7 +162,7 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 
 	if event == "" {
 		log.Printf("[WEBHOOK] Missing X-GitHub-Event header")
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Missing X-GitHub-Event header"})
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Missing required header"})
 	}
 
 	log.Printf("[WEBHOOK] Received GitHub webhook: webhook_id=%s, event=%s, delivery=%s", webhookID, event, deliveryID)

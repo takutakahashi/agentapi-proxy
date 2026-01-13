@@ -89,7 +89,7 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 
 		if signatureHeader == "" {
 			log.Printf("[WEBHOOK_CUSTOM] Missing signature header '%s' for webhook %s", headerName, webhookID)
-			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": fmt.Sprintf("Missing signature header: %s", headerName)})
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing signature header"})
 		}
 
 		if !c.verifySignature(body, signatureHeader, matchedWebhook.Secret()) {
@@ -106,7 +106,7 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 
 		if token == "" {
 			log.Printf("[WEBHOOK_CUSTOM] Missing token header '%s' for webhook %s", headerName, webhookID)
-			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": fmt.Sprintf("Missing token header: %s", headerName)})
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing token header"})
 		}
 
 		if token != matchedWebhook.Secret() {
@@ -125,7 +125,7 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 
 		if signatureHeader == "" {
 			log.Printf("[WEBHOOK_CUSTOM] Missing signature header '%s' for webhook %s", headerName, webhookID)
-			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": fmt.Sprintf("Missing signature header: %s", headerName)})
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing signature header"})
 		}
 
 		if !c.verifySignature(body, signatureHeader, matchedWebhook.Secret()) {
