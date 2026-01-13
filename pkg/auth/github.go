@@ -226,38 +226,26 @@ func (p *GitHubAuthProvider) getUserTeamsWithWildcard(ctx context.Context, token
 		return nil, fmt.Errorf("failed to get user teams: %w", err)
 	}
 
-	// Extract wildcard slugs and exact patterns
-	wildcardSlugs := make(map[string]bool)
-	for _, slug := range p.extractWildcardTeamSlugs() {
-		wildcardSlugs[slug] = true
+	// Get all configured patterns
+	patterns := make([]string, 0, len(p.config.UserMapping.TeamRoleMapping))
+	for pattern := range p.config.UserMapping.TeamRoleMapping {
+		patterns = append(patterns, pattern)
 	}
 
-	exactPatterns := make(map[string]bool)
-	for teamKey := range p.config.UserMapping.TeamRoleMapping {
-		if !strings.HasPrefix(teamKey, "*/") {
-			exactPatterns[teamKey] = true
-		}
-	}
+	log.Printf("[AUTH_DEBUG] Configured patterns: %v", patterns)
 
-	log.Printf("[AUTH_DEBUG] Wildcard slugs: %v", wildcardSlugs)
-	log.Printf("[AUTH_DEBUG] Exact patterns: %v", exactPatterns)
-
-	// Filter teams that match either wildcard or exact patterns
+	// Filter teams that match any configured pattern
 	var matchedTeams []GitHubTeamMembership
 	for _, team := range allTeams {
-		exactKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+		teamKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
 
-		// Check wildcard match
-		if wildcardSlugs[team.TeamSlug] {
-			matchedTeams = append(matchedTeams, team)
-			log.Printf("[AUTH_DEBUG] Wildcard match: */%s matched %s", team.TeamSlug, exactKey)
-			continue
-		}
-
-		// Check exact match
-		if exactPatterns[exactKey] {
-			matchedTeams = append(matchedTeams, team)
-			log.Printf("[AUTH_DEBUG] Exact match: %s", exactKey)
+		// Check each pattern for a match
+		for _, pattern := range patterns {
+			if matchTeamPattern(pattern, team.Organization, team.TeamSlug) {
+				matchedTeams = append(matchedTeams, team)
+				log.Printf("[AUTH_DEBUG] Pattern match: %s matched %s", pattern, teamKey)
+				break // Only add the team once even if multiple patterns match
+			}
 		}
 	}
 
@@ -444,18 +432,16 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 
 	// Check each team membership against configured rules
 	for _, team := range teams {
-		exactKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
-		wildcardKey := fmt.Sprintf("*/%s", team.TeamSlug)
-		log.Printf("[AUTH_DEBUG] Checking team: exactKey=%s, wildcardKey=%s", exactKey, wildcardKey)
+		teamKey := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+		log.Printf("[AUTH_DEBUG] Checking team: %s", teamKey)
 
-		// Check both exact match and wildcard match
-		keysToCheck := []string{exactKey, wildcardKey}
 		matchFound := false
 
-		for _, key := range keysToCheck {
-			if rule, exists := p.config.UserMapping.TeamRoleMapping[key]; exists {
+		// Check all configured patterns for matches
+		for pattern, rule := range p.config.UserMapping.TeamRoleMapping {
+			if matchTeamPattern(pattern, team.Organization, team.TeamSlug) {
 				matchFound = true
-				log.Printf("[AUTH_DEBUG] Found matching rule for %s (pattern: %s): role=%s, permissions=%v", exactKey, key, rule.Role, rule.Permissions)
+				log.Printf("[AUTH_DEBUG] Found matching rule for %s (pattern: %s): role=%s, permissions=%v", teamKey, pattern, rule.Role, rule.Permissions)
 
 				// Apply higher role if found
 				if p.isHigherRole(rule.Role, highestRole) {
@@ -477,7 +463,7 @@ func (p *GitHubAuthProvider) mapUserPermissions(teams []GitHubTeamMembership) (s
 		}
 
 		if !matchFound {
-			log.Printf("[AUTH_DEBUG] No rule found for team: %s", exactKey)
+			log.Printf("[AUTH_DEBUG] No rule found for team: %s", teamKey)
 			log.Printf("[AUTH_DEBUG] Available team mappings:")
 			for availableKey := range p.config.UserMapping.TeamRoleMapping {
 				log.Printf("[AUTH_DEBUG]   - %s", availableKey)
@@ -535,28 +521,72 @@ func ExtractTokenFromHeader(header string) string {
 	return header
 }
 
-// hasWildcardPatterns checks if any team mappings contain wildcard patterns (*/team)
+// matchWildcard matches a string against a pattern with wildcard support
+// Supported patterns:
+//   - "exact" - exact match
+//   - "*" - matches any string
+//   - "prefix-*" - matches strings starting with "prefix-"
+//   - "*-suffix" - matches strings ending with "-suffix"
+func matchWildcard(pattern, str string) bool {
+	// Exact match for "*"
+	if pattern == "*" {
+		return true
+	}
+
+	// No wildcard - exact match required
+	if !strings.Contains(pattern, "*") {
+		return pattern == str
+	}
+
+	// Prefix pattern: "prefix-*"
+	if strings.HasSuffix(pattern, "-*") {
+		prefix := strings.TrimSuffix(pattern, "-*")
+		return strings.HasPrefix(str, prefix+"-")
+	}
+
+	// Suffix pattern: "*-suffix"
+	if strings.HasPrefix(pattern, "*-") {
+		suffix := strings.TrimPrefix(pattern, "*-")
+		return strings.HasSuffix(str, "-"+suffix)
+	}
+
+	// If we reach here, the pattern has * in an unsupported position
+	return false
+}
+
+// matchTeamPattern matches a team against a pattern
+// Pattern format: "org/team" where both org and team can contain wildcards
+// Examples:
+//   - "myorg/myteam" - exact match
+//   - "*/myteam" - any org, exact team name
+//   - "myorg/*" - exact org, any team
+//   - "myorg/*-engineer" - exact org, team ending with "-engineer"
+//   - "myorg/backend-*" - exact org, team starting with "backend-"
+func matchTeamPattern(pattern, org, teamSlug string) bool {
+	parts := strings.Split(pattern, "/")
+	if len(parts) != 2 {
+		return false
+	}
+
+	orgPattern, teamPattern := parts[0], parts[1]
+
+	// Check organization match
+	if !matchWildcard(orgPattern, org) {
+		return false
+	}
+
+	// Check team match
+	return matchWildcard(teamPattern, teamSlug)
+}
+
+// hasWildcardPatterns checks if any team mappings contain wildcard patterns
 func (p *GitHubAuthProvider) hasWildcardPatterns() bool {
 	for teamKey := range p.config.UserMapping.TeamRoleMapping {
-		if strings.HasPrefix(teamKey, "*/") {
+		if strings.Contains(teamKey, "*") {
 			return true
 		}
 	}
 	return false
-}
-
-// extractWildcardTeamSlugs extracts team slugs from wildcard patterns (*/slug)
-func (p *GitHubAuthProvider) extractWildcardTeamSlugs() []string {
-	slugs := []string{}
-	for teamKey := range p.config.UserMapping.TeamRoleMapping {
-		if strings.HasPrefix(teamKey, "*/") {
-			parts := strings.Split(teamKey, "/")
-			if len(parts) == 2 {
-				slugs = append(slugs, parts[1])
-			}
-		}
-	}
-	return slugs
 }
 
 // getAllUserTeams retrieves all teams the user belongs to using /user/teams API
