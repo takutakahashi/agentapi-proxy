@@ -646,6 +646,27 @@ func TestGitHubAuthProvider_HasWildcardPatterns(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "team wildcard pattern",
+			teamMapping: map[string]config.TeamRoleRule{
+				"myorg/*": {Role: "developer"},
+			},
+			expected: true,
+		},
+		{
+			name: "prefix pattern",
+			teamMapping: map[string]config.TeamRoleRule{
+				"myorg/backend-*": {Role: "developer"},
+			},
+			expected: true,
+		},
+		{
+			name: "suffix pattern",
+			teamMapping: map[string]config.TeamRoleRule{
+				"myorg/*-engineer": {Role: "developer"},
+			},
+			expected: true,
+		},
+		{
 			name:        "empty mapping",
 			teamMapping: map[string]config.TeamRoleRule{},
 			expected:    false,
@@ -666,51 +687,92 @@ func TestGitHubAuthProvider_HasWildcardPatterns(t *testing.T) {
 	}
 }
 
-func TestGitHubAuthProvider_ExtractWildcardTeamSlugs(t *testing.T) {
+func TestMatchWildcard(t *testing.T) {
 	tests := []struct {
-		name          string
-		teamMapping   map[string]config.TeamRoleRule
-		expectedSlugs []string
+		name     string
+		pattern  string
+		str      string
+		expected bool
 	}{
-		{
-			name: "no wildcard patterns",
-			teamMapping: map[string]config.TeamRoleRule{
-				"org/team": {Role: "developer"},
-			},
-			expectedSlugs: []string{},
-		},
-		{
-			name: "single wildcard pattern",
-			teamMapping: map[string]config.TeamRoleRule{
-				"*/cc-users": {Role: "developer"},
-				"org/team":   {Role: "admin"},
-			},
-			expectedSlugs: []string{"cc-users"},
-		},
-		{
-			name: "multiple wildcard patterns",
-			teamMapping: map[string]config.TeamRoleRule{
-				"*/cc-users": {Role: "developer"},
-				"*/admins":   {Role: "admin"},
-				"org/team":   {Role: "member"},
-			},
-			expectedSlugs: []string{"cc-users", "admins"},
-		},
+		// Exact matches
+		{name: "exact match", pattern: "team", str: "team", expected: true},
+		{name: "exact no match", pattern: "team", str: "other", expected: false},
+
+		// Full wildcard
+		{name: "full wildcard", pattern: "*", str: "anything", expected: true},
+		{name: "full wildcard empty", pattern: "*", str: "", expected: true},
+
+		// Prefix patterns
+		{name: "prefix match", pattern: "backend-*", str: "backend-team", expected: true},
+		{name: "prefix match multiple", pattern: "backend-*", str: "backend-engineers", expected: true},
+		{name: "prefix no match", pattern: "backend-*", str: "frontend-team", expected: false},
+		{name: "prefix no match missing dash", pattern: "backend-*", str: "backend", expected: false},
+
+		// Suffix patterns
+		{name: "suffix match", pattern: "*-engineer", str: "backend-engineer", expected: true},
+		{name: "suffix match multiple", pattern: "*-engineer", str: "frontend-engineer", expected: true},
+		{name: "suffix no match", pattern: "*-engineer", str: "backend-team", expected: false},
+		{name: "suffix no match missing dash", pattern: "*-engineer", str: "engineer", expected: false},
+
+		// Edge cases
+		{name: "empty pattern no match", pattern: "", str: "team", expected: false},
+		{name: "empty string exact match", pattern: "", str: "", expected: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
-				UserMapping: config.GitHubUserMapping{
-					TeamRoleMapping: tt.teamMapping,
-				},
-			})
+			result := matchWildcard(tt.pattern, tt.str)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
 
-			result := provider.extractWildcardTeamSlugs()
-			assert.Equal(t, len(tt.expectedSlugs), len(result))
-			for _, expectedSlug := range tt.expectedSlugs {
-				assert.Contains(t, result, expectedSlug)
-			}
+func TestMatchTeamPattern(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		org      string
+		teamSlug string
+		expected bool
+	}{
+		// Exact matches
+		{name: "exact match", pattern: "myorg/myteam", org: "myorg", teamSlug: "myteam", expected: true},
+		{name: "exact no match org", pattern: "myorg/myteam", org: "otherorg", teamSlug: "myteam", expected: false},
+		{name: "exact no match team", pattern: "myorg/myteam", org: "myorg", teamSlug: "otherteam", expected: false},
+
+		// Org wildcard
+		{name: "org wildcard match", pattern: "*/myteam", org: "anyorg", teamSlug: "myteam", expected: true},
+		{name: "org wildcard no match", pattern: "*/myteam", org: "anyorg", teamSlug: "otherteam", expected: false},
+
+		// Team wildcard
+		{name: "team wildcard match", pattern: "myorg/*", org: "myorg", teamSlug: "anyteam", expected: true},
+		{name: "team wildcard no match", pattern: "myorg/*", org: "otherorg", teamSlug: "anyteam", expected: false},
+
+		// Both wildcards
+		{name: "both wildcards match", pattern: "*/*", org: "anyorg", teamSlug: "anyteam", expected: true},
+
+		// Prefix patterns
+		{name: "team prefix match", pattern: "myorg/backend-*", org: "myorg", teamSlug: "backend-team", expected: true},
+		{name: "team prefix no match", pattern: "myorg/backend-*", org: "myorg", teamSlug: "frontend-team", expected: false},
+
+		// Suffix patterns
+		{name: "team suffix match", pattern: "myorg/*-engineer", org: "myorg", teamSlug: "backend-engineer", expected: true},
+		{name: "team suffix match multiple", pattern: "myorg/*-engineer", org: "myorg", teamSlug: "frontend-engineer", expected: true},
+		{name: "team suffix no match", pattern: "myorg/*-engineer", org: "myorg", teamSlug: "backend-team", expected: false},
+
+		// Combined patterns
+		{name: "org wildcard team suffix", pattern: "*/*-engineer", org: "anyorg", teamSlug: "backend-engineer", expected: true},
+		{name: "org wildcard team prefix", pattern: "*/backend-*", org: "anyorg", teamSlug: "backend-team", expected: true},
+
+		// Invalid patterns
+		{name: "invalid pattern no slash", pattern: "invalid", org: "org", teamSlug: "team", expected: false},
+		{name: "invalid pattern multiple slashes", pattern: "a/b/c", org: "org", teamSlug: "team", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchTeamPattern(tt.pattern, tt.org, tt.teamSlug)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -833,6 +895,163 @@ func TestGitHubAuthProvider_MapUserPermissionsWithWildcard(t *testing.T) {
 			expectedRole:       "admin",
 			expectedPermCount:  2,
 			expectedPermExists: []string{"write", "admin"},
+		},
+		{
+			name: "team suffix pattern matches",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "myorg",
+					TeamSlug:     "backend-engineer",
+					Role:         "member",
+				},
+				{
+					Organization: "myorg",
+					TeamSlug:     "frontend-engineer",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"myorg/*-engineer": {
+						Role:        "developer",
+						Permissions: []string{"write", "execute"},
+					},
+				},
+			},
+			expectedRole:       "developer",
+			expectedPermCount:  3, // read + write + execute
+			expectedPermExists: []string{"read", "write", "execute"},
+		},
+		{
+			name: "team prefix pattern matches",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "myorg",
+					TeamSlug:     "backend-team",
+					Role:         "member",
+				},
+				{
+					Organization: "myorg",
+					TeamSlug:     "backend-developers",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"myorg/backend-*": {
+						Role:        "developer",
+						Permissions: []string{"write", "debug"},
+					},
+				},
+			},
+			expectedRole:       "developer",
+			expectedPermCount:  3, // read + write + debug
+			expectedPermExists: []string{"read", "write", "debug"},
+		},
+		{
+			name: "team wildcard pattern matches all teams",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "myorg",
+					TeamSlug:     "team-a",
+					Role:         "member",
+				},
+				{
+					Organization: "myorg",
+					TeamSlug:     "team-b",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"myorg/*": {
+						Role:        "member",
+						Permissions: []string{"write"},
+					},
+				},
+			},
+			expectedRole:       "member",
+			expectedPermCount:  2, // read + write
+			expectedPermExists: []string{"read", "write"},
+		},
+		{
+			name: "suffix pattern no match",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "myorg",
+					TeamSlug:     "backend-team",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"myorg/*-engineer": {
+						Role:        "developer",
+						Permissions: []string{"write"},
+					},
+				},
+			},
+			expectedRole:       "user",
+			expectedPermCount:  1,
+			expectedPermExists: []string{"read"},
+		},
+		{
+			name: "prefix pattern no match",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "myorg",
+					TeamSlug:     "frontend-team",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"myorg/backend-*": {
+						Role:        "developer",
+						Permissions: []string{"write"},
+					},
+				},
+			},
+			expectedRole:       "user",
+			expectedPermCount:  1,
+			expectedPermExists: []string{"read"},
+		},
+		{
+			name: "combined patterns - multiple matches",
+			teams: []GitHubTeamMembership{
+				{
+					Organization: "myorg",
+					TeamSlug:     "backend-engineer",
+					Role:         "member",
+				},
+			},
+			config: config.GitHubUserMapping{
+				DefaultRole:        "user",
+				DefaultPermissions: []string{"read"},
+				TeamRoleMapping: map[string]config.TeamRoleRule{
+					"myorg/backend-*": {
+						Role:        "developer",
+						Permissions: []string{"write"},
+					},
+					"myorg/*-engineer": {
+						Role:        "developer",
+						Permissions: []string{"execute"},
+					},
+				},
+			},
+			expectedRole:       "developer",
+			expectedPermCount:  3, // read + write + execute (both patterns match)
+			expectedPermExists: []string{"read", "write", "execute"},
 		},
 		{
 			name: "no match - default only",
