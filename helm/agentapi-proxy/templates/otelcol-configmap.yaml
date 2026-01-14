@@ -17,23 +17,18 @@ data:
               scrape_interval: {{ .Values.kubernetesSession.otelCollector.scrapeInterval | default "15s" }}
               static_configs:
                 - targets: ['localhost:{{ .Values.kubernetesSession.otelCollector.claudeCodeMetricsPort | default 9464 }}']
-              # Rename claude-code's native labels
-              metric_relabel_configs:
-                - source_labels: [user_id]
-                  target_label: claude_user_id
-                  action: replace
-                - source_labels: [session_id]
-                  target_label: claude_session_id
-                  action: replace
-                # Remove original labels to avoid duplication
-                - regex: 'user_id|session_id'
-                  action: labeldrop
 
     processors:
       transform:
         metric_statements:
           - context: datapoint
             statements:
+              # Rename claude-code's native labels
+              - set(attributes["claude_user_id"], attributes["user_id"]) where attributes["user_id"] != nil
+              - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
+              - delete_key(attributes, "user_id") where attributes["user_id"] != nil
+              - delete_key(attributes, "session_id") where attributes["session_id"] != nil
+              # Add agentapi labels
               - set(attributes["agentapi_session_id"], "${env:SESSION_ID}")
               - set(attributes["agentapi_user_id"], "${env:USER_ID}")
               - set(attributes["agentapi_team_id"], "${env:TEAM_ID}")
