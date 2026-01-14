@@ -1,0 +1,53 @@
+{{- if .Values.kubernetesSession.enabled }}
+{{- if .Values.kubernetesSession.otelCollector.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-otelcol-config
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otelcol
+data:
+  otel-collector-config.yaml: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'claude-code'
+              scrape_interval: {{ .Values.kubernetesSession.otelCollector.scrapeInterval | default "15s" }}
+              static_configs:
+                - targets: ['localhost:{{ .Values.kubernetesSession.otelCollector.claudeCodeMetricsPort | default 9464 }}']
+
+    processors:
+      resource:
+        attributes:
+          - key: session_id
+            value: ${env:SESSION_ID}
+            action: upsert
+          - key: user_id
+            value: ${env:USER_ID}
+            action: upsert
+          - key: team_id
+            value: ${env:TEAM_ID}
+            action: upsert
+          - key: schedule_id
+            value: ${env:SCHEDULE_ID}
+            action: upsert
+          - key: webhook_id
+            value: ${env:WEBHOOK_ID}
+            action: upsert
+
+    exporters:
+      prometheus:
+        endpoint: "0.0.0.0:{{ .Values.kubernetesSession.otelCollector.exporterPort | default 9090 }}"
+        resource_to_telemetry_conversion:
+          enabled: true
+
+    service:
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          processors: [resource]
+          exporters: [prometheus]
+{{- end }}
+{{- end }}

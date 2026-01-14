@@ -394,6 +394,33 @@ kubernetesSession:
     # - ${VAR} - expands to the value of VAR, empty if not set
     # - ${VAR:-default} - expands to VAR if set, otherwise "default"
 
+  # OpenTelemetry Collector Configuration
+  # Enables Prometheus metrics collection from Claude Code in session pods
+  otelCollector:
+    # Enable OpenTelemetry Collector sidecar
+    enabled: true
+
+    # Container image for otelcol sidecar
+    image: "otel/opentelemetry-collector-contrib:0.95.0"
+
+    # Scrape interval for Claude Code metrics
+    scrapeInterval: "15s"
+
+    # Claude Code metrics port (where OTEL_METRICS_EXPORTER=prometheus exposes metrics)
+    claudeCodeMetricsPort: 9464
+
+    # Exporter port (where otelcol exposes labeled metrics)
+    exporterPort: 9090
+
+    # Resource requests and limits for otelcol sidecar
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+
 # Schedule Worker Configuration
 # Enables delayed start and recurring (cron-based) session scheduling
 scheduleWorker:

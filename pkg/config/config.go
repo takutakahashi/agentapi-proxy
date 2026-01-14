@@ -244,6 +244,26 @@ type KubernetesSessionConfig struct {
 	// This Secret is applied to all sessions and contains marketplaces and enabled_plugins settings
 	// Team and user settings can override these base settings
 	SettingsBaseSecret string `json:"settings_base_secret" mapstructure:"settings_base_secret"`
+
+	// OpenTelemetry Collector configuration
+	// OtelCollectorEnabled enables OpenTelemetry Collector sidecar for metrics collection
+	OtelCollectorEnabled bool `json:"otel_collector_enabled" mapstructure:"otel_collector_enabled"`
+	// OtelCollectorImage is the container image for otelcol sidecar
+	OtelCollectorImage string `json:"otel_collector_image" mapstructure:"otel_collector_image"`
+	// OtelCollectorScrapeInterval is the scrape interval for Claude Code metrics
+	OtelCollectorScrapeInterval string `json:"otel_collector_scrape_interval" mapstructure:"otel_collector_scrape_interval"`
+	// OtelCollectorClaudeCodePort is the port where Claude Code exposes metrics
+	OtelCollectorClaudeCodePort int `json:"otel_collector_claude_code_port" mapstructure:"otel_collector_claude_code_port"`
+	// OtelCollectorExporterPort is the port where otelcol exposes labeled metrics
+	OtelCollectorExporterPort int `json:"otel_collector_exporter_port" mapstructure:"otel_collector_exporter_port"`
+	// OtelCollectorCPURequest is the CPU request for otelcol sidecar
+	OtelCollectorCPURequest string `json:"otel_collector_cpu_request" mapstructure:"otel_collector_cpu_request"`
+	// OtelCollectorCPULimit is the CPU limit for otelcol sidecar
+	OtelCollectorCPULimit string `json:"otel_collector_cpu_limit" mapstructure:"otel_collector_cpu_limit"`
+	// OtelCollectorMemoryRequest is the memory request for otelcol sidecar
+	OtelCollectorMemoryRequest string `json:"otel_collector_memory_request" mapstructure:"otel_collector_memory_request"`
+	// OtelCollectorMemoryLimit is the memory limit for otelcol sidecar
+	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
 }
 
 // Config represents the proxy configuration
@@ -506,6 +526,17 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.mcp_servers_base_secret", "AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_SECRET")
 	_ = v.BindEnv("kubernetes_session.mcp_servers_team_secret_prefix", "AGENTAPI_K8S_SESSION_MCP_SERVERS_TEAM_SECRET_PREFIX")
 	_ = v.BindEnv("kubernetes_session.mcp_servers_user_secret_prefix", "AGENTAPI_K8S_SESSION_MCP_SERVERS_USER_SECRET_PREFIX")
+
+	// OpenTelemetry Collector configuration
+	_ = v.BindEnv("kubernetes_session.otel_collector_enabled", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED")
+	_ = v.BindEnv("kubernetes_session.otel_collector_image", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IMAGE")
+	_ = v.BindEnv("kubernetes_session.otel_collector_scrape_interval", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_SCRAPE_INTERVAL")
+	_ = v.BindEnv("kubernetes_session.otel_collector_claude_code_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CLAUDE_CODE_PORT")
+	_ = v.BindEnv("kubernetes_session.otel_collector_exporter_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_EXPORTER_PORT")
+	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.otel_collector_memory_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.otel_collector_memory_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT")
 
 	// Schedule worker configuration
 	_ = v.BindEnv("schedule_worker.enabled", "AGENTAPI_SCHEDULE_WORKER_ENABLED")
