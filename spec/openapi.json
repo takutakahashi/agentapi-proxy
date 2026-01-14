@@ -1249,6 +1249,9 @@
           },
           "404": {
             "description": "Webhook not found"
+          },
+          "429": {
+            "description": "Session limit reached (maximum 10 sessions per webhook)"
           }
         }
       }
@@ -1316,6 +1319,9 @@
           },
           "404": {
             "description": "Webhook not found"
+          },
+          "429": {
+            "description": "Session limit reached (maximum 10 sessions per webhook)"
           }
         }
       }

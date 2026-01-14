@@ -175,6 +175,11 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 			log.Printf("[WEBHOOK_CUSTOM] Failed to record delivery: %v", recordErr)
 		}
 
+		// Check if error is due to session limit
+		if err.Error() == "session limit reached: maximum 10 sessions per webhook" {
+			return ctx.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+		}
+
 		return ctx.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create session"})
 	}
 
@@ -371,6 +376,17 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 	// Handle GitHub token if provided
 	if sessionConfig != nil && sessionConfig.Params() != nil && sessionConfig.Params().GithubToken() != "" {
 		req.GithubToken = sessionConfig.Params().GithubToken()
+	}
+
+	// Check session limit per webhook (max 10 sessions per webhook)
+	filter := entities.SessionFilter{
+		Tags: map[string]string{
+			"webhook_id": webhook.ID(),
+		},
+	}
+	existingSessions := c.sessionManager.ListSessions(filter)
+	if len(existingSessions) >= 10 {
+		return "", fmt.Errorf("session limit reached: maximum 10 sessions per webhook")
 	}
 
 	// Create the session
