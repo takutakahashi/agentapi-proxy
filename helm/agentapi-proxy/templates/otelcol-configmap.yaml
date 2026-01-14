@@ -28,13 +28,13 @@ data:
             value: ${env:USER_ID}
             action: upsert
           - key: team_id
-            value: ${env:TEAM_ID:-}
+            value: ${env:TEAM_ID}
             action: upsert
           - key: schedule_id
-            value: ${env:SCHEDULE_ID:-}
+            value: ${env:SCHEDULE_ID}
             action: upsert
           - key: webhook_id
-            value: ${env:WEBHOOK_ID:-}
+            value: ${env:WEBHOOK_ID}
             action: upsert
 
     exporters:

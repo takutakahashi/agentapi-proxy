@@ -2201,26 +2201,26 @@ func (m *KubernetesSessionManager) buildOtelcolEnvVars(session *KubernetesSessio
 		{Name: "USER_ID", Value: req.UserID},
 	}
 
-	// Team ID
+	// Team ID - use "-" as placeholder for empty values
+	teamID := "-"
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "TEAM_ID", Value: req.TeamID})
-	} else {
-		envVars = append(envVars, corev1.EnvVar{Name: "TEAM_ID", Value: ""})
+		teamID = req.TeamID
 	}
+	envVars = append(envVars, corev1.EnvVar{Name: "TEAM_ID", Value: teamID})
 
-	// Schedule ID (from tags)
-	scheduleID := ""
+	// Schedule ID (from tags) - use "-" as placeholder for empty values
+	scheduleID := "-"
 	if req.Tags != nil {
-		if val, ok := req.Tags["schedule_id"]; ok {
+		if val, ok := req.Tags["schedule_id"]; ok && val != "" {
 			scheduleID = val
 		}
 	}
 	envVars = append(envVars, corev1.EnvVar{Name: "SCHEDULE_ID", Value: scheduleID})
 
-	// Webhook ID (from tags)
-	webhookID := ""
+	// Webhook ID (from tags) - use "-" as placeholder for empty values
+	webhookID := "-"
 	if req.Tags != nil {
-		if val, ok := req.Tags["webhook_id"]; ok {
+		if val, ok := req.Tags["webhook_id"]; ok && val != "" {
 			webhookID = val
 		}
 	}
