@@ -1,5 +1,8 @@
 # Changelog
 
+## [v1.171.0](https://github.com/takutakahashi/agentapi-proxy/compare/v1.170.0...v1.171.0) - 2026-01-14
+- fix: update notification URL to point to session chat screen by @takutakahashi in https://github.com/takutakahashi/agentapi-proxy/pull/462
+
 ## [v1.129.0](https://github.com/takutakahashi/agentapi-proxy/compare/v1.128.0...v1.129.0) - 2025-12-28
 - feat: Add Claude plugin marketplace support to Settings API by @takutakahashi in https://github.com/takutakahashi/agentapi-proxy/pull/388
 
