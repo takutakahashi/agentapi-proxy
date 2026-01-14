@@ -21,6 +21,8 @@ data:
     processors:
       resource:
         attributes:
+          # Note: CLAUDE_CARDINALITY=low disables user_id and session_id labels in claude-code
+          # We add them here via resource processor for consistent labeling
           - key: session_id
             value: ${env:SESSION_ID}
             action: upsert
