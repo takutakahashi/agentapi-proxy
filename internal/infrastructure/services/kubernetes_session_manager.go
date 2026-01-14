@@ -916,6 +916,21 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		tolerations = append(tolerations, toleration)
 	}
 
+	// Build pod annotations
+	podAnnotations := make(map[string]string)
+
+	// Add Prometheus scrape annotations for otelcol sidecar if enabled
+	if m.k8sConfig.OtelCollectorEnabled {
+		exporterPort := 9090
+		if m.k8sConfig.OtelCollectorExporterPort > 0 {
+			exporterPort = m.k8sConfig.OtelCollectorExporterPort
+		}
+
+		podAnnotations["prometheus.io/scrape"] = "true"
+		podAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", exporterPort)
+		podAnnotations["prometheus.io/path"] = "/metrics"
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      session.DeploymentName(),
@@ -931,7 +946,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
+					Labels:      labels,
+					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "agentapi-proxy-session",
