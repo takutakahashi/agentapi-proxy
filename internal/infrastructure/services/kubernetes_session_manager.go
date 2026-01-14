@@ -2868,33 +2868,38 @@ func (m *KubernetesSessionManager) ensureOtelcolConfigMap(ctx context.Context) e
 processors:
   resource:
     attributes:
-      - key: session_id
-        value: ${env:SESSION_ID}
-        action: upsert
       - key: user_id
-        value: ${env:USER_ID}
-        action: upsert
-      - key: team_id
-        value: ${env:TEAM_ID}
-        action: upsert
-      - key: schedule_id
-        value: ${env:SCHEDULE_ID}
-        action: upsert
-      - key: webhook_id
-        value: ${env:WEBHOOK_ID}
-        action: upsert
+        action: delete
+      - key: session_id
+        action: delete
+  transform:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          # Rename claude-code's native labels
+          - set(attributes["claude_user_id"], attributes["user_id"]) where attributes["user_id"] != nil
+          - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
+          - delete_key(attributes, "user_id")
+          - delete_key(attributes, "session_id")
+          # Add agentapi labels
+          - set(attributes["agentapi_session_id"], "${env:SESSION_ID}")
+          - set(attributes["agentapi_user_id"], "${env:USER_ID}")
+          - set(attributes["agentapi_team_id"], "${env:TEAM_ID}")
+          - set(attributes["agentapi_schedule_id"], "${env:SCHEDULE_ID}")
+          - set(attributes["agentapi_webhook_id"], "${env:WEBHOOK_ID}")
 
 exporters:
   prometheus:
     endpoint: "0.0.0.0:%d"
     resource_to_telemetry_conversion:
-      enabled: true
+      enabled: false
 
 service:
   pipelines:
     metrics:
       receivers: [prometheus]
-      processors: [resource]
+      processors: [resource, transform]
       exporters: [prometheus]`, scrapeInterval, claudeCodePort, exporterPort)
 
 	configMap := &corev1.ConfigMap{
