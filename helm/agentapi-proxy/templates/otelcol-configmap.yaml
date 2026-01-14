@@ -17,7 +17,7 @@ data:
               scrape_interval: {{ .Values.kubernetesSession.otelCollector.scrapeInterval | default "15s" }}
               static_configs:
                 - targets: ['localhost:{{ .Values.kubernetesSession.otelCollector.claudeCodeMetricsPort | default 9464 }}']
-              # Rename claude-code's native labels to avoid conflicts with resource attributes
+              # Rename claude-code's native labels
               metric_relabel_configs:
                 - source_labels: [user_id]
                   target_label: claude_user_id
@@ -30,9 +30,8 @@ data:
                   action: labeldrop
 
     processors:
-      resource:
-        attributes:
-          # Add agentapi_ prefix to avoid conflicts with claude-code's native labels
+      attributes/add_labels:
+        actions:
           - key: agentapi_session_id
             value: ${env:SESSION_ID}
             action: upsert
@@ -52,14 +51,12 @@ data:
     exporters:
       prometheus:
         endpoint: "0.0.0.0:{{ .Values.kubernetesSession.otelCollector.exporterPort | default 9090 }}"
-        resource_to_telemetry_conversion:
-          enabled: true
 
     service:
       pipelines:
         metrics:
           receivers: [prometheus]
-          processors: [resource]
+          processors: [attributes/add_labels]
           exporters: [prometheus]
 {{- end }}
 {{- end }}
