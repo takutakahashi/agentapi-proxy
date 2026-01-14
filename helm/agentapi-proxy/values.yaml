@@ -401,7 +401,7 @@ kubernetesSession:
     enabled: true
 
     # Container image for otelcol sidecar
-    image: "otel/opentelemetry-collector-contrib:0.95.0"
+    image: "otel/opentelemetry-collector-contrib:0.143.1"
 
     # Scrape interval for Claude Code metrics
     scrapeInterval: "15s"
