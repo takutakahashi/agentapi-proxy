@@ -19,15 +19,22 @@ data:
                 - targets: ['localhost:{{ .Values.kubernetesSession.otelCollector.claudeCodeMetricsPort | default 9464 }}']
 
     processors:
+      resource:
+        attributes:
+          - key: user_id
+            action: delete
+          - key: session_id
+            action: delete
       transform:
+        error_mode: ignore
         metric_statements:
           - context: datapoint
             statements:
               # Rename claude-code's native labels
               - set(attributes["claude_user_id"], attributes["user_id"]) where attributes["user_id"] != nil
               - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
-              - delete_key(attributes, "user_id") where attributes["user_id"] != nil
-              - delete_key(attributes, "session_id") where attributes["session_id"] != nil
+              - delete_key(attributes, "user_id")
+              - delete_key(attributes, "session_id")
               # Add agentapi labels
               - set(attributes["agentapi_session_id"], "${env:SESSION_ID}")
               - set(attributes["agentapi_user_id"], "${env:USER_ID}")
@@ -45,7 +52,7 @@ data:
       pipelines:
         metrics:
           receivers: [prometheus]
-          processors: [transform]
+          processors: [resource, transform]
           exporters: [prometheus]
 {{- end }}
 {{- end }}
