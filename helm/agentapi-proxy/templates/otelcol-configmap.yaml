@@ -17,6 +17,17 @@ data:
               scrape_interval: {{ .Values.kubernetesSession.otelCollector.scrapeInterval | default "15s" }}
               static_configs:
                 - targets: ['localhost:{{ .Values.kubernetesSession.otelCollector.claudeCodeMetricsPort | default 9464 }}']
+              # Rename claude-code's native labels to avoid conflicts with resource attributes
+              metric_relabel_configs:
+                - source_labels: [user_id]
+                  target_label: claude_user_id
+                  action: replace
+                - source_labels: [session_id]
+                  target_label: claude_session_id
+                  action: replace
+                # Remove original labels to avoid duplication
+                - regex: 'user_id|session_id'
+                  action: labeldrop
 
     processors:
       resource:
