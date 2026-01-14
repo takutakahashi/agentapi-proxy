@@ -2159,9 +2159,6 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		envVars = append(envVars,
 			corev1.EnvVar{Name: "CLAUDE_CODE_ENABLE_TELEMETRY", Value: "1"},
 			corev1.EnvVar{Name: "OTEL_METRICS_EXPORTER", Value: "prometheus"},
-			// Set cardinality to "low" to disable user_id and session_id labels
-			// These labels will be added by otelcol resource processor instead
-			corev1.EnvVar{Name: "CLAUDE_CARDINALITY", Value: "low"},
 		)
 	}
 
