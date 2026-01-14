@@ -30,33 +30,27 @@ data:
                   action: labeldrop
 
     processors:
-      attributes/add_labels:
-        actions:
-          - key: agentapi_session_id
-            value: ${env:SESSION_ID}
-            action: upsert
-          - key: agentapi_user_id
-            value: ${env:USER_ID}
-            action: upsert
-          - key: agentapi_team_id
-            value: ${env:TEAM_ID}
-            action: upsert
-          - key: agentapi_schedule_id
-            value: ${env:SCHEDULE_ID}
-            action: upsert
-          - key: agentapi_webhook_id
-            value: ${env:WEBHOOK_ID}
-            action: upsert
+      transform:
+        metric_statements:
+          - context: datapoint
+            statements:
+              - set(attributes["agentapi_session_id"], "${env:SESSION_ID}")
+              - set(attributes["agentapi_user_id"], "${env:USER_ID}")
+              - set(attributes["agentapi_team_id"], "${env:TEAM_ID}")
+              - set(attributes["agentapi_schedule_id"], "${env:SCHEDULE_ID}")
+              - set(attributes["agentapi_webhook_id"], "${env:WEBHOOK_ID}")
 
     exporters:
       prometheus:
         endpoint: "0.0.0.0:{{ .Values.kubernetesSession.otelCollector.exporterPort | default 9090 }}"
+        resource_to_telemetry_conversion:
+          enabled: false
 
     service:
       pipelines:
         metrics:
           receivers: [prometheus]
-          processors: [attributes/add_labels]
+          processors: [transform]
           exporters: [prometheus]
 {{- end }}
 {{- end }}
