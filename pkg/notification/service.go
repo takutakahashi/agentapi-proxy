@@ -239,7 +239,7 @@ func (s *Service) ProcessWebhook(webhook WebhookRequest) error {
 	if data == nil {
 		data = make(map[string]interface{})
 	}
-	data["url"] = fmt.Sprintf("/session/%s", webhook.SessionID)
+	data["url"] = fmt.Sprintf("/sessions/%s", webhook.SessionID)
 
 	switch webhook.EventType {
 	case "message_received":
