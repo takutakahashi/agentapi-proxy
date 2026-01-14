@@ -79,7 +79,7 @@ func NewKubernetesSessionManagerWithClient(
 
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
-	return &KubernetesSessionManager{
+	manager := &KubernetesSessionManager{
 		config:    cfg,
 		k8sConfig: k8sConfig,
 		client:    client,
@@ -87,7 +87,17 @@ func NewKubernetesSessionManagerWithClient(
 		logger:    lgr,
 		sessions:  make(map[string]*KubernetesSession),
 		namespace: namespace,
-	}, nil
+	}
+
+	// Ensure OpenTelemetry Collector ConfigMap exists
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := manager.ensureOtelcolConfigMap(ctx); err != nil {
+		log.Printf("[K8S_SESSION] Warning: Failed to ensure otelcol ConfigMap: %v", err)
+		// Don't fail initialization if ConfigMap creation fails
+	}
+
+	return manager, nil
 }
 
 // CreateSession creates a new session with a Kubernetes Deployment
@@ -884,6 +894,13 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Added initial-message-sender sidecar for session %s", session.id)
 	}
 
+	// Add OpenTelemetry Collector sidecar
+	if m.k8sConfig.OtelCollectorEnabled {
+		otelcolContainer := m.buildOtelcolSidecar(session, req)
+		containers = append(containers, otelcolContainer)
+		log.Printf("[K8S_SESSION] Added otelcol sidecar for session %s", session.id)
+	}
+
 	// Convert config tolerations to corev1 tolerations
 	var tolerations []corev1.Toleration
 	for _, t := range m.k8sConfig.Tolerations {
@@ -1670,6 +1687,20 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 	// Add sync configuration volumes (settings secret)
 	volumes = append(volumes, m.buildSyncVolumes(session)...)
 
+	// Add OpenTelemetry Collector ConfigMap volume
+	if m.k8sConfig.OtelCollectorEnabled {
+		volumes = append(volumes, corev1.Volume{
+			Name: "otelcol-config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "otelcol-config",
+					},
+				},
+			},
+		})
+	}
+
 	return volumes
 }
 
@@ -1883,14 +1914,7 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 			Selector: map[string]string{
 				"agentapi.proxy/session-id": session.id,
 			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       int32(session.ServicePort()),
-					TargetPort: intstr.FromInt(m.k8sConfig.BasePort),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			},
+			Ports: m.buildServicePorts(session),
 		},
 	}
 
@@ -2114,6 +2138,19 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		{Name: "GITHUB_APP_PEM_PATH", Value: "/github-app/app.pem"},
 	}
 
+	// Add Claude Code telemetry configuration
+	if m.k8sConfig.OtelCollectorEnabled {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "CLAUDE_CODE_ENABLE_TELEMETRY", Value: "1"},
+			corev1.EnvVar{Name: "OTEL_METRICS_EXPORTER", Value: "prometheus"},
+		)
+	}
+
+	// Add Team ID if in team scope
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_TEAM_ID", Value: req.TeamID})
+	}
+
 	// Add CLAUDE_ARGS from request environment or proxy's environment
 	claudeArgs := ""
 	if req.Environment != nil {
@@ -2153,6 +2190,41 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 
 	// Note: Bedrock settings are now loaded via envFrom from agent-env-{name} Secret
 	// which is synced by CredentialsSecretSyncer when settings are updated via API
+
+	return envVars
+}
+
+// buildOtelcolEnvVars creates environment variables for the otelcol sidecar
+func (m *KubernetesSessionManager) buildOtelcolEnvVars(session *KubernetesSession, req *entities.RunServerRequest) []corev1.EnvVar {
+	envVars := []corev1.EnvVar{
+		{Name: "SESSION_ID", Value: session.id},
+		{Name: "USER_ID", Value: req.UserID},
+	}
+
+	// Team ID
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TEAM_ID", Value: req.TeamID})
+	} else {
+		envVars = append(envVars, corev1.EnvVar{Name: "TEAM_ID", Value: ""})
+	}
+
+	// Schedule ID (from tags)
+	scheduleID := ""
+	if req.Tags != nil {
+		if val, ok := req.Tags["schedule_id"]; ok {
+			scheduleID = val
+		}
+	}
+	envVars = append(envVars, corev1.EnvVar{Name: "SCHEDULE_ID", Value: scheduleID})
+
+	// Webhook ID (from tags)
+	webhookID := ""
+	if req.Tags != nil {
+		if val, ok := req.Tags["webhook_id"]; ok {
+			webhookID = val
+		}
+	}
+	envVars = append(envVars, corev1.EnvVar{Name: "WEBHOOK_ID", Value: webhookID})
 
 	return envVars
 }
@@ -2746,4 +2818,199 @@ func (m *KubernetesSessionManager) getStatusFromDeploymentObject(deployment *app
 		return "starting"
 	}
 	return "unhealthy"
+}
+
+// ensureOtelcolConfigMap creates or updates the OpenTelemetry Collector ConfigMap
+func (m *KubernetesSessionManager) ensureOtelcolConfigMap(ctx context.Context) error {
+	if !m.k8sConfig.OtelCollectorEnabled {
+		return nil
+	}
+
+	configMapName := "otelcol-config"
+	scrapeInterval := "15s"
+	if m.k8sConfig.OtelCollectorScrapeInterval != "" {
+		scrapeInterval = m.k8sConfig.OtelCollectorScrapeInterval
+	}
+	claudeCodePort := 9464
+	if m.k8sConfig.OtelCollectorClaudeCodePort > 0 {
+		claudeCodePort = m.k8sConfig.OtelCollectorClaudeCodePort
+	}
+	exporterPort := 9090
+	if m.k8sConfig.OtelCollectorExporterPort > 0 {
+		exporterPort = m.k8sConfig.OtelCollectorExporterPort
+	}
+
+	otelConfig := fmt.Sprintf(`receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'claude-code'
+          scrape_interval: %s
+          static_configs:
+            - targets: ['localhost:%d']
+
+processors:
+  resource:
+    attributes:
+      - key: session_id
+        value: ${env:SESSION_ID}
+        action: upsert
+      - key: user_id
+        value: ${env:USER_ID}
+        action: upsert
+      - key: team_id
+        value: ${env:TEAM_ID}
+        action: upsert
+      - key: schedule_id
+        value: ${env:SCHEDULE_ID}
+        action: upsert
+      - key: webhook_id
+        value: ${env:WEBHOOK_ID}
+        action: upsert
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:%d"
+    resource_to_telemetry_conversion:
+      enabled: true
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [resource]
+      exporters: [prometheus]`, scrapeInterval, claudeCodePort, exporterPort)
+
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      configMapName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "otelcol",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"app.kubernetes.io/component":  "telemetry",
+			},
+		},
+		Data: map[string]string{
+			"otel-collector-config.yaml": otelConfig,
+		},
+	}
+
+	// Try to get existing ConfigMap
+	existingCM, err := m.client.CoreV1().ConfigMaps(m.namespace).Get(ctx, configMapName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create new ConfigMap
+			_, err = m.client.CoreV1().ConfigMaps(m.namespace).Create(ctx, configMap, metav1.CreateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to create otelcol ConfigMap: %w", err)
+			}
+			log.Printf("[K8S_SESSION] Created otelcol ConfigMap: %s", configMapName)
+			return nil
+		}
+		return fmt.Errorf("failed to get otelcol ConfigMap: %w", err)
+	}
+
+	// Update existing ConfigMap
+	existingCM.Data = configMap.Data
+	existingCM.Labels = configMap.Labels
+	_, err = m.client.CoreV1().ConfigMaps(m.namespace).Update(ctx, existingCM, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update otelcol ConfigMap: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Updated otelcol ConfigMap: %s", configMapName)
+	return nil
+}
+
+// buildServicePorts builds the service ports for the session
+func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession) []corev1.ServicePort {
+	ports := []corev1.ServicePort{
+		{
+			Name:       "http",
+			Port:       int32(session.ServicePort()),
+			TargetPort: intstr.FromInt(m.k8sConfig.BasePort),
+			Protocol:   corev1.ProtocolTCP,
+		},
+	}
+
+	// Add metrics port if otelcol is enabled
+	if m.k8sConfig.OtelCollectorEnabled {
+		exporterPort := 9090
+		if m.k8sConfig.OtelCollectorExporterPort > 0 {
+			exporterPort = m.k8sConfig.OtelCollectorExporterPort
+		}
+		ports = append(ports, corev1.ServicePort{
+			Name:       "metrics",
+			Port:       int32(exporterPort),
+			TargetPort: intstr.FromInt(exporterPort),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+
+	return ports
+}
+
+// buildOtelcolSidecar builds the OpenTelemetry Collector sidecar container
+func (m *KubernetesSessionManager) buildOtelcolSidecar(session *KubernetesSession, req *entities.RunServerRequest) corev1.Container {
+	image := m.k8sConfig.OtelCollectorImage
+	if image == "" {
+		image = "otel/opentelemetry-collector-contrib:0.95.0"
+	}
+
+	// Parse resource limits
+	cpuRequest := "100m"
+	if m.k8sConfig.OtelCollectorCPURequest != "" {
+		cpuRequest = m.k8sConfig.OtelCollectorCPURequest
+	}
+	cpuLimit := "200m"
+	if m.k8sConfig.OtelCollectorCPULimit != "" {
+		cpuLimit = m.k8sConfig.OtelCollectorCPULimit
+	}
+	memoryRequest := "128Mi"
+	if m.k8sConfig.OtelCollectorMemoryRequest != "" {
+		memoryRequest = m.k8sConfig.OtelCollectorMemoryRequest
+	}
+	memoryLimit := "256Mi"
+	if m.k8sConfig.OtelCollectorMemoryLimit != "" {
+		memoryLimit = m.k8sConfig.OtelCollectorMemoryLimit
+	}
+
+	exporterPort := 9090
+	if m.k8sConfig.OtelCollectorExporterPort > 0 {
+		exporterPort = m.k8sConfig.OtelCollectorExporterPort
+	}
+
+	return corev1.Container{
+		Name:            "otelcol",
+		Image:           image,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Args: []string{
+			"--config=/etc/otelcol/otel-collector-config.yaml",
+		},
+		Env: m.buildOtelcolEnvVars(session, req),
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "prometheus",
+				ContainerPort: int32(exporterPort),
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "otelcol-config",
+				MountPath: "/etc/otelcol",
+				ReadOnly:  true,
+			},
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(cpuRequest),
+				corev1.ResourceMemory: resource.MustParse(memoryRequest),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(cpuLimit),
+				corev1.ResourceMemory: resource.MustParse(memoryLimit),
+			},
+		},
+	}
 }
