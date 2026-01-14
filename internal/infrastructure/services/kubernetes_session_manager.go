@@ -2970,7 +2970,7 @@ func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession)
 func (m *KubernetesSessionManager) buildOtelcolSidecar(session *KubernetesSession, req *entities.RunServerRequest) corev1.Container {
 	image := m.k8sConfig.OtelCollectorImage
 	if image == "" {
-		image = "otel/opentelemetry-collector-contrib:0.95.0"
+		image = "otel/opentelemetry-collector-contrib:0.143.1"
 	}
 
 	// Parse resource limits
