@@ -916,6 +916,21 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		tolerations = append(tolerations, toleration)
 	}
 
+	// Build pod annotations
+	podAnnotations := make(map[string]string)
+
+	// Add Prometheus scrape annotations for otelcol sidecar if enabled
+	if m.k8sConfig.OtelCollectorEnabled {
+		exporterPort := 9090
+		if m.k8sConfig.OtelCollectorExporterPort > 0 {
+			exporterPort = m.k8sConfig.OtelCollectorExporterPort
+		}
+
+		podAnnotations["prometheus.io/scrape"] = "true"
+		podAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", exporterPort)
+		podAnnotations["prometheus.io/path"] = "/metrics"
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      session.DeploymentName(),
@@ -931,7 +946,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
+					Labels:      labels,
+					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "agentapi-proxy-session",
@@ -2852,33 +2868,38 @@ func (m *KubernetesSessionManager) ensureOtelcolConfigMap(ctx context.Context) e
 processors:
   resource:
     attributes:
-      - key: session_id
-        value: ${env:SESSION_ID}
-        action: upsert
       - key: user_id
-        value: ${env:USER_ID}
-        action: upsert
-      - key: team_id
-        value: ${env:TEAM_ID}
-        action: upsert
-      - key: schedule_id
-        value: ${env:SCHEDULE_ID}
-        action: upsert
-      - key: webhook_id
-        value: ${env:WEBHOOK_ID}
-        action: upsert
+        action: delete
+      - key: session_id
+        action: delete
+  transform:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          # Rename claude-code's native labels
+          - set(attributes["claude_user_id"], attributes["user_id"]) where attributes["user_id"] != nil
+          - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
+          - delete_key(attributes, "user_id")
+          - delete_key(attributes, "session_id")
+          # Add agentapi labels
+          - set(attributes["agentapi_session_id"], "${env:SESSION_ID}")
+          - set(attributes["agentapi_user_id"], "${env:USER_ID}")
+          - set(attributes["agentapi_team_id"], "${env:TEAM_ID}")
+          - set(attributes["agentapi_schedule_id"], "${env:SCHEDULE_ID}")
+          - set(attributes["agentapi_webhook_id"], "${env:WEBHOOK_ID}")
 
 exporters:
   prometheus:
     endpoint: "0.0.0.0:%d"
     resource_to_telemetry_conversion:
-      enabled: true
+      enabled: false
 
 service:
   pipelines:
     metrics:
       receivers: [prometheus]
-      processors: [resource]
+      processors: [resource, transform]
       exporters: [prometheus]`, scrapeInterval, claudeCodePort, exporterPort)
 
 	configMap := &corev1.ConfigMap{
@@ -2954,7 +2975,7 @@ func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession)
 func (m *KubernetesSessionManager) buildOtelcolSidecar(session *KubernetesSession, req *entities.RunServerRequest) corev1.Container {
 	image := m.k8sConfig.OtelCollectorImage
 	if image == "" {
-		image = "otel/opentelemetry-collector-contrib:0.95.0"
+		image = "otel/opentelemetry-collector-contrib:0.143.1"
 	}
 
 	// Parse resource limits
