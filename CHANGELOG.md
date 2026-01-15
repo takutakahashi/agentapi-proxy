@@ -1,5 +1,8 @@
 # Changelog
 
+## [v1.172.0](https://github.com/takutakahashi/agentapi-proxy/compare/v1.171.0...v1.172.0) - 2026-01-15
+- feat: add Prometheus scrape annotations to session pods for otelcol by @takutakahashi in https://github.com/takutakahashi/agentapi-proxy/pull/464
+
 ## [v1.171.0](https://github.com/takutakahashi/agentapi-proxy/compare/v1.170.0...v1.171.0) - 2026-01-14
 - fix: update notification URL to point to session chat screen by @takutakahashi in https://github.com/takutakahashi/agentapi-proxy/pull/462
 
