@@ -2882,6 +2882,8 @@ processors:
           - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
           - delete_key(attributes, "user_id")
           - delete_key(attributes, "session_id")
+          # Remove user_email label to prevent it from being scraped by Prometheus
+          - delete_key(attributes, "user_email")
           # Add agentapi labels
           - set(attributes["agentapi_session_id"], "${env:SESSION_ID}")
           - set(attributes["agentapi_user_id"], "${env:USER_ID}")
