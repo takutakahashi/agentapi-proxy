@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
@@ -28,8 +29,10 @@ const (
 	LabelWebhookScope = "agentapi.proxy/webhook-scope"
 	// LabelWebhookUserID is the label key for webhook user ID
 	LabelWebhookUserID = "agentapi.proxy/webhook-user-id"
-	// LabelWebhookTeamID is the label key for webhook team ID
-	LabelWebhookTeamID = "agentapi.proxy/webhook-team-id"
+	// LabelWebhookTeamIDHash is the label key for hashed webhook team ID
+	LabelWebhookTeamIDHash = "agentapi.proxy/webhook-team-id-hash"
+	// AnnotationWebhookTeamID is the annotation key for original webhook team ID
+	AnnotationWebhookTeamID = "agentapi.proxy/webhook-team-id"
 	// SecretKeyWebhook is the key in the Secret data for webhook JSON
 	SecretKeyWebhook = "webhook.json"
 	// WebhookSecretPrefix is the prefix for webhook Secret names
@@ -437,15 +440,20 @@ func (r *KubernetesWebhookRepository) saveWebhook(ctx context.Context, webhook *
 		LabelWebhookScope:  string(webhook.Scope()),
 		LabelWebhookUserID: webhook.UserID(),
 	}
+	annotations := make(map[string]string)
 	if webhook.TeamID() != "" {
-		labels[LabelWebhookTeamID] = webhook.TeamID()
+		// Use sha256 hash for team-id label to avoid issues with "/" in team IDs
+		// The original team_id is stored in annotations for restoration
+		labels[LabelWebhookTeamIDHash] = services.HashTeamID(webhook.TeamID())
+		annotations[AnnotationWebhookTeamID] = webhook.TeamID()
 	}
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: r.namespace,
-			Labels:    labels,
+			Name:        secretName,
+			Namespace:   r.namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
@@ -463,8 +471,9 @@ func (r *KubernetesWebhookRepository) saveWebhook(ctx context.Context, webhook *
 			}
 
 			existing.Data[SecretKeyWebhook] = data
-			// Ensure labels are set
+			// Ensure labels and annotations are set
 			existing.Labels = labels
+			existing.Annotations = annotations
 
 			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, existing, metav1.UpdateOptions{})
 			if err != nil {
