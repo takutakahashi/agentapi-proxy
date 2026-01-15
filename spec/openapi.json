@@ -916,6 +916,32 @@
                       }
                     ]
                   }
+                },
+                "github-pr-with-template": {
+                  "summary": "GitHub PR webhook with Go Template filter",
+                  "value": {
+                    "name": "Feature PR Review Bot",
+                    "type": "github",
+                    "github": {
+                      "allowed_events": ["pull_request"],
+                      "allowed_repositories": ["myorg/*"]
+                    },
+                    "triggers": [
+                      {
+                        "name": "Review feature PRs",
+                        "conditions": {
+                          "github": {
+                            "events": ["pull_request"],
+                            "actions": ["opened", "synchronize"]
+                          },
+                          "go_template": "{{ and (contains .pull_request.title \"feat:\") (not .pull_request.draft) }}"
+                        },
+                        "session_config": {
+                          "initial_message_template": "Review feature PR #{{.pull_request.Number}}: {{.pull_request.Title}}"
+                        }
+                      }
+                    ]
+                  }
                 }
               }
             }
@@ -2189,7 +2215,7 @@
           },
           "go_template": {
             "type": "string",
-            "description": "Go template expression that evaluates to 'true' or 'false'. Example: {{ eq .event.type \"push\" }}"
+            "description": "Go template expression that evaluates to 'true' or 'false'. Supports both GitHub and custom webhooks. Available functions: contains, hasPrefix, hasSuffix, toLower, toUpper, trimSpace, len, in, matches. Examples: {{ eq .action \"opened\" }}, {{ contains .pull_request.title \"feat:\" }}, {{ and (eq .action \"opened\") (not .pull_request.draft) }}"
           }
         }
       },

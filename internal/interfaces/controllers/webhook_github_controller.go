@@ -20,20 +20,23 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/webhook"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 // WebhookGitHubController handles GitHub webhook reception
 type WebhookGitHubController struct {
-	repo           repositories.WebhookRepository
-	sessionManager repositories.SessionManager
+	repo                repositories.WebhookRepository
+	sessionManager      repositories.SessionManager
+	gotemplateEvaluator *webhook.GoTemplateEvaluator
 }
 
 // NewWebhookGitHubController creates a new GitHub webhook controller
 func NewWebhookGitHubController(repo repositories.WebhookRepository, sessionManager repositories.SessionManager) *WebhookGitHubController {
 	return &WebhookGitHubController{
-		repo:           repo,
-		sessionManager: sessionManager,
+		repo:                repo,
+		sessionManager:      sessionManager,
+		gotemplateEvaluator: webhook.NewGoTemplateEvaluator(),
 	}
 }
 
@@ -436,6 +439,22 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 			}
 		}
 		if !hasMatch {
+			return false
+		}
+	}
+
+	// Check Go template condition if defined
+	goTemplateCondition := trigger.Conditions().GoTemplate()
+	if goTemplateCondition != "" {
+		matched, err := c.gotemplateEvaluator.Evaluate(payload.Raw, goTemplateCondition)
+		if err != nil {
+			log.Printf("[WEBHOOK] Trigger %s (%s): GoTemplate evaluation error: %v",
+				trigger.ID(), trigger.Name(), err)
+			return false
+		}
+		if !matched {
+			log.Printf("[WEBHOOK] Trigger %s (%s): GoTemplate condition not met",
+				trigger.ID(), trigger.Name())
 			return false
 		}
 	}
