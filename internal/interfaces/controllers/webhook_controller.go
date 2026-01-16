@@ -47,6 +47,7 @@ type CreateWebhookRequest struct {
 	GitHub          *GitHubConfigRequest          `json:"github,omitempty"`
 	Triggers        []TriggerRequest              `json:"triggers"`
 	SessionConfig   *SessionConfigRequest         `json:"session_config,omitempty"`
+	MaxSessions     int                           `json:"max_sessions,omitempty"`
 }
 
 // GitHubConfigRequest represents GitHub-specific configuration in requests
@@ -116,6 +117,7 @@ type UpdateWebhookRequest struct {
 	GitHub          *GitHubConfigRequest           `json:"github,omitempty"`
 	Triggers        []TriggerRequest               `json:"triggers,omitempty"`
 	SessionConfig   *SessionConfigRequest          `json:"session_config,omitempty"`
+	MaxSessions     *int                           `json:"max_sessions,omitempty"`
 }
 
 // WebhookResponse represents the response for a webhook
@@ -134,6 +136,7 @@ type WebhookResponse struct {
 	GitHub          *GitHubConfigResponse         `json:"github,omitempty"`
 	Triggers        []TriggerResponse             `json:"triggers"`
 	SessionConfig   *SessionConfigResponse        `json:"session_config,omitempty"`
+	MaxSessions     int                           `json:"max_sessions"`
 	CreatedAt       string                        `json:"created_at"`
 	UpdatedAt       string                        `json:"updated_at"`
 	LastDelivery    *DeliveryRecordResponse       `json:"last_delivery,omitempty"`
@@ -263,6 +266,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	}
 	if req.SignatureType != "" {
 		webhook.SetSignatureType(req.SignatureType)
+	}
+	if req.MaxSessions > 0 {
+		webhook.SetMaxSessions(req.MaxSessions)
 	}
 
 	// Set GitHub config
@@ -491,6 +497,9 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 	if req.SignatureType != nil {
 		webhook.SetSignatureType(*req.SignatureType)
 	}
+	if req.MaxSessions != nil && *req.MaxSessions > 0 {
+		webhook.SetMaxSessions(*req.MaxSessions)
+	}
 	if req.GitHub != nil {
 		github := entities.NewWebhookGitHubConfig()
 		github.SetEnterpriseURL(req.GitHub.EnterpriseURL)
@@ -662,6 +671,7 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 		SignatureHeader: w.SignatureHeader(),
 		SignatureType:   w.SignatureType(),
 		WebhookURL:      c.getWebhookURL(ctx, w),
+		MaxSessions:     w.MaxSessions(),
 		CreatedAt:       w.CreatedAt().Format(time.RFC3339),
 		UpdatedAt:       w.UpdatedAt().Format(time.RFC3339),
 		DeliveryCount:   w.DeliveryCount(),

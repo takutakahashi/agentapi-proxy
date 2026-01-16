@@ -1275,6 +1275,9 @@
           },
           "404": {
             "description": "Webhook not found"
+          },
+          "429": {
+            "description": "Session limit reached (maximum concurrent sessions per webhook exceeded)"
           }
         }
       }
@@ -1342,6 +1345,9 @@
           },
           "404": {
             "description": "Webhook not found"
+          },
+          "429": {
+            "description": "Session limit reached (maximum concurrent sessions per webhook exceeded)"
           }
         }
       }
@@ -2044,6 +2050,13 @@
           },
           "signature_type": {
             "$ref": "#/components/schemas/WebhookSignatureType"
+          },
+          "max_sessions": {
+            "type": "integer",
+            "description": "Maximum number of concurrent sessions allowed for this webhook (default: 10)",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 100
           }
         }
       },
@@ -2074,6 +2087,13 @@
           },
           "signature_type": {
             "$ref": "#/components/schemas/WebhookSignatureType"
+          },
+          "max_sessions": {
+            "type": "integer",
+            "description": "Maximum number of concurrent sessions allowed for this webhook (default: 10)",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 100
           }
         }
       },
@@ -2128,6 +2148,11 @@
           },
           "session_config": {
             "$ref": "#/components/schemas/WebhookSessionConfigResponse"
+          },
+          "max_sessions": {
+            "type": "integer",
+            "description": "Maximum number of concurrent sessions allowed for this webhook (default: 10)",
+            "default": 10
           },
           "created_at": {
             "type": "string",

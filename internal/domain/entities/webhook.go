@@ -61,6 +61,7 @@ type Webhook struct {
 	github          *WebhookGitHubConfig
 	triggers        []WebhookTrigger
 	sessionConfig   *WebhookSessionConfig
+	maxSessions     int
 	createdAt       time.Time
 	updatedAt       time.Time
 	lastDelivery    *WebhookDeliveryRecord
@@ -77,6 +78,7 @@ func NewWebhook(id, name, userID string, webhookType WebhookType) *Webhook {
 		webhookType: webhookType,
 		status:      WebhookStatusActive,
 		triggers:    []WebhookTrigger{},
+		maxSessions: 10, // Default maximum concurrent sessions per webhook
 		createdAt:   now,
 		updatedAt:   now,
 	}
@@ -207,6 +209,21 @@ func (w *Webhook) SessionConfig() *WebhookSessionConfig { return w.sessionConfig
 // SetSessionConfig sets the session configuration
 func (w *Webhook) SetSessionConfig(config *WebhookSessionConfig) {
 	w.sessionConfig = config
+	w.updatedAt = time.Now()
+}
+
+// MaxSessions returns the maximum concurrent sessions allowed for this webhook
+// Returns 10 as default if not set or set to 0
+func (w *Webhook) MaxSessions() int {
+	if w.maxSessions <= 0 {
+		return 10
+	}
+	return w.maxSessions
+}
+
+// SetMaxSessions sets the maximum concurrent sessions allowed for this webhook
+func (w *Webhook) SetMaxSessions(max int) {
+	w.maxSessions = max
 	w.updatedAt = time.Now()
 }
 
