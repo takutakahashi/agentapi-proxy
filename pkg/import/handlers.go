@@ -44,16 +44,14 @@ func (h *Handlers) GetName() string {
 // RegisterRoutes registers import/export routes
 // Implements the app.CustomHandler interface
 func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
-	g := e.Group("/api/v1/teams/:team_id")
-
-	g.POST("/import", h.ImportTeamResources)
-	g.GET("/export", h.ExportTeamResources)
+	e.POST("/settings/:team_id/import", h.ImportTeamResources)
+	e.GET("/settings/:team_id/export", h.ExportTeamResources)
 
 	log.Printf("Registered import/export routes")
 	return nil
 }
 
-// ImportTeamResources handles POST /api/v1/teams/:team_id/import
+// ImportTeamResources handles POST /settings/:team_id/import
 func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	h.setCORSHeaders(c)
 
@@ -133,7 +131,7 @@ func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	return c.JSON(http.StatusMultiStatus, result)
 }
 
-// ExportTeamResources handles GET /api/v1/teams/:team_id/export
+// ExportTeamResources handles GET /settings/:team_id/export
 func (h *Handlers) ExportTeamResources(c echo.Context) error {
 	h.setCORSHeaders(c)
 
