@@ -15,6 +15,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
 	"k8s.io/client-go/kubernetes"
@@ -87,6 +88,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register webhook handlers (requires Kubernetes mode)
 	registerWebhookHandlers(configData, proxyServer)
+
+	// Register import/export handlers (requires Kubernetes mode)
+	registerImportExportHandlers(configData, proxyServer)
 
 	// Start server in a goroutine
 	go func() {
@@ -320,6 +324,50 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 		log.Printf("[WEBHOOK_HANDLERS] Webhook base URL not configured, will auto-detect from request headers")
 	}
 	log.Printf("[WEBHOOK_HANDLERS] Webhook handlers registered successfully")
+}
+
+// registerImportExportHandlers registers import/export REST API handlers
+func registerImportExportHandlers(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[IMPORT_EXPORT_HANDLERS] Registering import/export handlers...")
+
+	// Create Kubernetes client
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[IMPORT_EXPORT_HANDLERS] Kubernetes config not available, skipping import/export handlers: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[IMPORT_EXPORT_HANDLERS] Failed to create Kubernetes client, skipping import/export handlers: %v", err)
+		return
+	}
+
+	// Determine namespace
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Create schedule manager
+	scheduleManager := schedule.NewKubernetesManager(client, namespace)
+
+	// Create webhook repository
+	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
+
+	// Set default GitHub Enterprise host if configured
+	if configData.Webhook.GitHubEnterpriseHost != "" {
+		webhookRepo.SetDefaultGitHubEnterpriseHost(configData.Webhook.GitHubEnterpriseHost)
+	}
+
+	// Create and register import/export handlers
+	importExportHandlers := importexport.NewHandlers(scheduleManager, webhookRepo)
+	proxyServer.AddCustomHandler(importExportHandlers)
+
+	log.Printf("[IMPORT_EXPORT_HANDLERS] Import/export handlers registered successfully")
 }
 
 // runCredentialsSecretMigration migrates old agent-credentials-* secrets to agent-env-* secrets
