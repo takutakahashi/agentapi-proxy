@@ -51,6 +51,7 @@ type webhookJSON struct {
 	GitHub          *webhookGitHubConfigJSON      `json:"github,omitempty"`
 	Triggers        []webhookTriggerJSON          `json:"triggers"`
 	SessionConfig   *webhookSessionConfigJSON     `json:"session_config,omitempty"`
+	MaxSessions     int                           `json:"max_sessions,omitempty"`
 	CreatedAt       time.Time                     `json:"created_at"`
 	UpdatedAt       time.Time                     `json:"updated_at"`
 	LastDelivery    *webhookDeliveryRecordJSON    `json:"last_delivery,omitempty"`
@@ -491,6 +492,9 @@ func (r *KubernetesWebhookRepository) jsonToEntity(wj *webhookJSON) *entities.We
 	if wj.SignatureType != "" {
 		webhook.SetSignatureType(wj.SignatureType)
 	}
+	if wj.MaxSessions > 0 {
+		webhook.SetMaxSessions(wj.MaxSessions)
+	}
 
 	// GitHub config
 	if wj.GitHub != nil {
@@ -579,6 +583,7 @@ func (r *KubernetesWebhookRepository) entityToJSON(w *entities.Webhook) *webhook
 		Secret:          w.Secret(),
 		SignatureHeader: w.SignatureHeader(),
 		SignatureType:   w.SignatureType(),
+		MaxSessions:     w.MaxSessions(),
 		CreatedAt:       w.CreatedAt(),
 		UpdatedAt:       w.UpdatedAt(),
 		DeliveryCount:   w.DeliveryCount(),

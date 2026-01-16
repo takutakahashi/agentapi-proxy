@@ -241,7 +241,7 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 		}
 
 		// Check if error is due to session limit
-		if err.Error() == "session limit reached: maximum 10 sessions per webhook" {
+		if strings.Contains(err.Error(), "session limit reached") {
 			return ctx.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
 		}
 
@@ -521,15 +521,16 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 		}
 	}
 
-	// Check session limit per webhook (max 10 sessions per webhook)
+	// Check session limit per webhook
 	filter := entities.SessionFilter{
 		Tags: map[string]string{
 			"webhook_id": webhook.ID(),
 		},
 	}
 	existingSessions := c.sessionManager.ListSessions(filter)
-	if len(existingSessions) >= 10 {
-		return "", fmt.Errorf("session limit reached: maximum 10 sessions per webhook")
+	maxSessions := webhook.MaxSessions()
+	if len(existingSessions) >= maxSessions {
+		return "", fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
 	}
 
 	// Create the session
