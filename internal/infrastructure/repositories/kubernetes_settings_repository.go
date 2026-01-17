@@ -93,7 +93,43 @@ func (r *KubernetesSettingsRepository) Save(ctx context.Context, settings *entit
 	secretName := r.secretName(settings.Name())
 	labelValue := sanitizeLabelValue(settings.Name())
 
-	// Convert to JSON
+	// Create plaintext backup first
+	plaintextData, err := r.toJSONPlaintext(settings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal plaintext settings: %w", err)
+	}
+
+	backupSecretName := secretName + "-plaintext-backup"
+	backupSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      backupSecretName,
+			Namespace: r.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/settings-backup": "true",
+				LabelSettingsName:                 labelValue,
+				"backup":                          "plaintext",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			SecretKeySettings: plaintextData,
+		},
+	}
+
+	// Save plaintext backup (create or update)
+	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, backupSecret, metav1.CreateOptions{})
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, backupSecret, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to update plaintext backup secret: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to create plaintext backup secret: %w", err)
+		}
+	}
+
+	// Convert to JSON (with encryption)
 	data, err := r.toJSON(settings)
 	if err != nil {
 		return fmt.Errorf("failed to marshal settings: %w", err)
@@ -317,6 +353,58 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 				Args:    server.Args(),
 				Env:     encryptedEnv,
 				Headers: encryptedHeaders,
+			}
+		}
+	}
+
+	if marketplaces := settings.Marketplaces(); marketplaces != nil && !marketplaces.IsEmpty() {
+		sj.Marketplaces = make(map[string]*marketplaceJSON)
+		for name, marketplace := range marketplaces.Marketplaces() {
+			sj.Marketplaces[name] = &marketplaceJSON{
+				URL: marketplace.URL(),
+			}
+		}
+	}
+
+	if plugins := settings.EnabledPlugins(); len(plugins) > 0 {
+		sj.EnabledPlugins = plugins
+	}
+
+	return json.Marshal(sj)
+}
+
+// toJSONPlaintext converts Settings entity to JSON bytes without encryption
+// This is used for creating plaintext backup secrets
+func (r *KubernetesSettingsRepository) toJSONPlaintext(settings *entities.Settings) ([]byte, error) {
+	sj := &settingsJSON{
+		Name:                 settings.Name(),
+		ClaudeCodeOAuthToken: settings.ClaudeCodeOAuthToken(),
+		AuthMode:             string(settings.AuthMode()),
+		CreatedAt:            settings.CreatedAt(),
+		UpdatedAt:            settings.UpdatedAt(),
+	}
+
+	if bedrock := settings.Bedrock(); bedrock != nil {
+		sj.Bedrock = &bedrockJSON{
+			Enabled:         bedrock.Enabled(),
+			Model:           bedrock.Model(),
+			AccessKeyID:     bedrock.AccessKeyID(),
+			SecretAccessKey: bedrock.SecretAccessKey(),
+			RoleARN:         bedrock.RoleARN(),
+			Profile:         bedrock.Profile(),
+		}
+	}
+
+	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
+		sj.MCPServers = make(map[string]*mcpServerJSON)
+		for name, server := range mcpServers.Servers() {
+			sj.MCPServers[name] = &mcpServerJSON{
+				Type:    server.Type(),
+				URL:     server.URL(),
+				Command: server.Command(),
+				Args:    server.Args(),
+				Env:     server.Env(),
+				Headers: server.Headers(),
 			}
 		}
 	}

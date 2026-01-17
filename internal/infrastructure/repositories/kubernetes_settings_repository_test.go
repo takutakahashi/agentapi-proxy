@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -573,4 +575,67 @@ func TestSanitizeLabelValue(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKubernetesSettingsRepository_Save_CreatesPlaintextBackup(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
+	ctx := context.Background()
+
+	// Create settings with sensitive data
+	settings := entities.NewSettings("test-backup")
+	settings.SetClaudeCodeOAuthToken("secret-oauth-token-12345")
+
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("claude-sonnet-4")
+	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
+	bedrock.SetSecretAccessKey("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+	settings.SetBedrock(bedrock)
+
+	mcpServers := entities.NewMCPServersSettings()
+	server := entities.NewMCPServer("github", "stdio")
+	server.SetCommand("mcp-server-github")
+	server.SetEnv(map[string]string{"GITHUB_TOKEN": "ghp_secrettoken123"})
+	server.SetHeaders(map[string]string{"Authorization": "Bearer secret-bearer-token"})
+	mcpServers.SetServer("github", server)
+	settings.SetMCPServers(mcpServers)
+
+	// Save
+	err := repo.Save(ctx, settings)
+	require.NoError(t, err)
+
+	// Check that both main secret and backup secret were created
+	mainSecret, err := client.CoreV1().Secrets("default").Get(ctx, "agentapi-settings-test-backup", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotNil(t, mainSecret)
+
+	backupSecret, err := client.CoreV1().Secrets("default").Get(ctx, "agentapi-settings-test-backup-plaintext-backup", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotNil(t, backupSecret)
+
+	// Verify backup secret has correct labels
+	assert.Equal(t, "true", backupSecret.Labels["agentapi.proxy/settings-backup"])
+	assert.Equal(t, "plaintext", backupSecret.Labels["backup"])
+
+	// Verify backup contains plaintext data
+	var backupData map[string]interface{}
+	err = json.Unmarshal(backupSecret.Data["settings.json"], &backupData)
+	require.NoError(t, err)
+
+	// Check that oauth token is plaintext (not encrypted JSON)
+	oauthToken := backupData["claude_code_oauth_token"].(string)
+	assert.Equal(t, "secret-oauth-token-12345", oauthToken)
+
+	// Check that bedrock credentials are plaintext
+	bedrockData := backupData["bedrock"].(map[string]interface{})
+	assert.Equal(t, "AKIAIOSFODNN7EXAMPLE", bedrockData["access_key_id"].(string))
+	assert.Equal(t, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", bedrockData["secret_access_key"].(string))
+
+	// Check that MCP server env and headers are plaintext
+	mcpData := backupData["mcp_servers"].(map[string]interface{})
+	githubServer := mcpData["github"].(map[string]interface{})
+	envData := githubServer["env"].(map[string]interface{})
+	assert.Equal(t, "ghp_secrettoken123", envData["GITHUB_TOKEN"].(string))
+	headersData := githubServer["headers"].(map[string]interface{})
+	assert.Equal(t, "Bearer secret-bearer-token", headersData["Authorization"].(string))
 }
