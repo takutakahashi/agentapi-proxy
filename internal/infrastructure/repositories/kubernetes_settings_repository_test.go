@@ -111,11 +111,24 @@ func TestKubernetesSettingsRepository_Save_VerifySecretContent(t *testing.T) {
 	if bedrockData["model"] != "anthropic.claude-sonnet-4-20250514-v1:0" {
 		t.Errorf("Expected model='anthropic.claude-sonnet-4-20250514-v1:0', got '%v'", bedrockData["model"])
 	}
-	if bedrockData["access_key_id"] != "AKIAIOSFODNN7EXAMPLE" {
-		t.Errorf("Expected access_key_id='AKIAIOSFODNN7EXAMPLE', got '%v'", bedrockData["access_key_id"])
+	// Sensitive fields should be encrypted (contain EncryptedData JSON)
+	accessKeyIDStr, ok := bedrockData["access_key_id"].(string)
+	if !ok {
+		t.Errorf("Expected access_key_id to be a string, got %T", bedrockData["access_key_id"])
+	} else {
+		var encData map[string]interface{}
+		if err := json.Unmarshal([]byte(accessKeyIDStr), &encData); err != nil {
+			t.Errorf("Expected access_key_id to be encrypted JSON, got parse error: %v", err)
+		}
 	}
-	if bedrockData["secret_access_key"] != "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" {
-		t.Errorf("Expected secret_access_key to be preserved, got '%v'", bedrockData["secret_access_key"])
+	secretAccessKeyStr, ok := bedrockData["secret_access_key"].(string)
+	if !ok {
+		t.Errorf("Expected secret_access_key to be a string, got %T", bedrockData["secret_access_key"])
+	} else {
+		var encData map[string]interface{}
+		if err := json.Unmarshal([]byte(secretAccessKeyStr), &encData); err != nil {
+			t.Errorf("Expected secret_access_key to be encrypted JSON, got parse error: %v", err)
+		}
 	}
 	if bedrockData["role_arn"] != "arn:aws:iam::123456789012:role/ExampleRole" {
 		t.Errorf("Expected role_arn to be preserved, got '%v'", bedrockData["role_arn"])
@@ -236,11 +249,24 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	if bedrockData["model"] != "anthropic.claude-opus-4-20250514-v1:0" {
 		t.Errorf("Expected updated model 'anthropic.claude-opus-4-20250514-v1:0', got '%v'", bedrockData["model"])
 	}
-	if bedrockData["access_key_id"] != "AKIAIOSFODNN7UPDATED" {
-		t.Errorf("Expected updated access_key_id 'AKIAIOSFODNN7UPDATED', got '%v'", bedrockData["access_key_id"])
+	// Sensitive fields should be encrypted (contain EncryptedData JSON)
+	accessKeyIDStr, ok := bedrockData["access_key_id"].(string)
+	if !ok {
+		t.Errorf("Expected access_key_id to be a string, got %T", bedrockData["access_key_id"])
+	} else {
+		var encData map[string]interface{}
+		if err := json.Unmarshal([]byte(accessKeyIDStr), &encData); err != nil {
+			t.Errorf("Expected access_key_id to be encrypted JSON, got parse error: %v", err)
+		}
 	}
-	if bedrockData["secret_access_key"] != "updated-secret-key" {
-		t.Errorf("Expected updated secret_access_key, got '%v'", bedrockData["secret_access_key"])
+	secretAccessKeyStr, ok := bedrockData["secret_access_key"].(string)
+	if !ok {
+		t.Errorf("Expected secret_access_key to be a string, got %T", bedrockData["secret_access_key"])
+	} else {
+		var encData map[string]interface{}
+		if err := json.Unmarshal([]byte(secretAccessKeyStr), &encData); err != nil {
+			t.Errorf("Expected secret_access_key to be encrypted JSON, got parse error: %v", err)
+		}
 	}
 	if bedrockData["role_arn"] != "arn:aws:iam::222222222222:role/UpdatedRole" {
 		t.Errorf("Expected updated role_arn, got '%v'", bedrockData["role_arn"])
