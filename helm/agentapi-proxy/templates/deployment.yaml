@@ -229,6 +229,10 @@ spec:
             - name: AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD
               value: {{ .Values.scheduleWorker.retryPeriod | quote }}
             {{- end }}
+            {{- if .Values.config.encryption.key }}
+            - name: AGENTAPI_ENCRYPTION_KEY
+              value: {{ .Values.config.encryption.key | quote }}
+            {{- end }}
             {{- range .Values.env }}
             - name: {{ .name }}
               value: {{ .value | quote }}

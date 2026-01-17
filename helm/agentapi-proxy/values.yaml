@@ -141,6 +141,12 @@ config:
     # 例: github.company.com (https:// なし)
     githubEnterpriseHost: ""
 
+  # 暗号化設定
+  encryption:
+    # 暗号化キー (Base64エンコードされた32バイトの鍵)
+    # 設定しない場合は暗号化なし (Noop) になります
+    key: ""
+
 # Environment variables
 env: []
 # - name: GITHUB_TOKEN
