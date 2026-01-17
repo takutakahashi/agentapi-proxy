@@ -5,16 +5,19 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 func TestKubernetesSettingsRepository_Save(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 
 	settings := entities.NewSettings("test-user")
 	bedrock := entities.NewBedrockSettings(true)
@@ -44,7 +47,7 @@ func TestKubernetesSettingsRepository_Save(t *testing.T) {
 
 func TestKubernetesSettingsRepository_Save_VerifySecretContent(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 
 	settings := entities.NewSettings("verify-content")
 	bedrock := entities.NewBedrockSettings(true)
@@ -110,11 +113,24 @@ func TestKubernetesSettingsRepository_Save_VerifySecretContent(t *testing.T) {
 	if bedrockData["model"] != "anthropic.claude-sonnet-4-20250514-v1:0" {
 		t.Errorf("Expected model='anthropic.claude-sonnet-4-20250514-v1:0', got '%v'", bedrockData["model"])
 	}
-	if bedrockData["access_key_id"] != "AKIAIOSFODNN7EXAMPLE" {
-		t.Errorf("Expected access_key_id='AKIAIOSFODNN7EXAMPLE', got '%v'", bedrockData["access_key_id"])
+	// Sensitive fields should be encrypted (contain EncryptedData JSON)
+	accessKeyIDStr, ok := bedrockData["access_key_id"].(string)
+	if !ok {
+		t.Errorf("Expected access_key_id to be a string, got %T", bedrockData["access_key_id"])
+	} else {
+		var encData map[string]interface{}
+		if err := json.Unmarshal([]byte(accessKeyIDStr), &encData); err != nil {
+			t.Errorf("Expected access_key_id to be encrypted JSON, got parse error: %v", err)
+		}
 	}
-	if bedrockData["secret_access_key"] != "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" {
-		t.Errorf("Expected secret_access_key to be preserved, got '%v'", bedrockData["secret_access_key"])
+	secretAccessKeyStr, ok := bedrockData["secret_access_key"].(string)
+	if !ok {
+		t.Errorf("Expected secret_access_key to be a string, got %T", bedrockData["secret_access_key"])
+	} else {
+		var encData map[string]interface{}
+		if err := json.Unmarshal([]byte(secretAccessKeyStr), &encData); err != nil {
+			t.Errorf("Expected secret_access_key to be encrypted JSON, got parse error: %v", err)
+		}
 	}
 	if bedrockData["role_arn"] != "arn:aws:iam::123456789012:role/ExampleRole" {
 		t.Errorf("Expected role_arn to be preserved, got '%v'", bedrockData["role_arn"])
@@ -134,7 +150,7 @@ func TestKubernetesSettingsRepository_Save_VerifySecretContent(t *testing.T) {
 
 func TestKubernetesSettingsRepository_SaveUpdate(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Create initial settings
@@ -168,7 +184,7 @@ func TestKubernetesSettingsRepository_SaveUpdate(t *testing.T) {
 
 func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Create initial settings with all fields
@@ -235,11 +251,24 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	if bedrockData["model"] != "anthropic.claude-opus-4-20250514-v1:0" {
 		t.Errorf("Expected updated model 'anthropic.claude-opus-4-20250514-v1:0', got '%v'", bedrockData["model"])
 	}
-	if bedrockData["access_key_id"] != "AKIAIOSFODNN7UPDATED" {
-		t.Errorf("Expected updated access_key_id 'AKIAIOSFODNN7UPDATED', got '%v'", bedrockData["access_key_id"])
+	// Sensitive fields should be encrypted (contain EncryptedData JSON)
+	accessKeyIDStr, ok := bedrockData["access_key_id"].(string)
+	if !ok {
+		t.Errorf("Expected access_key_id to be a string, got %T", bedrockData["access_key_id"])
+	} else {
+		var encData map[string]interface{}
+		if err := json.Unmarshal([]byte(accessKeyIDStr), &encData); err != nil {
+			t.Errorf("Expected access_key_id to be encrypted JSON, got parse error: %v", err)
+		}
 	}
-	if bedrockData["secret_access_key"] != "updated-secret-key" {
-		t.Errorf("Expected updated secret_access_key, got '%v'", bedrockData["secret_access_key"])
+	secretAccessKeyStr, ok := bedrockData["secret_access_key"].(string)
+	if !ok {
+		t.Errorf("Expected secret_access_key to be a string, got %T", bedrockData["secret_access_key"])
+	} else {
+		var encData map[string]interface{}
+		if err := json.Unmarshal([]byte(secretAccessKeyStr), &encData); err != nil {
+			t.Errorf("Expected secret_access_key to be encrypted JSON, got parse error: %v", err)
+		}
 	}
 	if bedrockData["role_arn"] != "arn:aws:iam::222222222222:role/UpdatedRole" {
 		t.Errorf("Expected updated role_arn, got '%v'", bedrockData["role_arn"])
@@ -273,7 +302,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 
 func TestKubernetesSettingsRepository_SaveUpdate_VerifySecretOverwritten(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Create initial settings
@@ -345,7 +374,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_VerifySecretOverwritten(t *test
 
 func TestKubernetesSettingsRepository_FindByName(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Save settings
@@ -377,7 +406,7 @@ func TestKubernetesSettingsRepository_FindByName(t *testing.T) {
 
 func TestKubernetesSettingsRepository_FindByName_NotFound(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	_, err := repo.FindByName(ctx, "nonexistent")
@@ -388,7 +417,7 @@ func TestKubernetesSettingsRepository_FindByName_NotFound(t *testing.T) {
 
 func TestKubernetesSettingsRepository_Delete(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Save settings
@@ -426,7 +455,7 @@ func TestKubernetesSettingsRepository_Delete(t *testing.T) {
 
 func TestKubernetesSettingsRepository_Delete_NotFound(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	err := repo.Delete(ctx, "nonexistent")
@@ -437,7 +466,7 @@ func TestKubernetesSettingsRepository_Delete_NotFound(t *testing.T) {
 
 func TestKubernetesSettingsRepository_List(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Save multiple settings
@@ -463,7 +492,7 @@ func TestKubernetesSettingsRepository_List(t *testing.T) {
 
 func TestKubernetesSettingsRepository_List_SkipsInvalid(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default")
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Create a valid settings secret
@@ -546,4 +575,67 @@ func TestSanitizeLabelValue(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKubernetesSettingsRepository_Save_CreatesPlaintextBackup(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
+	ctx := context.Background()
+
+	// Create settings with sensitive data
+	settings := entities.NewSettings("test-backup")
+	settings.SetClaudeCodeOAuthToken("secret-oauth-token-12345")
+
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("claude-sonnet-4")
+	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
+	bedrock.SetSecretAccessKey("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+	settings.SetBedrock(bedrock)
+
+	mcpServers := entities.NewMCPServersSettings()
+	server := entities.NewMCPServer("github", "stdio")
+	server.SetCommand("mcp-server-github")
+	server.SetEnv(map[string]string{"GITHUB_TOKEN": "ghp_secrettoken123"})
+	server.SetHeaders(map[string]string{"Authorization": "Bearer secret-bearer-token"})
+	mcpServers.SetServer("github", server)
+	settings.SetMCPServers(mcpServers)
+
+	// Save
+	err := repo.Save(ctx, settings)
+	require.NoError(t, err)
+
+	// Check that both main secret and backup secret were created
+	mainSecret, err := client.CoreV1().Secrets("default").Get(ctx, "agentapi-settings-test-backup", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotNil(t, mainSecret)
+
+	backupSecret, err := client.CoreV1().Secrets("default").Get(ctx, "agentapi-settings-test-backup-plaintext-backup", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotNil(t, backupSecret)
+
+	// Verify backup secret has correct labels
+	assert.Equal(t, "true", backupSecret.Labels["agentapi.proxy/settings-backup"])
+	assert.Equal(t, "plaintext", backupSecret.Labels["backup"])
+
+	// Verify backup contains plaintext data
+	var backupData map[string]interface{}
+	err = json.Unmarshal(backupSecret.Data["settings.json"], &backupData)
+	require.NoError(t, err)
+
+	// Check that oauth token is plaintext (not encrypted JSON)
+	oauthToken := backupData["claude_code_oauth_token"].(string)
+	assert.Equal(t, "secret-oauth-token-12345", oauthToken)
+
+	// Check that bedrock credentials are plaintext
+	bedrockData := backupData["bedrock"].(map[string]interface{})
+	assert.Equal(t, "AKIAIOSFODNN7EXAMPLE", bedrockData["access_key_id"].(string))
+	assert.Equal(t, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", bedrockData["secret_access_key"].(string))
+
+	// Check that MCP server env and headers are plaintext
+	mcpData := backupData["mcp_servers"].(map[string]interface{})
+	githubServer := mcpData["github"].(map[string]interface{})
+	envData := githubServer["env"].(map[string]interface{})
+	assert.Equal(t, "ghp_secrettoken123", envData["GITHUB_TOKEN"].(string))
+	headersData := githubServer["headers"].(map[string]interface{})
+	assert.Equal(t, "Bearer secret-bearer-token", headersData["Authorization"].(string))
 }

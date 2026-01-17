@@ -14,6 +14,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/services"
+	infraservices "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 const (
@@ -67,15 +69,18 @@ type marketplaceJSON struct {
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
 type KubernetesSettingsRepository struct {
-	client    kubernetes.Interface
-	namespace string
+	client             kubernetes.Interface
+	namespace          string
+	encryptionRegistry *infraservices.EncryptionServiceRegistry
 }
 
 // NewKubernetesSettingsRepository creates a new KubernetesSettingsRepository
-func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string) *KubernetesSettingsRepository {
+// encryptionRegistry manages encryption/decryption services
+func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string, encryptionRegistry *infraservices.EncryptionServiceRegistry) *KubernetesSettingsRepository {
 	return &KubernetesSettingsRepository{
-		client:    client,
-		namespace: namespace,
+		client:             client,
+		namespace:          namespace,
+		encryptionRegistry: encryptionRegistry,
 	}
 }
 
@@ -88,7 +93,43 @@ func (r *KubernetesSettingsRepository) Save(ctx context.Context, settings *entit
 	secretName := r.secretName(settings.Name())
 	labelValue := sanitizeLabelValue(settings.Name())
 
-	// Convert to JSON
+	// Create plaintext backup first
+	plaintextData, err := r.toJSONPlaintext(settings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal plaintext settings: %w", err)
+	}
+
+	backupSecretName := secretName + "-plaintext-backup"
+	backupSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      backupSecretName,
+			Namespace: r.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/settings-backup": "true",
+				LabelSettingsName:                 labelValue,
+				"backup":                          "plaintext",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			SecretKeySettings: plaintextData,
+		},
+	}
+
+	// Save plaintext backup (create or update)
+	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, backupSecret, metav1.CreateOptions{})
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, backupSecret, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to update plaintext backup secret: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to create plaintext backup secret: %w", err)
+		}
+	}
+
+	// Convert to JSON (with encryption)
 	data, err := r.toJSON(settings)
 	if err != nil {
 		return fmt.Errorf("failed to marshal settings: %w", err)
@@ -198,8 +239,143 @@ func (r *KubernetesSettingsRepository) secretName(name string) string {
 	return SettingsSecretPrefix + sanitizeSecretName(name)
 }
 
+// encryptValue encrypts a plaintext value and returns a JSON-encoded EncryptedData
+func (r *KubernetesSettingsRepository) encryptValue(ctx context.Context, plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+
+	// Use primary encryption service from registry
+	service := r.encryptionRegistry.GetForEncryption()
+	encrypted, err := service.Encrypt(ctx, plaintext)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt value: %w", err)
+	}
+
+	// JSON encode the EncryptedData
+	data, err := json.Marshal(encrypted)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal encrypted data: %w", err)
+	}
+
+	return string(data), nil
+}
+
+// decryptValue attempts to decrypt a value if it's encrypted, otherwise returns it as-is
+func (r *KubernetesSettingsRepository) decryptValue(ctx context.Context, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+
+	// Try to unmarshal as EncryptedData
+	var encrypted services.EncryptedData
+	if err := json.Unmarshal([]byte(value), &encrypted); err != nil {
+		// Not encrypted, return as-is (plaintext for backward compatibility)
+		return value, nil
+	}
+
+	// Get appropriate decryption service based on metadata
+	service := r.encryptionRegistry.GetForDecryption(encrypted.Metadata)
+	plaintext, err := service.Decrypt(ctx, &encrypted)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt value: %w", err)
+	}
+
+	return plaintext, nil
+}
+
 // toJSON converts Settings entity to JSON bytes
 func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]byte, error) {
+	ctx := context.Background()
+
+	// Encrypt OAuth token if present
+	oauthToken, err := r.encryptValue(ctx, settings.ClaudeCodeOAuthToken())
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt oauth token: %w", err)
+	}
+
+	sj := &settingsJSON{
+		Name:                 settings.Name(),
+		ClaudeCodeOAuthToken: oauthToken,
+		AuthMode:             string(settings.AuthMode()),
+		CreatedAt:            settings.CreatedAt(),
+		UpdatedAt:            settings.UpdatedAt(),
+	}
+
+	if bedrock := settings.Bedrock(); bedrock != nil {
+		// Encrypt sensitive Bedrock fields
+		accessKeyID, err := r.encryptValue(ctx, bedrock.AccessKeyID())
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt access key id: %w", err)
+		}
+		secretAccessKey, err := r.encryptValue(ctx, bedrock.SecretAccessKey())
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt secret access key: %w", err)
+		}
+
+		sj.Bedrock = &bedrockJSON{
+			Enabled:         bedrock.Enabled(),
+			Model:           bedrock.Model(),
+			AccessKeyID:     accessKeyID,
+			SecretAccessKey: secretAccessKey,
+			RoleARN:         bedrock.RoleARN(),
+			Profile:         bedrock.Profile(),
+		}
+	}
+
+	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
+		sj.MCPServers = make(map[string]*mcpServerJSON)
+		for name, server := range mcpServers.Servers() {
+			// Encrypt env values
+			encryptedEnv := make(map[string]string)
+			for k, v := range server.Env() {
+				encrypted, err := r.encryptValue(ctx, v)
+				if err != nil {
+					return nil, fmt.Errorf("failed to encrypt env %s: %w", k, err)
+				}
+				encryptedEnv[k] = encrypted
+			}
+
+			// Encrypt header values
+			encryptedHeaders := make(map[string]string)
+			for k, v := range server.Headers() {
+				encrypted, err := r.encryptValue(ctx, v)
+				if err != nil {
+					return nil, fmt.Errorf("failed to encrypt header %s: %w", k, err)
+				}
+				encryptedHeaders[k] = encrypted
+			}
+
+			sj.MCPServers[name] = &mcpServerJSON{
+				Type:    server.Type(),
+				URL:     server.URL(),
+				Command: server.Command(),
+				Args:    server.Args(),
+				Env:     encryptedEnv,
+				Headers: encryptedHeaders,
+			}
+		}
+	}
+
+	if marketplaces := settings.Marketplaces(); marketplaces != nil && !marketplaces.IsEmpty() {
+		sj.Marketplaces = make(map[string]*marketplaceJSON)
+		for name, marketplace := range marketplaces.Marketplaces() {
+			sj.Marketplaces[name] = &marketplaceJSON{
+				URL: marketplace.URL(),
+			}
+		}
+	}
+
+	if plugins := settings.EnabledPlugins(); len(plugins) > 0 {
+		sj.EnabledPlugins = plugins
+	}
+
+	return json.Marshal(sj)
+}
+
+// toJSONPlaintext converts Settings entity to JSON bytes without encryption
+// This is used for creating plaintext backup secrets
+func (r *KubernetesSettingsRepository) toJSONPlaintext(settings *entities.Settings) ([]byte, error) {
 	sj := &settingsJSON{
 		Name:                 settings.Name(),
 		ClaudeCodeOAuthToken: settings.ClaudeCodeOAuthToken(),
@@ -251,6 +427,8 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 
 // fromSecret converts a Kubernetes Secret to Settings entity
 func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entities.Settings, error) {
+	ctx := context.Background()
+
 	data, ok := secret.Data[SecretKeySettings]
 	if !ok {
 		return nil, fmt.Errorf("secret missing settings data")
@@ -268,8 +446,19 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if sj.Bedrock != nil {
 		bedrock := entities.NewBedrockSettings(sj.Bedrock.Enabled)
 		bedrock.SetModel(sj.Bedrock.Model)
-		bedrock.SetAccessKeyID(sj.Bedrock.AccessKeyID)
-		bedrock.SetSecretAccessKey(sj.Bedrock.SecretAccessKey)
+
+		// Decrypt sensitive Bedrock fields
+		accessKeyID, err := r.decryptValue(ctx, sj.Bedrock.AccessKeyID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt access key id: %w", err)
+		}
+		secretAccessKey, err := r.decryptValue(ctx, sj.Bedrock.SecretAccessKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt secret access key: %w", err)
+		}
+
+		bedrock.SetAccessKeyID(accessKeyID)
+		bedrock.SetSecretAccessKey(secretAccessKey)
 		bedrock.SetRoleARN(sj.Bedrock.RoleARN)
 		bedrock.SetProfile(sj.Bedrock.Profile)
 		settings.SetBedrock(bedrock)
@@ -284,8 +473,29 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 			server.SetURL(serverJSON.URL)
 			server.SetCommand(serverJSON.Command)
 			server.SetArgs(serverJSON.Args)
-			server.SetEnv(serverJSON.Env)
-			server.SetHeaders(serverJSON.Headers)
+
+			// Decrypt env values
+			decryptedEnv := make(map[string]string)
+			for k, v := range serverJSON.Env {
+				decrypted, err := r.decryptValue(ctx, v)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt env %s: %w", k, err)
+				}
+				decryptedEnv[k] = decrypted
+			}
+			server.SetEnv(decryptedEnv)
+
+			// Decrypt header values
+			decryptedHeaders := make(map[string]string)
+			for k, v := range serverJSON.Headers {
+				decrypted, err := r.decryptValue(ctx, v)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt header %s: %w", k, err)
+				}
+				decryptedHeaders[k] = decrypted
+			}
+			server.SetHeaders(decryptedHeaders)
+
 			mcpServers.SetServer(name, server)
 		}
 		settings.SetMCPServers(mcpServers)
@@ -312,7 +522,12 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	}
 
 	if sj.ClaudeCodeOAuthToken != "" {
-		settings.SetClaudeCodeOAuthToken(sj.ClaudeCodeOAuthToken)
+		// Decrypt OAuth token
+		oauthToken, err := r.decryptValue(ctx, sj.ClaudeCodeOAuthToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt oauth token: %w", err)
+		}
+		settings.SetClaudeCodeOAuthToken(oauthToken)
 		// Reset updatedAt since SetClaudeCodeOAuthToken updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
