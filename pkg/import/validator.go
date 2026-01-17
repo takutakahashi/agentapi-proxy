@@ -7,6 +7,18 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// Validation sets for allowed values
+var (
+	validScheduleStatuses  = map[string]bool{"active": true, "paused": true, "completed": true}
+	validWebhookStatuses   = map[string]bool{"active": true, "paused": true}
+	validWebhookTypes      = map[string]bool{"github": true, "custom": true}
+	validSignatureTypes    = map[string]bool{"hmac": true, "static": true}
+	validJSONPathOperators = map[string]bool{
+		"eq": true, "ne": true, "contains": true,
+		"matches": true, "in": true, "exists": true,
+	}
+)
+
 // Validator validates imported resources
 type Validator struct {
 	cronParser cron.Parser
@@ -85,11 +97,8 @@ func (v *Validator) ValidateSchedule(schedule ScheduleImport) error {
 	}
 
 	// Validate status
-	if schedule.Status != "" {
-		validStatuses := map[string]bool{"active": true, "paused": true, "completed": true}
-		if !validStatuses[schedule.Status] {
-			return fmt.Errorf("invalid status: %s (must be active, paused, or completed)", schedule.Status)
-		}
+	if schedule.Status != "" && !validScheduleStatuses[schedule.Status] {
+		return fmt.Errorf("invalid status: %s (must be active, paused, or completed)", schedule.Status)
 	}
 
 	// Either scheduled_at or cron_expr must be set
@@ -127,28 +136,21 @@ func (v *Validator) ValidateWebhook(webhook WebhookImport) error {
 	}
 
 	// Validate status
-	if webhook.Status != "" {
-		validStatuses := map[string]bool{"active": true, "paused": true}
-		if !validStatuses[webhook.Status] {
-			return fmt.Errorf("invalid status: %s (must be active or paused)", webhook.Status)
-		}
+	if webhook.Status != "" && !validWebhookStatuses[webhook.Status] {
+		return fmt.Errorf("invalid status: %s (must be active or paused)", webhook.Status)
 	}
 
 	// Validate webhook type
 	if webhook.WebhookType == "" {
 		return fmt.Errorf("webhook_type is required")
 	}
-	validTypes := map[string]bool{"github": true, "custom": true}
-	if !validTypes[webhook.WebhookType] {
+	if !validWebhookTypes[webhook.WebhookType] {
 		return fmt.Errorf("invalid webhook_type: %s (must be github or custom)", webhook.WebhookType)
 	}
 
 	// Validate signature type if provided
-	if webhook.SignatureType != "" {
-		validSignatureTypes := map[string]bool{"hmac": true, "static": true}
-		if !validSignatureTypes[webhook.SignatureType] {
-			return fmt.Errorf("invalid signature_type: %s (must be hmac or static)", webhook.SignatureType)
-		}
+	if webhook.SignatureType != "" && !validSignatureTypes[webhook.SignatureType] {
+		return fmt.Errorf("invalid signature_type: %s (must be hmac or static)", webhook.SignatureType)
 	}
 
 	// Validate max_sessions
@@ -267,12 +269,7 @@ func (v *Validator) ValidateJSONPathCondition(condition JSONPathConditionImport)
 	if condition.Operator == "" {
 		return fmt.Errorf("operator is required")
 	}
-
-	validOperators := map[string]bool{
-		"eq": true, "ne": true, "contains": true,
-		"matches": true, "in": true, "exists": true,
-	}
-	if !validOperators[condition.Operator] {
+	if !validJSONPathOperators[condition.Operator] {
 		return fmt.Errorf("invalid operator: %s", condition.Operator)
 	}
 

@@ -3,6 +3,7 @@ package importexport
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -39,8 +40,8 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 	}
 
 	// Determine which resource types to include
-	includeSchedules := len(options.IncludeTypes) == 0 || contains(options.IncludeTypes, "schedules")
-	includeWebhooks := len(options.IncludeTypes) == 0 || contains(options.IncludeTypes, "webhooks")
+	includeSchedules := len(options.IncludeTypes) == 0 || slices.Contains(options.IncludeTypes, "schedules")
+	includeWebhooks := len(options.IncludeTypes) == 0 || slices.Contains(options.IncludeTypes, "webhooks")
 
 	// Export schedules
 	if includeSchedules {
@@ -55,7 +56,7 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 
 		for _, s := range schedules {
 			// Apply status filter if specified
-			if len(options.StatusFilter) > 0 && !contains(options.StatusFilter, string(s.Status)) {
+			if len(options.StatusFilter) > 0 && !slices.Contains(options.StatusFilter, string(s.Status)) {
 				continue
 			}
 
@@ -77,7 +78,7 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 
 		for _, w := range webhooks {
 			// Apply status filter if specified
-			if len(options.StatusFilter) > 0 && !contains(options.StatusFilter, string(w.Status())) {
+			if len(options.StatusFilter) > 0 && !slices.Contains(options.StatusFilter, string(w.Status())) {
 				continue
 			}
 
@@ -217,14 +218,4 @@ func (e *Exporter) convertWebhookSessionConfigToImport(config *entities.WebhookS
 	}
 
 	return sessionConfig
-}
-
-// contains checks if a slice contains a specific string
-func contains(slice []string, str string) bool {
-	for _, s := range slice {
-		if s == str {
-			return true
-		}
-	}
-	return false
 }

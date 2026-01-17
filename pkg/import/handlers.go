@@ -90,12 +90,9 @@ func (h *Handlers) ImportTeamResources(c echo.Context) error {
 
 	// Default mode based on HTTP method
 	if options.Mode == "" {
-		switch c.Request().Method {
-		case "POST":
-			options.Mode = ImportModeCreate
-		case "PUT":
+		if c.Request().Method == "PUT" {
 			options.Mode = ImportModeUpsert
-		default:
+		} else {
 			options.Mode = ImportModeCreate
 		}
 	}

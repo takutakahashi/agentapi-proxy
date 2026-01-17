@@ -98,6 +98,30 @@ func (i *Importer) Import(ctx context.Context, resources *TeamResources, userID 
 	return result, nil
 }
 
+// determineAction determines the action based on import mode and whether the resource exists.
+// Returns the action ("create" or "update") and an error message if the operation is not allowed.
+func determineAction(mode ImportMode, exists bool, resourceType, resourceName string) (action string, errMsg string) {
+	switch mode {
+	case ImportModeCreate:
+		if exists {
+			return "", fmt.Sprintf("%s with name %q already exists", resourceType, resourceName)
+		}
+		return "create", ""
+	case ImportModeUpdate:
+		if !exists {
+			return "", fmt.Sprintf("%s with name %q does not exist", resourceType, resourceName)
+		}
+		return "update", ""
+	case ImportModeUpsert:
+		if exists {
+			return "update", ""
+		}
+		return "create", ""
+	default:
+		return "create", ""
+	}
+}
+
 func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleImport, teamID, userID string, options ImportOptions) ImportDetail {
 	detail := ImportDetail{
 		ResourceType: "schedule",
@@ -124,30 +148,12 @@ func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleIm
 	}
 
 	// Determine action based on mode and existence
-	var action string
-	switch options.Mode {
-	case ImportModeCreate:
-		if existingSchedule != nil {
-			detail.Action = "failed"
-			detail.Status = "error"
-			detail.Error = fmt.Sprintf("schedule with name %q already exists", scheduleImport.Name)
-			return detail
-		}
-		action = "create"
-	case ImportModeUpdate:
-		if existingSchedule == nil {
-			detail.Action = "failed"
-			detail.Status = "error"
-			detail.Error = fmt.Sprintf("schedule with name %q does not exist", scheduleImport.Name)
-			return detail
-		}
-		action = "update"
-	case ImportModeUpsert:
-		if existingSchedule != nil {
-			action = "update"
-		} else {
-			action = "create"
-		}
+	action, errMsg := determineAction(options.Mode, existingSchedule != nil, "schedule", scheduleImport.Name)
+	if errMsg != "" {
+		detail.Action = "failed"
+		detail.Status = "error"
+		detail.Error = errMsg
+		return detail
 	}
 
 	// Dry run - don't actually create/update
@@ -217,30 +223,12 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 	}
 
 	// Determine action based on mode and existence
-	var action string
-	switch options.Mode {
-	case ImportModeCreate:
-		if existingWebhook != nil {
-			detail.Action = "failed"
-			detail.Status = "error"
-			detail.Error = fmt.Sprintf("webhook with name %q already exists", webhookImport.Name)
-			return detail
-		}
-		action = "create"
-	case ImportModeUpdate:
-		if existingWebhook == nil {
-			detail.Action = "failed"
-			detail.Status = "error"
-			detail.Error = fmt.Sprintf("webhook with name %q does not exist", webhookImport.Name)
-			return detail
-		}
-		action = "update"
-	case ImportModeUpsert:
-		if existingWebhook != nil {
-			action = "update"
-		} else {
-			action = "create"
-		}
+	action, errMsg := determineAction(options.Mode, existingWebhook != nil, "webhook", webhookImport.Name)
+	if errMsg != "" {
+		detail.Action = "failed"
+		detail.Status = "error"
+		detail.Error = errMsg
+		return detail
 	}
 
 	// Dry run - don't actually create/update
