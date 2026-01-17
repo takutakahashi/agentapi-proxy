@@ -16,7 +16,7 @@ func TestValidator_ValidateMetadata(t *testing.T) {
 		{
 			name: "valid metadata",
 			metadata: ResourceMetadata{
-				TeamID:      "myorg/backend-team",
+				TeamID:      "myorg-backend-team",
 				Description: "Test resources",
 			},
 			expectErr: false,
@@ -29,7 +29,7 @@ func TestValidator_ValidateMetadata(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "invalid team_id format - no slash",
+			name: "invalid team_id format - no hyphen",
 			metadata: ResourceMetadata{
 				TeamID: "myorg",
 			},
@@ -38,14 +38,14 @@ func TestValidator_ValidateMetadata(t *testing.T) {
 		{
 			name: "invalid team_id format - empty org",
 			metadata: ResourceMetadata{
-				TeamID: "/backend-team",
+				TeamID: "-backend-team",
 			},
 			expectErr: true,
 		},
 		{
 			name: "invalid team_id format - empty team",
 			metadata: ResourceMetadata{
-				TeamID: "myorg/",
+				TeamID: "myorg-",
 			},
 			expectErr: true,
 		},
@@ -507,7 +507,7 @@ func TestValidator_Validate(t *testing.T) {
 				APIVersion: "agentapi.proxy/v1",
 				Kind:       "TeamResources",
 				Metadata: ResourceMetadata{
-					TeamID: "myorg/backend-team",
+					TeamID: "myorg-backend-team",
 				},
 				Schedules: []ScheduleImport{
 					{
@@ -542,7 +542,7 @@ func TestValidator_Validate(t *testing.T) {
 			name: "duplicate schedule names",
 			resources: TeamResources{
 				Metadata: ResourceMetadata{
-					TeamID: "myorg/backend-team",
+					TeamID: "myorg-backend-team",
 				},
 				Schedules: []ScheduleImport{
 					{
@@ -567,7 +567,7 @@ func TestValidator_Validate(t *testing.T) {
 			name: "duplicate webhook names",
 			resources: TeamResources{
 				Metadata: ResourceMetadata{
-					TeamID: "myorg/backend-team",
+					TeamID: "myorg-backend-team",
 				},
 				Webhooks: []WebhookImport{
 					{

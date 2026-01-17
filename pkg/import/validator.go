@@ -61,14 +61,14 @@ func (v *Validator) ValidateMetadata(metadata ResourceMetadata) error {
 		return fmt.Errorf("team_id is required")
 	}
 
-	// Validate team_id format (org/team-slug)
-	if !strings.Contains(metadata.TeamID, "/") {
-		return fmt.Errorf("team_id must be in format 'org/team-slug'")
+	// Validate team_id format (org-team-slug)
+	if !strings.Contains(metadata.TeamID, "-") {
+		return fmt.Errorf("team_id must be in format 'org-team-slug'")
 	}
 
-	parts := strings.Split(metadata.TeamID, "/")
+	parts := strings.SplitN(metadata.TeamID, "-", 2)
 	if len(parts) != 2 {
-		return fmt.Errorf("team_id must be in format 'org/team-slug'")
+		return fmt.Errorf("team_id must be in format 'org-team-slug'")
 	}
 
 	if parts[0] == "" || parts[1] == "" {

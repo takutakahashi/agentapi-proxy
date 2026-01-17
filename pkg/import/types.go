@@ -15,6 +15,7 @@ type TeamResources struct {
 
 // ResourceMetadata contains metadata about the team resources
 type ResourceMetadata struct {
+	// TeamID in the format "org-team" (e.g., "myorg-backend-team")
 	TeamID      string `yaml:"team_id" toml:"team_id" json:"team_id"`
 	Description string `yaml:"description,omitempty" toml:"description,omitempty" json:"description,omitempty"`
 }

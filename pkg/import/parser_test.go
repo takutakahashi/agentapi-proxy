@@ -14,7 +14,7 @@ func TestParser_ParseYAML(t *testing.T) {
 apiVersion: agentapi.proxy/v1
 kind: TeamResources
 metadata:
-  team_id: "myorg/backend-team"
+  team_id: "myorg-backend-team"
   description: "Backend team resources"
 schedules:
   - name: "Daily Test"
@@ -61,8 +61,8 @@ webhooks:
 	}
 
 	// Validate metadata
-	if resources.Metadata.TeamID != "myorg/backend-team" {
-		t.Errorf("Expected team_id 'myorg/backend-team', got '%s'", resources.Metadata.TeamID)
+	if resources.Metadata.TeamID != "myorg-backend-team" {
+		t.Errorf("Expected team_id 'myorg-backend-team', got '%s'", resources.Metadata.TeamID)
 	}
 
 	// Validate schedules
@@ -97,7 +97,7 @@ func TestParser_ParseJSON(t *testing.T) {
 		"apiVersion": "agentapi.proxy/v1",
 		"kind": "TeamResources",
 		"metadata": {
-			"team_id": "myorg/backend-team"
+			"team_id": "myorg-backend-team"
 		},
 		"schedules": [
 			{
@@ -120,8 +120,8 @@ func TestParser_ParseJSON(t *testing.T) {
 		t.Fatalf("Failed to parse JSON: %v", err)
 	}
 
-	if resources.Metadata.TeamID != "myorg/backend-team" {
-		t.Errorf("Expected team_id 'myorg/backend-team', got '%s'", resources.Metadata.TeamID)
+	if resources.Metadata.TeamID != "myorg-backend-team" {
+		t.Errorf("Expected team_id 'myorg-backend-team', got '%s'", resources.Metadata.TeamID)
 	}
 
 	if len(resources.Schedules) != 1 {
@@ -134,7 +134,7 @@ func TestParser_ParseTOML(t *testing.T) {
 
 	tomlData := `
 [metadata]
-team_id = "myorg/backend-team"
+team_id = "myorg-backend-team"
 api_version = "agentapi.proxy/v1"
 kind = "TeamResources"
 
@@ -153,8 +153,8 @@ environment = { TEST_ENV = "integration" }
 		t.Fatalf("Failed to parse TOML: %v", err)
 	}
 
-	if resources.Metadata.TeamID != "myorg/backend-team" {
-		t.Errorf("Expected team_id 'myorg/backend-team', got '%s'", resources.Metadata.TeamID)
+	if resources.Metadata.TeamID != "myorg-backend-team" {
+		t.Errorf("Expected team_id 'myorg-backend-team', got '%s'", resources.Metadata.TeamID)
 	}
 
 	if len(resources.Schedules) != 1 {
@@ -230,7 +230,7 @@ func TestFormatter_FormatYAML(t *testing.T) {
 		APIVersion: "agentapi.proxy/v1",
 		Kind:       "TeamResources",
 		Metadata: ResourceMetadata{
-			TeamID:      "myorg/backend-team",
+			TeamID:      "myorg-backend-team",
 			Description: "Test resources",
 		},
 		Schedules: []ScheduleImport{
@@ -257,7 +257,7 @@ func TestFormatter_FormatYAML(t *testing.T) {
 	if !strings.Contains(output, "apiVersion: agentapi.proxy/v1") {
 		t.Error("Output does not contain apiVersion")
 	}
-	if !strings.Contains(output, "team_id: myorg/backend-team") {
+	if !strings.Contains(output, "team_id: myorg-backend-team") {
 		t.Error("Output does not contain team_id")
 	}
 }
@@ -269,7 +269,7 @@ func TestFormatter_FormatJSON(t *testing.T) {
 		APIVersion: "agentapi.proxy/v1",
 		Kind:       "TeamResources",
 		Metadata: ResourceMetadata{
-			TeamID: "myorg/backend-team",
+			TeamID: "myorg-backend-team",
 		},
 		Schedules: []ScheduleImport{},
 		Webhooks:  []WebhookImport{},

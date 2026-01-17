@@ -60,7 +60,7 @@ func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	if org == "" || team == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "org and team are required")
 	}
-	teamID := fmt.Sprintf("%s/%s", org, team)
+	teamID := fmt.Sprintf("%s-%s", org, team)
 
 	// Get user from context
 	user := auth.GetUserFromContext(c)
@@ -142,7 +142,7 @@ func (h *Handlers) ExportTeamResources(c echo.Context) error {
 	if org == "" || team == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "org and team are required")
 	}
-	teamID := fmt.Sprintf("%s/%s", org, team)
+	teamID := fmt.Sprintf("%s-%s", org, team)
 
 	// Get user from context
 	user := auth.GetUserFromContext(c)
