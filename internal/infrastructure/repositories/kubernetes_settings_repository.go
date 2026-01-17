@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/services"
 )
 
 const (
@@ -67,15 +68,17 @@ type marketplaceJSON struct {
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
 type KubernetesSettingsRepository struct {
-	client    kubernetes.Interface
-	namespace string
+	client            kubernetes.Interface
+	namespace         string
+	encryptionService services.EncryptionService
 }
 
 // NewKubernetesSettingsRepository creates a new KubernetesSettingsRepository
-func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string) *KubernetesSettingsRepository {
+func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string, encryptionService services.EncryptionService) *KubernetesSettingsRepository {
 	return &KubernetesSettingsRepository{
-		client:    client,
-		namespace: namespace,
+		client:            client,
+		namespace:         namespace,
+		encryptionService: encryptionService,
 	}
 }
 
