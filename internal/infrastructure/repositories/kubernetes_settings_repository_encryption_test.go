@@ -9,12 +9,11 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 func TestKubernetesSettingsRepository_EncryptDecrypt_Bedrock(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
+	repo := NewKubernetesSettingsRepository(client, "default")
 	ctx := context.Background()
 
 	// Create settings with Bedrock credentials
@@ -44,7 +43,7 @@ func TestKubernetesSettingsRepository_EncryptDecrypt_Bedrock(t *testing.T) {
 
 func TestKubernetesSettingsRepository_EncryptDecrypt_OAuthToken(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
+	repo := NewKubernetesSettingsRepository(client, "default")
 	ctx := context.Background()
 
 	// Create settings with OAuth token
@@ -65,7 +64,7 @@ func TestKubernetesSettingsRepository_EncryptDecrypt_OAuthToken(t *testing.T) {
 
 func TestKubernetesSettingsRepository_EncryptDecrypt_MCPServers(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
+	repo := NewKubernetesSettingsRepository(client, "default")
 	ctx := context.Background()
 
 	// Create settings with MCP servers
@@ -109,7 +108,7 @@ func TestKubernetesSettingsRepository_EncryptDecrypt_MCPServers(t *testing.T) {
 
 func TestKubernetesSettingsRepository_EncryptDecrypt_AllFields(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
+	repo := NewKubernetesSettingsRepository(client, "default")
 	ctx := context.Background()
 
 	// Create settings with all sensitive fields
@@ -153,7 +152,7 @@ func TestKubernetesSettingsRepository_EncryptDecrypt_AllFields(t *testing.T) {
 
 func TestKubernetesSettingsRepository_EmptyValues(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
+	repo := NewKubernetesSettingsRepository(client, "default")
 	ctx := context.Background()
 
 	// Create settings with empty values
