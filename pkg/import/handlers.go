@@ -44,14 +44,22 @@ func (h *Handlers) GetName() string {
 // RegisterRoutes registers import/export routes
 // Implements the app.CustomHandler interface
 func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
-	e.POST("/settings/:team_id/import", h.ImportTeamResources)
-	e.GET("/settings/:team_id/export", h.ExportTeamResources)
+	// GET /manage/:team_id - Export team resources
+	e.GET("/manage/:team_id", h.ExportTeamResources)
 
-	log.Printf("Registered import/export routes")
+	// POST /manage/:team_id - Import team resources (create mode)
+	e.POST("/manage/:team_id", h.ImportTeamResources)
+
+	// PUT /manage/:team_id - Import team resources (update/upsert mode)
+	e.PUT("/manage/:team_id", h.ImportTeamResources)
+
+	log.Printf("Registered team resources management routes: GET/POST/PUT /manage/:team_id")
 	return nil
 }
 
-// ImportTeamResources handles POST /settings/:team_id/import
+// ImportTeamResources handles POST/PUT /manage/:team_id
+// POST: Import with create mode (default)
+// PUT: Import with upsert mode (default)
 func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	h.setCORSHeaders(c)
 
@@ -80,9 +88,16 @@ func (h *Handlers) ImportTeamResources(c echo.Context) error {
 		RegenerateAll: c.QueryParam("regenerate_secrets") == "true",
 	}
 
-	// Default mode is create
+	// Default mode based on HTTP method
 	if options.Mode == "" {
-		options.Mode = ImportModeCreate
+		switch c.Request().Method {
+		case "POST":
+			options.Mode = ImportModeCreate
+		case "PUT":
+			options.Mode = ImportModeUpsert
+		default:
+			options.Mode = ImportModeCreate
+		}
 	}
 
 	// Default ID field is name
@@ -131,7 +146,7 @@ func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	return c.JSON(http.StatusMultiStatus, result)
 }
 
-// ExportTeamResources handles GET /settings/:team_id/export
+// ExportTeamResources handles GET /manage/:team_id
 func (h *Handlers) ExportTeamResources(c echo.Context) error {
 	h.setCORSHeaders(c)
 
