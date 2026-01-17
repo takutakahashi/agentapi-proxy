@@ -22,8 +22,13 @@ type LocalEncryptionService struct {
 }
 
 // NewLocalEncryptionService は LocalEncryptionService を作成する
-// keyPath が指定されていない場合、環境変数 AGENTAPI_ENCRYPTION_KEY から読み込む
-func NewLocalEncryptionService(keyPath string) (*LocalEncryptionService, error) {
+// keyPath が指定されていない場合、環境変数から読み込む
+// keyEnvVar が空の場合は "AGENTAPI_ENCRYPTION_KEY" を使用
+func NewLocalEncryptionService(keyPath string, keyEnvVar string) (*LocalEncryptionService, error) {
+	if keyEnvVar == "" {
+		keyEnvVar = "AGENTAPI_ENCRYPTION_KEY"
+	}
+
 	var key []byte
 	var err error
 
@@ -35,9 +40,9 @@ func NewLocalEncryptionService(keyPath string) (*LocalEncryptionService, error) 
 		}
 	} else {
 		// 環境変数から読み込み
-		keyB64 := os.Getenv("AGENTAPI_ENCRYPTION_KEY")
+		keyB64 := os.Getenv(keyEnvVar)
 		if keyB64 == "" {
-			return nil, fmt.Errorf("encryption key not found: neither keyPath nor AGENTAPI_ENCRYPTION_KEY is set")
+			return nil, fmt.Errorf("encryption key not found: neither keyPath nor %s is set", keyEnvVar)
 		}
 		key, err = base64.StdEncoding.DecodeString(keyB64)
 		if err != nil {

@@ -71,14 +71,18 @@ type KubernetesSettingsRepository struct {
 	client            kubernetes.Interface
 	namespace         string
 	encryptionService services.EncryptionService
+	decryptionService services.EncryptionService
 }
 
 // NewKubernetesSettingsRepository creates a new KubernetesSettingsRepository
-func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string, encryptionService services.EncryptionService) *KubernetesSettingsRepository {
+// encryptionService is used for encrypting values when saving
+// decryptionService is used for decrypting values when loading
+func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string, encryptionService services.EncryptionService, decryptionService services.EncryptionService) *KubernetesSettingsRepository {
 	return &KubernetesSettingsRepository{
 		client:            client,
 		namespace:         namespace,
 		encryptionService: encryptionService,
+		decryptionService: decryptionService,
 	}
 }
 
@@ -234,8 +238,8 @@ func (r *KubernetesSettingsRepository) decryptValue(ctx context.Context, value s
 		return value, nil
 	}
 
-	// Decrypt
-	plaintext, err := r.encryptionService.Decrypt(ctx, &encrypted)
+	// Decrypt using decryption service
+	plaintext, err := r.decryptionService.Decrypt(ctx, &encrypted)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt value: %w", err)
 	}

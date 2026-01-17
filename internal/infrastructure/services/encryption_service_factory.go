@@ -14,15 +14,23 @@ type EncryptionServiceFactory struct {
 	kmsKeyID     string
 	kmsRegion    string
 	localKeyPath string
+	localKeyEnv  string
+	prefix       string
 }
 
 // NewEncryptionServiceFactory は EncryptionServiceFactory を作成する
 // 環境変数から設定を読み込む
-func NewEncryptionServiceFactory() *EncryptionServiceFactory {
+// prefix が空の場合は "AGENTAPI_ENCRYPTION" を使用
+func NewEncryptionServiceFactory(prefix string) *EncryptionServiceFactory {
+	if prefix == "" {
+		prefix = "AGENTAPI_ENCRYPTION"
+	}
 	return &EncryptionServiceFactory{
-		kmsKeyID:     os.Getenv("AGENTAPI_ENCRYPTION_KMS_KEY_ID"),
-		kmsRegion:    os.Getenv("AGENTAPI_ENCRYPTION_KMS_REGION"),
-		localKeyPath: os.Getenv("AGENTAPI_ENCRYPTION_KEY_FILE"),
+		kmsKeyID:     os.Getenv(prefix + "_KMS_KEY_ID"),
+		kmsRegion:    os.Getenv(prefix + "_KMS_REGION"),
+		localKeyPath: os.Getenv(prefix + "_KEY_FILE"),
+		localKeyEnv:  prefix + "_KEY",
+		prefix:       prefix,
 	}
 }
 
@@ -35,28 +43,28 @@ func (f *EncryptionServiceFactory) Create() (services.EncryptionService, error) 
 		if err == nil {
 			// KMS が利用可能かテスト
 			if err := f.testKMSAvailability(service); err == nil {
-				log.Printf("[ENCRYPTION] Using AWS KMS encryption (key: %s, region: %s)", f.kmsKeyID, f.kmsRegion)
+				log.Printf("[%s] Using AWS KMS encryption (key: %s, region: %s)", f.prefix, f.kmsKeyID, f.kmsRegion)
 				return service, nil
 			}
 			// KMS が利用不可の場合はフォールバック
-			log.Printf("[ENCRYPTION] KMS unavailable, falling back to next option: %v", err)
+			log.Printf("[%s] KMS unavailable, falling back to next option: %v", f.prefix, err)
 		} else {
-			log.Printf("[ENCRYPTION] Failed to create KMS service: %v", err)
+			log.Printf("[%s] Failed to create KMS service: %v", f.prefix, err)
 		}
 	}
 
 	// 2. ローカル暗号化が設定されていれば使用
-	if f.localKeyPath != "" || os.Getenv("AGENTAPI_ENCRYPTION_KEY") != "" {
-		service, err := NewLocalEncryptionService(f.localKeyPath)
+	if f.localKeyPath != "" || os.Getenv(f.localKeyEnv) != "" {
+		service, err := NewLocalEncryptionService(f.localKeyPath, f.localKeyEnv)
 		if err == nil {
-			log.Printf("[ENCRYPTION] Using local AES-256-GCM encryption (key fingerprint: %s)", service.KeyID())
+			log.Printf("[%s] Using local AES-256-GCM encryption (key fingerprint: %s)", f.prefix, service.KeyID())
 			return service, nil
 		}
-		log.Printf("[ENCRYPTION] Failed to create local encryption service: %v", err)
+		log.Printf("[%s] Failed to create local encryption service: %v", f.prefix, err)
 	}
 
 	// 3. どちらも設定されていなければ Noop（暗号化なし）
-	log.Printf("[ENCRYPTION] No encryption configured, using noop encryption (plaintext)")
+	log.Printf("[%s] No encryption configured, using noop encryption (plaintext)", f.prefix)
 	return NewNoopEncryptionService(), nil
 }
 

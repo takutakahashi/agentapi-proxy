@@ -133,11 +133,20 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	sessionManager := portrepos.SessionManager(k8sSessionManager)
 	log.Printf("[SERVER] Kubernetes session manager initialized successfully")
 
-	// Initialize encryption service
-	encryptionFactory := services.NewEncryptionServiceFactory()
+	// Initialize encryption services
+	// Encryption service: used for encrypting values when saving
+	encryptionFactory := services.NewEncryptionServiceFactory("AGENTAPI_ENCRYPTION")
 	encryptionService, err := encryptionFactory.Create()
 	if err != nil {
 		log.Fatalf("Failed to create encryption service: %v", err)
+	}
+
+	// Decryption service: used for decrypting values when loading
+	// If AGENTAPI_DECRYPTION_* env vars are not set, this will use AGENTAPI_ENCRYPTION_* (same as encryption)
+	decryptionFactory := services.NewEncryptionServiceFactory("AGENTAPI_DECRYPTION")
+	decryptionService, err := decryptionFactory.Create()
+	if err != nil {
+		log.Fatalf("Failed to create decryption service: %v", err)
 	}
 
 	// Initialize settings repository
@@ -145,6 +154,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		k8sSessionManager.GetClient(),
 		k8sSessionManager.GetNamespace(),
 		encryptionService,
+		decryptionService,
 	)
 	// Set settings repository in session manager for Bedrock integration
 	k8sSessionManager.SetSettingsRepository(settingsRepo)

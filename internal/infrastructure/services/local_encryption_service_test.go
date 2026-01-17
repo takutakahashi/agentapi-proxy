@@ -30,7 +30,7 @@ func TestNewLocalEncryptionService_FromFile(t *testing.T) {
 	require.NoError(t, err)
 
 	// サービスを作成
-	service, err := NewLocalEncryptionService(keyPath)
+	service, err := NewLocalEncryptionService(keyPath, "")
 	require.NoError(t, err)
 	require.NotNil(t, service)
 
@@ -46,7 +46,7 @@ func TestNewLocalEncryptionService_FromEnv(t *testing.T) {
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
 
 	// サービスを作成
-	service, err := NewLocalEncryptionService("")
+	service, err := NewLocalEncryptionService("", "")
 	require.NoError(t, err)
 	require.NotNil(t, service)
 
@@ -63,7 +63,7 @@ func TestNewLocalEncryptionService_InvalidKeySize(t *testing.T) {
 	require.NoError(t, err)
 
 	// サービス作成はエラーになるはず
-	_, err = NewLocalEncryptionService(keyPath)
+	_, err = NewLocalEncryptionService(keyPath, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "must be 32 bytes")
 }
@@ -72,7 +72,7 @@ func TestNewLocalEncryptionService_NoKey(t *testing.T) {
 	// キーが設定されていない場合
 	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY")
 
-	_, err := NewLocalEncryptionService("")
+	_, err := NewLocalEncryptionService("", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "encryption key not found")
 }
@@ -83,7 +83,7 @@ func TestLocalEncryptionService_Encrypt(t *testing.T) {
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64))
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
 
-	service, err := NewLocalEncryptionService("")
+	service, err := NewLocalEncryptionService("", "")
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -107,7 +107,7 @@ func TestLocalEncryptionService_Decrypt(t *testing.T) {
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64))
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
 
-	service, err := NewLocalEncryptionService("")
+	service, err := NewLocalEncryptionService("", "")
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -129,7 +129,7 @@ func TestLocalEncryptionService_RoundTrip(t *testing.T) {
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64))
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
 
-	service, err := NewLocalEncryptionService("")
+	service, err := NewLocalEncryptionService("", "")
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -170,14 +170,14 @@ func TestLocalEncryptionService_DifferentKeys(t *testing.T) {
 	key1 := generateTestKey()
 	key1B64 := base64.StdEncoding.EncodeToString(key1)
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", key1B64))
-	service1, err := NewLocalEncryptionService("")
+	service1, err := NewLocalEncryptionService("", "")
 	require.NoError(t, err)
 
 	// サービス2 を作成（異なるキー）
 	key2 := generateTestKey()
 	key2B64 := base64.StdEncoding.EncodeToString(key2)
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", key2B64))
-	service2, err := NewLocalEncryptionService("")
+	service2, err := NewLocalEncryptionService("", "")
 	require.NoError(t, err)
 
 	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY")
@@ -199,7 +199,7 @@ func TestLocalEncryptionService_InvalidCiphertext(t *testing.T) {
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64))
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
 
-	service, err := NewLocalEncryptionService("")
+	service, err := NewLocalEncryptionService("", "")
 	require.NoError(t, err)
 
 	ctx := context.Background()

@@ -18,7 +18,7 @@ func TestEncryptionServiceFactory_Create_Noop(t *testing.T) {
 	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY_FILE")
 	_ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY")
 
-	factory := NewEncryptionServiceFactory()
+	factory := NewEncryptionServiceFactory("")
 
 	service, err := factory.Create()
 	require.NoError(t, err)
@@ -47,7 +47,7 @@ func TestEncryptionServiceFactory_Create_Local(t *testing.T) {
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64))
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
 
-	factory := NewEncryptionServiceFactory()
+	factory := NewEncryptionServiceFactory("")
 
 	service, err := factory.Create()
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestEncryptionServiceFactory_Create_LocalFromFile(t *testing.T) {
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY_FILE", keyPath))
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY_FILE") }()
 
-	factory := NewEncryptionServiceFactory()
+	factory := NewEncryptionServiceFactory("")
 
 	service, err := factory.Create()
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestEncryptionServiceFactory_Create_KMS_FallbackToLocal(t *testing.T) {
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", keyB64))
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
 
-	factory := NewEncryptionServiceFactory()
+	factory := NewEncryptionServiceFactory("")
 
 	service, err := factory.Create()
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestEncryptionServiceFactory_Create_InvalidLocal_FallbackToNoop(t *testing.
 	require.NoError(t, os.Setenv("AGENTAPI_ENCRYPTION_KEY", "invalid-key"))
 	defer func() { _ = os.Unsetenv("AGENTAPI_ENCRYPTION_KEY") }()
 
-	factory := NewEncryptionServiceFactory()
+	factory := NewEncryptionServiceFactory("")
 
 	service, err := factory.Create()
 	require.NoError(t, err)
