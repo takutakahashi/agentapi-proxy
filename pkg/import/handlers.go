@@ -44,23 +44,21 @@ func (h *Handlers) GetName() string {
 // RegisterRoutes registers import/export routes
 // Implements the app.CustomHandler interface
 func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
-	e.POST("/settings/:org/:team/import", h.ImportTeamResources)
-	e.GET("/settings/:org/:team/export", h.ExportTeamResources)
+	e.POST("/settings/:team_id/import", h.ImportTeamResources)
+	e.GET("/settings/:team_id/export", h.ExportTeamResources)
 
 	log.Printf("Registered import/export routes")
 	return nil
 }
 
-// ImportTeamResources handles POST /settings/:org/:team/import
+// ImportTeamResources handles POST /settings/:team_id/import
 func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	h.setCORSHeaders(c)
 
-	org := c.Param("org")
-	team := c.Param("team")
-	if org == "" || team == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "org and team are required")
+	teamID := c.Param("team_id")
+	if teamID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "team_id is required")
 	}
-	teamID := fmt.Sprintf("%s-%s", org, team)
 
 	// Get user from context
 	user := auth.GetUserFromContext(c)
@@ -133,16 +131,14 @@ func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	return c.JSON(http.StatusMultiStatus, result)
 }
 
-// ExportTeamResources handles GET /settings/:org/:team/export
+// ExportTeamResources handles GET /settings/:team_id/export
 func (h *Handlers) ExportTeamResources(c echo.Context) error {
 	h.setCORSHeaders(c)
 
-	org := c.Param("org")
-	team := c.Param("team")
-	if org == "" || team == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "org and team are required")
+	teamID := c.Param("team_id")
+	if teamID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "team_id is required")
 	}
-	teamID := fmt.Sprintf("%s-%s", org, team)
 
 	// Get user from context
 	user := auth.GetUserFromContext(c)
