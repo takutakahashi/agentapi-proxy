@@ -15,7 +15,7 @@ import (
 
 func TestKubernetesSettingsRepository_Save(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 
 	settings := entities.NewSettings("test-user")
 	bedrock := entities.NewBedrockSettings(true)
@@ -45,7 +45,7 @@ func TestKubernetesSettingsRepository_Save(t *testing.T) {
 
 func TestKubernetesSettingsRepository_Save_VerifySecretContent(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 
 	settings := entities.NewSettings("verify-content")
 	bedrock := entities.NewBedrockSettings(true)
@@ -148,7 +148,7 @@ func TestKubernetesSettingsRepository_Save_VerifySecretContent(t *testing.T) {
 
 func TestKubernetesSettingsRepository_SaveUpdate(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Create initial settings
@@ -182,7 +182,7 @@ func TestKubernetesSettingsRepository_SaveUpdate(t *testing.T) {
 
 func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Create initial settings with all fields
@@ -300,7 +300,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 
 func TestKubernetesSettingsRepository_SaveUpdate_VerifySecretOverwritten(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Create initial settings
@@ -372,7 +372,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_VerifySecretOverwritten(t *test
 
 func TestKubernetesSettingsRepository_FindByName(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Save settings
@@ -404,7 +404,7 @@ func TestKubernetesSettingsRepository_FindByName(t *testing.T) {
 
 func TestKubernetesSettingsRepository_FindByName_NotFound(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	_, err := repo.FindByName(ctx, "nonexistent")
@@ -415,7 +415,7 @@ func TestKubernetesSettingsRepository_FindByName_NotFound(t *testing.T) {
 
 func TestKubernetesSettingsRepository_Delete(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Save settings
@@ -453,7 +453,7 @@ func TestKubernetesSettingsRepository_Delete(t *testing.T) {
 
 func TestKubernetesSettingsRepository_Delete_NotFound(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	err := repo.Delete(ctx, "nonexistent")
@@ -464,7 +464,7 @@ func TestKubernetesSettingsRepository_Delete_NotFound(t *testing.T) {
 
 func TestKubernetesSettingsRepository_List(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Save multiple settings
@@ -490,7 +490,7 @@ func TestKubernetesSettingsRepository_List(t *testing.T) {
 
 func TestKubernetesSettingsRepository_List_SkipsInvalid(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	repo := NewKubernetesSettingsRepository(client, "default", services.NewNoopEncryptionService(), services.NewNoopEncryptionService())
+	repo := NewKubernetesSettingsRepository(client, "default", services.NewEncryptionServiceRegistry(services.NewNoopEncryptionService()))
 	ctx := context.Background()
 
 	// Create a valid settings secret

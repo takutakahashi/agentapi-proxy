@@ -44,5 +44,15 @@ func (s *NoopEncryptionService) KeyID() string {
 	return "noop"
 }
 
+// createMetadata は metadata を作成する（テスト用）
+func (s *NoopEncryptionService) createMetadata() services.EncryptionMetadata {
+	return services.EncryptionMetadata{
+		Algorithm:   "noop",
+		KeyID:       "noop",
+		EncryptedAt: time.Now(),
+		Version:     "v1",
+	}
+}
+
 // コンパイル時にインターフェースを実装していることを確認
 var _ services.EncryptionService = (*NoopEncryptionService)(nil)

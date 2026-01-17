@@ -15,6 +15,7 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/services"
+	infraservices "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 const (
@@ -68,21 +69,18 @@ type marketplaceJSON struct {
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
 type KubernetesSettingsRepository struct {
-	client            kubernetes.Interface
-	namespace         string
-	encryptionService services.EncryptionService
-	decryptionService services.EncryptionService
+	client             kubernetes.Interface
+	namespace          string
+	encryptionRegistry *infraservices.EncryptionServiceRegistry
 }
 
 // NewKubernetesSettingsRepository creates a new KubernetesSettingsRepository
-// encryptionService is used for encrypting values when saving
-// decryptionService is used for decrypting values when loading
-func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string, encryptionService services.EncryptionService, decryptionService services.EncryptionService) *KubernetesSettingsRepository {
+// encryptionRegistry manages encryption/decryption services
+func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string, encryptionRegistry *infraservices.EncryptionServiceRegistry) *KubernetesSettingsRepository {
 	return &KubernetesSettingsRepository{
-		client:            client,
-		namespace:         namespace,
-		encryptionService: encryptionService,
-		decryptionService: decryptionService,
+		client:             client,
+		namespace:          namespace,
+		encryptionRegistry: encryptionRegistry,
 	}
 }
 
@@ -211,7 +209,9 @@ func (r *KubernetesSettingsRepository) encryptValue(ctx context.Context, plainte
 		return "", nil
 	}
 
-	encrypted, err := r.encryptionService.Encrypt(ctx, plaintext)
+	// Use primary encryption service from registry
+	service := r.encryptionRegistry.GetForEncryption()
+	encrypted, err := service.Encrypt(ctx, plaintext)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt value: %w", err)
 	}
@@ -238,8 +238,9 @@ func (r *KubernetesSettingsRepository) decryptValue(ctx context.Context, value s
 		return value, nil
 	}
 
-	// Decrypt using decryption service
-	plaintext, err := r.decryptionService.Decrypt(ctx, &encrypted)
+	// Get appropriate decryption service based on metadata
+	service := r.encryptionRegistry.GetForDecryption(encrypted.Metadata)
+	plaintext, err := service.Decrypt(ctx, &encrypted)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt value: %w", err)
 	}
