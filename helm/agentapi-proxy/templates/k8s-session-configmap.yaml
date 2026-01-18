@@ -1,4 +1,3 @@
-{{- if .Values.kubernetesSession.enabled }}
 {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.tolerations }}
 apiVersion: v1
 kind: ConfigMap
@@ -33,5 +32,4 @@ data:
           {{- end }}
         {{- end }}
       {{- end }}
-{{- end }}
 {{- end }}
