@@ -1,5 +1,4 @@
 {{- $scheduleWorkerEnabled := ((.Values.scheduleWorker).enabled) | default true }}
-{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -7,7 +6,6 @@ metadata:
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 rules:
-  {{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "delete"]
@@ -23,7 +21,6 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  {{- end }}
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "create", "update", "delete", "patch"]
@@ -36,4 +33,3 @@ rules:
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   {{- end }}
-{{- end }}

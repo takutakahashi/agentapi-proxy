@@ -3,7 +3,7 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-replicaCount: 1
+replicaCount: 3
 
 image:
   repository: ghcr.io/takutakahashi/agentapi-proxy
@@ -286,25 +286,6 @@ roleEnvFiles:
 # Kubernetes Session Management
 # Sessions are created as separate Kubernetes Deployments
 kubernetesSession:
-  # Number of replicas for the agentapi-proxy Deployment
-  replicaCount: 3
-
-  # Namespace for session resources (defaults to release namespace if empty)
-  namespace: ""
-
-  # Container image for session pods
-  # If empty, uses the same image as the proxy
-  image: ""
-
-  # Image pull policy for session pods
-  imagePullPolicy: "IfNotPresent"
-
-  # Service account for session pods (deprecated - always uses agentapi-proxy-session)
-  # This setting is ignored. Session pods always use the hardcoded ServiceAccount name
-  # "agentapi-proxy-session" which has minimal permissions (pods, configmaps read-only)
-  # and cannot access secrets directly.
-  serviceAccount: ""
-
   # Base port that agentapi listens on in session pods
   basePort: 9000
 
