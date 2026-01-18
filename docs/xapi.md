@@ -40,7 +40,6 @@ Creates a new agentapi server instance with a unique session ID.
 ```
 
 **Features:**
-- Dynamically allocates a new port for the agentapi server
 - Supports custom environment variables
 - Allows tagging for session categorization
 - Returns unique session identifier for future requests
@@ -62,7 +61,6 @@ Retrieves and filters existing sessions.
       "user_id": "alice",
       "status": "active",
       "started_at": "2024-01-01T12:00:00Z",
-      "port": 9000,
       "tags": {
         "repository": "agentapi-proxy",
         "branch": "main",
@@ -164,13 +162,7 @@ Get current agent status for the session.
 ## Configuration
 
 ### Server Configuration
-The proxy server can be configured via `config.json`:
-
-```json
-{
-  "start_port": 9000
-}
-```
+The proxy server can be configured via `config.json` or environment variables. See the main README for detailed configuration options.
 
 ### Environment Variables
 Sessions support custom environment variables passed during creation:
@@ -261,21 +253,21 @@ curl -X DELETE http://localhost:8080/sessions/550e8400-e29b-41d4-a716-4466554400
 
 ## Architecture Notes
 
-### Process Management
-- Each session runs an independent agentapi server process
-- Processes are allocated unique ports starting from the configured `start_port`
-- Session cleanup properly terminates associated processes
+### Pod Management
+- Each session runs as an independent Kubernetes Pod
+- Pods are managed through Kubernetes Deployments for lifecycle management
+- Session cleanup properly terminates associated Pods and resources
 - Graceful shutdown handles all active sessions
 
 ### Request Routing
-- URL path-based routing directs requests to appropriate backends
+- URL path-based routing directs requests to Kubernetes Services
 - Full HTTP method support with header and body preservation
 - WebSocket and SSE support for real-time communication
-- Error handling and retry logic for backend connectivity
+- DNS-based service discovery for backend connectivity
 
 ### Session Lifecycle
-1. **Creation**: Port allocation, process startup, session registration
-2. **Active**: Request forwarding, status monitoring
-3. **Termination**: Process cleanup, resource deallocation
+1. **Creation**: Deployment creation, Pod startup, Service registration
+2. **Active**: Request forwarding via Service DNS, status monitoring
+3. **Termination**: Pod cleanup, resource deallocation (Deployment, Service, PVC)
 
-This extended API provides a robust foundation for managing multiple agentapi instances while maintaining the core functionality and adding session-based isolation and management capabilities.
+This extended API provides a robust foundation for managing multiple agentapi instances in Kubernetes while maintaining the core functionality and adding session-based isolation and management capabilities.

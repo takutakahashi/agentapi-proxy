@@ -70,17 +70,7 @@ docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json ghcr.io/takutakah
 
 ### Configuration
 
-Create a `config.json` file:
-
-```json
-{
-  "start_port": 9000
-}
-```
-
-#### Configuration Fields
-
-- `start_port`: Starting port number for agentapi server instances (default: 9000)
+Configuration is managed through environment variables and Kubernetes ConfigMaps. See the Helm chart values for detailed configuration options.
 
 ## API Endpoints
 

@@ -26,10 +26,10 @@ type ProxyService interface {
 	RouteRequest(ctx context.Context, sessionID entities.SessionID, request *HTTPRequest) (*HTTPResponse, error)
 
 	// IsSessionReachable checks if a session is reachable via HTTP
-	IsSessionReachable(ctx context.Context, sessionID entities.SessionID, port entities.Port) (bool, error)
+	IsSessionReachable(ctx context.Context, sessionID entities.SessionID) (bool, error)
 
 	// GetSessionURL constructs the URL for accessing a session
-	GetSessionURL(ctx context.Context, sessionID entities.SessionID, port entities.Port) (string, error)
+	GetSessionURL(ctx context.Context, sessionID entities.SessionID) (string, error)
 }
 
 // NotificationResult represents the result of sending a notification
