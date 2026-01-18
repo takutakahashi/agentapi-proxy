@@ -213,10 +213,6 @@ spec:
             - name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE
               value: {{ .Values.scheduleWorker.namespace | quote }}
             {{- end }}
-            {{- if (.Values.scheduleWorker).defaultTimezone }}
-            - name: AGENTAPI_SCHEDULE_WORKER_DEFAULT_TIMEZONE
-              value: {{ .Values.scheduleWorker.defaultTimezone | quote }}
-            {{- end }}
             {{- if (.Values.scheduleWorker).leaseDuration }}
             - name: AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION
               value: {{ .Values.scheduleWorker.leaseDuration | quote }}
