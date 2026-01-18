@@ -10,6 +10,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
@@ -27,10 +28,12 @@ type Handlers struct {
 func NewHandlers(
 	scheduleManager schedule.Manager,
 	webhookRepository repositories.WebhookRepository,
+	settingsRepository repositories.SettingsRepository,
+	encryptionService services.EncryptionService,
 ) *Handlers {
 	return &Handlers{
-		importer:  NewImporter(scheduleManager, webhookRepository),
-		exporter:  NewExporter(scheduleManager, webhookRepository),
+		importer:  NewImporter(scheduleManager, webhookRepository, settingsRepository, encryptionService),
+		exporter:  NewExporter(scheduleManager, webhookRepository, settingsRepository, encryptionService),
 		parser:    NewParser(),
 		formatter: NewFormatter(),
 	}
@@ -166,48 +169,33 @@ func (h *Handlers) ExportTeamResources(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "user is not a member of team "+teamID)
 	}
 
-	// Parse export options from query parameters
-	options := ExportOptions{
-		IncludeSecrets: c.QueryParam("include_secrets") == "true",
-	}
-
-	// Parse format
+	// Parse format (only query parameter)
 	formatStr := c.QueryParam("format")
 	if formatStr == "" {
 		formatStr = "yaml"
 	}
-	options.Format = ExportFormat(formatStr)
+	format := ExportFormat(formatStr)
 
 	// Validate format
-	if options.Format != ExportFormatYAML && options.Format != ExportFormatTOML && options.Format != ExportFormatJSON {
+	if format != ExportFormatYAML && format != ExportFormatTOML && format != ExportFormatJSON {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid format: must be yaml, toml, or json")
 	}
 
-	// Parse status filter
-	if statusParam := c.QueryParam("status"); statusParam != "" {
-		options.StatusFilter = strings.Split(statusParam, ",")
-	}
-
-	// Parse include types
-	if includeParam := c.QueryParam("include"); includeParam != "" {
-		options.IncludeTypes = strings.Split(includeParam, ",")
-	}
-
-	// Perform export
-	resources, err := h.exporter.Export(c.Request().Context(), teamID, string(user.ID()), options)
+	// Perform export (always includes all resources and secrets, encrypts if available)
+	resources, err := h.exporter.Export(c.Request().Context(), teamID, string(user.ID()), ExportOptions{Format: format})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "export failed: "+err.Error())
 	}
 
 	// Format output
 	var buf bytes.Buffer
-	if err := h.formatter.Format(resources, options.Format, &buf); err != nil {
+	if err := h.formatter.Format(resources, format, &buf); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to format output: "+err.Error())
 	}
 
 	// Set appropriate content type and filename
-	contentType := ContentTypeForFormat(options.Format)
-	filename := fmt.Sprintf("%s-export%s", sanitizeFilename(teamID), FileExtensionForFormat(options.Format))
+	contentType := ContentTypeForFormat(format)
+	filename := fmt.Sprintf("%s-export%s", sanitizeFilename(teamID), FileExtensionForFormat(format))
 
 	c.Response().Header().Set("Content-Type", contentType)
 	c.Response().Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))

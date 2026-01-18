@@ -11,6 +11,7 @@ type TeamResources struct {
 	Metadata   ResourceMetadata `yaml:"metadata" toml:"metadata" json:"metadata"`
 	Schedules  []ScheduleImport `yaml:"schedules,omitempty" toml:"schedules,omitempty" json:"schedules,omitempty"`
 	Webhooks   []WebhookImport  `yaml:"webhooks,omitempty" toml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	Settings   *SettingsImport  `yaml:"settings,omitempty" toml:"settings,omitempty" json:"settings,omitempty"`
 }
 
 // ResourceMetadata contains metadata about the team resources
@@ -36,6 +37,7 @@ type WebhookImport struct {
 	Status          string                 `yaml:"status,omitempty" toml:"status,omitempty" json:"status,omitempty"`
 	WebhookType     string                 `yaml:"webhook_type" toml:"webhook_type" json:"webhook_type"`
 	Secret          string                 `yaml:"secret,omitempty" toml:"secret,omitempty" json:"secret,omitempty"`
+	SecretEncrypted *EncryptedSecretData   `yaml:"secret_encrypted,omitempty" toml:"secret_encrypted,omitempty" json:"secret_encrypted,omitempty"`
 	SignatureHeader string                 `yaml:"signature_header,omitempty" toml:"signature_header,omitempty" json:"signature_header,omitempty"`
 	SignatureType   string                 `yaml:"signature_type,omitempty" toml:"signature_type,omitempty" json:"signature_type,omitempty"`
 	MaxSessions     int                    `yaml:"max_sessions,omitempty" toml:"max_sessions,omitempty" json:"max_sessions,omitempty"`
@@ -53,9 +55,10 @@ type SessionConfigImport struct {
 
 // SessionParamsImport represents session parameters for import/export
 type SessionParamsImport struct {
-	InitialMessage         string `yaml:"initial_message,omitempty" toml:"initial_message,omitempty" json:"initial_message,omitempty"`
-	InitialMessageTemplate string `yaml:"initial_message_template,omitempty" toml:"initial_message_template,omitempty" json:"initial_message_template,omitempty"`
-	GitHubToken            string `yaml:"github_token,omitempty" toml:"github_token,omitempty" json:"github_token,omitempty"`
+	InitialMessage         string               `yaml:"initial_message,omitempty" toml:"initial_message,omitempty" json:"initial_message,omitempty"`
+	InitialMessageTemplate string               `yaml:"initial_message_template,omitempty" toml:"initial_message_template,omitempty" json:"initial_message_template,omitempty"`
+	GitHubToken            string               `yaml:"github_token,omitempty" toml:"github_token,omitempty" json:"github_token,omitempty"`
+	GitHubTokenEncrypted   *EncryptedSecretData `yaml:"github_token_encrypted,omitempty" toml:"github_token_encrypted,omitempty" json:"github_token_encrypted,omitempty"`
 }
 
 // GitHubConfigImport represents GitHub-specific webhook configuration for import/export
@@ -173,4 +176,53 @@ type ExportOptions struct {
 	IncludeSecrets bool         // Include webhook secrets in export
 	StatusFilter   []string     // Filter by status (active, paused, etc.)
 	IncludeTypes   []string     // Include only specified types (schedules, webhooks)
+}
+
+// EncryptedSecretData represents encrypted secret metadata
+type EncryptedSecretData struct {
+	Algorithm   string    `yaml:"algorithm" toml:"algorithm" json:"algorithm"`
+	KeyID       string    `yaml:"key_id" toml:"key_id" json:"key_id"`
+	EncryptedAt time.Time `yaml:"encrypted_at" toml:"encrypted_at" json:"encrypted_at"`
+	Version     string    `yaml:"version" toml:"version" json:"version"`
+}
+
+// SettingsImport represents settings for import/export
+type SettingsImport struct {
+	Name                          string                        `yaml:"name" toml:"name" json:"name"`
+	Bedrock                       *BedrockSettingsImport        `yaml:"bedrock,omitempty" toml:"bedrock,omitempty" json:"bedrock,omitempty"`
+	MCPServers                    map[string]*MCPServerImport   `yaml:"mcp_servers,omitempty" toml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	Marketplaces                  map[string]*MarketplaceImport `yaml:"marketplaces,omitempty" toml:"marketplaces,omitempty" json:"marketplaces,omitempty"`
+	ClaudeCodeOAuthToken          string                        `yaml:"claude_code_oauth_token,omitempty" toml:"claude_code_oauth_token,omitempty" json:"claude_code_oauth_token,omitempty"`
+	ClaudeCodeOAuthTokenEncrypted *EncryptedSecretData          `yaml:"claude_code_oauth_token_encrypted,omitempty" toml:"claude_code_oauth_token_encrypted,omitempty" json:"claude_code_oauth_token_encrypted,omitempty"`
+	AuthMode                      string                        `yaml:"auth_mode,omitempty" toml:"auth_mode,omitempty" json:"auth_mode,omitempty"`
+	EnabledPlugins                []string                      `yaml:"enabled_plugins,omitempty" toml:"enabled_plugins,omitempty" json:"enabled_plugins,omitempty"`
+}
+
+// BedrockSettingsImport represents Bedrock settings for import/export
+type BedrockSettingsImport struct {
+	Enabled                  bool                 `yaml:"enabled" toml:"enabled" json:"enabled"`
+	Model                    string               `yaml:"model,omitempty" toml:"model,omitempty" json:"model,omitempty"`
+	AccessKeyID              string               `yaml:"access_key_id,omitempty" toml:"access_key_id,omitempty" json:"access_key_id,omitempty"`
+	AccessKeyIDEncrypted     *EncryptedSecretData `yaml:"access_key_id_encrypted,omitempty" toml:"access_key_id_encrypted,omitempty" json:"access_key_id_encrypted,omitempty"`
+	SecretAccessKey          string               `yaml:"secret_access_key,omitempty" toml:"secret_access_key,omitempty" json:"secret_access_key,omitempty"`
+	SecretAccessKeyEncrypted *EncryptedSecretData `yaml:"secret_access_key_encrypted,omitempty" toml:"secret_access_key_encrypted,omitempty" json:"secret_access_key_encrypted,omitempty"`
+	RoleARN                  string               `yaml:"role_arn,omitempty" toml:"role_arn,omitempty" json:"role_arn,omitempty"`
+	Profile                  string               `yaml:"profile,omitempty" toml:"profile,omitempty" json:"profile,omitempty"`
+}
+
+// MCPServerImport represents an MCP server for import/export
+type MCPServerImport struct {
+	Type             string                          `yaml:"type" toml:"type" json:"type"`
+	URL              string                          `yaml:"url,omitempty" toml:"url,omitempty" json:"url,omitempty"`
+	Command          string                          `yaml:"command,omitempty" toml:"command,omitempty" json:"command,omitempty"`
+	Args             []string                        `yaml:"args,omitempty" toml:"args,omitempty" json:"args,omitempty"`
+	Env              map[string]string               `yaml:"env,omitempty" toml:"env,omitempty" json:"env,omitempty"`
+	EnvEncrypted     map[string]*EncryptedSecretData `yaml:"env_encrypted,omitempty" toml:"env_encrypted,omitempty" json:"env_encrypted,omitempty"`
+	Headers          map[string]string               `yaml:"headers,omitempty" toml:"headers,omitempty" json:"headers,omitempty"`
+	HeadersEncrypted map[string]*EncryptedSecretData `yaml:"headers_encrypted,omitempty" toml:"headers_encrypted,omitempty" json:"headers_encrypted,omitempty"`
+}
+
+// MarketplaceImport represents a marketplace for import/export
+type MarketplaceImport struct {
+	URL string `yaml:"url" toml:"url" json:"url"`
 }
