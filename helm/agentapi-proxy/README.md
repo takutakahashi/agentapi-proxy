@@ -6,7 +6,6 @@ A Helm chart for deploying AgentAPI Proxy - a reverse proxy and process manager 
 
 - Kubernetes 1.21+
 - Helm 3.0+
-- Persistent volume provisioner support in the underlying infrastructure (if persistence is enabled)
 
 ## Installing the Chart
 
@@ -85,33 +84,12 @@ The command removes all the Kubernetes components associated with the chart and 
 | `ingress.hosts`            | An array with hosts and paths                      | `[{"host": "agentapi.example.com", "paths": [{"path": "/", "pathType": "Prefix"}]}]` |
 | `ingress.tls`              | TLS configuration for ingress                      | `[]`                     |
 
-### Persistence parameters
-
-| Name                         | Description                                   | Value            |
-| ---------------------------- | --------------------------------------------- | ---------------- |
-| `persistence.enabled`        | Enable persistence using StatefulSet         | `true`           |
-| `persistence.storageClassName` | Storage class name for the persistent volume | `standard`       |
-| `persistence.accessMode`     | Access mode for the persistent volume        | `ReadWriteOnce`  |
-| `persistence.size`           | Size of the persistent volume                 | `10Gi`           |
-
 ### Application Configuration
 
 | Name                                    | Description                               | Value     |
 | --------------------------------------- | ----------------------------------------- | --------- |
 | `config.startPort`                      | Starting port for agentapi instances     | `9000`    |
 | `config.enableMultipleUsers`            | Enable multi-user mode                   | `false`   |
-| `config.persistence.enabled`            | Enable session persistence               | `false`   |
-| `config.persistence.backend`            | Persistence backend (file/memory/s3)     | `"file"`  |
-| `config.persistence.filePath`           | File path for file backend               | `"./sessions.json"` |
-| `config.persistence.syncIntervalSeconds`| Sync interval for file backend           | `30`      |
-| `config.persistence.encryptSensitiveData`| Encrypt sensitive data                  | `true`    |
-| `config.persistence.sessionRecoveryMaxAgeHours`| Max age for session recovery    | `24`      |
-| `config.persistence.s3.bucket`          | S3 bucket name                           | `""`      |
-| `config.persistence.s3.region`          | S3 region                                | `"us-east-1"` |
-| `config.persistence.s3.prefix`          | S3 object prefix                         | `"sessions/"` |
-| `config.persistence.s3.endpoint`        | Custom S3 endpoint (MinIO etc.)          | `""`      |
-| `config.persistence.s3.accessKey`       | S3 access key (use IAM roles instead)    | `""`      |
-| `config.persistence.s3.secretKey`       | S3 secret key (use IAM roles instead)    | `""`      |
 | `config.auth.enabled`                   | Enable authentication                    | `false`   |
 
 ### Environment variables
@@ -163,15 +141,13 @@ helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --
 # From local chart
 helm install agentapi-proxy ./helm/agentapi-proxy \
   --set image.tag=latest \
-  --set replicaCount=2 \
-  --set persistence.size=20Gi
+  --set replicaCount=2
 
 # From OCI registry
 helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
   --version 0.1.0 \
   --set image.tag=latest \
-  --set replicaCount=2 \
-  --set persistence.size=20Gi
+  --set replicaCount=2
 ```
 
 ### With Ingress Enabled
@@ -213,34 +189,6 @@ envFrom:
       name: agentapi-secrets
   - configMapRef:
       name: agentapi-config
-```
-
-### With S3 Persistence
-
-```yaml
-# values.yaml
-config:
-  persistence:
-    enabled: true
-    backend: "s3"
-    s3:
-      bucket: "agentapi-sessions"
-      region: "us-west-2"
-      prefix: "sessions/"
-      # For IAM Role authentication (recommended)
-      # Leave accessKey and secretKey empty
-      accessKey: ""
-      secretKey: ""
-
-# For EKS with IRSA (IAM Roles for Service Accounts)
-serviceAccount:
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT-ID:role/agentapi-s3-role
-```
-
-```bash
-# Install with S3 persistence
-helm install agentapi-proxy ./helm/agentapi-proxy -f values.yaml
 ```
 
 ### With Role-based Environment Variables
@@ -378,7 +326,7 @@ readinessProbe:
 
 ## Scaling
 
-The chart uses StatefulSet for better session persistence. Each replica gets its own persistent volume:
+The chart uses StatefulSet for better management:
 
 ```bash
 # Scale to 3 replicas (local chart)
@@ -434,7 +382,7 @@ helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --
 
 ## Values File Example
 
-### Basic Setup with File Persistence
+### Basic Setup
 ```yaml
 replicaCount: 2
 
@@ -453,15 +401,6 @@ ingress:
         - path: /
           pathType: Prefix
 
-persistence:
-  enabled: true
-  size: 20Gi
-
-config:
-  persistence:
-    enabled: true
-    backend: "file"
-
 env:
   - name: CLAUDE_ARGS
     value: "--dangerously-skip-permissions"
@@ -477,44 +416,4 @@ resources:
   limits:
     memory: 4Gi
     cpu: 4000m
-```
-
-### Setup with S3 Persistence (EKS + IRSA)
-```yaml
-replicaCount: 1
-
-image:
-  tag: "1.23.0"
-
-serviceAccount:
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/agentapi-s3-role
-
-config:
-  persistence:
-    enabled: true
-    backend: "s3"
-    s3:
-      bucket: "my-agentapi-sessions"
-      region: "us-west-2"
-      prefix: "sessions/"
-      # IAM role authentication - no keys needed
-      accessKey: ""
-      secretKey: ""
-
-# No persistent volume needed for S3
-persistence:
-  enabled: false
-
-env:
-  - name: CLAUDE_ARGS
-    value: "--dangerously-skip-permissions"
-
-resources:
-  requests:
-    memory: 512Mi
-    cpu: 500m
-  limits:
-    memory: 2Gi
-    cpu: 2000m
 ```

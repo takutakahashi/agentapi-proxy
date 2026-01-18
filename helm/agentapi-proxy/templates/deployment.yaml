@@ -248,11 +248,6 @@ spec:
             - name: OAUTH_ALLOWED_REDIRECT_URIS
               value: {{ .Values.config.auth.github.oauth.allowedRedirectUris | quote }}
             {{- end }}
-            # Userhome configuration
-            {{- if .Values.config.userhome.basedir }}
-            - name: USERHOME_BASEDIR
-              value: {{ .Values.config.userhome.basedir | quote }}
-            {{- end }}
             # VAPID configuration
             {{- if .Values.config.vapid.publicKey }}
             - name: VAPID_PUBLIC_KEY

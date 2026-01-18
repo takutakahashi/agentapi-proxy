@@ -67,7 +67,3 @@ ingress:
     - secretName: agentapi-proxy-tls
       hosts:
         - agentapi.example.com
-
-persistence:
-  enabled: true
-  size: 50Gi

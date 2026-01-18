@@ -34,13 +34,5 @@
         }
       }
     }
-  },
-  "persistence": {
-    "enabled": true,
-    "backend": "file",
-    "file_path": "./sessions.json",
-    "sync_interval_seconds": 30,
-    "encrypt_sensitive_data": true,
-    "session_recovery_max_age_hours": 24
   }
 }
