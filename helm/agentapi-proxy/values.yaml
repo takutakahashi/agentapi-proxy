@@ -126,12 +126,6 @@ config:
     # Claude Code の起動引数 (例: "--dangerously-skip-permissions")
     args: ""
 
-  # ユーザーホームディレクトリ設定
-  userhome:
-    # ユーザーホームディレクトリのベースパス
-    # 設定しない場合は /home/agentapi/.agentapi-proxy がデフォルト
-    basedir: ""
-
   # VAPID (Web Push 通知) 設定
   vapid:
     # VAPID 公開鍵 (Web Push 通知用)

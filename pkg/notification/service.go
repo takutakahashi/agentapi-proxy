@@ -340,13 +340,9 @@ func getSessionIDFromData(data map[string]interface{}) string {
 
 // GetBaseDir returns the base directory for user data
 func GetBaseDir() string {
-	baseDir := os.Getenv("USERHOME_BASEDIR")
-	if baseDir == "" {
-		homeDir := os.Getenv("HOME")
-		if homeDir == "" {
-			homeDir = "/home/agentapi"
-		}
-		baseDir = filepath.Join(homeDir, ".agentapi-proxy")
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = "/home/agentapi"
 	}
-	return baseDir
+	return filepath.Join(homeDir, ".agentapi-proxy")
 }

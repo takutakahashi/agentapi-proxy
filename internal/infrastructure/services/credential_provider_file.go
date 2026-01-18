@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/takutakahashi/agentapi-proxy/pkg/userdir"
 )
 
 // FileCredentialProvider loads credentials from user-specific credential files
@@ -63,24 +61,9 @@ func (p *FileCredentialProvider) Load(userID string) (*ClaudeCredentials, error)
 	}, nil
 }
 
-// getCredentialPath returns the path to the credentials file for the given user
+// getCredentialPath returns the path to the credentials file
 func (p *FileCredentialProvider) getCredentialPath(userID string) (string, error) {
-	if userID != "" {
-		// Use user-specific path: $HOME/.agentapi-proxy/myclaudes/[userID]/.claude/.credentials.json
-		envMap, err := userdir.SetupUserHome(userID)
-		if err != nil {
-			return "", fmt.Errorf("failed to get user home directory: %w", err)
-		}
-
-		userHome, ok := envMap["HOME"]
-		if !ok || userHome == "" {
-			return "", fmt.Errorf("failed to get user home directory for user: %s", userID)
-		}
-
-		return filepath.Join(userHome, ".claude", ".credentials.json"), nil
-	}
-
-	// Fall back to default path: ~/.claude/.credentials.json
+	// Use default path: ~/.claude/.credentials.json
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
