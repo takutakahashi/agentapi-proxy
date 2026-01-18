@@ -233,6 +233,39 @@ spec:
             - name: AGENTAPI_ENCRYPTION_KEY
               value: {{ .Values.config.encryption.key | quote }}
             {{- end }}
+            # GitHub Token configuration (for backward compatibility)
+            {{- if .Values.github.token }}
+            - name: GITHUB_TOKEN
+              value: {{ .Values.github.token | quote }}
+            {{- end }}
+            # Claude Code configuration
+            {{- if .Values.config.claude.args }}
+            - name: CLAUDE_ARGS
+              value: {{ .Values.config.claude.args | quote }}
+            {{- end }}
+            # OAuth configuration
+            {{- if .Values.config.auth.github.oauth.allowedRedirectUris }}
+            - name: OAUTH_ALLOWED_REDIRECT_URIS
+              value: {{ .Values.config.auth.github.oauth.allowedRedirectUris | quote }}
+            {{- end }}
+            # Userhome configuration
+            {{- if .Values.config.userhome.basedir }}
+            - name: USERHOME_BASEDIR
+              value: {{ .Values.config.userhome.basedir | quote }}
+            {{- end }}
+            # VAPID configuration
+            {{- if .Values.config.vapid.publicKey }}
+            - name: VAPID_PUBLIC_KEY
+              value: {{ .Values.config.vapid.publicKey | quote }}
+            {{- end }}
+            {{- if .Values.config.vapid.privateKey }}
+            - name: VAPID_PRIVATE_KEY
+              value: {{ .Values.config.vapid.privateKey | quote }}
+            {{- end }}
+            {{- if .Values.config.vapid.contactEmail }}
+            - name: VAPID_CONTACT_EMAIL
+              value: {{ .Values.config.vapid.contactEmail | quote }}
+            {{- end }}
             {{- range .Values.env }}
             - name: {{ .name }}
               value: {{ .value | quote }}
