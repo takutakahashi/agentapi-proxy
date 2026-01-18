@@ -88,7 +88,6 @@ The command removes all the Kubernetes components associated with the chart and 
 
 | Name                                    | Description                               | Value     |
 | --------------------------------------- | ----------------------------------------- | --------- |
-| `config.startPort`                      | Starting port for agentapi instances     | `9000`    |
 | `config.enableMultipleUsers`            | Enable multi-user mode                   | `false`   |
 | `config.auth.enabled`                   | Enable authentication                    | `false`   |
 

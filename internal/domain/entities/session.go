@@ -42,7 +42,6 @@ type RepositoryInfo struct {
 
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
-	Port           int
 	UserID         string
 	Environment    map[string]string
 	Tags           map[string]string
@@ -60,8 +59,7 @@ type Session interface {
 	ID() string
 
 	// Addr returns the address (host:port) the session is running on
-	// For local sessions, this returns "localhost:{port}"
-	// For Kubernetes sessions, this returns "{service-dns}:{port}"
+	// Returns "{service-dns}:{port}" for Kubernetes sessions
 	Addr() string
 
 	// UserID returns the user ID that owns this session

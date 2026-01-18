@@ -282,7 +282,6 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	initialMessage := "Hello, this is the initial message for testing"
 
 	req := &entities.RunServerRequest{
-		Port:           9000,
 		UserID:         "test-user",
 		InitialMessage: initialMessage,
 	}

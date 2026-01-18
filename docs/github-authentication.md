@@ -44,7 +44,6 @@
 
 ```json
 {
-  "start_port": 9000,
   "auth": {
     "enabled": true,
     "github": {
@@ -74,7 +73,6 @@
 
 ```json
 {
-  "start_port": 9000,
   "auth": {
     "enabled": true,
     "github": {
@@ -104,7 +102,6 @@
 
 ```json
 {
-  "start_port": 9000,
   "auth": {
     "enabled": true,
     "static": {

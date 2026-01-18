@@ -198,13 +198,13 @@ func (s *SimpleProxyService) RouteRequest(ctx context.Context, sessionID entitie
 	}, nil
 }
 
-func (s *SimpleProxyService) IsSessionReachable(ctx context.Context, sessionID entities.SessionID, port entities.Port) (bool, error) {
+func (s *SimpleProxyService) IsSessionReachable(ctx context.Context, sessionID entities.SessionID) (bool, error) {
 	// Simple implementation - assume session is reachable
 	return true, nil
 }
 
-func (s *SimpleProxyService) GetSessionURL(ctx context.Context, sessionID entities.SessionID, port entities.Port) (string, error) {
-	return fmt.Sprintf("http://localhost:%d", port), nil
+func (s *SimpleProxyService) GetSessionURL(ctx context.Context, sessionID entities.SessionID) (string, error) {
+	return fmt.Sprintf("http://session-%s:9000", sessionID), nil
 }
 
 // SimpleGitHubAuthService is a simple implementation of GitHubAuthService

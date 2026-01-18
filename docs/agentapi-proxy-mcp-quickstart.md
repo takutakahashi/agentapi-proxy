@@ -257,7 +257,6 @@ AgentAPI Proxy MCP Server は以下のツールを提供します：
 
 ```json
 {
-  "start_port": 9000,
   "max_sessions": 100,
   "session_timeout": "1h"
 }
