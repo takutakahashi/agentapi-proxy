@@ -9,26 +9,33 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 )
 
 // Importer handles importing of team resources
 type Importer struct {
-	scheduleManager   schedule.Manager
-	webhookRepository repositories.WebhookRepository
-	validator         *Validator
+	scheduleManager    schedule.Manager
+	webhookRepository  repositories.WebhookRepository
+	settingsRepository repositories.SettingsRepository
+	encryptionService  services.EncryptionService
+	validator          *Validator
 }
 
 // NewImporter creates a new Importer instance
 func NewImporter(
 	scheduleManager schedule.Manager,
 	webhookRepository repositories.WebhookRepository,
+	settingsRepository repositories.SettingsRepository,
+	encryptionService services.EncryptionService,
 ) *Importer {
 	return &Importer{
-		scheduleManager:   scheduleManager,
-		webhookRepository: webhookRepository,
-		validator:         NewValidator(),
+		scheduleManager:    scheduleManager,
+		webhookRepository:  webhookRepository,
+		settingsRepository: settingsRepository,
+		encryptionService:  encryptionService,
+		validator:          NewValidator(),
 	}
 }
 
@@ -253,7 +260,7 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 	}
 
 	// Convert import to webhook entity
-	webhookEntity, err := i.convertWebhookImport(webhookImport, teamID, userID, existingWebhook, options)
+	webhookEntity, err := i.convertWebhookImport(ctx, webhookImport, teamID, userID, existingWebhook, options)
 	if err != nil {
 		detail.Action = "failed"
 		detail.Status = "error"
@@ -335,7 +342,7 @@ func (i *Importer) convertScheduleImport(scheduleImport ScheduleImport, teamID, 
 	return scheduleEntity, nil
 }
 
-func (i *Importer) convertWebhookImport(webhookImport WebhookImport, teamID, userID string, existing *entities.Webhook, options ImportOptions) (*entities.Webhook, error) {
+func (i *Importer) convertWebhookImport(ctx context.Context, webhookImport WebhookImport, teamID, userID string, existing *entities.Webhook, options ImportOptions) (*entities.Webhook, error) {
 	var webhookEntity *entities.Webhook
 	if existing != nil {
 		webhookEntity = existing
@@ -357,8 +364,29 @@ func (i *Importer) convertWebhookImport(webhookImport WebhookImport, teamID, use
 		webhookEntity.SetStatus(entities.WebhookStatus(webhookImport.Status))
 	}
 
-	// Set secret
-	if options.RegenerateAll || (webhookImport.Secret == "" && existing == nil) {
+	// Set secret (with decryption if encrypted)
+	if webhookImport.SecretEncrypted != nil {
+		// Encrypted secret - decrypt it
+		if i.encryptionService == nil {
+			return nil, fmt.Errorf("encrypted secret found but encryption service not configured")
+		}
+
+		encrypted := &services.EncryptedData{
+			EncryptedValue: webhookImport.Secret,
+			Metadata: services.EncryptionMetadata{
+				Algorithm:   webhookImport.SecretEncrypted.Algorithm,
+				KeyID:       webhookImport.SecretEncrypted.KeyID,
+				EncryptedAt: webhookImport.SecretEncrypted.EncryptedAt,
+				Version:     webhookImport.SecretEncrypted.Version,
+			},
+		}
+
+		plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt secret: %w", err)
+		}
+		webhookEntity.SetSecret(plaintext)
+	} else if options.RegenerateAll || (webhookImport.Secret == "" && existing == nil) {
 		// Generate new secret
 		secret, err := generateSecret(32)
 		if err != nil {
@@ -366,6 +394,7 @@ func (i *Importer) convertWebhookImport(webhookImport WebhookImport, teamID, use
 		}
 		webhookEntity.SetSecret(secret)
 	} else if webhookImport.Secret != "" {
+		// Plain text secret
 		webhookEntity.SetSecret(webhookImport.Secret)
 	}
 
