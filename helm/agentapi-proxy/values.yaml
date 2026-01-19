@@ -452,9 +452,6 @@ scheduleWorker:
   # How often to check for due schedules
   checkInterval: "30s"
 
-  # Default timezone for schedules (used when not specified in request)
-  defaultTimezone: "Asia/Tokyo"
-
   # Leader election configuration (for multi-replica deployments)
   leaderElection:
     # Lease duration (how long leader holds the lock)
