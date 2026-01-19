@@ -64,9 +64,9 @@ spec:
             - name: AGENTAPI_AUTH_GITHUB_TOKEN_HEADER
               value: {{ .Values.config.auth.github.tokenHeader | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID
-              value: {{ .Values.config.auth.github.oauth.clientId | quote }}
+              value: {{ ((.Values.global).config.auth.github.oauth.clientId | default .Values.config.auth.github.oauth.clientId) | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET
-              value: {{ .Values.config.auth.github.oauth.clientSecret | quote }}
+              value: {{ ((.Values.global).config.auth.github.oauth.clientSecret | default .Values.config.auth.github.oauth.clientSecret) | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE
               value: {{ .Values.config.auth.github.oauth.scope | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL
@@ -82,14 +82,32 @@ spec:
               value: {{ .Values.config.roleEnvFiles.path | quote }}
             - name: AGENTAPI_ROLE_ENV_FILES_LOAD_DEFAULT
               value: {{ .Values.config.roleEnvFiles.loadDefault | quote }}
-            {{- if .Values.github.enterprise.enabled }}
-            {{- if .Values.github.enterprise.baseUrl }}
-            - name: GITHUB_URL
-              value: {{ .Values.github.enterprise.baseUrl | quote }}
+            {{- $githubEnterpriseEnabled := false }}
+            {{- if .Values.global }}
+              {{- $githubEnterpriseEnabled = .Values.global.github.enterprise.enabled | default .Values.github.enterprise.enabled }}
+            {{- else }}
+              {{- $githubEnterpriseEnabled = .Values.github.enterprise.enabled }}
             {{- end }}
-            {{- if .Values.github.enterprise.apiUrl }}
+            {{- if $githubEnterpriseEnabled }}
+            {{- $githubEnterpriseBaseUrl := "" }}
+            {{- if .Values.global }}
+              {{- $githubEnterpriseBaseUrl = .Values.global.github.enterprise.baseUrl | default .Values.github.enterprise.baseUrl }}
+            {{- else }}
+              {{- $githubEnterpriseBaseUrl = .Values.github.enterprise.baseUrl }}
+            {{- end }}
+            {{- if $githubEnterpriseBaseUrl }}
+            - name: GITHUB_URL
+              value: {{ $githubEnterpriseBaseUrl | quote }}
+            {{- end }}
+            {{- $githubEnterpriseApiUrl := "" }}
+            {{- if .Values.global }}
+              {{- $githubEnterpriseApiUrl = .Values.global.github.enterprise.apiUrl | default .Values.github.enterprise.apiUrl }}
+            {{- else }}
+              {{- $githubEnterpriseApiUrl = .Values.github.enterprise.apiUrl }}
+            {{- end }}
+            {{- if $githubEnterpriseApiUrl }}
             - name: GITHUB_API
-              value: {{ .Values.github.enterprise.apiUrl | quote }}
+              value: {{ $githubEnterpriseApiUrl | quote }}
             {{- end }}
             {{- end }}
             {{- if .Values.github.app.id }}
@@ -109,20 +127,26 @@ spec:
             - name: GITHUB_APP_PEM_PATH
               value: "/etc/github-app/{{ .Values.github.app.privateKey.key }}"
             {{- end }}
+            {{- $hostname := "" }}
+            {{- if .Values.global }}
+              {{- $hostname = .Values.global.hostname | default .Values.config.hostname }}
+            {{- else }}
+              {{- $hostname = .Values.config.hostname }}
+            {{- end }}
             {{- if .Values.config.notification.baseUrl }}
             - name: NOTIFICATION_BASE_URL
               value: {{ .Values.config.notification.baseUrl | quote }}
-            {{- else if .Values.config.hostname }}
+            {{- else if $hostname }}
             - name: NOTIFICATION_BASE_URL
-              value: {{ printf "https://%s" .Values.config.hostname | quote }}
+              value: {{ printf "https://%s" $hostname | quote }}
             {{- end }}
             # Webhook configuration
             {{- if .Values.config.webhook.baseUrl }}
             - name: AGENTAPI_WEBHOOK_BASE_URL
               value: {{ .Values.config.webhook.baseUrl | quote }}
-            {{- else if .Values.config.hostname }}
+            {{- else if $hostname }}
             - name: AGENTAPI_WEBHOOK_BASE_URL
-              value: {{ printf "https://%s" .Values.config.hostname | quote }}
+              value: {{ printf "https://%s" $hostname | quote }}
             {{- end }}
             {{- if .Values.config.webhook.githubEnterpriseHost }}
             - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST
