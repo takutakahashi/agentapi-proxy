@@ -418,25 +418,15 @@ func (u *User) CanAccessSession(sessionUserID UserID) bool {
 }
 
 // IsMemberOfTeam checks if the user is a member of the specified team
-// teamID can be in one of two formats:
-//   - "org/team-slug" (slash-separated, matching config format)
-//   - "org-team-slug" (hyphen-separated, legacy format)
+// teamID must be in the format "org/team-slug" (slash-separated)
 func (u *User) IsMemberOfTeam(teamID string) bool {
 	if u.githubInfo == nil {
 		return false
 	}
 
-	// Try both slash-separated and hyphen-separated formats
 	for _, team := range u.githubInfo.Teams() {
-		// Format 1: org/team-slug (preferred, matches config format)
-		slashFormat := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
-		if slashFormat == teamID {
-			return true
-		}
-
-		// Format 2: org-team-slug (legacy format for backward compatibility)
-		hyphenFormat := fmt.Sprintf("%s-%s", team.Organization, team.TeamSlug)
-		if hyphenFormat == teamID {
+		fullTeamID := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+		if fullTeamID == teamID {
 			return true
 		}
 	}

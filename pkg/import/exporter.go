@@ -59,48 +59,30 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 		Webhooks:  []WebhookImport{},
 	}
 
-	// Generate both team ID formats for searching
-	// This handles legacy data that may be stored in either format
-	teamIDs := e.generateTeamIDFormats(teamID)
-
-	// Export schedules (search with both formats)
-	schedulesMap := make(map[string]*schedule.Schedule)
-	for _, tid := range teamIDs {
-		schedules, err := e.scheduleManager.List(ctx, schedule.ScheduleFilter{
-			UserID: userID,
-			Scope:  entities.ScopeTeam,
-			TeamID: tid,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list schedules: %w", err)
-		}
-		// Deduplicate by ID
-		for _, s := range schedules {
-			schedulesMap[s.ID] = s
-		}
+	// Export schedules (all team-scoped schedules for this team)
+	schedules, err := e.scheduleManager.List(ctx, schedule.ScheduleFilter{
+		UserID: userID,
+		Scope:  entities.ScopeTeam,
+		TeamID: teamID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list schedules: %w", err)
 	}
-	for _, s := range schedulesMap {
+	for _, s := range schedules {
 		scheduleImport := e.convertScheduleToImport(s)
 		resources.Schedules = append(resources.Schedules, scheduleImport)
 	}
 
-	// Export webhooks (search with both formats)
-	webhooksMap := make(map[string]*entities.Webhook)
-	for _, tid := range teamIDs {
-		webhooks, err := e.webhookRepository.List(ctx, repositories.WebhookFilter{
-			UserID: userID,
-			Scope:  entities.ScopeTeam,
-			TeamID: tid,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list webhooks: %w", err)
-		}
-		// Deduplicate by ID
-		for _, w := range webhooks {
-			webhooksMap[w.ID()] = w
-		}
+	// Export webhooks (all team-scoped webhooks for this team, with secrets)
+	webhooks, err := e.webhookRepository.List(ctx, repositories.WebhookFilter{
+		UserID: userID,
+		Scope:  entities.ScopeTeam,
+		TeamID: teamID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list webhooks: %w", err)
 	}
-	for _, w := range webhooksMap {
+	for _, w := range webhooks {
 		webhookImport, err := e.convertWebhookToImport(ctx, w)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert webhook %s: %w", w.Name(), err)
@@ -108,20 +90,15 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 		resources.Webhooks = append(resources.Webhooks, webhookImport)
 	}
 
-	// Export settings (try both formats)
+	// Export settings (always include if exists)
 	if e.settingsRepository != nil {
-		var settings *entities.Settings
-		var err error
-		for _, tid := range teamIDs {
-			settings, err = e.settingsRepository.FindByName(ctx, tid)
-			if err == nil {
-				break
-			}
+		settings, err := e.settingsRepository.FindByName(ctx, teamID)
+		if err != nil {
 			if !isNotFoundError(err) {
 				return nil, fmt.Errorf("failed to get settings: %w", err)
 			}
-		}
-		if settings != nil {
+			// Settings not found, skip
+		} else {
 			settingsImport, err := e.convertSettingsToImport(ctx, settings)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert settings: %w", err)
@@ -131,29 +108,6 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 	}
 
 	return resources, nil
-}
-
-// generateTeamIDFormats generates both slash and hyphen formats for a team ID
-// Returns: [original, alternative_format]
-func (e *Exporter) generateTeamIDFormats(teamID string) []string {
-	formats := []string{teamID}
-
-	// Convert between formats
-	if strings.Contains(teamID, "/") {
-		// Slash format -> hyphen format
-		hyphenFormat := strings.Replace(teamID, "/", "-", 1)
-		formats = append(formats, hyphenFormat)
-	} else if strings.Contains(teamID, "-") {
-		// Hyphen format -> try slash format
-		// Find the first hyphen and replace it with slash
-		parts := strings.SplitN(teamID, "-", 2)
-		if len(parts) == 2 {
-			slashFormat := parts[0] + "/" + parts[1]
-			formats = append(formats, slashFormat)
-		}
-	}
-
-	return formats
 }
 
 // shouldEncrypt returns true if secrets should be encrypted

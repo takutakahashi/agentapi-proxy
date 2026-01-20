@@ -80,7 +80,7 @@ func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	// Validate user is a member of the team
 	if !user.IsMemberOfTeam(teamID) && !user.IsAdmin() {
 		return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf(
-			"user is not a member of team %s (use format: org/team-slug or org-team-slug)",
+			"user is not a member of team %s (must use format: org/team-slug)",
 			teamID,
 		))
 	}
@@ -170,7 +170,7 @@ func (h *Handlers) ExportTeamResources(c echo.Context) error {
 	// Validate user is a member of the team
 	if !user.IsMemberOfTeam(teamID) && !user.IsAdmin() {
 		return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf(
-			"user is not a member of team %s (use format: org/team-slug or org-team-slug)",
+			"user is not a member of team %s (must use format: org/team-slug)",
 			teamID,
 		))
 	}
