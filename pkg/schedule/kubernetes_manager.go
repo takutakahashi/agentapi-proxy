@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -297,18 +296,9 @@ func (m *KubernetesManager) loadAllSchedules(ctx context.Context) ([]*Schedule, 
 			continue
 		}
 
-		// Prefer team_id from annotation (normalized slash format) over JSON data
-		// This ensures consistency when team_id format varies in JSON
+		// Prefer team_id from annotation over JSON data
+		// Use the annotation value as-is (should be in slash format: org/team-slug)
 		if annotationTeamID, ok := secret.Annotations[AnnotationScheduleTeamID]; ok && annotationTeamID != "" {
-			// Normalize to slash format if annotation contains hyphen format
-			// Convert "org-team" to "org/team" by replacing the LAST hyphen with slash
-			// e.g., "takutaka-lab-admin" -> "takutaka-lab/admin"
-			if strings.Contains(annotationTeamID, "-") && !strings.Contains(annotationTeamID, "/") {
-				lastHyphen := strings.LastIndex(annotationTeamID, "-")
-				if lastHyphen > 0 {
-					annotationTeamID = annotationTeamID[:lastHyphen] + "/" + annotationTeamID[lastHyphen+1:]
-				}
-			}
 			schedule.TeamID = annotationTeamID
 		}
 
