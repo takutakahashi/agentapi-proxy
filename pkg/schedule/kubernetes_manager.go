@@ -301,11 +301,12 @@ func (m *KubernetesManager) loadAllSchedules(ctx context.Context) ([]*Schedule, 
 		// This ensures consistency when team_id format varies in JSON
 		if annotationTeamID, ok := secret.Annotations[AnnotationScheduleTeamID]; ok && annotationTeamID != "" {
 			// Normalize to slash format if annotation contains hyphen format
-			// Convert "org-team" to "org/team" for the first hyphen only
+			// Convert "org-team" to "org/team" by replacing the LAST hyphen with slash
+			// e.g., "takutaka-lab-admin" -> "takutaka-lab/admin"
 			if strings.Contains(annotationTeamID, "-") && !strings.Contains(annotationTeamID, "/") {
-				parts := strings.SplitN(annotationTeamID, "-", 2)
-				if len(parts) == 2 {
-					annotationTeamID = parts[0] + "/" + parts[1]
+				lastHyphen := strings.LastIndex(annotationTeamID, "-")
+				if lastHyphen > 0 {
+					annotationTeamID = annotationTeamID[:lastHyphen] + "/" + annotationTeamID[lastHyphen+1:]
 				}
 			}
 			schedule.TeamID = annotationTeamID
