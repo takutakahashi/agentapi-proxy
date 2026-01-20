@@ -422,6 +422,14 @@ func (r *KubernetesWebhookRepository) loadAllWebhooks(ctx context.Context) ([]*e
 		// Prefer team_id from annotation (normalized slash format) over JSON data
 		// This ensures consistency when team_id format varies in JSON
 		if annotationTeamID, ok := secret.Annotations[AnnotationWebhookTeamID]; ok && annotationTeamID != "" {
+			// Normalize to slash format if annotation contains hyphen format
+			// Convert "org-team" to "org/team" for the first hyphen only
+			if strings.Contains(annotationTeamID, "-") && !strings.Contains(annotationTeamID, "/") {
+				parts := strings.SplitN(annotationTeamID, "-", 2)
+				if len(parts) == 2 {
+					annotationTeamID = parts[0] + "/" + parts[1]
+				}
+			}
 			wj.TeamID = annotationTeamID
 		}
 
