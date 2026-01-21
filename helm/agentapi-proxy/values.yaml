@@ -3,6 +3,32 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+# =============================================================================
+# グローバル設定 (オプション)
+# =============================================================================
+# 親チャート（ccplant等）から渡されるグローバル設定を受け取ります。
+# これらの設定は後方互換性のためオプションです。
+# global設定が存在しない場合、各設定のローカル値がフォールバックとして使用されます。
+#
+# global:
+#   # UIホスト名 (agentapi-ui用)
+#   hostname: ""
+#   # APIホスト名 (agentapi-proxy用)
+#   apiHostname: ""
+#
+#   github:
+#     enterprise:
+#       enabled: false
+#       baseUrl: ""
+#     oauth:
+#       clientId: ""
+#       clientSecret: ""
+#
+#   ingress:
+#     className: nginx
+#     tls:
+#       enabled: true
+
 replicaCount: 1
 
 image:

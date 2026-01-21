@@ -64,9 +64,43 @@ spec:
             - name: AGENTAPI_AUTH_GITHUB_TOKEN_HEADER
               value: {{ .Values.config.auth.github.tokenHeader | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID
-              value: {{ ((.Values.global).config.auth.github.oauth.clientId | default .Values.config.auth.github.oauth.clientId) | quote }}
+              {{- $clientId := .Values.config.auth.github.oauth.clientId }}
+              {{- if .Values.global }}
+                {{- if .Values.global.github }}
+                  {{- if .Values.global.github.oauth }}
+                    {{- $clientId = .Values.global.github.oauth.clientId | default $clientId }}
+                  {{- end }}
+                {{- end }}
+                {{- if .Values.global.config }}
+                  {{- if .Values.global.config.auth }}
+                    {{- if .Values.global.config.auth.github }}
+                      {{- if .Values.global.config.auth.github.oauth }}
+                        {{- $clientId = .Values.global.config.auth.github.oauth.clientId | default $clientId }}
+                      {{- end }}
+                    {{- end }}
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              value: {{ $clientId | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET
-              value: {{ ((.Values.global).config.auth.github.oauth.clientSecret | default .Values.config.auth.github.oauth.clientSecret) | quote }}
+              {{- $clientSecret := .Values.config.auth.github.oauth.clientSecret }}
+              {{- if .Values.global }}
+                {{- if .Values.global.github }}
+                  {{- if .Values.global.github.oauth }}
+                    {{- $clientSecret = .Values.global.github.oauth.clientSecret | default $clientSecret }}
+                  {{- end }}
+                {{- end }}
+                {{- if .Values.global.config }}
+                  {{- if .Values.global.config.auth }}
+                    {{- if .Values.global.config.auth.github }}
+                      {{- if .Values.global.config.auth.github.oauth }}
+                        {{- $clientSecret = .Values.global.config.auth.github.oauth.clientSecret | default $clientSecret }}
+                      {{- end }}
+                    {{- end }}
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              value: {{ $clientSecret | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE
               value: {{ .Values.config.auth.github.oauth.scope | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL
@@ -82,28 +116,34 @@ spec:
               value: {{ .Values.config.roleEnvFiles.path | quote }}
             - name: AGENTAPI_ROLE_ENV_FILES_LOAD_DEFAULT
               value: {{ .Values.config.roleEnvFiles.loadDefault | quote }}
-            {{- $githubEnterpriseEnabled := false }}
+            {{- $githubEnterpriseEnabled := .Values.github.enterprise.enabled }}
             {{- if .Values.global }}
-              {{- $githubEnterpriseEnabled = .Values.global.github.enterprise.enabled | default .Values.github.enterprise.enabled }}
-            {{- else }}
-              {{- $githubEnterpriseEnabled = .Values.github.enterprise.enabled }}
+              {{- if .Values.global.github }}
+                {{- if .Values.global.github.enterprise }}
+                  {{- $githubEnterpriseEnabled = .Values.global.github.enterprise.enabled | default $githubEnterpriseEnabled }}
+                {{- end }}
+              {{- end }}
             {{- end }}
             {{- if $githubEnterpriseEnabled }}
-            {{- $githubEnterpriseBaseUrl := "" }}
+            {{- $githubEnterpriseBaseUrl := .Values.github.enterprise.baseUrl }}
             {{- if .Values.global }}
-              {{- $githubEnterpriseBaseUrl = .Values.global.github.enterprise.baseUrl | default .Values.github.enterprise.baseUrl }}
-            {{- else }}
-              {{- $githubEnterpriseBaseUrl = .Values.github.enterprise.baseUrl }}
+              {{- if .Values.global.github }}
+                {{- if .Values.global.github.enterprise }}
+                  {{- $githubEnterpriseBaseUrl = .Values.global.github.enterprise.baseUrl | default $githubEnterpriseBaseUrl }}
+                {{- end }}
+              {{- end }}
             {{- end }}
             {{- if $githubEnterpriseBaseUrl }}
             - name: GITHUB_URL
               value: {{ $githubEnterpriseBaseUrl | quote }}
             {{- end }}
-            {{- $githubEnterpriseApiUrl := "" }}
+            {{- $githubEnterpriseApiUrl := .Values.github.enterprise.apiUrl }}
             {{- if .Values.global }}
-              {{- $githubEnterpriseApiUrl = .Values.global.github.enterprise.apiUrl | default .Values.github.enterprise.apiUrl }}
-            {{- else }}
-              {{- $githubEnterpriseApiUrl = .Values.github.enterprise.apiUrl }}
+              {{- if .Values.global.github }}
+                {{- if .Values.global.github.enterprise }}
+                  {{- $githubEnterpriseApiUrl = .Values.global.github.enterprise.apiUrl | default $githubEnterpriseApiUrl }}
+                {{- end }}
+              {{- end }}
             {{- end }}
             {{- if $githubEnterpriseApiUrl }}
             - name: GITHUB_API
