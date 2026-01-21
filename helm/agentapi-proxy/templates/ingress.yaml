@@ -1,4 +1,26 @@
 {{- if .Values.ingress.enabled -}}
+{{- $ingressClassName := .Values.ingress.className }}
+{{- if .Values.global }}
+  {{- if .Values.global.ingress }}
+    {{- $ingressClassName = .Values.global.ingress.className | default $ingressClassName }}
+  {{- end }}
+{{- end }}
+{{- $tlsEnabled := false }}
+{{- if .Values.ingress.tls }}
+  {{- $tlsEnabled = true }}
+{{- else if .Values.global }}
+  {{- if .Values.global.ingress }}
+    {{- if .Values.global.ingress.tls }}
+      {{- $tlsEnabled = .Values.global.ingress.tls.enabled | default false }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $apiHostname := "" }}
+{{- if .Values.global }}
+  {{- $apiHostname = .Values.global.apiHostname | default .Values.config.hostname }}
+{{- else }}
+  {{- $apiHostname = .Values.config.hostname }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -10,8 +32,8 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- if and .Values.ingress.className (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
-  ingressClassName: {{ .Values.ingress.className }}
+  {{- if and $ingressClassName (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
+  ingressClassName: {{ $ingressClassName }}
   {{- end }}
   {{- if .Values.ingress.tls }}
   tls:
@@ -22,8 +44,14 @@ spec:
         {{- end }}
       secretName: {{ .secretName }}
     {{- end }}
+  {{- else if and $tlsEnabled $apiHostname }}
+  tls:
+    - hosts:
+        - {{ $apiHostname | quote }}
+      secretName: {{ include "agentapi-proxy.fullname" . }}-tls
   {{- end }}
   rules:
+    {{- if .Values.ingress.hosts }}
     {{- range .Values.ingress.hosts }}
     - host: {{ .host | quote }}
       http:
@@ -44,5 +72,24 @@ spec:
               servicePort: {{ $.Values.service.port }}
               {{- end }}
           {{- end }}
+    {{- end }}
+    {{- else if $apiHostname }}
+    - host: {{ $apiHostname | quote }}
+      http:
+        paths:
+          - path: /
+            {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.fullname" . }}
+              servicePort: {{ .Values.service.port }}
+              {{- end }}
     {{- end }}
 {{- end }}
