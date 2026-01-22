@@ -419,6 +419,12 @@ func (r *KubernetesWebhookRepository) loadAllWebhooks(ctx context.Context) ([]*e
 			continue
 		}
 
+		// Prefer team_id from annotation over JSON data
+		// Use the annotation value as-is (should be in slash format: org/team-slug)
+		if annotationTeamID, ok := secret.Annotations[AnnotationWebhookTeamID]; ok && annotationTeamID != "" {
+			wj.TeamID = annotationTeamID
+		}
+
 		webhook := r.jsonToEntity(&wj)
 		result = append(result, webhook)
 	}

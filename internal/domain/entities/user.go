@@ -418,14 +418,14 @@ func (u *User) CanAccessSession(sessionUserID UserID) bool {
 }
 
 // IsMemberOfTeam checks if the user is a member of the specified team
-// teamID should be in the format "org-team-slug" (hyphen-separated)
+// teamID must be in the format "org/team-slug" (slash-separated)
 func (u *User) IsMemberOfTeam(teamID string) bool {
 	if u.githubInfo == nil {
 		return false
 	}
+
 	for _, team := range u.githubInfo.Teams() {
-		// GitHub teams are in org/team format, convert to org-team for comparison
-		fullTeamID := fmt.Sprintf("%s-%s", team.Organization, team.TeamSlug)
+		fullTeamID := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
 		if fullTeamID == teamID {
 			return true
 		}

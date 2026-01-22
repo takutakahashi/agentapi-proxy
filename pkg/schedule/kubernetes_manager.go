@@ -26,8 +26,10 @@ const (
 	LabelScheduleScope = "agentapi.proxy/schedule-scope"
 	// LabelScheduleUserID is the label key for schedule user ID
 	LabelScheduleUserID = "agentapi.proxy/schedule-user-id"
-	// LabelScheduleTeamID is the label key for schedule team ID
+	// LabelScheduleTeamID is the label key for schedule team ID (hashed)
 	LabelScheduleTeamID = "agentapi.proxy/schedule-team-id"
+	// AnnotationScheduleTeamID is the annotation key for original schedule team ID
+	AnnotationScheduleTeamID = "agentapi.proxy/schedule-team-id"
 	// SecretKeySchedule is the key in the Secret data for single schedule JSON
 	SecretKeySchedule = "schedule.json"
 	// ScheduleSecretPrefix is the prefix for schedule Secret names
@@ -294,6 +296,12 @@ func (m *KubernetesManager) loadAllSchedules(ctx context.Context) ([]*Schedule, 
 			continue
 		}
 
+		// Prefer team_id from annotation over JSON data
+		// Use the annotation value as-is (should be in slash format: org/team-slug)
+		if annotationTeamID, ok := secret.Annotations[AnnotationScheduleTeamID]; ok && annotationTeamID != "" {
+			schedule.TeamID = annotationTeamID
+		}
+
 		result = append(result, &schedule)
 	}
 
@@ -314,15 +322,20 @@ func (m *KubernetesManager) saveSchedule(ctx context.Context, schedule *Schedule
 		LabelScheduleScope:  string(schedule.GetScope()),
 		LabelScheduleUserID: services.HashLabelValue(schedule.UserID),
 	}
+	annotations := make(map[string]string)
 	if schedule.TeamID != "" {
+		// Use hash for label to avoid issues with "/" in team IDs
 		labels[LabelScheduleTeamID] = services.HashLabelValue(schedule.TeamID)
+		// Store original team_id in annotation for restoration
+		annotations[AnnotationScheduleTeamID] = schedule.TeamID
 	}
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels:    labels,
+			Name:        secretName,
+			Namespace:   m.namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
@@ -340,7 +353,9 @@ func (m *KubernetesManager) saveSchedule(ctx context.Context, schedule *Schedule
 			}
 
 			existing.Data[SecretKeySchedule] = data
+			// Ensure labels and annotations are set
 			existing.Labels = labels
+			existing.Annotations = annotations
 
 			_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, existing, metav1.UpdateOptions{})
 			if err != nil {

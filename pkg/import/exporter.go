@@ -59,7 +59,7 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 		Webhooks:  []WebhookImport{},
 	}
 
-	// Export schedules (always all)
+	// Export schedules (all team-scoped schedules for this team)
 	schedules, err := e.scheduleManager.List(ctx, schedule.ScheduleFilter{
 		UserID: userID,
 		Scope:  entities.ScopeTeam,
@@ -73,7 +73,7 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 		resources.Schedules = append(resources.Schedules, scheduleImport)
 	}
 
-	// Export webhooks (always all, with secrets)
+	// Export webhooks (all team-scoped webhooks for this team, with secrets)
 	webhooks, err := e.webhookRepository.List(ctx, repositories.WebhookFilter{
 		UserID: userID,
 		Scope:  entities.ScopeTeam,
