@@ -445,6 +445,129 @@ func TestKubernetesCredentialsSecretSyncer_Delete_SkipsExternalSecret(t *testing
 	}
 }
 
+func TestKubernetesCredentialsSecretSyncer_ResyncSecretsForOAuthMode(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
+	ctx := context.Background()
+
+	// Create an OAuth mode secret without Bedrock override values (simulating old version)
+	oldOAuthSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "agent-env-old-oauth-user",
+			Namespace: "default",
+			Labels: map[string]string{
+				LabelEnv:       "true",
+				LabelEnvName:   "old-oauth-user",
+				LabelManagedBy: "settings",
+			},
+		},
+		Data: map[string][]byte{
+			"CLAUDE_CODE_OAUTH_TOKEN": []byte("sk-ant-oauth-token"),
+			"CLAUDE_CODE_USE_BEDROCK": []byte("0"),
+			// Missing Bedrock override values
+		},
+	}
+	_, err := client.CoreV1().Secrets("default").Create(ctx, oldOAuthSecret, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create old OAuth secret: %v", err)
+	}
+
+	// Create a Bedrock mode secret (should not be touched)
+	bedrockSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "agent-env-bedrock-user",
+			Namespace: "default",
+			Labels: map[string]string{
+				LabelEnv:       "true",
+				LabelEnvName:   "bedrock-user",
+				LabelManagedBy: "settings",
+			},
+		},
+		Data: map[string][]byte{
+			"CLAUDE_CODE_USE_BEDROCK": []byte("1"),
+			"ANTHROPIC_MODEL":         []byte("anthropic.claude-sonnet-4-20250514-v1:0"),
+		},
+	}
+	_, err = client.CoreV1().Secrets("default").Create(ctx, bedrockSecret, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create Bedrock secret: %v", err)
+	}
+
+	// Create a new OAuth mode secret with all override values (should not be touched)
+	newOAuthSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "agent-env-new-oauth-user",
+			Namespace: "default",
+			Labels: map[string]string{
+				LabelEnv:       "true",
+				LabelEnvName:   "new-oauth-user",
+				LabelManagedBy: "settings",
+			},
+		},
+		Data: map[string][]byte{
+			"CLAUDE_CODE_OAUTH_TOKEN": []byte("sk-ant-oauth-token"),
+			"CLAUDE_CODE_USE_BEDROCK": []byte("0"),
+			"ANTHROPIC_MODEL":         []byte(""),
+			"AWS_ACCESS_KEY_ID":       []byte(""),
+			"AWS_SECRET_ACCESS_KEY":   []byte(""),
+			"AWS_ROLE_ARN":            []byte(""),
+			"AWS_PROFILE":             []byte(""),
+		},
+	}
+	_, err = client.CoreV1().Secrets("default").Create(ctx, newOAuthSecret, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create new OAuth secret: %v", err)
+	}
+
+	// Run resync
+	err = syncer.ResyncSecretsForOAuthMode(ctx)
+	if err != nil {
+		t.Fatalf("Resync failed: %v", err)
+	}
+
+	// Verify old OAuth secret was updated
+	oldSecret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-old-oauth-user", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get old OAuth secret: %v", err)
+	}
+	if string(oldSecret.Data["ANTHROPIC_MODEL"]) != "" {
+		t.Errorf("Expected ANTHROPIC_MODEL to be empty, got '%s'", string(oldSecret.Data["ANTHROPIC_MODEL"]))
+	}
+	if string(oldSecret.Data["AWS_ACCESS_KEY_ID"]) != "" {
+		t.Errorf("Expected AWS_ACCESS_KEY_ID to be empty, got '%s'", string(oldSecret.Data["AWS_ACCESS_KEY_ID"]))
+	}
+	if string(oldSecret.Data["AWS_SECRET_ACCESS_KEY"]) != "" {
+		t.Errorf("Expected AWS_SECRET_ACCESS_KEY to be empty, got '%s'", string(oldSecret.Data["AWS_SECRET_ACCESS_KEY"]))
+	}
+	if string(oldSecret.Data["AWS_ROLE_ARN"]) != "" {
+		t.Errorf("Expected AWS_ROLE_ARN to be empty, got '%s'", string(oldSecret.Data["AWS_ROLE_ARN"]))
+	}
+	if string(oldSecret.Data["AWS_PROFILE"]) != "" {
+		t.Errorf("Expected AWS_PROFILE to be empty, got '%s'", string(oldSecret.Data["AWS_PROFILE"]))
+	}
+
+	// Verify Bedrock secret was not modified
+	bedrockSecretAfter, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-bedrock-user", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get Bedrock secret: %v", err)
+	}
+	if string(bedrockSecretAfter.Data["ANTHROPIC_MODEL"]) != "anthropic.claude-sonnet-4-20250514-v1:0" {
+		t.Errorf("Bedrock secret should not be modified")
+	}
+	if _, exists := bedrockSecretAfter.Data["AWS_ACCESS_KEY_ID"]; exists {
+		t.Errorf("Bedrock secret should not have empty override values added")
+	}
+
+	// Verify new OAuth secret was not modified (already has override values)
+	newSecretAfter, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-new-oauth-user", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get new OAuth secret: %v", err)
+	}
+	if newSecretAfter.ResourceVersion != newOAuthSecret.ResourceVersion {
+		t.Errorf("New OAuth secret should not be modified")
+	}
+}
+
 func TestSanitizeSecretName(t *testing.T) {
 	tests := []struct {
 		input    string

@@ -416,4 +416,13 @@ func runCredentialsSecretMigration(configData *config.Config) {
 	}
 
 	log.Printf("[ENV_MIGRATION] Credentials secret migration completed successfully")
+
+	// Resync OAuth mode secrets to add Bedrock override values
+	if err := syncer.ResyncSecretsForOAuthMode(context.Background()); err != nil {
+		log.Printf("[ENV_RESYNC] Resync failed: %v", err)
+		// Continue even if resync fails - we don't want to prevent server startup
+		return
+	}
+
+	log.Printf("[ENV_RESYNC] OAuth mode secrets resync completed successfully")
 }

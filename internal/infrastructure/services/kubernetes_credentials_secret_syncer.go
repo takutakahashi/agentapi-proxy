@@ -131,6 +131,77 @@ func (s *KubernetesCredentialsSecretSyncer) Delete(ctx context.Context, name str
 	return nil
 }
 
+// ResyncSecretsForOAuthMode ensures OAuth mode secrets have empty Bedrock env vars
+// This function is idempotent and safe to run multiple times
+// It patches existing secrets that are in OAuth mode but missing empty Bedrock override values
+func (s *KubernetesCredentialsSecretSyncer) ResyncSecretsForOAuthMode(ctx context.Context) error {
+	listOptions := metav1.ListOptions{
+		LabelSelector: LabelManagedBy + "=settings",
+	}
+
+	secrets, err := s.client.CoreV1().Secrets(s.namespace).List(ctx, listOptions)
+	if err != nil {
+		return fmt.Errorf("failed to list secrets for resync: %w", err)
+	}
+
+	updatedCount := 0
+	skippedCount := 0
+
+	for _, secret := range secrets.Items {
+		// Only process agent-env-* secrets
+		if !strings.HasPrefix(secret.Name, EnvSecretPrefix) {
+			continue
+		}
+
+		// Check if this is an OAuth mode secret
+		useBedrock, exists := secret.Data["CLAUDE_CODE_USE_BEDROCK"]
+		if !exists || string(useBedrock) != "0" {
+			// Not OAuth mode, skip
+			skippedCount++
+			continue
+		}
+
+		// Check if Bedrock override values are already set
+		needsUpdate := false
+		bedrockKeys := []string{"ANTHROPIC_MODEL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ROLE_ARN", "AWS_PROFILE"}
+		for _, key := range bedrockKeys {
+			if _, exists := secret.Data[key]; !exists {
+				needsUpdate = true
+				break
+			}
+		}
+
+		if !needsUpdate {
+			// Already has all override values
+			skippedCount++
+			continue
+		}
+
+		// Add empty Bedrock override values
+		for _, key := range bedrockKeys {
+			if _, exists := secret.Data[key]; !exists {
+				secret.Data[key] = []byte("")
+			}
+		}
+
+		// Update the secret
+		_, err := s.client.CoreV1().Secrets(s.namespace).Update(ctx, &secret, metav1.UpdateOptions{})
+		if err != nil {
+			log.Printf("[ENV_SYNCER] Resync: Failed to update secret %s: %v", secret.Name, err)
+			continue
+		}
+
+		log.Printf("[ENV_SYNCER] Resync: Updated OAuth mode secret %s with Bedrock override values", secret.Name)
+		updatedCount++
+	}
+
+	if updatedCount > 0 || skippedCount > 0 {
+		log.Printf("[ENV_SYNCER] Resync complete: updated %d secrets, skipped %d secrets", updatedCount, skippedCount)
+	}
+
+	return nil
+}
+
 // MigrateSecrets migrates old agent-credentials-* secrets to agent-env-* secrets
 // This function is idempotent and safe to run multiple times
 func (s *KubernetesCredentialsSecretSyncer) MigrateSecrets(ctx context.Context) error {
