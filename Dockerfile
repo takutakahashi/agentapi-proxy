@@ -88,7 +88,7 @@ RUN curl https://mise.run | sh && \
 # The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
 # We copy with -L to follow the symlink and get the actual binary, then clean up
 # Then create a symlink at ~/.local/bin/claude -> /opt/claude/bin/claude for volume mount compatibility
-RUN curl -fsSL https://claude.ai/install.sh | bash && \
+RUN curl -fsSL https://claude.ai/install.sh | bash -s 2.1.12 && \
     sudo mkdir -p /opt/claude/bin && \
     sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
     sudo chown agentapi:agentapi /opt/claude/bin/claude && \
