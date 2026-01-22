@@ -138,6 +138,7 @@ type ImportResult struct {
 type ImportSummary struct {
 	Schedules ImportResourceSummary `json:"schedules"`
 	Webhooks  ImportResourceSummary `json:"webhooks"`
+	Settings  ImportResourceSummary `json:"settings"`
 }
 
 // ImportResourceSummary contains summary statistics for a resource type
