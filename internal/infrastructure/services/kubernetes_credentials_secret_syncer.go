@@ -246,6 +246,13 @@ func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.S
 			data["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(settings.ClaudeCodeOAuthToken())
 		}
 		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
+		// Override any Bedrock credentials from team settings with empty values
+		// This ensures user OAuth settings take precedence over team Bedrock settings
+		data["ANTHROPIC_MODEL"] = []byte("")
+		data["AWS_ACCESS_KEY_ID"] = []byte("")
+		data["AWS_SECRET_ACCESS_KEY"] = []byte("")
+		data["AWS_ROLE_ARN"] = []byte("")
+		data["AWS_PROFILE"] = []byte("")
 	case entities.AuthModeBedrock:
 		// Only add Bedrock credentials for Bedrock mode
 		bedrock := settings.Bedrock()

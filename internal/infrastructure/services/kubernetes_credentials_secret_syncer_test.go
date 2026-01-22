@@ -236,6 +236,16 @@ func TestKubernetesCredentialsSecretSyncer_Sync_OAuthMode(t *testing.T) {
 	if string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]) != "0" {
 		t.Errorf("Expected CLAUDE_CODE_USE_BEDROCK to be '0', got '%s'", string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]))
 	}
+	// Verify Bedrock credentials are set to empty (to override team settings)
+	if string(secret.Data["ANTHROPIC_MODEL"]) != "" {
+		t.Errorf("Expected ANTHROPIC_MODEL to be empty, got '%s'", string(secret.Data["ANTHROPIC_MODEL"]))
+	}
+	if string(secret.Data["AWS_ACCESS_KEY_ID"]) != "" {
+		t.Errorf("Expected AWS_ACCESS_KEY_ID to be empty, got '%s'", string(secret.Data["AWS_ACCESS_KEY_ID"]))
+	}
+	if string(secret.Data["AWS_SECRET_ACCESS_KEY"]) != "" {
+		t.Errorf("Expected AWS_SECRET_ACCESS_KEY to be empty, got '%s'", string(secret.Data["AWS_SECRET_ACCESS_KEY"]))
+	}
 }
 
 func TestKubernetesCredentialsSecretSyncer_Sync_OAuthModeWithBedrock(t *testing.T) {
@@ -272,15 +282,21 @@ func TestKubernetesCredentialsSecretSyncer_Sync_OAuthModeWithBedrock(t *testing.
 		t.Errorf("Expected CLAUDE_CODE_USE_BEDROCK to be '0', got '%s'", string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]))
 	}
 
-	// Verify Bedrock credentials are NOT set
-	if _, ok := secret.Data["ANTHROPIC_MODEL"]; ok {
-		t.Error("Expected ANTHROPIC_MODEL to not be set in OAuth mode")
+	// Verify Bedrock credentials are explicitly set to empty (to override team settings)
+	if string(secret.Data["ANTHROPIC_MODEL"]) != "" {
+		t.Errorf("Expected ANTHROPIC_MODEL to be empty in OAuth mode, got '%s'", string(secret.Data["ANTHROPIC_MODEL"]))
 	}
-	if _, ok := secret.Data["AWS_ACCESS_KEY_ID"]; ok {
-		t.Error("Expected AWS_ACCESS_KEY_ID to not be set in OAuth mode")
+	if string(secret.Data["AWS_ACCESS_KEY_ID"]) != "" {
+		t.Errorf("Expected AWS_ACCESS_KEY_ID to be empty in OAuth mode, got '%s'", string(secret.Data["AWS_ACCESS_KEY_ID"]))
 	}
-	if _, ok := secret.Data["AWS_SECRET_ACCESS_KEY"]; ok {
-		t.Error("Expected AWS_SECRET_ACCESS_KEY to not be set in OAuth mode")
+	if string(secret.Data["AWS_SECRET_ACCESS_KEY"]) != "" {
+		t.Errorf("Expected AWS_SECRET_ACCESS_KEY to be empty in OAuth mode, got '%s'", string(secret.Data["AWS_SECRET_ACCESS_KEY"]))
+	}
+	if string(secret.Data["AWS_ROLE_ARN"]) != "" {
+		t.Errorf("Expected AWS_ROLE_ARN to be empty in OAuth mode, got '%s'", string(secret.Data["AWS_ROLE_ARN"]))
+	}
+	if string(secret.Data["AWS_PROFILE"]) != "" {
+		t.Errorf("Expected AWS_PROFILE to be empty in OAuth mode, got '%s'", string(secret.Data["AWS_PROFILE"]))
 	}
 }
 
