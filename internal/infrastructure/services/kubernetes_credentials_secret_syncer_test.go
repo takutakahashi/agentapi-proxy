@@ -238,6 +238,52 @@ func TestKubernetesCredentialsSecretSyncer_Sync_OAuthMode(t *testing.T) {
 	}
 }
 
+func TestKubernetesCredentialsSecretSyncer_Sync_OAuthModeWithBedrock(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
+	ctx := context.Background()
+
+	// Create settings with both OAuth token and Bedrock credentials
+	// but auth_mode is set to OAuth
+	settings := entities.NewSettings("oauth-with-bedrock")
+	settings.SetClaudeCodeOAuthToken("sk-ant-oauth-token-example")
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetModel("anthropic.claude-sonnet-4-20250514-v1:0")
+	bedrock.SetAccessKeyID("AKIAIOSFODNN7EXAMPLE")
+	bedrock.SetSecretAccessKey("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+	settings.SetBedrock(bedrock)
+	settings.SetAuthMode(entities.AuthModeOAuth) // OAuth takes priority
+
+	err := syncer.Sync(ctx, settings)
+	if err != nil {
+		t.Fatalf("Failed to sync: %v", err)
+	}
+
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-oauth-with-bedrock", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get secret: %v", err)
+	}
+
+	// Verify OAuth token is set
+	if string(secret.Data["CLAUDE_CODE_OAUTH_TOKEN"]) != "sk-ant-oauth-token-example" {
+		t.Errorf("Expected CLAUDE_CODE_OAUTH_TOKEN to be set, got '%s'", string(secret.Data["CLAUDE_CODE_OAUTH_TOKEN"]))
+	}
+	if string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]) != "0" {
+		t.Errorf("Expected CLAUDE_CODE_USE_BEDROCK to be '0', got '%s'", string(secret.Data["CLAUDE_CODE_USE_BEDROCK"]))
+	}
+
+	// Verify Bedrock credentials are NOT set
+	if _, ok := secret.Data["ANTHROPIC_MODEL"]; ok {
+		t.Error("Expected ANTHROPIC_MODEL to not be set in OAuth mode")
+	}
+	if _, ok := secret.Data["AWS_ACCESS_KEY_ID"]; ok {
+		t.Error("Expected AWS_ACCESS_KEY_ID to not be set in OAuth mode")
+	}
+	if _, ok := secret.Data["AWS_SECRET_ACCESS_KEY"]; ok {
+		t.Error("Expected AWS_SECRET_ACCESS_KEY to not be set in OAuth mode")
+	}
+}
+
 func TestKubernetesCredentialsSecretSyncer_Sync_NilSettings(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")

@@ -222,36 +222,37 @@ func (s *KubernetesCredentialsSecretSyncer) secretName(name string) string {
 }
 
 // buildSecretData builds the secret data from settings
-// Both OAuth token and Bedrock credentials are stored if they are set
+// Only credentials for the configured auth_mode are stored
 func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.Settings) map[string][]byte {
 	data := make(map[string][]byte)
 
-	// Add OAuth token if it exists
-	if settings.HasClaudeCodeOAuthToken() {
-		data["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(settings.ClaudeCodeOAuthToken())
-	}
-
-	// Add Bedrock credentials if they exist
-	bedrock := settings.Bedrock()
-	if bedrock != nil && (bedrock.Enabled() || bedrock.AccessKeyID() != "" || bedrock.SecretAccessKey() != "") {
-		s.addBedrockCredentials(data, bedrock)
-	}
-
-	// Set CLAUDE_CODE_USE_BEDROCK based on auth_mode for backward compatibility
-	// This flag indicates which authentication method should be used by default
-	switch settings.AuthMode() {
-	case entities.AuthModeOAuth:
-		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
-	case entities.AuthModeBedrock:
-		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
-	default:
+	// Determine which authentication mode to use
+	authMode := settings.AuthMode()
+	if authMode == "" {
 		// If auth_mode is not set, determine based on what credentials exist
 		// OAuth takes priority if both exist
 		if settings.HasClaudeCodeOAuthToken() {
-			data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
-		} else if bedrock != nil && bedrock.Enabled() {
-			data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
+			authMode = entities.AuthModeOAuth
+		} else if bedrock := settings.Bedrock(); bedrock != nil && bedrock.Enabled() {
+			authMode = entities.AuthModeBedrock
 		}
+	}
+
+	// Add credentials based on auth mode
+	switch authMode {
+	case entities.AuthModeOAuth:
+		// Only add OAuth token for OAuth mode
+		if settings.HasClaudeCodeOAuthToken() {
+			data["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(settings.ClaudeCodeOAuthToken())
+		}
+		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
+	case entities.AuthModeBedrock:
+		// Only add Bedrock credentials for Bedrock mode
+		bedrock := settings.Bedrock()
+		if bedrock != nil && (bedrock.Enabled() || bedrock.AccessKeyID() != "" || bedrock.SecretAccessKey() != "") {
+			s.addBedrockCredentials(data, bedrock)
+		}
+		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
 	}
 
 	return data
