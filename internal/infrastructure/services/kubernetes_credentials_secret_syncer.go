@@ -131,6 +131,77 @@ func (s *KubernetesCredentialsSecretSyncer) Delete(ctx context.Context, name str
 	return nil
 }
 
+// ResyncSecretsForOAuthMode ensures OAuth mode secrets have empty Bedrock env vars
+// This function is idempotent and safe to run multiple times
+// It patches existing secrets that are in OAuth mode but missing empty Bedrock override values
+func (s *KubernetesCredentialsSecretSyncer) ResyncSecretsForOAuthMode(ctx context.Context) error {
+	listOptions := metav1.ListOptions{
+		LabelSelector: LabelManagedBy + "=settings",
+	}
+
+	secrets, err := s.client.CoreV1().Secrets(s.namespace).List(ctx, listOptions)
+	if err != nil {
+		return fmt.Errorf("failed to list secrets for resync: %w", err)
+	}
+
+	updatedCount := 0
+	skippedCount := 0
+
+	for _, secret := range secrets.Items {
+		// Only process agent-env-* secrets
+		if !strings.HasPrefix(secret.Name, EnvSecretPrefix) {
+			continue
+		}
+
+		// Check if this is an OAuth mode secret
+		useBedrock, exists := secret.Data["CLAUDE_CODE_USE_BEDROCK"]
+		if !exists || string(useBedrock) != "0" {
+			// Not OAuth mode, skip
+			skippedCount++
+			continue
+		}
+
+		// Check if Bedrock override values are already set
+		needsUpdate := false
+		bedrockKeys := []string{"ANTHROPIC_MODEL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_ROLE_ARN", "AWS_PROFILE"}
+		for _, key := range bedrockKeys {
+			if _, exists := secret.Data[key]; !exists {
+				needsUpdate = true
+				break
+			}
+		}
+
+		if !needsUpdate {
+			// Already has all override values
+			skippedCount++
+			continue
+		}
+
+		// Add empty Bedrock override values
+		for _, key := range bedrockKeys {
+			if _, exists := secret.Data[key]; !exists {
+				secret.Data[key] = []byte("")
+			}
+		}
+
+		// Update the secret
+		_, err := s.client.CoreV1().Secrets(s.namespace).Update(ctx, &secret, metav1.UpdateOptions{})
+		if err != nil {
+			log.Printf("[ENV_SYNCER] Resync: Failed to update secret %s: %v", secret.Name, err)
+			continue
+		}
+
+		log.Printf("[ENV_SYNCER] Resync: Updated OAuth mode secret %s with Bedrock override values", secret.Name)
+		updatedCount++
+	}
+
+	if updatedCount > 0 || skippedCount > 0 {
+		log.Printf("[ENV_SYNCER] Resync complete: updated %d secrets, skipped %d secrets", updatedCount, skippedCount)
+	}
+
+	return nil
+}
+
 // MigrateSecrets migrates old agent-credentials-* secrets to agent-env-* secrets
 // This function is idempotent and safe to run multiple times
 func (s *KubernetesCredentialsSecretSyncer) MigrateSecrets(ctx context.Context) error {
@@ -222,36 +293,44 @@ func (s *KubernetesCredentialsSecretSyncer) secretName(name string) string {
 }
 
 // buildSecretData builds the secret data from settings
-// Both OAuth token and Bedrock credentials are stored if they are set
+// Only credentials for the configured auth_mode are stored
 func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.Settings) map[string][]byte {
 	data := make(map[string][]byte)
 
-	// Add OAuth token if it exists
-	if settings.HasClaudeCodeOAuthToken() {
-		data["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(settings.ClaudeCodeOAuthToken())
-	}
-
-	// Add Bedrock credentials if they exist
-	bedrock := settings.Bedrock()
-	if bedrock != nil && (bedrock.Enabled() || bedrock.AccessKeyID() != "" || bedrock.SecretAccessKey() != "") {
-		s.addBedrockCredentials(data, bedrock)
-	}
-
-	// Set CLAUDE_CODE_USE_BEDROCK based on auth_mode for backward compatibility
-	// This flag indicates which authentication method should be used by default
-	switch settings.AuthMode() {
-	case entities.AuthModeOAuth:
-		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
-	case entities.AuthModeBedrock:
-		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
-	default:
+	// Determine which authentication mode to use
+	authMode := settings.AuthMode()
+	if authMode == "" {
 		// If auth_mode is not set, determine based on what credentials exist
 		// OAuth takes priority if both exist
 		if settings.HasClaudeCodeOAuthToken() {
-			data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
-		} else if bedrock != nil && bedrock.Enabled() {
-			data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
+			authMode = entities.AuthModeOAuth
+		} else if bedrock := settings.Bedrock(); bedrock != nil && bedrock.Enabled() {
+			authMode = entities.AuthModeBedrock
 		}
+	}
+
+	// Add credentials based on auth mode
+	switch authMode {
+	case entities.AuthModeOAuth:
+		// Only add OAuth token for OAuth mode
+		if settings.HasClaudeCodeOAuthToken() {
+			data["CLAUDE_CODE_OAUTH_TOKEN"] = []byte(settings.ClaudeCodeOAuthToken())
+		}
+		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("0")
+		// Override any Bedrock credentials from team settings with empty values
+		// This ensures user OAuth settings take precedence over team Bedrock settings
+		data["ANTHROPIC_MODEL"] = []byte("")
+		data["AWS_ACCESS_KEY_ID"] = []byte("")
+		data["AWS_SECRET_ACCESS_KEY"] = []byte("")
+		data["AWS_ROLE_ARN"] = []byte("")
+		data["AWS_PROFILE"] = []byte("")
+	case entities.AuthModeBedrock:
+		// Only add Bedrock credentials for Bedrock mode
+		bedrock := settings.Bedrock()
+		if bedrock != nil && (bedrock.Enabled() || bedrock.AccessKeyID() != "" || bedrock.SecretAccessKey() != "") {
+			s.addBedrockCredentials(data, bedrock)
+		}
+		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
 	}
 
 	return data
