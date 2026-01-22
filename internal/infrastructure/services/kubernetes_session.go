@@ -19,6 +19,7 @@ type KubernetesSession struct {
 	servicePort    int
 	namespace      string
 	startedAt      time.Time
+	updatedAt      time.Time
 	status         string
 	cancelFunc     context.CancelFunc
 	mutex          sync.RWMutex
@@ -33,6 +34,7 @@ func NewKubernetesSession(
 	servicePort int,
 	cancelFunc context.CancelFunc,
 ) *KubernetesSession {
+	now := time.Now()
 	return &KubernetesSession{
 		id:             id,
 		request:        request,
@@ -41,7 +43,8 @@ func NewKubernetesSession(
 		pvcName:        pvcName,
 		servicePort:    servicePort,
 		namespace:      namespace,
-		startedAt:      time.Now(),
+		startedAt:      now,
+		updatedAt:      now,
 		status:         "creating",
 		cancelFunc:     cancelFunc,
 	}
@@ -106,6 +109,13 @@ func (s *KubernetesSession) Description() string {
 	return ""
 }
 
+// UpdatedAt returns when the session was last updated
+func (s *KubernetesSession) UpdatedAt() time.Time {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.updatedAt
+}
+
 // Cancel cancels the session context to trigger shutdown
 func (s *KubernetesSession) Cancel() {
 	if s.cancelFunc != nil {
@@ -128,6 +138,20 @@ func (s *KubernetesSession) SetStartedAt(t time.Time) {
 // SetDescription sets the session description (used for restored sessions from Secret)
 func (s *KubernetesSession) SetDescription(desc string) {
 	s.description = desc
+}
+
+// SetUpdatedAt sets the last updated time (used for restored sessions)
+func (s *KubernetesSession) SetUpdatedAt(t time.Time) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.updatedAt = t
+}
+
+// TouchUpdatedAt updates the updatedAt timestamp to now
+func (s *KubernetesSession) TouchUpdatedAt() {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.updatedAt = time.Now()
 }
 
 // ServiceDNS returns the Kubernetes Service DNS name for this session

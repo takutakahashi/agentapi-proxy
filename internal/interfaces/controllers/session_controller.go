@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
@@ -244,6 +246,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			"team_id":     session.TeamID(),
 			"status":      session.Status(),
 			"started_at":  session.StartedAt(),
+			"updated_at":  session.UpdatedAt(),
 			"addr":        session.Addr(),
 			"tags":        session.Tags(),
 			"description": session.Description(),
@@ -347,9 +350,10 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Invalid target URL: %v", err))
 	}
 
-	// Capture first message for session description
+	// Capture first message for session description and update timestamp
 	if ctx.Request().Method == "POST" && strings.HasSuffix(ctx.Request().URL.Path, "/message") {
 		c.captureFirstMessage(ctx, session)
+		c.updateSessionTimestamp(ctx, session)
 	}
 
 	req := ctx.Request()
@@ -434,6 +438,27 @@ func (c *SessionController) captureFirstMessage(ctx echo.Context, session entiti
 	var messageReq map[string]interface{}
 	if err := json.Unmarshal(body, &messageReq); err != nil {
 		return
+	}
+}
+
+// updateSessionTimestamp updates the session's updated_at timestamp
+func (c *SessionController) updateSessionTimestamp(ctx echo.Context, session entities.Session) {
+	// Update in-memory timestamp
+	if ks, ok := session.(*services.KubernetesSession); ok {
+		ks.TouchUpdatedAt()
+
+		// Update Service annotation asynchronously to avoid blocking the request
+		go func() {
+			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if manager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
+				updatedAt := ks.UpdatedAt().Format(time.RFC3339)
+				if err := manager.UpdateServiceAnnotation(updateCtx, session.ID(), "agentapi.proxy/updated-at", updatedAt); err != nil {
+					log.Printf("[SESSION] Failed to update Service annotation for session %s: %v", session.ID(), err)
+				}
+			}
+		}()
 	}
 }
 
