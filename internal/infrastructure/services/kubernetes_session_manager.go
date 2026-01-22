@@ -1922,6 +1922,7 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 			Labels:    m.buildLabels(session),
 			Annotations: map[string]string{
 				"agentapi.proxy/created-at": session.startedAt.Format(time.RFC3339),
+				"agentapi.proxy/updated-at": session.startedAt.Format(time.RFC3339),
 				"agentapi.proxy/team-id":    session.Request().TeamID, // Store original team_id (unsanitized)
 			},
 		},
@@ -2700,6 +2701,14 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		}
 	}
 
+	// Parse updated-at from annotations
+	updatedAt := createdAt // Default to createdAt if not set
+	if updatedAtStr, ok := svc.Annotations["agentapi.proxy/updated-at"]; ok {
+		if parsed, err := time.Parse(time.RFC3339, updatedAtStr); err == nil {
+			updatedAt = parsed
+		}
+	}
+
 	// Extract service port
 	servicePort := m.k8sConfig.BasePort
 	if len(svc.Spec.Ports) > 0 {
@@ -2727,6 +2736,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	)
 	// Set restored values
 	session.SetStartedAt(createdAt)
+	session.SetUpdatedAt(updatedAt)
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
 	session.SetDescription(initialMessage) // Cache initial message as description
 
@@ -2778,6 +2788,14 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 		}
 	}
 
+	// Parse updated-at from annotations
+	updatedAt := createdAt // Default to createdAt if not set
+	if updatedAtStr, ok := svc.Annotations["agentapi.proxy/updated-at"]; ok {
+		if parsed, err := time.Parse(time.RFC3339, updatedAtStr); err == nil {
+			updatedAt = parsed
+		}
+	}
+
 	// Extract service port
 	servicePort := m.k8sConfig.BasePort
 	if len(svc.Spec.Ports) > 0 {
@@ -2805,6 +2823,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	)
 	// Set restored values
 	session.SetStartedAt(createdAt)
+	session.SetUpdatedAt(updatedAt)
 	session.SetStatus(m.getStatusFromDeploymentObject(deployment))
 	session.SetDescription(initialMessage) // Cache initial message as description
 
@@ -3036,4 +3055,39 @@ func (m *KubernetesSessionManager) buildOtelcolSidecar(session *KubernetesSessio
 			},
 		},
 	}
+}
+
+// UpdateServiceAnnotation updates a specific annotation on a session's Service
+func (m *KubernetesSessionManager) UpdateServiceAnnotation(ctx context.Context, sessionID, key, value string) error {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session is not a KubernetesSession")
+	}
+
+	serviceName := ks.ServiceName()
+
+	// Get the current Service
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get service: %w", err)
+	}
+
+	// Update the annotation
+	if svc.Annotations == nil {
+		svc.Annotations = make(map[string]string)
+	}
+	svc.Annotations[key] = value
+
+	// Update the Service
+	_, err = m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update service annotation: %w", err)
+	}
+
+	return nil
 }

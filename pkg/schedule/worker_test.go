@@ -21,6 +21,7 @@ type mockProxySession struct {
 	addr      string
 	tags      map[string]string
 	startedAt time.Time
+	updatedAt time.Time
 }
 
 func (s *mockProxySession) ID() string                    { return s.id }
@@ -29,6 +30,7 @@ func (s *mockProxySession) UserID() string                { return s.userID }
 func (s *mockProxySession) Tags() map[string]string       { return s.tags }
 func (s *mockProxySession) Status() string                { return s.status }
 func (s *mockProxySession) StartedAt() time.Time          { return s.startedAt }
+func (s *mockProxySession) UpdatedAt() time.Time          { return s.updatedAt }
 func (s *mockProxySession) Description() string           { return "" }
 func (s *mockProxySession) Scope() entities.ResourceScope { return entities.ScopeUser }
 func (s *mockProxySession) TeamID() string                { return "" }
@@ -39,13 +41,15 @@ func newMockProxySessionManager() *mockProxySessionManager {
 }
 
 func (m *mockProxySessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest) (entities.Session, error) {
+	now := time.Now()
 	session := &mockProxySession{
 		id:        id,
 		userID:    req.UserID,
 		status:    "active",
 		addr:      "localhost:9000",
 		tags:      req.Tags,
-		startedAt: time.Now(),
+		startedAt: now,
+		updatedAt: now,
 	}
 	m.sessions[id] = session
 	return session, nil

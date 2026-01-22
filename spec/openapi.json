@@ -1797,6 +1797,11 @@
             "format": "date-time",
             "description": "When the session was started"
           },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the session was last updated (e.g., last message received)"
+          },
           "addr": {
             "type": "string",
             "description": "Address of the agentapi server (host:port)"

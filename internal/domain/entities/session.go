@@ -80,6 +80,9 @@ type Session interface {
 	// StartedAt returns when the session was started
 	StartedAt() time.Time
 
+	// UpdatedAt returns when the session was last updated
+	UpdatedAt() time.Time
+
 	// Description returns the session description
 	// Returns tags["description"] if exists, otherwise returns InitialMessage
 	Description() string
