@@ -179,21 +179,32 @@ func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleIm
 		}
 	}
 
-	// Dry run - don't actually create/update
-	if options.DryRun {
-		detail.Action = action + "d (dry-run)"
-		if existingSchedule != nil {
-			detail.ID = existingSchedule.ID
-		}
-		return detail
-	}
-
 	// Convert import to schedule entity
 	scheduleEntity, err := i.convertScheduleImport(scheduleImport, teamID, userID, existingSchedule)
 	if err != nil {
 		detail.Action = "failed"
 		detail.Status = "error"
 		detail.Error = err.Error()
+		return detail
+	}
+
+	// Dry run - don't actually create/update, but generate diff
+	if options.DryRun {
+		detail.Action = action + "d (dry-run)"
+		if existingSchedule != nil {
+			detail.ID = existingSchedule.ID
+			// Generate diff for update
+			diff, err := generateDiff(existingSchedule, scheduleEntity, scheduleImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		} else {
+			// For create, show the new resource as diff
+			diff, err := generateDiff(nil, scheduleEntity, scheduleImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		}
 		return detail
 	}
 
@@ -272,21 +283,32 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 		}
 	}
 
-	// Dry run - don't actually create/update
-	if options.DryRun {
-		detail.Action = action + "d (dry-run)"
-		if existingWebhook != nil {
-			detail.ID = existingWebhook.ID()
-		}
-		return detail
-	}
-
 	// Convert import to webhook entity
 	webhookEntity, err := i.convertWebhookImport(ctx, webhookImport, teamID, userID, existingWebhook, options)
 	if err != nil {
 		detail.Action = "failed"
 		detail.Status = "error"
 		detail.Error = err.Error()
+		return detail
+	}
+
+	// Dry run - don't actually create/update, but generate diff
+	if options.DryRun {
+		detail.Action = action + "d (dry-run)"
+		if existingWebhook != nil {
+			detail.ID = existingWebhook.ID()
+			// Generate diff for update
+			diff, err := generateDiff(existingWebhook, webhookEntity, webhookImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		} else {
+			// For create, show the new resource as diff
+			diff, err := generateDiff(nil, webhookEntity, webhookImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		}
 		return detail
 	}
 
@@ -601,18 +623,31 @@ func (i *Importer) importSettings(ctx context.Context, settingsImport SettingsIm
 		}
 	}
 
-	// Dry run - don't actually create/update
-	if options.DryRun {
-		detail.Action = action + "d (dry-run)"
-		return detail
-	}
-
 	// Convert import to settings entity
 	settingsEntity, err := i.convertSettingsImport(ctx, settingsImport, existingSettings)
 	if err != nil {
 		detail.Action = "failed"
 		detail.Status = "error"
 		detail.Error = err.Error()
+		return detail
+	}
+
+	// Dry run - don't actually create/update, but generate diff
+	if options.DryRun {
+		detail.Action = action + "d (dry-run)"
+		if existingSettings != nil {
+			// Generate diff for update
+			diff, err := generateDiff(existingSettings, settingsEntity, settingsImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		} else {
+			// For create, show the new resource as diff
+			diff, err := generateDiff(nil, settingsEntity, settingsImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		}
 		return detail
 	}
 

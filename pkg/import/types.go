@@ -151,12 +151,13 @@ type ImportResourceSummary struct {
 
 // ImportDetail contains detailed information about a single resource import
 type ImportDetail struct {
-	ResourceType string `json:"resource_type"` // "schedule" or "webhook"
-	ResourceName string `json:"resource_name"`
-	Action       string `json:"action"` // "created", "updated", "skipped", "failed"
-	ID           string `json:"id,omitempty"`
-	Status       string `json:"status"` // "success" or "error"
-	Error        string `json:"error,omitempty"`
+	ResourceType string  `json:"resource_type"` // "schedule", "webhook", or "settings"
+	ResourceName string  `json:"resource_name"`
+	Action       string  `json:"action"` // "created", "updated", "skipped", "failed"
+	ID           string  `json:"id,omitempty"`
+	Status       string  `json:"status"` // "success" or "error"
+	Error        string  `json:"error,omitempty"`
+	Diff         *string `json:"diff,omitempty"` // Unified diff for dry-run mode
 }
 
 // ExportFormat defines the export format
