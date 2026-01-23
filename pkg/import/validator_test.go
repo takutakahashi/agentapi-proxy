@@ -539,21 +539,23 @@ func TestValidator_Validate(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name: "duplicate schedule names",
+			name: "duplicate schedule IDs",
 			resources: TeamResources{
 				Metadata: ResourceMetadata{
 					TeamID: "myorg-backend-team",
 				},
 				Schedules: []ScheduleImport{
 					{
-						Name:        "Test",
+						ID:          "schedule-123",
+						Name:        "Test1",
 						ScheduledAt: &scheduledAt,
 						SessionConfig: SessionConfigImport{
 							Environment: map[string]string{"TEST": "true"},
 						},
 					},
 					{
-						Name:        "Test",
+						ID:          "schedule-123",
+						Name:        "Test2",
 						ScheduledAt: &scheduledAt,
 						SessionConfig: SessionConfigImport{
 							Environment: map[string]string{"TEST": "true"},
@@ -564,14 +566,15 @@ func TestValidator_Validate(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "duplicate webhook names",
+			name: "duplicate webhook IDs",
 			resources: TeamResources{
 				Metadata: ResourceMetadata{
 					TeamID: "myorg-backend-team",
 				},
 				Webhooks: []WebhookImport{
 					{
-						Name:        "Test",
+						ID:          "webhook-456",
+						Name:        "Test1",
 						WebhookType: "github",
 						Triggers: []WebhookTriggerImport{
 							{
@@ -586,7 +589,8 @@ func TestValidator_Validate(t *testing.T) {
 						},
 					},
 					{
-						Name:        "Test",
+						ID:          "webhook-456",
+						Name:        "Test2",
 						WebhookType: "github",
 						Triggers: []WebhookTriggerImport{
 							{
