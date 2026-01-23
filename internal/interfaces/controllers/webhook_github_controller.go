@@ -509,7 +509,7 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 		msg, err := c.renderTemplate(sessionConfig.InitialMessageTemplate(), event, payload)
 		if err != nil {
 			log.Printf("[WEBHOOK] Failed to render initial message template: %v", err)
-			initialMessage = fmt.Sprintf("GitHub %s event received for %s", event, payload.Repository.FullName)
+			initialMessage = c.buildDefaultInitialMessage(event, payload)
 		} else {
 			initialMessage = msg
 		}

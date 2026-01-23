@@ -355,7 +355,7 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 		msg, err := c.renderTemplate(sessionConfig.InitialMessageTemplate(), payload)
 		if err != nil {
 			log.Printf("[WEBHOOK_CUSTOM] Failed to render initial message template: %v", err)
-			initialMessage = "Custom webhook event received"
+			initialMessage = c.buildDefaultInitialMessage(payload)
 		} else {
 			initialMessage = msg
 		}
