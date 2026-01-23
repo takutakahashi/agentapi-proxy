@@ -140,6 +140,7 @@ func isNotFoundError(err error) bool {
 
 func (e *Exporter) convertScheduleToImport(s *schedule.Schedule) ScheduleImport {
 	scheduleImport := ScheduleImport{
+		ID:          s.ID,
 		Name:        s.Name,
 		Status:      string(s.Status),
 		ScheduledAt: s.ScheduledAt,
@@ -162,6 +163,7 @@ func (e *Exporter) convertScheduleToImport(s *schedule.Schedule) ScheduleImport 
 
 func (e *Exporter) convertWebhookToImport(ctx context.Context, w *entities.Webhook) (WebhookImport, error) {
 	webhookImport := WebhookImport{
+		ID:              w.ID(),
 		Name:            w.Name(),
 		Status:          string(w.Status()),
 		WebhookType:     string(w.WebhookType()),

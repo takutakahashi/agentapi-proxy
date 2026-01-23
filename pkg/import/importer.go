@@ -140,7 +140,7 @@ func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleIm
 		Status:       "success",
 	}
 
-	// Find existing schedule by name if mode is update or upsert
+	// Find existing schedule by ID (preferred) or name (fallback) if mode is update or upsert
 	var existingSchedule *schedule.Schedule
 	if options.Mode == ImportModeUpdate || options.Mode == ImportModeUpsert {
 		schedules, err := i.scheduleManager.List(ctx, schedule.ScheduleFilter{
@@ -149,10 +149,22 @@ func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleIm
 			TeamID: teamID,
 		})
 		if err == nil {
-			for _, s := range schedules {
-				if s.Name == scheduleImport.Name {
-					existingSchedule = s
-					break
+			// First, try to match by ID if provided
+			if scheduleImport.ID != "" {
+				for _, s := range schedules {
+					if s.ID == scheduleImport.ID {
+						existingSchedule = s
+						break
+					}
+				}
+			}
+			// Fallback to name matching if ID not found or not provided
+			if existingSchedule == nil {
+				for _, s := range schedules {
+					if s.Name == scheduleImport.Name {
+						existingSchedule = s
+						break
+					}
 				}
 			}
 		}
@@ -244,7 +256,7 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 		Status:       "success",
 	}
 
-	// Find existing webhook by name if mode is update or upsert
+	// Find existing webhook by ID (preferred) or name (fallback) if mode is update or upsert
 	var existingWebhook *entities.Webhook
 	if options.Mode == ImportModeUpdate || options.Mode == ImportModeUpsert {
 		webhooks, err := i.webhookRepository.List(ctx, repositories.WebhookFilter{
@@ -253,10 +265,22 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 			TeamID: teamID,
 		})
 		if err == nil {
-			for _, w := range webhooks {
-				if w.Name() == webhookImport.Name {
-					existingWebhook = w
-					break
+			// First, try to match by ID if provided
+			if webhookImport.ID != "" {
+				for _, w := range webhooks {
+					if w.ID() == webhookImport.ID {
+						existingWebhook = w
+						break
+					}
+				}
+			}
+			// Fallback to name matching if ID not found or not provided
+			if existingWebhook == nil {
+				for _, w := range webhooks {
+					if w.Name() == webhookImport.Name {
+						existingWebhook = w
+						break
+					}
 				}
 			}
 		}

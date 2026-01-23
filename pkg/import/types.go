@@ -23,6 +23,7 @@ type ResourceMetadata struct {
 
 // ScheduleImport represents a schedule for import/export
 type ScheduleImport struct {
+	ID            string              `yaml:"id,omitempty" toml:"id,omitempty" json:"id,omitempty"`
 	Name          string              `yaml:"name" toml:"name" json:"name"`
 	Status        string              `yaml:"status,omitempty" toml:"status,omitempty" json:"status,omitempty"`
 	ScheduledAt   *time.Time          `yaml:"scheduled_at,omitempty" toml:"scheduled_at,omitempty" json:"scheduled_at,omitempty"`
@@ -33,6 +34,7 @@ type ScheduleImport struct {
 
 // WebhookImport represents a webhook for import/export
 type WebhookImport struct {
+	ID              string                 `yaml:"id,omitempty" toml:"id,omitempty" json:"id,omitempty"`
 	Name            string                 `yaml:"name" toml:"name" json:"name"`
 	Status          string                 `yaml:"status,omitempty" toml:"status,omitempty" json:"status,omitempty"`
 	WebhookType     string                 `yaml:"webhook_type" toml:"webhook_type" json:"webhook_type"`

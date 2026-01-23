@@ -27,29 +27,33 @@ func (v *Validator) Validate(resources *TeamResources) error {
 	}
 
 	// Validate schedules
-	scheduleNames := make(map[string]bool)
+	scheduleIDs := make(map[string]bool)
 	for i, schedule := range resources.Schedules {
 		if err := v.ValidateSchedule(schedule); err != nil {
 			return fmt.Errorf("schedule[%d] validation failed: %w", i, err)
 		}
-		// Check for duplicate names
-		if scheduleNames[schedule.Name] {
-			return fmt.Errorf("duplicate schedule name: %s", schedule.Name)
+		// Check for duplicate IDs (if ID is provided)
+		if schedule.ID != "" {
+			if scheduleIDs[schedule.ID] {
+				return fmt.Errorf("duplicate schedule ID: %s", schedule.ID)
+			}
+			scheduleIDs[schedule.ID] = true
 		}
-		scheduleNames[schedule.Name] = true
 	}
 
 	// Validate webhooks
-	webhookNames := make(map[string]bool)
+	webhookIDs := make(map[string]bool)
 	for i, webhook := range resources.Webhooks {
 		if err := v.ValidateWebhook(webhook); err != nil {
 			return fmt.Errorf("webhook[%d] validation failed: %w", i, err)
 		}
-		// Check for duplicate names
-		if webhookNames[webhook.Name] {
-			return fmt.Errorf("duplicate webhook name: %s", webhook.Name)
+		// Check for duplicate IDs (if ID is provided)
+		if webhook.ID != "" {
+			if webhookIDs[webhook.ID] {
+				return fmt.Errorf("duplicate webhook ID: %s", webhook.ID)
+			}
+			webhookIDs[webhook.ID] = true
 		}
-		webhookNames[webhook.Name] = true
 	}
 
 	return nil
