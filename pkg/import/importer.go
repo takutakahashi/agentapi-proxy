@@ -41,16 +41,22 @@ func NewImporter(
 
 // Import imports team resources
 func (i *Importer) Import(ctx context.Context, resources *TeamResources, userID string, options ImportOptions) (*ImportResult, error) {
-	// Validate the resources first
-	if err := i.validator.Validate(resources); err != nil {
-		return nil, fmt.Errorf("validation failed: %w", err)
-	}
-
 	result := &ImportResult{
 		Success: true,
 		Summary: ImportSummary{},
 		Details: []ImportDetail{},
 		Errors:  []string{},
+	}
+
+	// Validate the resources first
+	if err := i.validator.Validate(resources); err != nil {
+		// In dry-run mode, return validation errors in the result instead of failing immediately
+		if options.DryRun {
+			result.Success = false
+			result.Errors = append(result.Errors, fmt.Sprintf("Validation failed: %v", err))
+			return result, nil
+		}
+		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Import schedules
