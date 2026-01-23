@@ -23,6 +23,7 @@ type ResourceMetadata struct {
 
 // ScheduleImport represents a schedule for import/export
 type ScheduleImport struct {
+	ID            string              `yaml:"id" toml:"id" json:"id"`
 	Name          string              `yaml:"name" toml:"name" json:"name"`
 	Status        string              `yaml:"status,omitempty" toml:"status,omitempty" json:"status,omitempty"`
 	ScheduledAt   *time.Time          `yaml:"scheduled_at,omitempty" toml:"scheduled_at,omitempty" json:"scheduled_at,omitempty"`
@@ -33,6 +34,7 @@ type ScheduleImport struct {
 
 // WebhookImport represents a webhook for import/export
 type WebhookImport struct {
+	ID              string                 `yaml:"id" toml:"id" json:"id"`
 	Name            string                 `yaml:"name" toml:"name" json:"name"`
 	Status          string                 `yaml:"status,omitempty" toml:"status,omitempty" json:"status,omitempty"`
 	WebhookType     string                 `yaml:"webhook_type" toml:"webhook_type" json:"webhook_type"`
@@ -138,6 +140,7 @@ type ImportResult struct {
 type ImportSummary struct {
 	Schedules ImportResourceSummary `json:"schedules"`
 	Webhooks  ImportResourceSummary `json:"webhooks"`
+	Settings  ImportResourceSummary `json:"settings"`
 }
 
 // ImportResourceSummary contains summary statistics for a resource type
@@ -150,12 +153,13 @@ type ImportResourceSummary struct {
 
 // ImportDetail contains detailed information about a single resource import
 type ImportDetail struct {
-	ResourceType string `json:"resource_type"` // "schedule" or "webhook"
-	ResourceName string `json:"resource_name"`
-	Action       string `json:"action"` // "created", "updated", "skipped", "failed"
-	ID           string `json:"id,omitempty"`
-	Status       string `json:"status"` // "success" or "error"
-	Error        string `json:"error,omitempty"`
+	ResourceType string  `json:"resource_type"` // "schedule", "webhook", or "settings"
+	ResourceName string  `json:"resource_name"`
+	Action       string  `json:"action"` // "created", "updated", "skipped", "failed"
+	ID           string  `json:"id,omitempty"`
+	Status       string  `json:"status"` // "success" or "error"
+	Error        string  `json:"error,omitempty"`
+	Diff         *string `json:"diff,omitempty"` // Unified diff for dry-run mode
 }
 
 // ExportFormat defines the export format

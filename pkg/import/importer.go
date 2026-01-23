@@ -41,16 +41,22 @@ func NewImporter(
 
 // Import imports team resources
 func (i *Importer) Import(ctx context.Context, resources *TeamResources, userID string, options ImportOptions) (*ImportResult, error) {
-	// Validate the resources first
-	if err := i.validator.Validate(resources); err != nil {
-		return nil, fmt.Errorf("validation failed: %w", err)
-	}
-
 	result := &ImportResult{
 		Success: true,
 		Summary: ImportSummary{},
 		Details: []ImportDetail{},
 		Errors:  []string{},
+	}
+
+	// Validate the resources first
+	if err := i.validator.Validate(resources); err != nil {
+		// In dry-run mode, return validation errors in the result instead of failing immediately
+		if options.DryRun {
+			result.Success = false
+			result.Errors = append(result.Errors, fmt.Sprintf("Validation failed: %v", err))
+			return result, nil
+		}
+		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Import schedules
@@ -97,8 +103,30 @@ func (i *Importer) Import(ctx context.Context, resources *TeamResources, userID 
 		}
 	}
 
+	// Import settings
+	if resources.Settings != nil {
+		detail := i.importSettings(ctx, *resources.Settings, resources.Metadata.TeamID, userID, options)
+		result.Details = append(result.Details, detail)
+
+		switch detail.Action {
+		case "created":
+			result.Summary.Settings.Created++
+		case "updated":
+			result.Summary.Settings.Updated++
+		case "skipped":
+			result.Summary.Settings.Skipped++
+		case "failed":
+			result.Summary.Settings.Failed++
+			result.Errors = append(result.Errors, detail.Error)
+			if !options.AllowPartial {
+				result.Success = false
+				return result, nil
+			}
+		}
+	}
+
 	// Check if any failures occurred
-	if result.Summary.Schedules.Failed > 0 || result.Summary.Webhooks.Failed > 0 {
+	if result.Summary.Schedules.Failed > 0 || result.Summary.Webhooks.Failed > 0 || result.Summary.Settings.Failed > 0 {
 		result.Success = false
 	}
 
@@ -112,7 +140,7 @@ func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleIm
 		Status:       "success",
 	}
 
-	// Find existing schedule by name if mode is update or upsert
+	// Find existing schedule by ID (preferred) or name (fallback) if mode is update or upsert
 	var existingSchedule *schedule.Schedule
 	if options.Mode == ImportModeUpdate || options.Mode == ImportModeUpsert {
 		schedules, err := i.scheduleManager.List(ctx, schedule.ScheduleFilter{
@@ -121,10 +149,22 @@ func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleIm
 			TeamID: teamID,
 		})
 		if err == nil {
-			for _, s := range schedules {
-				if s.Name == scheduleImport.Name {
-					existingSchedule = s
-					break
+			// First, try to match by ID if provided
+			if scheduleImport.ID != "" {
+				for _, s := range schedules {
+					if s.ID == scheduleImport.ID {
+						existingSchedule = s
+						break
+					}
+				}
+			}
+			// Fallback to name matching if ID not found or not provided
+			if existingSchedule == nil {
+				for _, s := range schedules {
+					if s.Name == scheduleImport.Name {
+						existingSchedule = s
+						break
+					}
 				}
 			}
 		}
@@ -157,21 +197,32 @@ func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleIm
 		}
 	}
 
-	// Dry run - don't actually create/update
-	if options.DryRun {
-		detail.Action = action + "d (dry-run)"
-		if existingSchedule != nil {
-			detail.ID = existingSchedule.ID
-		}
-		return detail
-	}
-
 	// Convert import to schedule entity
 	scheduleEntity, err := i.convertScheduleImport(scheduleImport, teamID, userID, existingSchedule)
 	if err != nil {
 		detail.Action = "failed"
 		detail.Status = "error"
 		detail.Error = err.Error()
+		return detail
+	}
+
+	// Dry run - don't actually create/update, but generate diff
+	if options.DryRun {
+		detail.Action = action + "d (dry-run)"
+		if existingSchedule != nil {
+			detail.ID = existingSchedule.ID
+			// Generate diff for update
+			diff, err := generateDiff(existingSchedule, scheduleEntity, scheduleImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		} else {
+			// For create, show the new resource as diff
+			diff, err := generateDiff(nil, scheduleEntity, scheduleImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		}
 		return detail
 	}
 
@@ -205,7 +256,7 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 		Status:       "success",
 	}
 
-	// Find existing webhook by name if mode is update or upsert
+	// Find existing webhook by ID (preferred) or name (fallback) if mode is update or upsert
 	var existingWebhook *entities.Webhook
 	if options.Mode == ImportModeUpdate || options.Mode == ImportModeUpsert {
 		webhooks, err := i.webhookRepository.List(ctx, repositories.WebhookFilter{
@@ -214,10 +265,22 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 			TeamID: teamID,
 		})
 		if err == nil {
-			for _, w := range webhooks {
-				if w.Name() == webhookImport.Name {
-					existingWebhook = w
-					break
+			// First, try to match by ID if provided
+			if webhookImport.ID != "" {
+				for _, w := range webhooks {
+					if w.ID() == webhookImport.ID {
+						existingWebhook = w
+						break
+					}
+				}
+			}
+			// Fallback to name matching if ID not found or not provided
+			if existingWebhook == nil {
+				for _, w := range webhooks {
+					if w.Name() == webhookImport.Name {
+						existingWebhook = w
+						break
+					}
 				}
 			}
 		}
@@ -250,21 +313,32 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 		}
 	}
 
-	// Dry run - don't actually create/update
-	if options.DryRun {
-		detail.Action = action + "d (dry-run)"
-		if existingWebhook != nil {
-			detail.ID = existingWebhook.ID()
-		}
-		return detail
-	}
-
 	// Convert import to webhook entity
 	webhookEntity, err := i.convertWebhookImport(ctx, webhookImport, teamID, userID, existingWebhook, options)
 	if err != nil {
 		detail.Action = "failed"
 		detail.Status = "error"
 		detail.Error = err.Error()
+		return detail
+	}
+
+	// Dry run - don't actually create/update, but generate diff
+	if options.DryRun {
+		detail.Action = action + "d (dry-run)"
+		if existingWebhook != nil {
+			detail.ID = existingWebhook.ID()
+			// Generate diff for update
+			diff, err := generateDiff(existingWebhook, webhookEntity, webhookImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		} else {
+			// For create, show the new resource as diff
+			diff, err := generateDiff(nil, webhookEntity, webhookImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		}
 		return detail
 	}
 
@@ -528,4 +602,288 @@ func generateSecret(length int) (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+func (i *Importer) importSettings(ctx context.Context, settingsImport SettingsImport, teamID, userID string, options ImportOptions) ImportDetail {
+	detail := ImportDetail{
+		ResourceType: "settings",
+		ResourceName: settingsImport.Name,
+		Status:       "success",
+	}
+
+	// Settings repository must be available
+	if i.settingsRepository == nil {
+		detail.Action = "failed"
+		detail.Status = "error"
+		detail.Error = "settings repository not available"
+		return detail
+	}
+
+	// Find existing settings
+	var existingSettings *entities.Settings
+	existing, err := i.settingsRepository.FindByName(ctx, teamID)
+	if err == nil {
+		existingSettings = existing
+	}
+
+	// Determine action based on mode and existence
+	var action string
+	switch options.Mode {
+	case ImportModeCreate:
+		if existingSettings != nil {
+			detail.Action = "failed"
+			detail.Status = "error"
+			detail.Error = fmt.Sprintf("settings with name %q already exists", settingsImport.Name)
+			return detail
+		}
+		action = "create"
+	case ImportModeUpdate:
+		if existingSettings == nil {
+			detail.Action = "failed"
+			detail.Status = "error"
+			detail.Error = fmt.Sprintf("settings with name %q does not exist", settingsImport.Name)
+			return detail
+		}
+		action = "update"
+	case ImportModeUpsert:
+		if existingSettings != nil {
+			action = "update"
+		} else {
+			action = "create"
+		}
+	}
+
+	// Convert import to settings entity
+	settingsEntity, err := i.convertSettingsImport(ctx, settingsImport, existingSettings)
+	if err != nil {
+		detail.Action = "failed"
+		detail.Status = "error"
+		detail.Error = err.Error()
+		return detail
+	}
+
+	// Dry run - don't actually create/update, but generate diff
+	if options.DryRun {
+		detail.Action = action + "d (dry-run)"
+		if existingSettings != nil {
+			// Generate diff for update
+			diff, err := generateDiff(existingSettings, settingsEntity, settingsImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		} else {
+			// For create, show the new resource as diff
+			diff, err := generateDiff(nil, settingsEntity, settingsImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		}
+		return detail
+	}
+
+	// Save settings
+	if err := i.settingsRepository.Save(ctx, settingsEntity); err != nil {
+		detail.Action = "failed"
+		detail.Status = "error"
+		detail.Error = err.Error()
+		return detail
+	}
+
+	detail.Action = action + "d"
+	return detail
+}
+
+func (i *Importer) convertSettingsImport(ctx context.Context, settingsImport SettingsImport, existing *entities.Settings) (*entities.Settings, error) {
+	var settingsEntity *entities.Settings
+	if existing != nil {
+		settingsEntity = existing
+	} else {
+		settingsEntity = entities.NewSettings(settingsImport.Name)
+	}
+
+	// Bedrock settings
+	if settingsImport.Bedrock != nil {
+		bedrock := entities.NewBedrockSettings(settingsImport.Bedrock.Enabled)
+		bedrock.SetModel(settingsImport.Bedrock.Model)
+		bedrock.SetRoleARN(settingsImport.Bedrock.RoleARN)
+		bedrock.SetProfile(settingsImport.Bedrock.Profile)
+
+		// Decrypt AccessKeyID
+		if settingsImport.Bedrock.AccessKeyIDEncrypted != nil {
+			if i.encryptionService == nil {
+				return nil, fmt.Errorf("encrypted access_key_id found but encryption service not configured")
+			}
+			encrypted := &services.EncryptedData{
+				EncryptedValue: settingsImport.Bedrock.AccessKeyID,
+				Metadata: services.EncryptionMetadata{
+					Algorithm:   settingsImport.Bedrock.AccessKeyIDEncrypted.Algorithm,
+					KeyID:       settingsImport.Bedrock.AccessKeyIDEncrypted.KeyID,
+					EncryptedAt: settingsImport.Bedrock.AccessKeyIDEncrypted.EncryptedAt,
+					Version:     settingsImport.Bedrock.AccessKeyIDEncrypted.Version,
+				},
+			}
+			plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt access_key_id: %w", err)
+			}
+			bedrock.SetAccessKeyID(plaintext)
+		} else if settingsImport.Bedrock.AccessKeyID != "" {
+			bedrock.SetAccessKeyID(settingsImport.Bedrock.AccessKeyID)
+		}
+
+		// Decrypt SecretAccessKey
+		if settingsImport.Bedrock.SecretAccessKeyEncrypted != nil {
+			if i.encryptionService == nil {
+				return nil, fmt.Errorf("encrypted secret_access_key found but encryption service not configured")
+			}
+			encrypted := &services.EncryptedData{
+				EncryptedValue: settingsImport.Bedrock.SecretAccessKey,
+				Metadata: services.EncryptionMetadata{
+					Algorithm:   settingsImport.Bedrock.SecretAccessKeyEncrypted.Algorithm,
+					KeyID:       settingsImport.Bedrock.SecretAccessKeyEncrypted.KeyID,
+					EncryptedAt: settingsImport.Bedrock.SecretAccessKeyEncrypted.EncryptedAt,
+					Version:     settingsImport.Bedrock.SecretAccessKeyEncrypted.Version,
+				},
+			}
+			plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt secret_access_key: %w", err)
+			}
+			bedrock.SetSecretAccessKey(plaintext)
+		} else if settingsImport.Bedrock.SecretAccessKey != "" {
+			bedrock.SetSecretAccessKey(settingsImport.Bedrock.SecretAccessKey)
+		}
+
+		settingsEntity.SetBedrock(bedrock)
+	}
+
+	// MCP Servers
+	if settingsImport.MCPServers != nil {
+		mcpServers := entities.NewMCPServersSettings()
+		for name, serverImport := range settingsImport.MCPServers {
+			server, err := i.convertMCPServerImport(ctx, name, serverImport)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert MCP server %s: %w", name, err)
+			}
+			mcpServers.SetServer(name, server)
+		}
+		settingsEntity.SetMCPServers(mcpServers)
+	}
+
+	// Marketplaces
+	if settingsImport.Marketplaces != nil {
+		marketplaces := entities.NewMarketplacesSettings()
+		for name, marketplaceImport := range settingsImport.Marketplaces {
+			marketplace := entities.NewMarketplace(name)
+			marketplace.SetURL(marketplaceImport.URL)
+			marketplaces.SetMarketplace(name, marketplace)
+		}
+		settingsEntity.SetMarketplaces(marketplaces)
+	}
+
+	// Decrypt ClaudeCodeOAuthToken
+	if settingsImport.ClaudeCodeOAuthTokenEncrypted != nil {
+		if i.encryptionService == nil {
+			return nil, fmt.Errorf("encrypted oauth token found but encryption service not configured")
+		}
+		encrypted := &services.EncryptedData{
+			EncryptedValue: settingsImport.ClaudeCodeOAuthToken,
+			Metadata: services.EncryptionMetadata{
+				Algorithm:   settingsImport.ClaudeCodeOAuthTokenEncrypted.Algorithm,
+				KeyID:       settingsImport.ClaudeCodeOAuthTokenEncrypted.KeyID,
+				EncryptedAt: settingsImport.ClaudeCodeOAuthTokenEncrypted.EncryptedAt,
+				Version:     settingsImport.ClaudeCodeOAuthTokenEncrypted.Version,
+			},
+		}
+		plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt oauth token: %w", err)
+		}
+		settingsEntity.SetClaudeCodeOAuthToken(plaintext)
+	} else if settingsImport.ClaudeCodeOAuthToken != "" {
+		settingsEntity.SetClaudeCodeOAuthToken(settingsImport.ClaudeCodeOAuthToken)
+	}
+
+	// Auth mode
+	if settingsImport.AuthMode != "" {
+		settingsEntity.SetAuthMode(entities.AuthMode(settingsImport.AuthMode))
+	}
+
+	// Enabled plugins
+	if settingsImport.EnabledPlugins != nil {
+		settingsEntity.SetEnabledPlugins(settingsImport.EnabledPlugins)
+	}
+
+	return settingsEntity, nil
+}
+
+func (i *Importer) convertMCPServerImport(ctx context.Context, name string, serverImport *MCPServerImport) (*entities.MCPServer, error) {
+	server := entities.NewMCPServer(name, serverImport.Type)
+	server.SetURL(serverImport.URL)
+	server.SetCommand(serverImport.Command)
+	server.SetArgs(serverImport.Args)
+
+	// Decrypt Env (each value individually)
+	if len(serverImport.Env) > 0 {
+		env := make(map[string]string)
+		for k, v := range serverImport.Env {
+			if serverImport.EnvEncrypted != nil && serverImport.EnvEncrypted[k] != nil {
+				// Encrypted value - decrypt it
+				if i.encryptionService == nil {
+					return nil, fmt.Errorf("encrypted env %s found but encryption service not configured", k)
+				}
+				encrypted := &services.EncryptedData{
+					EncryptedValue: v,
+					Metadata: services.EncryptionMetadata{
+						Algorithm:   serverImport.EnvEncrypted[k].Algorithm,
+						KeyID:       serverImport.EnvEncrypted[k].KeyID,
+						EncryptedAt: serverImport.EnvEncrypted[k].EncryptedAt,
+						Version:     serverImport.EnvEncrypted[k].Version,
+					},
+				}
+				plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt env %s: %w", k, err)
+				}
+				env[k] = plaintext
+			} else {
+				// Plain text value
+				env[k] = v
+			}
+		}
+		server.SetEnv(env)
+	}
+
+	// Decrypt Headers (each value individually)
+	if len(serverImport.Headers) > 0 {
+		headers := make(map[string]string)
+		for k, v := range serverImport.Headers {
+			if serverImport.HeadersEncrypted != nil && serverImport.HeadersEncrypted[k] != nil {
+				// Encrypted value - decrypt it
+				if i.encryptionService == nil {
+					return nil, fmt.Errorf("encrypted header %s found but encryption service not configured", k)
+				}
+				encrypted := &services.EncryptedData{
+					EncryptedValue: v,
+					Metadata: services.EncryptionMetadata{
+						Algorithm:   serverImport.HeadersEncrypted[k].Algorithm,
+						KeyID:       serverImport.HeadersEncrypted[k].KeyID,
+						EncryptedAt: serverImport.HeadersEncrypted[k].EncryptedAt,
+						Version:     serverImport.HeadersEncrypted[k].Version,
+					},
+				}
+				plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt header %s: %w", k, err)
+				}
+				headers[k] = plaintext
+			} else {
+				// Plain text value
+				headers[k] = v
+			}
+		}
+		server.SetHeaders(headers)
+	}
+
+	return server, nil
 }
