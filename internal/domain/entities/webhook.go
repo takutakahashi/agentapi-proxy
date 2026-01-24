@@ -521,7 +521,9 @@ type WebhookSessionConfig struct {
 	environment            map[string]string
 	tags                   map[string]string
 	initialMessageTemplate string
+	reuseMessageTemplate   string
 	params                 *WebhookSessionParams
+	reuseSession           bool
 }
 
 // NewWebhookSessionConfig creates a new session config
@@ -552,11 +554,25 @@ func (c *WebhookSessionConfig) SetInitialMessageTemplate(template string) {
 	c.initialMessageTemplate = template
 }
 
+// ReuseMessageTemplate returns the reuse message template
+func (c *WebhookSessionConfig) ReuseMessageTemplate() string { return c.reuseMessageTemplate }
+
+// SetReuseMessageTemplate sets the reuse message template
+func (c *WebhookSessionConfig) SetReuseMessageTemplate(template string) {
+	c.reuseMessageTemplate = template
+}
+
 // Params returns the session params
 func (c *WebhookSessionConfig) Params() *WebhookSessionParams { return c.params }
 
 // SetParams sets the session params
 func (c *WebhookSessionConfig) SetParams(params *WebhookSessionParams) { c.params = params }
+
+// ReuseSession returns whether to reuse existing sessions
+func (c *WebhookSessionConfig) ReuseSession() bool { return c.reuseSession }
+
+// SetReuseSession sets whether to reuse existing sessions
+func (c *WebhookSessionConfig) SetReuseSession(reuse bool) { c.reuseSession = reuse }
 
 // WebhookSessionParams contains additional session parameters
 type WebhookSessionParams struct {
@@ -582,6 +598,7 @@ type WebhookDeliveryRecord struct {
 	matchedTrigger string
 	sessionID      string
 	errorMessage   string
+	sessionReused  bool
 }
 
 // NewWebhookDeliveryRecord creates a new delivery record
@@ -619,6 +636,12 @@ func (r *WebhookDeliveryRecord) Error() string { return r.errorMessage }
 
 // SetError sets the error message
 func (r *WebhookDeliveryRecord) SetError(errorMessage string) { r.errorMessage = errorMessage }
+
+// SessionReused returns whether the session was reused
+func (r *WebhookDeliveryRecord) SessionReused() bool { return r.sessionReused }
+
+// SetSessionReused sets whether the session was reused
+func (r *WebhookDeliveryRecord) SetSessionReused(reused bool) { r.sessionReused = reused }
 
 // ErrInvalidWebhook represents a validation error
 type ErrInvalidWebhook struct {

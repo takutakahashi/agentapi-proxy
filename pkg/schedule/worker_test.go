@@ -80,6 +80,10 @@ func (m *mockProxySessionManager) Shutdown(timeout time.Duration) error {
 	return nil
 }
 
+func (m *mockProxySessionManager) SendMessage(ctx context.Context, id string, message string) error {
+	return nil
+}
+
 func TestWorker_StartStop(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	manager := NewKubernetesManager(client, "default")

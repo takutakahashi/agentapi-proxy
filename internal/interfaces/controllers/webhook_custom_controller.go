@@ -184,8 +184,8 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 
 	log.Printf("[WEBHOOK_CUSTOM] Trigger matched: %s (%s)", matchResult.ID(), matchResult.Name())
 
-	// Create session
-	sessionID, err := c.createSessionFromWebhook(ctx, matchedWebhook, matchResult, payload)
+	// Create or reuse session
+	sessionID, sessionReused, err := c.createSessionFromWebhook(ctx, matchedWebhook, matchResult, payload)
 	if err != nil {
 		log.Printf("[WEBHOOK_CUSTOM] Failed to create session: %v", err)
 
@@ -209,6 +209,7 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 	record := entities.NewWebhookDeliveryRecord("", entities.DeliveryStatusProcessed)
 	record.SetMatchedTrigger(matchResult.ID())
 	record.SetSessionID(sessionID)
+	record.SetSessionReused(sessionReused)
 	if err := c.repo.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), record); err != nil {
 		log.Printf("[WEBHOOK_CUSTOM] Failed to record delivery: %v", err)
 	}
@@ -342,9 +343,7 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 	webhook *entities.Webhook,
 	trigger *entities.WebhookTrigger,
 	payload map[string]interface{},
-) (string, error) {
-	sessionID := uuid.New().String()
-
+) (string, bool, error) {
 	// Merge session configs (trigger overrides webhook default)
 	sessionConfig := c.mergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
 
@@ -385,6 +384,50 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 		initialMessage = c.buildDefaultInitialMessage(payload)
 	}
 
+	// Check if session reuse is enabled
+	if sessionConfig != nil && sessionConfig.ReuseSession() {
+		// Try to find existing session with same webhook_id and trigger_id
+		filter := entities.SessionFilter{
+			Tags: map[string]string{
+				"webhook_id": webhook.ID(),
+				"trigger_id": trigger.ID(),
+			},
+			Status: "running",
+		}
+		existingSessions := c.sessionManager.ListSessions(filter)
+		if len(existingSessions) > 0 {
+			// Reuse the first matching session
+			existingSession := existingSessions[0]
+			log.Printf("[WEBHOOK_CUSTOM] Reusing existing session %s for webhook %s, trigger %s", existingSession.ID(), webhook.ID(), trigger.ID())
+
+			// Generate reuse message
+			var reuseMessage string
+			if sessionConfig.ReuseMessageTemplate() != "" {
+				// Use reuse message template if specified
+				msg, err := c.renderTemplate(sessionConfig.ReuseMessageTemplate(), payload)
+				if err != nil {
+					log.Printf("[WEBHOOK_CUSTOM] Failed to render reuse message template: %v", err)
+					reuseMessage = initialMessage
+				} else {
+					reuseMessage = msg
+				}
+			} else {
+				// Fall back to initial message
+				reuseMessage = initialMessage
+			}
+
+			// Send message to existing session
+			err := c.sessionManager.SendMessage(ctx.Request().Context(), existingSession.ID(), reuseMessage)
+			if err == nil {
+				return existingSession.ID(), true, nil
+			}
+			log.Printf("[WEBHOOK_CUSTOM] Failed to send message to existing session: %v, creating new session instead", err)
+		}
+	}
+
+	// Create new session
+	sessionID := uuid.New().String()
+
 	// Build session request
 	req := &entities.RunServerRequest{
 		UserID:         webhook.UserID(),
@@ -409,16 +452,16 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 	existingSessions := c.sessionManager.ListSessions(filter)
 	maxSessions := webhook.MaxSessions()
 	if len(existingSessions) >= maxSessions {
-		return "", fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
+		return "", false, fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
 	}
 
 	// Create the session
 	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req)
 	if err != nil {
-		return "", fmt.Errorf("failed to create session: %w", err)
+		return "", false, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	return session.ID(), nil
+	return session.ID(), false, nil
 }
 
 // mergeSessionConfigs merges two session configs, with override taking precedence
