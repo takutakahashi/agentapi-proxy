@@ -140,7 +140,29 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 	var payload map[string]interface{}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		log.Printf("[WEBHOOK_CUSTOM] Failed to parse payload as JSON: %v", err)
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON payload"})
+
+		// Create session with parse error message
+		sessionID, sessionErr := c.createSessionForParseError(ctx, matchedWebhook, err, body)
+		if sessionErr != nil {
+			log.Printf("[WEBHOOK_CUSTOM] Failed to create error session: %v", sessionErr)
+			return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON payload"})
+		}
+
+		// Record failed delivery
+		record := entities.NewWebhookDeliveryRecord("", entities.DeliveryStatusFailed)
+		record.SetSessionID(sessionID)
+		record.SetError(fmt.Sprintf("JSON parse error: %v", err))
+		if recordErr := c.repo.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), record); recordErr != nil {
+			log.Printf("[WEBHOOK_CUSTOM] Failed to record delivery: %v", recordErr)
+		}
+
+		log.Printf("[WEBHOOK_CUSTOM] Session created with parse error: %s", sessionID)
+
+		return ctx.JSON(http.StatusOK, map[string]string{
+			"message":    "Session created with parse error",
+			"session_id": sessionID,
+			"webhook_id": matchedWebhook.ID(),
+		})
 	}
 
 	// Match triggers based on JSONPath conditions
@@ -450,6 +472,96 @@ func (c *WebhookCustomController) mergeSessionConfigs(
 	}
 
 	return result
+}
+
+// createSessionForParseError creates a session when payload parsing fails
+func (c *WebhookCustomController) createSessionForParseError(
+	ctx echo.Context,
+	webhook *entities.Webhook,
+	parseErr error,
+	rawBody []byte,
+) (string, error) {
+	sessionID := uuid.New().String()
+
+	// Use webhook-level session config
+	sessionConfig := webhook.SessionConfig()
+
+	// Build environment variables
+	env := make(map[string]string)
+	if sessionConfig != nil && sessionConfig.Environment() != nil {
+		for k, v := range sessionConfig.Environment() {
+			env[k] = v
+		}
+	}
+
+	// Build tags
+	tags := make(map[string]string)
+	if sessionConfig != nil && sessionConfig.Tags() != nil {
+		for k, v := range sessionConfig.Tags() {
+			tags[k] = v
+		}
+	}
+
+	// Add webhook metadata tags
+	tags["webhook_id"] = webhook.ID()
+	tags["webhook_name"] = webhook.Name()
+	tags["webhook_type"] = string(webhook.WebhookType())
+	tags["parse_error"] = "true"
+
+	// Create error message
+	initialMessage := fmt.Sprintf(`Custom webhook parse error
+
+Webhook: %s
+Error: %s
+
+Raw payload (first 500 chars):
+%s
+
+Please ensure the webhook payload is valid JSON.
+`, webhook.Name(), parseErr.Error(), c.truncateString(string(rawBody), 500))
+
+	// Build session request
+	req := &entities.RunServerRequest{
+		UserID:         webhook.UserID(),
+		Environment:    env,
+		Tags:           tags,
+		Scope:          webhook.Scope(),
+		TeamID:         webhook.TeamID(),
+		InitialMessage: initialMessage,
+	}
+
+	// Handle GitHub token if provided
+	if sessionConfig != nil && sessionConfig.Params() != nil && sessionConfig.Params().GithubToken() != "" {
+		req.GithubToken = sessionConfig.Params().GithubToken()
+	}
+
+	// Check session limit per webhook
+	filter := entities.SessionFilter{
+		Tags: map[string]string{
+			"webhook_id": webhook.ID(),
+		},
+	}
+	existingSessions := c.sessionManager.ListSessions(filter)
+	maxSessions := webhook.MaxSessions()
+	if len(existingSessions) >= maxSessions {
+		return "", fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
+	}
+
+	// Create the session
+	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req)
+	if err != nil {
+		return "", fmt.Errorf("failed to create session: %w", err)
+	}
+
+	return session.ID(), nil
+}
+
+// truncateString truncates a string to the specified length
+func (c *WebhookCustomController) truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // renderTemplate renders a Go template with webhook payload data
