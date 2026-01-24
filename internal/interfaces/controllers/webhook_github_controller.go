@@ -613,29 +613,16 @@ func (c *WebhookGitHubController) mergeSessionConfigs(base, override *entities.W
 }
 
 // renderTemplate renders a Go template with webhook payload data
+// Uses the raw GitHub payload directly, same as GoTemplate conditions
 func (c *WebhookGitHubController) renderTemplate(tmplStr, event string, payload *GitHubPayload) (string, error) {
 	tmpl, err := template.New("initial_message").Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	data := map[string]interface{}{
-		"event":   event,
-		"payload": payload.Raw,
-	}
-
-	if payload.Repository != nil {
-		data["repository"] = payload.Repository
-	}
-	if payload.Sender != nil {
-		data["sender"] = payload.Sender
-	}
-	if payload.PullRequest != nil {
-		data["pull_request"] = payload.PullRequest
-	}
-	if payload.Issue != nil {
-		data["issue"] = payload.Issue
-	}
+	// Use the raw payload directly, same as GoTemplate matcher
+	// This allows templates to access payload fields like {{ .action }}, {{ .pull_request.number }}, etc.
+	data := payload.Raw
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

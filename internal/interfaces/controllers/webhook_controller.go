@@ -1,14 +1,17 @@
 package controllers
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net/http"
+	"text/template"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/webhook"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
@@ -232,6 +235,11 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	}
 	if len(req.Triggers) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one trigger is required")
+	}
+
+	// Validate templates before creating webhook
+	if err := c.validateWebhookTemplates(req.Type, req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Template validation error: %v", err))
 	}
 
 	// Get user from context
@@ -482,6 +490,11 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 	var req UpdateWebhookRequest
 	if err := ctx.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+
+	// Validate templates before updating webhook
+	if err := c.validateWebhookTemplatesForUpdate(webhook.WebhookType(), req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Template validation error: %v", err))
 	}
 
 	// Apply updates
@@ -819,4 +832,139 @@ func (c *WebhookController) setCORSHeaders(ctx echo.Context) {
 // generateSecret generates a random secret for webhook signature verification
 func generateSecret() string {
 	return uuid.New().String() + uuid.New().String()
+}
+
+// validateWebhookTemplates validates all templates in the webhook request
+func (c *WebhookController) validateWebhookTemplates(webhookType entities.WebhookType, req CreateWebhookRequest) error {
+	// Validate webhook-level session config template
+	if req.SessionConfig != nil && req.SessionConfig.InitialMessageTemplate != "" {
+		if err := c.validateInitialMessageTemplate(webhookType, req.SessionConfig.InitialMessageTemplate); err != nil {
+			return fmt.Errorf("webhook session_config.initial_message_template: %w", err)
+		}
+	}
+
+	// Validate trigger templates
+	for i, trigger := range req.Triggers {
+		// Validate GoTemplate condition
+		if trigger.Conditions.GoTemplate != "" {
+			if err := c.validateGoTemplateCondition(webhookType, trigger.Conditions.GoTemplate); err != nil {
+				return fmt.Errorf("trigger[%d] (%s) conditions.go_template: %w", i, trigger.Name, err)
+			}
+		}
+
+		// Validate trigger-level session config template
+		if trigger.SessionConfig != nil && trigger.SessionConfig.InitialMessageTemplate != "" {
+			if err := c.validateInitialMessageTemplate(webhookType, trigger.SessionConfig.InitialMessageTemplate); err != nil {
+				return fmt.Errorf("trigger[%d] (%s) session_config.initial_message_template: %w", i, trigger.Name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateWebhookTemplatesForUpdate validates all templates in the webhook update request
+func (c *WebhookController) validateWebhookTemplatesForUpdate(webhookType entities.WebhookType, req UpdateWebhookRequest) error {
+	// Validate webhook-level session config template
+	if req.SessionConfig != nil && req.SessionConfig.InitialMessageTemplate != "" {
+		if err := c.validateInitialMessageTemplate(webhookType, req.SessionConfig.InitialMessageTemplate); err != nil {
+			return fmt.Errorf("webhook session_config.initial_message_template: %w", err)
+		}
+	}
+
+	// Validate trigger templates
+	if req.Triggers != nil {
+		for i, trigger := range req.Triggers {
+			// Validate GoTemplate condition
+			if trigger.Conditions.GoTemplate != "" {
+				if err := c.validateGoTemplateCondition(webhookType, trigger.Conditions.GoTemplate); err != nil {
+					return fmt.Errorf("trigger[%d] (%s) conditions.go_template: %w", i, trigger.Name, err)
+				}
+			}
+
+			// Validate trigger-level session config template
+			if trigger.SessionConfig != nil && trigger.SessionConfig.InitialMessageTemplate != "" {
+				if err := c.validateInitialMessageTemplate(webhookType, trigger.SessionConfig.InitialMessageTemplate); err != nil {
+					return fmt.Errorf("trigger[%d] (%s) session_config.initial_message_template: %w", i, trigger.Name, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateGoTemplateCondition validates a GoTemplate condition string
+func (c *WebhookController) validateGoTemplateCondition(webhookType entities.WebhookType, tmplStr string) error {
+	// Create test payload based on webhook type
+	testPayload := c.createTestPayload(webhookType)
+
+	// Use the existing GoTemplateEvaluator to validate
+	evaluator := webhook.NewGoTemplateEvaluator()
+	_, err := evaluator.Evaluate(testPayload, tmplStr)
+	if err != nil {
+		return fmt.Errorf("template validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// validateInitialMessageTemplate validates an initial message template
+func (c *WebhookController) validateInitialMessageTemplate(webhookType entities.WebhookType, tmplStr string) error {
+	// Try to parse the template
+	tmpl, err := template.New("initial_message").Parse(tmplStr)
+	if err != nil {
+		return fmt.Errorf("template parse failed: %w", err)
+	}
+
+	// Use the same test payload as GoTemplate conditions
+	// This ensures consistency between condition matching and message rendering
+	testData := c.createTestPayload(webhookType)
+
+	// Try to execute the template with test data
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, testData); err != nil {
+		return fmt.Errorf("template execution failed: %w", err)
+	}
+
+	return nil
+}
+
+// createTestPayload creates a test payload for template validation
+func (c *WebhookController) createTestPayload(webhookType entities.WebhookType) map[string]interface{} {
+	if webhookType == entities.WebhookTypeGitHub {
+		// GitHub webhook test payload
+		return map[string]interface{}{
+			"action": "opened",
+			"repository": map[string]interface{}{
+				"full_name": "example/repo",
+				"name":      "repo",
+			},
+			"pull_request": map[string]interface{}{
+				"number": 1,
+				"title":  "Test PR",
+				"state":  "open",
+				"base": map[string]interface{}{
+					"ref": "main",
+				},
+				"head": map[string]interface{}{
+					"ref": "feature/test",
+				},
+				"user": map[string]interface{}{
+					"login": "testuser",
+				},
+			},
+			"sender": map[string]interface{}{
+				"login": "testuser",
+			},
+		}
+	}
+
+	// Custom webhook test payload
+	return map[string]interface{}{
+		"event": "test",
+		"data": map[string]interface{}{
+			"message": "test message",
+		},
+	}
 }
