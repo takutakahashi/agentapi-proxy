@@ -917,8 +917,9 @@ func (c *WebhookController) validateInitialMessageTemplate(webhookType entities.
 		return fmt.Errorf("template parse failed: %w", err)
 	}
 
-	// Create test data based on webhook type
-	testData := c.createTestTemplateData(webhookType)
+	// Use the same test payload as GoTemplate conditions
+	// This ensures consistency between condition matching and message rendering
+	testData := c.createTestPayload(webhookType)
 
 	// Try to execute the template with test data
 	var buf bytes.Buffer
@@ -960,49 +961,6 @@ func (c *WebhookController) createTestPayload(webhookType entities.WebhookType) 
 	}
 
 	// Custom webhook test payload
-	return map[string]interface{}{
-		"event": "test",
-		"data": map[string]interface{}{
-			"message": "test message",
-		},
-	}
-}
-
-// createTestTemplateData creates test data for initial message template validation
-func (c *WebhookController) createTestTemplateData(webhookType entities.WebhookType) map[string]interface{} {
-	if webhookType == entities.WebhookTypeGitHub {
-		// GitHub webhook template data structure
-		return map[string]interface{}{
-			"event": "pull_request",
-			"repository": map[string]interface{}{
-				"FullName": "example/repo",
-				"Name":     "repo",
-			},
-			"pull_request": map[string]interface{}{
-				"Number": 1,
-				"Title":  "Test PR",
-				"State":  "open",
-				"Base": map[string]interface{}{
-					"Ref": "main",
-				},
-				"Head": map[string]interface{}{
-					"Ref": "feature/test",
-				},
-				"User": map[string]interface{}{
-					"Login": "testuser",
-				},
-				"HTMLURL": "https://github.com/example/repo/pull/1",
-			},
-			"sender": map[string]interface{}{
-				"Login": "testuser",
-			},
-			"payload": map[string]interface{}{
-				"action": "opened",
-			},
-		}
-	}
-
-	// Custom webhook template data
 	return map[string]interface{}{
 		"event": "test",
 		"data": map[string]interface{}{

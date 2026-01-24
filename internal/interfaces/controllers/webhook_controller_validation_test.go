@@ -19,19 +19,19 @@ func TestValidateInitialMessageTemplate(t *testing.T) {
 		{
 			name:        "Valid GitHub template with pull_request fields",
 			webhookType: entities.WebhookTypeGitHub,
-			template:    "PR #{{ .pull_request.Number }}: {{ .pull_request.Title }}",
+			template:    "PR #{{ .pull_request.number }}: {{ .pull_request.title }}",
 			shouldError: false,
 		},
 		{
 			name:        "Valid GitHub template with repository fields",
 			webhookType: entities.WebhookTypeGitHub,
-			template:    "Repository: {{ .repository.FullName }}",
+			template:    "Repository: {{ .repository.full_name }}",
 			shouldError: false,
 		},
 		{
 			name:        "Valid GitHub template with sender fields",
 			webhookType: entities.WebhookTypeGitHub,
-			template:    "Author: {{ .sender.Login }}",
+			template:    "Author: {{ .sender.login }}",
 			shouldError: false,
 		},
 		{
@@ -43,14 +43,14 @@ func TestValidateInitialMessageTemplate(t *testing.T) {
 		{
 			name:        "Invalid template - unclosed action",
 			webhookType: entities.WebhookTypeGitHub,
-			template:    "{{ .pull_request.Number",
+			template:    "{{ .pull_request.number",
 			shouldError: true,
 			errorMsg:    "template parse failed",
 		},
 		{
 			name:        "Invalid template - undefined function",
 			webhookType: entities.WebhookTypeGitHub,
-			template:    "{{ invalidFunc .pull_request.Number }}",
+			template:    "{{ invalidFunc .pull_request.number }}",
 			shouldError: true,
 			errorMsg:    "template execution failed",
 		},
@@ -276,39 +276,6 @@ func TestCreateTestPayload(t *testing.T) {
 			for _, field := range tt.checkFields {
 				if _, ok := payload[field]; !ok {
 					t.Errorf("Expected field %s in test payload but not found", field)
-				}
-			}
-		})
-	}
-}
-
-func TestCreateTestTemplateData(t *testing.T) {
-	controller := &WebhookController{}
-
-	tests := []struct {
-		name        string
-		webhookType entities.WebhookType
-		checkFields []string
-	}{
-		{
-			name:        "GitHub webhook template data",
-			webhookType: entities.WebhookTypeGitHub,
-			checkFields: []string{"event", "repository", "pull_request", "sender", "payload"},
-		},
-		{
-			name:        "Custom webhook template data",
-			webhookType: entities.WebhookTypeCustom,
-			checkFields: []string{"event", "data"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data := controller.createTestTemplateData(tt.webhookType)
-
-			for _, field := range tt.checkFields {
-				if _, ok := data[field]; !ok {
-					t.Errorf("Expected field %s in template data but not found", field)
 				}
 			}
 		})
