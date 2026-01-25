@@ -653,11 +653,27 @@ func (c *WebhookGitHubController) mergeSessionConfigs(base, override *entities.W
 		result.SetInitialMessageTemplate(base.InitialMessageTemplate())
 	}
 
+	// Override reuse message template if provided
+	if override.ReuseMessageTemplate() != "" {
+		result.SetReuseMessageTemplate(override.ReuseMessageTemplate())
+	} else {
+		result.SetReuseMessageTemplate(base.ReuseMessageTemplate())
+	}
+
 	// Override params if provided
 	if override.Params() != nil {
 		result.SetParams(override.Params())
 	} else {
 		result.SetParams(base.Params())
+	}
+
+	// Merge reuse session flag (override takes precedence, but also consider base if override is false)
+	if override.ReuseSession() {
+		result.SetReuseSession(true)
+	} else if base.ReuseSession() {
+		result.SetReuseSession(true)
+	} else {
+		result.SetReuseSession(false)
 	}
 
 	return result
