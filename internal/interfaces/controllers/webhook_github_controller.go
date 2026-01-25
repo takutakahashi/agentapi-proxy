@@ -230,8 +230,8 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 
 	log.Printf("[WEBHOOK] Trigger matched: %s (%s)", matchResult.ID(), matchResult.Name())
 
-	// Create session
-	sessionID, err := c.createSessionFromWebhook(ctx, matchedWebhook, matchResult, event, &payload)
+	// Create or reuse session
+	sessionID, sessionReused, err := c.createSessionFromWebhook(ctx, matchedWebhook, matchResult, event, &payload)
 	if err != nil {
 		log.Printf("[WEBHOOK] Failed to create session: %v", err)
 
@@ -255,6 +255,7 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 	record := entities.NewWebhookDeliveryRecord(deliveryID, entities.DeliveryStatusProcessed)
 	record.SetMatchedTrigger(matchResult.ID())
 	record.SetSessionID(sessionID)
+	record.SetSessionReused(sessionReused)
 	if err := c.repo.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), record); err != nil {
 		log.Printf("[WEBHOOK] Failed to record delivery: %v", err)
 	}
@@ -468,9 +469,8 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 }
 
 // createSessionFromWebhook creates a session based on webhook and trigger configuration
-func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, webhook *entities.Webhook, trigger *entities.WebhookTrigger, event string, payload *GitHubPayload) (string, error) {
-	sessionID := uuid.New().String()
-
+// Returns sessionID, sessionReused flag, and error
+func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, webhook *entities.Webhook, trigger *entities.WebhookTrigger, event string, payload *GitHubPayload) (string, bool, error) {
 	// Merge session configs (trigger overrides webhook default)
 	sessionConfig := c.mergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
 
@@ -517,6 +517,57 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 		initialMessage = c.buildDefaultInitialMessage(event, payload)
 	}
 
+	// Check if session reuse is enabled
+	if sessionConfig != nil && sessionConfig.ReuseSession() {
+		log.Printf("[WEBHOOK] Session reuse is enabled, searching for existing session with tags: %v", tags)
+		// Try to find existing session with all the same tags
+		filter := entities.SessionFilter{
+			Tags:   tags,
+			Status: "active",
+		}
+		existingSessions := c.sessionManager.ListSessions(filter)
+		log.Printf("[WEBHOOK] Found %d existing sessions matching filter", len(existingSessions))
+		if len(existingSessions) > 0 {
+			// Reuse the first matching session
+			existingSession := existingSessions[0]
+			log.Printf("[WEBHOOK] Reusing existing session %s with tags: %v", existingSession.ID(), existingSession.Tags())
+
+			// Generate reuse message
+			var reuseMessage string
+			if sessionConfig.ReuseMessageTemplate() != "" {
+				// Use reuse message template if specified
+				msg, err := c.renderTemplate(sessionConfig.ReuseMessageTemplate(), event, payload)
+				if err != nil {
+					log.Printf("[WEBHOOK] Failed to render reuse message template: %v", err)
+					reuseMessage = initialMessage
+				} else {
+					reuseMessage = msg
+				}
+			} else {
+				// Fall back to initial message
+				reuseMessage = initialMessage
+			}
+
+			// Send message to existing session
+			err := c.sessionManager.SendMessage(ctx.Request().Context(), existingSession.ID(), reuseMessage)
+			if err == nil {
+				return existingSession.ID(), true, nil
+			}
+			log.Printf("[WEBHOOK] Failed to send message to existing session: %v, creating new session instead", err)
+		} else {
+			log.Printf("[WEBHOOK] No existing sessions found with matching tags, creating new session")
+		}
+	} else {
+		if sessionConfig == nil {
+			log.Printf("[WEBHOOK] Session reuse disabled: sessionConfig is nil")
+		} else {
+			log.Printf("[WEBHOOK] Session reuse disabled: reuse_session=%v", sessionConfig.ReuseSession())
+		}
+	}
+
+	// Create new session
+	sessionID := uuid.New().String()
+
 	// Build session request
 	req := &entities.RunServerRequest{
 		UserID:         webhook.UserID(),
@@ -549,16 +600,16 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 	existingSessions := c.sessionManager.ListSessions(filter)
 	maxSessions := webhook.MaxSessions()
 	if len(existingSessions) >= maxSessions {
-		return "", fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
+		return "", false, fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
 	}
 
 	// Create the session
 	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req)
 	if err != nil {
-		return "", fmt.Errorf("failed to create session: %w", err)
+		return "", false, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	return session.ID(), nil
+	return session.ID(), false, nil
 }
 
 // mergeSessionConfigs merges two session configs, with override taking precedence

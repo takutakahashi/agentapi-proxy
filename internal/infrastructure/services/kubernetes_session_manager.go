@@ -1,11 +1,14 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -331,11 +334,14 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 		}
 
 		// Apply Tag filters
+		// Tags are compared after sanitization since they are stored as sanitized labels in Kubernetes
 		if len(filter.Tags) > 0 {
 			matchAllTags := true
 			sessionTags := session.Tags()
 			for tagKey, tagValue := range filter.Tags {
-				if sessionTagValue, exists := sessionTags[tagKey]; !exists || sessionTagValue != tagValue {
+				sessionTagValue, exists := sessionTags[tagKey]
+				// Compare sanitized values since Kubernetes labels are sanitized
+				if !exists || sanitizeLabelValue(sessionTagValue) != sanitizeLabelValue(tagValue) {
 					matchAllTags = false
 					break
 				}
@@ -430,6 +436,70 @@ func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
 
 	log.Printf("[K8S_SESSION] Shutting down, preserving %d session(s) in Kubernetes for recovery", sessionCount)
 	return nil
+}
+
+// SendMessage sends a message to an existing session
+func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
+	// Get session
+	session := m.GetSession(id)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	// Check session status
+	status := session.Status()
+	if status != "active" && status != "starting" {
+		return fmt.Errorf("session is not active: status=%s", status)
+	}
+
+	// Build service name and endpoint URL
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/message",
+		serviceName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+	)
+
+	// Create payload
+	payload := map[string]interface{}{
+		"content": message,
+		"type":    "user",
+	}
+
+	// Marshal JSON
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message payload: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request with retry logic
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil && resp.StatusCode == 200 {
+			_ = resp.Body.Close()
+			log.Printf("[K8S_SESSION] Successfully sent message to session %s", id)
+			return nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			_ = resp.Body.Close()
+		}
+		if i < 2 {
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	return fmt.Errorf("failed to send message after 3 retries: %w", lastErr)
 }
 
 // createPVC creates a PersistentVolumeClaim for the session

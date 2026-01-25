@@ -21,6 +21,9 @@ type SessionManager interface {
 	// DeleteSession stops and removes a session
 	DeleteSession(id string) error
 
+	// SendMessage sends a message to an existing session
+	SendMessage(ctx context.Context, id string, message string) error
+
 	// Shutdown gracefully stops all sessions
 	Shutdown(timeout time.Duration) error
 }

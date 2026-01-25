@@ -2350,6 +2350,15 @@
             "type": "string",
             "description": "Go template for initial message (e.g., 'Review PR #{{.pull_request.Number}}')"
           },
+          "reuse_message_template": {
+            "type": "string",
+            "description": "Go template for message when reusing existing session (e.g., 'New update for PR #{{.pull_request.Number}}'). If not set, initial_message_template will be used."
+          },
+          "reuse_session": {
+            "type": "boolean",
+            "description": "If true, reuse existing session with same webhook_id and trigger_id instead of creating new one",
+            "default": false
+          },
           "params": {
             "type": "object",
             "properties": {
@@ -2379,6 +2388,15 @@
           "initial_message_template": {
             "type": "string",
             "description": "Go template for initial message (e.g., 'Review PR #{{.pull_request.Number}}')"
+          },
+          "reuse_message_template": {
+            "type": "string",
+            "description": "Go template for message when reusing existing session (e.g., 'New update for PR #{{.pull_request.Number}}')"
+          },
+          "reuse_session": {
+            "type": "boolean",
+            "description": "If true, reuse existing session with same webhook_id and trigger_id instead of creating new one",
+            "default": false
           }
         },
         "description": "Session configuration in responses (sensitive params like github_token are excluded)"
@@ -2402,6 +2420,10 @@
           },
           "session_id": {
             "type": "string"
+          },
+          "session_reused": {
+            "type": "boolean",
+            "description": "Whether an existing session was reused instead of creating a new one"
           },
           "error": {
             "type": "string"
