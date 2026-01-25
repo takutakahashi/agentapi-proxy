@@ -445,8 +445,8 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 
 	// Check session status
 	status := session.Status()
-	if status != "running" && status != "starting" {
-		return fmt.Errorf("session is not running: status=%s", status)
+	if status != "active" && status != "starting" {
+		return fmt.Errorf("session is not active: status=%s", status)
 	}
 
 	// Build service name and endpoint URL

@@ -386,16 +386,18 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 
 	// Check if session reuse is enabled
 	if sessionConfig != nil && sessionConfig.ReuseSession() {
+		log.Printf("[WEBHOOK_CUSTOM] Session reuse is enabled, searching for existing session with tags: %v", tags)
 		// Try to find existing session with all the same tags
 		filter := entities.SessionFilter{
 			Tags:   tags,
-			Status: "running",
+			Status: "active",
 		}
 		existingSessions := c.sessionManager.ListSessions(filter)
+		log.Printf("[WEBHOOK_CUSTOM] Found %d existing sessions matching filter", len(existingSessions))
 		if len(existingSessions) > 0 {
 			// Reuse the first matching session
 			existingSession := existingSessions[0]
-			log.Printf("[WEBHOOK_CUSTOM] Reusing existing session %s with matching tags", existingSession.ID())
+			log.Printf("[WEBHOOK_CUSTOM] Reusing existing session %s with tags: %v", existingSession.ID(), existingSession.Tags())
 
 			// Generate reuse message
 			var reuseMessage string

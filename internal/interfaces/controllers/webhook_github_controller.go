@@ -519,16 +519,18 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 
 	// Check if session reuse is enabled
 	if sessionConfig != nil && sessionConfig.ReuseSession() {
+		log.Printf("[WEBHOOK] Session reuse is enabled, searching for existing session with tags: %v", tags)
 		// Try to find existing session with all the same tags
 		filter := entities.SessionFilter{
 			Tags:   tags,
-			Status: "running",
+			Status: "active",
 		}
 		existingSessions := c.sessionManager.ListSessions(filter)
+		log.Printf("[WEBHOOK] Found %d existing sessions matching filter", len(existingSessions))
 		if len(existingSessions) > 0 {
 			// Reuse the first matching session
 			existingSession := existingSessions[0]
-			log.Printf("[WEBHOOK] Reusing existing session %s with matching tags", existingSession.ID())
+			log.Printf("[WEBHOOK] Reusing existing session %s with tags: %v", existingSession.ID(), existingSession.Tags())
 
 			// Generate reuse message
 			var reuseMessage string
@@ -552,6 +554,14 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 				return existingSession.ID(), true, nil
 			}
 			log.Printf("[WEBHOOK] Failed to send message to existing session: %v, creating new session instead", err)
+		} else {
+			log.Printf("[WEBHOOK] No existing sessions found with matching tags, creating new session")
+		}
+	} else {
+		if sessionConfig == nil {
+			log.Printf("[WEBHOOK] Session reuse disabled: sessionConfig is nil")
+		} else {
+			log.Printf("[WEBHOOK] Session reuse disabled: reuse_session=%v", sessionConfig.ReuseSession())
 		}
 	}
 
