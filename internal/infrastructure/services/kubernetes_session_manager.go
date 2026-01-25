@@ -334,11 +334,14 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 		}
 
 		// Apply Tag filters
+		// Tags are compared after sanitization since they are stored as sanitized labels in Kubernetes
 		if len(filter.Tags) > 0 {
 			matchAllTags := true
 			sessionTags := session.Tags()
 			for tagKey, tagValue := range filter.Tags {
-				if sessionTagValue, exists := sessionTags[tagKey]; !exists || sessionTagValue != tagValue {
+				sessionTagValue, exists := sessionTags[tagKey]
+				// Compare sanitized values since Kubernetes labels are sanitized
+				if !exists || sanitizeLabelValue(sessionTagValue) != sanitizeLabelValue(tagValue) {
 					matchAllTags = false
 					break
 				}
