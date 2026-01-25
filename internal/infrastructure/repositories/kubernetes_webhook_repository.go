@@ -105,7 +105,9 @@ type webhookSessionConfigJSON struct {
 	Environment            map[string]string         `json:"environment,omitempty"`
 	Tags                   map[string]string         `json:"tags,omitempty"`
 	InitialMessageTemplate string                    `json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                    `json:"reuse_message_template,omitempty"`
 	Params                 *webhookSessionParamsJSON `json:"params,omitempty"`
+	ReuseSession           bool                      `json:"reuse_session,omitempty"`
 }
 
 type webhookSessionParamsJSON struct {
@@ -687,6 +689,8 @@ func (r *KubernetesWebhookRepository) sessionConfigJSONToEntity(scj *webhookSess
 	sc.SetEnvironment(scj.Environment)
 	sc.SetTags(scj.Tags)
 	sc.SetInitialMessageTemplate(scj.InitialMessageTemplate)
+	sc.SetReuseMessageTemplate(scj.ReuseMessageTemplate)
+	sc.SetReuseSession(scj.ReuseSession)
 	if scj.Params != nil {
 		params := entities.NewWebhookSessionParams()
 		params.SetGithubToken(scj.Params.GithubToken)
@@ -700,6 +704,8 @@ func (r *KubernetesWebhookRepository) sessionConfigEntityToJSON(sc *entities.Web
 		Environment:            sc.Environment(),
 		Tags:                   sc.Tags(),
 		InitialMessageTemplate: sc.InitialMessageTemplate(),
+		ReuseMessageTemplate:   sc.ReuseMessageTemplate(),
+		ReuseSession:           sc.ReuseSession(),
 	}
 	if params := sc.Params(); params != nil {
 		scj.Params = &webhookSessionParamsJSON{
