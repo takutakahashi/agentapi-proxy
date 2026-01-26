@@ -102,8 +102,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
-# Create npx, bun, and bunx alias scripts that use claude x with BUN_BE_BUN=1
-RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
+# Create npm, npx, bun, and bunx wrapper scripts that use claude x with BUN_BE_BUN=1
+RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude x "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
+    sudo chmod +x /usr/local/bin/npm && \
+    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
     sudo chmod +x /usr/local/bin/npx && \
     printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude x "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
     sudo chmod +x /usr/local/bin/bun && \
