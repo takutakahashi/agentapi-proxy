@@ -112,6 +112,9 @@ RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude x "$@"\n' | sudo tee /usr/
     printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude x "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
     sudo chmod +x /usr/local/bin/bunx
 
+# install claude-agentapi
+RUN bun install github:takutakahashi/claude-agentapi
+
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI)
 ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
