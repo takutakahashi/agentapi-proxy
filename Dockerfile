@@ -116,7 +116,7 @@ RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude "$@"\n' | sudo tee /usr/lo
 ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
 # install claude-agentapi
-RUN bun install github:takutakahashi/claude-agentapi
+RUN sudo bun install github:takutakahashi/claude-agentapi
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
