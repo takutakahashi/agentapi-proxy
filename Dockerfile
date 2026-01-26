@@ -102,12 +102,21 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
-# Create npx alias script that uses claude x with BUN_BE_BUN=1
-RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
-    sudo chmod +x /usr/local/bin/npx
+# Create npm, npx, bun, and bunx wrapper scripts that use claude x with BUN_BE_BUN=1
+RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
+    sudo chmod +x /usr/local/bin/npm && \
+    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
+    sudo chmod +x /usr/local/bin/npx && \
+    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
+    sudo chmod +x /usr/local/bin/bun && \
+    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
+    sudo chmod +x /usr/local/bin/bunx
 
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI)
 ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
+
+# install claude-agentapi
+RUN sudo bun install github:takutakahashi/claude-agentapi
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
