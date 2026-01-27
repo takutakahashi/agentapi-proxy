@@ -24,7 +24,7 @@ func (e *GoTemplateEvaluator) Evaluate(payload map[string]interface{}, templateS
 	}
 
 	// Create a new template with custom functions
-	tmpl, err := template.New("condition").Funcs(e.funcMap()).Parse(templateStr)
+	tmpl, err := template.New("condition").Funcs(e.FuncMap()).Parse(templateStr)
 	if err != nil {
 		return false, fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -40,8 +40,8 @@ func (e *GoTemplateEvaluator) Evaluate(payload map[string]interface{}, templateS
 	return result == "true", nil
 }
 
-// funcMap returns custom template functions
-func (e *GoTemplateEvaluator) funcMap() template.FuncMap {
+// FuncMap returns custom template functions
+func (e *GoTemplateEvaluator) FuncMap() template.FuncMap {
 	return template.FuncMap{
 		// String functions
 		"contains":  strings.Contains,
