@@ -969,10 +969,17 @@ func (c *WebhookController) createTestPayload(webhookType entities.WebhookType) 
 	}
 
 	// Custom webhook test payload
+	// Create a flexible structure that supports nested field access
 	return map[string]interface{}{
-		"event": "test",
+		"event": map[string]interface{}{
+			"t":    "test",
+			"type": "test_event",
+			"id":   "12345",
+		},
 		"data": map[string]interface{}{
 			"message": "test message",
+			"status":  "success",
 		},
+		"timestamp": "2024-01-01T00:00:00Z",
 	}
 }

@@ -112,6 +112,24 @@ func TestValidateGoTemplateCondition(t *testing.T) {
 			shouldError: false,
 		},
 		{
+			name:        "Valid custom webhook GoTemplate with nested field access",
+			webhookType: entities.WebhookTypeCustom,
+			template:    `{{ eq .event.t "alert" }}`,
+			shouldError: false,
+		},
+		{
+			name:        "Valid custom webhook GoTemplate with nested event.type",
+			webhookType: entities.WebhookTypeCustom,
+			template:    `{{ eq .event.type "test_event" }}`,
+			shouldError: false,
+		},
+		{
+			name:        "Valid custom webhook GoTemplate with data fields",
+			webhookType: entities.WebhookTypeCustom,
+			template:    `{{ and (eq .data.status "success") (eq .data.message "test message") }}`,
+			shouldError: false,
+		},
+		{
 			name:        "Invalid GoTemplate - syntax error",
 			webhookType: entities.WebhookTypeGitHub,
 			template:    `{{ eq .action `,
