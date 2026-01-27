@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"net/http"
@@ -904,14 +903,12 @@ func (c *WebhookController) validateWebhookTemplatesForUpdate(webhookType entiti
 
 // validateGoTemplateCondition validates a GoTemplate condition string
 func (c *WebhookController) validateGoTemplateCondition(webhookType entities.WebhookType, tmplStr string) error {
-	// Create test payload based on webhook type
-	testPayload := c.createTestPayload(webhookType)
-
-	// Use the existing GoTemplateEvaluator to validate
+	// Only validate template syntax, not execution with test payload
+	// This allows flexible payload structures without predefined schema
 	evaluator := webhook.NewGoTemplateEvaluator()
-	_, err := evaluator.Evaluate(testPayload, tmplStr)
+	_, err := template.New("condition").Funcs(evaluator.FuncMap()).Parse(tmplStr)
 	if err != nil {
-		return fmt.Errorf("template validation failed: %w", err)
+		return fmt.Errorf("template parse failed: %w", err)
 	}
 
 	return nil
@@ -919,60 +916,13 @@ func (c *WebhookController) validateGoTemplateCondition(webhookType entities.Web
 
 // validateInitialMessageTemplate validates an initial message template
 func (c *WebhookController) validateInitialMessageTemplate(webhookType entities.WebhookType, tmplStr string) error {
-	// Try to parse the template
-	tmpl, err := template.New("initial_message").Parse(tmplStr)
+	// Only validate template syntax, not execution with test payload
+	// This allows flexible payload structures without predefined schema
+	_, err := template.New("initial_message").Parse(tmplStr)
 	if err != nil {
 		return fmt.Errorf("template parse failed: %w", err)
-	}
-
-	// Use the same test payload as GoTemplate conditions
-	// This ensures consistency between condition matching and message rendering
-	testData := c.createTestPayload(webhookType)
-
-	// Try to execute the template with test data
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, testData); err != nil {
-		return fmt.Errorf("template execution failed: %w", err)
 	}
 
 	return nil
 }
 
-// createTestPayload creates a test payload for template validation
-func (c *WebhookController) createTestPayload(webhookType entities.WebhookType) map[string]interface{} {
-	if webhookType == entities.WebhookTypeGitHub {
-		// GitHub webhook test payload
-		return map[string]interface{}{
-			"action": "opened",
-			"repository": map[string]interface{}{
-				"full_name": "example/repo",
-				"name":      "repo",
-			},
-			"pull_request": map[string]interface{}{
-				"number": 1,
-				"title":  "Test PR",
-				"state":  "open",
-				"base": map[string]interface{}{
-					"ref": "main",
-				},
-				"head": map[string]interface{}{
-					"ref": "feature/test",
-				},
-				"user": map[string]interface{}{
-					"login": "testuser",
-				},
-			},
-			"sender": map[string]interface{}{
-				"login": "testuser",
-			},
-		}
-	}
-
-	// Custom webhook test payload
-	return map[string]interface{}{
-		"event": "test",
-		"data": map[string]interface{}{
-			"message": "test message",
-		},
-	}
-}

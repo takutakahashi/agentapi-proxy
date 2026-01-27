@@ -48,13 +48,6 @@ func TestValidateInitialMessageTemplate(t *testing.T) {
 			errorMsg:    "template parse failed",
 		},
 		{
-			name:        "Invalid template - undefined function",
-			webhookType: entities.WebhookTypeGitHub,
-			template:    "{{ invalidFunc .pull_request.number }}",
-			shouldError: true,
-			errorMsg:    "template execution failed",
-		},
-		{
 			name:        "Empty template - should pass",
 			webhookType: entities.WebhookTypeGitHub,
 			template:    "",
@@ -109,6 +102,24 @@ func TestValidateGoTemplateCondition(t *testing.T) {
 			name:        "Valid GoTemplate with and/or",
 			webhookType: entities.WebhookTypeGitHub,
 			template:    `{{ and (eq .action "opened") (contains .repository.full_name "test") }}`,
+			shouldError: false,
+		},
+		{
+			name:        "Valid custom webhook GoTemplate with nested field access",
+			webhookType: entities.WebhookTypeCustom,
+			template:    `{{ eq .event.t "alert" }}`,
+			shouldError: false,
+		},
+		{
+			name:        "Valid custom webhook GoTemplate with nested event.type",
+			webhookType: entities.WebhookTypeCustom,
+			template:    `{{ eq .event.type "test_event" }}`,
+			shouldError: false,
+		},
+		{
+			name:        "Valid custom webhook GoTemplate with data fields",
+			webhookType: entities.WebhookTypeCustom,
+			template:    `{{ and (eq .data.status "success") (eq .data.message "test message") }}`,
 			shouldError: false,
 		},
 		{
@@ -249,35 +260,3 @@ func TestValidateWebhookTemplates(t *testing.T) {
 	}
 }
 
-func TestCreateTestPayload(t *testing.T) {
-	controller := &WebhookController{}
-
-	tests := []struct {
-		name        string
-		webhookType entities.WebhookType
-		checkFields []string
-	}{
-		{
-			name:        "GitHub webhook test payload",
-			webhookType: entities.WebhookTypeGitHub,
-			checkFields: []string{"action", "repository", "pull_request", "sender"},
-		},
-		{
-			name:        "Custom webhook test payload",
-			webhookType: entities.WebhookTypeCustom,
-			checkFields: []string{"event", "data"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			payload := controller.createTestPayload(tt.webhookType)
-
-			for _, field := range tt.checkFields {
-				if _, ok := payload[field]; !ok {
-					t.Errorf("Expected field %s in test payload but not found", field)
-				}
-			}
-		})
-	}
-}
