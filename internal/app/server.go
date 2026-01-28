@@ -386,6 +386,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		GithubToken:    githubToken,
 		Scope:          startReq.Scope,
 		TeamID:         startReq.TeamID,
+		AgentType:      startReq.AgentType,
 	}
 
 	// Delegate to session manager

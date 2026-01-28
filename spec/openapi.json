@@ -1754,6 +1754,10 @@
           "team_id": {
             "type": "string",
             "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
+          },
+          "agent_type": {
+            "type": "string",
+            "description": "Agent type for the session (e.g., 'claude-code', 'custom-agent')"
           }
         }
       },

@@ -1985,16 +1985,21 @@ func (m *KubernetesSessionManager) buildSyncVolumes(session *KubernetesSession) 
 
 // createService creates a Service for the session
 func (m *KubernetesSessionManager) createService(ctx context.Context, session *KubernetesSession) error {
+	annotations := map[string]string{
+		"agentapi.proxy/created-at": session.startedAt.Format(time.RFC3339),
+		"agentapi.proxy/updated-at": session.startedAt.Format(time.RFC3339),
+		"agentapi.proxy/team-id":    session.Request().TeamID, // Store original team_id (unsanitized)
+	}
+	if session.Request().AgentType != "" {
+		annotations["agentapi.proxy/agent-type"] = session.Request().AgentType
+	}
+
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.ServiceName(),
-			Namespace: m.namespace,
-			Labels:    m.buildLabels(session),
-			Annotations: map[string]string{
-				"agentapi.proxy/created-at": session.startedAt.Format(time.RFC3339),
-				"agentapi.proxy/updated-at": session.startedAt.Format(time.RFC3339),
-				"agentapi.proxy/team-id":    session.Request().TeamID, // Store original team_id (unsanitized)
-			},
+			Name:        session.ServiceName(),
+			Namespace:   m.namespace,
+			Labels:      m.buildLabels(session),
+			Annotations: annotations,
 		},
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeClusterIP,
@@ -2236,6 +2241,11 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	// Add Team ID if in team scope
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_TEAM_ID", Value: req.TeamID})
+	}
+
+	// Add Agent Type if specified
+	if req.AgentType != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_AGENT_TYPE", Value: req.AgentType})
 	}
 
 	// Add CLAUDE_ARGS from request environment or proxy's environment
