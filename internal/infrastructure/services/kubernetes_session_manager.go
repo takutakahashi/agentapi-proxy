@@ -2246,6 +2246,12 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	// Add Agent Type if specified
 	if req.AgentType != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_AGENT_TYPE", Value: req.AgentType})
+
+		// Add claude-agentapi specific environment variables
+		if req.AgentType == "claude-agentapi" {
+			envVars = append(envVars, corev1.EnvVar{Name: "HOST", Value: "0.0.0.0"})
+			envVars = append(envVars, corev1.EnvVar{Name: "PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)})
+		}
 	}
 
 	// Add CLAUDE_ARGS from request environment or proxy's environment
@@ -2712,36 +2718,61 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.Vol
 	return volumeMounts
 }
 
-// buildClaudeStartCommand builds the Claude start command with optional MCP config
-// Uses resume fallback pattern: "claude -c [args] || claude [args]"
-// This attempts to resume an existing session first, falling back to a new session if not available
+// buildClaudeStartCommand builds the agent start command based on agent type
+// For agent_type == "claude-agentapi": runs claude-agentapi with CLAUDE_ARGS as CLI options
+// For default/agentapi: uses resume fallback pattern "claude -c [args] || claude [args]"
 func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
-	// Base command that uses CLAUDE_ARGS if set
 	baseCmd := `
-# Start agentapi with Claude
-CLAUDE_ARGS_FULL=""
+# Determine which agent to start based on AGENTAPI_AGENT_TYPE
+if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
+    # Start claude-agentapi
+    echo "[STARTUP] Starting claude-agentapi on $HOST:$PORT"
 
-# Add --mcp-config if MCP config file exists
-if [ -f /mcp-config/merged.json ]; then
-    CLAUDE_ARGS_FULL="--mcp-config /mcp-config/merged.json"
-    echo "[STARTUP] Using MCP config: /mcp-config/merged.json"
-fi
+    # Build claude-agentapi options
+    CLAUDE_AGENTAPI_OPTS=""
 
-# Add CLAUDE_ARGS if set
-if [ -n "$CLAUDE_ARGS" ]; then
-    CLAUDE_ARGS_FULL="$CLAUDE_ARGS_FULL $CLAUDE_ARGS"
-fi
+    # Add --mcp-config if MCP config file exists
+    if [ -f /mcp-config/merged.json ]; then
+        CLAUDE_AGENTAPI_OPTS="--mcp-config /mcp-config/merged.json"
+        echo "[STARTUP] Using MCP config: /mcp-config/merged.json"
+    fi
 
-# Build command with resume fallback (claude -c || claude)
-# This attempts to resume an existing session first, falling back to a new session if not available
-if [ -n "$CLAUDE_ARGS_FULL" ]; then
-    CLAUDE_CMD="claude -c $CLAUDE_ARGS_FULL || claude $CLAUDE_ARGS_FULL"
+    # Append CLAUDE_ARGS if set (as CLI options)
+    if [ -n "$CLAUDE_ARGS" ]; then
+        CLAUDE_AGENTAPI_OPTS="$CLAUDE_AGENTAPI_OPTS $CLAUDE_ARGS"
+        echo "[STARTUP] Using CLAUDE_ARGS: $CLAUDE_ARGS"
+    fi
+
+    echo "[STARTUP] Executing: claude-agentapi $CLAUDE_AGENTAPI_OPTS"
+    exec claude-agentapi $CLAUDE_AGENTAPI_OPTS
 else
-    CLAUDE_CMD="claude -c || claude"
-fi
+    # Start agentapi with Claude (original behavior)
+    echo "[STARTUP] Starting agentapi"
 
-echo "[STARTUP] Starting agentapi with resume fallback: $CLAUDE_CMD"
-exec agentapi server --allowed-hosts '*' --allowed-origins '*' --port $AGENTAPI_PORT -- sh -c "$CLAUDE_CMD"
+    CLAUDE_ARGS_FULL=""
+
+    # Add --mcp-config if MCP config file exists
+    if [ -f /mcp-config/merged.json ]; then
+        CLAUDE_ARGS_FULL="--mcp-config /mcp-config/merged.json"
+        echo "[STARTUP] Using MCP config: /mcp-config/merged.json"
+    fi
+
+    # Add CLAUDE_ARGS if set
+    if [ -n "$CLAUDE_ARGS" ]; then
+        CLAUDE_ARGS_FULL="$CLAUDE_ARGS_FULL $CLAUDE_ARGS"
+    fi
+
+    # Build command with resume fallback (claude -c || claude)
+    # This attempts to resume an existing session first, falling back to a new session if not available
+    if [ -n "$CLAUDE_ARGS_FULL" ]; then
+        CLAUDE_CMD="claude -c $CLAUDE_ARGS_FULL || claude $CLAUDE_ARGS_FULL"
+    else
+        CLAUDE_CMD="claude -c || claude"
+    fi
+
+    echo "[STARTUP] Starting agentapi with resume fallback: $CLAUDE_CMD"
+    exec agentapi server --allowed-hosts '*' --allowed-origins '*' --port $AGENTAPI_PORT -- sh -c "$CLAUDE_CMD"
+fi
 `
 	return baseCmd
 }
