@@ -126,6 +126,10 @@ func (a *ServerAdapter) RegisterTools() {
 func (a *ServerAdapter) HandleMCPRequest(c echo.Context) error {
 	log.Printf("[MCP_ADAPTER] Handling %s request to %s", c.Request().Method, c.Request().URL.Path)
 
+	// Debug: Check if user is in Echo context
+	user := c.Get("user")
+	log.Printf("[MCP_ADAPTER] User in Echo context: %v (type: %T)", user != nil, user)
+
 	// Store Echo context in request context for tool handlers to access
 	ctx := context.WithValue(c.Request().Context(), echoContextKey, c)
 	req := c.Request().WithContext(ctx)
