@@ -105,7 +105,7 @@ func runSend(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	fmt.Printf("Message sent successfully\nID: %s\nTimestamp: %s\n", msgResp.ID, msgResp.Timestamp.Format(time.RFC3339))
+	fmt.Printf("Message sent successfully\nID: %d\nTimestamp: %s\n", msgResp.ID, msgResp.Timestamp.Format(time.RFC3339))
 }
 
 func runHistory(cmd *cobra.Command, args []string) {

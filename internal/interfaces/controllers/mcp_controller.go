@@ -380,7 +380,7 @@ func (c *MCPController) HandleSendMessage(ctx context.Context, echoCtx echo.Cont
 
 	log.Printf("[MCP] Sent message to session %s by user: %s", sessionID, c.getUserID(user))
 
-	return fmt.Sprintf("Message sent successfully. Message ID: %s", resp.ID), nil
+	return fmt.Sprintf("Message sent successfully. Message ID: %d", resp.ID), nil
 }
 
 // HandleGetMessages handles the get_messages tool
