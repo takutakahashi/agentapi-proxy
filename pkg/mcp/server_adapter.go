@@ -2,13 +2,11 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	oldmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 )
@@ -161,42 +159,27 @@ func (a *ServerAdapter) handleCreateSession(ctx context.Context, req *mcp.CallTo
 		return nil, nil, fmt.Errorf("echo context not found")
 	}
 
-	// Create tool context
-	toolContext := &controllers.ToolContext{
-		Context:     ctx,
-		EchoContext: echoCtx,
-		Controller:  a.mcpController,
+	// Convert params to controller params
+	controllerParams := controllers.CreateSessionParams{
+		Environment: params.Environment,
+		Tags:        params.Tags,
+		Params:      params.Params,
+		Scope:       params.Scope,
+		TeamID:      params.TeamID,
 	}
 
-	// Convert params to arguments map
-	arguments := make(map[string]interface{})
-	if params.Environment != nil {
-		arguments["environment"] = params.Environment
-	}
-	if params.Tags != nil {
-		arguments["tags"] = params.Tags
-	}
-	if params.Params != nil {
-		arguments["params"] = params.Params
-	}
-	if params.Scope != "" {
-		arguments["scope"] = params.Scope
-	}
-	if params.TeamID != "" {
-		arguments["team_id"] = params.TeamID
-	}
-
-	// Create CallToolRequest for the controller
-	oldReq := createOldCallToolRequest("create_session", arguments)
-
-	// Call existing controller handler
-	result, err := a.mcpController.HandleCreateSession(toolContext, oldReq)
+	// Call controller handler
+	resultText, err := a.mcpController.HandleCreateSession(ctx, echoCtx, controllerParams)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Convert old result to new result
-	return convertResult(result), nil, nil
+	// Wrap result in MCP TextContent
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: resultText},
+		},
+	}, nil, nil
 }
 
 func (a *ServerAdapter) handleListSessions(ctx context.Context, req *mcp.CallToolRequest, params *ListSessionsParams) (*mcp.CallToolResult, any, error) {
@@ -205,33 +188,23 @@ func (a *ServerAdapter) handleListSessions(ctx context.Context, req *mcp.CallToo
 		return nil, nil, fmt.Errorf("echo context not found")
 	}
 
-	toolContext := &controllers.ToolContext{
-		Context:     ctx,
-		EchoContext: echoCtx,
-		Controller:  a.mcpController,
+	controllerParams := controllers.ListSessionsParams{
+		Status: params.Status,
+		Scope:  params.Scope,
+		TeamID: params.TeamID,
+		Tags:   params.Tags,
 	}
 
-	arguments := make(map[string]interface{})
-	if params.Status != "" {
-		arguments["status"] = params.Status
-	}
-	if params.Scope != "" {
-		arguments["scope"] = params.Scope
-	}
-	if params.TeamID != "" {
-		arguments["team_id"] = params.TeamID
-	}
-	if params.Tags != nil {
-		arguments["tags"] = params.Tags
-	}
-
-	oldReq := createOldCallToolRequest("list_sessions", arguments)
-	result, err := a.mcpController.HandleListSessions(toolContext, oldReq)
+	resultText, err := a.mcpController.HandleListSessions(ctx, echoCtx, controllerParams)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return convertResult(result), nil, nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: resultText},
+		},
+	}, nil, nil
 }
 
 func (a *ServerAdapter) handleGetSession(ctx context.Context, req *mcp.CallToolRequest, params *GetSessionParams) (*mcp.CallToolResult, any, error) {
@@ -240,23 +213,20 @@ func (a *ServerAdapter) handleGetSession(ctx context.Context, req *mcp.CallToolR
 		return nil, nil, fmt.Errorf("echo context not found")
 	}
 
-	toolContext := &controllers.ToolContext{
-		Context:     ctx,
-		EchoContext: echoCtx,
-		Controller:  a.mcpController,
+	controllerParams := controllers.SessionIDParams{
+		SessionID: params.SessionID,
 	}
 
-	arguments := map[string]interface{}{
-		"session_id": params.SessionID,
-	}
-
-	oldReq := createOldCallToolRequest("get_session", arguments)
-	result, err := a.mcpController.HandleGetSession(toolContext, oldReq)
+	resultText, err := a.mcpController.HandleGetSession(ctx, echoCtx, controllerParams)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return convertResult(result), nil, nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: resultText},
+		},
+	}, nil, nil
 }
 
 func (a *ServerAdapter) handleDeleteSession(ctx context.Context, req *mcp.CallToolRequest, params *DeleteSessionParams) (*mcp.CallToolResult, any, error) {
@@ -265,23 +235,20 @@ func (a *ServerAdapter) handleDeleteSession(ctx context.Context, req *mcp.CallTo
 		return nil, nil, fmt.Errorf("echo context not found")
 	}
 
-	toolContext := &controllers.ToolContext{
-		Context:     ctx,
-		EchoContext: echoCtx,
-		Controller:  a.mcpController,
+	controllerParams := controllers.SessionIDParams{
+		SessionID: params.SessionID,
 	}
 
-	arguments := map[string]interface{}{
-		"session_id": params.SessionID,
-	}
-
-	oldReq := createOldCallToolRequest("delete_session", arguments)
-	result, err := a.mcpController.HandleDeleteSession(toolContext, oldReq)
+	resultText, err := a.mcpController.HandleDeleteSession(ctx, echoCtx, controllerParams)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return convertResult(result), nil, nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: resultText},
+		},
+	}, nil, nil
 }
 
 func (a *ServerAdapter) handleSendMessage(ctx context.Context, req *mcp.CallToolRequest, params *SendMessageParams) (*mcp.CallToolResult, any, error) {
@@ -290,27 +257,22 @@ func (a *ServerAdapter) handleSendMessage(ctx context.Context, req *mcp.CallTool
 		return nil, nil, fmt.Errorf("echo context not found")
 	}
 
-	toolContext := &controllers.ToolContext{
-		Context:     ctx,
-		EchoContext: echoCtx,
-		Controller:  a.mcpController,
+	controllerParams := controllers.SendMessageParams{
+		SessionID: params.SessionID,
+		Message:   params.Message,
+		Type:      params.Type,
 	}
 
-	arguments := map[string]interface{}{
-		"session_id": params.SessionID,
-		"message":    params.Message,
-	}
-	if params.Type != "" {
-		arguments["type"] = params.Type
-	}
-
-	oldReq := createOldCallToolRequest("send_message", arguments)
-	result, err := a.mcpController.HandleSendMessage(toolContext, oldReq)
+	resultText, err := a.mcpController.HandleSendMessage(ctx, echoCtx, controllerParams)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return convertResult(result), nil, nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: resultText},
+		},
+	}, nil, nil
 }
 
 func (a *ServerAdapter) handleGetMessages(ctx context.Context, req *mcp.CallToolRequest, params *GetMessagesParams) (*mcp.CallToolResult, any, error) {
@@ -319,23 +281,20 @@ func (a *ServerAdapter) handleGetMessages(ctx context.Context, req *mcp.CallTool
 		return nil, nil, fmt.Errorf("echo context not found")
 	}
 
-	toolContext := &controllers.ToolContext{
-		Context:     ctx,
-		EchoContext: echoCtx,
-		Controller:  a.mcpController,
+	controllerParams := controllers.SessionIDParams{
+		SessionID: params.SessionID,
 	}
 
-	arguments := map[string]interface{}{
-		"session_id": params.SessionID,
-	}
-
-	oldReq := createOldCallToolRequest("get_messages", arguments)
-	result, err := a.mcpController.HandleGetMessages(toolContext, oldReq)
+	resultText, err := a.mcpController.HandleGetMessages(ctx, echoCtx, controllerParams)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return convertResult(result), nil, nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: resultText},
+		},
+	}, nil, nil
 }
 
 func (a *ServerAdapter) handleGetStatus(ctx context.Context, req *mcp.CallToolRequest, params *GetStatusParams) (*mcp.CallToolResult, any, error) {
@@ -344,69 +303,18 @@ func (a *ServerAdapter) handleGetStatus(ctx context.Context, req *mcp.CallToolRe
 		return nil, nil, fmt.Errorf("echo context not found")
 	}
 
-	toolContext := &controllers.ToolContext{
-		Context:     ctx,
-		EchoContext: echoCtx,
-		Controller:  a.mcpController,
+	controllerParams := controllers.SessionIDParams{
+		SessionID: params.SessionID,
 	}
 
-	arguments := map[string]interface{}{
-		"session_id": params.SessionID,
-	}
-
-	oldReq := createOldCallToolRequest("get_status", arguments)
-	result, err := a.mcpController.HandleGetStatus(toolContext, oldReq)
+	resultText, err := a.mcpController.HandleGetStatus(ctx, echoCtx, controllerParams)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return convertResult(result), nil, nil
-}
-
-// Helper functions to bridge between old and new SDK types
-
-func createOldCallToolRequest(name string, arguments map[string]interface{}) oldmcp.CallToolRequest {
-	// Create request via JSON marshaling because CallToolRequest has unexported fields
-	requestData := map[string]interface{}{
-		"params": map[string]interface{}{
-			"name":      name,
-			"arguments": arguments,
-		},
-	}
-	requestBytes, _ := json.Marshal(requestData)
-
-	var req oldmcp.CallToolRequest
-	_ = json.Unmarshal(requestBytes, &req)
-	return req
-}
-
-func convertResult(oldResult *oldmcp.CallToolResult) *mcp.CallToolResult {
-	if oldResult == nil {
-		log.Printf("[MCP_ADAPTER] convertResult: oldResult is nil")
-		return &mcp.CallToolResult{}
-	}
-
-	log.Printf("[MCP_ADAPTER] convertResult: oldResult.Content length=%d, IsError=%v", len(oldResult.Content), oldResult.IsError)
-
-	// Convert Content from old format to new format
-	var newContent []mcp.Content
-	for i, c := range oldResult.Content {
-		log.Printf("[MCP_ADAPTER] convertResult: content[%d] type=%T", i, c)
-		// Assuming old content is *TextContent
-		if textContent, ok := c.(*oldmcp.TextContent); ok {
-			log.Printf("[MCP_ADAPTER] convertResult: content[%d] text=%s", i, textContent.Text)
-			newContent = append(newContent, &mcp.TextContent{
-				Text: textContent.Text,
-			})
-		} else {
-			log.Printf("[MCP_ADAPTER] convertResult: content[%d] type assertion failed", i)
-		}
-	}
-
-	log.Printf("[MCP_ADAPTER] convertResult: newContent length=%d", len(newContent))
-
 	return &mcp.CallToolResult{
-		Content: newContent,
-		IsError: oldResult.IsError,
-	}
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: resultText},
+		},
+	}, nil, nil
 }

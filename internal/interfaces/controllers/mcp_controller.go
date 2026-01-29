@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
@@ -36,54 +35,63 @@ func NewMCPController(
 	}
 }
 
-// ToolContext provides context for MCP tool handlers
-type ToolContext struct {
-	Context     context.Context
-	EchoContext echo.Context
-	Controller  *MCPController
+// CreateSessionParams represents parameters for creating a session
+type CreateSessionParams struct {
+	Environment map[string]string
+	Tags        map[string]string
+	Params      map[string]interface{}
+	Scope       string
+	TeamID      string
 }
 
-// HandleCreateSession handles the create_session MCP tool
-func (c *MCPController) HandleCreateSession(tc *ToolContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Extract parameters
-	environment := mcp.ParseStringMap(request, "environment", nil)
-	tags := mcp.ParseStringMap(request, "tags", nil)
-	paramsMap := mcp.ParseStringMap(request, "params", nil)
-	scope := mcp.ParseString(request, "scope", string(entities.ScopeUser))
-	teamID := mcp.ParseString(request, "team_id", "")
+// ListSessionsParams represents parameters for listing sessions
+type ListSessionsParams struct {
+	Status string
+	Scope  string
+	TeamID string
+	Tags   map[string]string
+}
 
-	// Convert maps to proper types
-	envMap := make(map[string]string)
-	for k, v := range environment {
-		if strVal, ok := v.(string); ok {
-			envMap[k] = strVal
-		}
+// SessionIDParams represents parameters with session_id
+type SessionIDParams struct {
+	SessionID string
+}
+
+// SendMessageParams represents parameters for sending a message
+type SendMessageParams struct {
+	SessionID string
+	Message   string
+	Type      string
+}
+
+// HandleCreateSession handles the create_session tool
+func (c *MCPController) HandleCreateSession(ctx context.Context, echoCtx echo.Context, params CreateSessionParams) (string, error) {
+	environment := params.Environment
+	tags := params.Tags
+	paramsMap := params.Params
+	scope := params.Scope
+	if scope == "" {
+		scope = string(entities.ScopeUser)
 	}
+	teamID := params.TeamID
 
-	tagsMap := make(map[string]string)
-	for k, v := range tags {
-		if strVal, ok := v.(string); ok {
-			tagsMap[k] = strVal
-		}
-	}
-
-	// Extract params
-	var params *entities.SessionParams
+	// Extract session params
+	var sessionParams *entities.SessionParams
 	if paramsMap != nil {
-		params = &entities.SessionParams{}
+		sessionParams = &entities.SessionParams{}
 		if msg, ok := paramsMap["message"].(string); ok {
-			params.Message = msg
+			sessionParams.Message = msg
 		}
 		if token, ok := paramsMap["github_token"].(string); ok {
-			params.GithubToken = token
+			sessionParams.GithubToken = token
 		}
 		if agentType, ok := paramsMap["agent_type"].(string); ok {
-			params.AgentType = agentType
+			sessionParams.AgentType = agentType
 		}
 	}
 
 	// Get user from context
-	user := auth.GetUserFromContext(tc.EchoContext)
+	user := auth.GetUserFromContext(echoCtx)
 	var userID, userRole string
 	var teams []string
 	if user != nil {
@@ -111,14 +119,14 @@ func (c *MCPController) HandleCreateSession(tc *ToolContext, request mcp.CallToo
 		teams,
 		user != nil,
 	); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Validation failed: %v", err)), nil
+		return "", fmt.Errorf("validation failed: %v", err)
 	}
 
 	// Create start request
 	startReq := entities.StartRequest{
-		Environment: envMap,
-		Tags:        tagsMap,
-		Params:      params,
+		Environment: environment,
+		Tags:        tags,
+		Params:      sessionParams,
 		Scope:       entities.ResourceScope(scope),
 		TeamID:      teamID,
 	}
@@ -128,7 +136,7 @@ func (c *MCPController) HandleCreateSession(tc *ToolContext, request mcp.CallToo
 	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
 	if err != nil {
 		log.Printf("[MCP] Failed to create session: %v", err)
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to create session: %v", err)), nil
+		return "", fmt.Errorf("failed to create session: %v", err)
 	}
 
 	log.Printf("[MCP] Session created: %s by user: %s", session.ID(), userID)
@@ -139,27 +147,18 @@ func (c *MCPController) HandleCreateSession(tc *ToolContext, request mcp.CallToo
 		resultText += fmt.Sprintf("\nTeam ID: %s", teamID)
 	}
 
-	return mcp.NewToolResultText(resultText), nil
+	return resultText, nil
 }
 
-// HandleListSessions handles the list_sessions MCP tool
-func (c *MCPController) HandleListSessions(tc *ToolContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Extract parameters
-	status := mcp.ParseString(request, "status", "")
-	scope := mcp.ParseString(request, "scope", "")
-	teamID := mcp.ParseString(request, "team_id", "")
-	tags := mcp.ParseStringMap(request, "tags", nil)
-
-	// Convert tags
-	tagsMap := make(map[string]string)
-	for k, v := range tags {
-		if strVal, ok := v.(string); ok {
-			tagsMap[k] = strVal
-		}
-	}
+// HandleListSessions handles the list_sessions tool
+func (c *MCPController) HandleListSessions(ctx context.Context, echoCtx echo.Context, params ListSessionsParams) (string, error) {
+	status := params.Status
+	scope := params.Scope
+	teamID := params.TeamID
+	tags := params.Tags
 
 	// Get user from context
-	user := auth.GetUserFromContext(tc.EchoContext)
+	user := auth.GetUserFromContext(echoCtx)
 	var userID string
 	var userTeamIDs []string
 	if user != nil {
@@ -175,7 +174,7 @@ func (c *MCPController) HandleListSessions(tc *ToolContext, request mcp.CallTool
 	// Build filter
 	filter := entities.SessionFilter{
 		Status:  status,
-		Tags:    tagsMap,
+		Tags:    tags,
 		Scope:   entities.ResourceScope(scope),
 		TeamID:  teamID,
 		TeamIDs: userTeamIDs,
@@ -190,7 +189,7 @@ func (c *MCPController) HandleListSessions(tc *ToolContext, request mcp.CallTool
 	sessions := c.sessionManagerProvider.GetSessionManager().ListSessions(filter)
 
 	// Check if auth is enabled
-	cfg := auth.GetConfigFromContext(tc.EchoContext)
+	cfg := auth.GetConfigFromContext(echoCtx)
 	authEnabled := cfg != nil && cfg.Auth.Enabled
 
 	// Filter by authorization
@@ -249,27 +248,27 @@ func (c *MCPController) HandleListSessions(tc *ToolContext, request mcp.CallTool
 
 	log.Printf("[MCP] Listed %d sessions for user: %s", len(filteredSessions), userID)
 
-	return mcp.NewToolResultText(result), nil
+	return result, nil
 }
 
-// HandleGetSession handles the get_session MCP tool
-func (c *MCPController) HandleGetSession(tc *ToolContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID := mcp.ParseString(request, "session_id", "")
+// HandleGetSession handles the get_session tool
+func (c *MCPController) HandleGetSession(ctx context.Context, echoCtx echo.Context, params SessionIDParams) (string, error) {
+	sessionID := params.SessionID
 	if sessionID == "" {
-		return mcp.NewToolResultError("session_id is required"), nil
+		return "", fmt.Errorf("session_id is required")
 	}
 
 	// Get session
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionID)
 	if session == nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Session not found: %s", sessionID)), nil
+		return "", fmt.Errorf("session not found: %s", sessionID)
 	}
 
 	// Check authorization
-	user := auth.GetUserFromContext(tc.EchoContext)
-	if !c.userCanAccessSession(tc.EchoContext, session) {
+	user := auth.GetUserFromContext(echoCtx)
+	if !c.userCanAccessSession(echoCtx, session) {
 		log.Printf("[MCP] Access denied to session %s for user: %s", sessionID, c.getUserID(user))
-		return mcp.NewToolResultError("Permission denied: you don't have access to this session"), nil
+		return "", fmt.Errorf("permission denied: you don't have access to this session")
 	}
 
 	// Format response
@@ -298,65 +297,68 @@ func (c *MCPController) HandleGetSession(tc *ToolContext, request mcp.CallToolRe
 
 	log.Printf("[MCP] Retrieved session %s for user: %s", sessionID, c.getUserID(user))
 
-	return mcp.NewToolResultText(result), nil
+	return result, nil
 }
 
-// HandleDeleteSession handles the delete_session MCP tool
-func (c *MCPController) HandleDeleteSession(tc *ToolContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID := mcp.ParseString(request, "session_id", "")
+// HandleDeleteSession handles the delete_session tool
+func (c *MCPController) HandleDeleteSession(ctx context.Context, echoCtx echo.Context, params SessionIDParams) (string, error) {
+	sessionID := params.SessionID
 	if sessionID == "" {
-		return mcp.NewToolResultError("session_id is required"), nil
+		return "", fmt.Errorf("session_id is required")
 	}
 
 	// Get session
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionID)
 	if session == nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Session not found: %s", sessionID)), nil
+		return "", fmt.Errorf("session not found: %s", sessionID)
 	}
 
 	// Check authorization
-	user := auth.GetUserFromContext(tc.EchoContext)
-	if !c.userCanAccessSession(tc.EchoContext, session) {
+	user := auth.GetUserFromContext(echoCtx)
+	if !c.userCanAccessSession(echoCtx, session) {
 		log.Printf("[MCP] Delete denied for session %s by user: %s", sessionID, c.getUserID(user))
-		return mcp.NewToolResultError("Permission denied: you don't have access to this session"), nil
+		return "", fmt.Errorf("permission denied: you don't have access to this session")
 	}
 
 	// Delete session
 	if err := c.sessionCreator.DeleteSessionByID(sessionID); err != nil {
 		log.Printf("[MCP] Failed to delete session %s: %v", sessionID, err)
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to delete session: %v", err)), nil
+		return "", fmt.Errorf("failed to delete session: %v", err)
 	}
 
 	log.Printf("[MCP] Deleted session %s by user: %s", sessionID, c.getUserID(user))
 
-	return mcp.NewToolResultText(fmt.Sprintf("Session %s deleted successfully", sessionID)), nil
+	return fmt.Sprintf("Session %s deleted successfully", sessionID), nil
 }
 
-// HandleSendMessage handles the send_message MCP tool
-func (c *MCPController) HandleSendMessage(tc *ToolContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID := mcp.ParseString(request, "session_id", "")
+// HandleSendMessage handles the send_message tool
+func (c *MCPController) HandleSendMessage(ctx context.Context, echoCtx echo.Context, params SendMessageParams) (string, error) {
+	sessionID := params.SessionID
 	if sessionID == "" {
-		return mcp.NewToolResultError("session_id is required"), nil
+		return "", fmt.Errorf("session_id is required")
 	}
 
-	message := mcp.ParseString(request, "message", "")
+	message := params.Message
 	if message == "" {
-		return mcp.NewToolResultError("message is required"), nil
+		return "", fmt.Errorf("message is required")
 	}
 
-	messageType := mcp.ParseString(request, "type", "user")
+	messageType := params.Type
+	if messageType == "" {
+		messageType = "user"
+	}
 
 	// Get session
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionID)
 	if session == nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Session not found: %s", sessionID)), nil
+		return "", fmt.Errorf("session not found: %s", sessionID)
 	}
 
 	// Check authorization
-	user := auth.GetUserFromContext(tc.EchoContext)
-	if !c.userCanAccessSession(tc.EchoContext, session) {
+	user := auth.GetUserFromContext(echoCtx)
+	if !c.userCanAccessSession(echoCtx, session) {
 		log.Printf("[MCP] Send message denied for session %s by user: %s", sessionID, c.getUserID(user))
-		return mcp.NewToolResultError("Permission denied: you don't have access to this session"), nil
+		return "", fmt.Errorf("permission denied: you don't have access to this session")
 	}
 
 	// Create client for this session
@@ -367,50 +369,50 @@ func (c *MCPController) HandleSendMessage(tc *ToolContext, request mcp.CallToolR
 		Type:    messageType,
 	}
 
-	ctx, cancel := context.WithTimeout(tc.Context, 30*time.Second)
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	resp, err := sessionClient.SendMessage(ctx, sessionID, msg)
+	resp, err := sessionClient.SendMessage(sendCtx, sessionID, msg)
 	if err != nil {
 		log.Printf("[MCP] Failed to send message to session %s: %v", sessionID, err)
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to send message: %v", err)), nil
+		return "", fmt.Errorf("failed to send message: %v", err)
 	}
 
 	log.Printf("[MCP] Sent message to session %s by user: %s", sessionID, c.getUserID(user))
 
-	return mcp.NewToolResultText(fmt.Sprintf("Message sent successfully. Message ID: %s", resp.ID)), nil
+	return fmt.Sprintf("Message sent successfully. Message ID: %s", resp.ID), nil
 }
 
-// HandleGetMessages handles the get_messages MCP tool
-func (c *MCPController) HandleGetMessages(tc *ToolContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID := mcp.ParseString(request, "session_id", "")
+// HandleGetMessages handles the get_messages tool
+func (c *MCPController) HandleGetMessages(ctx context.Context, echoCtx echo.Context, params SessionIDParams) (string, error) {
+	sessionID := params.SessionID
 	if sessionID == "" {
-		return mcp.NewToolResultError("session_id is required"), nil
+		return "", fmt.Errorf("session_id is required")
 	}
 
 	// Get session
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionID)
 	if session == nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Session not found: %s", sessionID)), nil
+		return "", fmt.Errorf("session not found: %s", sessionID)
 	}
 
 	// Check authorization
-	user := auth.GetUserFromContext(tc.EchoContext)
-	if !c.userCanAccessSession(tc.EchoContext, session) {
+	user := auth.GetUserFromContext(echoCtx)
+	if !c.userCanAccessSession(echoCtx, session) {
 		log.Printf("[MCP] Get messages denied for session %s by user: %s", sessionID, c.getUserID(user))
-		return mcp.NewToolResultError("Permission denied: you don't have access to this session"), nil
+		return "", fmt.Errorf("permission denied: you don't have access to this session")
 	}
 
 	// Create client for this session
 	sessionClient := client.NewClient(fmt.Sprintf("http://%s", session.Addr()))
 
-	ctx, cancel := context.WithTimeout(tc.Context, 30*time.Second)
+	getCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	resp, err := sessionClient.GetMessages(ctx, sessionID)
+	resp, err := sessionClient.GetMessages(getCtx, sessionID)
 	if err != nil {
 		log.Printf("[MCP] Failed to get messages from session %s: %v", sessionID, err)
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to get messages: %v", err)), nil
+		return "", fmt.Errorf("failed to get messages: %v", err)
 	}
 
 	result := fmt.Sprintf("Conversation History (%d messages):\n\n", len(resp.Messages))
@@ -422,27 +424,27 @@ func (c *MCPController) HandleGetMessages(tc *ToolContext, request mcp.CallToolR
 	log.Printf("[MCP] Retrieved %d messages from session %s for user: %s",
 		len(resp.Messages), sessionID, c.getUserID(user))
 
-	return mcp.NewToolResultText(result), nil
+	return result, nil
 }
 
-// HandleGetStatus handles the get_status MCP tool
-func (c *MCPController) HandleGetStatus(tc *ToolContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID := mcp.ParseString(request, "session_id", "")
+// HandleGetStatus handles the get_status tool
+func (c *MCPController) HandleGetStatus(ctx context.Context, echoCtx echo.Context, params SessionIDParams) (string, error) {
+	sessionID := params.SessionID
 	if sessionID == "" {
-		return mcp.NewToolResultError("session_id is required"), nil
+		return "", fmt.Errorf("session_id is required")
 	}
 
 	// Get session
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionID)
 	if session == nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Session not found: %s", sessionID)), nil
+		return "", fmt.Errorf("session not found: %s", sessionID)
 	}
 
 	// Check authorization
-	user := auth.GetUserFromContext(tc.EchoContext)
-	if !c.userCanAccessSession(tc.EchoContext, session) {
+	user := auth.GetUserFromContext(echoCtx)
+	if !c.userCanAccessSession(echoCtx, session) {
 		log.Printf("[MCP] Get status denied for session %s by user: %s", sessionID, c.getUserID(user))
-		return mcp.NewToolResultError("Permission denied: you don't have access to this session"), nil
+		return "", fmt.Errorf("permission denied: you don't have access to this session")
 	}
 
 	result := fmt.Sprintf("Session Status: %s\n", session.Status())
@@ -452,7 +454,7 @@ func (c *MCPController) HandleGetStatus(tc *ToolContext, request mcp.CallToolReq
 
 	log.Printf("[MCP] Retrieved status for session %s by user: %s", sessionID, c.getUserID(user))
 
-	return mcp.NewToolResultText(result), nil
+	return result, nil
 }
 
 // userCanAccessSession checks if the current user can access the session

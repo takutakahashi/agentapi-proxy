@@ -246,7 +246,7 @@ func TestAgentAPIServer_handleSendMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasPrefix(r.URL.Path, "/test-session/message") {
+				if strings.HasPrefix(r.URL.Path, "/message") {
 					w.WriteHeader(tt.mockStatusCode)
 					_, _ = w.Write([]byte(tt.mockResponse))
 					return
@@ -339,7 +339,7 @@ func TestAgentAPIServer_handleGetMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasPrefix(r.URL.Path, "/test-session/messages") {
+				if strings.HasPrefix(r.URL.Path, "/messages") {
 					w.WriteHeader(tt.mockStatusCode)
 					_, _ = w.Write([]byte(tt.mockResponse))
 					return
@@ -417,7 +417,7 @@ func TestAgentAPIServer_handleGetStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasPrefix(r.URL.Path, "/test-session/status") {
+				if strings.HasPrefix(r.URL.Path, "/status") {
 					w.WriteHeader(tt.mockStatusCode)
 					_, _ = w.Write([]byte(tt.mockResponse))
 					return
