@@ -75,6 +75,8 @@ func (a *ServerAdapter) HandleMCPRequest(c echo.Context) error {
 		return a.handleToolsCall(c, mcpRequest)
 	case "initialize":
 		return a.handleInitialize(c, mcpRequest)
+	case "notifications/initialized":
+		return a.handleNotificationInitialized(c, mcpRequest)
 	default:
 		log.Printf("[MCP_ADAPTER] Unknown method: %s", method)
 		return c.JSON(http.StatusBadRequest, map[string]string{
@@ -308,4 +310,16 @@ func (a *ServerAdapter) handleInitialize(c echo.Context, request map[string]inte
 	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
 
 	return c.JSON(http.StatusOK, response)
+}
+
+// handleNotificationInitialized handles notifications/initialized method
+// Notifications are one-way messages that don't require a response
+func (a *ServerAdapter) handleNotificationInitialized(c echo.Context, request map[string]interface{}) error {
+	log.Printf("[MCP_ADAPTER] Received notifications/initialized")
+
+	// Set CORS headers
+	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Notifications don't require a response, just acknowledge with 200 OK
+	return c.NoContent(http.StatusOK)
 }
