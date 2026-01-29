@@ -97,12 +97,11 @@ func TestMessageStruct(t *testing.T) {
 func TestMessageResponseStruct(t *testing.T) {
 	now := time.Now()
 	resp := client.MessageResponse{
-		Message: client.Message{
-			ID:        "test-id",
-			Role:      "assistant",
-			Content:   "test response",
-			Timestamp: now,
-		},
+		ID:        "test-id",
+		Role:      "assistant",
+		Content:   "test response",
+		Type:      "assistant",
+		Timestamp: now,
 	}
 
 	data, err := json.Marshal(resp)
@@ -156,12 +155,11 @@ func TestRunSendWithArgument(t *testing.T) {
 
 		// Return a mock response
 		response := client.MessageResponse{
-			Message: client.Message{
-				ID:        "test-id",
-				Role:      "assistant",
-				Content:   fmt.Sprintf("Response to: %s", msg.Content),
-				Timestamp: time.Now(),
-			},
+			ID:        "test-id",
+			Role:      "assistant",
+			Content:   fmt.Sprintf("Response to: %s", msg.Content),
+			Type:      "assistant",
+			Timestamp: time.Now(),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -207,17 +205,19 @@ func TestRunHistoryWithMockServer(t *testing.T) {
 		}
 
 		response := client.MessagesResponse{
-			Messages: []client.Message{
+			Messages: []client.HistoryMessage{
 				{
 					ID:        "msg-1",
 					Role:      "user",
 					Content:   "Hello",
+					Type:      "user",
 					Timestamp: time.Now().Add(-5 * time.Minute),
 				},
 				{
 					ID:        "msg-2",
 					Role:      "assistant",
 					Content:   "Hi there!",
+					Type:      "assistant",
 					Timestamp: time.Now(),
 				},
 			},
@@ -420,12 +420,11 @@ func TestRunSendInteractiveMode(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := client.MessageResponse{
-			Message: client.Message{
-				ID:        "test-id",
-				Role:      "assistant",
-				Content:   "Interactive response",
-				Timestamp: time.Now(),
-			},
+			ID:        "test-id",
+			Role:      "assistant",
+			Content:   "Interactive response",
+			Type:      "assistant",
+			Timestamp: time.Now(),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)

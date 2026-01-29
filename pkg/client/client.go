@@ -54,23 +54,33 @@ type SearchResponse struct {
 	Sessions []SessionInfo `json:"sessions"`
 }
 
-// Message represents an agentapi message
+// Message represents an agentapi message request
 type Message struct {
+	Content string `json:"content"`
+	Type    string `json:"type"` // "user" or "raw"
+}
+
+// MessageResponse represents the response from sending a message
+type MessageResponse struct {
 	Content   string    `json:"content"`
-	Type      string    `json:"type"` // "user" or "raw"
+	Type      string    `json:"type"`
 	Role      string    `json:"role,omitempty"`
 	Timestamp time.Time `json:"timestamp,omitempty"`
 	ID        string    `json:"id,omitempty"`
 }
 
-// MessageResponse represents the response from sending a message
-type MessageResponse struct {
-	Message
+// HistoryMessage represents a message in conversation history
+type HistoryMessage struct {
+	Content   string    `json:"content"`
+	Type      string    `json:"type"`
+	Role      string    `json:"role,omitempty"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+	ID        string    `json:"id,omitempty"`
 }
 
 // MessagesResponse represents the response from getting messages
 type MessagesResponse struct {
-	Messages []Message `json:"messages"`
+	Messages []HistoryMessage `json:"messages"`
 }
 
 // StatusResponse represents the agent status
