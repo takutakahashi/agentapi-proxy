@@ -13,86 +13,86 @@ import (
 
 // ListSessionsInput represents input for list_sessions tool
 type ListSessionsInput struct {
-	Status string            `json:"status,omitempty" jsonschema:"description=Filter by session status"`
-	UserID string            `json:"user_id,omitempty" jsonschema:"description=Filter by user ID"`
-	Tags   map[string]string `json:"tags,omitempty" jsonschema:"description=Filter by tags"`
+	Status string            `json:"status,omitempty" jsonschema:"Filter by session status"`
+	UserID string            `json:"user_id,omitempty" jsonschema:"Filter by user ID"`
+	Tags   map[string]string `json:"tags,omitempty" jsonschema:"Filter by tags"`
 }
 
 // ListSessionsOutput represents output for list_sessions tool
 type ListSessionsOutput struct {
-	Sessions []SessionOutput `json:"sessions" jsonschema:"description=List of sessions"`
+	Sessions []SessionOutput `json:"sessions" jsonschema:"List of sessions"`
 }
 
 // SessionOutput represents a session in the output
 type SessionOutput struct {
-	SessionID string            `json:"session_id" jsonschema:"description=Session ID"`
-	UserID    string            `json:"user_id" jsonschema:"description=User ID"`
-	Status    string            `json:"status" jsonschema:"description=Session status"`
-	StartedAt time.Time         `json:"started_at" jsonschema:"description=When the session was started"`
-	Port      int               `json:"port" jsonschema:"description=Port number"`
-	Tags      map[string]string `json:"tags,omitempty" jsonschema:"description=Session tags"`
+	SessionID string            `json:"session_id" jsonschema:"Session ID"`
+	UserID    string            `json:"user_id" jsonschema:"User ID"`
+	Status    string            `json:"status" jsonschema:"Session status"`
+	StartedAt time.Time         `json:"started_at" jsonschema:"When the session was started"`
+	Port      int               `json:"port" jsonschema:"Port number"`
+	Tags      map[string]string `json:"tags,omitempty" jsonschema:"Session tags"`
 }
 
 // CreateSessionInput represents input for create_session tool
 type CreateSessionInput struct {
-	UserID      string            `json:"user_id" jsonschema:"description=User ID for the session,required"`
-	Environment map[string]string `json:"environment,omitempty" jsonschema:"description=Environment variables for the session"`
-	Tags        map[string]string `json:"tags,omitempty" jsonschema:"description=Tags for the session"`
+	UserID      string            `json:"user_id" jsonschema:"User ID for the session"`
+	Environment map[string]string `json:"environment,omitempty" jsonschema:"Environment variables for the session"`
+	Tags        map[string]string `json:"tags,omitempty" jsonschema:"Tags for the session"`
 }
 
 // CreateSessionOutput represents output for create_session tool
 type CreateSessionOutput struct {
-	SessionID string `json:"session_id" jsonschema:"description=Created session ID"`
+	SessionID string `json:"session_id" jsonschema:"Created session ID"`
 }
 
 // GetStatusInput represents input for get_session_status tool
 type GetStatusInput struct {
-	SessionID string `json:"session_id" jsonschema:"description=Session ID to get status for,required"`
+	SessionID string `json:"session_id" jsonschema:"Session ID to get status for"`
 }
 
 // GetStatusOutput represents output for get_session_status tool
 type GetStatusOutput struct {
-	Status string `json:"status" jsonschema:"description=Session status"`
+	Status string `json:"status" jsonschema:"Session status"`
 }
 
 // SendMessageInput represents input for send_message tool
 type SendMessageInput struct {
-	SessionID string `json:"session_id" jsonschema:"description=Session ID to send message to,required"`
-	Message   string `json:"message" jsonschema:"description=Message content to send,required"`
-	Type      string `json:"type,omitempty" jsonschema:"description=Message type (user or raw),enum=user|raw"`
+	SessionID string `json:"session_id" jsonschema:"Session ID to send message to"`
+	Message   string `json:"message" jsonschema:"Message content to send"`
+	Type      string `json:"type,omitempty" jsonschema:"Message type (user or raw)"`
 }
 
 // SendMessageOutput represents output for send_message tool
 type SendMessageOutput struct {
-	MessageID string `json:"message_id" jsonschema:"description=Sent message ID"`
+	MessageID string `json:"message_id" jsonschema:"Sent message ID"`
 }
 
 // GetMessagesInput represents input for get_messages tool
 type GetMessagesInput struct {
-	SessionID string `json:"session_id" jsonschema:"description=Session ID to get messages from,required"`
+	SessionID string `json:"session_id" jsonschema:"Session ID to get messages from"`
 }
 
 // GetMessagesOutput represents output for get_messages tool
 type GetMessagesOutput struct {
-	Messages []MessageOutput `json:"messages" jsonschema:"description=List of messages"`
+	Messages []MessageOutput `json:"messages" jsonschema:"List of messages"`
 }
 
 // MessageOutput represents a message in the output
 type MessageOutput struct {
-	Role      string    `json:"role" jsonschema:"description=Message role"`
-	Content   string    `json:"content" jsonschema:"description=Message content"`
-	Timestamp time.Time `json:"timestamp" jsonschema:"description=Message timestamp"`
+	Role      string    `json:"role" jsonschema:"Message role"`
+	Content   string    `json:"content" jsonschema:"Message content"`
+	Timestamp time.Time `json:"timestamp" jsonschema:"Message timestamp"`
 }
 
 // DeleteSessionInput represents input for delete_session tool
 type DeleteSessionInput struct {
-	SessionID string `json:"session_id" jsonschema:"description=Session ID to delete,required"`
+	SessionID string `json:"session_id" jsonschema:"Session ID to delete"`
 }
 
 // DeleteSessionOutput represents output for delete_session tool
 type DeleteSessionOutput struct {
-	Message   string `json:"message" jsonschema:"description=Success message"`
-	SessionID string `json:"session_id" jsonschema:"description=Deleted session ID"`
+	Message   string `json:"message" jsonschema:"Success message"`
+	SessionID string `json:"session_id" jsonschema:"Deleted session ID"`
 }
 
 // Tool Handlers
