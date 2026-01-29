@@ -58,7 +58,7 @@ type GetStatusParams struct {
 
 // NewServerAdapter creates a new ServerAdapter
 func NewServerAdapter(mcpController *controllers.MCPController) *ServerAdapter {
-	// Create MCP server
+	// Create MCP server with capabilities
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "agentapi-proxy-mcp",
 		Version: "1.0.0",
