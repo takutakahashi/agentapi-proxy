@@ -62,7 +62,11 @@ func NewServerAdapter(mcpController *controllers.MCPController) *ServerAdapter {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "agentapi-proxy-mcp",
 		Version: "1.0.0",
-	}, nil)
+	}, &mcp.ServerOptions{
+		Capabilities: &mcp.ServerCapabilities{
+			Tools: &mcp.ToolCapabilities{},
+		},
+	})
 
 	adapter := &ServerAdapter{
 		mcpServer:     server,
