@@ -20,6 +20,8 @@ type SessionParams struct {
 	Message string `json:"message,omitempty"`
 	// GithubToken is a GitHub token to use for authentication instead of GitHub App
 	GithubToken string `json:"github_token,omitempty"`
+	// AgentType specifies the type of agent to use for the session
+	AgentType string `json:"agent_type,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -32,8 +34,6 @@ type StartRequest struct {
 	Scope ResourceScope `json:"scope,omitempty"`
 	// TeamID is the team identifier (e.g., "org/team-slug") when Scope is "team"
 	TeamID string `json:"team_id,omitempty"`
-	// AgentType specifies the type of agent to use for the session
-	AgentType string `json:"agent_type,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags

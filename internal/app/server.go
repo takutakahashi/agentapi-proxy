@@ -375,6 +375,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		githubToken = startReq.Params.GithubToken
 	}
 
+	// Determine agent type from Params.AgentType
+	var agentType string
+	if startReq.Params != nil && startReq.Params.AgentType != "" {
+		agentType = startReq.Params.AgentType
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:         userID,
@@ -386,7 +392,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		GithubToken:    githubToken,
 		Scope:          startReq.Scope,
 		TeamID:         startReq.TeamID,
-		AgentType:      startReq.AgentType,
+		AgentType:      agentType,
 	}
 
 	// Delegate to session manager
