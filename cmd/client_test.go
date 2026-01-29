@@ -97,7 +97,7 @@ func TestMessageStruct(t *testing.T) {
 func TestMessageResponseStruct(t *testing.T) {
 	now := time.Now()
 	resp := client.MessageResponse{
-		ID:        "test-id",
+		ID:        123,
 		Role:      "assistant",
 		Content:   "test response",
 		Type:      "assistant",
@@ -155,7 +155,7 @@ func TestRunSendWithArgument(t *testing.T) {
 
 		// Return a mock response
 		response := client.MessageResponse{
-			ID:        "test-id",
+			ID:        456,
 			Role:      "assistant",
 			Content:   fmt.Sprintf("Response to: %s", msg.Content),
 			Type:      "assistant",
@@ -207,14 +207,14 @@ func TestRunHistoryWithMockServer(t *testing.T) {
 		response := client.MessagesResponse{
 			Messages: []client.HistoryMessage{
 				{
-					ID:        "msg-1",
+					ID:        1,
 					Role:      "user",
 					Content:   "Hello",
 					Type:      "user",
 					Timestamp: time.Now().Add(-5 * time.Minute),
 				},
 				{
-					ID:        "msg-2",
+					ID:        2,
 					Role:      "assistant",
 					Content:   "Hi there!",
 					Type:      "assistant",
@@ -420,7 +420,7 @@ func TestRunSendInteractiveMode(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := client.MessageResponse{
-			ID:        "test-id",
+			ID:        789,
 			Role:      "assistant",
 			Content:   "Interactive response",
 			Type:      "assistant",

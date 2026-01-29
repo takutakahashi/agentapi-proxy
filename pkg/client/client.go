@@ -63,19 +63,19 @@ type Message struct {
 // MessageResponse represents the response from sending a message
 type MessageResponse struct {
 	Content   string    `json:"content"`
-	Type      string    `json:"type"`
+	Type      string    `json:"type,omitempty"`
 	Role      string    `json:"role,omitempty"`
-	Timestamp time.Time `json:"timestamp,omitempty"`
-	ID        string    `json:"id,omitempty"`
+	Timestamp time.Time `json:"time,omitempty"`
+	ID        int64     `json:"id,omitempty"`
 }
 
 // HistoryMessage represents a message in conversation history
 type HistoryMessage struct {
 	Content   string    `json:"content"`
-	Type      string    `json:"type"`
+	Type      string    `json:"type,omitempty"`
 	Role      string    `json:"role,omitempty"`
-	Timestamp time.Time `json:"timestamp,omitempty"`
-	ID        string    `json:"id,omitempty"`
+	Timestamp time.Time `json:"time,omitempty"`
+	ID        int64     `json:"id,omitempty"`
 }
 
 // MessagesResponse represents the response from getting messages

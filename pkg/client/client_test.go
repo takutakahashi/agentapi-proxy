@@ -187,7 +187,7 @@ func TestClient_SendMessage(t *testing.T) {
 				Content: "Hello, agent!",
 				Type:    "user",
 			},
-			serverResponse: `{"content": "Hello, agent!", "type": "user", "role": "user", "timestamp": "2023-01-01T00:00:00Z", "id": "msg123"}`,
+			serverResponse: `{"content": "Hello, agent!", "type": "user", "role": "user", "time": "2023-01-01T00:00:00Z", "id": 123}`,
 			serverStatus:   http.StatusOK,
 			wantErr:        false,
 		},
@@ -252,7 +252,7 @@ func TestClient_SendMessage(t *testing.T) {
 
 func TestClient_GetMessages(t *testing.T) {
 	sessionID := "test-session"
-	serverResponse := `{"messages": [{"content": "Hello", "type": "user", "role": "user", "timestamp": "2023-01-01T00:00:00Z", "id": "msg1"}]}`
+	serverResponse := `{"messages": [{"content": "Hello", "type": "user", "role": "user", "time": "2023-01-01T00:00:00Z", "id": 1}]}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		expectedPath := "/messages"
