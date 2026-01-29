@@ -8,6 +8,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
 // MCPHandler implements the CustomHandler interface for MCP endpoints
@@ -49,13 +51,14 @@ func (h *MCPHandler) GetName() string {
 
 // RegisterRoutes registers the /mcp endpoint with Echo
 func (h *MCPHandler) RegisterRoutes(e *echo.Echo, server *app.Server) error {
-	// Register /mcp endpoint - handles all HTTP methods (POST, GET, etc.)
+	// Register /mcp endpoint with authentication middleware
+	// MCP tools require session read permission
 	e.Any("/mcp", func(c echo.Context) error {
 		// Delegate to the go-sdk HTTP handler
 		h.httpHandler.ServeHTTP(c.Response(), c.Request())
 		return nil
-	})
+	}, auth.RequirePermission(entities.PermissionSessionRead, server.GetContainer().AuthService))
 
-	log.Printf("[MCP] Registered /mcp endpoint successfully")
+	log.Printf("[MCP] Registered /mcp endpoint successfully with authentication")
 	return nil
 }
