@@ -22,40 +22,40 @@ type ServerAdapter struct {
 
 // Tool parameter types
 type CreateSessionParams struct {
-	Environment map[string]string `json:"environment,omitempty" jsonschema:"description=Environment variables"`
-	Tags        map[string]string `json:"tags,omitempty" jsonschema:"description=Tags to attach"`
-	Params      map[string]any    `json:"params,omitempty" jsonschema:"description=Session parameters"`
-	Scope       string            `json:"scope,omitempty" jsonschema:"enum=user,enum=team,description=Resource scope"`
-	TeamID      string            `json:"team_id,omitempty" jsonschema:"description=Team ID"`
+	Environment map[string]string `json:"environment,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Params      map[string]any    `json:"params,omitempty"`
+	Scope       string            `json:"scope,omitempty"`
+	TeamID      string            `json:"team_id,omitempty"`
 }
 
 type ListSessionsParams struct {
-	Status string            `json:"status,omitempty" jsonschema:"description=Filter by status"`
-	Scope  string            `json:"scope,omitempty" jsonschema:"enum=user,enum=team,description=Filter by scope"`
-	TeamID string            `json:"team_id,omitempty" jsonschema:"description=Filter by team ID"`
-	Tags   map[string]string `json:"tags,omitempty" jsonschema:"description=Filter by tags"`
+	Status string            `json:"status,omitempty"`
+	Scope  string            `json:"scope,omitempty"`
+	TeamID string            `json:"team_id,omitempty"`
+	Tags   map[string]string `json:"tags,omitempty"`
 }
 
 type GetSessionParams struct {
-	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
+	SessionID string `json:"session_id"`
 }
 
 type DeleteSessionParams struct {
-	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
+	SessionID string `json:"session_id"`
 }
 
 type SendMessageParams struct {
-	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
-	Message   string `json:"message" jsonschema:"required,description=Message content"`
-	Type      string `json:"type,omitempty" jsonschema:"enum=user,enum=raw,description=Message type"`
+	SessionID string `json:"session_id"`
+	Message   string `json:"message"`
+	Type      string `json:"type,omitempty"`
 }
 
 type GetMessagesParams struct {
-	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
+	SessionID string `json:"session_id"`
 }
 
 type GetStatusParams struct {
-	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
+	SessionID string `json:"session_id"`
 }
 
 // NewServerAdapter creates a new ServerAdapter
