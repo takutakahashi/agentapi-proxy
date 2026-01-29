@@ -21,6 +21,9 @@ func NewMCPHandler(proxyURL string) *MCPHandler {
 	// Create MCP server with options
 	opts := &mcp.ServerOptions{
 		Logger: slog.Default(),
+		Capabilities: &mcp.ServerCapabilities{
+			Tools: &mcp.ToolCapabilities{},
+		},
 	}
 
 	mcpServer := NewMCPServer(proxyURL, opts)
