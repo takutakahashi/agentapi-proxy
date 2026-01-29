@@ -356,8 +356,6 @@ func (c *MCPController) HandleSendMessage(ctx context.Context, echoCtx echo.Cont
 
 	// Check authorization
 	user := auth.GetUserFromContext(echoCtx)
-	log.Printf("[MCP] SendMessage - sessionID: %s, userID: %s, session.UserID: %s, session.Scope: %s",
-		sessionID, c.getUserID(user), session.UserID(), session.Scope())
 	if !c.userCanAccessSession(echoCtx, session) {
 		log.Printf("[MCP] Send message denied for session %s by user: %s", sessionID, c.getUserID(user))
 		return "", fmt.Errorf("permission denied: you don't have access to this session")
@@ -462,24 +460,19 @@ func (c *MCPController) HandleGetStatus(ctx context.Context, echoCtx echo.Contex
 // userCanAccessSession checks if the current user can access the session
 func (c *MCPController) userCanAccessSession(echoCtx echo.Context, session entities.Session) bool {
 	user := auth.GetUserFromContext(echoCtx)
-	log.Printf("[MCP] userCanAccessSession - user is nil: %v", user == nil)
 	if user == nil {
 		// If no auth is configured, allow access
 		cfg := auth.GetConfigFromContext(echoCtx)
-		log.Printf("[MCP] userCanAccessSession - cfg is nil: %v, Auth.Enabled: %v", cfg == nil, cfg != nil && cfg.Auth.Enabled)
 		if cfg == nil || !cfg.Auth.Enabled {
 			return true
 		}
 		return false
 	}
-	canAccess := user.CanAccessResource(
+	return user.CanAccessResource(
 		entities.UserID(session.UserID()),
 		string(session.Scope()),
 		session.TeamID(),
 	)
-	log.Printf("[MCP] userCanAccessSession - CanAccessResource result: %v (userID: %s, sessionUserID: %s, scope: %s, teamID: %s)",
-		canAccess, user.ID(), session.UserID(), session.Scope(), session.TeamID())
-	return canAccess
 }
 
 // getUserID safely gets user ID from user object

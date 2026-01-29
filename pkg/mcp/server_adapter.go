@@ -129,12 +129,7 @@ func (a *ServerAdapter) RegisterTools() {
 func (a *ServerAdapter) HandleMCPRequest(c echo.Context) error {
 	log.Printf("[MCP_ADAPTER] Handling %s request to %s", c.Request().Method, c.Request().URL.Path)
 
-	// Debug: Check if user is in Echo context
-	internalUser := c.Get("internal_user")
-	log.Printf("[MCP_ADAPTER] internal_user in Echo context: %v (type: %T)", internalUser != nil, internalUser)
-
-	// Store ORIGINAL Echo context (with auth info) in request context for tool handlers to access
-	// This is critical - the Echo context contains user info set by auth middleware
+	// Store Echo context (with auth info) in request context for tool handlers to access
 	ctx := context.WithValue(c.Request().Context(), echoContextKey, c)
 	req := c.Request().WithContext(ctx)
 
