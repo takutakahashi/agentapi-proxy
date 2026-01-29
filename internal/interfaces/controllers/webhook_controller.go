@@ -925,4 +925,3 @@ func (c *WebhookController) validateInitialMessageTemplate(webhookType entities.
 
 	return nil
 }
-

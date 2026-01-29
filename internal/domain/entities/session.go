@@ -32,6 +32,8 @@ type StartRequest struct {
 	Scope ResourceScope `json:"scope,omitempty"`
 	// TeamID is the team identifier (e.g., "org/team-slug") when Scope is "team"
 	TeamID string `json:"team_id,omitempty"`
+	// AgentType specifies the type of agent to use for the session
+	AgentType string `json:"agent_type,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -51,6 +53,7 @@ type RunServerRequest struct {
 	GithubToken    string        // GitHub token passed via params.github_token
 	Scope          ResourceScope // Resource scope ("user" or "team")
 	TeamID         string        // Team identifier when Scope is "team"
+	AgentType      string        // Agent type for the session
 }
 
 // Session represents a running agentapi session

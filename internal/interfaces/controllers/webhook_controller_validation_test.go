@@ -259,4 +259,3 @@ func TestValidateWebhookTemplates(t *testing.T) {
 		})
 	}
 }
-

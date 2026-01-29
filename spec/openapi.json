@@ -1754,6 +1754,11 @@
           "team_id": {
             "type": "string",
             "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
+          },
+          "agent_type": {
+            "type": "string",
+            "description": "Agent type for the session. Supported values: 'claude-agentapi' (uses claude-agentapi command with HOST=0.0.0.0 and PORT=9000). If not specified, uses default agentapi.",
+            "example": "claude-agentapi"
           }
         }
       },
