@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
@@ -91,6 +93,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register import/export handlers (requires Kubernetes mode)
 	registerImportExportHandlers(configData, proxyServer)
+
+	// Register MCP handler
+	registerMCPHandler(proxyServer, port)
 
 	// Start server in a goroutine
 	go func() {
@@ -425,4 +430,18 @@ func runCredentialsSecretMigration(configData *config.Config) {
 	}
 
 	log.Printf("[ENV_RESYNC] OAuth mode secrets resync completed successfully")
+}
+
+// registerMCPHandler registers MCP HTTP handler
+func registerMCPHandler(proxyServer *app.Server, port string) {
+	log.Printf("[MCP_HANDLER] Registering MCP handler...")
+
+	// Determine proxy URL (localhost for internal communication)
+	proxyURL := fmt.Sprintf("http://localhost:%s", port)
+
+	// Create and register MCP handler
+	mcpHandler := mcpiface.NewMCPHandler(proxyURL)
+	proxyServer.AddCustomHandler(mcpHandler)
+
+	log.Printf("[MCP_HANDLER] MCP handler registered successfully at /mcp")
 }
