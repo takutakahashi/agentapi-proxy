@@ -64,7 +64,10 @@ func NewServerAdapter(mcpController *controllers.MCPController) *ServerAdapter {
 		Version: "1.0.0",
 	}, &mcp.ServerOptions{
 		Capabilities: &mcp.ServerCapabilities{
-			Tools: &mcp.ToolCapabilities{},
+			Tools: &mcp.ToolCapabilities{
+				ListChanged: true,
+			},
+			Logging: &mcp.LoggingCapabilities{},
 		},
 	})
 
