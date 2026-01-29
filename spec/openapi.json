@@ -20,7 +20,9 @@
         "summary": "Health check",
         "description": "Returns the health status of the proxy server.",
         "operationId": "healthCheck",
-        "tags": ["Health"],
+        "tags": [
+          "Health"
+        ],
         "security": [],
         "responses": {
           "200": {
@@ -47,7 +49,9 @@
         "summary": "Create a new session",
         "description": "Creates a new session and starts an agentapi server instance. Returns the session ID for subsequent requests.",
         "operationId": "createSession",
-        "tags": ["Sessions"],
+        "tags": [
+          "Sessions"
+        ],
         "requestBody": {
           "required": false,
           "content": {
@@ -104,7 +108,9 @@
                       "description": "Unique session identifier (UUID)"
                     }
                   },
-                  "required": ["session_id"]
+                  "required": [
+                    "session_id"
+                  ]
                 },
                 "example": {
                   "session_id": "abc123-def456-ghi789"
@@ -133,7 +139,9 @@
         "summary": "Search sessions",
         "description": "Returns a list of sessions. Non-admin users can see their own sessions and team-scoped sessions they have access to. Supports filtering by status, scope, team, and tags.",
         "operationId": "searchSessions",
-        "tags": ["Sessions"],
+        "tags": [
+          "Sessions"
+        ],
         "parameters": [
           {
             "name": "status",
@@ -198,7 +206,9 @@
         "summary": "Delete a session",
         "description": "Terminates and deletes a session. Users can only delete their own sessions.",
         "operationId": "deleteSession",
-        "tags": ["Sessions"],
+        "tags": [
+          "Sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -254,7 +264,9 @@
         "summary": "Create a share URL",
         "description": "Creates a shareable URL for the session. Only the session owner can create a share URL.",
         "operationId": "createSessionShare",
-        "tags": ["Session Sharing"],
+        "tags": [
+          "Session Sharing"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -305,7 +317,9 @@
         "summary": "Get share status",
         "description": "Returns the share status for a session. Only the session owner can view the share status.",
         "operationId": "getSessionShare",
-        "tags": ["Session Sharing"],
+        "tags": [
+          "Session Sharing"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -343,7 +357,9 @@
         "summary": "Revoke share URL",
         "description": "Revokes/deletes the share URL for a session. Only the session owner can revoke the share.",
         "operationId": "deleteSessionShare",
-        "tags": ["Session Sharing"],
+        "tags": [
+          "Session Sharing"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -394,7 +410,9 @@
         "summary": "Access shared session",
         "description": "Proxy GET request to a shared session. Only GET and HEAD methods are allowed for shared sessions.",
         "operationId": "accessSharedSession",
-        "tags": ["Session Sharing"],
+        "tags": [
+          "Session Sharing"
+        ],
         "security": [],
         "parameters": [
           {
@@ -438,7 +456,9 @@
         "summary": "HEAD request to shared session",
         "description": "Proxy HEAD request to a shared session.",
         "operationId": "headSharedSession",
-        "tags": ["Session Sharing"],
+        "tags": [
+          "Session Sharing"
+        ],
         "security": [],
         "parameters": [
           {
@@ -482,7 +502,9 @@
       "get": {
         "summary": "Proxy GET request to session",
         "operationId": "proxyGetToSession",
-        "tags": ["Session Proxy"],
+        "tags": [
+          "Session Proxy"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -521,7 +543,9 @@
       "post": {
         "summary": "Proxy POST request to session",
         "operationId": "proxyPostToSession",
-        "tags": ["Session Proxy"],
+        "tags": [
+          "Session Proxy"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -573,7 +597,9 @@
         "summary": "Create a new schedule",
         "description": "Creates a new schedule for delayed or recurring session execution.",
         "operationId": "createSchedule",
-        "tags": ["Schedules"],
+        "tags": [
+          "Schedules"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -646,7 +672,9 @@
         "summary": "List schedules",
         "description": "Returns a list of schedules. Non-admin users can see their own schedules and team-scoped schedules they have access to.",
         "operationId": "listSchedules",
-        "tags": ["Schedules"],
+        "tags": [
+          "Schedules"
+        ],
         "parameters": [
           {
             "name": "status",
@@ -703,7 +731,9 @@
         "summary": "Get a schedule",
         "description": "Returns a specific schedule by ID.",
         "operationId": "getSchedule",
-        "tags": ["Schedules"],
+        "tags": [
+          "Schedules"
+        ],
         "parameters": [
           {
             "name": "id",
@@ -738,7 +768,9 @@
         "summary": "Update a schedule",
         "description": "Updates an existing schedule.",
         "operationId": "updateSchedule",
-        "tags": ["Schedules"],
+        "tags": [
+          "Schedules"
+        ],
         "parameters": [
           {
             "name": "id",
@@ -786,7 +818,9 @@
         "summary": "Delete a schedule",
         "description": "Deletes a schedule by ID.",
         "operationId": "deleteSchedule",
-        "tags": ["Schedules"],
+        "tags": [
+          "Schedules"
+        ],
         "parameters": [
           {
             "name": "id",
@@ -832,7 +866,9 @@
         "summary": "Manually trigger a schedule",
         "description": "Immediately executes a schedule, creating a new session.",
         "operationId": "triggerSchedule",
-        "tags": ["Schedules"],
+        "tags": [
+          "Schedules"
+        ],
         "parameters": [
           {
             "name": "id",
@@ -882,7 +918,9 @@
         "summary": "Create a new webhook",
         "description": "Creates a new webhook configuration for receiving GitHub events.",
         "operationId": "createWebhook",
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -897,17 +935,28 @@
                     "name": "PR Review Bot",
                     "type": "github",
                     "github": {
-                      "allowed_events": ["pull_request"],
-                      "allowed_repositories": ["myorg/*"]
+                      "allowed_events": [
+                        "pull_request"
+                      ],
+                      "allowed_repositories": [
+                        "myorg/*"
+                      ]
                     },
                     "triggers": [
                       {
                         "name": "Review PR on open",
                         "conditions": {
                           "github": {
-                            "events": ["pull_request"],
-                            "actions": ["opened", "synchronize"],
-                            "base_branches": ["main"]
+                            "events": [
+                              "pull_request"
+                            ],
+                            "actions": [
+                              "opened",
+                              "synchronize"
+                            ],
+                            "base_branches": [
+                              "main"
+                            ]
                           }
                         },
                         "session_config": {
@@ -923,16 +972,25 @@
                     "name": "Feature PR Review Bot",
                     "type": "github",
                     "github": {
-                      "allowed_events": ["pull_request"],
-                      "allowed_repositories": ["myorg/*"]
+                      "allowed_events": [
+                        "pull_request"
+                      ],
+                      "allowed_repositories": [
+                        "myorg/*"
+                      ]
                     },
                     "triggers": [
                       {
                         "name": "Review feature PRs",
                         "conditions": {
                           "github": {
-                            "events": ["pull_request"],
-                            "actions": ["opened", "synchronize"]
+                            "events": [
+                              "pull_request"
+                            ],
+                            "actions": [
+                              "opened",
+                              "synchronize"
+                            ]
                           },
                           "go_template": "{{ and (contains .pull_request.title \"feat:\") (not .pull_request.draft) }}"
                         },
@@ -977,7 +1035,9 @@
         "summary": "List webhooks",
         "description": "Returns a list of webhooks. Non-admin users can see their own webhooks and team-scoped webhooks they have access to.",
         "operationId": "listWebhooks",
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "parameters": [
           {
             "name": "type",
@@ -1042,7 +1102,9 @@
         "summary": "Get a webhook",
         "description": "Returns a specific webhook by ID.",
         "operationId": "getWebhook",
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "parameters": [
           {
             "name": "id",
@@ -1077,7 +1139,9 @@
         "summary": "Update a webhook",
         "description": "Updates an existing webhook.",
         "operationId": "updateWebhook",
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "parameters": [
           {
             "name": "id",
@@ -1125,7 +1189,9 @@
         "summary": "Delete a webhook",
         "description": "Deletes a webhook by ID.",
         "operationId": "deleteWebhook",
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "parameters": [
           {
             "name": "id",
@@ -1171,7 +1237,9 @@
         "summary": "Regenerate webhook secret",
         "description": "Generates a new secret for signature verification.",
         "operationId": "regenerateWebhookSecret",
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "parameters": [
           {
             "name": "id",
@@ -1217,7 +1285,9 @@
         "summary": "Receive GitHub webhook",
         "description": "Receives webhook payloads from GitHub/GHES. Uses the webhook ID from the URL to identify the webhook and verifies the signature using the webhook's secret.",
         "operationId": "handleGitHubWebhook",
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "security": [],
         "parameters": [
           {
@@ -1287,7 +1357,9 @@
         "summary": "Receive custom webhook",
         "description": "Receives webhook payloads from custom services (Slack, Datadog, PagerDuty, etc.). Uses the webhook ID from the URL to identify the webhook and verifies the signature using the webhook's secret. Triggers are matched using JSONPath conditions.",
         "operationId": "handleCustomWebhook",
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "security": [],
         "parameters": [
           {
@@ -1357,7 +1429,9 @@
         "summary": "Get settings",
         "description": "Returns settings for a user or team. Users can access their own settings or settings of teams they belong to.",
         "operationId": "getSettings",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "parameters": [
           {
             "name": "name",
@@ -1388,8 +1462,13 @@
                     "github": {
                       "type": "stdio",
                       "command": "npx",
-                      "args": ["-y", "@modelcontextprotocol/server-github"],
-                      "env_keys": ["GITHUB_TOKEN"]
+                      "args": [
+                        "-y",
+                        "@modelcontextprotocol/server-github"
+                      ],
+                      "env_keys": [
+                        "GITHUB_TOKEN"
+                      ]
                     }
                   },
                   "marketplaces": {
@@ -1397,7 +1476,10 @@
                       "url": "https://github.com/example/my-marketplace.git"
                     }
                   },
-                  "enabled_plugins": ["commit@claude-plugins-official", "plugin1@my-marketplace"],
+                  "enabled_plugins": [
+                    "commit@claude-plugins-official",
+                    "plugin1@my-marketplace"
+                  ],
                   "created_at": "2025-01-01T00:00:00Z",
                   "updated_at": "2025-01-02T00:00:00Z"
                 }
@@ -1419,7 +1501,9 @@
         "summary": "Update settings",
         "description": "Creates or updates settings for a user or team. Users can modify their own settings or team settings if they have admin/maintainer role.",
         "operationId": "updateSettings",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "parameters": [
           {
             "name": "name",
@@ -1458,7 +1542,10 @@
                       "github": {
                         "type": "stdio",
                         "command": "npx",
-                        "args": ["-y", "@modelcontextprotocol/server-github"],
+                        "args": [
+                          "-y",
+                          "@modelcontextprotocol/server-github"
+                        ],
                         "env": {
                           "GITHUB_TOKEN": "ghp_xxxx"
                         }
@@ -1484,7 +1571,10 @@
                       "github": {
                         "type": "stdio",
                         "command": "npx",
-                        "args": ["-y", "@modelcontextprotocol/server-github"],
+                        "args": [
+                          "-y",
+                          "@modelcontextprotocol/server-github"
+                        ],
                         "env": {
                           "GITHUB_TOKEN": "ghp_xxxx"
                         }
@@ -1503,7 +1593,11 @@
                         "url": "https://github.com/example/another-marketplace.git"
                       }
                     },
-                    "enabled_plugins": ["plugin1@my-marketplace", "plugin2@my-marketplace", "pluginA@another-marketplace"]
+                    "enabled_plugins": [
+                      "plugin1@my-marketplace",
+                      "plugin2@my-marketplace",
+                      "pluginA@another-marketplace"
+                    ]
                   }
                 }
               }
@@ -1543,7 +1637,9 @@
         "summary": "Delete settings",
         "description": "Deletes settings for a user or team. Also deletes associated credentials and MCP servers secrets.",
         "operationId": "deleteSettings",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "parameters": [
           {
             "name": "name",
@@ -1589,7 +1685,9 @@
         "summary": "Get current user info",
         "description": "Returns information about the currently authenticated user.",
         "operationId": "getUserInfo",
-        "tags": ["User"],
+        "tags": [
+          "User"
+        ],
         "responses": {
           "200": {
             "description": "User information",
@@ -1612,7 +1710,9 @@
         "summary": "Subscribe to push notifications",
         "description": "Registers a Web Push subscription for receiving notifications.",
         "operationId": "subscribeNotification",
-        "tags": ["Notifications"],
+        "tags": [
+          "Notifications"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1636,7 +1736,9 @@
         "summary": "Get push subscriptions",
         "description": "Returns the current user's push notification subscriptions.",
         "operationId": "getSubscriptions",
-        "tags": ["Notifications"],
+        "tags": [
+          "Notifications"
+        ],
         "responses": {
           "200": {
             "description": "List of subscriptions",
@@ -1665,7 +1767,9 @@
         "summary": "Unsubscribe from push notifications",
         "description": "Removes a Web Push subscription.",
         "operationId": "unsubscribeNotification",
-        "tags": ["Notifications"],
+        "tags": [
+          "Notifications"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1678,7 +1782,9 @@
                     "description": "The push subscription endpoint to unsubscribe"
                   }
                 },
-                "required": ["endpoint"]
+                "required": [
+                  "endpoint"
+                ]
               }
             }
           }
@@ -1698,7 +1804,9 @@
         "summary": "Get notification history",
         "description": "Returns the history of notifications for the current user.",
         "operationId": "getNotificationHistory",
-        "tags": ["Notifications"],
+        "tags": [
+          "Notifications"
+        ],
         "responses": {
           "200": {
             "description": "Notification history",
@@ -1754,11 +1862,6 @@
           "team_id": {
             "type": "string",
             "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
-          },
-          "agent_type": {
-            "type": "string",
-            "description": "Agent type for the session. Supported values: 'claude-agentapi' (uses claude-agentapi command with HOST=0.0.0.0 and PORT=9000). If not specified, uses default agentapi.",
-            "example": "claude-agentapi"
           }
         }
       },
@@ -1772,6 +1875,11 @@
           "github_token": {
             "type": "string",
             "description": "GitHub token to use for authentication instead of GitHub App"
+          },
+          "agent_type": {
+            "type": "string",
+            "description": "Agent type for the session. Supported values: 'claude-agentapi' (uses claude-agentapi command with HOST=0.0.0.0 and PORT=9000). If not specified, uses default agentapi.",
+            "example": "claude-agentapi"
           }
         }
       },
@@ -1826,12 +1934,21 @@
       },
       "SessionStatus": {
         "type": "string",
-        "enum": ["creating", "starting", "active", "unhealthy", "stopped", "unknown"],
+        "enum": [
+          "creating",
+          "starting",
+          "active",
+          "unhealthy",
+          "stopped",
+          "unknown"
+        ],
         "description": "Session status"
       },
       "CreateScheduleRequest": {
         "type": "object",
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -1992,7 +2109,11 @@
           },
           "status": {
             "type": "string",
-            "enum": ["success", "failed", "skipped"],
+            "enum": [
+              "success",
+              "failed",
+              "skipped"
+            ],
             "description": "Execution result status"
           },
           "error": {
@@ -2003,27 +2124,44 @@
       },
       "ScheduleStatus": {
         "type": "string",
-        "enum": ["active", "paused", "completed"],
+        "enum": [
+          "active",
+          "paused",
+          "completed"
+        ],
         "description": "Schedule status"
       },
       "WebhookType": {
         "type": "string",
-        "enum": ["github", "custom"],
+        "enum": [
+          "github",
+          "custom"
+        ],
         "description": "Webhook source type"
       },
       "WebhookStatus": {
         "type": "string",
-        "enum": ["active", "paused"],
+        "enum": [
+          "active",
+          "paused"
+        ],
         "description": "Webhook status"
       },
       "WebhookSignatureType": {
         "type": "string",
-        "enum": ["hmac", "static"],
+        "enum": [
+          "hmac",
+          "static"
+        ],
         "description": "Signature verification type: hmac (HMAC-based signature verification, default), static (simple token comparison)"
       },
       "CreateWebhookRequest": {
         "type": "object",
-        "required": ["name", "type", "triggers"],
+        "required": [
+          "name",
+          "type",
+          "triggers"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -2205,7 +2343,10 @@
       },
       "WebhookTrigger": {
         "type": "object",
-        "required": ["name", "conditions"],
+        "required": [
+          "name",
+          "conditions"
+        ],
         "properties": {
           "id": {
             "type": "string"
@@ -2320,7 +2461,11 @@
       },
       "JSONPathCondition": {
         "type": "object",
-        "required": ["path", "operator", "value"],
+        "required": [
+          "path",
+          "operator",
+          "value"
+        ],
         "properties": {
           "path": {
             "type": "string",
@@ -2328,7 +2473,14 @@
           },
           "operator": {
             "type": "string",
-            "enum": ["eq", "ne", "contains", "matches", "in", "exists"],
+            "enum": [
+              "eq",
+              "ne",
+              "contains",
+              "matches",
+              "in",
+              "exists"
+            ],
             "description": "Comparison operator"
           },
           "value": {
@@ -2418,7 +2570,11 @@
           },
           "status": {
             "type": "string",
-            "enum": ["processed", "skipped", "failed"]
+            "enum": [
+              "processed",
+              "skipped",
+              "failed"
+            ]
           },
           "matched_trigger": {
             "type": "string"
@@ -2437,7 +2593,10 @@
       },
       "ResourceScope": {
         "type": "string",
-        "enum": ["user", "team"],
+        "enum": [
+          "user",
+          "team"
+        ],
         "default": "user",
         "description": "Ownership scope. 'user' for personal resources, 'team' for team-shared resources"
       },
@@ -2467,7 +2626,10 @@
           },
           "auth_mode": {
             "type": "string",
-            "enum": ["oauth", "bedrock"],
+            "enum": [
+              "oauth",
+              "bedrock"
+            ],
             "description": "Authentication mode. If not set, oauth is preferred when both credentials are available."
           },
           "enabled_plugins": {
@@ -2510,11 +2672,17 @@
       },
       "MCPServerRequest": {
         "type": "object",
-        "required": ["type"],
+        "required": [
+          "type"
+        ],
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["stdio", "http", "sse"],
+            "enum": [
+              "stdio",
+              "http",
+              "sse"
+            ],
             "description": "Server type"
           },
           "url": {
@@ -2550,7 +2718,9 @@
       },
       "MarketplaceRequest": {
         "type": "object",
-        "required": ["url"],
+        "required": [
+          "url"
+        ],
         "properties": {
           "url": {
             "type": "string",
@@ -2588,7 +2758,11 @@
           },
           "auth_mode": {
             "type": "string",
-            "enum": ["oauth", "bedrock", ""],
+            "enum": [
+              "oauth",
+              "bedrock",
+              ""
+            ],
             "description": "The determined authentication mode being used"
           },
           "enabled_plugins": {
@@ -2631,7 +2805,11 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["stdio", "http", "sse"]
+            "enum": [
+              "stdio",
+              "http",
+              "sse"
+            ]
           },
           "url": {
             "type": "string"
