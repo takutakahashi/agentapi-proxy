@@ -54,23 +54,33 @@ type SearchResponse struct {
 	Sessions []SessionInfo `json:"sessions"`
 }
 
-// Message represents an agentapi message
+// Message represents an agentapi message request
 type Message struct {
+	Content string `json:"content"`
+	Type    string `json:"type"` // "user" or "raw"
+}
+
+// MessageResponse represents the response from sending a message
+type MessageResponse struct {
 	Content   string    `json:"content"`
-	Type      string    `json:"type"` // "user" or "raw"
+	Type      string    `json:"type"`
 	Role      string    `json:"role,omitempty"`
 	Timestamp time.Time `json:"timestamp,omitempty"`
 	ID        string    `json:"id,omitempty"`
 }
 
-// MessageResponse represents the response from sending a message
-type MessageResponse struct {
-	Message
+// HistoryMessage represents a message in conversation history
+type HistoryMessage struct {
+	Content   string    `json:"content"`
+	Type      string    `json:"type"`
+	Role      string    `json:"role,omitempty"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+	ID        string    `json:"id,omitempty"`
 }
 
 // MessagesResponse represents the response from getting messages
 type MessagesResponse struct {
-	Messages []Message `json:"messages"`
+	Messages []HistoryMessage `json:"messages"`
 }
 
 // StatusResponse represents the agent status
@@ -210,7 +220,8 @@ func (c *Client) SendMessage(ctx context.Context, sessionID string, message *Mes
 		return nil, fmt.Errorf("failed to marshal message: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/%s/message", c.baseURL, sessionID)
+	// agentapi endpoint is /message (not /{sessionID}/message)
+	url := fmt.Sprintf("%s/message", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -240,7 +251,8 @@ func (c *Client) SendMessage(ctx context.Context, sessionID string, message *Mes
 
 // GetMessages retrieves conversation history from an agentapi session
 func (c *Client) GetMessages(ctx context.Context, sessionID string) (*MessagesResponse, error) {
-	url := fmt.Sprintf("%s/%s/messages", c.baseURL, sessionID)
+	// agentapi endpoint is /messages (not /{sessionID}/messages)
+	url := fmt.Sprintf("%s/messages", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -269,7 +281,8 @@ func (c *Client) GetMessages(ctx context.Context, sessionID string) (*MessagesRe
 
 // GetStatus retrieves the current agent status from an agentapi session
 func (c *Client) GetStatus(ctx context.Context, sessionID string) (*StatusResponse, error) {
-	url := fmt.Sprintf("%s/%s/status", c.baseURL, sessionID)
+	// agentapi endpoint is /status (not /{sessionID}/status)
+	url := fmt.Sprintf("%s/status", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -305,7 +318,8 @@ func (c *Client) StreamEvents(ctx context.Context, sessionID string) (<-chan str
 		defer close(eventChan)
 		defer close(errorChan)
 
-		url := fmt.Sprintf("%s/%s/events", c.baseURL, sessionID)
+		// agentapi endpoint is /events (not /{sessionID}/events)
+		url := fmt.Sprintf("%s/events", c.baseURL)
 		httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			errorChan <- fmt.Errorf("failed to create request: %w", err)

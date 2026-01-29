@@ -16,6 +16,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
+	"github.com/takutakahashi/agentapi-proxy/pkg/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
 	"k8s.io/client-go/kubernetes"
@@ -91,6 +92,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register import/export handlers (requires Kubernetes mode)
 	registerImportExportHandlers(configData, proxyServer)
+
+	// Register MCP handlers (integrated MCP server at /mcp endpoint)
+	registerMCPHandlers(configData, proxyServer)
 
 	// Start server in a goroutine
 	go func() {
@@ -380,6 +384,22 @@ func registerImportExportHandlers(configData *config.Config, proxyServer *app.Se
 	proxyServer.AddCustomHandler(importExportHandlers)
 
 	log.Printf("[IMPORT_EXPORT_HANDLERS] Import/export handlers registered successfully")
+}
+
+// registerMCPHandlers registers MCP server handlers at /mcp endpoint
+func registerMCPHandlers(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[MCP_HANDLERS] Registering MCP handlers...")
+
+	// Create and register MCP handlers (does not require Kubernetes)
+	mcpHandlers := mcp.NewHandlers(
+		proxyServer.GetSessionManager(),
+		proxyServer, // Implements SessionCreator interface
+	)
+	proxyServer.AddCustomHandler(mcpHandlers)
+
+	log.Printf("[MCP_HANDLERS] MCP handlers registered successfully at POST /mcp")
+	log.Printf("[MCP_HANDLERS] Available tools: create_session, list_sessions, get_session, delete_session, send_message, get_messages, get_status")
+	log.Printf("[MCP_HANDLERS] NOTE: Standalone 'agentapi-proxy mcp' command is deprecated in favor of /mcp endpoint")
 }
 
 // runCredentialsSecretMigration migrates old agent-credentials-* secrets to agent-env-* secrets
