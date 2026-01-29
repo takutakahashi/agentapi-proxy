@@ -122,12 +122,21 @@ func (a *ServerAdapter) RegisterTools() {
 
 // HandleMCPRequest handles MCP protocol requests via Echo
 func (a *ServerAdapter) HandleMCPRequest(c echo.Context) error {
+	log.Printf("[MCP_ADAPTER] Handling %s request to %s", c.Request().Method, c.Request().URL.Path)
+
 	// Store Echo context in request context for tool handlers to access
 	ctx := context.WithValue(c.Request().Context(), echoContextKey, c)
 	req := c.Request().WithContext(ctx)
 
 	// Delegate to the Streamable HTTP handler
-	a.httpHandler.ServeHTTP(c.Response(), req)
+	// Use the underlying ResponseWriter to avoid Echo's buffering issues
+	log.Printf("[MCP_ADAPTER] Delegating to Streamable HTTP handler")
+	a.httpHandler.ServeHTTP(c.Response().Writer, req)
+
+	log.Printf("[MCP_ADAPTER] Response status: %d", c.Response().Status)
+
+	// Mark response as committed so Echo doesn't try to write again
+	c.Response().Committed = true
 	return nil
 }
 

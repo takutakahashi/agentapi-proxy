@@ -43,10 +43,14 @@ func (h *Handlers) GetName() string {
 // RegisterRoutes registers MCP routes
 // Implements the app.CustomHandler interface
 func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
-	// Register POST /mcp endpoint for MCP protocol
+	// Register POST and GET /mcp endpoints for MCP protocol
+	// POST: Send messages to server
+	// GET: Open SSE stream for server-initiated messages
 	e.POST("/mcp", h.adapter.HandleMCPRequest)
+	e.GET("/mcp", h.adapter.HandleMCPRequest)
+	e.DELETE("/mcp", h.adapter.HandleMCPRequest)
 
-	log.Printf("[MCP_HANDLERS] Registered MCP endpoint at POST /mcp")
+	log.Printf("[MCP_HANDLERS] Registered MCP endpoint at POST/GET/DELETE /mcp")
 	log.Printf("[MCP_HANDLERS] Available tools: create_session, list_sessions, get_session, delete_session, send_message, get_messages, get_status")
 	log.Printf("[MCP_HANDLERS] NOTE: Standalone 'agentapi-proxy mcp' command is deprecated in favor of /mcp endpoint")
 
