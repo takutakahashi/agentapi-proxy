@@ -207,7 +207,7 @@ func TestClient_SendMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				expectedPath := "/" + tt.sessionID + "/message"
+				expectedPath := "/message"
 				if r.Method != "POST" || r.URL.Path != expectedPath {
 					t.Errorf("Expected POST %s, got %s %s", expectedPath, r.Method, r.URL.Path)
 				}
@@ -255,7 +255,7 @@ func TestClient_GetMessages(t *testing.T) {
 	serverResponse := `{"messages": [{"content": "Hello", "type": "user", "role": "user", "timestamp": "2023-01-01T00:00:00Z", "id": "msg1"}]}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		expectedPath := "/" + sessionID + "/messages"
+		expectedPath := "/messages"
 		if r.Method != "GET" || r.URL.Path != expectedPath {
 			t.Errorf("Expected GET %s, got %s %s", expectedPath, r.Method, r.URL.Path)
 		}
@@ -290,7 +290,7 @@ func TestClient_GetStatus(t *testing.T) {
 	serverResponse := `{"status": "stable"}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		expectedPath := "/" + sessionID + "/status"
+		expectedPath := "/status"
 		if r.Method != "GET" || r.URL.Path != expectedPath {
 			t.Errorf("Expected GET %s, got %s %s", expectedPath, r.Method, r.URL.Path)
 		}
@@ -323,7 +323,7 @@ func TestClient_StreamEvents(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		expectedPath := "/" + sessionID + "/events"
+		expectedPath := "/events"
 		if r.Method != "GET" || r.URL.Path != expectedPath {
 			t.Errorf("Expected GET %s, got %s %s", expectedPath, r.Method, r.URL.Path)
 		}
