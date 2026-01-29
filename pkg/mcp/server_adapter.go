@@ -1,325 +1,394 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/mark3labs/mcp-go/mcp"
+	oldmcp "github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 )
 
 // ServerAdapter adapts MCP server to Echo HTTP handler
 type ServerAdapter struct {
+	mcpServer     *mcp.Server
 	mcpController *controllers.MCPController
-	tools         map[string]func(*controllers.ToolContext, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	httpHandler   http.Handler
+}
+
+// Tool parameter types
+type CreateSessionParams struct {
+	Environment map[string]string `json:"environment,omitempty" jsonschema:"description=Environment variables"`
+	Tags        map[string]string `json:"tags,omitempty" jsonschema:"description=Tags to attach"`
+	Params      map[string]any    `json:"params,omitempty" jsonschema:"description=Session parameters"`
+	Scope       string            `json:"scope,omitempty" jsonschema:"enum=user,enum=team,description=Resource scope"`
+	TeamID      string            `json:"team_id,omitempty" jsonschema:"description=Team ID"`
+}
+
+type ListSessionsParams struct {
+	Status string            `json:"status,omitempty" jsonschema:"description=Filter by status"`
+	Scope  string            `json:"scope,omitempty" jsonschema:"enum=user,enum=team,description=Filter by scope"`
+	TeamID string            `json:"team_id,omitempty" jsonschema:"description=Filter by team ID"`
+	Tags   map[string]string `json:"tags,omitempty" jsonschema:"description=Filter by tags"`
+}
+
+type GetSessionParams struct {
+	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
+}
+
+type DeleteSessionParams struct {
+	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
+}
+
+type SendMessageParams struct {
+	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
+	Message   string `json:"message" jsonschema:"required,description=Message content"`
+	Type      string `json:"type,omitempty" jsonschema:"enum=user,enum=raw,description=Message type"`
+}
+
+type GetMessagesParams struct {
+	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
+}
+
+type GetStatusParams struct {
+	SessionID string `json:"session_id" jsonschema:"required,description=Session ID"`
 }
 
 // NewServerAdapter creates a new ServerAdapter
 func NewServerAdapter(mcpController *controllers.MCPController) *ServerAdapter {
-	return &ServerAdapter{
+	// Create MCP server
+	server := mcp.NewServer(&mcp.Implementation{
+		Name:    "agentapi-proxy-mcp",
+		Version: "1.0.0",
+	}, nil)
+
+	adapter := &ServerAdapter{
+		mcpServer:     server,
 		mcpController: mcpController,
-		tools:         make(map[string]func(*controllers.ToolContext, mcp.CallToolRequest) (*mcp.CallToolResult, error)),
 	}
+
+	return adapter
 }
 
 // RegisterTools registers all MCP tools
 func (a *ServerAdapter) RegisterTools() {
-	a.tools["create_session"] = a.mcpController.HandleCreateSession
-	a.tools["list_sessions"] = a.mcpController.HandleListSessions
-	a.tools["get_session"] = a.mcpController.HandleGetSession
-	a.tools["delete_session"] = a.mcpController.HandleDeleteSession
-	a.tools["send_message"] = a.mcpController.HandleSendMessage
-	a.tools["get_messages"] = a.mcpController.HandleGetMessages
-	a.tools["get_status"] = a.mcpController.HandleGetStatus
+	// Register tools using mcp.AddTool
+	mcp.AddTool(a.mcpServer, &mcp.Tool{
+		Name:        "create_session",
+		Description: "Create a new agentapi session",
+	}, a.handleCreateSession)
+
+	mcp.AddTool(a.mcpServer, &mcp.Tool{
+		Name:        "list_sessions",
+		Description: "List and search sessions",
+	}, a.handleListSessions)
+
+	mcp.AddTool(a.mcpServer, &mcp.Tool{
+		Name:        "get_session",
+		Description: "Get details of a specific session",
+	}, a.handleGetSession)
+
+	mcp.AddTool(a.mcpServer, &mcp.Tool{
+		Name:        "delete_session",
+		Description: "Delete a session",
+	}, a.handleDeleteSession)
+
+	mcp.AddTool(a.mcpServer, &mcp.Tool{
+		Name:        "send_message",
+		Description: "Send a message to a session",
+	}, a.handleSendMessage)
+
+	mcp.AddTool(a.mcpServer, &mcp.Tool{
+		Name:        "get_messages",
+		Description: "Get conversation history from a session",
+	}, a.handleGetMessages)
+
+	mcp.AddTool(a.mcpServer, &mcp.Tool{
+		Name:        "get_status",
+		Description: "Get the status of a session",
+	}, a.handleGetStatus)
+
+	// Create the Streamable HTTP handler
+	a.httpHandler = mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		return a.mcpServer
+	}, nil)
 
 	log.Printf("[MCP_ADAPTER] Registered 7 MCP tools")
 }
 
 // HandleMCPRequest handles MCP protocol requests via Echo
 func (a *ServerAdapter) HandleMCPRequest(c echo.Context) error {
-	// Read request body
-	body, err := io.ReadAll(c.Request().Body)
-	if err != nil {
-		log.Printf("[MCP_ADAPTER] Failed to read request body: %v", err)
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Failed to read request body",
-		})
-	}
+	// Store Echo context in request context for tool handlers to access
+	ctx := context.WithValue(c.Request().Context(), echoContextKey, c)
+	req := c.Request().WithContext(ctx)
 
-	// Parse MCP request
-	var mcpRequest map[string]interface{}
-	if err := json.Unmarshal(body, &mcpRequest); err != nil {
-		log.Printf("[MCP_ADAPTER] Failed to parse MCP request: %v", err)
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Invalid MCP request format",
-		})
-	}
-
-	// Extract method
-	method, ok := mcpRequest["method"].(string)
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Missing or invalid 'method' field",
-		})
-	}
-
-	// Handle different MCP methods
-	switch method {
-	case "tools/list":
-		return a.handleToolsList(c, mcpRequest)
-	case "tools/call":
-		return a.handleToolsCall(c, mcpRequest)
-	case "initialize":
-		return a.handleInitialize(c, mcpRequest)
-	case "notifications/initialized":
-		return a.handleNotificationInitialized(c, mcpRequest)
-	default:
-		log.Printf("[MCP_ADAPTER] Unknown method: %s", method)
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("Unknown method: %s", method),
-		})
-	}
+	// Delegate to the Streamable HTTP handler
+	a.httpHandler.ServeHTTP(c.Response(), req)
+	return nil
 }
 
-// handleToolsList handles tools/list method
-func (a *ServerAdapter) handleToolsList(c echo.Context, request map[string]interface{}) error {
-	// Get request ID
-	id := request["id"]
+// Context key for storing Echo context
+type contextKey string
 
-	// Define available tools
-	tools := []map[string]interface{}{
-		{
-			"name":        "create_session",
-			"description": "Create a new agentapi session",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"environment": map[string]interface{}{"type": "object", "description": "Environment variables"},
-					"tags":        map[string]interface{}{"type": "object", "description": "Tags to attach"},
-					"params":      map[string]interface{}{"type": "object", "description": "Session parameters"},
-					"scope":       map[string]interface{}{"type": "string", "enum": []string{"user", "team"}, "description": "Resource scope"},
-					"team_id":     map[string]interface{}{"type": "string", "description": "Team ID"},
-				},
-			},
-		},
-		{
-			"name":        "list_sessions",
-			"description": "List and search sessions",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"status":  map[string]interface{}{"type": "string", "description": "Filter by status"},
-					"scope":   map[string]interface{}{"type": "string", "enum": []string{"user", "team"}, "description": "Filter by scope"},
-					"team_id": map[string]interface{}{"type": "string", "description": "Filter by team ID"},
-					"tags":    map[string]interface{}{"type": "object", "description": "Filter by tags"},
-				},
-			},
-		},
-		{
-			"name":        "get_session",
-			"description": "Get details of a specific session",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
-				},
-				"required": []string{"session_id"},
-			},
-		},
-		{
-			"name":        "delete_session",
-			"description": "Delete a session",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
-				},
-				"required": []string{"session_id"},
-			},
-		},
-		{
-			"name":        "send_message",
-			"description": "Send a message to a session",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
-					"message":    map[string]interface{}{"type": "string", "description": "Message content"},
-					"type":       map[string]interface{}{"type": "string", "enum": []string{"user", "raw"}, "description": "Message type"},
-				},
-				"required": []string{"session_id", "message"},
-			},
-		},
-		{
-			"name":        "get_messages",
-			"description": "Get conversation history from a session",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
-				},
-				"required": []string{"session_id"},
-			},
-		},
-		{
-			"name":        "get_status",
-			"description": "Get the status of a session",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "Session ID"},
-				},
-				"required": []string{"session_id"},
-			},
-		},
+const echoContextKey contextKey = "echo-context"
+
+// getEchoContext extracts Echo context from request context
+func getEchoContext(ctx context.Context) echo.Context {
+	if c, ok := ctx.Value(echoContextKey).(echo.Context); ok {
+		return c
 	}
-
-	response := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result": map[string]interface{}{
-			"tools": tools,
-		},
-	}
-
-	// Set CORS headers
-	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
-
-	return c.JSON(http.StatusOK, response)
+	return nil
 }
 
-// handleToolsCall handles tools/call method
-func (a *ServerAdapter) handleToolsCall(c echo.Context, request map[string]interface{}) error {
-	// Get request ID
-	id := request["id"]
+// Tool handlers that match mcp.AddTool signature
 
-	// Extract params
-	params, ok := request["params"].(map[string]interface{})
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"error": map[string]interface{}{
-				"code":    -32602,
-				"message": "Invalid params",
-			},
-		})
-	}
-
-	// Extract tool name
-	toolName, ok := params["name"].(string)
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"error": map[string]interface{}{
-				"code":    -32602,
-				"message": "Missing tool name",
-			},
-		})
-	}
-
-	// Get arguments
-	arguments, _ := params["arguments"].(map[string]interface{})
-
-	// Find tool handler
-	handler, ok := a.tools[toolName]
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"error": map[string]interface{}{
-				"code":    -32601,
-				"message": fmt.Sprintf("Tool not found: %s", toolName),
-			},
-		})
+func (a *ServerAdapter) handleCreateSession(ctx context.Context, req *mcp.CallToolRequest, params *CreateSessionParams) (*mcp.CallToolResult, any, error) {
+	echoCtx := getEchoContext(ctx)
+	if echoCtx == nil {
+		return nil, nil, fmt.Errorf("echo context not found")
 	}
 
 	// Create tool context
 	toolContext := &controllers.ToolContext{
-		Context:     c.Request().Context(),
-		EchoContext: c,
+		Context:     ctx,
+		EchoContext: echoCtx,
 		Controller:  a.mcpController,
 	}
 
-	// Create MCP request by marshaling and unmarshaling
-	// This is necessary because CallToolRequest has unexported fields
+	// Convert params to arguments map
+	arguments := make(map[string]interface{})
+	if params.Environment != nil {
+		arguments["environment"] = params.Environment
+	}
+	if params.Tags != nil {
+		arguments["tags"] = params.Tags
+	}
+	if params.Params != nil {
+		arguments["params"] = params.Params
+	}
+	if params.Scope != "" {
+		arguments["scope"] = params.Scope
+	}
+	if params.TeamID != "" {
+		arguments["team_id"] = params.TeamID
+	}
+
+	// Create CallToolRequest for the controller
+	oldReq := createOldCallToolRequest("create_session", arguments)
+
+	// Call existing controller handler
+	result, err := a.mcpController.HandleCreateSession(toolContext, oldReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Convert old result to new result
+	return convertResult(result), nil, nil
+}
+
+func (a *ServerAdapter) handleListSessions(ctx context.Context, req *mcp.CallToolRequest, params *ListSessionsParams) (*mcp.CallToolResult, any, error) {
+	echoCtx := getEchoContext(ctx)
+	if echoCtx == nil {
+		return nil, nil, fmt.Errorf("echo context not found")
+	}
+
+	toolContext := &controllers.ToolContext{
+		Context:     ctx,
+		EchoContext: echoCtx,
+		Controller:  a.mcpController,
+	}
+
+	arguments := make(map[string]interface{})
+	if params.Status != "" {
+		arguments["status"] = params.Status
+	}
+	if params.Scope != "" {
+		arguments["scope"] = params.Scope
+	}
+	if params.TeamID != "" {
+		arguments["team_id"] = params.TeamID
+	}
+	if params.Tags != nil {
+		arguments["tags"] = params.Tags
+	}
+
+	oldReq := createOldCallToolRequest("list_sessions", arguments)
+	result, err := a.mcpController.HandleListSessions(toolContext, oldReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return convertResult(result), nil, nil
+}
+
+func (a *ServerAdapter) handleGetSession(ctx context.Context, req *mcp.CallToolRequest, params *GetSessionParams) (*mcp.CallToolResult, any, error) {
+	echoCtx := getEchoContext(ctx)
+	if echoCtx == nil {
+		return nil, nil, fmt.Errorf("echo context not found")
+	}
+
+	toolContext := &controllers.ToolContext{
+		Context:     ctx,
+		EchoContext: echoCtx,
+		Controller:  a.mcpController,
+	}
+
+	arguments := map[string]interface{}{
+		"session_id": params.SessionID,
+	}
+
+	oldReq := createOldCallToolRequest("get_session", arguments)
+	result, err := a.mcpController.HandleGetSession(toolContext, oldReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return convertResult(result), nil, nil
+}
+
+func (a *ServerAdapter) handleDeleteSession(ctx context.Context, req *mcp.CallToolRequest, params *DeleteSessionParams) (*mcp.CallToolResult, any, error) {
+	echoCtx := getEchoContext(ctx)
+	if echoCtx == nil {
+		return nil, nil, fmt.Errorf("echo context not found")
+	}
+
+	toolContext := &controllers.ToolContext{
+		Context:     ctx,
+		EchoContext: echoCtx,
+		Controller:  a.mcpController,
+	}
+
+	arguments := map[string]interface{}{
+		"session_id": params.SessionID,
+	}
+
+	oldReq := createOldCallToolRequest("delete_session", arguments)
+	result, err := a.mcpController.HandleDeleteSession(toolContext, oldReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return convertResult(result), nil, nil
+}
+
+func (a *ServerAdapter) handleSendMessage(ctx context.Context, req *mcp.CallToolRequest, params *SendMessageParams) (*mcp.CallToolResult, any, error) {
+	echoCtx := getEchoContext(ctx)
+	if echoCtx == nil {
+		return nil, nil, fmt.Errorf("echo context not found")
+	}
+
+	toolContext := &controllers.ToolContext{
+		Context:     ctx,
+		EchoContext: echoCtx,
+		Controller:  a.mcpController,
+	}
+
+	arguments := map[string]interface{}{
+		"session_id": params.SessionID,
+		"message":    params.Message,
+	}
+	if params.Type != "" {
+		arguments["type"] = params.Type
+	}
+
+	oldReq := createOldCallToolRequest("send_message", arguments)
+	result, err := a.mcpController.HandleSendMessage(toolContext, oldReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return convertResult(result), nil, nil
+}
+
+func (a *ServerAdapter) handleGetMessages(ctx context.Context, req *mcp.CallToolRequest, params *GetMessagesParams) (*mcp.CallToolResult, any, error) {
+	echoCtx := getEchoContext(ctx)
+	if echoCtx == nil {
+		return nil, nil, fmt.Errorf("echo context not found")
+	}
+
+	toolContext := &controllers.ToolContext{
+		Context:     ctx,
+		EchoContext: echoCtx,
+		Controller:  a.mcpController,
+	}
+
+	arguments := map[string]interface{}{
+		"session_id": params.SessionID,
+	}
+
+	oldReq := createOldCallToolRequest("get_messages", arguments)
+	result, err := a.mcpController.HandleGetMessages(toolContext, oldReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return convertResult(result), nil, nil
+}
+
+func (a *ServerAdapter) handleGetStatus(ctx context.Context, req *mcp.CallToolRequest, params *GetStatusParams) (*mcp.CallToolResult, any, error) {
+	echoCtx := getEchoContext(ctx)
+	if echoCtx == nil {
+		return nil, nil, fmt.Errorf("echo context not found")
+	}
+
+	toolContext := &controllers.ToolContext{
+		Context:     ctx,
+		EchoContext: echoCtx,
+		Controller:  a.mcpController,
+	}
+
+	arguments := map[string]interface{}{
+		"session_id": params.SessionID,
+	}
+
+	oldReq := createOldCallToolRequest("get_status", arguments)
+	result, err := a.mcpController.HandleGetStatus(toolContext, oldReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return convertResult(result), nil, nil
+}
+
+// Helper functions to bridge between old and new SDK types
+
+func createOldCallToolRequest(name string, arguments map[string]interface{}) oldmcp.CallToolRequest {
+	// Create request via JSON marshaling because CallToolRequest has unexported fields
 	requestData := map[string]interface{}{
 		"params": map[string]interface{}{
-			"name":      toolName,
+			"name":      name,
 			"arguments": arguments,
 		},
 	}
 	requestBytes, _ := json.Marshal(requestData)
 
-	var mcpToolRequest mcp.CallToolRequest
-	_ = json.Unmarshal(requestBytes, &mcpToolRequest)
-
-	// Call handler
-	result, err := handler(toolContext, mcpToolRequest)
-	if err != nil {
-		log.Printf("[MCP_ADAPTER] Tool handler error for %s: %v", toolName, err)
-		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"error": map[string]interface{}{
-				"code":    -32603,
-				"message": fmt.Sprintf("Internal error: %v", err),
-			},
-		})
-	}
-
-	// Format response
-	response := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result":  result,
-	}
-
-	// Set CORS headers
-	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
-
-	return c.JSON(http.StatusOK, response)
+	var req oldmcp.CallToolRequest
+	_ = json.Unmarshal(requestBytes, &req)
+	return req
 }
 
-// handleInitialize handles initialize method
-func (a *ServerAdapter) handleInitialize(c echo.Context, request map[string]interface{}) error {
-	// Get request ID
-	id := request["id"]
-
-	response := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"capabilities": map[string]interface{}{
-				"tools": map[string]interface{}{},
-			},
-			"serverInfo": map[string]interface{}{
-				"name":    "agentapi-proxy-mcp-integrated",
-				"version": "1.0.0",
-			},
-		},
+func convertResult(oldResult *oldmcp.CallToolResult) *mcp.CallToolResult {
+	if oldResult == nil {
+		return &mcp.CallToolResult{}
 	}
 
-	// Set CORS headers
-	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	// Convert Content from old format to new format
+	var newContent []mcp.Content
+	for _, c := range oldResult.Content {
+		// Assuming old content is *TextContent
+		if textContent, ok := c.(*oldmcp.TextContent); ok {
+			newContent = append(newContent, &mcp.TextContent{
+				Text: textContent.Text,
+			})
+		}
+	}
 
-	return c.JSON(http.StatusOK, response)
-}
-
-// handleNotificationInitialized handles notifications/initialized method
-// Notifications are one-way messages that don't require a response
-func (a *ServerAdapter) handleNotificationInitialized(c echo.Context, request map[string]interface{}) error {
-	log.Printf("[MCP_ADAPTER] Received notifications/initialized")
-
-	// Set CORS headers
-	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
-
-	// Notifications don't require a response, just acknowledge with 200 OK
-	return c.NoContent(http.StatusOK)
+	return &mcp.CallToolResult{
+		Content: newContent,
+		IsError: oldResult.IsError,
+	}
 }
