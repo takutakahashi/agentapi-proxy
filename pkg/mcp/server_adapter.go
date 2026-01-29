@@ -382,19 +382,28 @@ func createOldCallToolRequest(name string, arguments map[string]interface{}) old
 
 func convertResult(oldResult *oldmcp.CallToolResult) *mcp.CallToolResult {
 	if oldResult == nil {
+		log.Printf("[MCP_ADAPTER] convertResult: oldResult is nil")
 		return &mcp.CallToolResult{}
 	}
 
+	log.Printf("[MCP_ADAPTER] convertResult: oldResult.Content length=%d, IsError=%v", len(oldResult.Content), oldResult.IsError)
+
 	// Convert Content from old format to new format
 	var newContent []mcp.Content
-	for _, c := range oldResult.Content {
+	for i, c := range oldResult.Content {
+		log.Printf("[MCP_ADAPTER] convertResult: content[%d] type=%T", i, c)
 		// Assuming old content is *TextContent
 		if textContent, ok := c.(*oldmcp.TextContent); ok {
+			log.Printf("[MCP_ADAPTER] convertResult: content[%d] text=%s", i, textContent.Text)
 			newContent = append(newContent, &mcp.TextContent{
 				Text: textContent.Text,
 			})
+		} else {
+			log.Printf("[MCP_ADAPTER] convertResult: content[%d] type assertion failed", i)
 		}
 	}
+
+	log.Printf("[MCP_ADAPTER] convertResult: newContent length=%d", len(newContent))
 
 	return &mcp.CallToolResult{
 		Content: newContent,
