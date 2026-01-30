@@ -38,9 +38,14 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 	mcpServer.RegisterTools()
 
 	// Create HTTP handler using go-sdk's streamable HTTP handler
+	// Use stateless mode for simpler session management
+	httpOpts := &mcp.StreamableHTTPOptions{
+		Stateless: true,
+		Logger:    slog.Default(),
+	}
 	httpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return mcpServer.GetServer()
-	}, nil)
+	}, httpOpts)
 
 	return &MCPHandler{
 		mcpServer:   mcpServer,
