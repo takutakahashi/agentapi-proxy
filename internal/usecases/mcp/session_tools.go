@@ -42,6 +42,8 @@ type CreateSessionInput struct {
 	UserID      string            `json:"user_id"`
 	Environment map[string]string `json:"environment,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
+	GithubToken string            `json:"github_token,omitempty"`
+	Teams       []string          `json:"teams,omitempty"` // GitHub team slugs (e.g., ["org/team-a"])
 }
 
 // Message represents a message in the conversation
@@ -98,6 +100,8 @@ func (uc *MCPSessionToolsUseCase) CreateSession(ctx context.Context, req *Create
 		Environment: req.Environment,
 		Tags:        tags,
 		Scope:       entities.ScopeUser,
+		Teams:       req.Teams,
+		GithubToken: req.GithubToken,
 	}
 
 	// Create session using SessionManager

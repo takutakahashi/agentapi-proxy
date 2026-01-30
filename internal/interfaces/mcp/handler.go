@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -48,8 +49,24 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 	httpHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		// Extract authenticated user from the request context
 		var authenticatedUserID string
+		var authenticatedTeams []string
+		var authenticatedGithubToken string
+
 		if user := getUserFromContext(req.Context()); user != nil {
 			authenticatedUserID = string(user.ID())
+			// Extract team slugs from GitHub user info
+			if githubInfo := user.GitHubInfo(); githubInfo != nil {
+				for _, team := range githubInfo.Teams() {
+					// Format: "org/team-slug"
+					teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
+					authenticatedTeams = append(authenticatedTeams, teamSlug)
+				}
+			}
+		}
+
+		// Extract GitHub token from Authorization header
+		if authHeader := req.Header.Get("Authorization"); authHeader != "" {
+			authenticatedGithubToken = auth.ExtractTokenFromHeader(authHeader)
 		}
 
 		// Create MCP server with options
@@ -61,7 +78,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		}
 
 		// Create new MCP server instance with authenticated user
-		mcpServer := NewMCPServer(sessionManager, shareRepo, authenticatedUserID, opts)
+		mcpServer := NewMCPServer(sessionManager, shareRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, opts)
 
 		// Register all tools
 		mcpServer.RegisterTools()
