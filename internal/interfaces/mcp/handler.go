@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"log"
 	"log/slog"
 	"net/http"
@@ -9,33 +10,27 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
+// Context key for authenticated user
+type contextKey string
+
+const userContextKey contextKey = "mcp_authenticated_user"
+
 // MCPHandler implements the CustomHandler interface for MCP endpoints
 type MCPHandler struct {
-	mcpServer   *MCPServer
-	httpHandler http.Handler
+	sessionManager repositories.SessionManager
+	shareRepo      repositories.ShareRepository
+	httpHandler    http.Handler
 }
 
 // NewMCPHandler creates a new MCP handler for the /mcp endpoint
 func NewMCPHandler(server *app.Server) *MCPHandler {
-	// Create MCP server with options
-	opts := &mcp.ServerOptions{
-		Logger: slog.Default(),
-		Capabilities: &mcp.ServerCapabilities{
-			Tools: &mcp.ToolCapabilities{},
-		},
-	}
-
 	// Get dependencies from server
 	sessionManager := server.GetSessionManager()
 	shareRepo := server.GetShareRepository()
-
-	mcpServer := NewMCPServer(sessionManager, shareRepo, opts)
-
-	// Register all tools
-	mcpServer.RegisterTools()
 
 	// Create HTTP handler using go-sdk's streamable HTTP handler
 	// Use stateless mode for simpler session management
@@ -43,14 +38,39 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		Stateless: true,
 		Logger:    slog.Default(),
 	}
-	httpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+
+	handler := &MCPHandler{
+		sessionManager: sessionManager,
+		shareRepo:      shareRepo,
+	}
+
+	// Create factory function that creates a new MCP server per request with authenticated user
+	httpHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		// Extract authenticated user from the request context
+		var authenticatedUserID string
+		if user := getUserFromContext(req.Context()); user != nil {
+			authenticatedUserID = string(user.ID())
+		}
+
+		// Create MCP server with options
+		opts := &mcp.ServerOptions{
+			Logger: slog.Default(),
+			Capabilities: &mcp.ServerCapabilities{
+				Tools: &mcp.ToolCapabilities{},
+			},
+		}
+
+		// Create new MCP server instance with authenticated user
+		mcpServer := NewMCPServer(sessionManager, shareRepo, authenticatedUserID, opts)
+
+		// Register all tools
+		mcpServer.RegisterTools()
+
 		return mcpServer.GetServer()
 	}, httpOpts)
 
-	return &MCPHandler{
-		mcpServer:   mcpServer,
-		httpHandler: httpHandler,
-	}
+	handler.httpHandler = httpHandler
+	return handler
 }
 
 // GetName returns the name of this handler for logging
@@ -63,11 +83,36 @@ func (h *MCPHandler) RegisterRoutes(e *echo.Echo, server *app.Server) error {
 	// Register /mcp endpoint with authentication middleware
 	// MCP tools require session read permission
 	e.Any("/mcp", func(c echo.Context) error {
-		// Delegate to the go-sdk HTTP handler
-		h.httpHandler.ServeHTTP(c.Response(), c.Request())
+		// Extract authenticated user from Echo context
+		user := auth.GetUserFromContext(c)
+
+		// Store user in http.Request context so MCP server can access it
+		ctx := c.Request().Context()
+		if user != nil {
+			ctx = withUser(ctx, user)
+		}
+
+		// Create new request with updated context
+		req := c.Request().WithContext(ctx)
+
+		// Delegate to the go-sdk HTTP handler with user in context
+		h.httpHandler.ServeHTTP(c.Response(), req)
 		return nil
 	}, auth.RequirePermission(entities.PermissionSessionRead, server.GetContainer().AuthService))
 
 	log.Printf("[MCP] Registered /mcp endpoint successfully with authentication")
+	return nil
+}
+
+// withUser stores the user in the context
+func withUser(ctx context.Context, user *entities.User) context.Context {
+	return context.WithValue(ctx, userContextKey, user)
+}
+
+// getUserFromContext retrieves the user from the context
+func getUserFromContext(ctx context.Context) *entities.User {
+	if user, ok := ctx.Value(userContextKey).(*entities.User); ok {
+		return user
+	}
 	return nil
 }

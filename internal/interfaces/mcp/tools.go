@@ -14,7 +14,6 @@ import (
 // ListSessionsInput represents input for list_sessions tool
 type ListSessionsInput struct {
 	Status string            `json:"status,omitempty" jsonschema:"Filter by session status"`
-	UserID string            `json:"user_id,omitempty" jsonschema:"Filter by user ID"`
 	Tags   map[string]string `json:"tags,omitempty" jsonschema:"Filter by tags"`
 }
 
@@ -35,7 +34,6 @@ type SessionOutput struct {
 
 // CreateSessionInput represents input for create_session tool
 type CreateSessionInput struct {
-	UserID      string            `json:"user_id" jsonschema:"User ID for the session"`
 	Environment map[string]string `json:"environment,omitempty" jsonschema:"Environment variables for the session"`
 	Tags        map[string]string `json:"tags,omitempty" jsonschema:"Tags for the session"`
 }
@@ -98,13 +96,13 @@ type DeleteSessionOutput struct {
 // Tool Handlers
 
 func (s *MCPServer) handleListSessions(ctx context.Context, req *mcp.CallToolRequest, input ListSessionsInput) (*mcp.CallToolResult, ListSessionsOutput, error) {
-	// Build tags filter
+	// Build tags filter with authenticated user
 	tags := input.Tags
 	if tags == nil {
 		tags = make(map[string]string)
 	}
-	if input.UserID != "" {
-		tags["user_id"] = input.UserID
+	if s.authenticatedUserID != "" {
+		tags["user_id"] = s.authenticatedUserID
 	}
 
 	sessions, err := s.useCase.ListSessions(ctx, input.Status, tags)
@@ -131,12 +129,13 @@ func (s *MCPServer) handleListSessions(ctx context.Context, req *mcp.CallToolReq
 }
 
 func (s *MCPServer) handleCreateSession(ctx context.Context, req *mcp.CallToolRequest, input CreateSessionInput) (*mcp.CallToolResult, CreateSessionOutput, error) {
-	if input.UserID == "" {
-		return nil, CreateSessionOutput{}, fmt.Errorf("user_id is required")
+	// Use authenticated user_id
+	if s.authenticatedUserID == "" {
+		return nil, CreateSessionOutput{}, fmt.Errorf("authentication required")
 	}
 
 	createReq := &mcpusecases.CreateSessionInput{
-		UserID:      input.UserID,
+		UserID:      s.authenticatedUserID,
 		Environment: input.Environment,
 		Tags:        input.Tags,
 	}
