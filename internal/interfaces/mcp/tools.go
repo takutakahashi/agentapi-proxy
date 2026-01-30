@@ -162,7 +162,7 @@ func (s *MCPServer) handleGetStatus(ctx context.Context, req *mcp.CallToolReques
 		return nil, GetStatusOutput{}, fmt.Errorf("session_id is required")
 	}
 
-	status, err := s.useCase.GetSessionStatus(ctx, input.SessionID)
+	status, err := s.useCase.GetSessionStatus(ctx, input.SessionID, s.authenticatedUserID)
 	if err != nil {
 		return nil, GetStatusOutput{}, fmt.Errorf("failed to get session status: %w", err)
 	}
@@ -183,7 +183,7 @@ func (s *MCPServer) handleSendMessage(ctx context.Context, req *mcp.CallToolRequ
 		msgType = "user"
 	}
 
-	messageID, err := s.useCase.SendMessage(ctx, input.SessionID, input.Message, msgType)
+	messageID, err := s.useCase.SendMessage(ctx, input.SessionID, input.Message, msgType, s.authenticatedUserID)
 	if err != nil {
 		return nil, SendMessageOutput{}, fmt.Errorf("failed to send message: %w", err)
 	}
@@ -196,7 +196,7 @@ func (s *MCPServer) handleGetMessages(ctx context.Context, req *mcp.CallToolRequ
 		return nil, GetMessagesOutput{}, fmt.Errorf("session_id is required")
 	}
 
-	messages, err := s.useCase.GetMessages(ctx, input.SessionID)
+	messages, err := s.useCase.GetMessages(ctx, input.SessionID, s.authenticatedUserID)
 	if err != nil {
 		return nil, GetMessagesOutput{}, fmt.Errorf("failed to get messages: %w", err)
 	}
@@ -221,7 +221,7 @@ func (s *MCPServer) handleDeleteSession(ctx context.Context, req *mcp.CallToolRe
 		return nil, DeleteSessionOutput{}, fmt.Errorf("session_id is required")
 	}
 
-	err := s.useCase.DeleteSession(ctx, input.SessionID)
+	err := s.useCase.DeleteSession(ctx, input.SessionID, s.authenticatedUserID)
 	if err != nil {
 		return nil, DeleteSessionOutput{}, fmt.Errorf("failed to delete session: %w", err)
 	}

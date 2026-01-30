@@ -53,6 +53,33 @@ type Message struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+const (
+	// MaxMessageLength is the maximum allowed length for a message
+	MaxMessageLength = 100000 // 100KB
+)
+
+// validateSessionID validates that the session ID is a valid UUID
+func validateSessionID(sessionID string) error {
+	if _, err := uuid.Parse(sessionID); err != nil {
+		return fmt.Errorf("invalid session ID format")
+	}
+	return nil
+}
+
+// checkSessionOwnership verifies that the requesting user owns the session
+func (uc *MCPSessionToolsUseCase) checkSessionOwnership(sessionID, requestingUserID string) error {
+	session := uc.sessionManager.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found")
+	}
+
+	if session.UserID() != requestingUserID {
+		return fmt.Errorf("access denied")
+	}
+
+	return nil
+}
+
 // ListSessions lists sessions matching the given filters
 func (uc *MCPSessionToolsUseCase) ListSessions(ctx context.Context, status string, tags map[string]string) ([]SessionInfo, error) {
 	// Build filter
@@ -114,19 +141,44 @@ func (uc *MCPSessionToolsUseCase) CreateSession(ctx context.Context, req *Create
 }
 
 // GetSessionStatus gets the status of a session
-func (uc *MCPSessionToolsUseCase) GetSessionStatus(ctx context.Context, sessionID string) (string, error) {
+func (uc *MCPSessionToolsUseCase) GetSessionStatus(ctx context.Context, sessionID, requestingUserID string) (string, error) {
+	// Validate session ID format
+	if err := validateSessionID(sessionID); err != nil {
+		return "", err
+	}
+
+	// Check ownership
+	if err := uc.checkSessionOwnership(sessionID, requestingUserID); err != nil {
+		return "", err
+	}
+
 	session := uc.sessionManager.GetSession(sessionID)
 	if session == nil {
-		return "", fmt.Errorf("session not found: %s", sessionID)
+		return "", fmt.Errorf("session not found")
 	}
 
 	return session.Status(), nil
 }
 
 // SendMessage sends a message to a session
-func (uc *MCPSessionToolsUseCase) SendMessage(ctx context.Context, sessionID, message, msgType string) (string, error) {
+func (uc *MCPSessionToolsUseCase) SendMessage(ctx context.Context, sessionID, message, msgType, requestingUserID string) (string, error) {
+	// Validate session ID format
+	if err := validateSessionID(sessionID); err != nil {
+		return "", err
+	}
+
+	// Validate message length
+	if len(message) > MaxMessageLength {
+		return "", fmt.Errorf("message too long")
+	}
+
 	if msgType != "" && msgType != "user" {
 		return "", fmt.Errorf("only 'user' message type is supported via SessionManager")
+	}
+
+	// Check ownership
+	if err := uc.checkSessionOwnership(sessionID, requestingUserID); err != nil {
+		return "", err
 	}
 
 	// Use SessionManager's SendMessage
@@ -141,7 +193,17 @@ func (uc *MCPSessionToolsUseCase) SendMessage(ctx context.Context, sessionID, me
 }
 
 // GetMessages gets messages from a session
-func (uc *MCPSessionToolsUseCase) GetMessages(ctx context.Context, sessionID string) ([]Message, error) {
+func (uc *MCPSessionToolsUseCase) GetMessages(ctx context.Context, sessionID, requestingUserID string) ([]Message, error) {
+	// Validate session ID format
+	if err := validateSessionID(sessionID); err != nil {
+		return nil, err
+	}
+
+	// Check ownership
+	if err := uc.checkSessionOwnership(sessionID, requestingUserID); err != nil {
+		return nil, err
+	}
+
 	messages, err := uc.sessionManager.GetMessages(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get messages: %w", err)
@@ -160,7 +222,17 @@ func (uc *MCPSessionToolsUseCase) GetMessages(ctx context.Context, sessionID str
 }
 
 // DeleteSession deletes a session
-func (uc *MCPSessionToolsUseCase) DeleteSession(ctx context.Context, sessionID string) error {
+func (uc *MCPSessionToolsUseCase) DeleteSession(ctx context.Context, sessionID, requestingUserID string) error {
+	// Validate session ID format
+	if err := validateSessionID(sessionID); err != nil {
+		return err
+	}
+
+	// Check ownership
+	if err := uc.checkSessionOwnership(sessionID, requestingUserID); err != nil {
+		return err
+	}
+
 	// Delete associated share link if exists (ignore errors as share may not exist)
 	if uc.shareRepo != nil {
 		_ = uc.shareRepo.Delete(sessionID)
