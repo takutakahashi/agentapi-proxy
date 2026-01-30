@@ -7,6 +7,13 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
+// Message represents a message in a conversation
+type Message struct {
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // SessionManager manages the lifecycle of sessions
 type SessionManager interface {
 	// CreateSession creates a new session and starts it
@@ -23,6 +30,9 @@ type SessionManager interface {
 
 	// SendMessage sends a message to an existing session
 	SendMessage(ctx context.Context, id string, message string) error
+
+	// GetMessages retrieves conversation history from a session
+	GetMessages(ctx context.Context, id string) ([]Message, error)
 
 	// Shutdown gracefully stops all sessions
 	Shutdown(timeout time.Duration) error

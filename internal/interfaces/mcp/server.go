@@ -5,6 +5,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	mcpusecases "github.com/takutakahashi/agentapi-proxy/internal/usecases/mcp"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 // MCPServer wraps the MCP server and use cases
@@ -14,9 +15,9 @@ type MCPServer struct {
 }
 
 // NewMCPServer creates a new MCP server instance
-func NewMCPServer(proxyURL string, opts *mcp.ServerOptions) *MCPServer {
-	// Create use case
-	useCase := mcpusecases.NewMCPSessionToolsUseCase(proxyURL)
+func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, opts *mcp.ServerOptions) *MCPServer {
+	// Create use case with actual dependencies
+	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, shareRepo)
 
 	// Create MCP server
 	impl := &mcp.Implementation{

@@ -502,6 +502,53 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 	return fmt.Errorf("failed to send message after 3 retries: %w", lastErr)
 }
 
+// GetMessages retrieves conversation history from a session
+func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]repositories.Message, error) {
+	// Get session
+	session := m.GetSession(id)
+	if session == nil {
+		return nil, fmt.Errorf("session not found: %s", id)
+	}
+
+	// Build service name and endpoint URL
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/messages",
+		serviceName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+	)
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Send request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get messages: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Parse response
+	var response struct {
+		Messages []repositories.Message `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Successfully retrieved %d messages from session %s", len(response.Messages), id)
+	return response.Messages, nil
+}
+
 // createPVC creates a PersistentVolumeClaim for the session
 func (m *KubernetesSessionManager) createPVC(ctx context.Context, session *KubernetesSession) error {
 	storageSize := resource.MustParse(m.k8sConfig.PVCStorageSize)

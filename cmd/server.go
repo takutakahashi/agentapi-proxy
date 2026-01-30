@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -436,11 +435,8 @@ func runCredentialsSecretMigration(configData *config.Config) {
 func registerMCPHandler(proxyServer *app.Server, port string) {
 	log.Printf("[MCP_HANDLER] Registering MCP handler...")
 
-	// Determine proxy URL (localhost for internal communication)
-	proxyURL := fmt.Sprintf("http://localhost:%s", port)
-
-	// Create and register MCP handler
-	mcpHandler := mcpiface.NewMCPHandler(proxyURL)
+	// Create and register MCP handler with server dependencies
+	mcpHandler := mcpiface.NewMCPHandler(proxyServer)
 	proxyServer.AddCustomHandler(mcpHandler)
 
 	log.Printf("[MCP_HANDLER] MCP handler registered successfully at /mcp")

@@ -5,18 +5,25 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/pkg/client"
+	"github.com/google/uuid"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 // MCPSessionToolsUseCase provides use cases for MCP session tools
 type MCPSessionToolsUseCase struct {
-	client *client.Client
+	sessionManager repositories.SessionManager
+	shareRepo      repositories.ShareRepository
 }
 
 // NewMCPSessionToolsUseCase creates a new MCPSessionToolsUseCase
-func NewMCPSessionToolsUseCase(proxyURL string) *MCPSessionToolsUseCase {
+func NewMCPSessionToolsUseCase(
+	sessionManager repositories.SessionManager,
+	shareRepo repositories.ShareRepository,
+) *MCPSessionToolsUseCase {
 	return &MCPSessionToolsUseCase{
-		client: client.NewClient(proxyURL),
+		sessionManager: sessionManager,
+		shareRepo:      shareRepo,
 	}
 }
 
@@ -46,29 +53,38 @@ type Message struct {
 
 // ListSessions lists sessions matching the given filters
 func (uc *MCPSessionToolsUseCase) ListSessions(ctx context.Context, status string, tags map[string]string) ([]SessionInfo, error) {
-	resp, err := uc.client.SearchWithTags(ctx, status, tags)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search sessions: %w", err)
+	// Build filter
+	filter := entities.SessionFilter{
+		Status: status,
+		Tags:   tags,
 	}
 
-	sessions := make([]SessionInfo, 0, len(resp.Sessions))
-	for _, s := range resp.Sessions {
-		sessions = append(sessions, SessionInfo{
-			SessionID: s.SessionID,
-			UserID:    s.UserID,
-			Status:    s.Status,
-			StartedAt: s.StartedAt,
-			Port:      s.Port,
-			Tags:      s.Tags,
+	sessions := uc.sessionManager.ListSessions(filter)
+
+	result := make([]SessionInfo, 0, len(sessions))
+	for _, s := range sessions {
+		// Use default port (actual port is in service address, not needed for MCP)
+		port := 8080
+
+		result = append(result, SessionInfo{
+			SessionID: s.ID(),
+			UserID:    s.UserID(),
+			Status:    s.Status(),
+			StartedAt: s.StartedAt(),
+			Port:      port,
+			Tags:      s.Tags(),
 		})
 	}
 
-	return sessions, nil
+	return result, nil
 }
 
 // CreateSession creates a new session
 func (uc *MCPSessionToolsUseCase) CreateSession(ctx context.Context, req *CreateSessionInput) (string, error) {
-	// Add user_id to tags if provided
+	// Generate session ID
+	sessionID := uuid.New().String()
+
+	// Build RunServerRequest
 	tags := req.Tags
 	if tags == nil {
 		tags = make(map[string]string)
@@ -77,80 +93,74 @@ func (uc *MCPSessionToolsUseCase) CreateSession(ctx context.Context, req *Create
 		tags["user_id"] = req.UserID
 	}
 
-	startReq := &client.StartRequest{
+	runReq := &entities.RunServerRequest{
+		UserID:      req.UserID,
 		Environment: req.Environment,
 		Tags:        tags,
+		Scope:       entities.ScopeUser,
 	}
 
-	resp, err := uc.client.Start(ctx, startReq)
+	// Create session using SessionManager
+	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq)
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}
 
-	return resp.SessionID, nil
+	return session.ID(), nil
 }
 
 // GetSessionStatus gets the status of a session
 func (uc *MCPSessionToolsUseCase) GetSessionStatus(ctx context.Context, sessionID string) (string, error) {
-	resp, err := uc.client.GetStatus(ctx, sessionID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get session status: %w", err)
+	session := uc.sessionManager.GetSession(sessionID)
+	if session == nil {
+		return "", fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	return resp.Status, nil
+	return session.Status(), nil
 }
 
 // SendMessage sends a message to a session
 func (uc *MCPSessionToolsUseCase) SendMessage(ctx context.Context, sessionID, message, msgType string) (string, error) {
-	if msgType == "" {
-		msgType = "user"
+	if msgType != "" && msgType != "user" {
+		return "", fmt.Errorf("only 'user' message type is supported via SessionManager")
 	}
 
-	msg := &client.Message{
-		Content: message,
-		Type:    msgType,
-	}
-
-	resp, err := uc.client.SendMessage(ctx, sessionID, msg)
+	// Use SessionManager's SendMessage
+	err := uc.sessionManager.SendMessage(ctx, sessionID, message)
 	if err != nil {
 		return "", fmt.Errorf("failed to send message: %w", err)
 	}
 
-	if !resp.OK {
-		return "", fmt.Errorf("message was not sent successfully")
-	}
-
-	// Generate a message ID since agentapi doesn't return one
-	// Use timestamp-based ID for tracking
+	// Generate a message ID since SessionManager doesn't return one
 	messageID := fmt.Sprintf("msg-%d", time.Now().UnixNano())
 	return messageID, nil
 }
 
 // GetMessages gets messages from a session
 func (uc *MCPSessionToolsUseCase) GetMessages(ctx context.Context, sessionID string) ([]Message, error) {
-	resp, err := uc.client.GetMessages(ctx, sessionID)
+	messages, err := uc.sessionManager.GetMessages(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get messages: %w", err)
 	}
 
-	messages := make([]Message, 0, len(resp.Messages))
-	for _, m := range resp.Messages {
-		messages = append(messages, Message{
+	result := make([]Message, 0, len(messages))
+	for _, m := range messages {
+		result = append(result, Message{
 			Role:      m.Role,
 			Content:   m.Content,
 			Timestamp: m.Timestamp,
 		})
 	}
 
-	return messages, nil
+	return result, nil
 }
 
 // DeleteSession deletes a session
 func (uc *MCPSessionToolsUseCase) DeleteSession(ctx context.Context, sessionID string) error {
-	_, err := uc.client.DeleteSession(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to delete session: %w", err)
+	// Delete associated share link if exists (ignore errors as share may not exist)
+	if uc.shareRepo != nil {
+		_ = uc.shareRepo.Delete(sessionID)
 	}
 
-	return nil
+	return uc.sessionManager.DeleteSession(sessionID)
 }

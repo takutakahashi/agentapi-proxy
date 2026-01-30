@@ -19,7 +19,7 @@ type MCPHandler struct {
 }
 
 // NewMCPHandler creates a new MCP handler for the /mcp endpoint
-func NewMCPHandler(proxyURL string) *MCPHandler {
+func NewMCPHandler(server *app.Server) *MCPHandler {
 	// Create MCP server with options
 	opts := &mcp.ServerOptions{
 		Logger: slog.Default(),
@@ -28,7 +28,11 @@ func NewMCPHandler(proxyURL string) *MCPHandler {
 		},
 	}
 
-	mcpServer := NewMCPServer(proxyURL, opts)
+	// Get dependencies from server
+	sessionManager := server.GetSessionManager()
+	shareRepo := server.GetShareRepository()
+
+	mcpServer := NewMCPServer(sessionManager, shareRepo, opts)
 
 	// Register all tools
 	mcpServer.RegisterTools()
