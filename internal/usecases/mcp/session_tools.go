@@ -132,7 +132,7 @@ func (uc *MCPSessionToolsUseCase) CreateSession(ctx context.Context, req *Create
 	}
 
 	// Create session using SessionManager
-	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq)
+	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}

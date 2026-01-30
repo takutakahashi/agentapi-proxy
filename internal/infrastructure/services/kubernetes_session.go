@@ -24,6 +24,7 @@ type KubernetesSession struct {
 	cancelFunc     context.CancelFunc
 	mutex          sync.RWMutex
 	description    string // Preserved description from Secret (not truncated by label limits)
+	webhookPayload []byte // Webhook payload JSON
 }
 
 // NewKubernetesSession creates a new KubernetesSession
@@ -33,6 +34,7 @@ func NewKubernetesSession(
 	deploymentName, serviceName, pvcName, namespace string,
 	servicePort int,
 	cancelFunc context.CancelFunc,
+	webhookPayload []byte,
 ) *KubernetesSession {
 	now := time.Now()
 	return &KubernetesSession{
@@ -47,6 +49,7 @@ func NewKubernetesSession(
 		updatedAt:      now,
 		status:         "creating",
 		cancelFunc:     cancelFunc,
+		webhookPayload: webhookPayload,
 	}
 }
 
@@ -107,6 +110,11 @@ func (s *KubernetesSession) Description() string {
 		return s.request.InitialMessage
 	}
 	return ""
+}
+
+// WebhookPayload returns the webhook payload JSON
+func (s *KubernetesSession) WebhookPayload() []byte {
+	return s.webhookPayload
 }
 
 // UpdatedAt returns when the session was last updated

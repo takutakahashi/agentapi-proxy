@@ -28,7 +28,7 @@ func NewCreateSessionUseCase(
 
 // Execute creates a new session
 func (uc *CreateSessionUseCase) Execute(ctx context.Context, sessionID string, req *entities.RunServerRequest) (entities.Session, error) {
-	return uc.sessionManager.CreateSession(ctx, sessionID, req)
+	return uc.sessionManager.CreateSession(ctx, sessionID, req, nil)
 }
 
 // ListSessionsUseCase handles session listing

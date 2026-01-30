@@ -78,6 +78,7 @@ func TestKubernetesSession_Methods(t *testing.T) {
 		"test-ns",
 		9000,
 		nil,
+		nil, // No webhook payload for test
 	)
 	session.SetStatus("active")
 

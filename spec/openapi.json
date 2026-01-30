@@ -2516,6 +2516,11 @@
             "description": "If true, reuse existing session with same webhook_id and trigger_id instead of creating new one",
             "default": false
           },
+          "mount_payload": {
+            "type": "boolean",
+            "description": "If true, mount the webhook payload as /opt/webhook/payload.json in the session container",
+            "default": false
+          },
           "params": {
             "type": "object",
             "properties": {
@@ -2553,6 +2558,11 @@
           "reuse_session": {
             "type": "boolean",
             "description": "If true, reuse existing session with same webhook_id and trigger_id instead of creating new one",
+            "default": false
+          },
+          "mount_payload": {
+            "type": "boolean",
+            "description": "If true, mount the webhook payload as /opt/webhook/payload.json in the session container",
             "default": false
           }
         },

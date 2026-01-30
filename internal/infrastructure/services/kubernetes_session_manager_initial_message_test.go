@@ -45,6 +45,7 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 			"test-ns",
 			9000,
 			nil,
+			nil, // No webhook payload for test
 		)
 
 		sidecar := manager.buildInitialMessageSenderSidecar(session)
@@ -66,6 +67,7 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 			"test-ns",
 			9000,
 			nil,
+			nil, // No webhook payload for test
 		)
 
 		sidecar := manager.buildInitialMessageSenderSidecar(session)
@@ -136,6 +138,7 @@ func TestCreateInitialMessageSecret(t *testing.T) {
 		"test-ns",
 		9000,
 		nil,
+		nil, // No webhook payload for test
 	)
 
 	message := "This is a test initial message"
@@ -191,6 +194,7 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 			"test-ns",
 			9000,
 			nil,
+			nil, // No webhook payload for test
 		)
 
 		volumes := manager.buildVolumes(session, "claude-config-user")
@@ -235,6 +239,7 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 			"test-ns",
 			9000,
 			nil,
+			nil, // No webhook payload for test
 		)
 
 		volumes := manager.buildVolumes(session, "claude-config-user")
@@ -286,7 +291,7 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		InitialMessage: initialMessage,
 	}
 
-	session, err := manager.CreateSession(ctx, sessionID, req)
+	session, err := manager.CreateSession(ctx, sessionID, req, nil)
 	if err != nil {
 		t.Fatalf("Failed to create session: %v", err)
 	}
