@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -76,11 +77,15 @@ func (m *mockProxySessionManager) DeleteSession(id string) error {
 	return nil
 }
 
-func (m *mockProxySessionManager) Shutdown(timeout time.Duration) error {
+func (m *mockProxySessionManager) SendMessage(ctx context.Context, id string, message string) error {
 	return nil
 }
 
-func (m *mockProxySessionManager) SendMessage(ctx context.Context, id string, message string) error {
+func (m *mockProxySessionManager) GetMessages(ctx context.Context, id string) ([]repositories.Message, error) {
+	return nil, nil
+}
+
+func (m *mockProxySessionManager) Shutdown(timeout time.Duration) error {
 	return nil
 }
 

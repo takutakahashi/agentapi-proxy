@@ -95,14 +95,8 @@ func TestMessageStruct(t *testing.T) {
 }
 
 func TestMessageResponseStruct(t *testing.T) {
-	now := time.Now()
 	resp := client.MessageResponse{
-		Message: client.Message{
-			ID:        "test-id",
-			Role:      "assistant",
-			Content:   "test response",
-			Timestamp: now,
-		},
+		OK: true,
 	}
 
 	data, err := json.Marshal(resp)
@@ -112,11 +106,8 @@ func TestMessageResponseStruct(t *testing.T) {
 	err = json.Unmarshal(data, &unmarshaled)
 	assert.NoError(t, err)
 
-	assert.Equal(t, resp.ID, unmarshaled.ID)
-	assert.Equal(t, resp.Role, unmarshaled.Role)
-	assert.Equal(t, resp.Content, unmarshaled.Content)
-	// Time comparison with some tolerance for JSON marshaling precision
-	assert.WithinDuration(t, resp.Timestamp, unmarshaled.Timestamp, time.Second)
+	assert.Equal(t, resp.OK, unmarshaled.OK)
+	assert.True(t, unmarshaled.OK)
 }
 
 func TestStatusResponseStruct(t *testing.T) {
@@ -156,12 +147,7 @@ func TestRunSendWithArgument(t *testing.T) {
 
 		// Return a mock response
 		response := client.MessageResponse{
-			Message: client.Message{
-				ID:        "test-id",
-				Role:      "assistant",
-				Content:   fmt.Sprintf("Response to: %s", msg.Content),
-				Timestamp: time.Now(),
-			},
+			OK: true,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -420,12 +406,7 @@ func TestRunSendInteractiveMode(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := client.MessageResponse{
-			Message: client.Message{
-				ID:        "test-id",
-				Role:      "assistant",
-				Content:   "Interactive response",
-				Timestamp: time.Now(),
-			},
+			OK: true,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
