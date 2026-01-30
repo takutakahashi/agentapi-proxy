@@ -50,6 +50,8 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		// Extract authenticated user from the request context
 		var authenticatedUserID string
 		var authenticatedTeams []string
+		var authenticatedGithubToken string
+
 		if user := getUserFromContext(req.Context()); user != nil {
 			authenticatedUserID = string(user.ID())
 			// Extract team slugs from GitHub user info
@@ -62,6 +64,11 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 			}
 		}
 
+		// Extract GitHub token from Authorization header
+		if authHeader := req.Header.Get("Authorization"); authHeader != "" {
+			authenticatedGithubToken = auth.ExtractTokenFromHeader(authHeader)
+		}
+
 		// Create MCP server with options
 		opts := &mcp.ServerOptions{
 			Logger: slog.Default(),
@@ -71,7 +78,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		}
 
 		// Create new MCP server instance with authenticated user
-		mcpServer := NewMCPServer(sessionManager, shareRepo, authenticatedUserID, authenticatedTeams, opts)
+		mcpServer := NewMCPServer(sessionManager, shareRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, opts)
 
 		// Register all tools
 		mcpServer.RegisterTools()

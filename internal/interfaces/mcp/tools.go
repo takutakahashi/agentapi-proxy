@@ -135,11 +135,17 @@ func (s *MCPServer) handleCreateSession(ctx context.Context, req *mcp.CallToolRe
 		return nil, CreateSessionOutput{}, fmt.Errorf("authentication required")
 	}
 
+	// Use github_token from input if provided, otherwise use token from Authorization header
+	githubToken := input.GithubToken
+	if githubToken == "" {
+		githubToken = s.authenticatedGithubToken
+	}
+
 	createReq := &mcpusecases.CreateSessionInput{
 		UserID:      s.authenticatedUserID,
 		Environment: input.Environment,
 		Tags:        input.Tags,
-		GithubToken: input.GithubToken,
+		GithubToken: githubToken,
 		Teams:       s.authenticatedTeams,
 	}
 
