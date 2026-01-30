@@ -579,8 +579,11 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 	}
 
 	// Handle GitHub token
-	if sessionConfig != nil && sessionConfig.Params() != nil && sessionConfig.Params().GithubToken() != "" {
-		req.GithubToken = sessionConfig.Params().GithubToken()
+	// For team-scoped webhooks, do not use the creator's github_token
+	if webhook.Scope() != entities.ScopeTeam {
+		if sessionConfig != nil && sessionConfig.Params() != nil && sessionConfig.Params().GithubToken() != "" {
+			req.GithubToken = sessionConfig.Params().GithubToken()
+		}
 	}
 
 	// Set repository info from tags

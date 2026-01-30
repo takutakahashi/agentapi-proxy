@@ -454,16 +454,20 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 	// Create session with schedule's scope
 	sessionID := uuid.New().String()
+	scheduleScope := schedule.GetScope() // Use GetScope() to handle default value
 	req := &entities.RunServerRequest{
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
-		Scope:       schedule.GetScope(), // Use GetScope() to handle default value
+		Scope:       scheduleScope,
 		TeamID:      schedule.TeamID,
 	}
 	if schedule.SessionConfig.Params != nil {
 		req.InitialMessage = schedule.SessionConfig.Params.Message
-		req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		// For team-scoped schedules, do not use the creator's github_token
+		if scheduleScope != entities.ScopeTeam {
+			req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		}
 	}
 
 	// Extract repository information from tags
