@@ -36,7 +36,7 @@ type SessionOutput struct {
 type CreateSessionInput struct {
 	Environment map[string]string `json:"environment,omitempty" jsonschema:"Environment variables for the session"`
 	Tags        map[string]string `json:"tags,omitempty" jsonschema:"Tags for the session"`
-	GithubToken string            `json:"github_token,omitempty" jsonschema:"GitHub personal access token for authentication"`
+	Repository  string            `json:"repository,omitempty" jsonschema:"Repository to clone (e.g., 'owner/repo' or 'https://github.com/owner/repo')"`
 }
 
 // CreateSessionOutput represents output for create_session tool
@@ -135,16 +135,22 @@ func (s *MCPServer) handleCreateSession(ctx context.Context, req *mcp.CallToolRe
 		return nil, CreateSessionOutput{}, fmt.Errorf("authentication required")
 	}
 
-	// Use github_token from input if provided, otherwise use token from Authorization header
-	githubToken := input.GithubToken
-	if githubToken == "" {
-		githubToken = s.authenticatedGithubToken
+	// Always use github_token from Authorization header
+	githubToken := s.authenticatedGithubToken
+
+	// Merge repository into tags if provided
+	tags := input.Tags
+	if tags == nil {
+		tags = make(map[string]string)
+	}
+	if input.Repository != "" {
+		tags["repository"] = input.Repository
 	}
 
 	createReq := &mcpusecases.CreateSessionInput{
 		UserID:      s.authenticatedUserID,
 		Environment: input.Environment,
-		Tags:        input.Tags,
+		Tags:        tags,
 		GithubToken: githubToken,
 		Teams:       s.authenticatedTeams,
 	}
