@@ -187,7 +187,7 @@ func TestClient_SendMessage(t *testing.T) {
 				Content: "Hello, agent!",
 				Type:    "user",
 			},
-			serverResponse: `{"content": "Hello, agent!", "type": "user", "role": "user", "timestamp": "2023-01-01T00:00:00Z", "id": "msg123"}`,
+			serverResponse: `{"ok": true}`,
 			serverStatus:   http.StatusOK,
 			wantErr:        false,
 		},
@@ -243,8 +243,8 @@ func TestClient_SendMessage(t *testing.T) {
 				return
 			}
 
-			if resp.Content != tt.message.Content {
-				t.Errorf("Expected content %s, got %s", tt.message.Content, resp.Content)
+			if !resp.OK {
+				t.Error("Expected OK to be true, got false")
 			}
 		})
 	}

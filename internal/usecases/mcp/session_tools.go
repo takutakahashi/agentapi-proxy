@@ -116,7 +116,14 @@ func (uc *MCPSessionToolsUseCase) SendMessage(ctx context.Context, sessionID, me
 		return "", fmt.Errorf("failed to send message: %w", err)
 	}
 
-	return resp.ID, nil
+	if !resp.OK {
+		return "", fmt.Errorf("message was not sent successfully")
+	}
+
+	// Generate a message ID since agentapi doesn't return one
+	// Use timestamp-based ID for tracking
+	messageID := fmt.Sprintf("msg-%d", time.Now().UnixNano())
+	return messageID, nil
 }
 
 // GetMessages gets messages from a session

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/client"
@@ -105,7 +104,11 @@ func runSend(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	fmt.Printf("Message sent successfully\nID: %s\nTimestamp: %s\n", msgResp.ID, msgResp.Timestamp.Format(time.RFC3339))
+	if msgResp.OK {
+		fmt.Printf("Message sent successfully\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "Message was not sent successfully\n")
+	}
 }
 
 func runHistory(cmd *cobra.Command, args []string) {

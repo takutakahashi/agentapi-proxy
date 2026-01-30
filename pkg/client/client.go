@@ -65,7 +65,7 @@ type Message struct {
 
 // MessageResponse represents the response from sending a message
 type MessageResponse struct {
-	Message
+	OK bool `json:"ok"`
 }
 
 // MessagesResponse represents the response from getting messages
