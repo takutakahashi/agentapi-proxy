@@ -36,6 +36,7 @@ type SessionOutput struct {
 type CreateSessionInput struct {
 	Environment map[string]string `json:"environment,omitempty" jsonschema:"Environment variables for the session"`
 	Tags        map[string]string `json:"tags,omitempty" jsonschema:"Tags for the session"`
+	GithubToken string            `json:"github_token,omitempty" jsonschema:"GitHub personal access token for authentication"`
 }
 
 // CreateSessionOutput represents output for create_session tool
@@ -138,6 +139,8 @@ func (s *MCPServer) handleCreateSession(ctx context.Context, req *mcp.CallToolRe
 		UserID:      s.authenticatedUserID,
 		Environment: input.Environment,
 		Tags:        input.Tags,
+		GithubToken: input.GithubToken,
+		Teams:       s.authenticatedTeams,
 	}
 
 	sessionID, err := s.useCase.CreateSession(ctx, createReq)

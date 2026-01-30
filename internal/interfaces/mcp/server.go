@@ -13,10 +13,11 @@ type MCPServer struct {
 	server              *mcp.Server
 	useCase             *mcpusecases.MCPSessionToolsUseCase
 	authenticatedUserID string
+	authenticatedTeams  []string // GitHub team slugs (e.g., ["org/team-a"])
 }
 
 // NewMCPServer creates a new MCP server instance
-func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, authenticatedUserID string, opts *mcp.ServerOptions) *MCPServer {
+func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, authenticatedUserID string, authenticatedTeams []string, opts *mcp.ServerOptions) *MCPServer {
 	// Create use case with actual dependencies
 	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, shareRepo)
 
@@ -32,6 +33,7 @@ func NewMCPServer(sessionManager repositories.SessionManager, shareRepo reposito
 		server:              server,
 		useCase:             useCase,
 		authenticatedUserID: authenticatedUserID,
+		authenticatedTeams:  authenticatedTeams,
 	}
 }
 
