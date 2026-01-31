@@ -81,6 +81,8 @@ type UpdateSettingsRequest struct {
 	ClaudeCodeOAuthToken *string                        `json:"claude_code_oauth_token,omitempty"`
 	AuthMode             *string                        `json:"auth_mode,omitempty"`       // "oauth" or "bedrock"
 	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	GitRepository        *string                        `json:"git_repository,omitempty"`  // Git repository URL for settings sync
+	StoragePath          *string                        `json:"storage_path,omitempty"`    // Storage path for settings sync
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -117,6 +119,8 @@ type SettingsResponse struct {
 	HasClaudeCodeOAuthToken bool                            `json:"has_claude_code_oauth_token"`
 	AuthMode                string                          `json:"auth_mode,omitempty"`
 	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	GitRepository           string                          `json:"git_repository,omitempty"`  // Git repository URL for settings sync
+	StoragePath             string                          `json:"storage_path,omitempty"`    // Storage path for settings sync
 	CreatedAt               string                          `json:"created_at"`
 	UpdatedAt               string                          `json:"updated_at"`
 }
@@ -267,6 +271,16 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Update Claude Code OAuth Token
 	if req.ClaudeCodeOAuthToken != nil {
 		settings.SetClaudeCodeOAuthToken(*req.ClaudeCodeOAuthToken)
+	}
+
+	// Update Git Repository
+	if req.GitRepository != nil {
+		settings.SetGitRepository(*req.GitRepository)
+	}
+
+	// Update Storage Path
+	if req.StoragePath != nil {
+		settings.SetStoragePath(*req.StoragePath)
 	}
 
 	// Determine and set auth_mode
@@ -501,6 +515,8 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 		Name:                    settings.Name(),
 		HasClaudeCodeOAuthToken: settings.HasClaudeCodeOAuthToken(),
 		AuthMode:                string(settings.AuthMode()),
+		GitRepository:           settings.GitRepository(),
+		StoragePath:             settings.StoragePath(),
 		CreatedAt:               settings.CreatedAt().Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:               settings.UpdatedAt().Format("2006-01-02T15:04:05Z07:00"),
 	}

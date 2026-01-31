@@ -36,6 +36,8 @@ type settingsJSON struct {
 	ClaudeCodeOAuthToken string                      `json:"claude_code_oauth_token,omitempty"`
 	AuthMode             string                      `json:"auth_mode,omitempty"`
 	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	GitRepository        string                      `json:"git_repository,omitempty"`  // Git repository URL for settings sync
+	StoragePath          string                      `json:"storage_path,omitempty"`    // Storage path for settings sync
 	CreatedAt            time.Time                   `json:"created_at"`
 	UpdatedAt            time.Time                   `json:"updated_at"`
 }
@@ -204,6 +206,8 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		Name:                 settings.Name(),
 		ClaudeCodeOAuthToken: settings.ClaudeCodeOAuthToken(),
 		AuthMode:             string(settings.AuthMode()),
+		GitRepository:        settings.GitRepository(),
+		StoragePath:          settings.StoragePath(),
 		CreatedAt:            settings.CreatedAt(),
 		UpdatedAt:            settings.UpdatedAt(),
 	}
@@ -321,6 +325,18 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if sj.AuthMode != "" {
 		settings.SetAuthMode(entities.AuthMode(sj.AuthMode))
 		// Reset updatedAt since SetAuthMode updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.GitRepository != "" {
+		settings.SetGitRepository(sj.GitRepository)
+		// Reset updatedAt since SetGitRepository updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.StoragePath != "" {
+		settings.SetStoragePath(sj.StoragePath)
+		// Reset updatedAt since SetStoragePath updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
