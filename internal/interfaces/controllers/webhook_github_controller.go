@@ -603,8 +603,8 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 		return "", false, fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
 	}
 
-	// Create the session
-	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req)
+	// Create the session (no webhook payload for GitHub webhooks)
+	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create session: %w", err)
 	}

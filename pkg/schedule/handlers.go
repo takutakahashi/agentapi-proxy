@@ -469,7 +469,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	// Extract repository information from tags
 	req.RepoInfo = app.ExtractRepositoryInfo(req.Tags, sessionID)
 
-	session, err := h.sessionManager.CreateSession(c.Request().Context(), sessionID, req)
+	session, err := h.sessionManager.CreateSession(c.Request().Context(), sessionID, req, nil)
 	if err != nil {
 		log.Printf("Failed to trigger schedule %s: %v", id, err)
 

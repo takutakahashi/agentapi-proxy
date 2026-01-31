@@ -41,7 +41,7 @@ func newMockProxySessionManager() *mockProxySessionManager {
 	return &mockProxySessionManager{sessions: make(map[string]*mockProxySession)}
 }
 
-func (m *mockProxySessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest) (entities.Session, error) {
+func (m *mockProxySessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	now := time.Now()
 	session := &mockProxySession{
 		id:        id,

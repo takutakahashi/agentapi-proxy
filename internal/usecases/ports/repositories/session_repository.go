@@ -17,7 +17,7 @@ type Message struct {
 // SessionManager manages the lifecycle of sessions
 type SessionManager interface {
 	// CreateSession creates a new session and starts it
-	CreateSession(ctx context.Context, id string, req *entities.RunServerRequest) (entities.Session, error)
+	CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error)
 
 	// GetSession returns a session by ID, nil if not found
 	GetSession(id string) entities.Session

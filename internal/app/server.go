@@ -396,7 +396,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	}
 
 	// Delegate to session manager
-	return s.sessionManager.CreateSession(context.Background(), sessionID, req)
+	return s.sessionManager.CreateSession(context.Background(), sessionID, req, nil)
 }
 
 // DeleteSessionByID deletes a session by ID

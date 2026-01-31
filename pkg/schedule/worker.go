@@ -156,7 +156,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 	sessionID := uuid.New().String()
 	req := w.buildRunServerRequest(schedule, sessionID)
 
-	session, err := w.sessionManager.CreateSession(ctx, sessionID, req)
+	session, err := w.sessionManager.CreateSession(ctx, sessionID, req, nil)
 	if err != nil {
 		log.Printf("[SCHEDULE_WORKER] Failed to create session for schedule %s: %v",
 			schedule.ID, err)

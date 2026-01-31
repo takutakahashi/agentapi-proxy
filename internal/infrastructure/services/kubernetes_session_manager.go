@@ -104,7 +104,7 @@ func NewKubernetesSessionManagerWithClient(
 }
 
 // CreateSession creates a new session with a Kubernetes Deployment
-func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest) (entities.Session, error) {
+func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	// Create session context
 	sessionCtx, cancel := context.WithCancel(context.Background())
 
@@ -123,6 +123,7 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		m.namespace,
 		m.k8sConfig.BasePort,
 		cancel,
+		webhookPayload,
 	)
 
 	// Store session
@@ -164,6 +165,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		if err := m.createGithubTokenSecret(ctx, session, req.GithubToken); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to create github token secret: %v", err)
 			// Continue anyway - will fall back to GitHub App authentication if available
+		}
+	}
+
+	// Create webhook payload Secret if webhook payload is provided
+	if len(webhookPayload) > 0 {
+		if err := m.createWebhookPayloadSecret(ctx, session, webhookPayload); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create webhook payload secret: %v", err)
+			// Continue anyway - session will work without payload file
 		}
 	}
 
@@ -964,7 +973,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				corev1.ResourceMemory: memoryLimit,
 			},
 		},
-		VolumeMounts: m.buildMainContainerVolumeMounts(),
+		VolumeMounts: m.buildMainContainerVolumeMounts(session),
 		Command:      []string{"sh", "-c"},
 		Args: []string{
 			m.buildClaudeStartCommand(),
@@ -1602,12 +1611,55 @@ func (m *KubernetesSessionManager) createInitialMessageSecret(
 	return nil
 }
 
+// createWebhookPayloadSecret creates a Secret containing the webhook payload JSON
+func (m *KubernetesSessionManager) createWebhookPayloadSecret(
+	ctx context.Context,
+	session *KubernetesSession,
+	payload []byte,
+) error {
+	secretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
+				"agentapi.proxy/resource":   "webhook-payload",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"payload.json": payload,
+		},
+	}
+
+	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create webhook payload secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created webhook payload Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
 // deleteInitialMessageSecret deletes the initial message Secret for a session
 func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Context, session *KubernetesSession) error {
 	secretName := fmt.Sprintf("%s-initial-message", session.ServiceName())
 	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete initial message secret: %w", err)
+	}
+	return nil
+}
+
+// deleteWebhookPayloadSecret deletes the webhook payload Secret for a session
+func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Context, session *KubernetesSession) error {
+	secretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete webhook payload secret: %w", err)
 	}
 	return nil
 }
@@ -1810,6 +1862,20 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 				},
 			},
 		)
+	}
+
+	// Add webhook payload volume if webhook payload is provided
+	if len(session.WebhookPayload()) > 0 {
+		webhookPayloadSecretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
+		volumes = append(volumes, corev1.Volume{
+			Name: "webhook-payload",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: webhookPayloadSecretName,
+					Optional:   boolPtr(true),
+				},
+			},
+		})
 	}
 
 	// Add MCP server configuration volumes if enabled
@@ -2181,6 +2247,11 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 	// Delete GitHub token Secret
 	if err := m.deleteGithubTokenSecret(ctx, session); err != nil {
 		errs = append(errs, fmt.Sprintf("github-token-secret: %v", err))
+	}
+
+	// Delete webhook payload Secret
+	if err := m.deleteWebhookPayloadSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("webhook-payload-secret: %v", err))
 	}
 
 	if len(errs) > 0 {
@@ -2724,7 +2795,7 @@ func (m *KubernetesSessionManager) buildSettingsMergeInitContainer(session *Kube
 }
 
 // buildMainContainerVolumeMounts builds the volume mounts for the main container
-func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.VolumeMount {
+func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *KubernetesSession) []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      "workdir",
@@ -2758,6 +2829,16 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts() []corev1.Vol
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "mcp-config",
 			MountPath: "/mcp-config",
+			ReadOnly:  true,
+		})
+	}
+
+	// Add webhook payload volume mount if webhook payload is provided
+	if len(session.WebhookPayload()) > 0 {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "webhook-payload",
+			MountPath: "/opt/webhook/payload.json",
+			SubPath:   "payload.json",
 			ReadOnly:  true,
 		})
 	}
@@ -2891,6 +2972,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		m.namespace,
 		servicePort,
 		cancel,
+		nil, // No webhook payload for restored sessions
 	)
 	// Set restored values
 	session.SetStartedAt(createdAt)
@@ -2978,6 +3060,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 		m.namespace,
 		servicePort,
 		cancel,
+		nil, // No webhook payload for restored sessions
 	)
 	// Set restored values
 	session.SetStartedAt(createdAt)

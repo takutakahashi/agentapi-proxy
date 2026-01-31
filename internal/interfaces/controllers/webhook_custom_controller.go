@@ -185,7 +185,7 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 	log.Printf("[WEBHOOK_CUSTOM] Trigger matched: %s (%s)", matchResult.ID(), matchResult.Name())
 
 	// Create or reuse session
-	sessionID, sessionReused, err := c.createSessionFromWebhook(ctx, matchedWebhook, matchResult, payload)
+	sessionID, sessionReused, err := c.createSessionFromWebhook(ctx, matchedWebhook, matchResult, payload, body)
 	if err != nil {
 		log.Printf("[WEBHOOK_CUSTOM] Failed to create session: %v", err)
 
@@ -343,6 +343,7 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 	webhook *entities.Webhook,
 	trigger *entities.WebhookTrigger,
 	payload map[string]interface{},
+	rawPayload []byte,
 ) (string, bool, error) {
 	// Merge session configs (trigger overrides webhook default)
 	sessionConfig := c.mergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
@@ -454,8 +455,14 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 		return "", false, fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
 	}
 
+	// Prepare webhook payload if mount_payload is enabled
+	var webhookPayload []byte
+	if sessionConfig != nil && sessionConfig.MountPayload() {
+		webhookPayload = rawPayload
+	}
+
 	// Create the session
-	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req)
+	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req, webhookPayload)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create session: %w", err)
 	}
@@ -605,8 +612,8 @@ Please ensure the webhook payload is valid JSON.
 		return "", fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
 	}
 
-	// Create the session
-	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req)
+	// Create the session (no webhook payload for invalid payload error handling)
+	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}

@@ -524,6 +524,7 @@ type WebhookSessionConfig struct {
 	reuseMessageTemplate   string
 	params                 *WebhookSessionParams
 	reuseSession           bool
+	mountPayload           bool
 }
 
 // NewWebhookSessionConfig creates a new session config
@@ -573,6 +574,12 @@ func (c *WebhookSessionConfig) ReuseSession() bool { return c.reuseSession }
 
 // SetReuseSession sets whether to reuse existing sessions
 func (c *WebhookSessionConfig) SetReuseSession(reuse bool) { c.reuseSession = reuse }
+
+// MountPayload returns whether to mount the webhook payload
+func (c *WebhookSessionConfig) MountPayload() bool { return c.mountPayload }
+
+// SetMountPayload sets whether to mount the webhook payload
+func (c *WebhookSessionConfig) SetMountPayload(mount bool) { c.mountPayload = mount }
 
 // WebhookSessionParams contains additional session parameters
 type WebhookSessionParams struct {
