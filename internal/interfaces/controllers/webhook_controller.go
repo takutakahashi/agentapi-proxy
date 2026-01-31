@@ -105,6 +105,7 @@ type SessionConfigRequest struct {
 	ReuseMessageTemplate   string                `json:"reuse_message_template,omitempty"`
 	Params                 *SessionParamsRequest `json:"params,omitempty"`
 	ReuseSession           bool                  `json:"reuse_session,omitempty"`
+	MountPayload           bool                  `json:"mount_payload,omitempty"`
 }
 
 // SessionParamsRequest represents session params in requests
@@ -200,6 +201,7 @@ type SessionConfigResponse struct {
 	ReuseMessageTemplate   string                 `json:"reuse_message_template,omitempty"`
 	Params                 *SessionParamsResponse `json:"params,omitempty"`
 	ReuseSession           bool                   `json:"reuse_session,omitempty"`
+	MountPayload           bool                   `json:"mount_payload,omitempty"`
 }
 
 // SessionParamsResponse represents session params in responses
@@ -667,6 +669,7 @@ func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *e
 	config.SetInitialMessageTemplate(req.InitialMessageTemplate)
 	config.SetReuseMessageTemplate(req.ReuseMessageTemplate)
 	config.SetReuseSession(req.ReuseSession)
+	config.SetMountPayload(req.MountPayload)
 	if req.Params != nil {
 		params := entities.NewWebhookSessionParams()
 		params.SetGithubToken(req.Params.GithubToken)
@@ -780,6 +783,7 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 		InitialMessageTemplate: sc.InitialMessageTemplate(),
 		ReuseMessageTemplate:   sc.ReuseMessageTemplate(),
 		ReuseSession:           sc.ReuseSession(),
+		MountPayload:           sc.MountPayload(),
 	}
 	// GitHubトークンは機密情報なのでレスポンスに含めない
 	// params フィールドは意図的に省略
