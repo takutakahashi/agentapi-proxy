@@ -2853,6 +2853,14 @@ func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
 	baseCmd := `
 # Determine which agent to start based on AGENTAPI_AGENT_TYPE
 if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
+    # Update claude-agentapi to the latest version
+    echo "[STARTUP] Updating claude-agentapi to the latest version"
+    if bun install -g github:takutakahashi/claude-agentapi; then
+        echo "[STARTUP] claude-agentapi update successful"
+    else
+        echo "[STARTUP] Warning: Failed to update claude-agentapi, continuing with existing version"
+    fi
+
     # Start claude-agentapi
     echo "[STARTUP] Starting claude-agentapi on $HOST:$PORT"
 
