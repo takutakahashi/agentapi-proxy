@@ -2855,7 +2855,7 @@ func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
 if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
     # Update claude-agentapi to the latest version
     echo "[STARTUP] Updating claude-agentapi to the latest version"
-    if bun install -g github:takutakahashi/claude-agentapi; then
+    if bun install -g claude-agentapi; then
         echo "[STARTUP] claude-agentapi update successful"
     else
         echo "[STARTUP] Warning: Failed to update claude-agentapi, continuing with existing version"
