@@ -34,7 +34,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/takutakahashi/agentapi-proxy
   pullPolicy: IfNotPresent
-  tag: ""
+  # Image tag is not configurable and always uses Chart's appVersion
 
 nameOverride: ""
 fullnameOverride: ""

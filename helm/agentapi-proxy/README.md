@@ -53,8 +53,9 @@ The command removes all the Kubernetes components associated with the chart and 
 | Name                | Description                       | Value                                      |
 | ------------------- | --------------------------------- | ------------------------------------------ |
 | `image.repository`  | AgentAPI Proxy image repository   | `ghcr.io/takutakahashi/agentapi-proxy`     |
-| `image.tag`         | AgentAPI Proxy image tag          | `0.18.0`                                   |
 | `image.pullPolicy`  | AgentAPI Proxy image pull policy  | `IfNotPresent`                             |
+
+**Note:** The image tag is not configurable and always uses the Chart's `appVersion`.
 
 ### Deployment parameters
 
@@ -139,13 +140,11 @@ helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --
 ```bash
 # From local chart
 helm install agentapi-proxy ./helm/agentapi-proxy \
-  --set image.tag=latest \
   --set replicaCount=2
 
 # From OCI registry
 helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
   --version 0.1.0 \
-  --set image.tag=latest \
   --set replicaCount=2
 ```
 

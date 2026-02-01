@@ -266,7 +266,6 @@ jobs:
           helm install agentapi-proxy-dev \
             oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${{ env.CHART_NAME }} \
             --version ${{ steps.version.outputs.dev_version }} \
-            --set image.tag=dev-${{ steps.commit.outputs.hash }} \
             --set config.enableMultipleUsers=true
           ```
 
