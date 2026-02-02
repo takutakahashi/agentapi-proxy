@@ -3340,3 +3340,8 @@ func (m *KubernetesSessionManager) UpdateServiceAnnotation(ctx context.Context, 
 
 	return nil
 }
+
+// GetInitialMessage retrieves the initial message from Secret for a given session
+func (m *KubernetesSessionManager) GetInitialMessage(ctx context.Context, session *KubernetesSession) string {
+	return m.getInitialMessageFromSecret(ctx, session.ServiceName())
+}

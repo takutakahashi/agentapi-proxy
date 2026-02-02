@@ -1926,9 +1926,15 @@
             },
             "description": "Session tags"
           },
-          "description": {
-            "type": "string",
-            "description": "Session description (initial message or tags.description)"
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Initial message sent to the agent"
+              }
+            },
+            "description": "Session metadata"
           }
         }
       },
