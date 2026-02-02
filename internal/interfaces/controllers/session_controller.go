@@ -239,17 +239,27 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 
 	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
 	for _, session := range matchingSessions {
+		// Get initial message from Secret if available
+		var initialMessage string
+		if ksManager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
+			if ks, ok := session.(*services.KubernetesSession); ok {
+				initialMessage = ksManager.GetInitialMessage(context.Background(), ks)
+			}
+		}
+
 		sessionData := map[string]interface{}{
-			"session_id":  session.ID(),
-			"user_id":     session.UserID(),
-			"scope":       session.Scope(),
-			"team_id":     session.TeamID(),
-			"status":      session.Status(),
-			"started_at":  session.StartedAt(),
-			"updated_at":  session.UpdatedAt(),
-			"addr":        session.Addr(),
-			"tags":        session.Tags(),
-			"description": session.Description(),
+			"session_id": session.ID(),
+			"user_id":    session.UserID(),
+			"scope":      session.Scope(),
+			"team_id":    session.TeamID(),
+			"status":     session.Status(),
+			"started_at": session.StartedAt(),
+			"updated_at": session.UpdatedAt(),
+			"addr":       session.Addr(),
+			"tags":       session.Tags(),
+			"metadata": map[string]interface{}{
+				"description": initialMessage,
+			},
 		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
