@@ -31,6 +31,7 @@ type GitHubUserInfo struct {
 	Name          string                 `json:"name"`
 	Organizations []GitHubOrganization   `json:"organizations"`
 	Teams         []GitHubTeamMembership `json:"teams"`
+	Repositories  []GitHubRepository     `json:"repositories"`
 }
 
 // GitHubOrganization represents GitHub organization information
@@ -45,6 +46,12 @@ type GitHubTeamMembership struct {
 	TeamSlug     string `json:"team_slug"`
 	TeamName     string `json:"team_name"`
 	Role         string `json:"role"`
+}
+
+// GitHubRepository represents GitHub repository information
+type GitHubRepository struct {
+	Name     string `json:"name"`
+	FullName string `json:"full_name"`
 }
 
 // UserCache represents cached user information, role and permissions
@@ -136,6 +143,15 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 	}
 
 	user.Teams = teams
+
+	// Get user's repositories
+	repos, err := p.getUserRepositories(ctx, token)
+	if err != nil {
+		log.Printf("Warning: Failed to get user repositories for %s: %v", user.Login, err)
+		repos = []GitHubRepository{}
+	}
+
+	user.Repositories = repos
 
 	// Map user permissions based on team memberships
 	role, permissions, envFile := p.mapUserPermissions(teams)
@@ -656,4 +672,66 @@ func (p *GitHubAuthProvider) getAllUserTeams(ctx context.Context, token string) 
 
 	log.Printf("[AUTH_DEBUG] Retrieved %d total teams for user via /user/teams", len(allTeams))
 	return allTeams, nil
+}
+
+// getUserRepositories retrieves all repositories the user has access to
+func (p *GitHubAuthProvider) getUserRepositories(ctx context.Context, token string) ([]GitHubRepository, error) {
+	var allRepos []GitHubRepository
+	page := 1
+	perPage := 100 // GitHub API max
+
+	for {
+		url := fmt.Sprintf("%s/user/repos?per_page=%d&page=%d&affiliation=owner,collaborator,organization_member",
+			strings.TrimSuffix(p.config.BaseURL, "/"), perPage, page)
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+		req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+		logVerbose("Making GitHub API request: GET %s", url)
+		resp, err := p.client.Do(req)
+		if err != nil {
+			logVerbose("GitHub API request failed: %v", err)
+			return nil, err
+		}
+		defer utils.SafeCloseResponse(resp)
+
+		logVerbose("GitHub API response: %d %s", resp.StatusCode, resp.Status)
+		if err := utils.CheckHTTPResponse(resp, url); err != nil {
+			return nil, err
+		}
+
+		var repos []struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&repos); err != nil {
+			return nil, err
+		}
+
+		if len(repos) == 0 {
+			break
+		}
+
+		for _, repo := range repos {
+			allRepos = append(allRepos, GitHubRepository{
+				Name:     repo.Name,
+				FullName: repo.FullName,
+			})
+		}
+
+		// Check if there are more pages
+		if len(repos) < perPage {
+			break
+		}
+		page++
+	}
+
+	log.Printf("[AUTH_DEBUG] Retrieved %d total repositories for user via /user/repos", len(allRepos))
+	return allRepos, nil
 }

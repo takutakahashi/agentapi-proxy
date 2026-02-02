@@ -236,6 +236,10 @@ func (s *SimpleGitHubAuthService) GetUserTeams(ctx context.Context, token string
 	return []entities.GitHubTeamMembership{}, nil
 }
 
+func (s *SimpleGitHubAuthService) GetUserRepositories(ctx context.Context, token string) ([]entities.GitHubRepository, error) {
+	return []entities.GitHubRepository{}, nil
+}
+
 func (s *SimpleGitHubAuthService) ValidateGitHubToken(ctx context.Context, token string) (bool, error) {
 	return len(token) > 0, nil
 }

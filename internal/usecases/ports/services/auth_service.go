@@ -37,6 +37,9 @@ type GitHubAuthService interface {
 	// GetUserTeams retrieves user team memberships from GitHub
 	GetUserTeams(ctx context.Context, token string, user *entities.GitHubUserInfo) ([]entities.GitHubTeamMembership, error)
 
+	// GetUserRepositories retrieves user repositories from GitHub
+	GetUserRepositories(ctx context.Context, token string) ([]entities.GitHubRepository, error)
+
 	// ValidateGitHubToken validates a GitHub token
 	ValidateGitHubToken(ctx context.Context, token string) (bool, error)
 

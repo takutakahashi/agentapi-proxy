@@ -257,8 +257,16 @@ func (uc *GitHubAuthenticateUseCase) Execute(ctx context.Context, req *GitHubAut
 		teams = []entities.GitHubTeamMembership{}
 	}
 
+	// Get user repositories
+	repositories, err := uc.githubAuthService.GetUserRepositories(ctx, req.Token)
+	if err != nil {
+		// Log warning but don't fail - repositories are optional
+		fmt.Printf("Warning: failed to get user repositories: %v\n", err)
+		repositories = []entities.GitHubRepository{}
+	}
+
 	// Update user with GitHub information
-	user.SetGitHubInfo(githubInfo, teams)
+	user.SetGitHubInfo(githubInfo, teams, repositories)
 
 	// Verify user is active
 	if !user.IsActive() {
@@ -277,7 +285,7 @@ func (uc *GitHubAuthenticateUseCase) Execute(ctx context.Context, req *GitHubAut
 		}
 	} else {
 		// User exists, update with new GitHub info
-		existingUser.SetGitHubInfo(githubInfo, teams)
+		existingUser.SetGitHubInfo(githubInfo, teams, repositories)
 		existingUser.UpdateLastUsed()
 		if err := uc.userRepo.Update(ctx, existingUser); err != nil {
 			return nil, fmt.Errorf("failed to update user: %w", err)

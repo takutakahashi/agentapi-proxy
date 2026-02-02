@@ -81,6 +81,7 @@ type GitHubUserInfo struct {
 	location      string
 	organizations []GitHubOrganization
 	teams         []GitHubTeamMembership
+	repositories  []GitHubRepository
 }
 
 // Login returns the GitHub login
@@ -132,6 +133,13 @@ func (g *GitHubUserInfo) Teams() []GitHubTeamMembership {
 	return teams
 }
 
+// Repositories returns the GitHub repositories
+func (g *GitHubUserInfo) Repositories() []GitHubRepository {
+	repos := make([]GitHubRepository, len(g.repositories))
+	copy(repos, g.repositories)
+	return repos
+}
+
 // NewGitHubUserInfo creates a new GitHubUserInfo
 func NewGitHubUserInfo(id int64, login, name, email, avatarURL, company, location string) *GitHubUserInfo {
 	return &GitHubUserInfo{
@@ -157,6 +165,12 @@ type GitHubTeamMembership struct {
 	TeamSlug     string
 	TeamName     string
 	Role         string
+}
+
+// GitHubRepository represents GitHub repository information
+type GitHubRepository struct {
+	Name     string
+	FullName string
 }
 
 // NewUser creates a new user
@@ -461,10 +475,11 @@ func (u *User) UpdateGitHubInfo(githubInfo *GitHubUserInfo) error {
 }
 
 // SetGitHubInfo sets GitHub information for the user
-func (u *User) SetGitHubInfo(info *GitHubUserInfo, teams []GitHubTeamMembership) {
+func (u *User) SetGitHubInfo(info *GitHubUserInfo, teams []GitHubTeamMembership, repositories []GitHubRepository) {
 	u.githubInfo = info
 	if info != nil {
 		u.githubInfo.teams = teams
+		u.githubInfo.repositories = repositories
 	}
 }
 
