@@ -47,7 +47,7 @@ func (c *UserController) GetUserInfo(ctx echo.Context) error {
 			response.Teams = append(response.Teams, teamSlug)
 		}
 		for _, repo := range githubInfo.Repositories() {
-			response.Repositories = append(response.Repositories, repo.Name)
+			response.Repositories = append(response.Repositories, repo.FullName)
 		}
 	}
 
