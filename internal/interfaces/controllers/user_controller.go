@@ -13,8 +13,9 @@ type UserController struct{}
 
 // UserInfoResponse represents the response for /user/info endpoint
 type UserInfoResponse struct {
-	Username string   `json:"username"`
-	Teams    []string `json:"teams"`
+	Username     string   `json:"username"`
+	Teams        []string `json:"teams"`
+	Repositories []string `json:"repositories"`
 }
 
 // NewUserController creates a new UserController instance
@@ -35,7 +36,8 @@ func (c *UserController) GetUserInfo(ctx echo.Context) error {
 	}
 
 	response := UserInfoResponse{
-		Teams: []string{},
+		Teams:        []string{},
+		Repositories: []string{},
 	}
 
 	if githubInfo := user.GitHubInfo(); githubInfo != nil {
@@ -43,6 +45,9 @@ func (c *UserController) GetUserInfo(ctx echo.Context) error {
 		for _, team := range githubInfo.Teams() {
 			teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
 			response.Teams = append(response.Teams, teamSlug)
+		}
+		for _, repo := range githubInfo.Repositories() {
+			response.Repositories = append(response.Repositories, repo.Name)
 		}
 	}
 

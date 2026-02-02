@@ -219,6 +219,7 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			// Convert GitHub user info to entity GitHubUserInfo
 			var githubInfo *entities.GitHubUserInfo
 			var teams []entities.GitHubTeamMembership
+			var repositories []entities.GitHubRepository
 			if userContext.GitHubUser != nil {
 				githubInfo = entities.NewGitHubUserInfo(
 					userContext.GitHubUser.ID,
@@ -238,6 +239,13 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 						Role:         t.Role,
 					})
 				}
+				// Convert repositories
+				for _, r := range userContext.GitHubUser.Repositories {
+					repositories = append(repositories, entities.GitHubRepository{
+						Name:     r.Name,
+						FullName: r.FullName,
+					})
+				}
 			}
 
 			// Check if user already exists
@@ -246,8 +254,8 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			s.mu.RUnlock()
 
 			if exists {
-				// Update existing user with latest GitHub info and teams
-				existingUser.SetGitHubInfo(githubInfo, teams)
+				// Update existing user with latest GitHub info, teams, and repositories
+				existingUser.SetGitHubInfo(githubInfo, teams, repositories)
 				return existingUser, nil
 			}
 
@@ -267,8 +275,8 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 				userContext.GitHubUser.Email,
 				githubInfo,
 			)
-			// Set teams
-			newUser.SetGitHubInfo(githubInfo, teams)
+			// Set teams and repositories
+			newUser.SetGitHubInfo(githubInfo, teams, repositories)
 
 			// Set permissions from GitHub context
 			for _, perm := range userContext.Permissions {

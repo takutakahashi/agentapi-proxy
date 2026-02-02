@@ -2898,6 +2898,13 @@
               "$ref": "#/components/schemas/TeamInfo"
             },
             "description": "Teams the user belongs to"
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Repository names the user has access to"
           }
         }
       },
