@@ -66,14 +66,16 @@ func (c *SessionController) GetName() string {
 
 // RegisterRoutes registers session management routes
 func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
-	// Session management routes
+	// Session management routes (without /sessions prefix)
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
-	// Register /sessions/:sessionId/action BEFORE /:sessionId/* to avoid matching conflict
-	e.POST("/sessions/:sessionId/action", c.SessionAction)
-	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
-	// Session proxy route
+	// Sessions group routes (with /sessions prefix)
+	sessions := e.Group("/sessions")
+	sessions.POST("/:sessionId/action", c.SessionAction)
+	sessions.DELETE("/:sessionId", c.DeleteSession)
+
+	// Session proxy route (this matches /sessionId/*, not /sessions/sessionId/*)
 	e.Any("/:sessionId/*", c.RouteToSession)
 
 	log.Printf("Registered session management routes")
