@@ -434,6 +434,8 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 
 // ResumeSession resumes a suspended session by recreating its deployment
 func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string) error {
+	log.Printf("[K8S_SESSION] ResumeSession called for session %s", id)
+
 	// Get session (will restore from Service if not in memory)
 	session := m.GetSession(id)
 	if session == nil {
@@ -442,6 +444,8 @@ func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string)
 
 	// Check if session is actually suspended
 	status := session.Status()
+	log.Printf("[K8S_SESSION] Session %s current status: %s", id, status)
+
 	if status != "suspend" {
 		log.Printf("[K8S_SESSION] Session %s is not suspended (status: %s), skipping resume", id, status)
 		return nil
@@ -469,6 +473,7 @@ func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string)
 
 	// Update status to starting before creating deployment
 	ks.SetStatus("starting")
+	log.Printf("[K8S_SESSION] Status set to 'starting' for session %s", id)
 
 	// Recreate the deployment using the stored request information
 	if err := m.createDeployment(ctx, ks, ks.Request()); err != nil {
@@ -476,10 +481,9 @@ func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string)
 		return fmt.Errorf("failed to recreate deployment: %w", err)
 	}
 
-	log.Printf("[K8S_SESSION] Successfully resumed session %s (Deployment recreated)", id)
+	log.Printf("[K8S_SESSION] Successfully resumed session %s (Deployment recreated), current status: %s", id, ks.Status())
 
-	// Start watching deployment status
-	go m.watchDeploymentStatus(ctx, ks)
+	// Note: Don't start watchDeploymentStatus here, it's already running from restoreSessionFromService or CreateSession
 
 	return nil
 }
@@ -2273,29 +2277,45 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 
 // watchDeploymentStatus continuously watches the deployment status after it becomes ready
 func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, session *KubernetesSession) {
+	sessionID := session.ID()
+	log.Printf("[K8S_SESSION] Started watchDeploymentStatus for session %s, initial status: %s", sessionID, session.Status())
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("[K8S_SESSION] watchDeploymentStatus stopped for session %s (context done)", sessionID)
 			return
 
 		case <-ticker.C:
+			currentStatus := session.Status()
 			deployment, err := m.client.AppsV1().Deployments(m.namespace).Get(
 				context.Background(), session.DeploymentName(), metav1.GetOptions{})
 			if err != nil {
 				if errors.IsNotFound(err) {
 					// Deployment deleted but Service still exists = suspended
+					log.Printf("[K8S_SESSION] Deployment not found for session %s, setting status to suspend (was: %s)", sessionID, currentStatus)
 					session.SetStatus("suspend")
 					return
 				}
+				log.Printf("[K8S_SESSION] Error getting deployment for session %s: %v (keeping status: %s)", sessionID, err, currentStatus)
 				continue
 			}
 
-			if deployment.Status.ReadyReplicas == 0 {
+			readyReplicas := deployment.Status.ReadyReplicas
+			log.Printf("[K8S_SESSION] Session %s deployment check: ReadyReplicas=%d, current status=%s", sessionID, readyReplicas, currentStatus)
+
+			if readyReplicas == 0 {
+				if currentStatus != "unhealthy" {
+					log.Printf("[K8S_SESSION] Setting session %s status to unhealthy (was: %s)", sessionID, currentStatus)
+				}
 				session.SetStatus("unhealthy")
 			} else {
+				if currentStatus != "active" {
+					log.Printf("[K8S_SESSION] Setting session %s status to active (was: %s)", sessionID, currentStatus)
+				}
 				session.SetStatus("active")
 			}
 		}

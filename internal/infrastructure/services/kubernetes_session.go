@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -135,7 +136,11 @@ func (s *KubernetesSession) Cancel() {
 func (s *KubernetesSession) SetStatus(status string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	oldStatus := s.status
 	s.status = status
+	if oldStatus != status {
+		log.Printf("[K8S_SESSION] Session %s status changed: %s -> %s", s.id, oldStatus, status)
+	}
 }
 
 // SetStartedAt sets the session start time (used for restored sessions)
