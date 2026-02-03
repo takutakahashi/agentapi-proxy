@@ -70,7 +70,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
-	e.POST("/sessions/:sessionId/action", c.SessionAction)
+	e.POST("/action", c.SessionAction)
 
 	// Session proxy route
 	e.Any("/:sessionId/*", c.RouteToSession)
@@ -327,14 +327,14 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 
 // SessionActionRequest represents the request body for session actions
 type SessionActionRequest struct {
-	Action string `json:"action"`
+	SessionID string `json:"session_id"`
+	Action    string `json:"action"`
 }
 
-// SessionAction handles POST /action/:sessionId requests to perform actions on sessions
+// SessionAction handles POST /action requests to perform actions on sessions
 func (c *SessionController) SessionAction(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
-	sessionID := ctx.Param("sessionId")
 	clientIP := ctx.RealIP()
 
 	// Parse action from request body
@@ -344,9 +344,9 @@ func (c *SessionController) SessionAction(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
 	}
 
-	log.Printf("Request: POST /action/%s (action=%s) from %s", sessionID, req.Action, clientIP)
+	log.Printf("Request: POST /action (session_id=%s, action=%s) from %s", req.SessionID, req.Action, clientIP)
 
-	if sessionID == "" {
+	if req.SessionID == "" {
 		log.Printf("Session action failed: missing session ID from %s", clientIP)
 		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
 	}
@@ -356,9 +356,9 @@ func (c *SessionController) SessionAction(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Action is required")
 	}
 
-	session := c.getSessionManager().GetSession(sessionID)
+	session := c.getSessionManager().GetSession(req.SessionID)
 	if session == nil {
-		log.Printf("Session action failed: session %s not found (requested by %s)", sessionID, clientIP)
+		log.Printf("Session action failed: session %s not found (requested by %s)", req.SessionID, clientIP)
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
@@ -376,16 +376,16 @@ func (c *SessionController) SessionAction(ctx echo.Context) error {
 	}
 
 	if !canAccess {
-		log.Printf("Session action failed: user does not have access to session %s (requested by %s)", sessionID, clientIP)
+		log.Printf("Session action failed: user does not have access to session %s (requested by %s)", req.SessionID, clientIP)
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to perform this action on this session")
 	}
 
 	// Handle different actions
 	switch req.Action {
 	case "resume":
-		return c.handleResumeAction(ctx, session, sessionID, clientIP)
+		return c.handleResumeAction(ctx, session, req.SessionID, clientIP)
 	case "suspend":
-		return c.handleSuspendAction(ctx, session, sessionID, clientIP)
+		return c.handleSuspendAction(ctx, session, req.SessionID, clientIP)
 	default:
 		log.Printf("Session action failed: unknown action '%s' from %s", req.Action, clientIP)
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Unknown action: %s", req.Action))
