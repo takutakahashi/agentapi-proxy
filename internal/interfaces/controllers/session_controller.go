@@ -70,6 +70,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
+	e.POST("/sessions/:sessionId/resume", c.ResumeSession)
 
 	// Session proxy route
 	e.Any("/:sessionId/*", c.RouteToSession)
@@ -324,6 +325,79 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	})
 }
 
+// ResumeSession handles POST /sessions/:sessionId/resume requests to resume a suspended session
+func (c *SessionController) ResumeSession(ctx echo.Context) error {
+	c.setCORSHeaders(ctx)
+
+	sessionID := ctx.Param("sessionId")
+	clientIP := ctx.RealIP()
+
+	log.Printf("Request: POST /sessions/%s/resume from %s", sessionID, clientIP)
+
+	if sessionID == "" {
+		log.Printf("Resume session failed: missing session ID from %s", clientIP)
+		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
+	}
+
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil {
+		log.Printf("Resume session failed: session %s not found (requested by %s)", sessionID, clientIP)
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+
+	// Check authorization based on scope
+	user := auth.GetUserFromContext(ctx)
+	canAccess := false
+	if user != nil {
+		canAccess = user.CanAccessResource(
+			entities.UserID(session.UserID()),
+			string(session.Scope()),
+			session.TeamID(),
+		)
+	} else {
+		canAccess = auth.UserOwnsSession(ctx, session.UserID())
+	}
+
+	if !canAccess {
+		log.Printf("Resume session failed: user does not have access to session %s (requested by %s)", sessionID, clientIP)
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to resume this session")
+	}
+
+	// Check if session is actually suspended
+	status := session.Status()
+	if status != "suspend" {
+		log.Printf("Resume session skipped: session %s is not suspended (status: %s)", sessionID, status)
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"message":    "Session is not suspended",
+			"session_id": sessionID,
+			"status":     status,
+		})
+	}
+
+	log.Printf("Resuming session %s (status: %s, user: %s) requested by %s",
+		sessionID, session.Status(), session.UserID(), clientIP)
+
+	// Resume the session
+	if manager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
+		resumeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := manager.ResumeSession(resumeCtx, sessionID); err != nil {
+			log.Printf("Failed to resume session %s: %v", sessionID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to resume session")
+		}
+	} else {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Session manager does not support resume")
+	}
+
+	log.Printf("Session %s resume initiated successfully", sessionID)
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"message":    "Session resume initiated",
+		"session_id": sessionID,
+		"status":     "starting",
+	})
+}
+
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
@@ -331,26 +405,6 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
-	}
-
-	// Auto-resume suspended sessions
-	if session.Status() == "suspend" {
-		log.Printf("Session %s is suspended, attempting to resume", sessionID)
-		if manager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
-			resumeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := manager.ResumeSession(resumeCtx, sessionID); err != nil {
-				log.Printf("Failed to resume session %s: %v", sessionID, err)
-				return echo.NewHTTPError(http.StatusServiceUnavailable, "Session is suspended and failed to resume")
-			}
-			// Wait briefly for the deployment to start
-			time.Sleep(2 * time.Second)
-			// Refresh session to get updated status
-			session = c.getSessionManager().GetSession(sessionID)
-			if session == nil {
-				return echo.NewHTTPError(http.StatusNotFound, "Session not found after resume")
-			}
-		}
 	}
 
 	// Skip auth check for OPTIONS requests
