@@ -454,6 +454,19 @@ func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string)
 
 	log.Printf("[K8S_SESSION] Resuming suspended session %s", id)
 
+	// Check if deployment already exists
+	deploymentName := ks.DeploymentName()
+	_, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err == nil {
+		// Deployment already exists, just update status
+		log.Printf("[K8S_SESSION] Deployment %s already exists, updating status to active", deploymentName)
+		ks.SetStatus("active")
+		return nil
+	}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check deployment: %w", err)
+	}
+
 	// Update status to starting before creating deployment
 	ks.SetStatus("starting")
 
