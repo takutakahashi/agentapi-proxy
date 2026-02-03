@@ -69,8 +69,9 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	// Session management routes
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
-	e.DELETE("/sessions/:sessionId", c.DeleteSession)
+	// Register /sessions/action BEFORE /sessions/:sessionId to avoid matching conflict
 	e.POST("/sessions/action", c.SessionAction)
+	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
 	e.Any("/:sessionId/*", c.RouteToSession)
