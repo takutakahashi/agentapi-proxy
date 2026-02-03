@@ -70,7 +70,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
-	e.POST("/action", c.SessionAction)
+	e.POST("/sessions/action", c.SessionAction)
 
 	// Session proxy route
 	e.Any("/:sessionId/*", c.RouteToSession)
