@@ -182,7 +182,6 @@ type MockGitHubAuthService struct {
 	authenticateWithToken func(ctx context.Context, token string) (*entities.User, error)
 	getUserInfo           func(ctx context.Context, token string) (*entities.GitHubUserInfo, error)
 	getUserTeams          func(ctx context.Context, token string, user *entities.GitHubUserInfo) ([]entities.GitHubTeamMembership, error)
-	getUserRepositories   func(ctx context.Context, token string) ([]entities.GitHubRepository, error)
 }
 
 func (m *MockGitHubAuthService) AuthenticateWithToken(ctx context.Context, token string) (*entities.User, error) {
@@ -204,13 +203,6 @@ func (m *MockGitHubAuthService) GetUserTeams(ctx context.Context, token string, 
 		return m.getUserTeams(ctx, token, user)
 	}
 	return []entities.GitHubTeamMembership{}, nil
-}
-
-func (m *MockGitHubAuthService) GetUserRepositories(ctx context.Context, token string) ([]entities.GitHubRepository, error) {
-	if m.getUserRepositories != nil {
-		return m.getUserRepositories(ctx, token)
-	}
-	return []entities.GitHubRepository{}, nil
 }
 
 func (m *MockGitHubAuthService) ValidateGitHubToken(ctx context.Context, token string) (bool, error) {
