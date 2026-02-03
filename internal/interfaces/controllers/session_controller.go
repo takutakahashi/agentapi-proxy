@@ -273,6 +273,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 
 // DeleteSession handles DELETE /sessions/:sessionId requests to terminate a session
 func (c *SessionController) DeleteSession(ctx echo.Context) error {
+	log.Printf("[ROUTE] DeleteSession handler called: %s %s", ctx.Request().Method, ctx.Request().URL.Path)
 	c.setCORSHeaders(ctx)
 
 	sessionID := ctx.Param("sessionId")
@@ -333,6 +334,7 @@ type SessionActionRequest struct {
 
 // SessionAction handles POST /sessions/:sessionId/action requests to perform actions on sessions
 func (c *SessionController) SessionAction(ctx echo.Context) error {
+	log.Printf("[ROUTE] SessionAction handler called: %s %s", ctx.Request().Method, ctx.Request().URL.Path)
 	c.setCORSHeaders(ctx)
 
 	sessionID := ctx.Param("sessionId")
@@ -469,6 +471,7 @@ func (c *SessionController) handleSuspendAction(ctx echo.Context, session entiti
 
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
+	log.Printf("[ROUTE] RouteToSession handler called: %s %s", ctx.Request().Method, ctx.Request().URL.Path)
 	sessionID := ctx.Param("sessionId")
 
 	session := c.getSessionManager().GetSession(sessionID)
