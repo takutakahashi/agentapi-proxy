@@ -2563,7 +2563,8 @@ func (m *KubernetesSessionManager) getSessionStatusFromDeployment(sessionID stri
 
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return "stopped"
+			// Service exists but Deployment not found = suspended session
+			return "suspend"
 		}
 		return "unknown"
 	}
