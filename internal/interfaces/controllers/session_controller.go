@@ -384,6 +384,8 @@ func (c *SessionController) SessionAction(ctx echo.Context) error {
 	switch req.Action {
 	case "resume":
 		return c.handleResumeAction(ctx, session, sessionID, clientIP)
+	case "suspend":
+		return c.handleSuspendAction(ctx, session, sessionID, clientIP)
 	default:
 		log.Printf("Session action failed: unknown action '%s' from %s", req.Action, clientIP)
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Unknown action: %s", req.Action))
@@ -424,6 +426,43 @@ func (c *SessionController) handleResumeAction(ctx echo.Context, session entitie
 		"message":    "Session resume initiated",
 		"session_id": sessionID,
 		"status":     "starting",
+	})
+}
+
+// handleSuspendAction handles the suspend action for a session
+func (c *SessionController) handleSuspendAction(ctx echo.Context, session entities.Session, sessionID, clientIP string) error {
+	// Check if session is already suspended
+	status := session.Status()
+	if status == "suspend" {
+		log.Printf("Suspend session skipped: session %s is already suspended", sessionID)
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"message":    "Session is already suspended",
+			"session_id": sessionID,
+			"status":     status,
+		})
+	}
+
+	log.Printf("Suspending session %s (status: %s, user: %s) requested by %s",
+		sessionID, session.Status(), session.UserID(), clientIP)
+
+	// Suspend the session
+	if manager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
+		suspendCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := manager.SuspendSession(suspendCtx, sessionID); err != nil {
+			log.Printf("Failed to suspend session %s: %v", sessionID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to suspend session")
+		}
+	} else {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Session manager does not support suspend")
+	}
+
+	log.Printf("Session %s suspended successfully", sessionID)
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"message":    "Session suspended successfully",
+		"session_id": sessionID,
+		"status":     "suspend",
 	})
 }
 

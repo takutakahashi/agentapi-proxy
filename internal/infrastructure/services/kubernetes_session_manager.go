@@ -471,6 +471,45 @@ func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string)
 	return nil
 }
 
+// SuspendSession suspends a running session by deleting its deployment while keeping the service
+func (m *KubernetesSessionManager) SuspendSession(ctx context.Context, id string) error {
+	// Get session
+	session := m.GetSession(id)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	// Check if session is already suspended or stopped
+	status := session.Status()
+	if status == "suspend" {
+		log.Printf("[K8S_SESSION] Session %s is already suspended, skipping suspend", id)
+		return nil
+	}
+
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session %s is not a KubernetesSession", id)
+	}
+
+	log.Printf("[K8S_SESSION] Suspending session %s (current status: %s)", id, status)
+
+	// Delete the deployment but keep Service and PVC
+	deploymentName := ks.DeploymentName()
+	if err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, deploymentName, metav1.DeleteOptions{}); err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete deployment: %w", err)
+		}
+		// If deployment not found, that's fine - it's already gone
+		log.Printf("[K8S_SESSION] Deployment %s not found, session already suspended", deploymentName)
+	}
+
+	// Update status to suspend
+	ks.SetStatus("suspend")
+	log.Printf("[K8S_SESSION] Successfully suspended session %s (Deployment deleted, Service and PVC preserved)", id)
+
+	return nil
+}
+
 // Shutdown gracefully stops all sessions
 // Note: This does NOT delete Kubernetes resources (Deployment, Service, PVC, Secret).
 // Resources are preserved so sessions can be restored when the proxy restarts.

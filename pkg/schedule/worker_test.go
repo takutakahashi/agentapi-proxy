@@ -81,6 +81,10 @@ func (m *mockProxySessionManager) ResumeSession(ctx context.Context, id string) 
 	return nil
 }
 
+func (m *mockProxySessionManager) SuspendSession(ctx context.Context, id string) error {
+	return nil
+}
+
 func (m *mockProxySessionManager) SendMessage(ctx context.Context, id string, message string) error {
 	return nil
 }
