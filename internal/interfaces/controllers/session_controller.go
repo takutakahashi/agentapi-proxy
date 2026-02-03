@@ -333,6 +333,26 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
+	// Auto-resume suspended sessions
+	if session.Status() == "suspend" {
+		log.Printf("Session %s is suspended, attempting to resume", sessionID)
+		if manager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
+			resumeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := manager.ResumeSession(resumeCtx, sessionID); err != nil {
+				log.Printf("Failed to resume session %s: %v", sessionID, err)
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "Session is suspended and failed to resume")
+			}
+			// Wait briefly for the deployment to start
+			time.Sleep(2 * time.Second)
+			// Refresh session to get updated status
+			session = c.getSessionManager().GetSession(sessionID)
+			if session == nil {
+				return echo.NewHTTPError(http.StatusNotFound, "Session not found after resume")
+			}
+		}
+	}
+
 	// Skip auth check for OPTIONS requests
 	if ctx.Request().Method != "OPTIONS" {
 		cfg := auth.GetConfigFromContext(ctx)

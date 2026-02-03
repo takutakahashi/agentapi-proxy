@@ -28,6 +28,9 @@ type SessionManager interface {
 	// DeleteSession stops and removes a session
 	DeleteSession(id string) error
 
+	// ResumeSession resumes a suspended session by recreating its deployment
+	ResumeSession(ctx context.Context, id string) error
+
 	// SendMessage sends a message to an existing session
 	SendMessage(ctx context.Context, id string, message string) error
 

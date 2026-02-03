@@ -432,6 +432,45 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 	return nil
 }
 
+// ResumeSession resumes a suspended session by recreating its deployment
+func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string) error {
+	// Get session (will restore from Service if not in memory)
+	session := m.GetSession(id)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	// Check if session is actually suspended
+	status := session.Status()
+	if status != "suspend" {
+		log.Printf("[K8S_SESSION] Session %s is not suspended (status: %s), skipping resume", id, status)
+		return nil
+	}
+
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session %s is not a KubernetesSession", id)
+	}
+
+	log.Printf("[K8S_SESSION] Resuming suspended session %s", id)
+
+	// Update status to starting before creating deployment
+	ks.SetStatus("starting")
+
+	// Recreate the deployment using the stored request information
+	if err := m.createDeployment(ctx, ks, ks.Request()); err != nil {
+		ks.SetStatus("suspend") // Revert status on failure
+		return fmt.Errorf("failed to recreate deployment: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Successfully resumed session %s (Deployment recreated)", id)
+
+	// Start watching deployment status
+	go m.watchDeploymentStatus(ctx, ks)
+
+	return nil
+}
+
 // Shutdown gracefully stops all sessions
 // Note: This does NOT delete Kubernetes resources (Deployment, Service, PVC, Secret).
 // Resources are preserved so sessions can be restored when the proxy restarts.
@@ -3092,7 +3131,8 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 // getStatusFromDeploymentObject determines session status from a pre-fetched Deployment object
 func (m *KubernetesSessionManager) getStatusFromDeploymentObject(deployment *appsv1.Deployment) string {
 	if deployment == nil {
-		return "stopped"
+		// Service exists but no deployment = suspended session
+		return "suspend"
 	}
 
 	if deployment.Status.ReadyReplicas > 0 {
