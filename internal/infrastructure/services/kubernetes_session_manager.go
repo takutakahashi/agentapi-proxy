@@ -2234,7 +2234,8 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 				context.Background(), session.DeploymentName(), metav1.GetOptions{})
 			if err != nil {
 				if errors.IsNotFound(err) {
-					session.SetStatus("stopped")
+					// Deployment deleted but Service still exists = suspended
+					session.SetStatus("suspend")
 					return
 				}
 				continue
