@@ -343,13 +343,14 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 				log.Printf("Failed to resume session %s: %v", sessionID, err)
 				return echo.NewHTTPError(http.StatusServiceUnavailable, "Session is suspended and failed to resume")
 			}
-			// Wait briefly for the deployment to start
+			// Wait briefly for the deployment to start (status: resuming → starting → active)
 			time.Sleep(2 * time.Second)
 			// Refresh session to get updated status
 			session = c.getSessionManager().GetSession(sessionID)
 			if session == nil {
 				return echo.NewHTTPError(http.StatusNotFound, "Session not found after resume")
 			}
+			log.Printf("Session %s resumed, current status: %s", sessionID, session.Status())
 		}
 	}
 
