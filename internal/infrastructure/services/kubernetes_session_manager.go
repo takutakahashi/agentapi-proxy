@@ -454,8 +454,8 @@ func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string)
 
 	log.Printf("[K8S_SESSION] Resuming suspended session %s", id)
 
-	// Update status to resuming before creating deployment
-	ks.SetStatus("resuming")
+	// Update status to starting before creating deployment
+	ks.SetStatus("starting")
 
 	// Recreate the deployment using the stored request information
 	if err := m.createDeployment(ctx, ks, ks.Request()); err != nil {
@@ -463,7 +463,7 @@ func (m *KubernetesSessionManager) ResumeSession(ctx context.Context, id string)
 		return fmt.Errorf("failed to recreate deployment: %w", err)
 	}
 
-	log.Printf("[K8S_SESSION] Successfully resumed session %s (Deployment recreated), status will transition to starting/active", id)
+	log.Printf("[K8S_SESSION] Successfully resumed session %s (Deployment recreated)", id)
 
 	// Start watching deployment status
 	go m.watchDeploymentStatus(ctx, ks)
