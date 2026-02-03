@@ -126,6 +126,8 @@ func (r *Router) registerCoreRoutes() error {
 	log.Printf("[ROUTES] Registering session management endpoints...")
 	r.echo.POST("/start", r.handlers.sessionController.StartSession)
 	r.echo.GET("/search", r.handlers.sessionController.SearchSessions)
+	// Register /sessions/:sessionId/action BEFORE /:sessionId/* to avoid routing conflicts
+	r.echo.POST("/sessions/:sessionId/action", r.handlers.sessionController.SessionAction)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 
 	// Session sharing routes

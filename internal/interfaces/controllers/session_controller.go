@@ -65,17 +65,15 @@ func (c *SessionController) GetName() string {
 }
 
 // RegisterRoutes registers session management routes
+// Note: This is not currently used as routes are registered directly in router.go
 func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
-	// Session management routes (without /sessions prefix)
+	// Session management routes
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
+	e.POST("/sessions/:sessionId/action", c.SessionAction)
+	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
-	// Sessions group routes (with /sessions prefix)
-	sessions := e.Group("/sessions")
-	sessions.POST("/:sessionId/action", c.SessionAction)
-	sessions.DELETE("/:sessionId", c.DeleteSession)
-
-	// Session proxy route (this matches /sessionId/*, not /sessions/sessionId/*)
+	// Session proxy route
 	e.Any("/:sessionId/*", c.RouteToSession)
 
 	log.Printf("Registered session management routes")
