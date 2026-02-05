@@ -386,7 +386,6 @@ func TestOAuthProviderErrors(t *testing.T) {
 
 		cfg := &config.Config{
 			Auth: config.AuthConfig{
-				Enabled: true,
 				GitHub: &config.GitHubAuthConfig{
 					Enabled: true,
 					BaseURL: mockServer.URL,
@@ -430,7 +429,6 @@ func TestOAuthProviderErrors(t *testing.T) {
 
 		cfg := &config.Config{
 			Auth: config.AuthConfig{
-				Enabled: true,
 				GitHub: &config.GitHubAuthConfig{
 					Enabled: true,
 					BaseURL: mockServer.URL,

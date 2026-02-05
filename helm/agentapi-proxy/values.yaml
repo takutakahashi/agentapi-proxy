@@ -131,7 +131,6 @@ config:
 
   # 認証設定
   auth:
-    enabled: false
     static:
       enabled: false
       headerName: "X-API-Key"

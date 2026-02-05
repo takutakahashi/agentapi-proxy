@@ -51,8 +51,6 @@ spec:
             - name: HOME
               value: "/home/agentapi"
             # Application configuration via environment variables (AGENTAPI_ prefix)
-            - name: AGENTAPI_AUTH_ENABLED
-              value: {{ .Values.config.auth.enabled | quote }}
             - name: AGENTAPI_AUTH_STATIC_ENABLED
               value: {{ .Values.config.auth.static.enabled | quote }}
             - name: AGENTAPI_AUTH_STATIC_HEADER_NAME

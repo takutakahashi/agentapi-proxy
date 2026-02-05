@@ -234,21 +234,12 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to list schedules")
 	}
 
-	// Check if auth is enabled
-	cfg := auth.GetConfigFromContext(c)
-	authEnabled := cfg != nil && cfg.Auth.Enabled
-
 	// Filter by user authorization (supports both user-scoped and team-scoped)
 	// IMPORTANT: Resources are isolated by scope - team scope resources are only visible
 	// when explicitly filtering by scope=team, and user scope resources are only visible
 	// when filtering by scope=user or no scope filter (default to user scope)
 	responses := make([]ScheduleResponse, 0, len(schedules))
 	for _, s := range schedules {
-		// If auth is not enabled, return all schedules
-		if !authEnabled {
-			responses = append(responses, h.toResponse(s))
-			continue
-		}
 
 		// Scope isolation: resources are only visible within their respective scope
 		// - scope=team filter: only show team-scoped resources
@@ -529,11 +520,6 @@ func (h *Handlers) toResponse(s *Schedule) ScheduleResponse {
 func (h *Handlers) userCanAccessSchedule(c echo.Context, schedule *Schedule) bool {
 	user := auth.GetUserFromContext(c)
 	if user == nil {
-		// If no auth is configured, allow access
-		cfg := auth.GetConfigFromContext(c)
-		if cfg == nil || !cfg.Auth.Enabled {
-			return true
-		}
 		return false
 	}
 	return user.CanAccessResource(

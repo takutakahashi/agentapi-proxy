@@ -404,15 +404,8 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to list webhooks")
 	}
 
-	cfg := auth.GetConfigFromContext(ctx)
-	authEnabled := cfg != nil && cfg.Auth.Enabled
-
 	responses := make([]WebhookResponse, 0, len(webhooks))
 	for _, w := range webhooks {
-		if !authEnabled {
-			responses = append(responses, c.toResponse(ctx, w))
-			continue
-		}
 
 		webhookScope := w.Scope()
 		if scopeFilter == string(entities.ScopeTeam) {
@@ -819,10 +812,6 @@ func (c *WebhookController) getWebhookURL(ctx echo.Context, w *entities.Webhook)
 func (c *WebhookController) userCanAccessWebhook(ctx echo.Context, webhook *entities.Webhook) bool {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
-		cfg := auth.GetConfigFromContext(ctx)
-		if cfg == nil || !cfg.Auth.Enabled {
-			return true
-		}
 		return false
 	}
 	return user.CanAccessResource(

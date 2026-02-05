@@ -12,7 +12,10 @@ import (
 
 func TestHealthCheck(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.Auth.Enabled = false
+	// Auth is now always enabled, disable specific auth methods if needed
+	if cfg.Auth.Static != nil {
+		cfg.Auth.Static.Enabled = false
+	}
 	proxyServer := app.NewServer(cfg, true)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -38,7 +41,10 @@ func TestHealthCheck(t *testing.T) {
 
 func TestNotificationEndpoints(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.Auth.Enabled = false
+	// Auth is now always enabled, disable specific auth methods if needed
+	if cfg.Auth.Static != nil {
+		cfg.Auth.Static.Enabled = false
+	}
 	proxyServer := app.NewServer(cfg, true)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
@@ -60,7 +66,10 @@ func TestNotificationEndpoints(t *testing.T) {
 
 func TestCORSHeaders(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.Auth.Enabled = false
+	// Auth is now always enabled, disable specific auth methods if needed
+	if cfg.Auth.Static != nil {
+		cfg.Auth.Static.Enabled = false
+	}
 	proxyServer := app.NewServer(cfg, true)
 	defer func() {
 		if err := proxyServer.Shutdown(5 * time.Second); err != nil {
