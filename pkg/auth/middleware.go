@@ -30,8 +30,21 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			// Store config in context for permission checks
 			c.Set("config", cfg)
 
-			// Skip auth if disabled
+			// If auth is disabled, create a default admin authorization context
 			if !cfg.Auth.Enabled {
+				// Create a dummy admin user with full permissions
+				adminUser := entities.NewUser("anonymous", entities.UserTypeRegular, "anonymous")
+				_ = adminUser.SetRoles([]entities.Role{entities.RoleAdmin})
+				adminUser.SetPermissions([]entities.Permission{
+					entities.PermissionAdmin,
+					entities.PermissionSessionCreate,
+					entities.PermissionSessionRead,
+					entities.PermissionSessionUpdate,
+					entities.PermissionSessionDelete,
+				})
+				authzCtx := buildAuthorizationContext(adminUser)
+				c.Set("internal_user", adminUser)
+				c.Set("authz_context", authzCtx)
 				return next(c)
 			}
 

@@ -89,32 +89,24 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
 	}
 
-	// Get authorization context from middleware
+	// Get authorization context from middleware (guaranteed to be non-nil by AuthMiddleware)
 	authzCtx := auth.GetAuthorizationContext(ctx)
-	var userID, userRole string
-	var teams []string
+	user := authzCtx.User
+	userID := string(user.ID())
 
-	if authzCtx != nil && authzCtx.User != nil {
-		user := authzCtx.User
-		userID = string(user.ID())
-		if len(user.Roles()) > 0 {
-			userRole = string(user.Roles()[0])
-		} else {
-			userRole = "user"
-		}
-		// Use pre-resolved team information from authorization context
-		teams = authzCtx.TeamScope.Teams
-		log.Printf("[SESSION_DEBUG] Using authz context for user %s, teams count: %d", userID, len(teams))
+	var userRole string
+	if len(user.Roles()) > 0 {
+		userRole = string(user.Roles()[0])
 	} else {
-		userID = "anonymous"
-		userRole = "guest"
+		userRole = "user"
 	}
+
+	// Use pre-resolved team information from authorization context
+	teams := authzCtx.TeamScope.Teams
+	log.Printf("[SESSION_DEBUG] Using authz context for user %s, teams count: %d", userID, len(teams))
 
 	// Validate team scope authorization
 	if startReq.Scope == entities.ScopeTeam {
-		if authzCtx == nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "authentication required for team scope")
-		}
 		if startReq.TeamID == "" {
 			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required for team scope")
 		}
@@ -122,7 +114,7 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
 			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))
 		}
-	} else if authzCtx != nil {
+	} else {
 		// Personal scope - check if user can create personal resources
 		if !authzCtx.PersonalScope.CanCreate {
 			return echo.NewHTTPError(http.StatusForbidden, "user does not have permission to create sessions")
@@ -144,21 +136,15 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
-	// Get authorization context from middleware
+	// Get authorization context from middleware (guaranteed to be non-nil by AuthMiddleware)
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	status := ctx.QueryParam("status")
 	scopeFilter := ctx.QueryParam("scope")
 	teamIDFilter := ctx.QueryParam("team_id")
 
-	var userID string
-	var userTeamIDs []string
-	var isAdmin bool
-
-	if authzCtx != nil {
-		userID = authzCtx.PersonalScope.UserID
-		userTeamIDs = authzCtx.TeamScope.Teams
-		isAdmin = authzCtx.TeamScope.IsAdmin
-	}
+	userID := authzCtx.PersonalScope.UserID
+	userTeamIDs := authzCtx.TeamScope.Teams
+	isAdmin := authzCtx.TeamScope.IsAdmin
 
 	tagFilters := make(map[string]string)
 	for paramName, paramValues := range ctx.QueryParams() {
@@ -178,7 +164,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	}
 
 	// For non-admin users, set UserID filter only if not filtering by team
-	if authzCtx != nil && !isAdmin && scopeFilter != "team" && teamIDFilter == "" {
+	if !isAdmin && scopeFilter != "team" && teamIDFilter == "" {
 		filter.UserID = userID
 	}
 
@@ -209,18 +195,15 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			}
 		}
 
-		// Use authorization context for access checks
-		if authzCtx != nil {
-			// Admin can see all sessions within the filtered scope
-			if isAdmin {
-				matchingSessions = append(matchingSessions, session)
-				continue
-			}
+		// Admin can see all sessions within the filtered scope
+		if isAdmin {
+			matchingSessions = append(matchingSessions, session)
+			continue
+		}
 
-			// Check authorization using pre-resolved context
-			if authzCtx.CanAccessResource(session.UserID(), string(sessionScope), session.TeamID()) {
-				matchingSessions = append(matchingSessions, session)
-			}
+		// Check authorization using pre-resolved context
+		if authzCtx.CanAccessResource(session.UserID(), string(sessionScope), session.TeamID()) {
+			matchingSessions = append(matchingSessions, session)
 		}
 	}
 
@@ -281,21 +264,9 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
-	// Check authorization using pre-resolved authorization context
+	// Check authorization using pre-resolved authorization context (guaranteed to be non-nil by AuthMiddleware)
 	authzCtx := auth.GetAuthorizationContext(ctx)
-	canAccess := false
-	if authzCtx != nil {
-		canAccess = authzCtx.CanModifyResource(
-			session.UserID(),
-			string(session.Scope()),
-			session.TeamID(),
-		)
-	} else {
-		// Fallback for cases where auth is disabled
-		canAccess = auth.UserOwnsSession(ctx, session.UserID())
-	}
-
-	if !canAccess {
+	if !authzCtx.CanModifyResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		log.Printf("Delete session failed: user does not have access to session %s (requested by %s)", sessionID, clientIP)
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to delete this session")
 	}
@@ -328,21 +299,11 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 
 	// Skip auth check for OPTIONS requests
 	if ctx.Request().Method != "OPTIONS" {
-		cfg := auth.GetConfigFromContext(ctx)
-		if cfg != nil && cfg.Auth.Enabled {
-			authzCtx := auth.GetAuthorizationContext(ctx)
-			canAccess := false
-			if authzCtx != nil {
-				canAccess = authzCtx.CanAccessResource(
-					session.UserID(),
-					string(session.Scope()),
-					session.TeamID(),
-				)
-			}
-			if !canAccess {
-				log.Printf("User does not have access to session %s", sessionID)
-				return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
-			}
+		// Check authorization using pre-resolved context (guaranteed to be non-nil by AuthMiddleware)
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+			log.Printf("User does not have access to session %s", sessionID)
+			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
 		}
 	}
 
