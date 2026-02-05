@@ -30,24 +30,6 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			// Store config in context for permission checks
 			c.Set("config", cfg)
 
-			// If auth is disabled, create a default admin authorization context
-			if !cfg.Auth.Enabled {
-				// Create a dummy admin user with full permissions
-				adminUser := entities.NewUser("anonymous", entities.UserTypeRegular, "anonymous")
-				_ = adminUser.SetRoles([]entities.Role{entities.RoleAdmin})
-				adminUser.SetPermissions([]entities.Permission{
-					entities.PermissionAdmin,
-					entities.PermissionSessionCreate,
-					entities.PermissionSessionRead,
-					entities.PermissionSessionUpdate,
-					entities.PermissionSessionDelete,
-				})
-				authzCtx := buildAuthorizationContext(adminUser)
-				c.Set("internal_user", adminUser)
-				c.Set("authz_context", authzCtx)
-				return next(c)
-			}
-
 			// Skip auth for OPTIONS requests (CORS preflight)
 			if c.Request().Method == "OPTIONS" {
 				log.Printf("Skipping auth for OPTIONS request: %s", c.Request().URL.Path)
@@ -123,11 +105,6 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 func RequirePermission(permission entities.Permission, authService services.AuthService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			// Check if auth is disabled by looking for config in context
-			if cfg := GetConfigFromContext(c); cfg != nil && !cfg.Auth.Enabled {
-				return next(c)
-			}
-
 			// Skip permission check for OPTIONS requests (CORS preflight)
 			if c.Request().Method == "OPTIONS" {
 				return next(c)
@@ -221,11 +198,6 @@ func buildAuthorizationContext(user *entities.User) *AuthorizationContext {
 
 // UserOwnsSession checks if the current user owns the specified session using internal auth
 func UserOwnsSession(c echo.Context, sessionUserID string) bool {
-	// If auth is disabled, allow access to all sessions
-	if cfg := GetConfigFromContext(c); cfg != nil && !cfg.Auth.Enabled {
-		return true
-	}
-
 	user := GetUserFromContext(c)
 	if user == nil {
 		log.Printf("Session access denied: no authenticated user for session %s from %s", sessionUserID, c.RealIP())

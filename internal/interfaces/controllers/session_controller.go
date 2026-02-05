@@ -171,18 +171,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	// Get sessions from session manager
 	sessions := c.getSessionManager().ListSessions(filter)
 
-	// Check if auth is enabled
-	cfg := auth.GetConfigFromContext(ctx)
-	authEnabled := cfg != nil && cfg.Auth.Enabled
-
 	// Filter by user authorization using authorization context
 	matchingSessions := make([]entities.Session, 0)
 	for _, session := range sessions {
-		if !authEnabled {
-			matchingSessions = append(matchingSessions, session)
-			continue
-		}
-
 		// Scope isolation
 		sessionScope := session.Scope()
 		if scopeFilter == string(entities.ScopeTeam) {
