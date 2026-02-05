@@ -101,6 +101,8 @@ type Settings struct {
 	claudeCodeOAuthToken string   // Claude Code OAuth token
 	authMode             AuthMode // Authentication mode (oauth or bedrock)
 	enabledPlugins       []string // plugin@marketplace format (e.g., "commit@claude-plugins-official")
+	gitRepository        string   // Git repository URL for settings sync
+	storagePath          string   // Storage path for settings sync
 	createdAt            time.Time
 	updatedAt            time.Time
 }
@@ -208,6 +210,28 @@ func (s *Settings) AuthMode() AuthMode {
 // SetAuthMode sets the authentication mode
 func (s *Settings) SetAuthMode(mode AuthMode) {
 	s.authMode = mode
+	s.updatedAt = time.Now()
+}
+
+// GitRepository returns the git repository URL
+func (s *Settings) GitRepository() string {
+	return s.gitRepository
+}
+
+// SetGitRepository sets the git repository URL
+func (s *Settings) SetGitRepository(repo string) {
+	s.gitRepository = repo
+	s.updatedAt = time.Now()
+}
+
+// StoragePath returns the storage path
+func (s *Settings) StoragePath() string {
+	return s.storagePath
+}
+
+// SetStoragePath sets the storage path
+func (s *Settings) SetStoragePath(path string) {
+	s.storagePath = path
 	s.updatedAt = time.Now()
 }
 
