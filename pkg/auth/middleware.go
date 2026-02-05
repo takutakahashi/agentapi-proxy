@@ -67,6 +67,9 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
 					c.Set("internal_user", user)
 					log.Printf("API key authentication successful: user %s (type: %s)", user.ID(), user.UserType())
+					// Build and store authorization context
+					authzCtx := buildAuthorizationContext(user)
+					c.Set("authz_context", authzCtx)
 					return next(c)
 				}
 				log.Printf("API key authentication failed: %v from %s", err, c.RealIP())
@@ -76,6 +79,9 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
 				if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
 					c.Set("internal_user", user)
+					// Build and store authorization context
+					authzCtx := buildAuthorizationContext(user)
+					c.Set("authz_context", authzCtx)
 					return next(c)
 				}
 				log.Printf("GitHub authentication failed: %v from %s", err, c.RealIP())
@@ -86,6 +92,9 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				if user, err = tryInternalAWSAuth(c, cfg, authService); err == nil {
 					c.Set("internal_user", user)
 					log.Printf("AWS authentication successful: user %s (type: %s)", user.ID(), user.UserType())
+					// Build and store authorization context
+					authzCtx := buildAuthorizationContext(user)
+					c.Set("authz_context", authzCtx)
 					return next(c)
 				}
 				log.Printf("AWS authentication failed: %v from %s", err, c.RealIP())
@@ -137,6 +146,64 @@ func GetUserFromContext(c echo.Context) *entities.User {
 		}
 	}
 	return nil
+}
+
+// GetAuthorizationContext retrieves the pre-built authorization context from Echo context
+func GetAuthorizationContext(c echo.Context) *AuthorizationContext {
+	if authzCtx := c.Get("authz_context"); authzCtx != nil {
+		if ctx, ok := authzCtx.(*AuthorizationContext); ok {
+			return ctx
+		}
+	}
+	return nil
+}
+
+// buildAuthorizationContext builds authorization context from user entity
+// This function resolves all authorization information upfront to avoid redundant checks in handlers
+func buildAuthorizationContext(user *entities.User) *AuthorizationContext {
+	if user == nil {
+		return nil
+	}
+
+	authzCtx := &AuthorizationContext{
+		User: user,
+	}
+
+	// Build personal scope auth
+	authzCtx.PersonalScope = PersonalScopeAuth{
+		UserID:    string(user.ID()),
+		CanCreate: user.HasPermission(entities.PermissionSessionCreate),
+		CanRead:   user.HasPermission(entities.PermissionSessionRead),
+		CanUpdate: user.HasPermission(entities.PermissionSessionUpdate),
+		CanDelete: user.HasPermission(entities.PermissionSessionDelete),
+	}
+
+	// Build team scope auth
+	authzCtx.TeamScope = TeamScopeAuth{
+		Teams:           make([]string, 0),
+		TeamPermissions: make(map[string]TeamPermissions),
+		IsAdmin:         user.IsAdmin(),
+	}
+
+	// Extract team information from GitHub user info
+	if githubInfo := user.GitHubInfo(); githubInfo != nil {
+		for _, team := range githubInfo.Teams() {
+			teamID := team.Organization + "/" + team.TeamSlug
+			authzCtx.TeamScope.Teams = append(authzCtx.TeamScope.Teams, teamID)
+
+			// For now, all team members have the same permissions
+			// In the future, we might differentiate based on team role
+			authzCtx.TeamScope.TeamPermissions[teamID] = TeamPermissions{
+				TeamID:    teamID,
+				CanCreate: user.HasPermission(entities.PermissionSessionCreate),
+				CanRead:   user.HasPermission(entities.PermissionSessionRead),
+				CanUpdate: user.HasPermission(entities.PermissionSessionUpdate),
+				CanDelete: user.HasPermission(entities.PermissionSessionDelete),
+			}
+		}
+	}
+
+	return authzCtx
 }
 
 // UserOwnsSession checks if the current user owns the specified session using internal auth

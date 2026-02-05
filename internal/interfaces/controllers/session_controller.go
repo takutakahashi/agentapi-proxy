@@ -89,47 +89,44 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
 	}
 
-	user := auth.GetUserFromContext(ctx)
+	// Get authorization context from middleware
+	authzCtx := auth.GetAuthorizationContext(ctx)
 	var userID, userRole string
 	var teams []string
-	if user != nil {
+
+	if authzCtx != nil && authzCtx.User != nil {
+		user := authzCtx.User
 		userID = string(user.ID())
 		if len(user.Roles()) > 0 {
 			userRole = string(user.Roles()[0])
 		} else {
 			userRole = "user"
 		}
-		// Extract team slugs from GitHub user info
-		if githubInfo := user.GitHubInfo(); githubInfo != nil {
-			log.Printf("[SESSION_DEBUG] GitHubInfo found for user %s, teams count: %d", userID, len(githubInfo.Teams()))
-			for _, team := range githubInfo.Teams() {
-				// Format: "org/team-slug"
-				teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
-				teams = append(teams, teamSlug)
-				log.Printf("[SESSION_DEBUG] Added team: %s", teamSlug)
-			}
-		} else {
-			log.Printf("[SESSION_DEBUG] No GitHubInfo for user %s", userID)
-		}
+		// Use pre-resolved team information from authorization context
+		teams = authzCtx.TeamScope.Teams
+		log.Printf("[SESSION_DEBUG] Using authz context for user %s, teams count: %d", userID, len(teams))
 	} else {
 		userID = "anonymous"
 		userRole = "guest"
 	}
 
-	// Validate team scope using use case
-	if err := c.validateTeamUC.ValidateTeamScope(
-		startReq.Scope,
-		startReq.TeamID,
-		teams,
-		user != nil,
-	); err != nil {
-		if strings.Contains(err.Error(), "team_id is required") {
-			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	// Validate team scope authorization
+	if startReq.Scope == entities.ScopeTeam {
+		if authzCtx == nil {
+			return echo.NewHTTPError(http.StatusUnauthorized, "authentication required for team scope")
 		}
-		if strings.Contains(err.Error(), "authentication required") {
-			return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+		if startReq.TeamID == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required for team scope")
 		}
-		return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		// Check if user can create in this team
+		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))
+		}
+	} else if authzCtx != nil {
+		// Personal scope - check if user can create personal resources
+		if !authzCtx.PersonalScope.CanCreate {
+			return echo.NewHTTPError(http.StatusForbidden, "user does not have permission to create sessions")
+		}
 	}
 
 	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
@@ -147,22 +144,20 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
-	user := auth.GetUserFromContext(ctx)
+	// Get authorization context from middleware
+	authzCtx := auth.GetAuthorizationContext(ctx)
 	status := ctx.QueryParam("status")
 	scopeFilter := ctx.QueryParam("scope")
 	teamIDFilter := ctx.QueryParam("team_id")
 
 	var userID string
 	var userTeamIDs []string
-	if user != nil && !user.IsAdmin() {
-		userID = string(user.ID())
-		// Extract user's team IDs for filtering team-scoped sessions
-		if githubInfo := user.GitHubInfo(); githubInfo != nil {
-			for _, team := range githubInfo.Teams() {
-				teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
-				userTeamIDs = append(userTeamIDs, teamSlug)
-			}
-		}
+	var isAdmin bool
+
+	if authzCtx != nil {
+		userID = authzCtx.PersonalScope.UserID
+		userTeamIDs = authzCtx.TeamScope.Teams
+		isAdmin = authzCtx.TeamScope.IsAdmin
 	}
 
 	tagFilters := make(map[string]string)
@@ -183,7 +178,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	}
 
 	// For non-admin users, set UserID filter only if not filtering by team
-	if user != nil && !user.IsAdmin() && scopeFilter != "team" && teamIDFilter == "" {
+	if authzCtx != nil && !isAdmin && scopeFilter != "team" && teamIDFilter == "" {
 		filter.UserID = userID
 	}
 
@@ -194,7 +189,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	cfg := auth.GetConfigFromContext(ctx)
 	authEnabled := cfg != nil && cfg.Auth.Enabled
 
-	// Filter by user authorization
+	// Filter by user authorization using authorization context
 	matchingSessions := make([]entities.Session, 0)
 	for _, session := range sessions {
 		if !authEnabled {
@@ -214,19 +209,16 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			}
 		}
 
-		// Admin can see all sessions within the filtered scope
-		if user != nil && user.IsAdmin() {
-			matchingSessions = append(matchingSessions, session)
-			continue
-		}
-
-		// Check authorization based on scope
-		if sessionScope == entities.ScopeTeam {
-			if user != nil && user.IsMemberOfTeam(session.TeamID()) {
+		// Use authorization context for access checks
+		if authzCtx != nil {
+			// Admin can see all sessions within the filtered scope
+			if isAdmin {
 				matchingSessions = append(matchingSessions, session)
+				continue
 			}
-		} else {
-			if user != nil && session.UserID() == string(user.ID()) {
+
+			// Check authorization using pre-resolved context
+			if authzCtx.CanAccessResource(session.UserID(), string(sessionScope), session.TeamID()) {
 				matchingSessions = append(matchingSessions, session)
 			}
 		}
@@ -289,16 +281,17 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
-	// Check authorization based on scope
-	user := auth.GetUserFromContext(ctx)
+	// Check authorization using pre-resolved authorization context
+	authzCtx := auth.GetAuthorizationContext(ctx)
 	canAccess := false
-	if user != nil {
-		canAccess = user.CanAccessResource(
-			entities.UserID(session.UserID()),
+	if authzCtx != nil {
+		canAccess = authzCtx.CanModifyResource(
+			session.UserID(),
 			string(session.Scope()),
 			session.TeamID(),
 		)
 	} else {
+		// Fallback for cases where auth is disabled
 		canAccess = auth.UserOwnsSession(ctx, session.UserID())
 	}
 
@@ -337,11 +330,11 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	if ctx.Request().Method != "OPTIONS" {
 		cfg := auth.GetConfigFromContext(ctx)
 		if cfg != nil && cfg.Auth.Enabled {
-			user := auth.GetUserFromContext(ctx)
+			authzCtx := auth.GetAuthorizationContext(ctx)
 			canAccess := false
-			if user != nil {
-				canAccess = user.CanAccessResource(
-					entities.UserID(session.UserID()),
+			if authzCtx != nil {
+				canAccess = authzCtx.CanAccessResource(
+					session.UserID(),
 					string(session.Scope()),
 					session.TeamID(),
 				)
