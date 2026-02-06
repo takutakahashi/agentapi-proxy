@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -132,6 +133,7 @@ func TestHandlers_ListSchedules(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/schedules", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
+	setTestUser(c, "test-user")
 
 	err := handlers.ListSchedules(c)
 	if err != nil {
@@ -196,6 +198,7 @@ func TestHandlers_GetSchedule(t *testing.T) {
 			c := e.NewContext(req, rec)
 			c.SetParamNames("id")
 			c.SetParamValues(tt.scheduleID)
+			setTestUser(c, "test-user")
 
 			err := handlers.GetSchedule(c)
 			if err != nil {
@@ -248,6 +251,7 @@ func TestHandlers_UpdateSchedule(t *testing.T) {
 	c := e.NewContext(req, rec)
 	c.SetParamNames("id")
 	c.SetParamValues("test-schedule")
+	setTestUser(c, "test-user")
 
 	err := handlers.UpdateSchedule(c)
 	if err != nil {
@@ -293,6 +297,7 @@ func TestHandlers_DeleteSchedule(t *testing.T) {
 	c := e.NewContext(req, rec)
 	c.SetParamNames("id")
 	c.SetParamValues("test-schedule")
+	setTestUser(c, "test-user")
 
 	err := handlers.DeleteSchedule(c)
 	if err != nil {
@@ -321,4 +326,17 @@ func strPtr(s string) *string {
 
 func statusPtr(s ScheduleStatus) *ScheduleStatus {
 	return &s
+}
+
+// setTestUser sets a test user in the echo context for testing
+func setTestUser(c echo.Context, userID string) {
+	// Create a test user with necessary permissions
+	user := entities.NewUser(entities.UserID(userID), entities.UserTypeAPIKey, userID)
+	user.SetPermissions([]entities.Permission{
+		entities.PermissionSessionCreate,
+		entities.PermissionSessionRead,
+		entities.PermissionSessionUpdate,
+		entities.PermissionSessionDelete,
+	})
+	c.Set("internal_user", user)
 }

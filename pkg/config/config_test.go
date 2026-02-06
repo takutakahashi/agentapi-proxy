@@ -40,8 +40,8 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Verify default auth config
-	if config.Auth.Enabled {
-		t.Error("Auth should be disabled by default")
+	if config.Auth.Static == nil {
+		t.Error("Auth.Static should be initialized by default")
 	}
 }
 
@@ -51,7 +51,9 @@ func TestLoadConfig(t *testing.T) {
 	// Create a temporary config file
 	tempConfig := &Config{
 		Auth: AuthConfig{
-			Enabled: false,
+			Static: &StaticAuthConfig{
+				Enabled: false,
+			},
 		},
 	}
 
@@ -79,8 +81,8 @@ func TestLoadConfig(t *testing.T) {
 	}
 
 	// Compare auth config values (not pointer equality)
-	if loadedConfig.Auth.Enabled {
-		t.Errorf("Auth.Enabled mismatch: expected false, got %t", loadedConfig.Auth.Enabled)
+	if loadedConfig.Auth.Static != nil && loadedConfig.Auth.Static.Enabled {
+		t.Error("Auth.Static should be disabled by default")
 	}
 
 	// Verify static auth config is properly initialized with defaults
@@ -143,7 +145,9 @@ func TestLoadConfigInvalidJSON(t *testing.T) {
 func TestValidateAPIKey_AuthDisabled(t *testing.T) {
 	cfg := &Config{
 		Auth: AuthConfig{
-			Enabled: false,
+			Static: &StaticAuthConfig{
+				Enabled: false,
+			},
 		},
 	}
 
@@ -154,7 +158,6 @@ func TestValidateAPIKey_AuthDisabled(t *testing.T) {
 func TestValidateAPIKey_ValidKey(t *testing.T) {
 	cfg := &Config{
 		Auth: AuthConfig{
-			Enabled: true,
 			Static: &StaticAuthConfig{
 				Enabled: true,
 				APIKeys: []APIKey{
@@ -180,7 +183,6 @@ func TestValidateAPIKey_ValidKey(t *testing.T) {
 func TestValidateAPIKey_InvalidKey(t *testing.T) {
 	cfg := &Config{
 		Auth: AuthConfig{
-			Enabled: true,
 			Static: &StaticAuthConfig{
 				Enabled: true,
 				APIKeys: []APIKey{
@@ -203,7 +205,6 @@ func TestValidateAPIKey_ExpiredKey(t *testing.T) {
 
 	cfg := &Config{
 		Auth: AuthConfig{
-			Enabled: true,
 			Static: &StaticAuthConfig{
 				Enabled: true,
 				APIKeys: []APIKey{
@@ -417,13 +418,12 @@ func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 	}
 
 	// Verify environment variables were loaded
-	if !loadedConfig.Auth.Enabled {
-		t.Errorf("Expected Auth.Enabled to be true, got %t", loadedConfig.Auth.Enabled)
-	}
-
 	if loadedConfig.Auth.GitHub == nil || loadedConfig.Auth.GitHub.OAuth == nil {
 		t.Fatal("GitHub OAuth config should not be nil")
 	}
+
+	// GitHub auth is considered enabled if OAuth config is present
+	// (Auth.GitHub.Enabled was removed in favor of checking individual auth methods)
 
 	if loadedConfig.Auth.GitHub.OAuth.ClientID != "env_client_id" {
 		t.Errorf("Expected ClientID to be 'env_client_id', got '%s'", loadedConfig.Auth.GitHub.OAuth.ClientID)
@@ -647,8 +647,6 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 	}
 
 	// Verify all settings were loaded from environment variables
-	assert.True(t, loadedConfig.Auth.Enabled)
-
 	// Static auth verification
 	if assert.NotNil(t, loadedConfig.Auth.Static) {
 		assert.True(t, loadedConfig.Auth.Static.Enabled)

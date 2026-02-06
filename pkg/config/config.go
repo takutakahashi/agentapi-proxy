@@ -45,10 +45,9 @@ import (
 
 // AuthConfig represents authentication configuration
 type AuthConfig struct {
-	Enabled bool              `json:"enabled" mapstructure:"enabled"`
-	Static  *StaticAuthConfig `json:"static,omitempty" mapstructure:"static"`
-	GitHub  *GitHubAuthConfig `json:"github,omitempty" mapstructure:"github"`
-	AWS     *AWSAuthConfig    `json:"aws,omitempty" mapstructure:"aws"`
+	Static *StaticAuthConfig `json:"static,omitempty" mapstructure:"static"`
+	GitHub *GitHubAuthConfig `json:"github,omitempty" mapstructure:"github"`
+	AWS    *AWSAuthConfig    `json:"aws,omitempty" mapstructure:"aws"`
 }
 
 // StaticAuthConfig represents static API key authentication
@@ -342,7 +341,6 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	// Debug: Log configuration summary
-	log.Printf("[CONFIG] Auth enabled: %v", config.Auth.Enabled)
 	log.Printf("[CONFIG] Static auth enabled: %v", config.Auth.Static != nil && config.Auth.Static.Enabled)
 	log.Printf("[CONFIG] GitHub auth enabled: %v", config.Auth.GitHub != nil && config.Auth.GitHub.Enabled)
 	if config.Auth.GitHub != nil {
@@ -462,7 +460,6 @@ func bindEnvVars(v *viper.Viper) {
 	// as they typically occur only when the key is already bound
 
 	// Auth configuration
-	_ = v.BindEnv("auth.enabled")
 	_ = v.BindEnv("auth.static.enabled")
 	_ = v.BindEnv("auth.static.header_name")
 	_ = v.BindEnv("auth.static.keys_file")
@@ -550,7 +547,6 @@ func bindEnvVars(v *viper.Viper) {
 // setDefaults sets default values for viper configuration
 func setDefaults(v *viper.Viper) {
 	// Auth defaults
-	v.SetDefault("auth.enabled", false)
 	v.SetDefault("auth.static.enabled", false)
 	v.SetDefault("auth.static.header_name", "X-API-Key")
 	v.SetDefault("auth.github.enabled", false)
@@ -675,7 +671,7 @@ func postProcessConfig(config *Config) error {
 	}
 
 	// Load API keys from external file if specified
-	if config.Auth.Enabled && config.Auth.Static != nil && config.Auth.Static.KeysFile != "" {
+	if config.Auth.Static != nil && config.Auth.Static.KeysFile != "" {
 		if err := config.loadAPIKeysFromFile(); err != nil {
 			log.Printf("Warning: Failed to load API keys from %s: %v", config.Auth.Static.KeysFile, err)
 		}
@@ -746,7 +742,6 @@ func expandEnvVars(s string) string {
 func DefaultConfig() *Config {
 	return &Config{
 		Auth: AuthConfig{
-			Enabled: false,
 			Static: &StaticAuthConfig{
 				Enabled:    false,
 				HeaderName: "X-API-Key",
@@ -783,7 +778,7 @@ func (c *Config) loadAPIKeysFromFile() error {
 
 // ValidateAPIKey validates an API key and returns user information
 func (c *Config) ValidateAPIKey(key string) (*APIKey, bool) {
-	if !c.Auth.Enabled || c.Auth.Static == nil || !c.Auth.Static.Enabled {
+	if c.Auth.Static == nil || !c.Auth.Static.Enabled {
 		return nil, false
 	}
 

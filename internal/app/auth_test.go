@@ -47,7 +47,6 @@ func setupTestServerWithOAuth(t *testing.T) (*Server, *httptest.Server) {
 
 	cfg := &config.Config{
 		Auth: config.AuthConfig{
-			Enabled: true,
 			GitHub: &config.GitHubAuthConfig{
 				Enabled:     true,
 				BaseURL:     mockServer.URL,

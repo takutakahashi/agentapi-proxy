@@ -128,7 +128,9 @@ func TestLoadAuthConfigFromFile(t *testing.T) {
 			// Create a basic config
 			config := &Config{
 				Auth: AuthConfig{
-					Enabled: true,
+					Static: &StaticAuthConfig{
+						Enabled: false,
+					},
 				},
 			}
 
@@ -235,12 +237,12 @@ func TestLoadConfigWithAuthConfigFile(t *testing.T) {
 		t.Errorf("Expected auth_config_file %s, got %s", authConfigPath, config.AuthConfigFile)
 	}
 
-	if !config.Auth.Enabled {
-		t.Errorf("Expected auth to be enabled")
-	}
-
 	if config.Auth.GitHub == nil {
 		t.Fatalf("Expected GitHub config to be initialized")
+	}
+
+	if !config.Auth.GitHub.Enabled {
+		t.Error("Expected GitHub auth to be enabled")
 	}
 
 	if !config.Auth.GitHub.Enabled {
