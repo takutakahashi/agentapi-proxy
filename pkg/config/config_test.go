@@ -422,9 +422,8 @@ func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 		t.Fatal("GitHub OAuth config should not be nil")
 	}
 
-	if !loadedConfig.Auth.GitHub.Enabled {
-		t.Error("Expected GitHub auth to be enabled")
-	}
+	// GitHub auth is considered enabled if OAuth config is present
+	// (Auth.GitHub.Enabled was removed in favor of checking individual auth methods)
 
 	if loadedConfig.Auth.GitHub.OAuth.ClientID != "env_client_id" {
 		t.Errorf("Expected ClientID to be 'env_client_id', got '%s'", loadedConfig.Auth.GitHub.OAuth.ClientID)
