@@ -141,3 +141,11 @@ func (a *AuthorizationContext) CanModifyResource(ownerUserID string, scope strin
 	// In the future, we might have stricter modification rules
 	return a.CanAccessResource(ownerUserID, scope, teamID)
 }
+
+// IsServiceAccount checks if the current user is a service account
+func (a *AuthorizationContext) IsServiceAccount() bool {
+	if a.User == nil {
+		return false
+	}
+	return a.User.UserType() == entities.UserTypeServiceAccount
+}

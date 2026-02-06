@@ -38,11 +38,12 @@ type Server struct {
 	githubAuthProvider *auth.GitHubAuthProvider
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	notificationSvc    *notification.Service
-	container          *di.Container                // Internal DI container
-	sessionManager     portrepos.SessionManager     // Session lifecycle manager
-	settingsRepo       portrepos.SettingsRepository // Settings repository
-	shareRepo          portrepos.ShareRepository    // Share repository for session sharing
-	router             *Router                      // Router for custom handler registration
+	container          *di.Container                  // Internal DI container
+	sessionManager     portrepos.SessionManager       // Session lifecycle manager
+	settingsRepo       portrepos.SettingsRepository   // Settings repository
+	shareRepo          portrepos.ShareRepository      // Share repository for session sharing
+	teamConfigRepo     portrepos.TeamConfigRepository // Team configuration repository
+	router             *Router                        // Router for custom handler registration
 }
 
 // NewServer creates a new server instance
@@ -180,6 +181,13 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	)
 	log.Printf("[SERVER] Share repository initialized")
 
+	// Initialize team config repository
+	teamConfigRepo := repositories.NewKubernetesTeamConfigRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] Team config repository initialized")
+
 	s := &Server{
 		config:         cfg,
 		echo:           e,
@@ -189,6 +197,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionManager: sessionManager,
 		settingsRepo:   settingsRepo,
 		shareRepo:      shareRepo,
+		teamConfigRepo: teamConfigRepo,
 	}
 
 	// Add logging middleware if verbose
@@ -264,6 +273,16 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Start cleanup goroutine for expired shares
 	if s.shareRepo != nil {
 		go s.cleanupExpiredShares()
+	}
+
+	// Bootstrap service accounts from team configs
+	if teamConfigRepo != nil {
+		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			ctx := context.Background()
+			if err := services.BootstrapServiceAccounts(ctx, simpleAuth, teamConfigRepo); err != nil {
+				log.Printf("[SERVER] Warning: failed to bootstrap service accounts: %v", err)
+			}
+		}
 	}
 
 	s.setupRoutes()

@@ -35,22 +35,30 @@ type SessionManagerProvider interface {
 	GetSessionManager() repositories.SessionManager
 }
 
+// GetOrCreateServiceAccountUseCase defines the interface for getting or creating service accounts
+type GetOrCreateServiceAccountUseCase interface {
+	Execute(ctx context.Context, teamID string) (*entities.ServiceAccount, error)
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
-	sessionManagerProvider SessionManagerProvider
-	sessionCreator         SessionCreator
-	validateTeamUC         *sessionuc.ValidateTeamAccessUseCase
+	sessionManagerProvider      SessionManagerProvider
+	sessionCreator              SessionCreator
+	validateTeamUC              *sessionuc.ValidateTeamAccessUseCase
+	getOrCreateServiceAccountUC GetOrCreateServiceAccountUseCase
 }
 
 // NewSessionController creates a new SessionController instance
 func NewSessionController(
 	sessionManagerProvider SessionManagerProvider,
 	sessionCreator SessionCreator,
+	getOrCreateServiceAccountUC GetOrCreateServiceAccountUseCase,
 ) *SessionController {
 	return &SessionController{
-		sessionManagerProvider: sessionManagerProvider,
-		sessionCreator:         sessionCreator,
-		validateTeamUC:         sessionuc.NewValidateTeamAccessUseCase(),
+		sessionManagerProvider:      sessionManagerProvider,
+		sessionCreator:              sessionCreator,
+		validateTeamUC:              sessionuc.NewValidateTeamAccessUseCase(),
+		getOrCreateServiceAccountUC: getOrCreateServiceAccountUC,
 	}
 }
 
@@ -110,6 +118,18 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		if startReq.TeamID == "" {
 			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required for team scope")
 		}
+
+		// Ensure service account exists for this team (lazy creation)
+		if c.getOrCreateServiceAccountUC != nil {
+			serviceAccount, err := c.getOrCreateServiceAccountUC.Execute(ctx.Request().Context(), startReq.TeamID)
+			if err != nil {
+				log.Printf("Failed to ensure service account for team %s: %v", startReq.TeamID, err)
+				// Don't fail the request - service account creation is best-effort
+			} else if serviceAccount != nil {
+				log.Printf("Service account ensured for team %s: %s", startReq.TeamID, serviceAccount.UserID())
+			}
+		}
+
 		// Check if user can create in this team
 		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
 			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))

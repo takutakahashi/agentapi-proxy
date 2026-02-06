@@ -14,11 +14,12 @@ type UserID string
 type UserType string
 
 const (
-	UserTypeAPIKey  UserType = "api_key"
-	UserTypeGitHub  UserType = "github"
-	UserTypeAWS     UserType = "aws"
-	UserTypeRegular UserType = "regular"
-	UserTypeAdmin   UserType = "admin"
+	UserTypeAPIKey         UserType = "api_key"
+	UserTypeGitHub         UserType = "github"
+	UserTypeAWS            UserType = "aws"
+	UserTypeRegular        UserType = "regular"
+	UserTypeAdmin          UserType = "admin"
+	UserTypeServiceAccount UserType = "service_account"
 )
 
 // Permission represents a user permission
@@ -68,6 +69,7 @@ type User struct {
 	lastUsedAt  *time.Time
 	githubInfo  *GitHubUserInfo
 	awsInfo     *AWSUserInfo
+	teamID      string // For service accounts only
 }
 
 // GitHubUserInfo contains GitHub-specific user information
@@ -207,6 +209,22 @@ func NewAWSUser(id UserID, username string, awsInfo *AWSUserInfo) *User {
 	}
 }
 
+// NewServiceAccountUser creates a new service account user
+func NewServiceAccountUser(id UserID, teamID string, permissions []Permission) *User {
+	now := time.Now()
+	return &User{
+		id:          id,
+		userType:    UserTypeServiceAccount,
+		username:    string(id),
+		status:      UserStatusActive,
+		roles:       []Role{RoleUser},
+		permissions: permissions,
+		createdAt:   now,
+		lastUsedAt:  &now,
+		teamID:      teamID,
+	}
+}
+
 // ID returns the user ID
 func (u *User) ID() UserID {
 	return u.id
@@ -289,6 +307,11 @@ func (u *User) GitHubInfo() *GitHubUserInfo {
 // AWSInfo returns AWS IAM-specific information
 func (u *User) AWSInfo() *AWSUserInfo {
 	return u.awsInfo
+}
+
+// TeamID returns the team ID for service accounts
+func (u *User) TeamID() string {
+	return u.teamID
 }
 
 // SetEmail sets the user email
@@ -499,7 +522,7 @@ func (u *User) Validate() error {
 	}
 
 	// Validate user type
-	validTypes := []UserType{UserTypeAPIKey, UserTypeGitHub, UserTypeAWS}
+	validTypes := []UserType{UserTypeAPIKey, UserTypeGitHub, UserTypeAWS, UserTypeServiceAccount}
 	typeValid := false
 	for _, validType := range validTypes {
 		if u.userType == validType {
