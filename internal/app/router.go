@@ -8,6 +8,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -59,11 +60,30 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] MCP secret syncer configured for settings controller")
 	}
 
+	// Create GetOrCreateServiceAccountUseCase if teamConfigRepo is available
+	var getOrCreateServiceAccountUC controllers.GetOrCreateServiceAccountUseCase
+	if server.teamConfigRepo != nil {
+		// Get AuthService from container
+		var authService *services.SimpleAuthService
+		if simpleAuth, ok := server.container.AuthService.(*services.SimpleAuthService); ok {
+			authService = simpleAuth
+		}
+
+		if authService != nil {
+			getOrCreateServiceAccountUC = service_account.NewGetOrCreateServiceAccountUseCase(
+				server.teamConfigRepo,
+				authService,
+			)
+			log.Printf("[ROUTER] GetOrCreateServiceAccountUseCase initialized")
+		}
+	}
+
 	// Create session controller with proper dependencies
 	// server implements SessionManagerProvider interface via GetSessionManager()
 	sessionController := controllers.NewSessionController(
-		server, // Server implements SessionManagerProvider interface
-		server, // Server implements SessionCreator interface
+		server,                      // Server implements SessionManagerProvider interface
+		server,                      // Server implements SessionCreator interface
+		getOrCreateServiceAccountUC, // GetOrCreateServiceAccountUseCase
 	)
 
 	// Create share controller if share repository is available

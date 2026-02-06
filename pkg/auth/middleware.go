@@ -175,20 +175,35 @@ func buildAuthorizationContext(user *entities.User) *AuthorizationContext {
 		IsAdmin:         user.IsAdmin(),
 	}
 
-	// Extract team information from GitHub user info
-	if githubInfo := user.GitHubInfo(); githubInfo != nil {
-		for _, team := range githubInfo.Teams() {
-			teamID := team.Organization + "/" + team.TeamSlug
-			authzCtx.TeamScope.Teams = append(authzCtx.TeamScope.Teams, teamID)
-
-			// For now, all team members have the same permissions
-			// In the future, we might differentiate based on team role
+	// Handle service accounts specially
+	if user.UserType() == entities.UserTypeServiceAccount {
+		// Service accounts are tied to a specific team
+		if teamID := user.TeamID(); teamID != "" {
+			authzCtx.TeamScope.Teams = []string{teamID}
 			authzCtx.TeamScope.TeamPermissions[teamID] = TeamPermissions{
 				TeamID:    teamID,
 				CanCreate: user.HasPermission(entities.PermissionSessionCreate),
 				CanRead:   user.HasPermission(entities.PermissionSessionRead),
 				CanUpdate: user.HasPermission(entities.PermissionSessionUpdate),
 				CanDelete: user.HasPermission(entities.PermissionSessionDelete),
+			}
+		}
+	} else {
+		// Extract team information from GitHub user info
+		if githubInfo := user.GitHubInfo(); githubInfo != nil {
+			for _, team := range githubInfo.Teams() {
+				teamID := team.Organization + "/" + team.TeamSlug
+				authzCtx.TeamScope.Teams = append(authzCtx.TeamScope.Teams, teamID)
+
+				// For now, all team members have the same permissions
+				// In the future, we might differentiate based on team role
+				authzCtx.TeamScope.TeamPermissions[teamID] = TeamPermissions{
+					TeamID:    teamID,
+					CanCreate: user.HasPermission(entities.PermissionSessionCreate),
+					CanRead:   user.HasPermission(entities.PermissionSessionRead),
+					CanUpdate: user.HasPermission(entities.PermissionSessionUpdate),
+					CanDelete: user.HasPermission(entities.PermissionSessionDelete),
+				}
 			}
 		}
 	}
