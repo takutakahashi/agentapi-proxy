@@ -914,6 +914,20 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		}
 	}
 
+	// Add personal API key Secret as envFrom for user-scoped sessions
+	if req.Scope == entities.ScopeUser {
+		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: personalAPIKeySecretName,
+				},
+				Optional: boolPtr(true), // Optional - user may not have generated a personal API key yet
+			},
+		})
+		log.Printf("[K8S_SESSION] Adding personal API key Secret %s for user-scoped session %s", personalAPIKeySecretName, session.id)
+	}
+
 	// Add credentials Secrets based on scope
 	// For team-scoped sessions: only mount the team's secret (not user secrets)
 	// For user-scoped sessions: mount all team secrets and user secret
@@ -1243,6 +1257,19 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *Kubernet
 				},
 			})
 		}
+	}
+
+	// Add personal API key Secret as envFrom for user-scoped sessions (init container)
+	if req.Scope == entities.ScopeUser {
+		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: personalAPIKeySecretName,
+				},
+				Optional: boolPtr(true), // Optional - user may not have generated a personal API key yet
+			},
+		})
 	}
 
 	return &corev1.Container{
@@ -1964,19 +1991,8 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 		})
 	}
 
-	// Add personal API key volume for user-scoped sessions
-	if session.Request().Scope == entities.ScopeUser {
-		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-		volumes = append(volumes, corev1.Volume{
-			Name: "personal-api-key",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: personalAPIKeySecretName,
-					Optional:   boolPtr(true), // Optional - user may not have generated a personal API key yet
-				},
-			},
-		})
-	}
+	// Note: Personal API key is now mounted as environment variable via envFrom
+	// No need to mount as volume
 
 	// Add MCP server configuration volumes if enabled
 	if m.k8sConfig.MCPServersEnabled {
@@ -3025,14 +3041,8 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		})
 	}
 
-	// Add personal API key volume mount for user-scoped sessions
-	if session.Request().Scope == entities.ScopeUser {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "personal-api-key",
-			MountPath: "/personal-api-key",
-			ReadOnly:  true,
-		})
-	}
+	// Note: Personal API key is now mounted as environment variable via envFrom
+	// No need to mount as volume
 
 	return volumeMounts
 }
