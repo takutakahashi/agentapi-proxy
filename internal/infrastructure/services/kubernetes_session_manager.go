@@ -25,23 +25,24 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 )
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 type KubernetesSessionManager struct {
-	config         *config.Config
-	k8sConfig      *config.KubernetesSessionConfig
-	client         kubernetes.Interface
-	verbose        bool
-	logger         *logger.Logger
-	sessions       map[string]*KubernetesSession
-	mutex          sync.RWMutex
-	namespace      string
-	settingsRepo   repositories.SettingsRepository
-	teamConfigRepo repositories.TeamConfigRepository
+	config             *config.Config
+	k8sConfig          *config.KubernetesSessionConfig
+	client             kubernetes.Interface
+	verbose            bool
+	logger             *logger.Logger
+	sessions           map[string]*KubernetesSession
+	mutex              sync.RWMutex
+	namespace          string
+	settingsRepo       portrepos.SettingsRepository
+	teamConfigRepo     portrepos.TeamConfigRepository
+	personalAPIKeyRepo portrepos.PersonalAPIKeyRepository
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -181,6 +182,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	if err := m.createTeamEnvSecret(ctx, session, req); err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to create team env secret: %v", err)
 		// Continue anyway - session will work without team environment variables
+	}
+
+	// Create personal API key Secret for user-scoped sessions
+	if req.Scope == entities.ScopeUser {
+		if err := m.createPersonalAPIKeySecret(ctx, session, req.UserID); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create personal API key secret: %v", err)
+			// Continue anyway - session will work without personal API key
+		}
 	}
 
 	// Create Deployment
@@ -519,7 +528,7 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 }
 
 // GetMessages retrieves conversation history from a session
-func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]repositories.Message, error) {
+func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	// Get session
 	session := m.GetSession(id)
 	if session == nil {
@@ -555,7 +564,7 @@ func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) (
 
 	// Parse response
 	var response struct {
-		Messages []repositories.Message `json:"messages"`
+		Messages []portrepos.Message `json:"messages"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
@@ -1753,6 +1762,54 @@ func (m *KubernetesSessionManager) createGithubTokenSecret(
 	return nil
 }
 
+// createPersonalAPIKeySecret creates a Secret containing the personal API key
+// This is used for user-scoped sessions to provide the user's personal API key
+func (m *KubernetesSessionManager) createPersonalAPIKeySecret(
+	ctx context.Context,
+	session *KubernetesSession,
+	userID string,
+) error {
+	// Skip if personal API key repository is not set
+	if m.personalAPIKeyRepo == nil {
+		log.Printf("[K8S_SESSION] Personal API key repository not set, skipping secret creation")
+		return nil
+	}
+
+	// Try to get existing personal API key
+	apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(userID))
+	if err != nil {
+		// If no API key exists, skip creating the secret
+		log.Printf("[K8S_SESSION] No personal API key found for user %s, skipping secret creation", userID)
+		return nil
+	}
+
+	secretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(userID),
+				"agentapi.proxy/resource":   "personal-api-key",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"PERSONAL_API_KEY": apiKey.APIKey(),
+		},
+	}
+
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create personal API key secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created personal API key Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
 // buildVolumes builds the volume configuration for the session pod
 func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, userConfigMapName string) []corev1.Volume {
 	// Build workdir volume - use PVC if enabled, otherwise EmptyDir
@@ -1902,6 +1959,20 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: webhookPayloadSecretName,
 					Optional:   boolPtr(true),
+				},
+			},
+		})
+	}
+
+	// Add personal API key volume for user-scoped sessions
+	if session.Request().Scope == entities.ScopeUser {
+		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+		volumes = append(volumes, corev1.Volume{
+			Name: "personal-api-key",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: personalAPIKeySecretName,
+					Optional:   boolPtr(true), // Optional - user may not have generated a personal API key yet
 				},
 			},
 		})
@@ -2612,13 +2683,18 @@ func (m *KubernetesSessionManager) GetNamespace() string {
 }
 
 // SetSettingsRepository sets the settings repository for Bedrock configuration
-func (m *KubernetesSessionManager) SetSettingsRepository(repo repositories.SettingsRepository) {
+func (m *KubernetesSessionManager) SetSettingsRepository(repo portrepos.SettingsRepository) {
 	m.settingsRepo = repo
 }
 
 // SetTeamConfigRepository sets the team config repository for service account configuration
-func (m *KubernetesSessionManager) SetTeamConfigRepository(repo repositories.TeamConfigRepository) {
+func (m *KubernetesSessionManager) SetTeamConfigRepository(repo portrepos.TeamConfigRepository) {
 	m.teamConfigRepo = repo
+}
+
+// SetPersonalAPIKeyRepository sets the personal API key repository
+func (m *KubernetesSessionManager) SetPersonalAPIKeyRepository(repo portrepos.PersonalAPIKeyRepository) {
+	m.personalAPIKeyRepo = repo
 }
 
 // getSessionStatusFromDeployment determines session status from Deployment state
@@ -2945,6 +3021,15 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			Name:      "webhook-payload",
 			MountPath: "/opt/webhook/payload.json",
 			SubPath:   "payload.json",
+			ReadOnly:  true,
+		})
+	}
+
+	// Add personal API key volume mount for user-scoped sessions
+	if session.Request().Scope == entities.ScopeUser {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "personal-api-key",
+			MountPath: "/personal-api-key",
 			ReadOnly:  true,
 		})
 	}
