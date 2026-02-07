@@ -32,15 +32,16 @@ import (
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 type KubernetesSessionManager struct {
-	config       *config.Config
-	k8sConfig    *config.KubernetesSessionConfig
-	client       kubernetes.Interface
-	verbose      bool
-	logger       *logger.Logger
-	sessions     map[string]*KubernetesSession
-	mutex        sync.RWMutex
-	namespace    string
-	settingsRepo repositories.SettingsRepository
+	config         *config.Config
+	k8sConfig      *config.KubernetesSessionConfig
+	client         kubernetes.Interface
+	verbose        bool
+	logger         *logger.Logger
+	sessions       map[string]*KubernetesSession
+	mutex          sync.RWMutex
+	namespace      string
+	settingsRepo   repositories.SettingsRepository
+	teamConfigRepo repositories.TeamConfigRepository
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -174,6 +175,12 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 			log.Printf("[K8S_SESSION] Warning: failed to create webhook payload secret: %v", err)
 			// Continue anyway - session will work without payload file
 		}
+	}
+
+	// Create team env Secret for team-scoped sessions
+	if err := m.createTeamEnvSecret(ctx, session, req); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to create team env secret: %v", err)
+		// Continue anyway - session will work without team environment variables
 	}
 
 	// Create Deployment
@@ -914,6 +921,18 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				},
 			})
 			log.Printf("[K8S_SESSION] Adding team credentials Secret %s for team-scoped session %s", secretName, session.id)
+
+			// Mount team-specific env vars from TeamConfig (includes service account API key)
+			teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
+			envFrom = append(envFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: teamEnvSecretName,
+					},
+					Optional: boolPtr(true), // Secret may not exist if team has no config
+				},
+			})
+			log.Printf("[K8S_SESSION] Adding team env Secret %s for team-scoped session %s", teamEnvSecretName, session.id)
 		}
 		// Note: user-specific credentials are NOT mounted for team-scoped sessions
 	} else {
@@ -1664,6 +1683,16 @@ func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Contex
 	return nil
 }
 
+// deleteTeamEnvSecret deletes the team env Secret for a session
+func (m *KubernetesSessionManager) deleteTeamEnvSecret(ctx context.Context, session *KubernetesSession) error {
+	secretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete team env secret: %w", err)
+	}
+	return nil
+}
+
 // getInitialMessageFromSecret retrieves the initial message from Secret for session restoration
 func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) string {
 	secretName := fmt.Sprintf("%s-initial-message", serviceName)
@@ -2127,6 +2156,73 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 	return err
 }
 
+// createTeamEnvSecret creates a Secret with team configuration environment variables
+// for team-scoped sessions. This includes service account API key and team-specific env vars.
+func (m *KubernetesSessionManager) createTeamEnvSecret(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
+	// Only create for team-scoped sessions
+	if req.Scope != entities.ScopeTeam || req.TeamID == "" {
+		return nil
+	}
+
+	// Skip if team config repository is not set
+	if m.teamConfigRepo == nil {
+		log.Printf("[K8S_SESSION] TeamConfigRepository not set, skipping team env secret creation for session %s", session.id)
+		return nil
+	}
+
+	// Fetch team config
+	teamConfig, err := m.teamConfigRepo.FindByTeamID(ctx, req.TeamID)
+	if err != nil {
+		// Team config not found is not an error - team may not have configuration yet
+		log.Printf("[K8S_SESSION] Team config not found for team %s, skipping team env secret: %v", req.TeamID, err)
+		return nil
+	}
+
+	// Build environment variables map
+	envData := make(map[string][]byte)
+
+	// Add service account API key if present
+	if sa := teamConfig.ServiceAccount(); sa != nil {
+		envData["SERVICE_ACCOUNT_API_KEY"] = []byte(sa.APIKey())
+		log.Printf("[K8S_SESSION] Adding service account API key to team env secret for session %s", session.id)
+	}
+
+	// Add team-specific environment variables
+	for key, value := range teamConfig.EnvVars() {
+		envData[key] = []byte(value)
+	}
+
+	// Skip if no environment variables to add
+	if len(envData) == 0 {
+		log.Printf("[K8S_SESSION] No environment variables in team config for team %s, skipping secret creation", req.TeamID)
+		return nil
+	}
+
+	// Create Secret
+	secretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/team-id":    sanitizeLabelValue(req.TeamID),
+				"agentapi.proxy/managed-by": "session-manager",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: envData,
+	}
+
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create team env secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created team env secret %s for session %s with %d environment variables", secretName, session.id, len(envData))
+	return nil
+}
+
 // watchSession monitors the session deployment status
 func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *KubernetesSession) {
 	defer func() {
@@ -2252,6 +2348,11 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 	// Delete webhook payload Secret
 	if err := m.deleteWebhookPayloadSecret(ctx, session); err != nil {
 		errs = append(errs, fmt.Sprintf("webhook-payload-secret: %v", err))
+	}
+
+	// Delete team env Secret (for team-scoped sessions)
+	if err := m.deleteTeamEnvSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("team-env-secret: %v", err))
 	}
 
 	if len(errs) > 0 {
@@ -2513,6 +2614,11 @@ func (m *KubernetesSessionManager) GetNamespace() string {
 // SetSettingsRepository sets the settings repository for Bedrock configuration
 func (m *KubernetesSessionManager) SetSettingsRepository(repo repositories.SettingsRepository) {
 	m.settingsRepo = repo
+}
+
+// SetTeamConfigRepository sets the team config repository for service account configuration
+func (m *KubernetesSessionManager) SetTeamConfigRepository(repo repositories.TeamConfigRepository) {
+	m.teamConfigRepo = repo
 }
 
 // getSessionStatusFromDeployment determines session status from Deployment state
