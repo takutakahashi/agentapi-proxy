@@ -186,6 +186,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		k8sSessionManager.GetClient(),
 		k8sSessionManager.GetNamespace(),
 	)
+	// Set team config repository in session manager for service account integration
+	k8sSessionManager.SetTeamConfigRepository(teamConfigRepo)
 	log.Printf("[SERVER] Team config repository initialized")
 
 	s := &Server{
