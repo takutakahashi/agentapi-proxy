@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -1805,9 +1806,24 @@ func (m *KubernetesSessionManager) createPersonalAPIKeySecret(
 	// Try to get existing personal API key
 	apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(userID))
 	if err != nil {
-		// If no API key exists, skip creating the secret
-		log.Printf("[K8S_SESSION] No personal API key found for user %s, skipping secret creation", userID)
-		return nil
+		// If no API key exists, create a new one automatically
+		log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", userID)
+
+		// Generate API key
+		generatedKey, err := generatePersonalAPIKey()
+		if err != nil {
+			return fmt.Errorf("failed to generate personal API key: %w", err)
+		}
+
+		// Create new PersonalAPIKey entity
+		apiKey = entities.NewPersonalAPIKey(entities.UserID(userID), generatedKey)
+
+		// Save to repository
+		if err := m.personalAPIKeyRepo.Save(ctx, apiKey); err != nil {
+			return fmt.Errorf("failed to save personal API key for user %s: %w", userID, err)
+		}
+
+		log.Printf("[K8S_SESSION] Created personal API key for user %s", userID)
 	}
 
 	secretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
@@ -3545,4 +3561,14 @@ func (m *KubernetesSessionManager) UpdateServiceAnnotation(ctx context.Context, 
 // GetInitialMessage retrieves the initial message from Secret for a given session
 func (m *KubernetesSessionManager) GetInitialMessage(ctx context.Context, session *KubernetesSession) string {
 	return m.getInitialMessageFromSecret(ctx, session.ServiceName())
+}
+
+// generatePersonalAPIKey generates a random API key for personal use
+// This uses the same format as team service account keys
+func generatePersonalAPIKey() (string, error) {
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return "", err
+	}
+	return "ap_" + hex.EncodeToString(keyBytes), nil
 }
