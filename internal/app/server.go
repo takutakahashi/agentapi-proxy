@@ -190,6 +190,15 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	k8sSessionManager.SetTeamConfigRepository(teamConfigRepo)
 	log.Printf("[SERVER] Team config repository initialized")
 
+	// Initialize personal API key repository
+	personalAPIKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	// Set personal API key repository in session manager
+	k8sSessionManager.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
+	log.Printf("[SERVER] Personal API key repository initialized")
+
 	s := &Server{
 		config:         cfg,
 		echo:           e,

@@ -6,8 +6,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
@@ -21,13 +23,14 @@ type Router struct {
 
 // HandlerRegistry contains all handlers
 type HandlerRegistry struct {
-	notificationHandlers *controllers.NotificationHandlers
-	healthController     *controllers.HealthController
-	sessionController    *controllers.SessionController
-	settingsController   *controllers.SettingsController
-	userController       *controllers.UserController
-	shareController      *controllers.ShareController
-	customHandlers       []CustomHandler
+	notificationHandlers     *controllers.NotificationHandlers
+	healthController         *controllers.HealthController
+	sessionController        *controllers.SessionController
+	settingsController       *controllers.SettingsController
+	userController           *controllers.UserController
+	shareController          *controllers.ShareController
+	personalAPIKeyController *controllers.PersonalAPIKeyController
+	customHandlers           []CustomHandler
 }
 
 // CustomHandler interface for adding custom routes
@@ -96,17 +99,30 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Share controller initialized")
 	}
 
+	// Create personal API key controller if session manager is Kubernetes-based
+	var personalAPIKeyController *controllers.PersonalAPIKeyController
+	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
+		apiKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(
+			k8sManager.GetClient(),
+			k8sManager.GetNamespace(),
+		)
+		getOrCreatePersonalAPIKeyUC := personal_api_key.NewGetOrCreatePersonalAPIKeyUseCase(apiKeyRepo)
+		personalAPIKeyController = controllers.NewPersonalAPIKeyController(getOrCreatePersonalAPIKeyUC)
+		log.Printf("[ROUTER] Personal API key controller initialized")
+	}
+
 	return &Router{
 		echo:   e,
 		server: server,
 		handlers: &HandlerRegistry{
-			notificationHandlers: controllers.NewNotificationHandlers(server.notificationSvc),
-			healthController:     controllers.NewHealthController(),
-			sessionController:    sessionController,
-			settingsController:   settingsController,
-			userController:       controllers.NewUserController(),
-			shareController:      shareController,
-			customHandlers:       make([]CustomHandler, 0),
+			notificationHandlers:     controllers.NewNotificationHandlers(server.notificationSvc),
+			healthController:         controllers.NewHealthController(),
+			sessionController:        sessionController,
+			settingsController:       settingsController,
+			userController:           controllers.NewUserController(),
+			shareController:          shareController,
+			personalAPIKeyController: personalAPIKeyController,
+			customHandlers:           make([]CustomHandler, 0),
 		},
 	}
 }
@@ -231,6 +247,16 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Settings endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Settings repository not available, skipping settings routes")
+	}
+
+	// Add personal API key routes if controller is available (Kubernetes mode only)
+	if r.handlers.personalAPIKeyController != nil {
+		log.Printf("[ROUTES] Registering personal API key endpoints...")
+		r.echo.GET("/users/me/api-key", r.handlers.personalAPIKeyController.GetOrCreatePersonalAPIKey, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/users/me/api-key", r.handlers.personalAPIKeyController.GetOrCreatePersonalAPIKey, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		log.Printf("[ROUTES] Personal API key endpoints registered")
+	} else {
+		log.Printf("[ROUTES] Personal API key controller not available, skipping personal API key routes")
 	}
 
 	return nil

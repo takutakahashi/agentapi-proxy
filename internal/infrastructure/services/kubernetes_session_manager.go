@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,23 +26,24 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 )
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 type KubernetesSessionManager struct {
-	config         *config.Config
-	k8sConfig      *config.KubernetesSessionConfig
-	client         kubernetes.Interface
-	verbose        bool
-	logger         *logger.Logger
-	sessions       map[string]*KubernetesSession
-	mutex          sync.RWMutex
-	namespace      string
-	settingsRepo   repositories.SettingsRepository
-	teamConfigRepo repositories.TeamConfigRepository
+	config             *config.Config
+	k8sConfig          *config.KubernetesSessionConfig
+	client             kubernetes.Interface
+	verbose            bool
+	logger             *logger.Logger
+	sessions           map[string]*KubernetesSession
+	mutex              sync.RWMutex
+	namespace          string
+	settingsRepo       portrepos.SettingsRepository
+	teamConfigRepo     portrepos.TeamConfigRepository
+	personalAPIKeyRepo portrepos.PersonalAPIKeyRepository
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -181,6 +183,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	if err := m.createTeamEnvSecret(ctx, session, req); err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to create team env secret: %v", err)
 		// Continue anyway - session will work without team environment variables
+	}
+
+	// Create personal API key Secret for user-scoped sessions
+	if req.Scope == entities.ScopeUser {
+		if err := m.createPersonalAPIKeySecret(ctx, session, req.UserID); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create personal API key secret: %v", err)
+			// Continue anyway - session will work without personal API key
+		}
 	}
 
 	// Create Deployment
@@ -519,7 +529,7 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 }
 
 // GetMessages retrieves conversation history from a session
-func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]repositories.Message, error) {
+func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	// Get session
 	session := m.GetSession(id)
 	if session == nil {
@@ -555,7 +565,7 @@ func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) (
 
 	// Parse response
 	var response struct {
-		Messages []repositories.Message `json:"messages"`
+		Messages []portrepos.Message `json:"messages"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
@@ -905,6 +915,20 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		}
 	}
 
+	// Add personal API key Secret as envFrom for user-scoped sessions
+	if req.Scope == entities.ScopeUser {
+		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: personalAPIKeySecretName,
+				},
+				Optional: boolPtr(true), // Optional - user may not have generated a personal API key yet
+			},
+		})
+		log.Printf("[K8S_SESSION] Adding personal API key Secret %s for user-scoped session %s", personalAPIKeySecretName, session.id)
+	}
+
 	// Add credentials Secrets based on scope
 	// For team-scoped sessions: only mount the team's secret (not user secrets)
 	// For user-scoped sessions: mount all team secrets and user secret
@@ -1234,6 +1258,19 @@ func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *Kubernet
 				},
 			})
 		}
+	}
+
+	// Add personal API key Secret as envFrom for user-scoped sessions (init container)
+	if req.Scope == entities.ScopeUser {
+		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: personalAPIKeySecretName,
+				},
+				Optional: boolPtr(true), // Optional - user may not have generated a personal API key yet
+			},
+		})
 	}
 
 	return &corev1.Container{
@@ -1753,6 +1790,69 @@ func (m *KubernetesSessionManager) createGithubTokenSecret(
 	return nil
 }
 
+// createPersonalAPIKeySecret creates a Secret containing the personal API key
+// This is used for user-scoped sessions to provide the user's personal API key
+func (m *KubernetesSessionManager) createPersonalAPIKeySecret(
+	ctx context.Context,
+	session *KubernetesSession,
+	userID string,
+) error {
+	// Skip if personal API key repository is not set
+	if m.personalAPIKeyRepo == nil {
+		log.Printf("[K8S_SESSION] Personal API key repository not set, skipping secret creation")
+		return nil
+	}
+
+	// Try to get existing personal API key
+	apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(userID))
+	if err != nil {
+		// If no API key exists, create a new one automatically
+		log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", userID)
+
+		// Generate API key
+		generatedKey, err := generatePersonalAPIKey()
+		if err != nil {
+			return fmt.Errorf("failed to generate personal API key: %w", err)
+		}
+
+		// Create new PersonalAPIKey entity
+		apiKey = entities.NewPersonalAPIKey(entities.UserID(userID), generatedKey)
+
+		// Save to repository
+		if err := m.personalAPIKeyRepo.Save(ctx, apiKey); err != nil {
+			return fmt.Errorf("failed to save personal API key for user %s: %w", userID, err)
+		}
+
+		log.Printf("[K8S_SESSION] Created personal API key for user %s", userID)
+	}
+
+	secretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(userID),
+				"agentapi.proxy/resource":   "personal-api-key",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"AGENTAPI_KEY": apiKey.APIKey(),
+		},
+	}
+
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create personal API key secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created personal API key Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
 // buildVolumes builds the volume configuration for the session pod
 func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, userConfigMapName string) []corev1.Volume {
 	// Build workdir volume - use PVC if enabled, otherwise EmptyDir
@@ -1906,6 +2006,9 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 			},
 		})
 	}
+
+	// Note: Personal API key is now mounted as environment variable via envFrom
+	// No need to mount as volume
 
 	// Add MCP server configuration volumes if enabled
 	if m.k8sConfig.MCPServersEnabled {
@@ -2183,8 +2286,8 @@ func (m *KubernetesSessionManager) createTeamEnvSecret(ctx context.Context, sess
 
 	// Add service account API key if present
 	if sa := teamConfig.ServiceAccount(); sa != nil {
-		envData["SERVICE_ACCOUNT_API_KEY"] = []byte(sa.APIKey())
-		log.Printf("[K8S_SESSION] Adding service account API key to team env secret for session %s", session.id)
+		envData["AGENTAPI_KEY"] = []byte(sa.APIKey())
+		log.Printf("[K8S_SESSION] Adding service account API key (AGENTAPI_KEY) to team env secret for session %s", session.id)
 	}
 
 	// Add team-specific environment variables
@@ -2612,13 +2715,18 @@ func (m *KubernetesSessionManager) GetNamespace() string {
 }
 
 // SetSettingsRepository sets the settings repository for Bedrock configuration
-func (m *KubernetesSessionManager) SetSettingsRepository(repo repositories.SettingsRepository) {
+func (m *KubernetesSessionManager) SetSettingsRepository(repo portrepos.SettingsRepository) {
 	m.settingsRepo = repo
 }
 
 // SetTeamConfigRepository sets the team config repository for service account configuration
-func (m *KubernetesSessionManager) SetTeamConfigRepository(repo repositories.TeamConfigRepository) {
+func (m *KubernetesSessionManager) SetTeamConfigRepository(repo portrepos.TeamConfigRepository) {
 	m.teamConfigRepo = repo
+}
+
+// SetPersonalAPIKeyRepository sets the personal API key repository
+func (m *KubernetesSessionManager) SetPersonalAPIKeyRepository(repo portrepos.PersonalAPIKeyRepository) {
+	m.personalAPIKeyRepo = repo
 }
 
 // getSessionStatusFromDeployment determines session status from Deployment state
@@ -2948,6 +3056,9 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			ReadOnly:  true,
 		})
 	}
+
+	// Note: Personal API key is now mounted as environment variable via envFrom
+	// No need to mount as volume
 
 	return volumeMounts
 }
@@ -3450,4 +3561,14 @@ func (m *KubernetesSessionManager) UpdateServiceAnnotation(ctx context.Context, 
 // GetInitialMessage retrieves the initial message from Secret for a given session
 func (m *KubernetesSessionManager) GetInitialMessage(ctx context.Context, session *KubernetesSession) string {
 	return m.getInitialMessageFromSecret(ctx, session.ServiceName())
+}
+
+// generatePersonalAPIKey generates a random API key for personal use
+// This uses the same format as team service account keys
+func generatePersonalAPIKey() (string, error) {
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return "", err
+	}
+	return "ap_" + hex.EncodeToString(keyBytes), nil
 }
