@@ -1824,7 +1824,7 @@ func (m *KubernetesSessionManager) createPersonalAPIKeySecret(
 		},
 		Type: corev1.SecretTypeOpaque,
 		StringData: map[string]string{
-			"PERSONAL_API_KEY": apiKey.APIKey(),
+			"AGENTAPI_KEY": apiKey.APIKey(),
 		},
 	}
 
@@ -2270,8 +2270,8 @@ func (m *KubernetesSessionManager) createTeamEnvSecret(ctx context.Context, sess
 
 	// Add service account API key if present
 	if sa := teamConfig.ServiceAccount(); sa != nil {
-		envData["SERVICE_ACCOUNT_API_KEY"] = []byte(sa.APIKey())
-		log.Printf("[K8S_SESSION] Adding service account API key to team env secret for session %s", session.id)
+		envData["AGENTAPI_KEY"] = []byte(sa.APIKey())
+		log.Printf("[K8S_SESSION] Adding service account API key (AGENTAPI_KEY) to team env secret for session %s", session.id)
 	}
 
 	// Add team-specific environment variables
