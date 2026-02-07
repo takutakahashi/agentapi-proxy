@@ -16,4 +16,7 @@ type PersonalAPIKeyRepository interface {
 
 	// Delete removes a personal API key
 	Delete(ctx context.Context, userID entities.UserID) error
+
+	// List retrieves all personal API keys
+	List(ctx context.Context) ([]*entities.PersonalAPIKey, error)
 }

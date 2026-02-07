@@ -2729,6 +2729,11 @@ func (m *KubernetesSessionManager) SetPersonalAPIKeyRepository(repo portrepos.Pe
 	m.personalAPIKeyRepo = repo
 }
 
+// GetPersonalAPIKeyRepository returns the personal API key repository
+func (m *KubernetesSessionManager) GetPersonalAPIKeyRepository() portrepos.PersonalAPIKeyRepository {
+	return m.personalAPIKeyRepo
+}
+
 // getSessionStatusFromDeployment determines session status from Deployment state
 func (m *KubernetesSessionManager) getSessionStatusFromDeployment(sessionID string) string {
 	deploymentName := fmt.Sprintf("agentapi-session-%s", sessionID)

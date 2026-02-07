@@ -407,3 +407,43 @@ func (s *SimpleAuthService) LoadServiceAccountFromTeamConfig(ctx context.Context
 
 	return nil
 }
+
+// LoadPersonalAPIKey loads a personal API key into memory
+func (s *SimpleAuthService) LoadPersonalAPIKey(ctx context.Context, personalAPIKey *entities.PersonalAPIKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	userID := personalAPIKey.UserID()
+	apiKey := personalAPIKey.APIKey()
+
+	// Check if user already exists
+	user, exists := s.users[userID]
+	if !exists {
+		// Create a new user entity for this personal API key
+		// Default to regular user type with basic permissions
+		user = entities.NewUser(
+			userID,
+			entities.UserTypeRegular,
+			string(userID),
+		)
+		// Add default permissions
+		user.AddPermission(entities.PermissionSessionCreate)
+		user.AddPermission(entities.PermissionSessionRead)
+		user.AddPermission(entities.PermissionSessionUpdate)
+		user.AddPermission(entities.PermissionSessionDelete)
+
+		s.users[userID] = user
+	}
+
+	// Store API key in memory maps
+	s.apiKeys[apiKey] = &services.APIKey{
+		Key:         apiKey,
+		UserID:      userID,
+		Permissions: user.Permissions(),
+		CreatedAt:   personalAPIKey.CreatedAt().Format(time.RFC3339),
+		ExpiresAt:   nil, // Personal API keys don't expire
+	}
+	s.keyToUserID[apiKey] = userID
+
+	return nil
+}

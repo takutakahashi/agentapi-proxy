@@ -296,6 +296,19 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		}
 	}
 
+	// Bootstrap personal API keys (Kubernetes mode only)
+	if k8sSessionManager, ok := s.sessionManager.(*services.KubernetesSessionManager); ok {
+		personalAPIKeyRepo := k8sSessionManager.GetPersonalAPIKeyRepository()
+		if personalAPIKeyRepo != nil {
+			if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+				ctx := context.Background()
+				if err := services.BootstrapPersonalAPIKeys(ctx, simpleAuth, personalAPIKeyRepo); err != nil {
+					log.Printf("[SERVER] Warning: failed to bootstrap personal API keys: %v", err)
+				}
+			}
+		}
+	}
+
 	s.setupRoutes()
 
 	return s
