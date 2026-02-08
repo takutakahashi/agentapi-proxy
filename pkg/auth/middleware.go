@@ -58,15 +58,18 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			var err error
 
 			// Try API key authentication first
+			// Always attempt API key auth if an API key is provided, regardless of Static Auth config
+			// This allows personal API keys (loaded via bootstrap) to work
+			if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
+				c.Set("internal_user", user)
+				log.Printf("API key authentication successful: user %s (type: %s)", user.ID(), user.UserType())
+				// Build and store authorization context
+				authzCtx := buildAuthorizationContext(user)
+				c.Set("authz_context", authzCtx)
+				return next(c)
+			}
+			// Only log if Static Auth is explicitly enabled (to avoid noise for missing API keys)
 			if cfg.Auth.Static != nil && cfg.Auth.Static.Enabled {
-				if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
-					c.Set("internal_user", user)
-					log.Printf("API key authentication successful: user %s (type: %s)", user.ID(), user.UserType())
-					// Build and store authorization context
-					authzCtx := buildAuthorizationContext(user)
-					c.Set("authz_context", authzCtx)
-					return next(c)
-				}
 				log.Printf("API key authentication failed: %v from %s", err, c.RealIP())
 			}
 
@@ -236,8 +239,13 @@ func tryInternalAPIKeyAuth(c echo.Context, cfg *config.Config, authService servi
 	var apiKey string
 
 	// First, try to get API key from the configured custom header
-	if cfg.Auth.Static != nil {
+	if cfg.Auth.Static != nil && cfg.Auth.Static.HeaderName != "" {
 		apiKey = c.Request().Header.Get(cfg.Auth.Static.HeaderName)
+	}
+
+	// Also try default X-API-Key header if not found yet
+	if apiKey == "" {
+		apiKey = c.Request().Header.Get("X-API-Key")
 	}
 
 	// If not found in custom header, try to extract from Authorization header (Bearer token)

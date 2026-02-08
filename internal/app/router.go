@@ -107,7 +107,14 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			k8sManager.GetNamespace(),
 		)
 		getOrCreatePersonalAPIKeyUC := personal_api_key.NewGetOrCreatePersonalAPIKeyUseCase(apiKeyRepo)
-		personalAPIKeyController = controllers.NewPersonalAPIKeyController(getOrCreatePersonalAPIKeyUC)
+
+		// Get auth service for loading API keys into memory
+		var authService controllers.AuthServiceForPersonalAPIKey
+		if simpleAuth, ok := server.container.AuthService.(*services.SimpleAuthService); ok {
+			authService = simpleAuth
+		}
+
+		personalAPIKeyController = controllers.NewPersonalAPIKeyController(getOrCreatePersonalAPIKeyUC, authService)
 		log.Printf("[ROUTER] Personal API key controller initialized")
 	}
 

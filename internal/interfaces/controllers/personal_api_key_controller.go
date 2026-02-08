@@ -15,17 +15,25 @@ type GetOrCreatePersonalAPIKeyUseCase interface {
 	Execute(ctx context.Context, userID entities.UserID) (*entities.PersonalAPIKey, error)
 }
 
+// AuthServiceForPersonalAPIKey defines the interface for auth service methods needed by this controller
+type AuthServiceForPersonalAPIKey interface {
+	LoadPersonalAPIKey(ctx context.Context, apiKey *entities.PersonalAPIKey) error
+}
+
 // PersonalAPIKeyController handles personal API key related requests
 type PersonalAPIKeyController struct {
 	getOrCreateAPIKeyUC GetOrCreatePersonalAPIKeyUseCase
+	authService         AuthServiceForPersonalAPIKey
 }
 
 // NewPersonalAPIKeyController creates a new PersonalAPIKeyController
 func NewPersonalAPIKeyController(
 	getOrCreateAPIKeyUC GetOrCreatePersonalAPIKeyUseCase,
+	authService AuthServiceForPersonalAPIKey,
 ) *PersonalAPIKeyController {
 	return &PersonalAPIKeyController{
 		getOrCreateAPIKeyUC: getOrCreateAPIKeyUC,
+		authService:         authService,
 	}
 }
 
@@ -49,6 +57,16 @@ func (c *PersonalAPIKeyController) GetOrCreatePersonalAPIKey(ctx echo.Context) e
 	if err != nil {
 		log.Printf("Failed to get or create personal API key for user %s: %v", userID, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get or create personal API key")
+	}
+
+	// Load the API key into auth service for immediate use
+	if c.authService != nil {
+		if err := c.authService.LoadPersonalAPIKey(ctx.Request().Context(), apiKey); err != nil {
+			log.Printf("Warning: failed to load personal API key into auth service for user %s: %v", userID, err)
+			// Don't fail the request, just log the warning
+		} else {
+			log.Printf("Loaded personal API key into auth service for user: %s", userID)
+		}
 	}
 
 	// Return API key details

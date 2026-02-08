@@ -130,6 +130,33 @@ func (r *KubernetesPersonalAPIKeyRepository) Delete(ctx context.Context, userID 
 	return nil
 }
 
+// List retrieves all personal API keys
+func (r *KubernetesPersonalAPIKeyRepository) List(ctx context.Context) ([]*entities.PersonalAPIKey, error) {
+	// List all secrets with the personal API key label
+	listOptions := metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s=true", LabelPersonalAPIKey),
+	}
+
+	secretList, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, listOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list personal API key secrets: %w", err)
+	}
+
+	apiKeys := make([]*entities.PersonalAPIKey, 0, len(secretList.Items))
+
+	for _, secret := range secretList.Items {
+		apiKey, err := r.fromSecret(&secret)
+		if err != nil {
+			// Log error but continue with other secrets
+			fmt.Printf("Warning: failed to parse personal API key from secret %s: %v\n", secret.Name, err)
+			continue
+		}
+		apiKeys = append(apiKeys, apiKey)
+	}
+
+	return apiKeys, nil
+}
+
 // secretName generates Secret name from user ID
 func (r *KubernetesPersonalAPIKeyRepository) secretName(userID string) string {
 	return PersonalAPIKeySecretPrefix + sanitizeLabelValue(userID)
