@@ -129,6 +129,9 @@ COPY config/managed-settings.json /etc/claude-code/managed-settings.json
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sudo chmod +x /usr/local/bin/entrypoint.sh
 
+# Copy wrapped_claude script
+COPY --chmod=755 scripts/wrapped_claude.sh /usr/local/bin/wrapped_claude
+
 # Expose port
 EXPOSE 8080
 
