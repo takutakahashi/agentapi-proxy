@@ -202,6 +202,55 @@ func (s *KubernetesCredentialsSecretSyncer) ResyncSecretsForOAuthMode(ctx contex
 	return nil
 }
 
+// ResyncSecretsForAttributionHeader ensures all secrets have CLAUDE_CODE_ATTRIBUTION_HEADER=0
+// This function is idempotent and safe to run multiple times
+func (s *KubernetesCredentialsSecretSyncer) ResyncSecretsForAttributionHeader(ctx context.Context) error {
+	listOptions := metav1.ListOptions{
+		LabelSelector: LabelManagedBy + "=settings",
+	}
+
+	secrets, err := s.client.CoreV1().Secrets(s.namespace).List(ctx, listOptions)
+	if err != nil {
+		return fmt.Errorf("failed to list secrets for attribution header resync: %w", err)
+	}
+
+	updatedCount := 0
+	skippedCount := 0
+
+	for _, secret := range secrets.Items {
+		// Only process agent-env-* secrets
+		if !strings.HasPrefix(secret.Name, EnvSecretPrefix) {
+			continue
+		}
+
+		// Check if CLAUDE_CODE_ATTRIBUTION_HEADER is already set to "0"
+		if attributionHeader, exists := secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"]; exists && string(attributionHeader) == "0" {
+			// Already has the correct value
+			skippedCount++
+			continue
+		}
+
+		// Add or update CLAUDE_CODE_ATTRIBUTION_HEADER
+		secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"] = []byte("0")
+
+		// Update the secret
+		_, err := s.client.CoreV1().Secrets(s.namespace).Update(ctx, &secret, metav1.UpdateOptions{})
+		if err != nil {
+			log.Printf("[ENV_SYNCER] Attribution header resync: Failed to update secret %s: %v", secret.Name, err)
+			continue
+		}
+
+		log.Printf("[ENV_SYNCER] Attribution header resync: Updated secret %s with CLAUDE_CODE_ATTRIBUTION_HEADER=0", secret.Name)
+		updatedCount++
+	}
+
+	if updatedCount > 0 || skippedCount > 0 {
+		log.Printf("[ENV_SYNCER] Attribution header resync complete: updated %d secrets, skipped %d secrets", updatedCount, skippedCount)
+	}
+
+	return nil
+}
+
 // MigrateSecrets migrates old agent-credentials-* secrets to agent-env-* secrets
 // This function is idempotent and safe to run multiple times
 func (s *KubernetesCredentialsSecretSyncer) MigrateSecrets(ctx context.Context) error {
@@ -324,6 +373,8 @@ func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.S
 		data["AWS_SECRET_ACCESS_KEY"] = []byte("")
 		data["AWS_ROLE_ARN"] = []byte("")
 		data["AWS_PROFILE"] = []byte("")
+		// Disable code attribution header
+		data["CLAUDE_CODE_ATTRIBUTION_HEADER"] = []byte("0")
 	case entities.AuthModeBedrock:
 		// Only add Bedrock credentials for Bedrock mode
 		bedrock := settings.Bedrock()

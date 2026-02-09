@@ -429,6 +429,15 @@ func runCredentialsSecretMigration(configData *config.Config) {
 	}
 
 	log.Printf("[ENV_RESYNC] OAuth mode secrets resync completed successfully")
+
+	// Resync all secrets to add CLAUDE_CODE_ATTRIBUTION_HEADER=0
+	if err := syncer.ResyncSecretsForAttributionHeader(context.Background()); err != nil {
+		log.Printf("[ENV_RESYNC] Attribution header resync failed: %v", err)
+		// Continue even if resync fails - we don't want to prevent server startup
+		return
+	}
+
+	log.Printf("[ENV_RESYNC] Attribution header resync completed successfully")
 }
 
 // registerMCPHandler registers MCP HTTP handler

@@ -619,3 +619,141 @@ func TestSanitizeLabelValue(t *testing.T) {
 		})
 	}
 }
+
+func TestKubernetesCredentialsSecretSyncer_ResyncSecretsForAttributionHeader(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
+
+	// Create test secrets with different states
+	testSecrets := []*corev1.Secret{
+		// Secret without CLAUDE_CODE_ATTRIBUTION_HEADER (should be updated)
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "agent-env-without-header",
+				Namespace: "default",
+				Labels: map[string]string{
+					LabelManagedBy: "settings",
+				},
+			},
+			Data: map[string][]byte{
+				"CLAUDE_CODE_USE_BEDROCK": []byte("1"),
+			},
+		},
+		// Secret with wrong CLAUDE_CODE_ATTRIBUTION_HEADER value (should be updated)
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "agent-env-wrong-value",
+				Namespace: "default",
+				Labels: map[string]string{
+					LabelManagedBy: "settings",
+				},
+			},
+			Data: map[string][]byte{
+				"CLAUDE_CODE_USE_BEDROCK":        []byte("1"),
+				"CLAUDE_CODE_ATTRIBUTION_HEADER": []byte("1"),
+			},
+		},
+		// Secret with correct CLAUDE_CODE_ATTRIBUTION_HEADER (should be skipped)
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "agent-env-correct",
+				Namespace: "default",
+				Labels: map[string]string{
+					LabelManagedBy: "settings",
+				},
+			},
+			Data: map[string][]byte{
+				"CLAUDE_CODE_USE_BEDROCK":        []byte("1"),
+				"CLAUDE_CODE_ATTRIBUTION_HEADER": []byte("0"),
+			},
+		},
+		// Secret with different prefix (should be skipped)
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "other-secret",
+				Namespace: "default",
+				Labels: map[string]string{
+					LabelManagedBy: "settings",
+				},
+			},
+			Data: map[string][]byte{
+				"SOME_KEY": []byte("value"),
+			},
+		},
+	}
+
+	for _, secret := range testSecrets {
+		_, err := client.CoreV1().Secrets("default").Create(ctx, secret, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create test secret: %v", err)
+		}
+	}
+
+	// Run resync
+	err := syncer.ResyncSecretsForAttributionHeader(ctx)
+	if err != nil {
+		t.Fatalf("ResyncSecretsForAttributionHeader failed: %v", err)
+	}
+
+	// Verify results
+	tests := []struct {
+		name                string
+		expectedHeaderValue string
+		shouldHaveHeader    bool
+	}{
+		{"agent-env-without-header", "0", true},
+		{"agent-env-wrong-value", "0", true},
+		{"agent-env-correct", "0", true},
+		{"other-secret", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			secret, err := client.CoreV1().Secrets("default").Get(ctx, tt.name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("Failed to get secret: %v", err)
+			}
+
+			headerValue, exists := secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"]
+			if tt.shouldHaveHeader {
+				if !exists {
+					t.Errorf("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to exist")
+				} else if string(headerValue) != tt.expectedHeaderValue {
+					t.Errorf("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to be %q, got %q", tt.expectedHeaderValue, string(headerValue))
+				}
+			} else {
+				if exists {
+					t.Errorf("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to not exist")
+				}
+			}
+		})
+	}
+}
+
+func TestKubernetesCredentialsSecretSyncer_Sync_OAuthMode_HasAttributionHeader(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
+	ctx := context.Background()
+
+	// Create settings with OAuth token
+	settings := entities.NewSettings("oauth-user")
+	settings.SetClaudeCodeOAuthToken("test-oauth-token")
+	settings.SetAuthMode(entities.AuthModeOAuth)
+
+	err := syncer.Sync(ctx, settings)
+	if err != nil {
+		t.Fatalf("Failed to sync: %v", err)
+	}
+
+	// Verify Secret was created
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-oauth-user", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get secret: %v", err)
+	}
+
+	// Verify CLAUDE_CODE_ATTRIBUTION_HEADER is set
+	if string(secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"]) != "0" {
+		t.Error("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to be '0' for OAuth mode")
+	}
+}
