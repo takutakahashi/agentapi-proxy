@@ -98,9 +98,10 @@ type Settings struct {
 	bedrock              *BedrockSettings
 	mcpServers           *MCPServersSettings
 	marketplaces         *MarketplacesSettings
-	claudeCodeOAuthToken string   // Claude Code OAuth token
-	authMode             AuthMode // Authentication mode (oauth or bedrock)
-	enabledPlugins       []string // plugin@marketplace format (e.g., "commit@claude-plugins-official")
+	claudeCodeOAuthToken string            // Claude Code OAuth token
+	authMode             AuthMode          // Authentication mode (oauth or bedrock)
+	enabledPlugins       []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
+	envVars              map[string]string // Custom environment variables
 	createdAt            time.Time
 	updatedAt            time.Time
 }
@@ -209,6 +210,41 @@ func (s *Settings) AuthMode() AuthMode {
 func (s *Settings) SetAuthMode(mode AuthMode) {
 	s.authMode = mode
 	s.updatedAt = time.Now()
+}
+
+// EnvVars returns the custom environment variables
+func (s *Settings) EnvVars() map[string]string {
+	return s.envVars
+}
+
+// SetEnvVars sets the custom environment variables
+func (s *Settings) SetEnvVars(envVars map[string]string) {
+	if envVars == nil {
+		s.envVars = make(map[string]string)
+	} else {
+		s.envVars = envVars
+	}
+	s.updatedAt = time.Now()
+}
+
+// EnvVarKeys returns a sorted list of environment variable keys (values are not included)
+func (s *Settings) EnvVarKeys() []string {
+	if len(s.envVars) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(s.envVars))
+	for k := range s.envVars {
+		keys = append(keys, k)
+	}
+	// Sort keys for consistent output
+	for i := 0; i < len(keys)-1; i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[i] > keys[j] {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+	return keys
 }
 
 // Validate validates the Settings

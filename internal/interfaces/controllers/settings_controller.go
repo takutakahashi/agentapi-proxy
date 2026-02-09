@@ -81,6 +81,7 @@ type UpdateSettingsRequest struct {
 	ClaudeCodeOAuthToken *string                        `json:"claude_code_oauth_token,omitempty"`
 	AuthMode             *string                        `json:"auth_mode,omitempty"`       // "oauth" or "bedrock"
 	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	EnvVars              map[string]string              `json:"env_vars,omitempty"`        // Custom environment variables
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -117,6 +118,7 @@ type SettingsResponse struct {
 	HasClaudeCodeOAuthToken bool                            `json:"has_claude_code_oauth_token"`
 	AuthMode                string                          `json:"auth_mode,omitempty"`
 	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`    // only keys, not values
 	CreatedAt               string                          `json:"created_at"`
 	UpdatedAt               string                          `json:"updated_at"`
 }
@@ -262,6 +264,16 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Update enabled plugins
 	if req.EnabledPlugins != nil {
 		settings.SetEnabledPlugins(req.EnabledPlugins)
+	}
+
+	// Update environment variables
+	if req.EnvVars != nil {
+		// Get existing env vars for preserving empty values
+		existingEnvVars := settings.EnvVars()
+
+		// Use mergeSecrets helper to preserve existing values when new value is empty
+		envVars := c.mergeSecrets(existingEnvVars, req.EnvVars)
+		settings.SetEnvVars(envVars)
 	}
 
 	// Update Claude Code OAuth Token
@@ -540,6 +552,10 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 
 	if plugins := settings.EnabledPlugins(); len(plugins) > 0 {
 		resp.EnabledPlugins = plugins
+	}
+
+	if envVarKeys := settings.EnvVarKeys(); len(envVarKeys) > 0 {
+		resp.EnvVarKeys = envVarKeys
 	}
 
 	return resp

@@ -333,6 +333,14 @@ func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.S
 		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
 	}
 
+	// Add user-defined environment variables (these override auth-related vars if there are conflicts)
+	// This is intentionally done last to give users the ability to override system-set variables
+	for k, v := range settings.EnvVars() {
+		if v != "" { // Only set non-empty values
+			data[k] = []byte(v)
+		}
+	}
+
 	return data
 }
 
