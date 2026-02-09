@@ -358,6 +358,8 @@ func (s *KubernetesCredentialsSecretSyncer) addBedrockCredentials(data map[strin
 	if bedrock.Profile() != "" {
 		data["AWS_PROFILE"] = []byte(bedrock.Profile())
 	}
+	// Disable code attribution header for Bedrock
+	data["CLAUDE_CODE_ATTRIBUTION_HEADER"] = []byte("0")
 }
 
 // sanitizeSecretName sanitizes a string to be used as a Kubernetes Secret name
