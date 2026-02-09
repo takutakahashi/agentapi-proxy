@@ -202,7 +202,7 @@ func (s *KubernetesCredentialsSecretSyncer) ResyncSecretsForOAuthMode(ctx contex
 	return nil
 }
 
-// ResyncSecretsForAttributionHeader ensures all secrets have CLAUDE_CODE_ATTRIBUTION_HEADER=0
+// ResyncSecretsForAttributionHeader ensures Bedrock secrets have CLAUDE_CODE_ATTRIBUTION_HEADER=0
 // This function is idempotent and safe to run multiple times
 func (s *KubernetesCredentialsSecretSyncer) ResyncSecretsForAttributionHeader(ctx context.Context) error {
 	listOptions := metav1.ListOptions{
@@ -220,6 +220,13 @@ func (s *KubernetesCredentialsSecretSyncer) ResyncSecretsForAttributionHeader(ct
 	for _, secret := range secrets.Items {
 		// Only process agent-env-* secrets
 		if !strings.HasPrefix(secret.Name, EnvSecretPrefix) {
+			continue
+		}
+
+		// Only process Bedrock mode secrets (CLAUDE_CODE_USE_BEDROCK=1)
+		useBedrock, exists := secret.Data["CLAUDE_CODE_USE_BEDROCK"]
+		if !exists || string(useBedrock) != "1" {
+			// Skip OAuth mode secrets
 			continue
 		}
 
@@ -245,7 +252,7 @@ func (s *KubernetesCredentialsSecretSyncer) ResyncSecretsForAttributionHeader(ct
 	}
 
 	if updatedCount > 0 || skippedCount > 0 {
-		log.Printf("[ENV_SYNCER] Attribution header resync complete: updated %d secrets, skipped %d secrets", updatedCount, skippedCount)
+		log.Printf("[ENV_SYNCER] Attribution header resync complete: updated %d Bedrock secrets, skipped %d secrets", updatedCount, skippedCount)
 	}
 
 	return nil
@@ -373,8 +380,6 @@ func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.S
 		data["AWS_SECRET_ACCESS_KEY"] = []byte("")
 		data["AWS_ROLE_ARN"] = []byte("")
 		data["AWS_PROFILE"] = []byte("")
-		// Disable code attribution header
-		data["CLAUDE_CODE_ATTRIBUTION_HEADER"] = []byte("0")
 	case entities.AuthModeBedrock:
 		// Only add Bedrock credentials for Bedrock mode
 		bedrock := settings.Bedrock()
@@ -382,6 +387,8 @@ func (s *KubernetesCredentialsSecretSyncer) buildSecretData(settings *entities.S
 			s.addBedrockCredentials(data, bedrock)
 		}
 		data["CLAUDE_CODE_USE_BEDROCK"] = []byte("1")
+		// Disable code attribution header for Bedrock mode only
+		data["CLAUDE_CODE_ATTRIBUTION_HEADER"] = []byte("0")
 	}
 
 	return data

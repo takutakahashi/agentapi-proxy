@@ -627,10 +627,10 @@ func TestKubernetesCredentialsSecretSyncer_ResyncSecretsForAttributionHeader(t *
 
 	// Create test secrets with different states
 	testSecrets := []*corev1.Secret{
-		// Secret without CLAUDE_CODE_ATTRIBUTION_HEADER (should be updated)
+		// Bedrock secret without CLAUDE_CODE_ATTRIBUTION_HEADER (should be updated)
 		{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "agent-env-without-header",
+				Name:      "agent-env-bedrock-without-header",
 				Namespace: "default",
 				Labels: map[string]string{
 					LabelManagedBy: "settings",
@@ -640,10 +640,10 @@ func TestKubernetesCredentialsSecretSyncer_ResyncSecretsForAttributionHeader(t *
 				"CLAUDE_CODE_USE_BEDROCK": []byte("1"),
 			},
 		},
-		// Secret with wrong CLAUDE_CODE_ATTRIBUTION_HEADER value (should be updated)
+		// Bedrock secret with wrong CLAUDE_CODE_ATTRIBUTION_HEADER value (should be updated)
 		{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "agent-env-wrong-value",
+				Name:      "agent-env-bedrock-wrong-value",
 				Namespace: "default",
 				Labels: map[string]string{
 					LabelManagedBy: "settings",
@@ -654,10 +654,10 @@ func TestKubernetesCredentialsSecretSyncer_ResyncSecretsForAttributionHeader(t *
 				"CLAUDE_CODE_ATTRIBUTION_HEADER": []byte("1"),
 			},
 		},
-		// Secret with correct CLAUDE_CODE_ATTRIBUTION_HEADER (should be skipped)
+		// Bedrock secret with correct CLAUDE_CODE_ATTRIBUTION_HEADER (should be skipped)
 		{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "agent-env-correct",
+				Name:      "agent-env-bedrock-correct",
 				Namespace: "default",
 				Labels: map[string]string{
 					LabelManagedBy: "settings",
@@ -666,6 +666,20 @@ func TestKubernetesCredentialsSecretSyncer_ResyncSecretsForAttributionHeader(t *
 			Data: map[string][]byte{
 				"CLAUDE_CODE_USE_BEDROCK":        []byte("1"),
 				"CLAUDE_CODE_ATTRIBUTION_HEADER": []byte("0"),
+			},
+		},
+		// OAuth secret (should be skipped - no attribution header should be added)
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "agent-env-oauth",
+				Namespace: "default",
+				Labels: map[string]string{
+					LabelManagedBy: "settings",
+				},
+			},
+			Data: map[string][]byte{
+				"CLAUDE_CODE_USE_BEDROCK": []byte("0"),
+				"CLAUDE_CODE_OAUTH_TOKEN": []byte("test-token"),
 			},
 		},
 		// Secret with different prefix (should be skipped)
@@ -702,9 +716,10 @@ func TestKubernetesCredentialsSecretSyncer_ResyncSecretsForAttributionHeader(t *
 		expectedHeaderValue string
 		shouldHaveHeader    bool
 	}{
-		{"agent-env-without-header", "0", true},
-		{"agent-env-wrong-value", "0", true},
-		{"agent-env-correct", "0", true},
+		{"agent-env-bedrock-without-header", "0", true},
+		{"agent-env-bedrock-wrong-value", "0", true},
+		{"agent-env-bedrock-correct", "0", true},
+		{"agent-env-oauth", "", false}, // OAuth mode should not have attribution header
 		{"other-secret", "", false},
 	}
 
@@ -731,7 +746,7 @@ func TestKubernetesCredentialsSecretSyncer_ResyncSecretsForAttributionHeader(t *
 	}
 }
 
-func TestKubernetesCredentialsSecretSyncer_Sync_OAuthMode_HasAttributionHeader(t *testing.T) {
+func TestKubernetesCredentialsSecretSyncer_Sync_OAuthMode_NoAttributionHeader(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
 	ctx := context.Background()
@@ -752,8 +767,39 @@ func TestKubernetesCredentialsSecretSyncer_Sync_OAuthMode_HasAttributionHeader(t
 		t.Fatalf("Failed to get secret: %v", err)
 	}
 
-	// Verify CLAUDE_CODE_ATTRIBUTION_HEADER is set
+	// Verify CLAUDE_CODE_ATTRIBUTION_HEADER is NOT set for OAuth mode
+	if _, exists := secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"]; exists {
+		t.Error("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to NOT be set for OAuth mode")
+	}
+}
+
+func TestKubernetesCredentialsSecretSyncer_Sync_BedrockMode_HasAttributionHeader(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	syncer := NewKubernetesCredentialsSecretSyncer(client, "default")
+	ctx := context.Background()
+
+	// Create settings with Bedrock credentials
+	settings := entities.NewSettings("bedrock-user")
+	bedrock := entities.NewBedrockSettings(true)
+	bedrock.SetAccessKeyID("test-access-key")
+	bedrock.SetSecretAccessKey("test-secret-key")
+	bedrock.SetModel("anthropic.claude-3-5-sonnet-20241022-v2:0")
+	settings.SetBedrock(bedrock)
+	settings.SetAuthMode(entities.AuthModeBedrock)
+
+	err := syncer.Sync(ctx, settings)
+	if err != nil {
+		t.Fatalf("Failed to sync: %v", err)
+	}
+
+	// Verify Secret was created
+	secret, err := client.CoreV1().Secrets("default").Get(ctx, "agent-env-bedrock-user", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get secret: %v", err)
+	}
+
+	// Verify CLAUDE_CODE_ATTRIBUTION_HEADER is set to "0" for Bedrock mode
 	if string(secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"]) != "0" {
-		t.Error("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to be '0' for OAuth mode")
+		t.Error("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to be '0' for Bedrock mode")
 	}
 }
