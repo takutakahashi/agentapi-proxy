@@ -57,9 +57,6 @@ func TestKubernetesCredentialsSecretSyncer_Sync(t *testing.T) {
 	if string(secret.Data["AWS_SECRET_ACCESS_KEY"]) != "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" {
 		t.Error("Expected AWS_SECRET_ACCESS_KEY to match")
 	}
-	if string(secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"]) != "0" {
-		t.Error("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to be '0'")
-	}
 }
 
 func TestKubernetesCredentialsSecretSyncer_Sync_Update(t *testing.T) {
@@ -127,13 +124,12 @@ func TestKubernetesCredentialsSecretSyncer_Sync_AllFields(t *testing.T) {
 	}
 
 	expectedData := map[string]string{
-		"CLAUDE_CODE_USE_BEDROCK":        "1",
-		"ANTHROPIC_MODEL":                "anthropic.claude-opus-4-20250514-v1:0",
-		"AWS_ACCESS_KEY_ID":              "AKIAIOSFODNN7EXAMPLE",
-		"AWS_SECRET_ACCESS_KEY":          "secret-key",
-		"AWS_ROLE_ARN":                   "arn:aws:iam::123456789012:role/ExampleRole",
-		"AWS_PROFILE":                    "production",
-		"CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+		"CLAUDE_CODE_USE_BEDROCK": "1",
+		"ANTHROPIC_MODEL":         "anthropic.claude-opus-4-20250514-v1:0",
+		"AWS_ACCESS_KEY_ID":       "AKIAIOSFODNN7EXAMPLE",
+		"AWS_SECRET_ACCESS_KEY":   "secret-key",
+		"AWS_ROLE_ARN":            "arn:aws:iam::123456789012:role/ExampleRole",
+		"AWS_PROFILE":             "production",
 	}
 
 	for key, expected := range expectedData {
@@ -179,9 +175,6 @@ func TestKubernetesCredentialsSecretSyncer_Sync_LegacyBedrockWithoutAuthMode(t *
 	}
 	if string(secret.Data["AWS_SECRET_ACCESS_KEY"]) != "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" {
 		t.Errorf("Expected AWS_SECRET_ACCESS_KEY to match, got '%s'", string(secret.Data["AWS_SECRET_ACCESS_KEY"]))
-	}
-	if string(secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"]) != "0" {
-		t.Errorf("Expected CLAUDE_CODE_ATTRIBUTION_HEADER to be '0', got '%s'", string(secret.Data["CLAUDE_CODE_ATTRIBUTION_HEADER"]))
 	}
 }
 
