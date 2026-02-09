@@ -36,6 +36,7 @@ type settingsJSON struct {
 	ClaudeCodeOAuthToken string                      `json:"claude_code_oauth_token,omitempty"`
 	AuthMode             string                      `json:"auth_mode,omitempty"`
 	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	EnvVars              map[string]string           `json:"env_vars,omitempty"`        // Custom environment variables
 	CreatedAt            time.Time                   `json:"created_at"`
 	UpdatedAt            time.Time                   `json:"updated_at"`
 }
@@ -246,6 +247,10 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		sj.EnabledPlugins = plugins
 	}
 
+	if envVars := settings.EnvVars(); len(envVars) > 0 {
+		sj.EnvVars = envVars
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -321,6 +326,12 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if sj.AuthMode != "" {
 		settings.SetAuthMode(entities.AuthMode(sj.AuthMode))
 		// Reset updatedAt since SetAuthMode updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if len(sj.EnvVars) > 0 {
+		settings.SetEnvVars(sj.EnvVars)
+		// Reset updatedAt since SetEnvVars updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 

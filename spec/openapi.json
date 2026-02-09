@@ -2654,6 +2654,13 @@
               "type": "string"
             },
             "description": "List of enabled plugins in 'plugin@marketplace' format (e.g., 'commit@claude-plugins-official')"
+          },
+          "env_vars": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Custom environment variables to be injected into agent sessions. Keys are environment variable names, values are the variable values. These variables will be available in all sessions for this user/team. Empty string values preserve existing values (for updates)."
           }
         }
       },
@@ -2787,6 +2794,13 @@
               "type": "string"
             },
             "description": "List of enabled plugins in 'plugin@marketplace' format"
+          },
+          "env_var_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of configured environment variable keys (values are not returned for security)"
           },
           "created_at": {
             "type": "string",

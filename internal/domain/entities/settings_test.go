@@ -139,6 +139,71 @@ func TestSettings_EnabledPlugins(t *testing.T) {
 	}
 }
 
+func TestSettings_EnvVars(t *testing.T) {
+	settings := NewSettings("test-user")
+
+	// Initially should be nil/empty
+	if len(settings.EnvVars()) != 0 {
+		t.Error("Expected EnvVars to be empty initially")
+	}
+	if settings.EnvVarKeys() != nil {
+		t.Error("Expected EnvVarKeys to be nil initially")
+	}
+
+	originalUpdatedAt := settings.UpdatedAt()
+
+	// Wait a bit to ensure time difference
+	time.Sleep(time.Millisecond)
+
+	// Set environment variables
+	envVars := map[string]string{
+		"MY_API_KEY":  "secret-key",
+		"DEBUG_MODE":  "true",
+		"SERVICE_URL": "https://api.example.com",
+		"ANOTHER_VAR": "value",
+	}
+	settings.SetEnvVars(envVars)
+
+	// Verify env vars are set
+	result := settings.EnvVars()
+	if len(result) != 4 {
+		t.Errorf("Expected 4 env vars, got %d", len(result))
+	}
+	if result["MY_API_KEY"] != "secret-key" {
+		t.Errorf("Expected MY_API_KEY='secret-key', got '%s'", result["MY_API_KEY"])
+	}
+	if result["DEBUG_MODE"] != "true" {
+		t.Errorf("Expected DEBUG_MODE='true', got '%s'", result["DEBUG_MODE"])
+	}
+
+	// Verify EnvVarKeys returns sorted keys
+	keys := settings.EnvVarKeys()
+	if len(keys) != 4 {
+		t.Errorf("Expected 4 keys, got %d", len(keys))
+	}
+	// Verify keys are sorted
+	expectedKeys := []string{"ANOTHER_VAR", "DEBUG_MODE", "MY_API_KEY", "SERVICE_URL"}
+	for i, key := range keys {
+		if key != expectedKeys[i] {
+			t.Errorf("Expected key %d to be '%s', got '%s'", i, expectedKeys[i], key)
+		}
+	}
+
+	// Verify UpdatedAt is updated
+	if !settings.UpdatedAt().After(originalUpdatedAt) {
+		t.Error("Expected UpdatedAt to be updated")
+	}
+
+	// Test setting nil env vars (should initialize as empty map)
+	settings.SetEnvVars(nil)
+	if settings.EnvVars() == nil {
+		t.Error("Expected EnvVars to be initialized as empty map, not nil")
+	}
+	if len(settings.EnvVars()) != 0 {
+		t.Error("Expected EnvVars to be empty after setting nil")
+	}
+}
+
 func TestSettings_Validate(t *testing.T) {
 	tests := []struct {
 		name      string
