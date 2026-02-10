@@ -50,9 +50,10 @@ type WebhookImport struct {
 
 // SessionConfigImport represents session configuration for import/export
 type SessionConfigImport struct {
-	Environment map[string]string    `yaml:"environment,omitempty" toml:"environment,omitempty" json:"environment,omitempty"`
-	Tags        map[string]string    `yaml:"tags,omitempty" toml:"tags,omitempty" json:"tags,omitempty"`
-	Params      *SessionParamsImport `yaml:"params,omitempty" toml:"params,omitempty" json:"params,omitempty"`
+	Environment          map[string]string               `yaml:"environment,omitempty" toml:"environment,omitempty" json:"environment,omitempty"`
+	EnvironmentEncrypted map[string]*EncryptedSecretData `yaml:"environment_encrypted,omitempty" toml:"environment_encrypted,omitempty" json:"environment_encrypted,omitempty"`
+	Tags                 map[string]string               `yaml:"tags,omitempty" toml:"tags,omitempty" json:"tags,omitempty"`
+	Params               *SessionParamsImport            `yaml:"params,omitempty" toml:"params,omitempty" json:"params,omitempty"`
 }
 
 // SessionParamsImport represents session parameters for import/export
