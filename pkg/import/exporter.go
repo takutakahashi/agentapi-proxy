@@ -69,7 +69,10 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 		return nil, fmt.Errorf("failed to list schedules: %w", err)
 	}
 	for _, s := range schedules {
-		scheduleImport := e.convertScheduleToImport(s)
+		scheduleImport, err := e.convertScheduleToImport(ctx, s)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert schedule %s: %w", s.Name, err)
+		}
 		resources.Schedules = append(resources.Schedules, scheduleImport)
 	}
 
@@ -138,18 +141,37 @@ func isNotFoundError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "not found")
 }
 
-func (e *Exporter) convertScheduleToImport(s *schedule.Schedule) ScheduleImport {
+func (e *Exporter) convertScheduleToImport(ctx context.Context, s *schedule.Schedule) (ScheduleImport, error) {
+	sessionConfig := SessionConfigImport{
+		Tags: s.SessionConfig.Tags,
+	}
+
+	// Encrypt environment variables
+	if len(s.SessionConfig.Environment) > 0 {
+		sessionConfig.Environment = make(map[string]string)
+		if e.shouldEncrypt() {
+			sessionConfig.EnvironmentEncrypted = make(map[string]*EncryptedSecretData)
+			for k, v := range s.SessionConfig.Environment {
+				encrypted, err := e.encryptionService.Encrypt(ctx, v)
+				if err != nil {
+					return ScheduleImport{}, fmt.Errorf("failed to encrypt environment variable %s: %w", k, err)
+				}
+				sessionConfig.Environment[k] = encrypted.EncryptedValue
+				sessionConfig.EnvironmentEncrypted[k] = e.toEncryptedSecretData(encrypted)
+			}
+		} else if e.isNoopEncryption() {
+			sessionConfig.Environment = s.SessionConfig.Environment
+		}
+	}
+
 	scheduleImport := ScheduleImport{
-		ID:          s.ID,
-		Name:        s.Name,
-		Status:      string(s.Status),
-		ScheduledAt: s.ScheduledAt,
-		CronExpr:    s.CronExpr,
-		Timezone:    s.Timezone,
-		SessionConfig: SessionConfigImport{
-			Environment: s.SessionConfig.Environment,
-			Tags:        s.SessionConfig.Tags,
-		},
+		ID:            s.ID,
+		Name:          s.Name,
+		Status:        string(s.Status),
+		ScheduledAt:   s.ScheduledAt,
+		CronExpr:      s.CronExpr,
+		Timezone:      s.Timezone,
+		SessionConfig: sessionConfig,
 	}
 
 	if s.SessionConfig.Params != nil {
@@ -158,7 +180,7 @@ func (e *Exporter) convertScheduleToImport(s *schedule.Schedule) ScheduleImport 
 		}
 	}
 
-	return scheduleImport
+	return scheduleImport, nil
 }
 
 func (e *Exporter) convertWebhookToImport(ctx context.Context, w *entities.Webhook) (WebhookImport, error) {
@@ -271,8 +293,25 @@ func (e *Exporter) convertTriggerToImport(ctx context.Context, trigger entities.
 
 func (e *Exporter) convertWebhookSessionConfigToImport(ctx context.Context, config *entities.WebhookSessionConfig) (SessionConfigImport, error) {
 	sessionConfig := SessionConfigImport{
-		Environment: config.Environment(),
-		Tags:        config.Tags(),
+		Tags: config.Tags(),
+	}
+
+	// Encrypt environment variables
+	if len(config.Environment()) > 0 {
+		sessionConfig.Environment = make(map[string]string)
+		if e.shouldEncrypt() {
+			sessionConfig.EnvironmentEncrypted = make(map[string]*EncryptedSecretData)
+			for k, v := range config.Environment() {
+				encrypted, err := e.encryptionService.Encrypt(ctx, v)
+				if err != nil {
+					return sessionConfig, fmt.Errorf("failed to encrypt environment variable %s: %w", k, err)
+				}
+				sessionConfig.Environment[k] = encrypted.EncryptedValue
+				sessionConfig.EnvironmentEncrypted[k] = e.toEncryptedSecretData(encrypted)
+			}
+		} else if e.isNoopEncryption() {
+			sessionConfig.Environment = config.Environment()
+		}
 	}
 
 	if config.Params() != nil || config.InitialMessageTemplate() != "" {

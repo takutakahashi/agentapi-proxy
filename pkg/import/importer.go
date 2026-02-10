@@ -198,7 +198,7 @@ func (i *Importer) importSchedule(ctx context.Context, scheduleImport ScheduleIm
 	}
 
 	// Convert import to schedule entity
-	scheduleEntity, err := i.convertScheduleImport(scheduleImport, teamID, userID, existingSchedule)
+	scheduleEntity, err := i.convertScheduleImport(ctx, scheduleImport, teamID, userID, existingSchedule)
 	if err != nil {
 		detail.Action = "failed"
 		detail.Status = "error"
@@ -365,7 +365,7 @@ func (i *Importer) importWebhook(ctx context.Context, webhookImport WebhookImpor
 	return detail
 }
 
-func (i *Importer) convertScheduleImport(scheduleImport ScheduleImport, teamID, userID string, existing *schedule.Schedule) (*schedule.Schedule, error) {
+func (i *Importer) convertScheduleImport(ctx context.Context, scheduleImport ScheduleImport, teamID, userID string, existing *schedule.Schedule) (*schedule.Schedule, error) {
 	var scheduleEntity *schedule.Schedule
 	if existing != nil {
 		scheduleEntity = existing
@@ -400,11 +400,43 @@ func (i *Importer) convertScheduleImport(scheduleImport ScheduleImport, teamID, 
 		scheduleEntity.Timezone = "UTC"
 	}
 
-	// Convert session config
-	scheduleEntity.SessionConfig = schedule.SessionConfig{
-		Environment: scheduleImport.SessionConfig.Environment,
-		Tags:        scheduleImport.SessionConfig.Tags,
+	// Convert session config with environment decryption
+	sessionConfig := schedule.SessionConfig{
+		Tags: scheduleImport.SessionConfig.Tags,
 	}
+
+	// Decrypt environment variables
+	if len(scheduleImport.SessionConfig.Environment) > 0 {
+		env := make(map[string]string)
+		for k, v := range scheduleImport.SessionConfig.Environment {
+			if scheduleImport.SessionConfig.EnvironmentEncrypted != nil && scheduleImport.SessionConfig.EnvironmentEncrypted[k] != nil {
+				// Encrypted value - decrypt it
+				if i.encryptionService == nil {
+					return nil, fmt.Errorf("encrypted environment variable %s found but encryption service not configured", k)
+				}
+				encrypted := &services.EncryptedData{
+					EncryptedValue: v,
+					Metadata: services.EncryptionMetadata{
+						Algorithm:   scheduleImport.SessionConfig.EnvironmentEncrypted[k].Algorithm,
+						KeyID:       scheduleImport.SessionConfig.EnvironmentEncrypted[k].KeyID,
+						EncryptedAt: scheduleImport.SessionConfig.EnvironmentEncrypted[k].EncryptedAt,
+						Version:     scheduleImport.SessionConfig.EnvironmentEncrypted[k].Version,
+					},
+				}
+				plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt environment variable %s: %w", k, err)
+				}
+				env[k] = plaintext
+			} else {
+				// Plain text value
+				env[k] = v
+			}
+		}
+		sessionConfig.Environment = env
+	}
+
+	scheduleEntity.SessionConfig = sessionConfig
 
 	if scheduleImport.SessionConfig.Params != nil {
 		scheduleEntity.SessionConfig.Params = &entities.SessionParams{}
@@ -503,7 +535,7 @@ func (i *Importer) convertWebhookImport(ctx context.Context, webhookImport Webho
 	// Convert triggers
 	triggers := make([]entities.WebhookTrigger, 0, len(webhookImport.Triggers))
 	for _, triggerImport := range webhookImport.Triggers {
-		trigger, err := i.convertTriggerImport(triggerImport)
+		trigger, err := i.convertTriggerImport(ctx, triggerImport)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert trigger %q: %w", triggerImport.Name, err)
 		}
@@ -513,14 +545,17 @@ func (i *Importer) convertWebhookImport(ctx context.Context, webhookImport Webho
 
 	// Set session config
 	if webhookImport.SessionConfig != nil {
-		sessionConfig := i.convertWebhookSessionConfig(*webhookImport.SessionConfig)
+		sessionConfig, err := i.convertWebhookSessionConfig(ctx, *webhookImport.SessionConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert session config: %w", err)
+		}
 		webhookEntity.SetSessionConfig(sessionConfig)
 	}
 
 	return webhookEntity, nil
 }
 
-func (i *Importer) convertTriggerImport(triggerImport WebhookTriggerImport) (entities.WebhookTrigger, error) {
+func (i *Importer) convertTriggerImport(ctx context.Context, triggerImport WebhookTriggerImport) (entities.WebhookTrigger, error) {
 	trigger := entities.NewWebhookTrigger(uuid.New().String(), triggerImport.Name)
 	trigger.SetPriority(triggerImport.Priority)
 	trigger.SetEnabled(triggerImport.Enabled)
@@ -563,28 +598,80 @@ func (i *Importer) convertTriggerImport(triggerImport WebhookTriggerImport) (ent
 
 	// Set session config
 	if triggerImport.SessionConfig != nil {
-		sessionConfig := i.convertWebhookSessionConfig(*triggerImport.SessionConfig)
+		sessionConfig, err := i.convertWebhookSessionConfig(ctx, *triggerImport.SessionConfig)
+		if err != nil {
+			return trigger, fmt.Errorf("failed to convert session config: %w", err)
+		}
 		trigger.SetSessionConfig(sessionConfig)
 	}
 
 	return trigger, nil
 }
 
-func (i *Importer) convertWebhookSessionConfig(configImport SessionConfigImport) *entities.WebhookSessionConfig {
+func (i *Importer) convertWebhookSessionConfig(ctx context.Context, configImport SessionConfigImport) (*entities.WebhookSessionConfig, error) {
 	config := entities.NewWebhookSessionConfig()
 
-	if configImport.Environment != nil {
-		config.SetEnvironment(configImport.Environment)
+	// Decrypt environment variables
+	if len(configImport.Environment) > 0 {
+		env := make(map[string]string)
+		for k, v := range configImport.Environment {
+			if configImport.EnvironmentEncrypted != nil && configImport.EnvironmentEncrypted[k] != nil {
+				// Encrypted value - decrypt it
+				if i.encryptionService == nil {
+					return nil, fmt.Errorf("encrypted environment variable %s found but encryption service not configured", k)
+				}
+				encrypted := &services.EncryptedData{
+					EncryptedValue: v,
+					Metadata: services.EncryptionMetadata{
+						Algorithm:   configImport.EnvironmentEncrypted[k].Algorithm,
+						KeyID:       configImport.EnvironmentEncrypted[k].KeyID,
+						EncryptedAt: configImport.EnvironmentEncrypted[k].EncryptedAt,
+						Version:     configImport.EnvironmentEncrypted[k].Version,
+					},
+				}
+				plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt environment variable %s: %w", k, err)
+				}
+				env[k] = plaintext
+			} else {
+				// Plain text value
+				env[k] = v
+			}
+		}
+		config.SetEnvironment(env)
 	}
+
 	if configImport.Tags != nil {
 		config.SetTags(configImport.Tags)
 	}
 
 	if configImport.Params != nil {
 		params := entities.NewWebhookSessionParams()
-		if configImport.Params.GitHubToken != "" {
+
+		// Decrypt GitHub token if encrypted
+		if configImport.Params.GitHubTokenEncrypted != nil {
+			if i.encryptionService == nil {
+				return nil, fmt.Errorf("encrypted github token found but encryption service not configured")
+			}
+			encrypted := &services.EncryptedData{
+				EncryptedValue: configImport.Params.GitHubToken,
+				Metadata: services.EncryptionMetadata{
+					Algorithm:   configImport.Params.GitHubTokenEncrypted.Algorithm,
+					KeyID:       configImport.Params.GitHubTokenEncrypted.KeyID,
+					EncryptedAt: configImport.Params.GitHubTokenEncrypted.EncryptedAt,
+					Version:     configImport.Params.GitHubTokenEncrypted.Version,
+				},
+			}
+			plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt github token: %w", err)
+			}
+			params.SetGithubToken(plaintext)
+		} else if configImport.Params.GitHubToken != "" {
 			params.SetGithubToken(configImport.Params.GitHubToken)
 		}
+
 		config.SetParams(params)
 
 		if configImport.Params.InitialMessageTemplate != "" {
@@ -592,7 +679,7 @@ func (i *Importer) convertWebhookSessionConfig(configImport SessionConfigImport)
 		}
 	}
 
-	return config
+	return config, nil
 }
 
 // generateSecret generates a random secret of the specified length
