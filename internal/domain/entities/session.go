@@ -14,6 +14,14 @@ const (
 	ScopeTeam ResourceScope = "team"
 )
 
+// SlackParams represents Slack integration parameters
+type SlackParams struct {
+	// Channel is the Slack channel ID (e.g., "C1234567890")
+	Channel string `json:"channel,omitempty"`
+	// ThreadTS is the thread timestamp for threaded messages (e.g., "1234567890.123456")
+	ThreadTS string `json:"thread_ts,omitempty"`
+}
+
 // SessionParams represents session parameters for agentapi server
 type SessionParams struct {
 	// Message is the initial message to send to the agent after session starts
@@ -22,6 +30,8 @@ type SessionParams struct {
 	GithubToken string `json:"github_token,omitempty"`
 	// AgentType specifies the type of agent to use for the session
 	AgentType string `json:"agent_type,omitempty"`
+	// Slack contains Slack integration parameters
+	Slack *SlackParams `json:"slack,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -54,6 +64,7 @@ type RunServerRequest struct {
 	Scope          ResourceScope // Resource scope ("user" or "team")
 	TeamID         string        // Team identifier when Scope is "team"
 	AgentType      string        // Agent type for the session
+	SlackParams    *SlackParams  // Slack integration parameters
 }
 
 // Session represents a running agentapi session

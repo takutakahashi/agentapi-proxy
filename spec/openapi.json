@@ -1880,8 +1880,27 @@
             "type": "string",
             "description": "Agent type for the session. Supported values: 'claude-agentapi' (uses claude-agentapi command with HOST=0.0.0.0 and PORT=9000). If not specified, uses default agentapi.",
             "example": "claude-agentapi"
+          },
+          "slack": {
+            "$ref": "#/components/schemas/SlackParams"
           }
         }
+      },
+      "SlackParams": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Slack channel ID (e.g., 'C1234567890')",
+            "example": "C1234567890"
+          },
+          "thread_ts": {
+            "type": "string",
+            "description": "Thread timestamp for threaded messages (e.g., '1234567890.123456')",
+            "example": "1234567890.123456"
+          }
+        },
+        "description": "Slack integration parameters for the session"
       },
       "SessionResponse": {
         "type": "object",

@@ -424,6 +424,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		agentType = startReq.Params.AgentType
 	}
 
+	// Determine Slack parameters from Params.Slack
+	var slackParams *entities.SlackParams
+	if startReq.Params != nil && startReq.Params.Slack != nil {
+		slackParams = startReq.Params.Slack
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:         userID,
@@ -436,6 +442,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		Scope:          startReq.Scope,
 		TeamID:         startReq.TeamID,
 		AgentType:      agentType,
+		SlackParams:    slackParams,
 	}
 
 	// Delegate to session manager

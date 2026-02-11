@@ -238,6 +238,8 @@ func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *en
 		if scheduleScope != entities.ScopeTeam {
 			req.GithubToken = schedule.SessionConfig.Params.GithubToken
 		}
+		req.AgentType = schedule.SessionConfig.Params.AgentType
+		req.SlackParams = schedule.SessionConfig.Params.Slack
 	}
 
 	// Extract repository information from tags
