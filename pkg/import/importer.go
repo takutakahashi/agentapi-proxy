@@ -647,7 +647,7 @@ func (i *Importer) convertWebhookSessionConfig(ctx context.Context, configImport
 	}
 
 	if configImport.Params != nil {
-		params := entities.NewWebhookSessionParams()
+		params := &entities.SessionParams{}
 
 		// Decrypt GitHub token if encrypted
 		if configImport.Params.GitHubTokenEncrypted != nil {
@@ -667,9 +667,9 @@ func (i *Importer) convertWebhookSessionConfig(ctx context.Context, configImport
 			if err != nil {
 				return nil, fmt.Errorf("failed to decrypt github token: %w", err)
 			}
-			params.SetGithubToken(plaintext)
+			params.GithubToken = plaintext
 		} else if configImport.Params.GitHubToken != "" {
-			params.SetGithubToken(configImport.Params.GitHubToken)
+			params.GithubToken = configImport.Params.GitHubToken
 		}
 
 		config.SetParams(params)

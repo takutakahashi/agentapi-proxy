@@ -522,7 +522,7 @@ type WebhookSessionConfig struct {
 	tags                   map[string]string
 	initialMessageTemplate string
 	reuseMessageTemplate   string
-	params                 *WebhookSessionParams
+	params                 *SessionParams
 	reuseSession           bool
 	mountPayload           bool
 }
@@ -564,10 +564,10 @@ func (c *WebhookSessionConfig) SetReuseMessageTemplate(template string) {
 }
 
 // Params returns the session params
-func (c *WebhookSessionConfig) Params() *WebhookSessionParams { return c.params }
+func (c *WebhookSessionConfig) Params() *SessionParams { return c.params }
 
 // SetParams sets the session params
-func (c *WebhookSessionConfig) SetParams(params *WebhookSessionParams) { c.params = params }
+func (c *WebhookSessionConfig) SetParams(params *SessionParams) { c.params = params }
 
 // ReuseSession returns whether to reuse existing sessions
 func (c *WebhookSessionConfig) ReuseSession() bool { return c.reuseSession }
@@ -580,22 +580,6 @@ func (c *WebhookSessionConfig) MountPayload() bool { return c.mountPayload }
 
 // SetMountPayload sets whether to mount the webhook payload
 func (c *WebhookSessionConfig) SetMountPayload(mount bool) { c.mountPayload = mount }
-
-// WebhookSessionParams contains additional session parameters
-type WebhookSessionParams struct {
-	githubToken string
-}
-
-// NewWebhookSessionParams creates new session params
-func NewWebhookSessionParams() *WebhookSessionParams {
-	return &WebhookSessionParams{}
-}
-
-// GithubToken returns the GitHub token
-func (p *WebhookSessionParams) GithubToken() string { return p.githubToken }
-
-// SetGithubToken sets the GitHub token
-func (p *WebhookSessionParams) SetGithubToken(token string) { p.githubToken = token }
 
 // WebhookDeliveryRecord represents a single webhook delivery
 type WebhookDeliveryRecord struct {

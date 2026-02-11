@@ -112,7 +112,9 @@ type webhookSessionConfigJSON struct {
 }
 
 type webhookSessionParamsJSON struct {
+	Message     string `json:"message,omitempty"`
 	GithubToken string `json:"github_token,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
 }
 
 type webhookDeliveryRecordJSON struct {
@@ -694,8 +696,11 @@ func (r *KubernetesWebhookRepository) sessionConfigJSONToEntity(scj *webhookSess
 	sc.SetReuseSession(scj.ReuseSession)
 	sc.SetMountPayload(scj.MountPayload)
 	if scj.Params != nil {
-		params := entities.NewWebhookSessionParams()
-		params.SetGithubToken(scj.Params.GithubToken)
+		params := &entities.SessionParams{
+			Message:     scj.Params.Message,
+			GithubToken: scj.Params.GithubToken,
+			AgentType:   scj.Params.AgentType,
+		}
 		sc.SetParams(params)
 	}
 	return sc
@@ -712,7 +717,9 @@ func (r *KubernetesWebhookRepository) sessionConfigEntityToJSON(sc *entities.Web
 	}
 	if params := sc.Params(); params != nil {
 		scj.Params = &webhookSessionParamsJSON{
-			GithubToken: params.GithubToken(),
+			Message:     params.Message,
+			GithubToken: params.GithubToken,
+			AgentType:   params.AgentType,
 		}
 	}
 	return scj

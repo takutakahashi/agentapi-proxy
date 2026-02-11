@@ -348,20 +348,27 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 	// Merge session configs (trigger overrides webhook default)
 	sessionConfig := c.mergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
 
-	// Build environment variables
-	env := make(map[string]string)
+	// Build environment variables with template evaluation
+	var env map[string]string
+	var err error
 	if sessionConfig != nil && sessionConfig.Environment() != nil {
-		for k, v := range sessionConfig.Environment() {
-			env[k] = v
+		env, err = c.renderTemplateMap(sessionConfig.Environment(), payload)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to render environment variables: %w", err)
 		}
+	} else {
+		env = make(map[string]string)
 	}
 
-	// Build tags
-	tags := make(map[string]string)
+	// Build tags with template evaluation
+	var tags map[string]string
 	if sessionConfig != nil && sessionConfig.Tags() != nil {
-		for k, v := range sessionConfig.Tags() {
-			tags[k] = v
+		tags, err = c.renderTemplateMap(sessionConfig.Tags(), payload)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to render tags: %w", err)
 		}
+	} else {
+		tags = make(map[string]string)
 	}
 
 	// Add webhook metadata tags
@@ -371,17 +378,29 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 	tags["trigger_id"] = trigger.ID()
 	tags["trigger_name"] = trigger.Name()
 
-	// Generate initial message from template
+	// Render session params with template evaluation
+	var renderedParams *entities.SessionParams
+	if sessionConfig != nil && sessionConfig.Params() != nil {
+		renderedParams, err = c.renderSessionParams(sessionConfig.Params(), payload)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to render session params: %w", err)
+		}
+	}
+
+	// Determine initial message (priority: params.message > initial_message_template > default)
 	var initialMessage string
-	if sessionConfig != nil && sessionConfig.InitialMessageTemplate() != "" {
+	if renderedParams != nil && renderedParams.Message != "" {
+		// Use params.message if available
+		initialMessage = renderedParams.Message
+	} else if sessionConfig != nil && sessionConfig.InitialMessageTemplate() != "" {
+		// Use initial_message_template if available
 		msg, err := c.renderTemplate(sessionConfig.InitialMessageTemplate(), payload)
 		if err != nil {
-			log.Printf("[WEBHOOK_CUSTOM] Failed to render initial message template: %v", err)
-			initialMessage = "Custom webhook event received"
-		} else {
-			initialMessage = msg
+			return "", false, fmt.Errorf("failed to render initial message template: %w", err)
 		}
+		initialMessage = msg
 	} else {
+		// Use default message
 		initialMessage = c.buildDefaultInitialMessage(payload)
 	}
 
@@ -438,9 +457,14 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 		InitialMessage: initialMessage,
 	}
 
-	// Handle GitHub token if provided
-	if sessionConfig != nil && sessionConfig.Params() != nil && sessionConfig.Params().GithubToken() != "" {
-		req.GithubToken = sessionConfig.Params().GithubToken()
+	// Set GitHub token and AgentType from rendered params
+	if renderedParams != nil {
+		if renderedParams.GithubToken != "" {
+			req.GithubToken = renderedParams.GithubToken
+		}
+		if renderedParams.AgentType != "" {
+			req.AgentType = renderedParams.AgentType
+		}
 	}
 
 	// Check session limit per webhook
@@ -595,9 +619,15 @@ Please ensure the webhook payload is valid JSON.
 		InitialMessage: initialMessage,
 	}
 
-	// Handle GitHub token if provided
-	if sessionConfig != nil && sessionConfig.Params() != nil && sessionConfig.Params().GithubToken() != "" {
-		req.GithubToken = sessionConfig.Params().GithubToken()
+	// Set GitHub token and AgentType from params (no template evaluation for parse errors)
+	if sessionConfig != nil && sessionConfig.Params() != nil {
+		params := sessionConfig.Params()
+		if params.GithubToken != "" {
+			req.GithubToken = params.GithubToken
+		}
+		if params.AgentType != "" {
+			req.AgentType = params.AgentType
+		}
 	}
 
 	// Check session limit per webhook
@@ -643,6 +673,57 @@ func (c *WebhookCustomController) renderTemplate(tmplStr string, payload map[str
 	}
 
 	return buf.String(), nil
+}
+
+// renderTemplateMap renders a map of templates
+func (c *WebhookCustomController) renderTemplateMap(templates map[string]string, payload map[string]interface{}) (map[string]string, error) {
+	result := make(map[string]string)
+	for key, templateStr := range templates {
+		rendered, err := c.renderTemplate(templateStr, payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render template for key '%s': %w", key, err)
+		}
+		result[key] = rendered
+	}
+	return result, nil
+}
+
+// renderSessionParams renders session params with template evaluation
+func (c *WebhookCustomController) renderSessionParams(params *entities.SessionParams, payload map[string]interface{}) (*entities.SessionParams, error) {
+	if params == nil {
+		return nil, nil
+	}
+
+	result := &entities.SessionParams{}
+
+	// Render Message field if not empty
+	if params.Message != "" {
+		rendered, err := c.renderTemplate(params.Message, payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render template for params.message: %w", err)
+		}
+		result.Message = rendered
+	}
+
+	// Render GithubToken field if not empty
+	if params.GithubToken != "" {
+		rendered, err := c.renderTemplate(params.GithubToken, payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render template for params.github_token: %w", err)
+		}
+		result.GithubToken = rendered
+	}
+
+	// Render AgentType field if not empty
+	if params.AgentType != "" {
+		rendered, err := c.renderTemplate(params.AgentType, payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render template for params.agent_type: %w", err)
+		}
+		result.AgentType = rendered
+	}
+
+	return result, nil
 }
 
 // buildDefaultInitialMessage builds a default initial message from the payload
