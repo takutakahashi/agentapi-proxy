@@ -455,6 +455,8 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	if schedule.SessionConfig.Params != nil {
 		req.InitialMessage = schedule.SessionConfig.Params.Message
 		req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		req.AgentType = schedule.SessionConfig.Params.AgentType
+		req.SlackParams = schedule.SessionConfig.Params.Slack
 	}
 
 	// Extract repository information from tags

@@ -1063,6 +1063,13 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Added initial-message-sender sidecar for session %s", session.id)
 	}
 
+	// Add Slack integration sidecar
+	// This sidecar handles Slack integration (currently just waits with sleep infinity)
+	if sidecar := m.buildSlackSidecar(session); sidecar != nil {
+		containers = append(containers, *sidecar)
+		log.Printf("[K8S_SESSION] Added slack-integration sidecar for session %s", session.id)
+	}
+
 	// Add OpenTelemetry Collector sidecar
 	if m.k8sConfig.OtelCollectorEnabled {
 		otelcolContainer := m.buildOtelcolSidecar(session, req)
@@ -1627,6 +1634,45 @@ func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *Kub
 		},
 		Command: []string{"/bin/sh", "-c"},
 		Args:    []string{initialMessageSenderScript},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
+}
+
+// buildSlackSidecar builds the sidecar container for Slack integration
+// This sidecar currently just waits with sleep infinity
+func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession) *corev1.Container {
+	// Only create sidecar if Slack parameters are provided
+	req := session.Request()
+	if req.SlackParams == nil || req.SlackParams.Channel == "" {
+		return nil
+	}
+
+	// Use alpine as a lightweight image for sleep infinity
+	sidecarImage := "alpine:latest"
+
+	return &corev1.Container{
+		Name:            "slack-integration",
+		Image:           sidecarImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"/bin/sh", "-c"},
+		Args:            []string{"sleep infinity"},
+		Env: []corev1.EnvVar{
+			{Name: "SLACK_CHANNEL", Value: req.SlackParams.Channel},
+			{Name: "SLACK_THREAD_TS", Value: req.SlackParams.ThreadTS},
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("16Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+		},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:  int64Ptr(999),
 			RunAsGroup: int64Ptr(999),

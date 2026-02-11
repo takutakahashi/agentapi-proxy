@@ -112,9 +112,10 @@ type webhookSessionConfigJSON struct {
 }
 
 type webhookSessionParamsJSON struct {
-	Message     string `json:"message,omitempty"`
-	GithubToken string `json:"github_token,omitempty"`
-	AgentType   string `json:"agent_type,omitempty"`
+	Message     string                `json:"message,omitempty"`
+	GithubToken string                `json:"github_token,omitempty"`
+	AgentType   string                `json:"agent_type,omitempty"`
+	Slack       *entities.SlackParams `json:"slack,omitempty"`
 }
 
 type webhookDeliveryRecordJSON struct {
@@ -700,6 +701,7 @@ func (r *KubernetesWebhookRepository) sessionConfigJSONToEntity(scj *webhookSess
 			Message:     scj.Params.Message,
 			GithubToken: scj.Params.GithubToken,
 			AgentType:   scj.Params.AgentType,
+			Slack:       scj.Params.Slack,
 		}
 		sc.SetParams(params)
 	}
@@ -720,6 +722,7 @@ func (r *KubernetesWebhookRepository) sessionConfigEntityToJSON(sc *entities.Web
 			Message:     params.Message,
 			GithubToken: params.GithubToken,
 			AgentType:   params.AgentType,
+			Slack:       params.Slack,
 		}
 	}
 	return scj

@@ -110,9 +110,10 @@ type SessionConfigRequest struct {
 
 // SessionParamsRequest represents session params in requests
 type SessionParamsRequest struct {
-	Message     string `json:"message,omitempty"`
-	GithubToken string `json:"github_token,omitempty"`
-	AgentType   string `json:"agent_type,omitempty"`
+	Message     string                `json:"message,omitempty"`
+	GithubToken string                `json:"github_token,omitempty"`
+	AgentType   string                `json:"agent_type,omitempty"`
+	Slack       *entities.SlackParams `json:"slack,omitempty"`
 }
 
 // UpdateWebhookRequest represents the request body for updating a webhook
@@ -670,6 +671,7 @@ func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *e
 			Message:     req.Params.Message,
 			GithubToken: req.Params.GithubToken,
 			AgentType:   req.Params.AgentType,
+			Slack:       req.Params.Slack,
 		}
 		config.SetParams(params)
 	}
