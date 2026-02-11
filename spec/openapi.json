@@ -2501,13 +2501,15 @@
             "type": "object",
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "description": "Environment variables for the session. Values can use Go template syntax to extract data from the webhook payload (e.g., {\"PR_NUMBER\": \"{{.pull_request.number}}\"})"
           },
           "tags": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "description": "Tags for the session. Values can use Go template syntax to extract data from the webhook payload (e.g., {\"pr_number\": \"{{.pull_request.number}}\"})"
           },
           "initial_message_template": {
             "type": "string",
@@ -2528,13 +2530,8 @@
             "default": false
           },
           "params": {
-            "type": "object",
-            "properties": {
-              "github_token": {
-                "type": "string",
-                "description": "GitHub token for the session (used in requests only)"
-              }
-            }
+            "$ref": "#/components/schemas/SessionParams",
+            "description": "Session parameters. All string fields (message, github_token, agent_type) can use Go template syntax to extract data from the webhook payload (e.g., {\"message\": \"Review PR #{{.pull_request.number}}\"})"
           }
         }
       },
@@ -2545,13 +2542,15 @@
             "type": "object",
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "description": "Environment variables for the session. Values can use Go template syntax to extract data from the webhook payload"
           },
           "tags": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "description": "Tags for the session. Values can use Go template syntax to extract data from the webhook payload"
           },
           "initial_message_template": {
             "type": "string",

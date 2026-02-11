@@ -474,20 +474,27 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 	// Merge session configs (trigger overrides webhook default)
 	sessionConfig := c.mergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
 
-	// Build environment variables
-	env := make(map[string]string)
+	// Build environment variables with template evaluation
+	var env map[string]string
+	var err error
 	if sessionConfig != nil && sessionConfig.Environment() != nil {
-		for k, v := range sessionConfig.Environment() {
-			env[k] = v
+		env, err = c.renderTemplateMap(sessionConfig.Environment(), event, payload)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to render environment variables: %w", err)
 		}
+	} else {
+		env = make(map[string]string)
 	}
 
-	// Build tags
-	tags := make(map[string]string)
+	// Build tags with template evaluation
+	var tags map[string]string
 	if sessionConfig != nil && sessionConfig.Tags() != nil {
-		for k, v := range sessionConfig.Tags() {
-			tags[k] = v
+		tags, err = c.renderTemplateMap(sessionConfig.Tags(), event, payload)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to render tags: %w", err)
 		}
+	} else {
+		tags = make(map[string]string)
 	}
 
 	// Add webhook metadata tags
@@ -503,17 +510,29 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 		tags["github_action"] = payload.Action
 	}
 
-	// Generate initial message from template
+	// Render session params with template evaluation
+	var renderedParams *entities.SessionParams
+	if sessionConfig != nil && sessionConfig.Params() != nil {
+		renderedParams, err = c.renderSessionParams(sessionConfig.Params(), event, payload)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to render session params: %w", err)
+		}
+	}
+
+	// Determine initial message (priority: params.message > initial_message_template > default)
 	var initialMessage string
-	if sessionConfig != nil && sessionConfig.InitialMessageTemplate() != "" {
+	if renderedParams != nil && renderedParams.Message != "" {
+		// Use params.message if available
+		initialMessage = renderedParams.Message
+	} else if sessionConfig != nil && sessionConfig.InitialMessageTemplate() != "" {
+		// Use initial_message_template if available
 		msg, err := c.renderTemplate(sessionConfig.InitialMessageTemplate(), event, payload)
 		if err != nil {
-			log.Printf("[WEBHOOK] Failed to render initial message template: %v", err)
-			initialMessage = fmt.Sprintf("GitHub %s event received for %s", event, payload.Repository.FullName)
-		} else {
-			initialMessage = msg
+			return "", false, fmt.Errorf("failed to render initial message template: %w", err)
 		}
+		initialMessage = msg
 	} else {
+		// Use default message
 		initialMessage = c.buildDefaultInitialMessage(event, payload)
 	}
 
@@ -578,9 +597,14 @@ func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, web
 		InitialMessage: initialMessage,
 	}
 
-	// Handle GitHub token
-	if sessionConfig != nil && sessionConfig.Params() != nil && sessionConfig.Params().GithubToken() != "" {
-		req.GithubToken = sessionConfig.Params().GithubToken()
+	// Set GitHub token and AgentType from rendered params
+	if renderedParams != nil {
+		if renderedParams.GithubToken != "" {
+			req.GithubToken = renderedParams.GithubToken
+		}
+		if renderedParams.AgentType != "" {
+			req.AgentType = renderedParams.AgentType
+		}
 	}
 
 	// Set repository info from tags
@@ -697,6 +721,57 @@ func (c *WebhookGitHubController) renderTemplate(tmplStr, event string, payload 
 	}
 
 	return buf.String(), nil
+}
+
+// renderTemplateMap renders a map of templates
+func (c *WebhookGitHubController) renderTemplateMap(templates map[string]string, event string, payload *GitHubPayload) (map[string]string, error) {
+	result := make(map[string]string)
+	for key, templateStr := range templates {
+		rendered, err := c.renderTemplate(templateStr, event, payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render template for key '%s': %w", key, err)
+		}
+		result[key] = rendered
+	}
+	return result, nil
+}
+
+// renderSessionParams renders session params with template evaluation
+func (c *WebhookGitHubController) renderSessionParams(params *entities.SessionParams, event string, payload *GitHubPayload) (*entities.SessionParams, error) {
+	if params == nil {
+		return nil, nil
+	}
+
+	result := &entities.SessionParams{}
+
+	// Render Message field if not empty
+	if params.Message != "" {
+		rendered, err := c.renderTemplate(params.Message, event, payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render template for params.message: %w", err)
+		}
+		result.Message = rendered
+	}
+
+	// Render GithubToken field if not empty
+	if params.GithubToken != "" {
+		rendered, err := c.renderTemplate(params.GithubToken, event, payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render template for params.github_token: %w", err)
+		}
+		result.GithubToken = rendered
+	}
+
+	// Render AgentType field if not empty
+	if params.AgentType != "" {
+		rendered, err := c.renderTemplate(params.AgentType, event, payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render template for params.agent_type: %w", err)
+		}
+		result.AgentType = rendered
+	}
+
+	return result, nil
 }
 
 // buildDefaultInitialMessage builds a default initial message based on the event type

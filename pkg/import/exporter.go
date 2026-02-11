@@ -321,8 +321,8 @@ func (e *Exporter) convertWebhookSessionConfigToImport(ctx context.Context, conf
 		}
 
 		// Encrypt GitHub token if present
-		if config.Params() != nil && config.Params().GithubToken() != "" {
-			token := config.Params().GithubToken()
+		if config.Params() != nil && config.Params().GithubToken != "" {
+			token := config.Params().GithubToken
 			if e.shouldEncrypt() {
 				encrypted, err := e.encryptionService.Encrypt(ctx, token)
 				if err != nil {

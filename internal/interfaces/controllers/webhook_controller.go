@@ -110,7 +110,9 @@ type SessionConfigRequest struct {
 
 // SessionParamsRequest represents session params in requests
 type SessionParamsRequest struct {
+	Message     string `json:"message,omitempty"`
 	GithubToken string `json:"github_token,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
 }
 
 // UpdateWebhookRequest represents the request body for updating a webhook
@@ -664,8 +666,11 @@ func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *e
 	config.SetReuseSession(req.ReuseSession)
 	config.SetMountPayload(req.MountPayload)
 	if req.Params != nil {
-		params := entities.NewWebhookSessionParams()
-		params.SetGithubToken(req.Params.GithubToken)
+		params := &entities.SessionParams{
+			Message:     req.Params.Message,
+			GithubToken: req.Params.GithubToken,
+			AgentType:   req.Params.AgentType,
+		}
 		config.SetParams(params)
 	}
 	return config
