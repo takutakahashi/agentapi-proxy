@@ -1883,6 +1883,11 @@
           },
           "slack": {
             "$ref": "#/components/schemas/SlackParams"
+          },
+          "oneshot": {
+            "type": "boolean",
+            "description": "When true, the session will automatically delete itself after Claude stops responding. Uses Claude Code Stop hook to execute session deletion.",
+            "default": false
           }
         }
       },

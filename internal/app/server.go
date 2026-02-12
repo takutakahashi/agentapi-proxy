@@ -430,6 +430,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		slackParams = startReq.Params.Slack
 	}
 
+	// Determine oneshot from Params.Oneshot
+	var oneshot bool
+	if startReq.Params != nil {
+		oneshot = startReq.Params.Oneshot
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:         userID,
@@ -443,6 +449,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		TeamID:         startReq.TeamID,
 		AgentType:      agentType,
 		SlackParams:    slackParams,
+		Oneshot:        oneshot,
 	}
 
 	// Delegate to session manager
