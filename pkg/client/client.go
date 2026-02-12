@@ -18,6 +18,7 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	apiKey     string
 }
 
 // NewClient creates a new agentapi-proxy client
@@ -25,6 +26,22 @@ func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL:    baseURL,
 		httpClient: utils.NewDefaultHTTPClient(),
+	}
+}
+
+// NewClientWithAuth creates a new agentapi-proxy client with API key authentication
+func NewClientWithAuth(baseURL, apiKey string) *Client {
+	return &Client{
+		baseURL:    baseURL,
+		httpClient: utils.NewDefaultHTTPClient(),
+		apiKey:     apiKey,
+	}
+}
+
+// setAuthHeader sets the authorization header if API key is configured
+func (c *Client) setAuthHeader(req *http.Request) {
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 }
 
@@ -177,6 +194,8 @@ func (c *Client) DeleteSession(ctx context.Context, sessionID string) (*DeleteRe
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+
+	c.setAuthHeader(httpReq)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
