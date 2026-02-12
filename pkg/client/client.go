@@ -14,35 +14,73 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
+// HTTPClient defines the interface for making HTTP requests
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// RequestMiddleware is a function that modifies an HTTP request
+type RequestMiddleware func(*http.Request) error
+
 // Client represents an agentapi-proxy client
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
-	apiKey     string
+	baseURL     string
+	httpClient  HTTPClient
+	middlewares []RequestMiddleware
 }
 
-// NewClient creates a new agentapi-proxy client
-func NewClient(baseURL string) *Client {
-	return &Client{
-		baseURL:    baseURL,
-		httpClient: utils.NewDefaultHTTPClient(),
+// ClientOption is a function that configures a Client
+type ClientOption func(*Client)
+
+// NewClient creates a new agentapi-proxy client with options
+func NewClient(baseURL string, opts ...ClientOption) *Client {
+	c := &Client{
+		baseURL:     baseURL,
+		httpClient:  utils.NewDefaultHTTPClient(),
+		middlewares: []RequestMiddleware{},
+	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
+}
+
+// WithHTTPClient sets a custom HTTP client
+func WithHTTPClient(httpClient HTTPClient) ClientOption {
+	return func(c *Client) {
+		c.httpClient = httpClient
 	}
 }
 
-// NewClientWithAuth creates a new agentapi-proxy client with API key authentication
-func NewClientWithAuth(baseURL, apiKey string) *Client {
-	return &Client{
-		baseURL:    baseURL,
-		httpClient: utils.NewDefaultHTTPClient(),
-		apiKey:     apiKey,
+// WithAPIKeyAuth adds API key authentication middleware
+func WithAPIKeyAuth(apiKey string) ClientOption {
+	return func(c *Client) {
+		c.middlewares = append(c.middlewares, func(req *http.Request) error {
+			if apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+			return nil
+		})
 	}
 }
 
-// setAuthHeader sets the authorization header if API key is configured
-func (c *Client) setAuthHeader(req *http.Request) {
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+// WithRequestMiddleware adds a custom request middleware
+func WithRequestMiddleware(middleware RequestMiddleware) ClientOption {
+	return func(c *Client) {
+		c.middlewares = append(c.middlewares, middleware)
 	}
+}
+
+// applyMiddlewares applies all registered middlewares to the request
+func (c *Client) applyMiddlewares(req *http.Request) error {
+	for _, middleware := range c.middlewares {
+		if err := middleware(req); err != nil {
+			return fmt.Errorf("middleware error: %w", err)
+		}
+	}
+	return nil
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -114,6 +152,10 @@ func (c *Client) Start(ctx context.Context, req *StartRequest) (*StartResponse, 
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -162,6 +204,10 @@ func (c *Client) SearchWithTags(ctx context.Context, status string, tags map[str
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -195,7 +241,9 @@ func (c *Client) DeleteSession(ctx context.Context, sessionID string) (*DeleteRe
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	c.setAuthHeader(httpReq)
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -236,6 +284,10 @@ func (c *Client) SendMessage(ctx context.Context, sessionID string, message *Mes
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -265,6 +317,10 @@ func (c *Client) GetMessages(ctx context.Context, sessionID string) (*MessagesRe
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -292,6 +348,10 @@ func (c *Client) GetStatus(ctx context.Context, sessionID string) (*StatusRespon
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
 	}
 
 	resp, err := c.httpClient.Do(httpReq)
@@ -332,6 +392,11 @@ func (c *Client) StreamEvents(ctx context.Context, sessionID string) (<-chan str
 		}
 		httpReq.Header.Set("Accept", "text/event-stream")
 		httpReq.Header.Set("Cache-Control", "no-cache")
+
+		if err := c.applyMiddlewares(httpReq); err != nil {
+			errorChan <- err
+			return
+		}
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {

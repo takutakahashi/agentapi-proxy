@@ -12,10 +12,9 @@ import (
 )
 
 var (
-	endpoint       string
-	sessionID      string
-	confirmDelete  bool
-	useEnvEndpoint bool
+	endpoint      string
+	sessionID     string
+	confirmDelete bool
 )
 
 var ClientCmd = &cobra.Command{
@@ -64,17 +63,12 @@ environment variables:
 - AGENTAPI_KEY: API key for authentication
 - AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP: For endpoint URL
 
-The endpoint can be overridden with the --endpoint flag.
-
 Examples:
   # Delete current session (with confirmation)
   agentapi-proxy client delete-session
 
   # Delete current session without confirmation
-  agentapi-proxy client delete-session --confirm
-
-  # Delete with custom endpoint
-  agentapi-proxy client delete-session --endpoint http://localhost:8080`,
+  agentapi-proxy client delete-session --confirm`,
 	Run: runDeleteSession,
 }
 
@@ -91,7 +85,6 @@ func init() {
 
 	// delete-session command flags
 	deleteSessionCmd.Flags().BoolVar(&confirmDelete, "confirm", false, "Skip confirmation prompt")
-	deleteSessionCmd.Flags().BoolVar(&useEnvEndpoint, "use-env-endpoint", false, "Use endpoint from environment variables")
 
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
@@ -205,40 +198,16 @@ func runEvents(cmd *cobra.Command, args []string) {
 }
 
 func runDeleteSession(cmd *cobra.Command, args []string) {
-	// Get session ID from environment variable
-	envSessionID := os.Getenv("AGENTAPI_SESSION_ID")
-	if envSessionID == "" {
-		fmt.Fprintf(os.Stderr, "Error: AGENTAPI_SESSION_ID environment variable is not set\n")
+	// Create client from environment variables
+	c, config, err := client.NewClientFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
-	}
-
-	// Get API key from environment variable
-	apiKey := os.Getenv("AGENTAPI_KEY")
-	if apiKey == "" {
-		fmt.Fprintf(os.Stderr, "Error: AGENTAPI_KEY environment variable is not set\n")
-		os.Exit(1)
-	}
-
-	// Determine endpoint
-	var endpointURL string
-	if useEnvEndpoint || endpoint == "" {
-		// Build endpoint from environment variables
-		proxyHost := os.Getenv("AGENTAPI_PROXY_SERVICE_HOST")
-		proxyPort := os.Getenv("AGENTAPI_PROXY_SERVICE_PORT_HTTP")
-
-		if proxyHost == "" || proxyPort == "" {
-			fmt.Fprintf(os.Stderr, "Error: AGENTAPI_PROXY_SERVICE_HOST or AGENTAPI_PROXY_SERVICE_PORT_HTTP environment variable is not set\n")
-			os.Exit(1)
-		}
-
-		endpointURL = fmt.Sprintf("http://%s:%s", proxyHost, proxyPort)
-	} else {
-		endpointURL = endpoint
 	}
 
 	// Show confirmation unless --confirm flag is set
 	if !confirmDelete {
-		fmt.Printf("Are you sure you want to delete session %s? [y/N]: ", envSessionID)
+		fmt.Printf("Are you sure you want to delete session %s? [y/N]: ", config.SessionID)
 		scanner := bufio.NewScanner(os.Stdin)
 		if scanner.Scan() {
 			response := strings.ToLower(strings.TrimSpace(scanner.Text()))
@@ -253,12 +222,9 @@ func runDeleteSession(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Create client with authentication
-	c := client.NewClientWithAuth(endpointURL, apiKey)
-	ctx := context.Background()
-
 	// Delete session
-	resp, err := c.DeleteSession(ctx, envSessionID)
+	ctx := context.Background()
+	resp, err := c.DeleteSession(ctx, config.SessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error deleting session: %v\n", err)
 		os.Exit(1)

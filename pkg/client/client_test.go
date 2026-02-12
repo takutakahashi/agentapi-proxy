@@ -26,8 +26,9 @@ func TestNewClient(t *testing.T) {
 		t.Fatal("httpClient is nil")
 	}
 
-	if client.httpClient.Timeout != 30*time.Second {
-		t.Errorf("Expected timeout 30s, got %v", client.httpClient.Timeout)
+	// Verify it's the default HTTP client by checking if it's an *http.Client
+	if _, ok := client.httpClient.(*http.Client); !ok {
+		t.Error("Expected httpClient to be *http.Client")
 	}
 }
 
