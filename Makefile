@@ -16,7 +16,9 @@ help:
 	@echo "Available targets:"
 	@echo "  install-deps  - Install project dependencies"
 	@echo "  build         - Build the Go binary"
-	@echo "  test          - Run Go tests"
+	@echo "  test          - Run Go tests (summary output, shows only pass/fail)"
+	@echo "  test-verbose  - Run Go tests with verbose output (requires PKG=./path)"
+	@echo "                  Example: make test-verbose PKG=./cmd/..."
 	@echo "  lint          - Run linters (golangci-lint)"
 	@echo "  gofmt         - Format Go code with gofmt -s -w"
 	@echo "  clean         - Clean build artifacts"
@@ -52,7 +54,36 @@ gofmt:
 
 test: gofmt
 	@echo "Running tests..."
-	go test -v -race ./...
+	@OUTPUT=$$(CGO_ENABLED=1 go test -race ./... 2>&1); \
+	EXIT_CODE=$$?; \
+	if [ $$EXIT_CODE -ne 0 ]; then \
+		echo "$$OUTPUT" | grep -E "^(FAIL|--- FAIL|panic:)" || echo "$$OUTPUT"; \
+		echo ""; \
+		echo "❌ Some tests failed. Run 'make test-verbose PKG=./path/to/package' for details."; \
+		echo "Example: make test-verbose PKG=./cmd/..."; \
+		exit $$EXIT_CODE; \
+	else \
+		echo "$$OUTPUT" | grep -E "^(ok|PASS)" | sed 's/^/  /'; \
+		echo ""; \
+		echo "✅ All tests passed!"; \
+		echo "For detailed output, run: make test-verbose PKG=./path/to/package"; \
+	fi
+
+test-verbose: gofmt
+	@echo "Running tests with verbose output..."
+	@if [ -z "$(PKG)" ]; then \
+		echo "❌ Error: PKG parameter is required"; \
+		echo ""; \
+		echo "Usage: make test-verbose PKG=./path/to/package"; \
+		echo ""; \
+		echo "Examples:"; \
+		echo "  make test-verbose PKG=./cmd/..."; \
+		echo "  make test-verbose PKG=./internal/app"; \
+		echo "  make test-verbose PKG=./pkg/..."; \
+		echo ""; \
+		exit 1; \
+	fi
+	CGO_ENABLED=1 go test -v -race $(PKG)
 
 lint: gofmt
 	@echo "Running linters..."
