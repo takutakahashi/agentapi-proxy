@@ -466,15 +466,15 @@ func TestRunDeleteSessionWithEnv(t *testing.T) {
 	defer server.Close()
 
 	// Set environment variables
-	os.Setenv("AGENTAPI_SESSION_ID", "test-session-123")
-	os.Setenv("AGENTAPI_KEY", "test-key")
-	os.Setenv("AGENTAPI_PROXY_SERVICE_HOST", server.URL[7:]) // Remove "http://"
-	os.Setenv("AGENTAPI_PROXY_SERVICE_PORT_HTTP", "80")
+	_ = os.Setenv("AGENTAPI_SESSION_ID", "test-session-123")
+	_ = os.Setenv("AGENTAPI_KEY", "test-key")
+	_ = os.Setenv("AGENTAPI_PROXY_SERVICE_HOST", server.URL[7:]) // Remove "http://"
+	_ = os.Setenv("AGENTAPI_PROXY_SERVICE_PORT_HTTP", "80")
 	defer func() {
-		os.Unsetenv("AGENTAPI_SESSION_ID")
-		os.Unsetenv("AGENTAPI_KEY")
-		os.Unsetenv("AGENTAPI_PROXY_SERVICE_HOST")
-		os.Unsetenv("AGENTAPI_PROXY_SERVICE_PORT_HTTP")
+		_ = os.Unsetenv("AGENTAPI_SESSION_ID")
+		_ = os.Unsetenv("AGENTAPI_KEY")
+		_ = os.Unsetenv("AGENTAPI_PROXY_SERVICE_HOST")
+		_ = os.Unsetenv("AGENTAPI_PROXY_SERVICE_PORT_HTTP")
 	}()
 
 	// Note: This test would require mocking os.Exit and stdin for the confirmation prompt
