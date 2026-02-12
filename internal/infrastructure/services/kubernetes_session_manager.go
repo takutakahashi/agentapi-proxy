@@ -2697,6 +2697,13 @@ func (m *KubernetesSessionManager) buildOtelcolEnvVars(session *KubernetesSessio
 	}
 	envVars = append(envVars, corev1.EnvVar{Name: "WEBHOOK_ID", Value: webhookID})
 
+	// Agent Type - use "-" as placeholder for empty values
+	agentType := "-"
+	if req.AgentType != "" {
+		agentType = req.AgentType
+	}
+	envVars = append(envVars, corev1.EnvVar{Name: "AGENT_TYPE", Value: agentType})
+
 	return envVars
 }
 
@@ -3426,6 +3433,7 @@ processors:
           - set(attributes["agentapi_team_id"], "${env:TEAM_ID}")
           - set(attributes["agentapi_schedule_id"], "${env:SCHEDULE_ID}")
           - set(attributes["agentapi_webhook_id"], "${env:WEBHOOK_ID}")
+          - set(attributes["agentapi_agent_type"], "${env:AGENT_TYPE}")
 
 exporters:
   prometheus:
