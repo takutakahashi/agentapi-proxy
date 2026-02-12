@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	endpoint  string
-	sessionID string
+	endpoint      string
+	sessionID     string
+	confirmDelete bool
 )
 
 var ClientCmd = &cobra.Command{
@@ -51,6 +52,26 @@ var eventsCmd = &cobra.Command{
 	Run:   runEvents,
 }
 
+var deleteSessionCmd = &cobra.Command{
+	Use:   "delete-session",
+	Short: "Delete the current session",
+	Long: `Delete the current session using environment variables.
+
+This command deletes the current agent session by reading configuration from
+environment variables:
+- AGENTAPI_SESSION_ID: The session ID to delete
+- AGENTAPI_KEY: API key for authentication
+- AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP: For endpoint URL
+
+Examples:
+  # Delete current session (with confirmation)
+  agentapi-proxy client delete-session
+
+  # Delete current session without confirmation
+  agentapi-proxy client delete-session --confirm`,
+	Run: runDeleteSession,
+}
+
 func init() {
 	ClientCmd.PersistentFlags().StringVarP(&endpoint, "endpoint", "e", "", "AgentAPI endpoint URL (required)")
 	ClientCmd.PersistentFlags().StringVarP(&sessionID, "session-id", "s", "", "Session ID for the agent (required)")
@@ -62,10 +83,14 @@ func init() {
 		panic(err)
 	}
 
+	// delete-session command flags
+	deleteSessionCmd.Flags().BoolVar(&confirmDelete, "confirm", false, "Skip confirmation prompt")
+
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
 	ClientCmd.AddCommand(eventsCmd)
+	ClientCmd.AddCommand(deleteSessionCmd)
 }
 
 func runSend(cmd *cobra.Command, args []string) {
@@ -170,4 +195,41 @@ func runEvents(cmd *cobra.Command, args []string) {
 			return
 		}
 	}
+}
+
+func runDeleteSession(cmd *cobra.Command, args []string) {
+	// Create client from environment variables
+	c, config, err := client.NewClientFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Show confirmation unless --confirm flag is set
+	if !confirmDelete {
+		fmt.Printf("Are you sure you want to delete session %s? [y/N]: ", config.SessionID)
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			response := strings.ToLower(strings.TrimSpace(scanner.Text()))
+			if response != "y" && response != "yes" {
+				fmt.Println("Deletion cancelled")
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+			return
+		}
+	}
+
+	// Delete session
+	ctx := context.Background()
+	resp, err := c.DeleteSession(ctx, config.SessionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting session: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Session deleted successfully: %s\n", resp.Message)
+	fmt.Printf("Session ID: %s\n", resp.SessionID)
 }
