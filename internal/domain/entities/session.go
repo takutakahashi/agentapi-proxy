@@ -32,6 +32,8 @@ type SessionParams struct {
 	AgentType string `json:"agent_type,omitempty"`
 	// Slack contains Slack integration parameters
 	Slack *SlackParams `json:"slack,omitempty"`
+	// Oneshot indicates whether the session should automatically delete itself after stopping
+	Oneshot bool `json:"oneshot,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -65,6 +67,7 @@ type RunServerRequest struct {
 	TeamID         string        // Team identifier when Scope is "team"
 	AgentType      string        // Agent type for the session
 	SlackParams    *SlackParams  // Slack integration parameters
+	Oneshot        bool          // Oneshot indicates whether the session should automatically delete itself after stopping
 }
 
 // Session represents a running agentapi session

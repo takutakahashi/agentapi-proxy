@@ -193,6 +193,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
+	// Create oneshot settings Secret if oneshot is enabled
+	if req.Oneshot {
+		if err := m.createOneshotSettingsSecret(ctx, session); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create oneshot settings secret: %v", err)
+			// Continue anyway - session will work without oneshot hook
+		}
+	}
+
 	// Create Deployment
 	if err := m.createDeployment(ctx, session, req); err != nil {
 		if m.isPVCEnabled() {
@@ -748,6 +756,15 @@ if [ -d "/settings-config-source/user" ] && [ "$(ls -A /settings-config-source/u
         SETTINGS_DIRS="$SETTINGS_DIRS,/settings-config-source/user"
     else
         SETTINGS_DIRS="/settings-config-source/user"
+    fi
+fi
+
+# Add oneshot directory (highest priority, added last)
+if [ -d "/settings-config-source/oneshot" ] && [ "$(ls -A /settings-config-source/oneshot 2>/dev/null)" ]; then
+    if [ -n "$SETTINGS_DIRS" ]; then
+        SETTINGS_DIRS="$SETTINGS_DIRS,/settings-config-source/oneshot"
+    else
+        SETTINGS_DIRS="/settings-config-source/oneshot"
     fi
 fi
 
@@ -1842,6 +1859,60 @@ func (m *KubernetesSessionManager) createGithubTokenSecret(
 	return nil
 }
 
+// createOneshotSettingsSecret creates a Secret containing settings.json with Stop hook
+// This is used when oneshot is enabled to automatically delete the session after stopping
+func (m *KubernetesSessionManager) createOneshotSettingsSecret(
+	ctx context.Context,
+	session *KubernetesSession,
+) error {
+	secretName := fmt.Sprintf("%s-oneshot-settings", session.ServiceName())
+
+	// Create settings.json with Stop hook
+	settingsJSON := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []map[string]interface{}{
+				{
+					"hooks": []map[string]interface{}{
+						{
+							"type":    "command",
+							"command": "agentapi-proxy client delete-session --confirm",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	settingsData, err := json.Marshal(settingsJSON)
+	if err != nil {
+		return fmt.Errorf("failed to marshal oneshot settings: %w", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
+				"agentapi.proxy/resource":   "oneshot-settings",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"settings.json": settingsData,
+		},
+	}
+
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create oneshot settings secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created oneshot settings Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
 // createPersonalAPIKeySecret creates a Secret containing the personal API key
 // This is used for user-scoped sessions to provide the user's personal API key
 func (m *KubernetesSessionManager) createPersonalAPIKeySecret(
@@ -2250,6 +2321,25 @@ func (m *KubernetesSessionManager) buildSyncVolumes(session *KubernetesSession) 
 					{
 						Key:  "settings.json",
 						Path: "user/settings.json",
+					},
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	// Add oneshot settings Secret (highest priority, added last)
+	if session.Request() != nil && session.Request().Oneshot {
+		oneshotSecretName := fmt.Sprintf("%s-oneshot-settings", session.ServiceName())
+		projectedSources = append(projectedSources, corev1.VolumeProjection{
+			Secret: &corev1.SecretProjection{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: oneshotSecretName,
+				},
+				Items: []corev1.KeyToPath{
+					{
+						Key:  "settings.json",
+						Path: "oneshot/settings.json",
 					},
 				},
 				Optional: boolPtr(true),

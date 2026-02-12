@@ -13,6 +13,7 @@ import (
 type SettingsConfig struct {
 	Marketplaces   map[string]MarketplaceConfig `json:"marketplaces,omitempty"`
 	EnabledPlugins []string                     `json:"enabled_plugins,omitempty"`
+	Hooks          map[string]interface{}       `json:"hooks,omitempty"`
 }
 
 // MarketplaceConfig represents a single marketplace configuration
@@ -29,10 +30,12 @@ type MergeOptions struct {
 // MergeConfigs merges multiple settings config directories into a single config.
 // Later directories take precedence over earlier ones (last wins) for marketplaces.
 // EnabledPlugins are merged as a union (all unique plugins from all sources).
+// Hooks are merged with later directories taking precedence (last wins).
 func MergeConfigs(inputDirs []string, opts MergeOptions) (*SettingsConfig, error) {
 	result := &SettingsConfig{
 		Marketplaces:   make(map[string]MarketplaceConfig),
 		EnabledPlugins: []string{},
+		Hooks:          make(map[string]interface{}),
 	}
 
 	log := opts.Logger
@@ -101,6 +104,7 @@ type settingsJSON struct {
 	Name           string                      `json:"name,omitempty"`
 	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
 	EnabledPlugins []string                    `json:"enabled_plugins,omitempty"`
+	Hooks          map[string]interface{}      `json:"hooks,omitempty"`
 }
 
 // marketplaceJSON is the JSON representation of a single marketplace
@@ -144,6 +148,18 @@ func mergeFile(result *SettingsConfig, filePath string, enabledPluginsSet map[st
 		}
 	}
 
+	// Merge hooks (later files override earlier ones)
+	if settings.Hooks != nil {
+		for hookEvent, hookConfig := range settings.Hooks {
+			if len(result.Hooks) > 0 && result.Hooks[hookEvent] != nil {
+				log("[SETTINGS] Overriding hook: %s (from %s)", hookEvent, filePath)
+			} else {
+				log("[SETTINGS] Adding hook: %s (from %s)", hookEvent, filePath)
+			}
+			result.Hooks[hookEvent] = hookConfig
+		}
+	}
+
 	return nil
 }
 
@@ -171,6 +187,10 @@ func WriteConfig(config *SettingsConfig, outputPath string) error {
 
 	if len(config.EnabledPlugins) > 0 {
 		output.EnabledPlugins = config.EnabledPlugins
+	}
+
+	if len(config.Hooks) > 0 {
+		output.Hooks = config.Hooks
 	}
 
 	data, err := json.MarshalIndent(output, "", "  ")

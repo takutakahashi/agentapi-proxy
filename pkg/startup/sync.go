@@ -28,6 +28,7 @@ type settingsJSON struct {
 	MCPServers     map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
 	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
 	EnabledPlugins []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	Hooks          map[string]interface{}      `json:"hooks,omitempty"`
 	CreatedAt      string                      `json:"created_at"`
 	UpdatedAt      string                      `json:"updated_at"`
 }
@@ -286,6 +287,12 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		}
 		settingsContent["enabledPlugins"] = enabledPlugins
 		log.Printf("[SYNC] Added %d enabled plugins (with resolved marketplace names)", len(settings.EnabledPlugins))
+	}
+
+	// Process hooks if available
+	if settings != nil && len(settings.Hooks) > 0 {
+		settingsContent["hooks"] = settings.Hooks
+		log.Printf("[SYNC] Added %d hook(s)", len(settings.Hooks))
 	}
 
 	// Write settings.json
