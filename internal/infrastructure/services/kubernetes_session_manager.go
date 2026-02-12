@@ -1663,6 +1663,12 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 			{Name: "SLACK_CHANNEL", Value: req.SlackParams.Channel},
 			{Name: "SLACK_THREAD_TS", Value: req.SlackParams.ThreadTS},
 		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "claude-agentapi-history",
+				MountPath: "/opt/claude-agentapi",
+			},
+		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("10m"),
@@ -2077,6 +2083,14 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 			},
 		})
 	}
+
+	// Add EmptyDir for claude-agentapi history output
+	volumes = append(volumes, corev1.Volume{
+		Name: "claude-agentapi-history",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	})
 
 	return volumes
 }
@@ -3111,6 +3125,12 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 	// Note: Personal API key is now mounted as environment variable via envFrom
 	// No need to mount as volume
 
+	// Add claude-agentapi history volume mount
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      "claude-agentapi-history",
+		MountPath: "/opt/claude-agentapi",
+	})
+
 	return volumeMounts
 }
 
@@ -3135,9 +3155,13 @@ if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
     # Build claude-agentapi options
     CLAUDE_AGENTAPI_OPTS=""
 
+    # Add --output-file for history logging
+    CLAUDE_AGENTAPI_OPTS="--output-file /opt/claude-agentapi/history.jsonl"
+    echo "[STARTUP] Using history output file: /opt/claude-agentapi/history.jsonl"
+
     # Add --mcp-config if MCP config file exists
     if [ -f /mcp-config/merged.json ]; then
-        CLAUDE_AGENTAPI_OPTS="--mcp-config /mcp-config/merged.json"
+        CLAUDE_AGENTAPI_OPTS="$CLAUDE_AGENTAPI_OPTS --mcp-config /mcp-config/merged.json"
         echo "[STARTUP] Using MCP config: /mcp-config/merged.json"
     fi
 
