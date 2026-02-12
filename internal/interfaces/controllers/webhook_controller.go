@@ -114,6 +114,7 @@ type SessionParamsRequest struct {
 	GithubToken string                `json:"github_token,omitempty"`
 	AgentType   string                `json:"agent_type,omitempty"`
 	Slack       *entities.SlackParams `json:"slack,omitempty"`
+	Oneshot     bool                  `json:"oneshot,omitempty"`
 }
 
 // UpdateWebhookRequest represents the request body for updating a webhook
@@ -210,6 +211,8 @@ type SessionConfigResponse struct {
 // SessionParamsResponse represents session params in responses
 type SessionParamsResponse struct {
 	GithubToken string `json:"github_token,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
+	Oneshot     bool   `json:"oneshot,omitempty"`
 }
 
 // DeliveryRecordResponse represents a delivery record in responses
@@ -672,6 +675,7 @@ func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *e
 			GithubToken: req.Params.GithubToken,
 			AgentType:   req.Params.AgentType,
 			Slack:       req.Params.Slack,
+			Oneshot:     req.Params.Oneshot,
 		}
 		config.SetParams(params)
 	}

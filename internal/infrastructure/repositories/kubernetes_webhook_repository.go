@@ -116,6 +116,7 @@ type webhookSessionParamsJSON struct {
 	GithubToken string                `json:"github_token,omitempty"`
 	AgentType   string                `json:"agent_type,omitempty"`
 	Slack       *entities.SlackParams `json:"slack,omitempty"`
+	Oneshot     bool                  `json:"oneshot,omitempty"`
 }
 
 type webhookDeliveryRecordJSON struct {
@@ -702,6 +703,7 @@ func (r *KubernetesWebhookRepository) sessionConfigJSONToEntity(scj *webhookSess
 			GithubToken: scj.Params.GithubToken,
 			AgentType:   scj.Params.AgentType,
 			Slack:       scj.Params.Slack,
+			Oneshot:     scj.Params.Oneshot,
 		}
 		sc.SetParams(params)
 	}
@@ -723,6 +725,7 @@ func (r *KubernetesWebhookRepository) sessionConfigEntityToJSON(sc *entities.Web
 			GithubToken: params.GithubToken,
 			AgentType:   params.AgentType,
 			Slack:       params.Slack,
+			Oneshot:     params.Oneshot,
 		}
 	}
 	return scj
