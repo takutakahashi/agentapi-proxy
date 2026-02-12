@@ -457,7 +457,7 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 		InitialMessage: initialMessage,
 	}
 
-	// Set GitHub token and AgentType from rendered params
+	// Set GitHub token, AgentType, and Oneshot from rendered params
 	if renderedParams != nil {
 		if renderedParams.GithubToken != "" {
 			req.GithubToken = renderedParams.GithubToken
@@ -465,6 +465,8 @@ func (c *WebhookCustomController) createSessionFromWebhook(
 		if renderedParams.AgentType != "" {
 			req.AgentType = renderedParams.AgentType
 		}
+		// Always set Oneshot (defaults to false if not specified)
+		req.Oneshot = renderedParams.Oneshot
 	}
 
 	// Check session limit per webhook
@@ -619,7 +621,7 @@ Please ensure the webhook payload is valid JSON.
 		InitialMessage: initialMessage,
 	}
 
-	// Set GitHub token and AgentType from params (no template evaluation for parse errors)
+	// Set GitHub token, AgentType, and Oneshot from params (no template evaluation for parse errors)
 	if sessionConfig != nil && sessionConfig.Params() != nil {
 		params := sessionConfig.Params()
 		if params.GithubToken != "" {
@@ -628,6 +630,8 @@ Please ensure the webhook payload is valid JSON.
 		if params.AgentType != "" {
 			req.AgentType = params.AgentType
 		}
+		// Always set Oneshot (defaults to false if not specified)
+		req.Oneshot = params.Oneshot
 	}
 
 	// Check session limit per webhook

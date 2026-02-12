@@ -99,21 +99,13 @@ type GitHubConditionsRequest struct {
 
 // SessionConfigRequest represents session configuration in requests
 type SessionConfigRequest struct {
-	Environment            map[string]string     `json:"environment,omitempty"`
-	Tags                   map[string]string     `json:"tags,omitempty"`
-	InitialMessageTemplate string                `json:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string                `json:"reuse_message_template,omitempty"`
-	Params                 *SessionParamsRequest `json:"params,omitempty"`
-	ReuseSession           bool                  `json:"reuse_session,omitempty"`
-	MountPayload           bool                  `json:"mount_payload,omitempty"`
-}
-
-// SessionParamsRequest represents session params in requests
-type SessionParamsRequest struct {
-	Message     string                `json:"message,omitempty"`
-	GithubToken string                `json:"github_token,omitempty"`
-	AgentType   string                `json:"agent_type,omitempty"`
-	Slack       *entities.SlackParams `json:"slack,omitempty"`
+	Environment            map[string]string       `json:"environment,omitempty"`
+	Tags                   map[string]string       `json:"tags,omitempty"`
+	InitialMessageTemplate string                  `json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                  `json:"reuse_message_template,omitempty"`
+	Params                 *entities.SessionParams `json:"params,omitempty"`
+	ReuseSession           bool                    `json:"reuse_session,omitempty"`
+	MountPayload           bool                    `json:"mount_payload,omitempty"`
 }
 
 // UpdateWebhookRequest represents the request body for updating a webhook
@@ -210,6 +202,8 @@ type SessionConfigResponse struct {
 // SessionParamsResponse represents session params in responses
 type SessionParamsResponse struct {
 	GithubToken string `json:"github_token,omitempty"`
+	AgentType   string `json:"agent_type,omitempty"`
+	Oneshot     bool   `json:"oneshot,omitempty"`
 }
 
 // DeliveryRecordResponse represents a delivery record in responses
@@ -667,13 +661,8 @@ func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *e
 	config.SetReuseSession(req.ReuseSession)
 	config.SetMountPayload(req.MountPayload)
 	if req.Params != nil {
-		params := &entities.SessionParams{
-			Message:     req.Params.Message,
-			GithubToken: req.Params.GithubToken,
-			AgentType:   req.Params.AgentType,
-			Slack:       req.Params.Slack,
-		}
-		config.SetParams(params)
+		// Use entities.SessionParams directly - no need to copy fields
+		config.SetParams(req.Params)
 	}
 	return config
 }
@@ -786,7 +775,14 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 		MountPayload:           sc.MountPayload(),
 	}
 	// GitHubトークンは機密情報なのでレスポンスに含めない
-	// params フィールドは意図的に省略
+	// その他のparamsはレスポンスに含める
+	if params := sc.Params(); params != nil {
+		resp.Params = &SessionParamsResponse{
+			AgentType: params.AgentType,
+			Oneshot:   params.Oneshot,
+			// GithubTokenは機密情報なので含めない
+		}
+	}
 	return resp
 }
 
