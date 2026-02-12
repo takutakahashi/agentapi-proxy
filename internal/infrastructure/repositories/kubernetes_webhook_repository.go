@@ -102,21 +102,13 @@ type webhookGitHubConditionsJSON struct {
 }
 
 type webhookSessionConfigJSON struct {
-	Environment            map[string]string         `json:"environment,omitempty"`
-	Tags                   map[string]string         `json:"tags,omitempty"`
-	InitialMessageTemplate string                    `json:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string                    `json:"reuse_message_template,omitempty"`
-	Params                 *webhookSessionParamsJSON `json:"params,omitempty"`
-	ReuseSession           bool                      `json:"reuse_session,omitempty"`
-	MountPayload           bool                      `json:"mount_payload,omitempty"`
-}
-
-type webhookSessionParamsJSON struct {
-	Message     string                `json:"message,omitempty"`
-	GithubToken string                `json:"github_token,omitempty"`
-	AgentType   string                `json:"agent_type,omitempty"`
-	Slack       *entities.SlackParams `json:"slack,omitempty"`
-	Oneshot     bool                  `json:"oneshot,omitempty"`
+	Environment            map[string]string       `json:"environment,omitempty"`
+	Tags                   map[string]string       `json:"tags,omitempty"`
+	InitialMessageTemplate string                  `json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                  `json:"reuse_message_template,omitempty"`
+	Params                 *entities.SessionParams `json:"params,omitempty"`
+	ReuseSession           bool                    `json:"reuse_session,omitempty"`
+	MountPayload           bool                    `json:"mount_payload,omitempty"`
 }
 
 type webhookDeliveryRecordJSON struct {
@@ -698,14 +690,8 @@ func (r *KubernetesWebhookRepository) sessionConfigJSONToEntity(scj *webhookSess
 	sc.SetReuseSession(scj.ReuseSession)
 	sc.SetMountPayload(scj.MountPayload)
 	if scj.Params != nil {
-		params := &entities.SessionParams{
-			Message:     scj.Params.Message,
-			GithubToken: scj.Params.GithubToken,
-			AgentType:   scj.Params.AgentType,
-			Slack:       scj.Params.Slack,
-			Oneshot:     scj.Params.Oneshot,
-		}
-		sc.SetParams(params)
+		// Use entities.SessionParams directly from JSON - no need to copy fields
+		sc.SetParams(scj.Params)
 	}
 	return sc
 }
@@ -720,13 +706,8 @@ func (r *KubernetesWebhookRepository) sessionConfigEntityToJSON(sc *entities.Web
 		MountPayload:           sc.MountPayload(),
 	}
 	if params := sc.Params(); params != nil {
-		scj.Params = &webhookSessionParamsJSON{
-			Message:     params.Message,
-			GithubToken: params.GithubToken,
-			AgentType:   params.AgentType,
-			Slack:       params.Slack,
-			Oneshot:     params.Oneshot,
-		}
+		// Use entities.SessionParams directly for JSON - no need to copy fields
+		scj.Params = params
 	}
 	return scj
 }
