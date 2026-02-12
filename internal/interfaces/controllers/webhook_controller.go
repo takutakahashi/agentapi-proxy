@@ -775,7 +775,14 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 		MountPayload:           sc.MountPayload(),
 	}
 	// GitHubトークンは機密情報なのでレスポンスに含めない
-	// params フィールドは意図的に省略
+	// その他のparamsはレスポンスに含める
+	if params := sc.Params(); params != nil {
+		resp.Params = &SessionParamsResponse{
+			AgentType: params.AgentType,
+			Oneshot:   params.Oneshot,
+			// GithubTokenは機密情報なので含めない
+		}
+	}
 	return resp
 }
 
