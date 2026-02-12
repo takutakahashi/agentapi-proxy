@@ -73,15 +73,8 @@ Examples:
 }
 
 func init() {
-	ClientCmd.PersistentFlags().StringVarP(&endpoint, "endpoint", "e", "", "AgentAPI endpoint URL (required)")
-	ClientCmd.PersistentFlags().StringVarP(&sessionID, "session-id", "s", "", "Session ID for the agent (required)")
-
-	if err := ClientCmd.MarkPersistentFlagRequired("endpoint"); err != nil {
-		panic(err)
-	}
-	if err := ClientCmd.MarkPersistentFlagRequired("session-id"); err != nil {
-		panic(err)
-	}
+	ClientCmd.PersistentFlags().StringVarP(&endpoint, "endpoint", "e", "", "AgentAPI endpoint URL (required for most commands)")
+	ClientCmd.PersistentFlags().StringVarP(&sessionID, "session-id", "s", "", "Session ID for the agent (required for most commands)")
 
 	// delete-session command flags
 	deleteSessionCmd.Flags().BoolVar(&confirmDelete, "confirm", false, "Skip confirmation prompt")
@@ -94,6 +87,11 @@ func init() {
 }
 
 func runSend(cmd *cobra.Command, args []string) {
+	if endpoint == "" || sessionID == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint and --session-id flags are required\n")
+		os.Exit(1)
+	}
+
 	var message string
 	if len(args) > 0 {
 		message = args[0]
@@ -137,6 +135,11 @@ func runSend(cmd *cobra.Command, args []string) {
 }
 
 func runHistory(cmd *cobra.Command, args []string) {
+	if endpoint == "" || sessionID == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint and --session-id flags are required\n")
+		os.Exit(1)
+	}
+
 	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
@@ -153,6 +156,11 @@ func runHistory(cmd *cobra.Command, args []string) {
 }
 
 func runStatus(cmd *cobra.Command, args []string) {
+	if endpoint == "" || sessionID == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint and --session-id flags are required\n")
+		os.Exit(1)
+	}
+
 	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
@@ -166,6 +174,11 @@ func runStatus(cmd *cobra.Command, args []string) {
 }
 
 func runEvents(cmd *cobra.Command, args []string) {
+	if endpoint == "" || sessionID == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint and --session-id flags are required\n")
+		os.Exit(1)
+	}
+
 	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
