@@ -2,22 +2,14 @@ package controllers
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha1"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"hash"
 	"io"
 	"log"
 	"net/http"
 	"path/filepath"
-	"sort"
 	"strings"
-	"text/template"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/webhook"
@@ -27,7 +19,8 @@ import (
 // WebhookGitHubController handles GitHub webhook reception
 type WebhookGitHubController struct {
 	repo                repositories.WebhookRepository
-	sessionManager      repositories.SessionManager
+	sessionService      *WebhookSessionService
+	signatureVerifier   *webhook.SignatureVerifier
 	gotemplateEvaluator *webhook.GoTemplateEvaluator
 }
 
@@ -35,7 +28,8 @@ type WebhookGitHubController struct {
 func NewWebhookGitHubController(repo repositories.WebhookRepository, sessionManager repositories.SessionManager) *WebhookGitHubController {
 	return &WebhookGitHubController{
 		repo:                repo,
-		sessionManager:      sessionManager,
+		sessionService:      NewWebhookSessionService(repo, sessionManager),
+		signatureVerifier:   webhook.NewSignatureVerifier(),
 		gotemplateEvaluator: webhook.NewGoTemplateEvaluator(),
 	}
 }
@@ -143,7 +137,6 @@ type GitHubCommitAuthor struct {
 
 // HandleGitHubWebhook handles POST /hooks/github/:id
 func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
-	// Get webhook ID from URL path
 	webhookID := ctx.Param("id")
 	if webhookID == "" {
 		log.Printf("[WEBHOOK] Missing webhook ID in URL path")
@@ -170,15 +163,14 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 
 	log.Printf("[WEBHOOK] Received GitHub webhook: webhook_id=%s, event=%s, delivery=%s", webhookID, event, deliveryID)
 
-	// Get the webhook by ID
 	matchedWebhook, err := c.repo.Get(ctx.Request().Context(), webhookID)
 	if err != nil {
 		log.Printf("[WEBHOOK] Failed to get webhook %s: %v", webhookID, err)
 		return ctx.JSON(http.StatusNotFound, map[string]string{"error": "Webhook not found"})
 	}
 
-	// Verify signature using the webhook's secret
-	if !c.verifyGitHubSignature(body, signature, matchedWebhook.Secret()) {
+	// Verify signature using the shared SignatureVerifier
+	if !c.signatureVerifier.VerifyGitHubSignature(body, signature, matchedWebhook.Secret()) {
 		log.Printf("[WEBHOOK] Signature verification failed for webhook %s", webhookID)
 		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Signature verification failed"})
 	}
@@ -191,7 +183,7 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 		return ctx.JSON(http.StatusOK, map[string]string{"message": "pong", "webhook_id": matchedWebhook.ID()})
 	}
 
-	// Parse payload to extract repository info
+	// Parse payload
 	var payload GitHubPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		log.Printf("[WEBHOOK] Failed to parse payload: %v", err)
@@ -215,13 +207,7 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 	if matchResult == nil {
 		log.Printf("[WEBHOOK] No matching trigger for webhook %s, event=%s, action=%s",
 			matchedWebhook.ID(), event, payload.Action)
-
-		// Record skipped delivery
-		record := entities.NewWebhookDeliveryRecord(deliveryID, entities.DeliveryStatusSkipped)
-		if err := c.repo.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), record); err != nil {
-			log.Printf("[WEBHOOK] Failed to record delivery: %v", err)
-		}
-
+		c.sessionService.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), deliveryID, entities.DeliveryStatusSkipped, nil, "", false, nil)
 		return ctx.JSON(http.StatusOK, map[string]string{
 			"message":    "No matching trigger",
 			"webhook_id": matchedWebhook.ID(),
@@ -230,35 +216,41 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 
 	log.Printf("[WEBHOOK] Trigger matched: %s (%s)", matchResult.ID(), matchResult.Name())
 
-	// Create or reuse session
-	sessionID, sessionReused, err := c.createSessionFromWebhook(ctx, matchedWebhook, matchResult, event, &payload)
+	// Build GitHub-specific metadata tags
+	tags := map[string]string{
+		"webhook_id":   matchedWebhook.ID(),
+		"webhook_name": matchedWebhook.Name(),
+		"trigger_id":   matchResult.ID(),
+		"trigger_name": matchResult.Name(),
+		"github_event": event,
+	}
+	if payload.Repository != nil {
+		tags["repository"] = payload.Repository.FullName
+	}
+	if payload.Action != "" {
+		tags["github_action"] = payload.Action
+	}
+
+	// Create or reuse session via shared service
+	sessionID, sessionReused, err := c.sessionService.CreateSessionFromWebhook(ctx, SessionCreationParams{
+		Webhook:        matchedWebhook,
+		Trigger:        matchResult,
+		Payload:        payload.Raw,
+		RawPayload:     nil, // GitHub webhooks do not mount payload
+		Tags:           tags,
+		DefaultMessage: c.buildDefaultInitialMessage(event, &payload),
+	})
 	if err != nil {
 		log.Printf("[WEBHOOK] Failed to create session: %v", err)
+		c.sessionService.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), deliveryID, entities.DeliveryStatusFailed, matchResult, "", false, err)
 
-		// Record failed delivery
-		record := entities.NewWebhookDeliveryRecord(deliveryID, entities.DeliveryStatusFailed)
-		record.SetMatchedTrigger(matchResult.ID())
-		record.SetError(err.Error())
-		if recordErr := c.repo.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), record); recordErr != nil {
-			log.Printf("[WEBHOOK] Failed to record delivery: %v", recordErr)
-		}
-
-		// Check if error is due to session limit
-		if strings.Contains(err.Error(), "session limit reached") {
+		if IsSessionLimitError(err) {
 			return ctx.JSON(http.StatusTooManyRequests, map[string]string{"error": err.Error()})
 		}
-
 		return ctx.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create session"})
 	}
 
-	// Record successful delivery
-	record := entities.NewWebhookDeliveryRecord(deliveryID, entities.DeliveryStatusProcessed)
-	record.SetMatchedTrigger(matchResult.ID())
-	record.SetSessionID(sessionID)
-	record.SetSessionReused(sessionReused)
-	if err := c.repo.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), record); err != nil {
-		log.Printf("[WEBHOOK] Failed to record delivery: %v", err)
-	}
+	c.sessionService.RecordDelivery(ctx.Request().Context(), matchedWebhook.ID(), deliveryID, entities.DeliveryStatusProcessed, matchResult, sessionID, sessionReused, nil)
 
 	log.Printf("[WEBHOOK] Session created successfully: %s", sessionID)
 
@@ -270,51 +262,15 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 	})
 }
 
-// verifyGitHubSignature verifies a GitHub webhook signature
-func (c *WebhookGitHubController) verifyGitHubSignature(payload []byte, signatureHeader, secret string) bool {
-	if signatureHeader == "" || secret == "" {
-		return false
-	}
-
-	parts := strings.SplitN(signatureHeader, "=", 2)
-	if len(parts) != 2 {
-		return false
-	}
-
-	algorithm := parts[0]
-	signature := parts[1]
-
-	var h hash.Hash
-	switch algorithm {
-	case "sha256":
-		h = hmac.New(sha256.New, []byte(secret))
-	case "sha1":
-		h = hmac.New(sha1.New, []byte(secret))
-	default:
-		return false
-	}
-
-	h.Write(payload)
-	expected := hex.EncodeToString(h.Sum(nil))
-
-	return hmac.Equal([]byte(expected), []byte(signature))
-}
-
 // matchTriggers evaluates all triggers against a GitHub payload and returns the first matching trigger
 func (c *WebhookGitHubController) matchTriggers(triggers []entities.WebhookTrigger, event string, payload *GitHubPayload) *entities.WebhookTrigger {
-	// Sort triggers by priority
-	sortedTriggers := make([]entities.WebhookTrigger, len(triggers))
-	copy(sortedTriggers, triggers)
-	sort.Slice(sortedTriggers, func(i, j int) bool {
-		return sortedTriggers[i].Priority() < sortedTriggers[j].Priority()
-	})
+	sorted := SortTriggersByPriority(triggers)
 
-	for i := range sortedTriggers {
-		trigger := &sortedTriggers[i]
+	for i := range sorted {
+		trigger := &sorted[i]
 		if !trigger.Enabled() {
 			continue
 		}
-
 		if c.matchTrigger(trigger, event, payload) {
 			return trigger
 		}
@@ -332,12 +288,10 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 	}
 
 	// Check event type
-	if len(cond.Events()) > 0 {
-		if !containsString(cond.Events(), event) {
-			log.Printf("[WEBHOOK] Trigger %s (%s): event mismatch - received=%s, allowed=%v",
-				trigger.ID(), trigger.Name(), event, cond.Events())
-			return false
-		}
+	if len(cond.Events()) > 0 && !containsString(cond.Events(), event) {
+		log.Printf("[WEBHOOK] Trigger %s (%s): event mismatch - received=%s, allowed=%v",
+			trigger.ID(), trigger.Name(), event, cond.Events())
+		return false
 	}
 
 	// Check action
@@ -351,17 +305,7 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 
 	// Check repository
 	if len(cond.Repositories()) > 0 {
-		if payload.Repository == nil {
-			return false
-		}
-		matched := false
-		for _, pattern := range cond.Repositories() {
-			if matchRepository(pattern, payload.Repository.FullName) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
+		if payload.Repository == nil || !matchAnyRepository(cond.Repositories(), payload.Repository.FullName) {
 			return false
 		}
 	}
@@ -369,31 +313,23 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 	// Check branches
 	if len(cond.Branches()) > 0 {
 		branch := extractBranch(event, payload)
-		if branch == "" {
-			return false
-		}
-		if !matchPatterns(cond.Branches(), branch) {
+		if branch == "" || !matchPatterns(cond.Branches(), branch) {
 			return false
 		}
 	}
 
-	// Check base branches (for PR only - skip if not a PR event)
+	// Check base branches (for PR only)
 	if len(cond.BaseBranches()) > 0 {
-		// Only apply base branch filter when PR information is available
 		if payload.PullRequest != nil && payload.PullRequest.Base != nil {
 			if !matchPatterns(cond.BaseBranches(), payload.PullRequest.Base.Ref) {
 				return false
 			}
 		}
-		// If no PR info, skip this check (allows non-PR events to pass)
 	}
 
 	// Check draft status
 	if cond.Draft() != nil {
-		if payload.PullRequest == nil {
-			return false
-		}
-		if payload.PullRequest.Draft != *cond.Draft() {
+		if payload.PullRequest == nil || payload.PullRequest.Draft != *cond.Draft() {
 			return false
 		}
 	}
@@ -401,27 +337,14 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 	// Check labels
 	if len(cond.Labels()) > 0 {
 		labels := extractLabels(payload)
-		if len(labels) == 0 {
-			return false
-		}
-		hasLabel := false
-		for _, requiredLabel := range cond.Labels() {
-			if containsString(labels, requiredLabel) {
-				hasLabel = true
-				break
-			}
-		}
-		if !hasLabel {
+		if !anyStringInSlice(cond.Labels(), labels) {
 			return false
 		}
 	}
 
 	// Check sender
 	if len(cond.Sender()) > 0 {
-		if payload.Sender == nil {
-			return false
-		}
-		if !containsString(cond.Sender(), payload.Sender.Login) {
+		if payload.Sender == nil || !containsString(cond.Sender(), payload.Sender.Login) {
 			return false
 		}
 	}
@@ -429,29 +352,13 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 	// Check paths (for push events)
 	if len(cond.Paths()) > 0 {
 		changedFiles := extractChangedFiles(payload)
-		if len(changedFiles) == 0 {
-			return false
-		}
-		hasMatch := false
-		for _, file := range changedFiles {
-			for _, pattern := range cond.Paths() {
-				if matchPath(pattern, file) {
-					hasMatch = true
-					break
-				}
-			}
-			if hasMatch {
-				break
-			}
-		}
-		if !hasMatch {
+		if !anyFileMatchesPatterns(cond.Paths(), changedFiles) {
 			return false
 		}
 	}
 
-	// Check Go template condition if defined
-	goTemplateCondition := trigger.Conditions().GoTemplate()
-	if goTemplateCondition != "" {
+	// Check Go template condition
+	if goTemplateCondition := trigger.Conditions().GoTemplate(); goTemplateCondition != "" {
 		matched, err := c.gotemplateEvaluator.Evaluate(payload.Raw, goTemplateCondition)
 		if err != nil {
 			log.Printf("[WEBHOOK] Trigger %s (%s): GoTemplate evaluation error: %v",
@@ -466,312 +373,6 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 	}
 
 	return true
-}
-
-// createSessionFromWebhook creates a session based on webhook and trigger configuration
-// Returns sessionID, sessionReused flag, and error
-func (c *WebhookGitHubController) createSessionFromWebhook(ctx echo.Context, webhook *entities.Webhook, trigger *entities.WebhookTrigger, event string, payload *GitHubPayload) (string, bool, error) {
-	// Merge session configs (trigger overrides webhook default)
-	sessionConfig := c.mergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
-
-	// Build environment variables with template evaluation
-	var env map[string]string
-	var err error
-	if sessionConfig != nil && sessionConfig.Environment() != nil {
-		env, err = c.renderTemplateMap(sessionConfig.Environment(), event, payload)
-		if err != nil {
-			return "", false, fmt.Errorf("failed to render environment variables: %w", err)
-		}
-	} else {
-		env = make(map[string]string)
-	}
-
-	// Build tags with template evaluation
-	var tags map[string]string
-	if sessionConfig != nil && sessionConfig.Tags() != nil {
-		tags, err = c.renderTemplateMap(sessionConfig.Tags(), event, payload)
-		if err != nil {
-			return "", false, fmt.Errorf("failed to render tags: %w", err)
-		}
-	} else {
-		tags = make(map[string]string)
-	}
-
-	// Add webhook metadata tags
-	tags["webhook_id"] = webhook.ID()
-	tags["webhook_name"] = webhook.Name()
-	tags["trigger_id"] = trigger.ID()
-	tags["trigger_name"] = trigger.Name()
-	tags["github_event"] = event
-	if payload.Repository != nil {
-		tags["repository"] = payload.Repository.FullName
-	}
-	if payload.Action != "" {
-		tags["github_action"] = payload.Action
-	}
-
-	// Render session params with template evaluation
-	var renderedParams *entities.SessionParams
-	if sessionConfig != nil && sessionConfig.Params() != nil {
-		renderedParams, err = c.renderSessionParams(sessionConfig.Params(), event, payload)
-		if err != nil {
-			return "", false, fmt.Errorf("failed to render session params: %w", err)
-		}
-	}
-
-	// Determine initial message (priority: params.message > initial_message_template > default)
-	var initialMessage string
-	if renderedParams != nil && renderedParams.Message != "" {
-		// Use params.message if available
-		initialMessage = renderedParams.Message
-	} else if sessionConfig != nil && sessionConfig.InitialMessageTemplate() != "" {
-		// Use initial_message_template if available
-		msg, err := c.renderTemplate(sessionConfig.InitialMessageTemplate(), event, payload)
-		if err != nil {
-			return "", false, fmt.Errorf("failed to render initial message template: %w", err)
-		}
-		initialMessage = msg
-	} else {
-		// Use default message
-		initialMessage = c.buildDefaultInitialMessage(event, payload)
-	}
-
-	// Check if session reuse is enabled
-	if sessionConfig != nil && sessionConfig.ReuseSession() {
-		log.Printf("[WEBHOOK] Session reuse is enabled, searching for existing session with tags: %v", tags)
-		// Try to find existing session with all the same tags
-		filter := entities.SessionFilter{
-			Tags:   tags,
-			Status: "active",
-		}
-		existingSessions := c.sessionManager.ListSessions(filter)
-		log.Printf("[WEBHOOK] Found %d existing sessions matching filter", len(existingSessions))
-		if len(existingSessions) > 0 {
-			// Reuse the first matching session
-			existingSession := existingSessions[0]
-			log.Printf("[WEBHOOK] Reusing existing session %s with tags: %v", existingSession.ID(), existingSession.Tags())
-
-			// Generate reuse message
-			var reuseMessage string
-			if sessionConfig.ReuseMessageTemplate() != "" {
-				// Use reuse message template if specified
-				msg, err := c.renderTemplate(sessionConfig.ReuseMessageTemplate(), event, payload)
-				if err != nil {
-					log.Printf("[WEBHOOK] Failed to render reuse message template: %v", err)
-					reuseMessage = initialMessage
-				} else {
-					reuseMessage = msg
-				}
-			} else {
-				// Fall back to initial message
-				reuseMessage = initialMessage
-			}
-
-			// Send message to existing session
-			err := c.sessionManager.SendMessage(ctx.Request().Context(), existingSession.ID(), reuseMessage)
-			if err == nil {
-				return existingSession.ID(), true, nil
-			}
-			log.Printf("[WEBHOOK] Failed to send message to existing session: %v, creating new session instead", err)
-		} else {
-			log.Printf("[WEBHOOK] No existing sessions found with matching tags, creating new session")
-		}
-	} else {
-		if sessionConfig == nil {
-			log.Printf("[WEBHOOK] Session reuse disabled: sessionConfig is nil")
-		} else {
-			log.Printf("[WEBHOOK] Session reuse disabled: reuse_session=%v", sessionConfig.ReuseSession())
-		}
-	}
-
-	// Create new session
-	sessionID := uuid.New().String()
-
-	// Build session request
-	req := &entities.RunServerRequest{
-		UserID:         webhook.UserID(),
-		Environment:    env,
-		Tags:           tags,
-		Scope:          webhook.Scope(),
-		TeamID:         webhook.TeamID(),
-		InitialMessage: initialMessage,
-	}
-
-	// Set GitHub token and AgentType from rendered params
-	if renderedParams != nil {
-		if renderedParams.GithubToken != "" {
-			req.GithubToken = renderedParams.GithubToken
-		}
-		if renderedParams.AgentType != "" {
-			req.AgentType = renderedParams.AgentType
-		}
-	}
-
-	// Set repository info from tags
-	if repoFullName, ok := req.Tags["repository"]; ok && repoFullName != "" {
-		req.RepoInfo = &entities.RepositoryInfo{
-			FullName: repoFullName,
-			CloneDir: sessionID,
-		}
-	}
-
-	// Check session limit per webhook
-	filter := entities.SessionFilter{
-		Tags: map[string]string{
-			"webhook_id": webhook.ID(),
-		},
-	}
-	existingSessions := c.sessionManager.ListSessions(filter)
-	maxSessions := webhook.MaxSessions()
-	if len(existingSessions) >= maxSessions {
-		return "", false, fmt.Errorf("session limit reached: maximum %d sessions per webhook", maxSessions)
-	}
-
-	// Create the session (no webhook payload for GitHub webhooks)
-	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req, nil)
-	if err != nil {
-		return "", false, fmt.Errorf("failed to create session: %w", err)
-	}
-
-	return session.ID(), false, nil
-}
-
-// mergeSessionConfigs merges two session configs, with override taking precedence
-func (c *WebhookGitHubController) mergeSessionConfigs(base, override *entities.WebhookSessionConfig) *entities.WebhookSessionConfig {
-	if base == nil && override == nil {
-		return nil
-	}
-	if base == nil {
-		return override
-	}
-	if override == nil {
-		return base
-	}
-
-	result := entities.NewWebhookSessionConfig()
-
-	// Merge environment
-	env := make(map[string]string)
-	for k, v := range base.Environment() {
-		env[k] = v
-	}
-	for k, v := range override.Environment() {
-		env[k] = v
-	}
-	result.SetEnvironment(env)
-
-	// Merge tags
-	tags := make(map[string]string)
-	for k, v := range base.Tags() {
-		tags[k] = v
-	}
-	for k, v := range override.Tags() {
-		tags[k] = v
-	}
-	result.SetTags(tags)
-
-	// Override template if provided
-	if override.InitialMessageTemplate() != "" {
-		result.SetInitialMessageTemplate(override.InitialMessageTemplate())
-	} else {
-		result.SetInitialMessageTemplate(base.InitialMessageTemplate())
-	}
-
-	// Override reuse message template if provided
-	if override.ReuseMessageTemplate() != "" {
-		result.SetReuseMessageTemplate(override.ReuseMessageTemplate())
-	} else {
-		result.SetReuseMessageTemplate(base.ReuseMessageTemplate())
-	}
-
-	// Override params if provided
-	if override.Params() != nil {
-		result.SetParams(override.Params())
-	} else {
-		result.SetParams(base.Params())
-	}
-
-	// Merge reuse session flag (override takes precedence, but also consider base if override is false)
-	if override.ReuseSession() {
-		result.SetReuseSession(true)
-	} else if base.ReuseSession() {
-		result.SetReuseSession(true)
-	} else {
-		result.SetReuseSession(false)
-	}
-
-	return result
-}
-
-// renderTemplate renders a Go template with webhook payload data
-// Uses the raw GitHub payload directly, same as GoTemplate conditions
-func (c *WebhookGitHubController) renderTemplate(tmplStr, event string, payload *GitHubPayload) (string, error) {
-	tmpl, err := template.New("initial_message").Parse(tmplStr)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	// Use the raw payload directly, same as GoTemplate matcher
-	// This allows templates to access payload fields like {{ .action }}, {{ .pull_request.number }}, etc.
-	data := payload.Raw
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	return buf.String(), nil
-}
-
-// renderTemplateMap renders a map of templates
-func (c *WebhookGitHubController) renderTemplateMap(templates map[string]string, event string, payload *GitHubPayload) (map[string]string, error) {
-	result := make(map[string]string)
-	for key, templateStr := range templates {
-		rendered, err := c.renderTemplate(templateStr, event, payload)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render template for key '%s': %w", key, err)
-		}
-		result[key] = rendered
-	}
-	return result, nil
-}
-
-// renderSessionParams renders session params with template evaluation
-func (c *WebhookGitHubController) renderSessionParams(params *entities.SessionParams, event string, payload *GitHubPayload) (*entities.SessionParams, error) {
-	if params == nil {
-		return nil, nil
-	}
-
-	result := &entities.SessionParams{}
-
-	// Render Message field if not empty
-	if params.Message != "" {
-		rendered, err := c.renderTemplate(params.Message, event, payload)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render template for params.message: %w", err)
-		}
-		result.Message = rendered
-	}
-
-	// Render GithubToken field if not empty
-	if params.GithubToken != "" {
-		rendered, err := c.renderTemplate(params.GithubToken, event, payload)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render template for params.github_token: %w", err)
-		}
-		result.GithubToken = rendered
-	}
-
-	// Render AgentType field if not empty
-	if params.AgentType != "" {
-		rendered, err := c.renderTemplate(params.AgentType, event, payload)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render template for params.agent_type: %w", err)
-		}
-		result.AgentType = rendered
-	}
-
-	return result, nil
 }
 
 // buildDefaultInitialMessage builds a default initial message based on the event type
@@ -840,11 +441,19 @@ func containsString(slice []string, s string) bool {
 	return false
 }
 
+func matchAnyRepository(patterns []string, fullName string) bool {
+	for _, pattern := range patterns {
+		if matchRepository(pattern, fullName) {
+			return true
+		}
+	}
+	return false
+}
+
 func matchRepository(pattern, fullName string) bool {
 	if pattern == fullName {
 		return true
 	}
-	// Support owner/* pattern
 	if strings.HasSuffix(pattern, "/*") {
 		owner := strings.TrimSuffix(pattern, "/*")
 		return strings.HasPrefix(fullName, owner+"/")
@@ -898,11 +507,39 @@ func extractChangedFiles(payload *GitHubPayload) []string {
 		}
 	}
 
-	var files []string
+	files := make([]string, 0, len(fileSet))
 	for f := range fileSet {
 		files = append(files, f)
 	}
 	return files
+}
+
+// anyStringInSlice returns true if any string from required is found in available.
+func anyStringInSlice(required, available []string) bool {
+	if len(available) == 0 {
+		return false
+	}
+	for _, r := range required {
+		if containsString(available, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyFileMatchesPatterns returns true if any file matches any of the patterns.
+func anyFileMatchesPatterns(patterns, files []string) bool {
+	if len(files) == 0 {
+		return false
+	}
+	for _, file := range files {
+		for _, pattern := range patterns {
+			if matchPath(pattern, file) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func matchPatterns(patterns []string, value string) bool {
