@@ -1280,6 +1280,58 @@
         }
       }
     },
+    "/webhooks/{id}/trigger": {
+      "post": {
+        "summary": "Trigger a webhook with a test payload",
+        "description": "Sends a test payload to evaluate trigger matching. With dry_run=true, only evaluates triggers and returns what would happen. With dry_run=false (default), actually creates a session. No signature verification is performed since this endpoint is authenticated.",
+        "operationId": "triggerWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerWebhookRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Trigger result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerWebhookResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Webhook not found"
+          }
+        }
+      }
+    },
     "/hooks/github/{id}": {
       "post": {
         "summary": "Receive GitHub webhook",
@@ -3032,6 +3084,77 @@
           "is_expired": {
             "type": "boolean",
             "description": "Whether the share has expired"
+          }
+        }
+      },
+      "TriggerWebhookRequest": {
+        "type": "object",
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The test payload JSON"
+          },
+          "event": {
+            "type": "string",
+            "description": "For GitHub webhooks: the event type (e.g., 'push', 'pull_request'). Required for GitHub webhooks."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, only evaluates trigger matching. When false, creates a session."
+          }
+        }
+      },
+      "TriggerWebhookResponse": {
+        "type": "object",
+        "properties": {
+          "matched": {
+            "type": "boolean",
+            "description": "Whether any trigger matched"
+          },
+          "matched_trigger": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Session ID (when dry_run=false)"
+          },
+          "session_reused": {
+            "type": "boolean"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "initial_message": {
+            "type": "string",
+            "description": "Rendered initial message (in dry_run mode)"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string"
           }
         }
       }

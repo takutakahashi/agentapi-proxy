@@ -269,6 +269,58 @@ func IsSessionLimitError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "session limit reached")
 }
 
+// DryRunResult holds the computed configuration from a dry-run test.
+type DryRunResult struct {
+	InitialMessage string
+	Tags           map[string]string
+	Environment    map[string]string
+	Error          string
+}
+
+// DryRunSessionConfig evaluates all template rendering and config merging
+// without creating a session. Returns the computed configuration.
+func (s *WebhookSessionService) DryRunSessionConfig(params SessionCreationParams) (*DryRunResult, error) {
+	webhook := params.Webhook
+	trigger := params.Trigger
+
+	sessionConfig := MergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
+
+	env, err := s.renderConfigMap(sessionConfig, params.Payload, func(sc *entities.WebhookSessionConfig) map[string]string {
+		return sc.Environment()
+	})
+	if err != nil {
+		return &DryRunResult{Error: fmt.Sprintf("failed to render environment variables: %v", err)}, nil
+	}
+
+	tags, err := s.renderConfigMap(sessionConfig, params.Payload, func(sc *entities.WebhookSessionConfig) map[string]string {
+		return sc.Tags()
+	})
+	if err != nil {
+		return &DryRunResult{Error: fmt.Sprintf("failed to render tags: %v", err)}, nil
+	}
+
+	// Merge caller-provided tags
+	for k, v := range params.Tags {
+		tags[k] = v
+	}
+
+	renderedParams, err := RenderSessionParams(sessionConfig, params.Payload)
+	if err != nil {
+		return &DryRunResult{Error: fmt.Sprintf("failed to render session params: %v", err)}, nil
+	}
+
+	initialMessage, err := s.determineInitialMessage(sessionConfig, renderedParams, params.Payload, params.DefaultMessage)
+	if err != nil {
+		return &DryRunResult{Error: fmt.Sprintf("failed to render initial message: %v", err)}, nil
+	}
+
+	return &DryRunResult{
+		InitialMessage: initialMessage,
+		Tags:           tags,
+		Environment:    env,
+	}, nil
+}
+
 // renderConfigMap renders either environment or tags from session config.
 func (s *WebhookSessionService) renderConfigMap(
 	sessionConfig *entities.WebhookSessionConfig,
