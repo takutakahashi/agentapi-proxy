@@ -371,7 +371,6 @@ func (t *WebhookTrigger) SetStopOnMatch(stop bool) { t.stopOnMatch = stop }
 // WebhookTriggerConditions defines the conditions for a trigger to match
 type WebhookTriggerConditions struct {
 	github     *WebhookGitHubConditions
-	jsonPath   []WebhookJSONPathCondition
 	goTemplate string
 }
 
@@ -380,14 +379,6 @@ func (c WebhookTriggerConditions) GitHub() *WebhookGitHubConditions { return c.g
 
 // SetGitHub sets the GitHub conditions
 func (c *WebhookTriggerConditions) SetGitHub(github *WebhookGitHubConditions) { c.github = github }
-
-// JSONPath returns the JSONPath conditions
-func (c WebhookTriggerConditions) JSONPath() []WebhookJSONPathCondition { return c.jsonPath }
-
-// SetJSONPath sets the JSONPath conditions
-func (c *WebhookTriggerConditions) SetJSONPath(jsonPath []WebhookJSONPathCondition) {
-	c.jsonPath = jsonPath
-}
 
 // GoTemplate returns the Go template condition
 func (c WebhookTriggerConditions) GoTemplate() string { return c.goTemplate }
@@ -472,49 +463,6 @@ func (c *WebhookGitHubConditions) Sender() []string { return c.sender }
 
 // SetSender sets the sender filter
 func (c *WebhookGitHubConditions) SetSender(sender []string) { c.sender = sender }
-
-// WebhookJSONPathCondition defines a JSONPath-based condition
-type WebhookJSONPathCondition struct {
-	path     string
-	operator WebhookConditionOperator
-	value    interface{}
-}
-
-// Path returns the JSONPath
-func (c *WebhookJSONPathCondition) Path() string { return c.path }
-
-// Operator returns the operator
-func (c *WebhookJSONPathCondition) Operator() WebhookConditionOperator { return c.operator }
-
-// Value returns the value
-func (c *WebhookJSONPathCondition) Value() interface{} { return c.value }
-
-// NewWebhookJSONPathCondition creates a new JSONPath condition
-func NewWebhookJSONPathCondition(path string, operator string, value interface{}) WebhookJSONPathCondition {
-	return WebhookJSONPathCondition{
-		path:     path,
-		operator: WebhookConditionOperator(operator),
-		value:    value,
-	}
-}
-
-// WebhookConditionOperator defines the comparison operator for conditions
-type WebhookConditionOperator string
-
-const (
-	// WebhookOperatorEquals checks for equality
-	WebhookOperatorEquals WebhookConditionOperator = "eq"
-	// WebhookOperatorNotEquals checks for inequality
-	WebhookOperatorNotEquals WebhookConditionOperator = "ne"
-	// WebhookOperatorContains checks if string contains substring
-	WebhookOperatorContains WebhookConditionOperator = "contains"
-	// WebhookOperatorMatches checks against a regular expression
-	WebhookOperatorMatches WebhookConditionOperator = "matches"
-	// WebhookOperatorIn checks if value is in a list
-	WebhookOperatorIn WebhookConditionOperator = "in"
-	// WebhookOperatorExists checks if path exists
-	WebhookOperatorExists WebhookConditionOperator = "exists"
-)
 
 // WebhookSessionConfig contains session creation parameters
 type WebhookSessionConfig struct {

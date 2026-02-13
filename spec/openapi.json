@@ -1355,7 +1355,7 @@
     "/hooks/custom/{id}": {
       "post": {
         "summary": "Receive custom webhook",
-        "description": "Receives webhook payloads from custom services (Slack, Datadog, PagerDuty, etc.). Uses the webhook ID from the URL to identify the webhook and verifies the signature using the webhook's secret. Triggers are matched using JSONPath conditions.",
+        "description": "Receives webhook payloads from custom services (Slack, Datadog, PagerDuty, etc.). Uses the webhook ID from the URL to identify the webhook and verifies the signature using the webhook's secret. Triggers are matched using GoTemplate conditions.",
         "operationId": "handleCustomWebhook",
         "tags": [
           "Webhooks"
@@ -2412,13 +2412,6 @@
           "github": {
             "$ref": "#/components/schemas/GitHubConditions"
           },
-          "jsonpath": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/JSONPathCondition"
-            },
-            "description": "JSONPath conditions for custom webhooks"
-          },
           "go_template": {
             "type": "string",
             "description": "Go template expression that evaluates to 'true' or 'false'. Supports both GitHub and custom webhooks. Available functions: contains, hasPrefix, hasSuffix, toLower, toUpper, trimSpace, len, in, matches. Examples: {{ eq .action \"opened\" }}, {{ contains .pull_request.title \"feat:\" }}, {{ and (eq .action \"opened\") (not .pull_request.draft) }}"
@@ -2486,35 +2479,6 @@
               "type": "string"
             },
             "description": "GitHub usernames"
-          }
-        }
-      },
-      "JSONPathCondition": {
-        "type": "object",
-        "required": [
-          "path",
-          "operator",
-          "value"
-        ],
-        "properties": {
-          "path": {
-            "type": "string",
-            "description": "JSONPath expression (e.g., $.event.type)"
-          },
-          "operator": {
-            "type": "string",
-            "enum": [
-              "eq",
-              "ne",
-              "contains",
-              "matches",
-              "in",
-              "exists"
-            ],
-            "description": "Comparison operator"
-          },
-          "value": {
-            "description": "Value to compare against"
           }
         }
       },

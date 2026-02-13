@@ -578,18 +578,6 @@ func (i *Importer) convertTriggerImport(ctx context.Context, triggerImport Webho
 		conditions.SetGitHub(githubConditions)
 	}
 
-	if len(triggerImport.Conditions.JSONPath) > 0 {
-		jsonPathConditions := make([]entities.WebhookJSONPathCondition, 0, len(triggerImport.Conditions.JSONPath))
-		for _, jp := range triggerImport.Conditions.JSONPath {
-			jsonPathConditions = append(jsonPathConditions, entities.NewWebhookJSONPathCondition(
-				jp.Path,
-				jp.Operator,
-				jp.Value,
-			))
-		}
-		conditions.SetJSONPath(jsonPathConditions)
-	}
-
 	if triggerImport.Conditions.GoTemplate != "" {
 		conditions.SetGoTemplate(triggerImport.Conditions.GoTemplate)
 	}
