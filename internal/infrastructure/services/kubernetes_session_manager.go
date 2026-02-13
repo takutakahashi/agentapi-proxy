@@ -3858,8 +3858,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	settings.Env = env
-
 	// Build envFrom secret references (mirrors envFrom logic from line 877-1009)
 	var envFromSecrets []sessionsettings.EnvFromSecret
 
@@ -3937,6 +3935,29 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	settings.EnvFromSecrets = envFromSecrets
+
+	// Expand secrets from envFromSecrets into env map
+	// Pod does not have permission to read secrets, so we need to expand them here
+	for _, secretRef := range envFromSecrets {
+		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
+			context.Background(),
+			secretRef.Name,
+			metav1.GetOptions{},
+		)
+		if err != nil {
+			if !errors.IsNotFound(err) || !secretRef.Optional {
+				log.Printf("[K8S_SESSION] Warning: failed to read secret %s for session settings: %v", secretRef.Name, err)
+			}
+			continue
+		}
+
+		// Merge secret data into env map (later secrets override earlier ones due to iteration order)
+		for k, v := range secret.Data {
+			env[k] = string(v)
+		}
+	}
+
+	settings.Env = env
 
 	// Claude config (defaults from ensureBaseSecret)
 	settings.Claude = sessionsettings.ClaudeConfig{
