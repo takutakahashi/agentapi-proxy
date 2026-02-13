@@ -26,10 +26,6 @@ func TestMarshalYAML_FullSettings(t *testing.T) {
 			"AGENTAPI_SESSION_ID": "test-session-123",
 			"HOME":                "/home/agentapi",
 		},
-		EnvFromSecrets: []EnvFromSecret{
-			{Name: "github-secret", Optional: true},
-			{Name: "agent-env-user456", Optional: true},
-		},
 		Claude: ClaudeConfig{
 			ClaudeJSON: map[string]interface{}{
 				"hasCompletedOnboarding":        true,
@@ -81,8 +77,6 @@ func TestMarshalYAML_FullSettings(t *testing.T) {
 	assert.Equal(t, settings.Session.Teams, unmarshaled.Session.Teams)
 
 	assert.Equal(t, settings.Env["AGENTAPI_PORT"], unmarshaled.Env["AGENTAPI_PORT"])
-	assert.Len(t, unmarshaled.EnvFromSecrets, 2)
-	assert.Equal(t, "github-secret", unmarshaled.EnvFromSecrets[0].Name)
 
 	assert.NotNil(t, unmarshaled.Repository)
 	assert.Equal(t, "org/repo", unmarshaled.Repository.FullName)

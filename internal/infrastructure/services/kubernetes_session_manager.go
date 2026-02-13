@@ -3858,43 +3858,29 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	// Build envFrom secret references (mirrors envFrom logic from line 877-1009)
-	var envFromSecrets []sessionsettings.EnvFromSecret
+	// Build list of secret names to expand into env map
+	// Pod does not have permission to read secrets, so we need to expand them here
+	var secretNames []string
 
 	if req.GithubToken != "" {
 		// When params.github_token is provided
 		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-				Name:     m.k8sConfig.GitHubConfigSecretName,
-				Optional: true,
-			})
+			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
 		}
 		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-		envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-			Name:     githubTokenSecretName,
-			Optional: true,
-		})
+		secretNames = append(secretNames, githubTokenSecretName)
 	} else if m.k8sConfig.GitHubSecretName != "" {
 		// When params.github_token is NOT provided
-		envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-			Name:     m.k8sConfig.GitHubSecretName,
-			Optional: true,
-		})
+		secretNames = append(secretNames, m.k8sConfig.GitHubSecretName)
 		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-				Name:     m.k8sConfig.GitHubConfigSecretName,
-				Optional: true,
-			})
+			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
 		}
 	}
 
 	// Add personal API key Secret for user-scoped sessions
 	if req.Scope == entities.ScopeUser {
 		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-		envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-			Name:     personalAPIKeySecretName,
-			Optional: true,
-		})
+		secretNames = append(secretNames, personalAPIKeySecretName)
 	}
 
 	// Add credentials Secrets based on scope
@@ -3902,52 +3888,38 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// Team-scoped: only mount the specific team's credentials
 		if req.TeamID != "" {
 			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.TeamID))
-			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-				Name:     secretName,
-				Optional: true,
-			})
+			secretNames = append(secretNames, secretName)
 
 			// Mount team-specific env vars from TeamConfig
 			teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-				Name:     teamEnvSecretName,
-				Optional: true,
-			})
+			secretNames = append(secretNames, teamEnvSecretName)
 		}
 	} else {
 		// User-scoped: mount all team secrets and user secret
 		for _, team := range req.Teams {
 			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(team))
-			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-				Name:     secretName,
-				Optional: true,
-			})
+			secretNames = append(secretNames, secretName)
 		}
 
 		// Add user-specific credentials Secret (added last for highest priority)
 		if req.UserID != "" {
 			userSecretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.UserID))
-			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
-				Name:     userSecretName,
-				Optional: true,
-			})
+			secretNames = append(secretNames, userSecretName)
 		}
 	}
 
-	settings.EnvFromSecrets = envFromSecrets
-
-	// Expand secrets from envFromSecrets into env map
-	// Pod does not have permission to read secrets, so we need to expand them here
-	for _, secretRef := range envFromSecrets {
+	// Expand secrets into env map
+	for _, secretName := range secretNames {
 		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
 			context.Background(),
-			secretRef.Name,
+			secretName,
 			metav1.GetOptions{},
 		)
 		if err != nil {
-			if !errors.IsNotFound(err) || !secretRef.Optional {
-				log.Printf("[K8S_SESSION] Warning: failed to read secret %s for session settings: %v", secretRef.Name, err)
+			if !errors.IsNotFound(err) {
+				log.Printf("[K8S_SESSION] Warning: failed to read secret %s for session settings: %v", secretName, err)
 			}
+			// Skip secrets that don't exist (they are all optional)
 			continue
 		}
 

@@ -12,7 +12,6 @@ import (
 type SessionSettings struct {
 	Session        SessionMeta       `yaml:"session"`
 	Env            map[string]string `yaml:"env,omitempty"`
-	EnvFromSecrets []EnvFromSecret   `yaml:"env_from_secrets,omitempty"`
 	Claude         ClaudeConfig      `yaml:"claude,omitempty"`
 	Repository     *RepositoryConfig `yaml:"repository,omitempty"`
 	InitialMessage string            `yaml:"initial_message,omitempty"`
@@ -30,12 +29,6 @@ type SessionMeta struct {
 	AgentType string   `yaml:"agent_type,omitempty"`
 	Oneshot   bool     `yaml:"oneshot,omitempty"`
 	Teams     []string `yaml:"teams,omitempty"`
-}
-
-// EnvFromSecret references an external Kubernetes Secret for envFrom.
-type EnvFromSecret struct {
-	Name     string `yaml:"name"`
-	Optional bool   `yaml:"optional,omitempty"`
 }
 
 // ClaudeConfig holds Claude-related configuration data.
