@@ -267,56 +267,11 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 
 	// Set GitHub config
 	if req.GitHub != nil {
-		github := entities.NewWebhookGitHubConfig()
-		github.SetEnterpriseURL(req.GitHub.EnterpriseURL)
-		github.SetAllowedEvents(req.GitHub.AllowedEvents)
-		github.SetAllowedRepositories(req.GitHub.AllowedRepositories)
-		webhook.SetGitHub(github)
+		webhook.SetGitHub(c.requestToGitHubConfig(req.GitHub))
 	}
 
-	// Set triggers
-	triggers := make([]entities.WebhookTrigger, 0, len(req.Triggers))
-	for _, t := range req.Triggers {
-		triggerID := t.ID
-		if triggerID == "" {
-			triggerID = uuid.New().String()
-		}
-		trigger := entities.NewWebhookTrigger(triggerID, t.Name)
-		trigger.SetPriority(t.Priority)
-		trigger.SetEnabled(t.Enabled)
-		trigger.SetStopOnMatch(t.StopOnMatch)
-
-		// Set conditions
-		var conditions entities.WebhookTriggerConditions
-		if t.Conditions.GitHub != nil {
-			ghCond := entities.NewWebhookGitHubConditions()
-			ghCond.SetEvents(t.Conditions.GitHub.Events)
-			ghCond.SetActions(t.Conditions.GitHub.Actions)
-			ghCond.SetBranches(t.Conditions.GitHub.Branches)
-			ghCond.SetRepositories(t.Conditions.GitHub.Repositories)
-			ghCond.SetLabels(t.Conditions.GitHub.Labels)
-			ghCond.SetPaths(t.Conditions.GitHub.Paths)
-			ghCond.SetBaseBranches(t.Conditions.GitHub.BaseBranches)
-			ghCond.SetDraft(t.Conditions.GitHub.Draft)
-			ghCond.SetSender(t.Conditions.GitHub.Sender)
-			conditions.SetGitHub(ghCond)
-		}
-		if t.Conditions.GoTemplate != "" {
-			conditions.SetGoTemplate(t.Conditions.GoTemplate)
-		}
-		trigger.SetConditions(conditions)
-
-		// Set session config
-		if t.SessionConfig != nil {
-			sessionConfig := c.requestToSessionConfig(t.SessionConfig)
-			trigger.SetSessionConfig(sessionConfig)
-		}
-
-		triggers = append(triggers, trigger)
-	}
-	webhook.SetTriggers(triggers)
-
-	// Set session config
+	// Set triggers and session config
+	webhook.SetTriggers(c.requestToTriggers(req.Triggers))
 	if req.SessionConfig != nil {
 		webhook.SetSessionConfig(c.requestToSessionConfig(req.SessionConfig))
 	}
@@ -482,50 +437,10 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 		webhook.SetMaxSessions(*req.MaxSessions)
 	}
 	if req.GitHub != nil {
-		github := entities.NewWebhookGitHubConfig()
-		github.SetEnterpriseURL(req.GitHub.EnterpriseURL)
-		github.SetAllowedEvents(req.GitHub.AllowedEvents)
-		github.SetAllowedRepositories(req.GitHub.AllowedRepositories)
-		webhook.SetGitHub(github)
+		webhook.SetGitHub(c.requestToGitHubConfig(req.GitHub))
 	}
 	if req.Triggers != nil {
-		triggers := make([]entities.WebhookTrigger, 0, len(req.Triggers))
-		for _, t := range req.Triggers {
-			triggerID := t.ID
-			if triggerID == "" {
-				triggerID = uuid.New().String()
-			}
-			trigger := entities.NewWebhookTrigger(triggerID, t.Name)
-			trigger.SetPriority(t.Priority)
-			trigger.SetEnabled(t.Enabled)
-			trigger.SetStopOnMatch(t.StopOnMatch)
-
-			var conditions entities.WebhookTriggerConditions
-			if t.Conditions.GitHub != nil {
-				ghCond := entities.NewWebhookGitHubConditions()
-				ghCond.SetEvents(t.Conditions.GitHub.Events)
-				ghCond.SetActions(t.Conditions.GitHub.Actions)
-				ghCond.SetBranches(t.Conditions.GitHub.Branches)
-				ghCond.SetRepositories(t.Conditions.GitHub.Repositories)
-				ghCond.SetLabels(t.Conditions.GitHub.Labels)
-				ghCond.SetPaths(t.Conditions.GitHub.Paths)
-				ghCond.SetBaseBranches(t.Conditions.GitHub.BaseBranches)
-				ghCond.SetDraft(t.Conditions.GitHub.Draft)
-				ghCond.SetSender(t.Conditions.GitHub.Sender)
-				conditions.SetGitHub(ghCond)
-			}
-			if t.Conditions.GoTemplate != "" {
-				conditions.SetGoTemplate(t.Conditions.GoTemplate)
-			}
-			trigger.SetConditions(conditions)
-
-			if t.SessionConfig != nil {
-				trigger.SetSessionConfig(c.requestToSessionConfig(t.SessionConfig))
-			}
-
-			triggers = append(triggers, trigger)
-		}
-		webhook.SetTriggers(triggers)
+		webhook.SetTriggers(c.requestToTriggers(req.Triggers))
 	}
 	if req.SessionConfig != nil {
 		webhook.SetSessionConfig(c.requestToSessionConfig(req.SessionConfig))
@@ -613,7 +528,57 @@ func (c *WebhookController) RegenerateSecret(ctx echo.Context) error {
 	})
 }
 
-// requestToSessionConfig converts request to entity
+// requestToGitHubConfig converts a GitHub config request to an entity.
+func (c *WebhookController) requestToGitHubConfig(req *GitHubConfigRequest) *entities.WebhookGitHubConfig {
+	gh := entities.NewWebhookGitHubConfig()
+	gh.SetEnterpriseURL(req.EnterpriseURL)
+	gh.SetAllowedEvents(req.AllowedEvents)
+	gh.SetAllowedRepositories(req.AllowedRepositories)
+	return gh
+}
+
+// requestToTriggers converts a slice of trigger requests to entities.
+func (c *WebhookController) requestToTriggers(reqs []TriggerRequest) []entities.WebhookTrigger {
+	triggers := make([]entities.WebhookTrigger, 0, len(reqs))
+	for _, t := range reqs {
+		triggerID := t.ID
+		if triggerID == "" {
+			triggerID = uuid.New().String()
+		}
+		trigger := entities.NewWebhookTrigger(triggerID, t.Name)
+		trigger.SetPriority(t.Priority)
+		trigger.SetEnabled(t.Enabled)
+		trigger.SetStopOnMatch(t.StopOnMatch)
+
+		var conditions entities.WebhookTriggerConditions
+		if t.Conditions.GitHub != nil {
+			ghCond := entities.NewWebhookGitHubConditions()
+			ghCond.SetEvents(t.Conditions.GitHub.Events)
+			ghCond.SetActions(t.Conditions.GitHub.Actions)
+			ghCond.SetBranches(t.Conditions.GitHub.Branches)
+			ghCond.SetRepositories(t.Conditions.GitHub.Repositories)
+			ghCond.SetLabels(t.Conditions.GitHub.Labels)
+			ghCond.SetPaths(t.Conditions.GitHub.Paths)
+			ghCond.SetBaseBranches(t.Conditions.GitHub.BaseBranches)
+			ghCond.SetDraft(t.Conditions.GitHub.Draft)
+			ghCond.SetSender(t.Conditions.GitHub.Sender)
+			conditions.SetGitHub(ghCond)
+		}
+		if t.Conditions.GoTemplate != "" {
+			conditions.SetGoTemplate(t.Conditions.GoTemplate)
+		}
+		trigger.SetConditions(conditions)
+
+		if t.SessionConfig != nil {
+			trigger.SetSessionConfig(c.requestToSessionConfig(t.SessionConfig))
+		}
+
+		triggers = append(triggers, trigger)
+	}
+	return triggers
+}
+
+// requestToSessionConfig converts a session config request to an entity.
 func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *entities.WebhookSessionConfig {
 	config := entities.NewWebhookSessionConfig()
 	config.SetEnvironment(req.Environment)
@@ -623,7 +588,6 @@ func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *e
 	config.SetReuseSession(req.ReuseSession)
 	config.SetMountPayload(req.MountPayload)
 	if req.Params != nil {
-		// Use entities.SessionParams directly - no need to copy fields
 		config.SetParams(req.Params)
 	}
 	return config
@@ -726,13 +690,11 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 		ReuseSession:           sc.ReuseSession(),
 		MountPayload:           sc.MountPayload(),
 	}
-	// GitHubトークンは機密情報なのでレスポンスに含めない
-	// その他のparamsはレスポンスに含める
+	// Exclude GithubToken from response since it is sensitive
 	if params := sc.Params(); params != nil {
 		resp.Params = &SessionParamsResponse{
 			AgentType: params.AgentType,
 			Oneshot:   params.Oneshot,
-			// GithubTokenは機密情報なので含めない
 		}
 	}
 	return resp
@@ -791,57 +753,32 @@ func generateSecret() string {
 
 // validateWebhookTemplates validates all templates in the webhook request
 func (c *WebhookController) validateWebhookTemplates(webhookType entities.WebhookType, req CreateWebhookRequest) error {
-	// Validate webhook-level session config template
-	if req.SessionConfig != nil && req.SessionConfig.InitialMessageTemplate != "" {
-		if err := c.validateInitialMessageTemplate(webhookType, req.SessionConfig.InitialMessageTemplate); err != nil {
+	return c.validateTemplates(webhookType, req.SessionConfig, req.Triggers)
+}
+
+// validateWebhookTemplatesForUpdate validates all templates in the webhook update request
+func (c *WebhookController) validateWebhookTemplatesForUpdate(webhookType entities.WebhookType, req UpdateWebhookRequest) error {
+	return c.validateTemplates(webhookType, req.SessionConfig, req.Triggers)
+}
+
+// validateTemplates validates all templates in session config and triggers.
+func (c *WebhookController) validateTemplates(webhookType entities.WebhookType, sessionConfig *SessionConfigRequest, triggers []TriggerRequest) error {
+	if sessionConfig != nil && sessionConfig.InitialMessageTemplate != "" {
+		if err := c.validateInitialMessageTemplate(webhookType, sessionConfig.InitialMessageTemplate); err != nil {
 			return fmt.Errorf("webhook session_config.initial_message_template: %w", err)
 		}
 	}
 
-	// Validate trigger templates
-	for i, trigger := range req.Triggers {
-		// Validate GoTemplate condition
+	for i, trigger := range triggers {
 		if trigger.Conditions.GoTemplate != "" {
 			if err := c.validateGoTemplateCondition(webhookType, trigger.Conditions.GoTemplate); err != nil {
 				return fmt.Errorf("trigger[%d] (%s) conditions.go_template: %w", i, trigger.Name, err)
 			}
 		}
 
-		// Validate trigger-level session config template
 		if trigger.SessionConfig != nil && trigger.SessionConfig.InitialMessageTemplate != "" {
 			if err := c.validateInitialMessageTemplate(webhookType, trigger.SessionConfig.InitialMessageTemplate); err != nil {
 				return fmt.Errorf("trigger[%d] (%s) session_config.initial_message_template: %w", i, trigger.Name, err)
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateWebhookTemplatesForUpdate validates all templates in the webhook update request
-func (c *WebhookController) validateWebhookTemplatesForUpdate(webhookType entities.WebhookType, req UpdateWebhookRequest) error {
-	// Validate webhook-level session config template
-	if req.SessionConfig != nil && req.SessionConfig.InitialMessageTemplate != "" {
-		if err := c.validateInitialMessageTemplate(webhookType, req.SessionConfig.InitialMessageTemplate); err != nil {
-			return fmt.Errorf("webhook session_config.initial_message_template: %w", err)
-		}
-	}
-
-	// Validate trigger templates
-	if req.Triggers != nil {
-		for i, trigger := range req.Triggers {
-			// Validate GoTemplate condition
-			if trigger.Conditions.GoTemplate != "" {
-				if err := c.validateGoTemplateCondition(webhookType, trigger.Conditions.GoTemplate); err != nil {
-					return fmt.Errorf("trigger[%d] (%s) conditions.go_template: %w", i, trigger.Name, err)
-				}
-			}
-
-			// Validate trigger-level session config template
-			if trigger.SessionConfig != nil && trigger.SessionConfig.InitialMessageTemplate != "" {
-				if err := c.validateInitialMessageTemplate(webhookType, trigger.SessionConfig.InitialMessageTemplate); err != nil {
-					return fmt.Errorf("trigger[%d] (%s) session_config.initial_message_template: %w", i, trigger.Name, err)
-				}
 			}
 		}
 	}
