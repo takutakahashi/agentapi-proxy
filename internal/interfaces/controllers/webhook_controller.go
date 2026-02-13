@@ -72,16 +72,8 @@ type TriggerRequest struct {
 
 // TriggerConditionsRequest represents trigger conditions in requests
 type TriggerConditionsRequest struct {
-	GitHub     *GitHubConditionsRequest   `json:"github,omitempty"`
-	JSONPath   []JSONPathConditionRequest `json:"jsonpath,omitempty"`
-	GoTemplate string                     `json:"go_template,omitempty"`
-}
-
-// JSONPathConditionRequest represents a JSONPath condition in requests
-type JSONPathConditionRequest struct {
-	Path     string      `json:"path"`
-	Operator string      `json:"operator"`
-	Value    interface{} `json:"value"`
+	GitHub     *GitHubConditionsRequest `json:"github,omitempty"`
+	GoTemplate string                   `json:"go_template,omitempty"`
 }
 
 // GitHubConditionsRequest represents GitHub-specific conditions in requests
@@ -163,16 +155,8 @@ type TriggerResponse struct {
 
 // TriggerConditionsResponse represents trigger conditions in responses
 type TriggerConditionsResponse struct {
-	GitHub     *GitHubConditionsResponse   `json:"github,omitempty"`
-	JSONPath   []JSONPathConditionResponse `json:"jsonpath,omitempty"`
-	GoTemplate string                      `json:"go_template,omitempty"`
-}
-
-// JSONPathConditionResponse represents a JSONPath condition in responses
-type JSONPathConditionResponse struct {
-	Path     string      `json:"path"`
-	Operator string      `json:"operator"`
-	Value    interface{} `json:"value"`
+	GitHub     *GitHubConditionsResponse `json:"github,omitempty"`
+	GoTemplate string                    `json:"go_template,omitempty"`
 }
 
 // GitHubConditionsResponse represents GitHub-specific conditions in responses
@@ -316,17 +300,6 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 			ghCond.SetDraft(t.Conditions.GitHub.Draft)
 			ghCond.SetSender(t.Conditions.GitHub.Sender)
 			conditions.SetGitHub(ghCond)
-		}
-		if t.Conditions.JSONPath != nil {
-			jsonPathConditions := make([]entities.WebhookJSONPathCondition, 0, len(t.Conditions.JSONPath))
-			for _, jp := range t.Conditions.JSONPath {
-				jsonPathConditions = append(jsonPathConditions, entities.NewWebhookJSONPathCondition(
-					jp.Path,
-					jp.Operator,
-					jp.Value,
-				))
-			}
-			conditions.SetJSONPath(jsonPathConditions)
 		}
 		if t.Conditions.GoTemplate != "" {
 			conditions.SetGoTemplate(t.Conditions.GoTemplate)
@@ -541,17 +514,6 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 				ghCond.SetSender(t.Conditions.GitHub.Sender)
 				conditions.SetGitHub(ghCond)
 			}
-			if t.Conditions.JSONPath != nil {
-				jsonPathConditions := make([]entities.WebhookJSONPathCondition, 0, len(t.Conditions.JSONPath))
-				for _, jp := range t.Conditions.JSONPath {
-					jsonPathConditions = append(jsonPathConditions, entities.NewWebhookJSONPathCondition(
-						jp.Path,
-						jp.Operator,
-						jp.Value,
-					))
-				}
-				conditions.SetJSONPath(jsonPathConditions)
-			}
 			if t.Conditions.GoTemplate != "" {
 				conditions.SetGoTemplate(t.Conditions.GoTemplate)
 			}
@@ -721,16 +683,6 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 				BaseBranches: ghCond.BaseBranches(),
 				Draft:        ghCond.Draft(),
 				Sender:       ghCond.Sender(),
-			}
-		}
-		if jsonPathConds := cond.JSONPath(); len(jsonPathConds) > 0 {
-			tr.Conditions.JSONPath = make([]JSONPathConditionResponse, 0, len(jsonPathConds))
-			for _, jp := range jsonPathConds {
-				tr.Conditions.JSONPath = append(tr.Conditions.JSONPath, JSONPathConditionResponse{
-					Path:     jp.Path(),
-					Operator: string(jp.Operator()),
-					Value:    jp.Value(),
-				})
 			}
 		}
 		if goTemplate := cond.GoTemplate(); goTemplate != "" {

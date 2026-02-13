@@ -264,17 +264,6 @@ func (e *Exporter) convertTriggerToImport(ctx context.Context, trigger entities.
 		}
 	}
 
-	if len(conditions.JSONPath()) > 0 {
-		triggerImport.Conditions.JSONPath = make([]JSONPathConditionImport, 0, len(conditions.JSONPath()))
-		for _, jp := range conditions.JSONPath() {
-			triggerImport.Conditions.JSONPath = append(triggerImport.Conditions.JSONPath, JSONPathConditionImport{
-				Path:     jp.Path(),
-				Operator: string(jp.Operator()),
-				Value:    jp.Value(),
-			})
-		}
-	}
-
 	if conditions.GoTemplate() != "" {
 		triggerImport.Conditions.GoTemplate = conditions.GoTemplate()
 	}
