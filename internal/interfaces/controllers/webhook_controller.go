@@ -200,6 +200,32 @@ type DeliveryRecordResponse struct {
 	Error          string `json:"error,omitempty"`
 }
 
+// TriggerWebhookRequest represents the request body for triggering a webhook with a test payload
+type TriggerWebhookRequest struct {
+	Payload map[string]interface{} `json:"payload"`         // The test payload JSON
+	Event   string                 `json:"event,omitempty"` // For GitHub webhooks: the event type (e.g., "push", "pull_request")
+	DryRun  bool                   `json:"dry_run"`         // If true, only evaluate triggers without creating a session
+}
+
+// TriggerWebhookResponse represents the response for a webhook trigger test
+type TriggerWebhookResponse struct {
+	Matched        bool                       `json:"matched"`                   // Whether any trigger matched
+	MatchedTrigger *TriggerMatchedTriggerInfo `json:"matched_trigger,omitempty"` // Info about the matched trigger
+	SessionID      string                     `json:"session_id,omitempty"`      // Set when dry_run=false and session was created
+	SessionReused  bool                       `json:"session_reused,omitempty"`  // Whether an existing session was reused
+	DryRun         bool                       `json:"dry_run"`                   // Echoes back the dry_run flag
+	InitialMessage string                     `json:"initial_message,omitempty"` // The rendered initial message (in dry_run mode)
+	Tags           map[string]string          `json:"tags,omitempty"`            // The computed tags (in dry_run mode)
+	Environment    map[string]string          `json:"environment,omitempty"`     // The computed environment (in dry_run mode)
+	Error          string                     `json:"error,omitempty"`           // Any error encountered during evaluation
+}
+
+// TriggerMatchedTriggerInfo contains information about a matched trigger
+type TriggerMatchedTriggerInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // CreateWebhook handles POST /webhooks
 func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
@@ -809,4 +835,14 @@ func (c *WebhookController) validateInitialMessageTemplate(webhookType entities.
 	}
 
 	return nil
+}
+
+// Repo returns the webhook repository for external access.
+func (c *WebhookController) Repo() repositories.WebhookRepository {
+	return c.repo
+}
+
+// UserCanAccessWebhook checks if the current user can access the webhook.
+func (c *WebhookController) UserCanAccessWebhook(ctx echo.Context, webhook *entities.Webhook) bool {
+	return c.userCanAccessWebhook(ctx, webhook)
 }

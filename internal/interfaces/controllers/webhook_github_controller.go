@@ -601,3 +601,47 @@ func matchPath(pattern, path string) bool {
 	}
 	return matched
 }
+
+// MatchTriggersForTest evaluates triggers against a test payload.
+// This reuses the same matching logic as HandleGitHubWebhook but without
+// signature verification or HTTP context dependency.
+func (c *WebhookGitHubController) MatchTriggersForTest(
+	triggers []entities.WebhookTrigger,
+	event string,
+	payload *GitHubPayload,
+) *entities.WebhookTrigger {
+	return c.matchTriggers(triggers, event, payload)
+}
+
+// BuildDefaultInitialMessageForTest builds a default initial message for a test payload.
+func (c *WebhookGitHubController) BuildDefaultInitialMessageForTest(event string, payload *GitHubPayload) string {
+	return c.buildDefaultInitialMessage(event, payload)
+}
+
+// BuildGitHubTagsForTest builds GitHub-specific metadata tags for a test payload.
+func (c *WebhookGitHubController) BuildGitHubTagsForTest(
+	webhook *entities.Webhook,
+	trigger *entities.WebhookTrigger,
+	event string,
+	payload *GitHubPayload,
+) map[string]string {
+	tags := map[string]string{
+		"webhook_id":   webhook.ID(),
+		"webhook_name": webhook.Name(),
+		"trigger_id":   trigger.ID(),
+		"trigger_name": trigger.Name(),
+		"github_event": event,
+	}
+	if payload.Repository != nil {
+		tags["repository"] = payload.Repository.FullName
+	}
+	if payload.Action != "" {
+		tags["github_action"] = payload.Action
+	}
+	return tags
+}
+
+// SessionService returns the session service for external access.
+func (c *WebhookGitHubController) SessionService() *WebhookSessionService {
+	return c.sessionService
+}
