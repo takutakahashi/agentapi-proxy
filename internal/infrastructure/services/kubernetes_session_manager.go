@@ -29,6 +29,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
@@ -199,6 +200,12 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 			log.Printf("[K8S_SESSION] Warning: failed to create oneshot settings secret: %v", err)
 			// Continue anyway - session will work without oneshot hook
 		}
+	}
+
+	// Create unified session settings Secret (for future migration)
+	if err := m.createSessionSettingsSecret(ctx, session, req, webhookPayload); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to create session settings secret: %v", err)
+		// Continue anyway - this is additive and not required for current operation
 	}
 
 	// Create Deployment
@@ -2608,6 +2615,21 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		errs = append(errs, fmt.Sprintf("team-env-secret: %v", err))
 	}
 
+	// Delete session settings Secret
+	if err := m.deleteSessionSettingsSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("session-settings-secret: %v", err))
+	}
+
+	// Delete personal API key Secret (bug fix - was not being deleted before)
+	if err := m.deletePersonalAPIKeySecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("personal-api-key-secret: %v", err))
+	}
+
+	// Delete oneshot settings Secret (bug fix - was not being deleted before)
+	if err := m.deleteOneshotSettingsSecret(ctx, session); err != nil {
+		errs = append(errs, fmt.Sprintf("oneshot-settings-secret: %v", err))
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to delete resources: %s", strings.Join(errs, ", "))
 	}
@@ -3744,4 +3766,300 @@ func generatePersonalAPIKey() (string, error) {
 		return "", err
 	}
 	return "ap_" + hex.EncodeToString(keyBytes), nil
+}
+
+// buildSessionSettings constructs SessionSettings from RunServerRequest and session state.
+// This consolidates buildEnvVars and envFrom logic into a single unified structure.
+func (m *KubernetesSessionManager) buildSessionSettings(
+	session *KubernetesSession,
+	req *entities.RunServerRequest,
+	webhookPayload []byte,
+) *sessionsettings.SessionSettings {
+	settings := &sessionsettings.SessionSettings{}
+
+	// Session metadata
+	scope := string(req.Scope)
+	if scope == "" {
+		scope = "user"
+	}
+	settings.Session = sessionsettings.SessionMeta{
+		ID:        session.id,
+		UserID:    req.UserID,
+		Scope:     scope,
+		TeamID:    req.TeamID,
+		AgentType: req.AgentType,
+		Oneshot:   req.Oneshot,
+		Teams:     req.Teams,
+	}
+
+	// Build env vars (mirrors buildEnvVars logic from line 2695)
+	env := map[string]string{
+		"AGENTAPI_PORT":       fmt.Sprintf("%d", m.k8sConfig.BasePort),
+		"AGENTAPI_SESSION_ID": session.id,
+		"AGENTAPI_USER_ID":    req.UserID,
+		"HOME":                "/home/agentapi",
+		"GITHUB_APP_PEM_PATH": "/github-app/app.pem",
+	}
+
+	// Add Claude Code telemetry configuration
+	if m.k8sConfig.OtelCollectorEnabled {
+		env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+		env["OTEL_METRICS_EXPORTER"] = "prometheus"
+	}
+
+	// Add Team ID if in team scope
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		env["AGENTAPI_TEAM_ID"] = req.TeamID
+	}
+
+	// Add Agent Type if specified
+	if req.AgentType != "" {
+		env["AGENTAPI_AGENT_TYPE"] = req.AgentType
+
+		// Add claude-agentapi specific environment variables
+		if req.AgentType == "claude-agentapi" {
+			env["HOST"] = "0.0.0.0"
+			env["PORT"] = fmt.Sprintf("%d", m.k8sConfig.BasePort)
+		}
+	}
+
+	// Add CLAUDE_ARGS from request environment or proxy's environment
+	claudeArgs := ""
+	if req.Environment != nil {
+		if v, ok := req.Environment["CLAUDE_ARGS"]; ok {
+			claudeArgs = v
+		}
+	}
+	if claudeArgs == "" {
+		claudeArgs = os.Getenv("CLAUDE_ARGS")
+	}
+	if claudeArgs != "" {
+		env["CLAUDE_ARGS"] = claudeArgs
+	}
+
+	// Add repository info if available
+	if req.RepoInfo != nil {
+		env["AGENTAPI_REPO_FULLNAME"] = req.RepoInfo.FullName
+		env["AGENTAPI_CLONE_DIR"] = req.RepoInfo.CloneDir
+	}
+
+	// Add environment variables from request (except CLAUDE_ARGS which is already handled)
+	for k, v := range req.Environment {
+		if k != "CLAUDE_ARGS" {
+			env[k] = v
+		}
+	}
+
+	// Add VAPID environment variables for push notifications
+	vapidEnvVars := []string{"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_CONTACT_EMAIL"}
+	for _, envName := range vapidEnvVars {
+		if value := os.Getenv(envName); value != "" {
+			env[envName] = value
+		}
+	}
+
+	settings.Env = env
+
+	// Build envFrom secret references (mirrors envFrom logic from line 877-1009)
+	var envFromSecrets []sessionsettings.EnvFromSecret
+
+	if req.GithubToken != "" {
+		// When params.github_token is provided
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+				Name:     m.k8sConfig.GitHubConfigSecretName,
+				Optional: true,
+			})
+		}
+		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
+		envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+			Name:     githubTokenSecretName,
+			Optional: true,
+		})
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		// When params.github_token is NOT provided
+		envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+			Name:     m.k8sConfig.GitHubSecretName,
+			Optional: true,
+		})
+		if m.k8sConfig.GitHubConfigSecretName != "" {
+			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+				Name:     m.k8sConfig.GitHubConfigSecretName,
+				Optional: true,
+			})
+		}
+	}
+
+	// Add personal API key Secret for user-scoped sessions
+	if req.Scope == entities.ScopeUser {
+		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+		envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+			Name:     personalAPIKeySecretName,
+			Optional: true,
+		})
+	}
+
+	// Add credentials Secrets based on scope
+	if req.Scope == entities.ScopeTeam {
+		// Team-scoped: only mount the specific team's credentials
+		if req.TeamID != "" {
+			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.TeamID))
+			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+				Name:     secretName,
+				Optional: true,
+			})
+
+			// Mount team-specific env vars from TeamConfig
+			teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
+			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+				Name:     teamEnvSecretName,
+				Optional: true,
+			})
+		}
+	} else {
+		// User-scoped: mount all team secrets and user secret
+		for _, team := range req.Teams {
+			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(team))
+			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+				Name:     secretName,
+				Optional: true,
+			})
+		}
+
+		// Add user-specific credentials Secret (added last for highest priority)
+		if req.UserID != "" {
+			userSecretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.UserID))
+			envFromSecrets = append(envFromSecrets, sessionsettings.EnvFromSecret{
+				Name:     userSecretName,
+				Optional: true,
+			})
+		}
+	}
+
+	settings.EnvFromSecrets = envFromSecrets
+
+	// Claude config (defaults from ensureBaseSecret)
+	settings.Claude = sessionsettings.ClaudeConfig{
+		ClaudeJSON: map[string]interface{}{
+			"hasCompletedOnboarding":        true,
+			"bypassPermissionsModeAccepted": true,
+		},
+	}
+
+	// Repository info
+	if req.RepoInfo != nil && req.RepoInfo.FullName != "" {
+		settings.Repository = &sessionsettings.RepositoryConfig{
+			FullName: req.RepoInfo.FullName,
+			CloneDir: req.RepoInfo.CloneDir,
+		}
+	}
+
+	// Initial message
+	settings.InitialMessage = req.InitialMessage
+
+	// Webhook payload
+	if len(webhookPayload) > 0 {
+		settings.WebhookPayload = string(webhookPayload)
+	}
+
+	// GitHub config
+	if req.GithubToken != "" {
+		settings.Github = &sessionsettings.GithubConfig{
+			Token:            req.GithubToken,
+			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
+		}
+	} else if m.k8sConfig.GitHubSecretName != "" {
+		settings.Github = &sessionsettings.GithubConfig{
+			SecretName:       m.k8sConfig.GitHubSecretName,
+			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
+		}
+	}
+
+	// Startup command (simplified version for now - full command logic in pod)
+	if req.AgentType == "claude-agentapi" {
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"claude-agentapi"},
+		}
+	} else {
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi", "server"},
+			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+		}
+	}
+
+	return settings
+}
+
+// createSessionSettingsSecret creates the unified session settings Secret.
+// This Secret consolidates all session configuration into a single YAML file.
+func (m *KubernetesSessionManager) createSessionSettingsSecret(
+	ctx context.Context,
+	session *KubernetesSession,
+	req *entities.RunServerRequest,
+	webhookPayload []byte,
+) error {
+	settings := m.buildSessionSettings(session, req, webhookPayload)
+
+	yamlData, err := sessionsettings.MarshalYAML(settings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal session settings to YAML: %w", err)
+	}
+
+	secretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.id,
+				"agentapi.proxy/user-id":    sanitizeLabelValue(req.UserID),
+				"agentapi.proxy/resource":   "session-settings",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"settings.yaml": yamlData,
+		},
+	}
+
+	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create session settings secret: %w", err)
+	}
+
+	log.Printf("[K8S_SESSION] Created session settings Secret %s for session %s", secretName, session.id)
+	return nil
+}
+
+// deleteSessionSettingsSecret deletes the unified session settings Secret.
+func (m *KubernetesSessionManager) deleteSessionSettingsSecret(ctx context.Context, session *KubernetesSession) error {
+	secretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete session settings secret: %w", err)
+	}
+	return nil
+}
+
+// deletePersonalAPIKeySecret deletes the personal API key Secret.
+// This fixes the existing bug where personal-api-key secrets were not being cleaned up.
+func (m *KubernetesSessionManager) deletePersonalAPIKeySecret(ctx context.Context, session *KubernetesSession) error {
+	secretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete personal API key secret: %w", err)
+	}
+	return nil
+}
+
+// deleteOneshotSettingsSecret deletes the oneshot settings Secret.
+// This fixes the existing bug where oneshot-settings secrets were not being cleaned up.
+func (m *KubernetesSessionManager) deleteOneshotSettingsSecret(ctx context.Context, session *KubernetesSession) error {
+	secretName := fmt.Sprintf("%s-oneshot-settings", session.ServiceName())
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete oneshot settings secret: %w", err)
+	}
+	return nil
 }

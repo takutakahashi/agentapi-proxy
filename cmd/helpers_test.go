@@ -31,6 +31,7 @@ func TestHelpersInit(t *testing.T) {
 	assert.Contains(t, commandNames, "init")
 	assert.Contains(t, commandNames, "generate-token")
 	assert.Contains(t, commandNames, "setup-gh")
+	assert.Contains(t, commandNames, "compile-settings")
 }
 
 func TestGenerateTokenFlags(t *testing.T) {
