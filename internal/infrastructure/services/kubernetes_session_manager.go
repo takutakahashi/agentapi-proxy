@@ -865,6 +865,13 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build init containers
 	var initContainers []corev1.Container
 
+	// Add write-pem init container to write GitHub App PEM to shared emptyDir
+	// This runs before clone-repo so both clone-repo and sync-config can use GitHub App auth
+	if writePEMInitContainer := m.buildWritePEMInitContainer(req); writePEMInitContainer != nil {
+		initContainers = append(initContainers, *writePEMInitContainer)
+		log.Printf("[K8S_SESSION] Added write-pem init container for session %s", session.id)
+	}
+
 	// Add clone-repo init container if repository info is provided
 	if cloneRepoInitContainer := m.buildCloneRepoInitContainer(session, req); cloneRepoInitContainer != nil {
 		initContainers = append(initContainers, *cloneRepoInitContainer)
@@ -1185,6 +1192,24 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	return err
 }
 
+// writePEMScript is the shell script executed by the write-pem init container
+// It writes the GitHub App PEM file from the GITHUB_APP_PEM environment variable
+// to the shared emptyDir volume so clone-repo and sync-config can use GitHub App authentication
+const writePEMScript = `
+set -e
+
+# Skip if GITHUB_APP_PEM is not set
+if [ -z "$GITHUB_APP_PEM" ]; then
+    echo "[WRITE-PEM] GITHUB_APP_PEM is not set, skipping"
+    exit 0
+fi
+
+echo "[WRITE-PEM] Writing GitHub App PEM to /github-app/app.pem"
+echo "$GITHUB_APP_PEM" > /github-app/app.pem
+chmod 600 /github-app/app.pem
+echo "[WRITE-PEM] GitHub App PEM file created at /github-app/app.pem"
+`
+
 // cloneRepoScript is the shell script executed by the init container to clone the repository
 // The repository is cloned to /home/agentapi/workdir/repo
 const cloneRepoScript = `
@@ -1199,15 +1224,6 @@ if [ -z "$AGENTAPI_REPO_FULLNAME" ]; then
 fi
 
 echo "Setting up repository clone for: $AGENTAPI_REPO_FULLNAME"
-
-# Write PEM to emptyDir if provided via environment variable
-# This file will be shared with main container via emptyDir volume
-if [ -n "$GITHUB_APP_PEM" ]; then
-    echo "$GITHUB_APP_PEM" > /github-app/app.pem
-    chmod 600 /github-app/app.pem
-    export GITHUB_APP_PEM_PATH=/github-app/app.pem
-    echo "GitHub App PEM file created at /github-app/app.pem"
-fi
 
 # Setup GitHub authentication
 # Always run setup-gh to configure git credential helper properly
@@ -1227,6 +1243,65 @@ fi
 
 echo "Repository setup completed"
 `
+
+// buildWritePEMInitContainer builds the init container for writing the GitHub App PEM file
+// to the shared emptyDir volume (/github-app/app.pem).
+// Returns nil if GitHubSecretName is not configured or if GithubToken is explicitly provided
+// (in which case GitHub App auth is not used).
+func (m *KubernetesSessionManager) buildWritePEMInitContainer(req *entities.RunServerRequest) *corev1.Container {
+	// Only run when GitHubSecretName is configured (GitHub App auth is available)
+	// and GithubToken is NOT explicitly provided (not using personal token flow)
+	if m.k8sConfig.GitHubSecretName == "" || req.GithubToken != "" {
+		return nil
+	}
+
+	// Use the main container image if InitContainerImage is not specified
+	initImage := m.k8sConfig.InitContainerImage
+	if initImage == "" {
+		initImage = m.k8sConfig.Image
+	}
+
+	var envFrom []corev1.EnvFromSource
+
+	envFrom = append(envFrom, corev1.EnvFromSource{
+		SecretRef: &corev1.SecretEnvSource{
+			LocalObjectReference: corev1.LocalObjectReference{
+				Name: m.k8sConfig.GitHubSecretName,
+			},
+			Optional: boolPtr(true),
+		},
+	})
+
+	if m.k8sConfig.GitHubConfigSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.GitHubConfigSecretName,
+				},
+				Optional: boolPtr(true),
+			},
+		})
+	}
+
+	return &corev1.Container{
+		Name:            "write-pem",
+		Image:           initImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c"},
+		Args:            []string{writePEMScript},
+		EnvFrom:         envFrom,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "github-app",
+				MountPath: "/github-app",
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
+		},
+	}
+}
 
 // buildCloneRepoInitContainer builds the init container for repository cloning
 func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *KubernetesSession, req *entities.RunServerRequest) *corev1.Container {
@@ -3142,6 +3217,10 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *KubernetesSes
 		Command:         []string{"sh", "-c"},
 		Args:            []string{syncScript},
 		EnvFrom:         envFrom,
+		Env: []corev1.EnvVar{
+			// GitHub App PEM path (file is created by write-pem init container in emptyDir)
+			{Name: "GITHUB_APP_PEM_PATH", Value: "/github-app/app.pem"},
+		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      "settings-config",
@@ -3170,6 +3249,12 @@ func (m *KubernetesSessionManager) buildSyncInitContainer(session *KubernetesSes
 				// Mount notifications EmptyDir (destination for copying)
 				Name:      "notifications",
 				MountPath: "/notifications",
+			},
+			{
+				// Mount emptyDir for GitHub App PEM file (written by write-pem init container)
+				Name:      "github-app",
+				MountPath: "/github-app",
+				ReadOnly:  true,
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
