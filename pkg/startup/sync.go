@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
 
 // SyncOptions contains options for the sync command
@@ -79,13 +81,6 @@ type extraKnownMarketplace struct {
 func Sync(opts SyncOptions) error {
 	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, register marketplaces: %v",
 		opts.SettingsFile, opts.OutputDir, opts.RegisterMarketplaces)
-
-	// Setup GitHub authentication first (for marketplace cloning)
-	log.Printf("[SYNC] Setting up GitHub authentication")
-	if err := SetupGitHubAuth(""); err != nil {
-		// Warning only - continue even if auth setup fails (public repos may work)
-		log.Printf("[SYNC] Warning: GitHub auth setup failed: %v", err)
-	}
 
 	// Load settings from file (optional - file may not exist)
 	settings, err := loadSettingsFile(opts.SettingsFile)
@@ -326,8 +321,31 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	return nil
 }
 
-// cloneMarketplace clones a marketplace repository
+// cloneMarketplace clones a marketplace repository.
+// It extracts the repo fullname from the URL and sets up GitHub authentication
+// before cloning, so private repositories can be accessed.
 func cloneMarketplace(url, targetDir string) error {
+	// Extract repo fullname from URL for GitHub App auth (Installation ID discovery)
+	repoFullName := github_pkg.ParseRepositoryURL(url)
+	if repoFullName != "" {
+		log.Printf("[SYNC] Setting up GitHub authentication for marketplace repo: %s", repoFullName)
+		if err := SetupGitHubAuth(repoFullName); err != nil {
+			// Warning only - continue (public repos may work without auth)
+			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
+		}
+	}
+
+	// Build clone URL: if we have a token, use authenticated HTTPS URL
+	cloneURL := url
+	if token, err := GetGitHubToken(repoFullName); err == nil && token != "" {
+		if authURL, err := github_pkg.CreateAuthenticatedURL(url, token); err == nil {
+			cloneURL = authURL
+			log.Printf("[SYNC] Using authenticated URL for marketplace clone")
+		} else {
+			log.Printf("[SYNC] Warning: failed to create authenticated URL: %v", err)
+		}
+	}
+
 	// Check if already cloned
 	if _, err := os.Stat(filepath.Join(targetDir, ".git")); err == nil {
 		log.Printf("[SYNC] Marketplace already cloned at %s, pulling updates", targetDir)
@@ -340,7 +358,7 @@ func cloneMarketplace(url, targetDir string) error {
 	}
 
 	// Clone with shallow depth
-	cmd := exec.Command("git", "clone", "--depth", "1", url, targetDir)
+	cmd := exec.Command("git", "clone", "--depth", "1", cloneURL, targetDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 	}
