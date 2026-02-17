@@ -323,7 +323,7 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 
 // cloneMarketplace clones a marketplace repository.
 // It extracts the repo fullname from the URL and sets up GitHub authentication
-// before cloning, so private repositories can be accessed.
+// via gh CLI (credential helper) before cloning, so private repositories can be accessed.
 func cloneMarketplace(url, targetDir string) error {
 	// Extract repo fullname from URL for GitHub App auth (Installation ID discovery)
 	repoFullName := github_pkg.ParseRepositoryURL(url)
@@ -332,17 +332,6 @@ func cloneMarketplace(url, targetDir string) error {
 		if err := SetupGitHubAuth(repoFullName); err != nil {
 			// Warning only - continue (public repos may work without auth)
 			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
-		}
-	}
-
-	// Build clone URL: if we have a token, use authenticated HTTPS URL
-	cloneURL := url
-	if token, err := GetGitHubToken(repoFullName); err == nil && token != "" {
-		if authURL, err := github_pkg.CreateAuthenticatedURL(url, token); err == nil {
-			cloneURL = authURL
-			log.Printf("[SYNC] Using authenticated URL for marketplace clone")
-		} else {
-			log.Printf("[SYNC] Warning: failed to create authenticated URL: %v", err)
 		}
 	}
 
@@ -357,8 +346,8 @@ func cloneMarketplace(url, targetDir string) error {
 		return nil
 	}
 
-	// Clone with shallow depth
-	cmd := exec.Command("git", "clone", "--depth", "1", cloneURL, targetDir)
+	// Clone with shallow depth; authentication is handled by gh credential helper
+	cmd := exec.Command("git", "clone", "--depth", "1", url, targetDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 	}
