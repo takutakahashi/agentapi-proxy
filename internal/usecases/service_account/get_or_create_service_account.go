@@ -31,6 +31,13 @@ func NewGetOrCreateServiceAccountUseCase(
 	}
 }
 
+// EnsureServiceAccount ensures a service account exists for the specified team.
+// It implements the services.ServiceAccountEnsurer interface.
+func (uc *GetOrCreateServiceAccountUseCase) EnsureServiceAccount(ctx context.Context, teamID string) error {
+	_, err := uc.Execute(ctx, teamID)
+	return err
+}
+
 // Execute gets or creates a service account for the specified team
 func (uc *GetOrCreateServiceAccountUseCase) Execute(ctx context.Context, teamID string) (*entities.ServiceAccount, error) {
 	// Try to find existing team config

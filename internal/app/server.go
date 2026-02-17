@@ -21,6 +21,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -305,6 +306,18 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 				if err := services.BootstrapPersonalAPIKeys(ctx, simpleAuth, personalAPIKeyRepo); err != nil {
 					log.Printf("[SERVER] Warning: failed to bootstrap personal API keys: %v", err)
 				}
+			}
+		}
+	}
+
+	// Set up ServiceAccountEnsurer in KubernetesSessionManager so that all session creation
+	// paths (start, webhook, schedule, etc.) automatically create TeamConfig on team-scoped sessions.
+	if teamConfigRepo != nil {
+		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			if k8sManager, ok := s.sessionManager.(*services.KubernetesSessionManager); ok {
+				ensurer := serviceaccountuc.NewGetOrCreateServiceAccountUseCase(teamConfigRepo, simpleAuth)
+				k8sManager.SetServiceAccountEnsurer(ensurer)
+				log.Printf("[SERVER] ServiceAccountEnsurer configured for KubernetesSessionManager")
 			}
 		}
 	}

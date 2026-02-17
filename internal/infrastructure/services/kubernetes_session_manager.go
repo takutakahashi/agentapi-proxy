@@ -33,18 +33,25 @@ import (
 )
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
+// ServiceAccountEnsurer ensures a service account exists for a team.
+// Implementations must be safe to call concurrently.
+type ServiceAccountEnsurer interface {
+	EnsureServiceAccount(ctx context.Context, teamID string) error
+}
+
 type KubernetesSessionManager struct {
-	config             *config.Config
-	k8sConfig          *config.KubernetesSessionConfig
-	client             kubernetes.Interface
-	verbose            bool
-	logger             *logger.Logger
-	sessions           map[string]*KubernetesSession
-	mutex              sync.RWMutex
-	namespace          string
-	settingsRepo       portrepos.SettingsRepository
-	teamConfigRepo     portrepos.TeamConfigRepository
-	personalAPIKeyRepo portrepos.PersonalAPIKeyRepository
+	config                *config.Config
+	k8sConfig             *config.KubernetesSessionConfig
+	client                kubernetes.Interface
+	verbose               bool
+	logger                *logger.Logger
+	sessions              map[string]*KubernetesSession
+	mutex                 sync.RWMutex
+	namespace             string
+	settingsRepo          portrepos.SettingsRepository
+	teamConfigRepo        portrepos.TeamConfigRepository
+	personalAPIKeyRepo    portrepos.PersonalAPIKeyRepository
+	serviceAccountEnsurer ServiceAccountEnsurer
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -177,6 +184,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		if err := m.createWebhookPayloadSecret(ctx, session, webhookPayload); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to create webhook payload secret: %v", err)
 			// Continue anyway - session will work without payload file
+		}
+	}
+
+	// Ensure service account exists for team-scoped sessions (best-effort)
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.serviceAccountEnsurer != nil {
+		if err := m.serviceAccountEnsurer.EnsureServiceAccount(ctx, req.TeamID); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to ensure service account for team %s: %v", req.TeamID, err)
+			// Continue anyway - session will work without service account
 		}
 	}
 
@@ -2901,6 +2916,11 @@ func (m *KubernetesSessionManager) SetSettingsRepository(repo portrepos.Settings
 // SetTeamConfigRepository sets the team config repository for service account configuration
 func (m *KubernetesSessionManager) SetTeamConfigRepository(repo portrepos.TeamConfigRepository) {
 	m.teamConfigRepo = repo
+}
+
+// SetServiceAccountEnsurer sets the service account ensurer for team-scoped session creation
+func (m *KubernetesSessionManager) SetServiceAccountEnsurer(ensurer ServiceAccountEnsurer) {
+	m.serviceAccountEnsurer = ensurer
 }
 
 // SetPersonalAPIKeyRepository sets the personal API key repository
