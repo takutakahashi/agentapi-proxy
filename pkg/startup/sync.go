@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
 
 // SyncOptions contains options for the sync command
@@ -79,13 +81,6 @@ type extraKnownMarketplace struct {
 func Sync(opts SyncOptions) error {
 	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, register marketplaces: %v",
 		opts.SettingsFile, opts.OutputDir, opts.RegisterMarketplaces)
-
-	// Setup GitHub authentication first (for marketplace cloning)
-	log.Printf("[SYNC] Setting up GitHub authentication")
-	if err := SetupGitHubAuth(""); err != nil {
-		// Warning only - continue even if auth setup fails (public repos may work)
-		log.Printf("[SYNC] Warning: GitHub auth setup failed: %v", err)
-	}
 
 	// Load settings from file (optional - file may not exist)
 	settings, err := loadSettingsFile(opts.SettingsFile)
@@ -326,8 +321,20 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	return nil
 }
 
-// cloneMarketplace clones a marketplace repository
+// cloneMarketplace clones a marketplace repository.
+// It extracts the repo fullname from the URL and sets up GitHub authentication
+// via gh CLI (credential helper) before cloning, so private repositories can be accessed.
 func cloneMarketplace(url, targetDir string) error {
+	// Extract repo fullname from URL for GitHub App auth (Installation ID discovery)
+	repoFullName := github_pkg.ParseRepositoryURL(url)
+	if repoFullName != "" {
+		log.Printf("[SYNC] Setting up GitHub authentication for marketplace repo: %s", repoFullName)
+		if err := SetupGitHubAuth(repoFullName); err != nil {
+			// Warning only - continue (public repos may work without auth)
+			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
+		}
+	}
+
 	// Check if already cloned
 	if _, err := os.Stat(filepath.Join(targetDir, ".git")); err == nil {
 		log.Printf("[SYNC] Marketplace already cloned at %s, pulling updates", targetDir)
@@ -339,7 +346,7 @@ func cloneMarketplace(url, targetDir string) error {
 		return nil
 	}
 
-	// Clone with shallow depth
+	// Clone with shallow depth; authentication is handled by gh credential helper
 	cmd := exec.Command("git", "clone", "--depth", "1", url, targetDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
