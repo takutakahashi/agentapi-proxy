@@ -2530,17 +2530,13 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			Name:      "workdir",
 			MountPath: "/home/agentapi/workdir",
 		},
+		// Mount claude-config EmptyDir as entire home dir
+		// (setup writes .claude.json and .claude/ here at startup; no SubPath to avoid mount errors on empty dir)
 		{
 			Name:      "claude-config",
-			MountPath: "/home/agentapi/.claude.json",
-			SubPath:   ".claude.json",
+			MountPath: "/home/agentapi",
 		},
-		{
-			Name:      "claude-config",
-			MountPath: "/home/agentapi/.claude",
-			SubPath:   ".claude",
-		},
-		// Mount notifications directory (EmptyDir, writable)
+		// Notifications EmptyDir (overlay on top of claude-config home mount)
 		{
 			Name:      "notifications",
 			MountPath: "/home/agentapi/notifications",
