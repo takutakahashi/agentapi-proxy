@@ -25,8 +25,8 @@ This command reads a settings YAML file and generates:
 - ~/.claude.json (Claude onboarding configuration)
 - ~/.claude/settings.json (Claude settings with marketplaces)
 - /mcp-config/merged.json (MCP server configurations)
-- /session-settings/env (environment variables as KEY=VALUE)
-- /session-settings/startup.sh (startup command script)
+- /home/agentapi/.session/env (environment variables as KEY=VALUE)
+- /home/agentapi/.session/startup.sh (startup command script)
 
 This is typically run as an init container in the session Pod.
 
@@ -38,7 +38,7 @@ Examples:
   agentapi-proxy helpers compile-settings \
     --input /session-settings/settings.yaml \
     --output-dir /home/agentapi \
-    --env-file /session-settings/env`,
+    --env-file /home/agentapi/.session/env`,
 	RunE: runCompileSettings,
 }
 

@@ -373,7 +373,7 @@ func TestDefaultCompileOptions(t *testing.T) {
 
 	assert.Equal(t, "/session-settings/settings.yaml", opts.InputPath)
 	assert.Equal(t, "/home/agentapi", opts.OutputDir)
-	assert.Equal(t, "/session-settings/env", opts.EnvFilePath)
-	assert.Equal(t, "/session-settings/startup.sh", opts.StartupPath)
+	assert.Equal(t, "/home/agentapi/.session/env", opts.EnvFilePath)
+	assert.Equal(t, "/home/agentapi/.session/startup.sh", opts.StartupPath)
 	assert.Equal(t, "/mcp-config/merged.json", opts.MCPOutputPath)
 }
