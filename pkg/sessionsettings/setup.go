@@ -76,8 +76,7 @@ func Setup(opts SetupOptions) error {
 	// 2. Clone repository if configured
 	if settings.Repository != nil && settings.Repository.FullName != "" {
 		if err := cloneRepo(settings); err != nil {
-			// Non-fatal: log warning and continue with the rest of setup
-			log.Printf("[SETUP] Warning: clone-repo failed: %v", err)
+			return fmt.Errorf("clone-repo failed: %w", err)
 		}
 	}
 
