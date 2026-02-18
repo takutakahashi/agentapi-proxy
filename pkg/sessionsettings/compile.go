@@ -16,8 +16,8 @@ import (
 type CompileOptions struct {
 	InputPath     string // Path to settings YAML (default: /session-settings/settings.yaml)
 	OutputDir     string // Base output directory (default: /home/agentapi)
-	EnvFilePath   string // Path for env file output (default: /home/agentapi/.session/env)
-	StartupPath   string // Path for startup script (default: /home/agentapi/.session/startup.sh)
+	EnvFilePath   string // Path for env file output (default: /session-settings/env)
+	StartupPath   string // Path for startup script (default: /session-settings/startup.sh)
 	MCPOutputPath string // Path for MCP config (default: /mcp-config/merged.json)
 }
 
@@ -26,8 +26,8 @@ func DefaultCompileOptions() CompileOptions {
 	return CompileOptions{
 		InputPath:     "/session-settings/settings.yaml",
 		OutputDir:     "/home/agentapi",
-		EnvFilePath:   "/home/agentapi/.session/env",
-		StartupPath:   "/home/agentapi/.session/startup.sh",
+		EnvFilePath:   "/session-settings/env",
+		StartupPath:   "/session-settings/startup.sh",
 		MCPOutputPath: "/mcp-config/merged.json",
 	}
 }

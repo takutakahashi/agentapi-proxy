@@ -720,11 +720,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		m.k8sConfig.ClaudeConfigUserConfigMapPrefix,
 		sanitizeLabelValue(req.UserID))
 
-	// Build init containers — unified single setup container
-	initContainers := []corev1.Container{
-		m.buildSetupInitContainer(session, req),
-	}
-	log.Printf("[K8S_SESSION] Added setup init container for session %s", session.id)
+	// No init containers — setup is performed by the main container on startup
 
 	// Determine working directory based on whether repository is specified
 	workingDir := "/home/agentapi/workdir"
@@ -1011,11 +1007,10 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 						RunAsUser:  int64Ptr(999),
 						RunAsGroup: int64Ptr(999),
 					},
-					InitContainers: initContainers,
-					Containers:     containers,
-					Volumes:        volumes,
-					NodeSelector:   m.k8sConfig.NodeSelector,
-					Tolerations:    tolerations,
+					Containers:   containers,
+					Volumes:      volumes,
+					NodeSelector: m.k8sConfig.NodeSelector,
+					Tolerations:  tolerations,
 				},
 			},
 		},
@@ -1023,76 +1018,6 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	_, err := m.client.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
-}
-
-// buildSetupInitContainer builds the single unified init container that replaces
-// write-pem, clone-repo, merge-settings, sync-config, and setup-mcp.
-// It reads /session-settings/settings.yaml (from agentapi-session-{id}-settings Secret)
-// and runs `agentapi-proxy helpers setup` which internally calls:
-//  1. writePEM  – writes GITHUB_APP_PEM to /github-app/app.pem
-//  2. cloneRepo – clones the repository (if session.repository is set)
-//  3. Compile   – generates .claude.json, settings.json, mcp config, env file, startup script
-//  4. syncExtra – copies credentials, CLAUDE.md, notification subscriptions
-func (m *KubernetesSessionManager) buildSetupInitContainer(
-	session *KubernetesSession,
-	req *entities.RunServerRequest,
-) corev1.Container {
-	initImage := m.k8sConfig.InitContainerImage
-	if initImage == "" {
-		initImage = m.k8sConfig.Image
-	}
-
-	sessionSettingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
-
-	volumeMounts := []corev1.VolumeMount{
-		// session-settings Secret (read-only) – the single source of truth
-		{Name: "session-settings", MountPath: "/session-settings", ReadOnly: true},
-		// workdir – clone-repo writes here
-		{Name: "workdir", MountPath: "/home/agentapi/workdir"},
-		// claude-config – Compile writes ~/.claude.json, ~/.claude/settings.json here
-		{Name: "claude-config", MountPath: "/home/agentapi"},
-		// credentials-config – syncExtra copies credentials.json from here
-		{Name: "claude-credentials", MountPath: "/credentials-config", ReadOnly: true},
-		// notification subscriptions source
-		{Name: "notification-subscriptions-source", MountPath: "/notification-subscriptions-source", ReadOnly: true},
-		// notifications output dir
-		{Name: "notifications", MountPath: "/notifications"},
-		// github-app – writePEM writes GITHUB_APP_PEM here for the main container to read
-		{Name: "github-app", MountPath: "/github-app"},
-	}
-
-	// Mount mcp-config output dir if MCP is enabled
-	if m.k8sConfig.MCPServersEnabled {
-		volumeMounts = append(volumeMounts,
-			corev1.VolumeMount{Name: "mcp-config", MountPath: "/mcp-config"},
-		)
-	}
-
-	setupScript := `set -e
-echo "[SETUP] Starting unified session setup"
-agentapi-proxy helpers setup \
-  --input /session-settings/settings.yaml \
-  --credentials-file /credentials-config/credentials.json \
-  --notification-subscriptions /notification-subscriptions-source \
-  --notifications-dir /notifications \
-  --register-marketplaces
-echo "[SETUP] Done"
-`
-
-	return corev1.Container{
-		Name:            "setup",
-		Image:           initImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"sh", "-c"},
-		Args:            []string{setupScript},
-		VolumeMounts:    volumeMounts,
-		Env: []corev1.EnvVar{
-			// Tell setup where the session-settings file lives (also the default, but explicit)
-			{Name: "SESSION_SETTINGS_PATH", Value: "/session-settings/settings.yaml"},
-			// Ensure the Secret name is available for debugging
-			{Name: "SESSION_SETTINGS_SECRET", Value: sessionSettingsSecretName},
-		},
-	}
 }
 
 // credentialsSyncScript is the shell script for the credentials sync sidecar
@@ -1917,7 +1842,7 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 	// No need to mount as volume
 
 	// Add MCP server configuration volumes if enabled
-	// mcp-config EmptyDir is written by the setup init container (via Compile)
+	// mcp-config EmptyDir is written by setup on main container startup (via Compile)
 	if m.k8sConfig.MCPServersEnabled {
 		volumes = append(volumes, m.buildMCPVolumes(session)...)
 	}
@@ -2620,10 +2545,27 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			Name:      "notifications",
 			MountPath: "/home/agentapi/notifications",
 		},
-		// Mount emptyDir for GitHub App PEM file (shared with clone-repo init container)
+		// Mount emptyDir for GitHub App PEM file (written by setup on startup)
 		{
 			Name:      "github-app",
 			MountPath: "/github-app",
+		},
+		// session-settings Secret – read by setup on startup
+		{
+			Name:      "session-settings",
+			MountPath: "/session-settings",
+			ReadOnly:  true,
+		},
+		// credentials-config – read by setup on startup
+		{
+			Name:      "claude-credentials",
+			MountPath: "/credentials-config",
+			ReadOnly:  true,
+		},
+		// notification subscriptions source – read by setup on startup
+		{
+			Name:      "notification-subscriptions-source",
+			MountPath: "/notification-subscriptions-source",
 			ReadOnly:  true,
 		},
 	}
@@ -2664,6 +2606,24 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 // For default/agentapi: uses resume fallback pattern "claude -c [args] || claude [args]"
 func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
 	baseCmd := `
+# Run session setup (write-pem, clone-repo, compile settings, sync extra)
+echo "[STARTUP] Running session setup"
+agentapi-proxy helpers setup \
+  --input /session-settings/settings.yaml \
+  --credentials-file /credentials-config/credentials.json \
+  --notification-subscriptions /notification-subscriptions-source \
+  --notifications-dir /notifications \
+  --register-marketplaces
+echo "[STARTUP] Session setup complete"
+
+# Source session env file generated by setup
+if [ -f /session-settings/env ]; then
+    echo "[STARTUP] Sourcing session env file"
+    set -a
+    . /session-settings/env
+    set +a
+fi
+
 # Determine which agent to start based on AGENTAPI_AGENT_TYPE
 if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
     # Update claude-agentapi to the latest version
