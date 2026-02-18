@@ -722,11 +722,10 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	// No init containers — setup is performed by the main container on startup
 
-	// Determine working directory based on whether repository is specified
+	// Determine working directory
+	// Always use /home/agentapi/workdir as base; clone-repo will create /home/agentapi/workdir/repo
+	// Setting workingDir to repo path would cause Kubernetes to pre-create the dir as root
 	workingDir := "/home/agentapi/workdir"
-	if req.RepoInfo != nil && req.RepoInfo.FullName != "" {
-		workingDir = "/home/agentapi/workdir/repo"
-	}
 
 	// Build envFrom for GitHub secrets
 	// Two secrets are used:
