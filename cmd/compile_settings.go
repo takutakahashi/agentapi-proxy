@@ -24,7 +24,7 @@ var compileSettingsCmd = &cobra.Command{
 This command reads a settings YAML file and generates:
 - ~/.claude.json (Claude onboarding configuration)
 - ~/.claude/settings.json (Claude settings with marketplaces)
-- /mcp-config/merged.json (MCP server configurations)
+- /home/agentapi/.mcp-config/merged.json (MCP server configurations)
 - /home/agentapi/.session/env (environment variables as KEY=VALUE)
 - /home/agentapi/.session/startup.sh (startup command script)
 

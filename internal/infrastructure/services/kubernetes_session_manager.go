@@ -2575,9 +2575,9 @@ if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
     echo "[STARTUP] Using history output file: /opt/claude-agentapi/history.jsonl"
 
     # Add --mcp-config if MCP config file exists
-    if [ -f /mcp-config/merged.json ]; then
-        CLAUDE_AGENTAPI_OPTS="$CLAUDE_AGENTAPI_OPTS --mcp-config /mcp-config/merged.json"
-        echo "[STARTUP] Using MCP config: /mcp-config/merged.json"
+    if [ -f /home/agentapi/.mcp-config/merged.json ]; then
+        CLAUDE_AGENTAPI_OPTS="$CLAUDE_AGENTAPI_OPTS --mcp-config /home/agentapi/.mcp-config/merged.json"
+        echo "[STARTUP] Using MCP config: /home/agentapi/.mcp-config/merged.json"
     fi
 
     # Append CLAUDE_ARGS if set (as CLI options)
@@ -2595,9 +2595,9 @@ else
     CLAUDE_ARGS_FULL=""
 
     # Add --mcp-config if MCP config file exists
-    if [ -f /mcp-config/merged.json ]; then
-        CLAUDE_ARGS_FULL="--mcp-config /mcp-config/merged.json"
-        echo "[STARTUP] Using MCP config: /mcp-config/merged.json"
+    if [ -f /home/agentapi/.mcp-config/merged.json ]; then
+        CLAUDE_ARGS_FULL="--mcp-config /home/agentapi/.mcp-config/merged.json"
+        echo "[STARTUP] Using MCP config: /home/agentapi/.mcp-config/merged.json"
     fi
 
     # Add CLAUDE_ARGS if set

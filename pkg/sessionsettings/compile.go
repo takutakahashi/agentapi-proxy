@@ -18,7 +18,7 @@ type CompileOptions struct {
 	OutputDir     string // Base output directory (default: /home/agentapi)
 	EnvFilePath   string // Path for env file output (default: /session-settings/env)
 	StartupPath   string // Path for startup script (default: /session-settings/startup.sh)
-	MCPOutputPath string // Path for MCP config (default: /mcp-config/merged.json)
+	MCPOutputPath string // Path for MCP config (default: /home/agentapi/.mcp-config/merged.json, written during setup)
 }
 
 // DefaultCompileOptions returns the default compile options.
@@ -28,7 +28,7 @@ func DefaultCompileOptions() CompileOptions {
 		OutputDir:     "/home/agentapi",
 		EnvFilePath:   "/session-settings/env",
 		StartupPath:   "/session-settings/startup.sh",
-		MCPOutputPath: "/mcp-config/merged.json",
+		MCPOutputPath: "/home/agentapi/.mcp-config/merged.json",
 	}
 }
 
