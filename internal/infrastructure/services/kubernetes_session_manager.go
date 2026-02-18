@@ -2553,6 +2553,12 @@ if [ -f /home/agentapi/.session/env ]; then
     set +a
 fi
 
+# cd into repo if it was cloned
+if [ -d /home/agentapi/workdir/repo ]; then
+    echo "[STARTUP] Changing to repo directory"
+    cd /home/agentapi/workdir/repo
+fi
+
 # Determine which agent to start based on AGENTAPI_AGENT_TYPE
 if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
     # Update claude-agentapi to the latest version
