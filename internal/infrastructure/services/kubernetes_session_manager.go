@@ -2303,7 +2303,7 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	if req.RepoInfo != nil {
 		envVars = append(envVars,
 			corev1.EnvVar{Name: "AGENTAPI_REPO_FULLNAME", Value: req.RepoInfo.FullName},
-			corev1.EnvVar{Name: "AGENTAPI_CLONE_DIR", Value: "/home/agentapi/repo"},
+			corev1.EnvVar{Name: "AGENTAPI_CLONE_DIR", Value: "/home/agentapi/workdir/repo"},
 		)
 	}
 
@@ -3137,7 +3137,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Add repository info if available
 	if req.RepoInfo != nil {
 		env["AGENTAPI_REPO_FULLNAME"] = req.RepoInfo.FullName
-		env["AGENTAPI_CLONE_DIR"] = "/home/agentapi/repo"
+		env["AGENTAPI_CLONE_DIR"] = "/home/agentapi/workdir/repo"
 	}
 
 	// Add environment variables from request (except CLAUDE_ARGS which is already handled)
@@ -3245,7 +3245,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	if req.RepoInfo != nil && req.RepoInfo.FullName != "" {
 		settings.Repository = &sessionsettings.RepositoryConfig{
 			FullName: req.RepoInfo.FullName,
-			CloneDir: "/home/agentapi/repo",
+			CloneDir: "/home/agentapi/workdir/repo",
 		}
 	}
 
