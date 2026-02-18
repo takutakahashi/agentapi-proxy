@@ -1057,6 +1057,8 @@ func (m *KubernetesSessionManager) buildSetupInitContainer(
 		{Name: "notification-subscriptions-source", MountPath: "/notification-subscriptions-source", ReadOnly: true},
 		// notifications output dir
 		{Name: "notifications", MountPath: "/notifications"},
+		// github-app – writePEM writes GITHUB_APP_PEM here for the main container to read
+		{Name: "github-app", MountPath: "/github-app"},
 	}
 
 	// Mount mcp-config output dir if MCP is enabled
@@ -1862,6 +1864,14 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 			Secret: &corev1.SecretVolumeSource{
 				SecretName: sessionSettingsSecretName,
 			},
+		},
+	})
+
+	// EmptyDir for GitHub App PEM file (written by setup init container, read by main container)
+	volumes = append(volumes, corev1.Volume{
+		Name: "github-app",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
 	})
 
