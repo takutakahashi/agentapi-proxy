@@ -2542,7 +2542,7 @@ agentapi-proxy helpers setup \
   --input /session-settings/settings.yaml \
   --credentials-file /credentials-config/credentials.json \
   --notification-subscriptions /notification-subscriptions-source \
-  --notifications-dir /notifications \
+  --notifications-dir /home/agentapi/.notifications \
   --register-marketplaces
 echo "[STARTUP] Session setup complete"
 
