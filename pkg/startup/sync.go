@@ -519,6 +519,36 @@ func syncClaudeMD(claudeMDPath, outputDir string) error {
 	return nil
 }
 
+// SyncExtra copies credentials, CLAUDE.md, and notification subscriptions.
+// It does NOT generate .claude.json / settings.json — that is handled by sessionsettings.Compile.
+// This is called from the unified Setup init container.
+func SyncExtra(opts SyncOptions) error {
+	// Copy credentials.json if provided
+	if opts.CredentialsFile != "" {
+		if err := syncCredentials(opts.CredentialsFile, opts.OutputDir); err != nil {
+			log.Printf("[SYNC-EXTRA] Warning: failed to sync credentials: %v", err)
+		}
+	}
+
+	// Copy CLAUDE.md if available
+	claudeMDPath := opts.ClaudeMDFile
+	if claudeMDPath == "" {
+		claudeMDPath = "/tmp/config/CLAUDE.md"
+	}
+	if err := syncClaudeMD(claudeMDPath, opts.OutputDir); err != nil {
+		log.Printf("[SYNC-EXTRA] Warning: failed to sync CLAUDE.md: %v", err)
+	}
+
+	// Copy notification subscriptions if provided
+	if opts.NotificationSubscriptions != "" && opts.NotificationsDir != "" {
+		if err := syncNotificationSubscriptions(opts.NotificationSubscriptions, opts.NotificationsDir); err != nil {
+			log.Printf("[SYNC-EXTRA] Warning: failed to sync notification subscriptions: %v", err)
+		}
+	}
+
+	return nil
+}
+
 // syncNotificationSubscriptions copies notification subscriptions from mounted Secret to notifications directory
 func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) error {
 	// Check if source directory exists

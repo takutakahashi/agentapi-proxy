@@ -29,7 +29,9 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/settings"
 )
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
@@ -701,150 +703,6 @@ func (m *KubernetesSessionManager) ensureBaseSecret(ctx context.Context) error {
 	return nil
 }
 
-// setupMCPServersScript is the shell script executed by the init container to merge MCP server configurations
-// It uses the agentapi-proxy helpers merge-mcp-config command to merge configurations from multiple directories
-const setupMCPServersScript = `
-set -e
-
-# Check if any MCP config directories exist
-MCP_DIRS=""
-if [ -d "/mcp-config-source/base" ] && [ "$(ls -A /mcp-config-source/base 2>/dev/null)" ]; then
-    MCP_DIRS="/mcp-config-source/base"
-fi
-
-# Add team directories (numbered: /mcp-config-source/team/0, /mcp-config-source/team/1, etc.)
-for team_dir in /mcp-config-source/team/*/; do
-    if [ -d "$team_dir" ] && [ "$(ls -A "$team_dir" 2>/dev/null)" ]; then
-        if [ -n "$MCP_DIRS" ]; then
-            MCP_DIRS="$MCP_DIRS,$team_dir"
-        else
-            MCP_DIRS="$team_dir"
-        fi
-    fi
-done
-
-if [ -d "/mcp-config-source/user" ] && [ "$(ls -A /mcp-config-source/user 2>/dev/null)" ]; then
-    if [ -n "$MCP_DIRS" ]; then
-        MCP_DIRS="$MCP_DIRS,/mcp-config-source/user"
-    else
-        MCP_DIRS="/mcp-config-source/user"
-    fi
-fi
-
-if [ -z "$MCP_DIRS" ]; then
-    echo "[MCP] No MCP server configurations found, skipping"
-    exit 0
-fi
-
-echo "[MCP] Merging MCP configurations from: $MCP_DIRS"
-
-# Create output directory
-mkdir -p /mcp-config
-
-# Merge MCP configurations using agentapi-proxy helper
-agentapi-proxy helpers merge-mcp-config \
-    --input-dirs "$MCP_DIRS" \
-    --output /mcp-config/merged.json \
-    --expand-env \
-    --verbose
-
-echo "[MCP] MCP server configuration complete"
-`
-
-// mergeSettingsScript is the shell script executed by the init container to merge settings configurations
-// It uses the agentapi-proxy helpers merge-settings-config command to merge configurations from multiple directories
-const mergeSettingsScript = `
-set -e
-
-# Check if any settings config directories exist
-SETTINGS_DIRS=""
-if [ -d "/settings-config-source/base" ] && [ "$(ls -A /settings-config-source/base 2>/dev/null)" ]; then
-    SETTINGS_DIRS="/settings-config-source/base"
-fi
-
-# Add team directories (numbered: /settings-config-source/team/0, /settings-config-source/team/1, etc.)
-for team_dir in /settings-config-source/team/*/; do
-    if [ -d "$team_dir" ] && [ "$(ls -A "$team_dir" 2>/dev/null)" ]; then
-        if [ -n "$SETTINGS_DIRS" ]; then
-            SETTINGS_DIRS="$SETTINGS_DIRS,$team_dir"
-        else
-            SETTINGS_DIRS="$team_dir"
-        fi
-    fi
-done
-
-if [ -d "/settings-config-source/user" ] && [ "$(ls -A /settings-config-source/user 2>/dev/null)" ]; then
-    if [ -n "$SETTINGS_DIRS" ]; then
-        SETTINGS_DIRS="$SETTINGS_DIRS,/settings-config-source/user"
-    else
-        SETTINGS_DIRS="/settings-config-source/user"
-    fi
-fi
-
-# Add oneshot directory (highest priority, added last)
-if [ -d "/settings-config-source/oneshot" ] && [ "$(ls -A /settings-config-source/oneshot 2>/dev/null)" ]; then
-    if [ -n "$SETTINGS_DIRS" ]; then
-        SETTINGS_DIRS="$SETTINGS_DIRS,/settings-config-source/oneshot"
-    else
-        SETTINGS_DIRS="/settings-config-source/oneshot"
-    fi
-fi
-
-if [ -z "$SETTINGS_DIRS" ]; then
-    echo "[SETTINGS] No settings configurations found, skipping merge"
-    exit 0
-fi
-
-echo "[SETTINGS] Merging settings from: $SETTINGS_DIRS"
-
-# Create output directory
-mkdir -p /settings-config
-
-# Merge settings configurations using agentapi-proxy helper
-agentapi-proxy helpers merge-settings-config \
-    --input-dirs "$SETTINGS_DIRS" \
-    --output /settings-config/settings.json \
-    --verbose
-
-echo "[SETTINGS] Settings configuration merge complete"
-`
-
-// syncScript is the shell script executed by the init container to sync Claude configuration
-// It reads from the Settings Secret and generates ~/.claude.json, ~/.claude/settings.json, ~/.claude/.credentials.json, and ~/.claude/CLAUDE.md
-// It also clones marketplaces to ~/.claude/plugins/marketplaces/ and installs enabled plugins
-// It also copies notification subscriptions to the notifications directory
-const syncScript = `
-set -e
-
-echo "[SYNC] Starting Claude configuration sync"
-
-# Build sync command with required arguments
-SYNC_ARGS="--settings-file /settings-config/settings.json --output-dir /home/agentapi"
-
-# Add credentials file if it exists
-if [ -f "/credentials-config/credentials.json" ]; then
-    echo "[SYNC] Found credentials file, including in sync"
-    SYNC_ARGS="$SYNC_ARGS --credentials-file /credentials-config/credentials.json"
-fi
-
-# Add CLAUDE.md file (default path in Docker image)
-SYNC_ARGS="$SYNC_ARGS --claude-md-file /tmp/config/CLAUDE.md"
-
-# Add notification subscriptions if source directory exists and has files
-if [ -d "/notification-subscriptions-source" ] && [ "$(ls -A /notification-subscriptions-source 2>/dev/null)" ]; then
-    echo "[SYNC] Found notification subscriptions, including in sync"
-    SYNC_ARGS="$SYNC_ARGS --notification-subscriptions /notification-subscriptions-source --notifications-dir /notifications"
-fi
-
-# Enable marketplace registration
-SYNC_ARGS="$SYNC_ARGS --register-marketplaces"
-
-# Run sync command to generate Claude configuration
-agentapi-proxy helpers sync $SYNC_ARGS
-
-echo "[SYNC] Claude configuration sync complete"
-`
-
 // createDeployment creates a Deployment for the session
 func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
 	labels := m.buildLabels(session)
@@ -862,36 +720,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		m.k8sConfig.ClaudeConfigUserConfigMapPrefix,
 		sanitizeLabelValue(req.UserID))
 
-	// Build init containers
-	var initContainers []corev1.Container
-
-	// Add write-pem init container to write GitHub App PEM to shared emptyDir
-	// This runs before clone-repo so both clone-repo and sync-config can use GitHub App auth
-	if writePEMInitContainer := m.buildWritePEMInitContainer(req); writePEMInitContainer != nil {
-		initContainers = append(initContainers, *writePEMInitContainer)
-		log.Printf("[K8S_SESSION] Added write-pem init container for session %s", session.id)
+	// Build init containers — unified single setup container
+	initContainers := []corev1.Container{
+		m.buildSetupInitContainer(session, req),
 	}
-
-	// Add clone-repo init container if repository info is provided
-	if cloneRepoInitContainer := m.buildCloneRepoInitContainer(session, req); cloneRepoInitContainer != nil {
-		initContainers = append(initContainers, *cloneRepoInitContainer)
-	}
-
-	// Add settings merge init container
-	// This merges base, team, and user settings into a single configuration
-	initContainers = append(initContainers, m.buildSettingsMergeInitContainer(session))
-	log.Printf("[K8S_SESSION] Added settings merge init container for session %s", session.id)
-
-	// Add sync init container
-	// This generates ~/.claude.json, ~/.claude/settings.json, and clones marketplace repositories
-	initContainers = append(initContainers, m.buildSyncInitContainer(session, req))
-	log.Printf("[K8S_SESSION] Added sync init container for session %s", session.id)
-
-	// Add MCP servers setup init container if enabled
-	if m.k8sConfig.MCPServersEnabled {
-		initContainers = append(initContainers, m.buildMCPSetupInitContainer(session, req))
-		log.Printf("[K8S_SESSION] Added MCP setup init container for session %s", session.id)
-	}
+	log.Printf("[K8S_SESSION] Added setup init container for session %s", session.id)
 
 	// Determine working directory based on whether repository is specified
 	workingDir := "/home/agentapi/workdir"
@@ -1192,230 +1025,70 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	return err
 }
 
-// writePEMScript is the shell script executed by the write-pem init container
-// It writes the GitHub App PEM file from the GITHUB_APP_PEM environment variable
-// to the shared emptyDir volume so clone-repo and sync-config can use GitHub App authentication
-const writePEMScript = `
-set -e
-
-# Skip if GITHUB_APP_PEM is not set
-if [ -z "$GITHUB_APP_PEM" ]; then
-    echo "[WRITE-PEM] GITHUB_APP_PEM is not set, skipping"
-    exit 0
-fi
-
-echo "[WRITE-PEM] Writing GitHub App PEM to /github-app/app.pem"
-echo "$GITHUB_APP_PEM" > /github-app/app.pem
-chmod 600 /github-app/app.pem
-echo "[WRITE-PEM] GitHub App PEM file created at /github-app/app.pem"
-`
-
-// cloneRepoScript is the shell script executed by the init container to clone the repository
-// The repository is cloned to /home/agentapi/workdir/repo
-const cloneRepoScript = `
-set -e
-
-CLONE_DIR="/home/agentapi/workdir/repo"
-
-# Skip if no repository is specified
-if [ -z "$AGENTAPI_REPO_FULLNAME" ]; then
-    echo "No repository specified, skipping clone"
-    exit 0
-fi
-
-echo "Setting up repository clone for: $AGENTAPI_REPO_FULLNAME"
-
-# Setup GitHub authentication
-# Always run setup-gh to configure git credential helper properly
-# This is required for GitHub Enterprise Server (GHES) even when GITHUB_TOKEN is set
-echo "Setting up GitHub authentication..."
-agentapi-proxy helpers setup-gh --repo-fullname "$AGENTAPI_REPO_FULLNAME"
-
-# Clone or update repository
-if [ -d "$CLONE_DIR/.git" ]; then
-    echo "Repository already exists, pulling latest changes..."
-    cd "$CLONE_DIR"
-    git pull || echo "Warning: git pull failed, continuing with existing repository"
-else
-    echo "Cloning repository to $CLONE_DIR..."
-    gh repo clone "$AGENTAPI_REPO_FULLNAME" "$CLONE_DIR"
-fi
-
-echo "Repository setup completed"
-`
-
-// buildWritePEMInitContainer builds the init container for writing the GitHub App PEM file
-// to the shared emptyDir volume (/github-app/app.pem).
-// Returns nil if GitHubSecretName is not configured or if GithubToken is explicitly provided
-// (in which case GitHub App auth is not used).
-func (m *KubernetesSessionManager) buildWritePEMInitContainer(req *entities.RunServerRequest) *corev1.Container {
-	// Only run when GitHubSecretName is configured (GitHub App auth is available)
-	// and GithubToken is NOT explicitly provided (not using personal token flow)
-	if m.k8sConfig.GitHubSecretName == "" || req.GithubToken != "" {
-		return nil
-	}
-
-	// Use the main container image if InitContainerImage is not specified
+// buildSetupInitContainer builds the single unified init container that replaces
+// write-pem, clone-repo, merge-settings, sync-config, and setup-mcp.
+// It reads /session-settings/settings.yaml (from agentapi-session-{id}-settings Secret)
+// and runs `agentapi-proxy helpers setup` which internally calls:
+//  1. writePEM  – writes GITHUB_APP_PEM to /github-app/app.pem
+//  2. cloneRepo – clones the repository (if session.repository is set)
+//  3. Compile   – generates .claude.json, settings.json, mcp config, env file, startup script
+//  4. syncExtra – copies credentials, CLAUDE.md, notification subscriptions
+func (m *KubernetesSessionManager) buildSetupInitContainer(
+	session *KubernetesSession,
+	req *entities.RunServerRequest,
+) corev1.Container {
 	initImage := m.k8sConfig.InitContainerImage
 	if initImage == "" {
 		initImage = m.k8sConfig.Image
 	}
 
-	var envFrom []corev1.EnvFromSource
+	sessionSettingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
 
-	envFrom = append(envFrom, corev1.EnvFromSource{
-		SecretRef: &corev1.SecretEnvSource{
-			LocalObjectReference: corev1.LocalObjectReference{
-				Name: m.k8sConfig.GitHubSecretName,
-			},
-			Optional: boolPtr(true),
-		},
-	})
-
-	if m.k8sConfig.GitHubConfigSecretName != "" {
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: m.k8sConfig.GitHubConfigSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
+	volumeMounts := []corev1.VolumeMount{
+		// session-settings Secret (read-only) – the single source of truth
+		{Name: "session-settings", MountPath: "/session-settings", ReadOnly: true},
+		// workdir – clone-repo writes here
+		{Name: "workdir", MountPath: "/home/agentapi/workdir"},
+		// claude-config – Compile writes ~/.claude.json, ~/.claude/settings.json here
+		{Name: "claude-config", MountPath: "/home/agentapi"},
+		// credentials-config – syncExtra copies credentials.json from here
+		{Name: "claude-credentials", MountPath: "/credentials-config", ReadOnly: true},
+		// notification subscriptions source
+		{Name: "notification-subscriptions-source", MountPath: "/notification-subscriptions-source", ReadOnly: true},
+		// notifications output dir
+		{Name: "notifications", MountPath: "/notifications"},
 	}
 
-	return &corev1.Container{
-		Name:            "write-pem",
+	// Mount mcp-config output dir if MCP is enabled
+	if m.k8sConfig.MCPServersEnabled {
+		volumeMounts = append(volumeMounts,
+			corev1.VolumeMount{Name: "mcp-config", MountPath: "/mcp-config"},
+		)
+	}
+
+	setupScript := `set -e
+echo "[SETUP] Starting unified session setup"
+agentapi-proxy helpers setup \
+  --input /session-settings/settings.yaml \
+  --credentials-file /credentials-config/credentials.json \
+  --notification-subscriptions /notification-subscriptions-source \
+  --notifications-dir /notifications \
+  --register-marketplaces
+echo "[SETUP] Done"
+`
+
+	return corev1.Container{
+		Name:            "setup",
 		Image:           initImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{"sh", "-c"},
-		Args:            []string{writePEMScript},
-		EnvFrom:         envFrom,
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "github-app",
-				MountPath: "/github-app",
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
-		},
-	}
-}
-
-// buildCloneRepoInitContainer builds the init container for repository cloning
-func (m *KubernetesSessionManager) buildCloneRepoInitContainer(session *KubernetesSession, req *entities.RunServerRequest) *corev1.Container {
-	// Skip if no repository info is provided
-	if req.RepoInfo == nil || req.RepoInfo.FullName == "" {
-		return nil
-	}
-
-	// Use the main container image if InitContainerImage is not specified
-	initImage := m.k8sConfig.InitContainerImage
-	if initImage == "" {
-		initImage = m.k8sConfig.Image
-	}
-
-	// Build environment variables
-	env := []corev1.EnvVar{
-		{Name: "AGENTAPI_REPO_FULLNAME", Value: req.RepoInfo.FullName},
-		{Name: "HOME", Value: "/home/agentapi"},
-	}
-
-	// Build envFrom for GitHub secrets
-	// When params.github_token is provided, use session-specific Secret instead of GitHubSecretName
-	// to avoid exposing GITHUB_APP_PEM and other auth credentials
-	var envFrom []corev1.EnvFromSource
-
-	if req.GithubToken != "" {
-		// When params.github_token is provided:
-		// - Do NOT mount GitHubSecretName (to avoid exposing GITHUB_APP_PEM and other auth credentials)
-		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
-		// - Mount session-specific Secret for GITHUB_TOKEN
-
-		// Mount GitHub config Secret (GITHUB_API, GITHUB_URL) if available
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
-
-		// Mount session-specific Secret for GITHUB_TOKEN
-		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: githubTokenSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided:
-		// - Mount GitHubSecretName for full GitHub App authentication
-		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: m.k8sConfig.GitHubSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-
-		// Mount GitHub config Secret if available (for any additional config)
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
-	}
-
-	// Add personal API key Secret as envFrom for user-scoped sessions (init container)
-	if req.Scope == entities.ScopeUser {
-		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: personalAPIKeySecretName,
-				},
-				Optional: boolPtr(true), // Optional - user may not have generated a personal API key yet
-			},
-		})
-	}
-
-	return &corev1.Container{
-		Name:            "clone-repo",
-		Image:           initImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"sh", "-c"},
-		Args:            []string{cloneRepoScript},
-		Env:             env,
-		EnvFrom:         envFrom,
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "workdir",
-				MountPath: "/home/agentapi/workdir",
-			},
-			// Mount emptyDir for GitHub App PEM file
-			{
-				Name:      "github-app",
-				MountPath: "/github-app",
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
+		Args:            []string{setupScript},
+		VolumeMounts:    volumeMounts,
+		Env: []corev1.EnvVar{
+			// Tell setup where the session-settings file lives (also the default, but explicit)
+			{Name: "SESSION_SETTINGS_PATH", Value: "/session-settings/settings.yaml"},
+			// Ensure the Secret name is available for debugging
+			{Name: "SESSION_SETTINGS_SECRET", Value: sessionSettingsSecretName},
 		},
 	}
 }
@@ -2181,11 +1854,14 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 		},
 	})
 
-	// EmptyDir for GitHub App PEM file (shared between init container and main container)
+	// session-settings Secret – the single source of truth consumed by the setup init container
+	sessionSettingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
 	volumes = append(volumes, corev1.Volume{
-		Name: "github-app",
+		Name: "session-settings",
 		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: sessionSettingsSecretName,
+			},
 		},
 	})
 
@@ -2231,12 +1907,10 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 	// No need to mount as volume
 
 	// Add MCP server configuration volumes if enabled
+	// mcp-config EmptyDir is written by the setup init container (via Compile)
 	if m.k8sConfig.MCPServersEnabled {
 		volumes = append(volumes, m.buildMCPVolumes(session)...)
 	}
-
-	// Add sync configuration volumes (settings secret)
-	volumes = append(volumes, m.buildSyncVolumes(session)...)
 
 	// Add OpenTelemetry Collector ConfigMap volume
 	if m.k8sConfig.OtelCollectorEnabled {
@@ -2351,122 +2025,6 @@ func (m *KubernetesSessionManager) buildMCPVolumes(session *KubernetesSession) [
 	// Add mcp-config EmptyDir for merged output
 	volumes = append(volumes, corev1.Volume{
 		Name: "mcp-config",
-		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
-		},
-	})
-
-	return volumes
-}
-
-// buildSyncVolumes builds the volumes for sync configuration
-// Uses projected volume to merge base, team, and user settings
-func (m *KubernetesSessionManager) buildSyncVolumes(session *KubernetesSession) []corev1.Volume {
-	volumes := []corev1.Volume{}
-
-	// Build projected volume sources for settings-config-source
-	var projectedSources []corev1.VolumeProjection
-
-	// Add base settings Secret (if configured)
-	if m.k8sConfig.SettingsBaseSecret != "" {
-		projectedSources = append(projectedSources, corev1.VolumeProjection{
-			Secret: &corev1.SecretProjection{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: m.k8sConfig.SettingsBaseSecret,
-				},
-				Items: []corev1.KeyToPath{
-					{
-						Key:  "settings.json",
-						Path: "base/settings.json",
-					},
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
-
-	// Add team settings Secrets
-	if session.Request() != nil {
-		for i, team := range session.Request().Teams {
-			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
-			projectedSources = append(projectedSources, corev1.VolumeProjection{
-				Secret: &corev1.SecretProjection{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: secretName,
-					},
-					Items: []corev1.KeyToPath{
-						{
-							Key:  "settings.json",
-							Path: fmt.Sprintf("team/%d/settings.json", i),
-						},
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
-	}
-
-	// Add user settings Secret
-	if session.Request() != nil && session.Request().UserID != "" {
-		userSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(session.Request().UserID))
-		projectedSources = append(projectedSources, corev1.VolumeProjection{
-			Secret: &corev1.SecretProjection{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: userSecretName,
-				},
-				Items: []corev1.KeyToPath{
-					{
-						Key:  "settings.json",
-						Path: "user/settings.json",
-					},
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
-
-	// Add oneshot settings Secret (highest priority, added last)
-	if session.Request() != nil && session.Request().Oneshot {
-		oneshotSecretName := fmt.Sprintf("%s-oneshot-settings", session.ServiceName())
-		projectedSources = append(projectedSources, corev1.VolumeProjection{
-			Secret: &corev1.SecretProjection{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: oneshotSecretName,
-				},
-				Items: []corev1.KeyToPath{
-					{
-						Key:  "settings.json",
-						Path: "oneshot/settings.json",
-					},
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
-
-	// Add settings-config-source as projected volume
-	if len(projectedSources) > 0 {
-		volumes = append(volumes, corev1.Volume{
-			Name: "settings-config-source",
-			VolumeSource: corev1.VolumeSource{
-				Projected: &corev1.ProjectedVolumeSource{
-					Sources: projectedSources,
-				},
-			},
-		})
-	} else {
-		// Use an EmptyDir if no secrets configured
-		volumes = append(volumes, corev1.Volume{
-			Name: "settings-config-source",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		})
-	}
-
-	// Add settings-config EmptyDir for merged output
-	volumes = append(volumes, corev1.Volume{
-		Name: "settings-config",
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
@@ -3028,273 +2586,6 @@ func (m *KubernetesSessionManager) getSessionStatusFromDeployment(sessionID stri
 		return "starting"
 	}
 	return "unhealthy"
-}
-
-// buildMCPSetupInitContainer builds the init container for MCP server configuration setup
-func (m *KubernetesSessionManager) buildMCPSetupInitContainer(session *KubernetesSession, req *entities.RunServerRequest) corev1.Container {
-	// Use the main container image if InitContainerImage is not specified
-	initImage := m.k8sConfig.InitContainerImage
-	if initImage == "" {
-		initImage = m.k8sConfig.Image
-	}
-
-	// Build envFrom for environment variables needed by MCP configs
-	// When params.github_token is provided, use session-specific Secret instead of GitHubSecretName
-	// to avoid exposing GITHUB_APP_PEM and other auth credentials
-	var envFrom []corev1.EnvFromSource
-
-	if req.GithubToken != "" {
-		// When params.github_token is provided:
-		// - Do NOT mount GitHubSecretName (to avoid exposing GITHUB_APP_PEM and other auth credentials)
-		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
-		// - Mount session-specific Secret for GITHUB_TOKEN
-
-		// Mount GitHub config Secret (GITHUB_API, GITHUB_URL) if available
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
-
-		// Mount session-specific Secret for GITHUB_TOKEN
-		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: githubTokenSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided:
-		// - Mount GitHubSecretName for full GitHub App authentication
-		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: m.k8sConfig.GitHubSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-
-		// Mount GitHub config Secret if available (for any additional config)
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
-	}
-
-	// Add team-based credentials Secrets (for environment variable expansion)
-	for _, team := range req.Teams {
-		secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(team))
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: secretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
-
-	// Add user-specific credentials Secret
-	if req.UserID != "" {
-		userSecretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.UserID))
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: userSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
-
-	return corev1.Container{
-		Name:            "setup-mcp",
-		Image:           initImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"sh", "-c"},
-		Args:            []string{setupMCPServersScript},
-		EnvFrom:         envFrom,
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "mcp-config-source",
-				MountPath: "/mcp-config-source",
-				ReadOnly:  true,
-			},
-			{
-				Name:      "mcp-config",
-				MountPath: "/mcp-config",
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
-		},
-	}
-}
-
-// buildSyncInitContainer builds the init container for syncing Claude configuration
-// This replaces both buildClaudeSetupInitContainer and buildMarketplaceSetupInitContainer
-func (m *KubernetesSessionManager) buildSyncInitContainer(session *KubernetesSession, req *entities.RunServerRequest) corev1.Container {
-	// Use the main container image if InitContainerImage is not specified
-	initImage := m.k8sConfig.InitContainerImage
-	if initImage == "" {
-		initImage = m.k8sConfig.Image
-	}
-
-	// Build envFrom for environment variables needed by sync (GITHUB_TOKEN for marketplace cloning)
-	var envFrom []corev1.EnvFromSource
-
-	if req.GithubToken != "" {
-		// When params.github_token is provided:
-		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
-		// - Mount session-specific Secret for GITHUB_TOKEN
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
-
-		// Mount session-specific Secret for GITHUB_TOKEN
-		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: githubTokenSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided:
-		// - Mount GitHubSecretName for full GitHub App authentication
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: m.k8sConfig.GitHubSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-
-		// Mount GitHub config Secret if available
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
-	}
-
-	return corev1.Container{
-		Name:            "sync-config",
-		Image:           initImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"sh", "-c"},
-		Args:            []string{syncScript},
-		EnvFrom:         envFrom,
-		Env: []corev1.EnvVar{
-			// GitHub App PEM path (file is created by write-pem init container in emptyDir)
-			{Name: "GITHUB_APP_PEM_PATH", Value: "/github-app/app.pem"},
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "settings-config",
-				MountPath: "/settings-config",
-				ReadOnly:  true,
-			},
-			{
-				// Mount claude-config EmptyDir to /home/agentapi
-				// Sync generates .claude.json and .claude/ directory here
-				Name:      "claude-config",
-				MountPath: "/home/agentapi",
-			},
-			{
-				// Mount claude-credentials Secret for copying credentials.json
-				Name:      "claude-credentials",
-				MountPath: "/credentials-config",
-				ReadOnly:  true,
-			},
-			{
-				// Mount notification subscriptions Secret (source for copying)
-				Name:      "notification-subscriptions-source",
-				MountPath: "/notification-subscriptions-source",
-				ReadOnly:  true,
-			},
-			{
-				// Mount notifications EmptyDir (destination for copying)
-				Name:      "notifications",
-				MountPath: "/notifications",
-			},
-			{
-				// Mount emptyDir for GitHub App PEM file (written by write-pem init container)
-				Name:      "github-app",
-				MountPath: "/github-app",
-				ReadOnly:  true,
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
-		},
-	}
-}
-
-// buildSettingsMergeInitContainer builds the init container for merging settings configurations
-// It merges base, team, and user settings into a single configuration
-func (m *KubernetesSessionManager) buildSettingsMergeInitContainer(session *KubernetesSession) corev1.Container {
-	// Use the main container image if InitContainerImage is not specified
-	initImage := m.k8sConfig.InitContainerImage
-	if initImage == "" {
-		initImage = m.k8sConfig.Image
-	}
-
-	return corev1.Container{
-		Name:            "merge-settings",
-		Image:           initImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"sh", "-c"},
-		Args:            []string{mergeSettingsScript},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "settings-config-source",
-				MountPath: "/settings-config-source",
-				ReadOnly:  true,
-			},
-			{
-				Name:      "settings-config",
-				MountPath: "/settings-config",
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
-		},
-	}
 }
 
 // buildMainContainerVolumeMounts builds the volume mounts for the main container
@@ -3876,6 +3167,7 @@ func generatePersonalAPIKey() (string, error) {
 // buildSessionSettings constructs SessionSettings from RunServerRequest and session state.
 // This consolidates buildEnvVars and envFrom logic into a single unified structure.
 func (m *KubernetesSessionManager) buildSessionSettings(
+	ctx context.Context,
 	session *KubernetesSession,
 	req *entities.RunServerRequest,
 	webhookPayload []byte,
@@ -4016,7 +3308,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Expand secrets into env map
 	for _, secretName := range secretNames {
 		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
-			context.Background(),
+			ctx,
 			secretName,
 			metav1.GetOptions{},
 		)
@@ -4036,12 +3328,17 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	settings.Env = env
 
-	// Claude config (defaults from ensureBaseSecret)
+	// Merge settings.json from base/team/user/oneshot Secrets (proxy-side, before Pod starts)
+	mergedSettingsJSON, mergedMCPServers := m.mergeSettingsAndMCP(ctx, session, req)
+
+	// Claude config
 	settings.Claude = sessionsettings.ClaudeConfig{
 		ClaudeJSON: map[string]interface{}{
 			"hasCompletedOnboarding":        true,
 			"bypassPermissionsModeAccepted": true,
 		},
+		SettingsJSON: mergedSettingsJSON,
+		MCPServers:   mergedMCPServers,
 	}
 
 	// Repository info
@@ -4096,7 +3393,7 @@ func (m *KubernetesSessionManager) createSessionSettingsSecret(
 	req *entities.RunServerRequest,
 	webhookPayload []byte,
 ) error {
-	settings := m.buildSessionSettings(session, req, webhookPayload)
+	settings := m.buildSessionSettings(ctx, session, req, webhookPayload)
 
 	yamlData, err := sessionsettings.MarshalYAML(settings)
 	if err != nil {
@@ -4160,4 +3457,165 @@ func (m *KubernetesSessionManager) deleteOneshotSettingsSecret(ctx context.Conte
 		return fmt.Errorf("failed to delete oneshot settings secret: %w", err)
 	}
 	return nil
+}
+
+// mergeSettingsAndMCP reads settings.json and mcp-servers.json from the relevant
+// Kubernetes Secrets (base, team[], user, oneshot) and merges them on the proxy side,
+// returning the merged structures ready to embed into SessionSettings.
+// This eliminates the need for separate merge-settings and setup-mcp init containers.
+func (m *KubernetesSessionManager) mergeSettingsAndMCP(
+	ctx context.Context,
+	session *KubernetesSession,
+	req *entities.RunServerRequest,
+) (settingsJSON map[string]interface{}, mcpServers map[string]interface{}) {
+	// --- settings.json merge ---
+	settingsDirs := []settings.SettingsConfig{}
+
+	// Helper: read settings.json from a Secret key and unmarshal
+	readSettingsSecret := func(secretName, key string) *settings.SettingsConfig {
+		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				log.Printf("[K8S_SESSION] Warning: failed to read settings secret %s: %v", secretName, err)
+			}
+			return nil
+		}
+		data, ok := secret.Data[key]
+		if !ok {
+			return nil
+		}
+		var cfg settings.SettingsConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to parse settings.json from secret %s: %v", secretName, err)
+			return nil
+		}
+		return &cfg
+	}
+
+	// 1. base
+	if m.k8sConfig.SettingsBaseSecret != "" {
+		if cfg := readSettingsSecret(m.k8sConfig.SettingsBaseSecret, "settings.json"); cfg != nil {
+			settingsDirs = append(settingsDirs, *cfg)
+		}
+	}
+
+	// 2. team (in order)
+	for _, team := range req.Teams {
+		secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
+		if cfg := readSettingsSecret(secretName, "settings.json"); cfg != nil {
+			settingsDirs = append(settingsDirs, *cfg)
+		}
+	}
+	// team-scoped single team
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
+		if cfg := readSettingsSecret(secretName, "settings.json"); cfg != nil {
+			settingsDirs = append(settingsDirs, *cfg)
+		}
+	}
+
+	// 3. user
+	if req.UserID != "" {
+		secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
+		if cfg := readSettingsSecret(secretName, "settings.json"); cfg != nil {
+			settingsDirs = append(settingsDirs, *cfg)
+		}
+	}
+
+	// 4. oneshot (highest priority)
+	if req.Oneshot {
+		oneshotSecretName := fmt.Sprintf("%s-oneshot-settings", session.ServiceName())
+		if cfg := readSettingsSecret(oneshotSecretName, "settings.json"); cfg != nil {
+			settingsDirs = append(settingsDirs, *cfg)
+		}
+	}
+
+	// Merge all settings configs
+	mergedSettings := settings.MergeInMemory(settingsDirs)
+
+	// Convert merged SettingsConfig → map[string]interface{} for SessionSettings.Claude.SettingsJSON
+	if mergedSettings != nil {
+		raw, err := json.Marshal(mergedSettings)
+		if err == nil {
+			if err := json.Unmarshal(raw, &settingsJSON); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to convert merged settings to map: %v", err)
+				settingsJSON = nil
+			}
+		}
+	}
+
+	// --- mcp-servers.json merge ---
+	if m.k8sConfig.MCPServersEnabled {
+		readMCPSecret := func(secretName, key string) *mcp.MCPConfig {
+			secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+			if err != nil {
+				if !errors.IsNotFound(err) {
+					log.Printf("[K8S_SESSION] Warning: failed to read mcp secret %s: %v", secretName, err)
+				}
+				return nil
+			}
+			data, ok := secret.Data[key]
+			if !ok {
+				return nil
+			}
+			var cfg mcp.MCPConfig
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to parse mcp-servers.json from secret %s: %v", secretName, err)
+				return nil
+			}
+			return &cfg
+		}
+
+		mcpConfigs := []*mcp.MCPConfig{}
+
+		// base MCP
+		if m.k8sConfig.SettingsBaseSecret != "" {
+			if cfg := readMCPSecret(m.k8sConfig.SettingsBaseSecret, "mcp-servers.json"); cfg != nil {
+				mcpConfigs = append(mcpConfigs, cfg)
+			}
+		}
+
+		// team MCP (in order)
+		for i, team := range req.Teams {
+			secretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(team))
+			_ = i
+			if cfg := readMCPSecret(secretName, "mcp-servers.json"); cfg != nil {
+				mcpConfigs = append(mcpConfigs, cfg)
+			}
+		}
+		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+			secretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(req.TeamID))
+			if cfg := readMCPSecret(secretName, "mcp-servers.json"); cfg != nil {
+				mcpConfigs = append(mcpConfigs, cfg)
+			}
+		}
+
+		// user MCP
+		if req.UserID != "" {
+			secretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(req.UserID))
+			if cfg := readMCPSecret(secretName, "mcp-servers.json"); cfg != nil {
+				mcpConfigs = append(mcpConfigs, cfg)
+			}
+		}
+
+		// Merge all MCP configs (later overrides earlier)
+		merged := &mcp.MCPConfig{MCPServers: make(map[string]mcp.MCPServer)}
+		for _, cfg := range mcpConfigs {
+			for name, server := range cfg.MCPServers {
+				merged.MCPServers[name] = server
+			}
+		}
+
+		if len(merged.MCPServers) > 0 {
+			raw, err := json.Marshal(merged.MCPServers)
+			if err == nil {
+				if err := json.Unmarshal(raw, &mcpServers); err != nil {
+					log.Printf("[K8S_SESSION] Warning: failed to convert merged MCP servers to map: %v", err)
+					mcpServers = nil
+				}
+			}
+		}
+	}
+
+	return settingsJSON, mcpServers
 }

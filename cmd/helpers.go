@@ -17,6 +17,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/github"
 	"github.com/takutakahashi/agentapi-proxy/pkg/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
@@ -832,5 +833,83 @@ func runMergeSettingsConfig(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Successfully merged %d marketplace(s) and %d plugin(s) to %s\n", marketplaceCount, pluginCount, settingsOutputPath)
 	}
 
+	return nil
+}
+
+// setup command flags
+var (
+	setupInputPath                 string
+	setupCredentialsFile           string
+	setupClaudeMDFile              string
+	setupNotificationSubscriptions string
+	setupNotificationsDir          string
+	setupRegisterMarketplaces      bool
+)
+
+var setupCmd = &cobra.Command{
+	Use:   "setup",
+	Short: "Run unified session setup (write-pem, clone-repo, compile-settings, sync-extra)",
+	Long: `Run the full init-container setup sequence for a session Pod.
+
+Reads /session-settings/settings.yaml and performs:
+  1. write-pem  - writes GITHUB_APP_PEM to /github-app/app.pem
+  2. clone-repo - clones the repository (if session.repository is set)
+  3. compile    - generates .claude.json, settings.json, mcp config, env file, startup script
+  4. sync-extra - copies credentials, CLAUDE.md, notification subscriptions
+
+This replaces the old write-pem, clone-repo, merge-settings, sync-config, and setup-mcp
+init containers with a single unified step.
+
+Examples:
+  # Use defaults (reads /session-settings/settings.yaml)
+  agentapi-proxy helpers setup
+
+  # Custom paths
+  agentapi-proxy helpers setup \
+    --input /session-settings/settings.yaml \
+    --credentials-file /credentials-config/credentials.json \
+    --notification-subscriptions /notification-subscriptions-source \
+    --notifications-dir /notifications \
+    --register-marketplaces`,
+	RunE: runSetup,
+}
+
+func init() {
+	defaults := sessionsettings.DefaultSetupOptions()
+	compileDefaults := sessionsettings.DefaultCompileOptions()
+
+	setupCmd.Flags().StringVar(&setupInputPath, "input", defaults.InputPath,
+		"Path to the session settings YAML file")
+	setupCmd.Flags().StringVar(&setupCredentialsFile, "credentials-file", "",
+		"Path to credentials.json from Credentials Secret (optional)")
+	setupCmd.Flags().StringVar(&setupClaudeMDFile, "claude-md-file", "",
+		"Path to CLAUDE.md to copy into ~/.claude/CLAUDE.md (optional)")
+	setupCmd.Flags().StringVar(&setupNotificationSubscriptions, "notification-subscriptions", "",
+		"Source directory for notification subscription files (optional)")
+	setupCmd.Flags().StringVar(&setupNotificationsDir, "notifications-dir", "",
+		"Destination directory for notification files (optional)")
+	setupCmd.Flags().BoolVar(&setupRegisterMarketplaces, "register-marketplaces", false,
+		"Register cloned marketplace repos via claude CLI")
+
+	_ = compileDefaults // referenced via DefaultCompileOptions inside Setup()
+	HelpersCmd.AddCommand(setupCmd)
+}
+
+func runSetup(cmd *cobra.Command, args []string) error {
+	opts := sessionsettings.SetupOptions{
+		InputPath:                 setupInputPath,
+		CompileOptions:            sessionsettings.DefaultCompileOptions(),
+		CredentialsFile:           setupCredentialsFile,
+		ClaudeMDFile:              setupClaudeMDFile,
+		NotificationSubscriptions: setupNotificationSubscriptions,
+		NotificationsDir:          setupNotificationsDir,
+		RegisterMarketplaces:      setupRegisterMarketplaces,
+	}
+
+	if err := sessionsettings.Setup(opts); err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+
+	fmt.Println("Session setup completed successfully!")
 	return nil
 }
