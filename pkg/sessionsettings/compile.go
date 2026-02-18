@@ -26,8 +26,8 @@ func DefaultCompileOptions() CompileOptions {
 	return CompileOptions{
 		InputPath:     "/session-settings/settings.yaml",
 		OutputDir:     "/home/agentapi",
-		EnvFilePath:   "/session-settings/env",
-		StartupPath:   "/session-settings/startup.sh",
+		EnvFilePath:   "/home/agentapi/.session/env",
+		StartupPath:   "/home/agentapi/.session/startup.sh",
 		MCPOutputPath: "/home/agentapi/.mcp-config/merged.json",
 	}
 }
