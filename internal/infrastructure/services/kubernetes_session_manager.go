@@ -1139,11 +1139,10 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *Kubernet
 			{Name: "SYNC_INTERVAL", Value: "10"},
 		},
 		VolumeMounts: []corev1.VolumeMount{
-			// Mount .claude directory (shared with main container)
+			// Mount shared .claude directory (written by setup, read by credentials-sync)
 			{
-				Name:      "claude-config",
+				Name:      "dot-claude",
 				MountPath: "/home/agentapi/.claude",
-				SubPath:   ".claude",
 			},
 		},
 		Resources: corev1.ResourceRequirements{
@@ -1726,38 +1725,17 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 	volumes := []corev1.Volume{
 		// Workdir volume (PVC or EmptyDir based on configuration)
 		workdirVolume,
-		// Base Claude configuration Secret (contains claude.json, settings.json with GITHUB_TOKEN)
+		// Credentials volume (Secret for user-scoped, EmptyDir for team-scoped)
+		// This Secret is managed by the credentials-sync sidecar for user-scoped sessions
+		credentialsVolume,
+		// dot-claude EmptyDir – shared between main container and credentials-sync sidecar
+		// setup writes ~/.claude/ here; credentials-sync reads .credentials.json from here
 		{
-			Name: "claude-config-base",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: m.k8sConfig.ClaudeConfigBaseSecret,
-					Optional:   boolPtr(true),
-				},
-			},
-		},
-		// User-specific Claude configuration ConfigMap
-		{
-			Name: "claude-config-user",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: userConfigMapName,
-					},
-					Optional: boolPtr(true), // User config is optional
-				},
-			},
-		},
-		// EmptyDir for merged Claude configuration
-		{
-			Name: "claude-config",
+			Name: "dot-claude",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-		// Credentials volume (Secret for user-scoped, EmptyDir for team-scoped)
-		// This Secret is managed by the credentials-sync sidecar for user-scoped sessions
-		credentialsVolume,
 	}
 
 	// Add notification subscription Secret volume (source for init container)
@@ -1773,14 +1751,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 		},
 	})
 
-	// EmptyDir for notifications (writable, populated by init container from Secret)
-	volumes = append(volumes, corev1.Volume{
-		Name: "notifications",
-		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
-		},
-	})
-
 	// session-settings Secret – the single source of truth consumed by the setup init container
 	sessionSettingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
 	volumes = append(volumes, corev1.Volume{
@@ -1789,14 +1759,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 			Secret: &corev1.SecretVolumeSource{
 				SecretName: sessionSettingsSecretName,
 			},
-		},
-	})
-
-	// EmptyDir for GitHub App PEM file (written by setup init container, read by main container)
-	volumes = append(volumes, corev1.Volume{
-		Name: "github-app",
-		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
 	})
 
@@ -1956,14 +1918,6 @@ func (m *KubernetesSessionManager) buildMCPVolumes(session *KubernetesSession) [
 			},
 		})
 	}
-
-	// Add mcp-config EmptyDir for merged output
-	volumes = append(volumes, corev1.Volume{
-		Name: "mcp-config",
-		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
-		},
-	})
 
 	return volumes
 }
@@ -2303,8 +2257,8 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
 		{Name: "AGENTAPI_USER_ID", Value: req.UserID},
 		{Name: "HOME", Value: "/home/agentapi"},
-		// GitHub App PEM path (file is created by clone-repo init container in emptyDir)
-		{Name: "GITHUB_APP_PEM_PATH", Value: "/github-app/app.pem"},
+		// GitHub App PEM path (file is written by setup directly to container FS)
+		{Name: "GITHUB_APP_PEM_PATH", Value: "/tmp/github-app/app.pem"},
 	}
 
 	// Add Claude Code telemetry configuration
@@ -2530,21 +2484,10 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			Name:      "workdir",
 			MountPath: "/home/agentapi/workdir",
 		},
-		// Mount claude-config EmptyDir as entire home dir
-		// (setup writes .claude.json and .claude/ here at startup; no SubPath to avoid mount errors on empty dir)
+		// dot-claude EmptyDir – setup writes .claude/ here; shared with credentials-sync sidecar
 		{
-			Name:      "claude-config",
-			MountPath: "/home/agentapi",
-		},
-		// Notifications EmptyDir (overlay on top of claude-config home mount)
-		{
-			Name:      "notifications",
-			MountPath: "/home/agentapi/notifications",
-		},
-		// Mount emptyDir for GitHub App PEM file (written by setup on startup)
-		{
-			Name:      "github-app",
-			MountPath: "/github-app",
+			Name:      "dot-claude",
+			MountPath: "/home/agentapi/.claude",
 		},
 		// session-settings Secret – read by setup on startup
 		{
@@ -2564,15 +2507,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			MountPath: "/notification-subscriptions-source",
 			ReadOnly:  true,
 		},
-	}
-
-	// Add MCP config volume mount if enabled
-	if m.k8sConfig.MCPServersEnabled {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "mcp-config",
-			MountPath: "/mcp-config",
-			ReadOnly:  true,
-		})
 	}
 
 	// Add webhook payload volume mount if webhook payload is provided
@@ -3161,7 +3095,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"AGENTAPI_SESSION_ID": session.id,
 		"AGENTAPI_USER_ID":    req.UserID,
 		"HOME":                "/home/agentapi",
-		"GITHUB_APP_PEM_PATH": "/github-app/app.pem",
+		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
 	}
 
 	// Add Claude Code telemetry configuration

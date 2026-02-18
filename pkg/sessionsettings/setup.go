@@ -35,7 +35,7 @@ type SetupOptions struct {
 	RegisterMarketplaces bool
 
 	// PEMOutputPath is where GITHUB_APP_PEM content is written.
-	// Defaults to /github-app/app.pem.
+	// Defaults to /tmp/github-app/app.pem.
 	PEMOutputPath string
 }
 
@@ -44,7 +44,7 @@ func DefaultSetupOptions() SetupOptions {
 	return SetupOptions{
 		InputPath:      "/session-settings/settings.yaml",
 		CompileOptions: DefaultCompileOptions(),
-		PEMOutputPath:  "/github-app/app.pem",
+		PEMOutputPath:  "/tmp/github-app/app.pem",
 	}
 }
 
