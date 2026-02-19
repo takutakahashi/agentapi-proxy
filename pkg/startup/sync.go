@@ -316,6 +316,16 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 				log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
 			}
 		}
+
+		// Install enabled plugins after marketplaces are registered
+		if settings != nil && len(settings.EnabledPlugins) > 0 {
+			for _, plugin := range settings.EnabledPlugins {
+				resolvedPlugin := resolvePluginName(plugin, nameMapping)
+				if err := installPlugin(opts.OutputDir, resolvedPlugin); err != nil {
+					log.Printf("[SYNC] Warning: failed to install plugin %s: %v", resolvedPlugin, err)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -450,6 +460,23 @@ func registerMarketplaces(outputDir string, marketplacesDir string) error {
 
 		log.Printf("[SYNC] Successfully registered marketplace at %s", marketplacePath)
 	}
+	return nil
+}
+
+// installPlugin installs a plugin using claude CLI
+// pluginIdentifier is in "plugin-name@marketplace-name" format
+func installPlugin(outputDir string, pluginIdentifier string) error {
+	log.Printf("[SYNC] Installing plugin: %s", pluginIdentifier)
+
+	cmd := exec.Command(claudeBinPath, "plugin", "install", pluginIdentifier)
+	// Set HOME to outputDir so claude CLI writes to the correct location
+	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to install plugin %s: %w, output: %s", pluginIdentifier, err, string(output))
+	}
+
+	log.Printf("[SYNC] Successfully installed plugin: %s", pluginIdentifier)
 	return nil
 }
 
