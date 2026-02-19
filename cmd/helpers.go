@@ -839,6 +839,7 @@ func runMergeSettingsConfig(cmd *cobra.Command, args []string) error {
 // setup command flags
 var (
 	setupInputPath                 string
+	setupSettingsFile              string
 	setupCredentialsFile           string
 	setupClaudeMDFile              string
 	setupNotificationSubscriptions string
@@ -880,6 +881,8 @@ func init() {
 
 	setupCmd.Flags().StringVar(&setupInputPath, "input", defaults.InputPath,
 		"Path to the session settings YAML file")
+	setupCmd.Flags().StringVar(&setupSettingsFile, "settings-file", "",
+		"Path to user settings.json with marketplace/plugin config (optional)")
 	setupCmd.Flags().StringVar(&setupCredentialsFile, "credentials-file", "",
 		"Path to credentials.json from Credentials Secret (optional)")
 	setupCmd.Flags().StringVar(&setupClaudeMDFile, "claude-md-file", "",
@@ -898,6 +901,7 @@ func init() {
 func runSetup(cmd *cobra.Command, args []string) error {
 	opts := sessionsettings.SetupOptions{
 		InputPath:                 setupInputPath,
+		SettingsFile:              setupSettingsFile,
 		CompileOptions:            sessionsettings.DefaultCompileOptions(),
 		CredentialsFile:           setupCredentialsFile,
 		ClaudeMDFile:              setupClaudeMDFile,

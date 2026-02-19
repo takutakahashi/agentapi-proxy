@@ -34,6 +34,10 @@ type SetupOptions struct {
 	// RegisterMarketplaces registers cloned marketplace repos via claude CLI.
 	RegisterMarketplaces bool
 
+	// SettingsFile is the path to the user settings.json (from claude-config-user ConfigMap).
+	// Contains marketplace and plugin configuration. Optional.
+	SettingsFile string
+
 	// PEMOutputPath is where GITHUB_APP_PEM content is written.
 	// Defaults to /tmp/github-app/app.pem.
 	PEMOutputPath string
@@ -173,6 +177,7 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 
 	syncOpts := startup.SyncOptions{
 		OutputDir:                 outputDir,
+		SettingsFile:              opts.SettingsFile,
 		CredentialsFile:           opts.CredentialsFile,
 		ClaudeMDFile:              opts.ClaudeMDFile,
 		NotificationSubscriptions: opts.NotificationSubscriptions,
@@ -187,5 +192,6 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 		}
 	}
 
-	return startup.SyncExtra(syncOpts)
+	// Use Sync (not SyncExtra) to also handle marketplace cloning and plugin registration
+	return startup.Sync(syncOpts)
 }

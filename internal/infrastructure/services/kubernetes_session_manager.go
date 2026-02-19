@@ -1735,6 +1735,18 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
+		// claude-config-user ConfigMap – contains user settings.json with marketplace/plugin config
+		{
+			Name: "claude-config-user",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: userConfigMapName,
+					},
+					Optional: boolPtr(true),
+				},
+			},
+		},
 	}
 
 	// Add notification subscription Secret volume (source for init container)
@@ -2500,6 +2512,12 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			MountPath: "/credentials-config",
 			ReadOnly:  true,
 		},
+		// claude-config-user ConfigMap – user settings.json with marketplace/plugin config
+		{
+			Name:      "claude-config-user",
+			MountPath: "/claude-config-user",
+			ReadOnly:  true,
+		},
 		// notification subscriptions source – read by setup on startup
 		{
 			Name:      "notification-subscriptions-source",
@@ -2539,6 +2557,7 @@ func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
 echo "[STARTUP] Running session setup"
 agentapi-proxy helpers setup \
   --input /session-settings/settings.yaml \
+  --settings-file /claude-config-user/settings.json \
   --credentials-file /credentials-config/credentials.json \
   --notification-subscriptions /notification-subscriptions-source \
   --notifications-dir /home/agentapi/notifications \
