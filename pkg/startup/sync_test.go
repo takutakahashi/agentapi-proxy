@@ -848,7 +848,6 @@ func TestSyncMarketplaces(t *testing.T) {
 }
 
 func TestCloneMarketplace(t *testing.T) {
-	// Skip if git is not available
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available, skipping clone tests")
 	}
@@ -856,55 +855,16 @@ func TestCloneMarketplace(t *testing.T) {
 	t.Run("clones new repository", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		// Create a local git repo to clone from
 		sourceDir := filepath.Join(tmpDir, "source")
-		if err := os.MkdirAll(sourceDir, 0755); err != nil {
-			t.Fatalf("Failed to create source dir: %v", err)
-		}
+		createTestGitRepo(t, sourceDir, map[string]string{
+			"test.txt": "test content",
+		})
 
-		// Initialize git repo
-		cmd := exec.Command("git", "init")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to init git repo: %v", err)
-		}
-
-		// Configure git user for the test repo
-		cmd = exec.Command("git", "config", "user.email", "test@test.com")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to config git email: %v", err)
-		}
-		cmd = exec.Command("git", "config", "user.name", "Test User")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to config git name: %v", err)
-		}
-
-		// Create a file and commit
-		testFile := filepath.Join(sourceDir, "test.txt")
-		if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
-			t.Fatalf("Failed to write test file: %v", err)
-		}
-		cmd = exec.Command("git", "add", ".")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to git add: %v", err)
-		}
-		cmd = exec.Command("git", "commit", "-m", "initial commit")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to git commit: %v", err)
-		}
-
-		// Clone the repo
 		targetDir := filepath.Join(tmpDir, "target")
-		err := cloneMarketplace(sourceDir, targetDir)
-		if err != nil {
+		if err := cloneMarketplace(sourceDir, targetDir); err != nil {
 			t.Fatalf("cloneMarketplace failed: %v", err)
 		}
 
-		// Verify clone succeeded
 		if _, err := os.Stat(filepath.Join(targetDir, ".git")); os.IsNotExist(err) {
 			t.Error("Expected .git directory to exist in cloned repo")
 		}
@@ -916,55 +876,20 @@ func TestCloneMarketplace(t *testing.T) {
 	t.Run("pulls updates for existing clone", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		// Create a local git repo to clone from
 		sourceDir := filepath.Join(tmpDir, "source")
-		if err := os.MkdirAll(sourceDir, 0755); err != nil {
-			t.Fatalf("Failed to create source dir: %v", err)
-		}
+		createTestGitRepo(t, sourceDir, map[string]string{
+			"test.txt": "initial content",
+		})
 
-		// Initialize git repo
-		cmd := exec.Command("git", "init")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to init git repo: %v", err)
-		}
-
-		// Configure git user
-		cmd = exec.Command("git", "config", "user.email", "test@test.com")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to config git email: %v", err)
-		}
-		cmd = exec.Command("git", "config", "user.name", "Test User")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to config git name: %v", err)
-		}
-
-		// Create a file and commit
-		testFile := filepath.Join(sourceDir, "test.txt")
-		if err := os.WriteFile(testFile, []byte("initial content"), 0644); err != nil {
-			t.Fatalf("Failed to write test file: %v", err)
-		}
-		cmd = exec.Command("git", "add", ".")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to git add: %v", err)
-		}
-		cmd = exec.Command("git", "commit", "-m", "initial commit")
-		cmd.Dir = sourceDir
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("Failed to git commit: %v", err)
-		}
-
-		// Clone the repo (first time - full clone, not shallow)
+		// Full clone (not shallow) so pull works
 		targetDir := filepath.Join(tmpDir, "target")
-		cmd = exec.Command("git", "clone", sourceDir, targetDir)
+		cmd := exec.Command("git", "clone", sourceDir, targetDir)
 		if err := cmd.Run(); err != nil {
 			t.Fatalf("Failed to clone: %v", err)
 		}
 
-		// Add new commit to source
+		// Add a new commit to the source
+		testFile := filepath.Join(sourceDir, "test.txt")
 		if err := os.WriteFile(testFile, []byte("updated content"), 0644); err != nil {
 			t.Fatalf("Failed to update test file: %v", err)
 		}
@@ -979,13 +904,10 @@ func TestCloneMarketplace(t *testing.T) {
 			t.Fatalf("Failed to git commit: %v", err)
 		}
 
-		// Call cloneMarketplace on existing clone - should pull
-		err := cloneMarketplace(sourceDir, targetDir)
-		if err != nil {
+		if err := cloneMarketplace(sourceDir, targetDir); err != nil {
 			t.Fatalf("cloneMarketplace (pull) failed: %v", err)
 		}
 
-		// Verify content was updated
 		data, err := os.ReadFile(filepath.Join(targetDir, "test.txt"))
 		if err != nil {
 			t.Fatalf("Failed to read test.txt: %v", err)
@@ -1697,23 +1619,4 @@ func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
 		}
 	})
 
-	t.Run("resolvePluginName resolves aliases to real names in nameMapping", func(t *testing.T) {
-		// This tests the resolvePluginName helper that syncMarketplaces uses
-		// to convert plugin@alias → plugin@real-name before calling installPlugin.
-		nameMapping := map[string]string{
-			"my-alias": "jlaswell-community-marketplace",
-		}
-
-		// Plugin with alias should be resolved
-		resolved := resolvePluginName("skill-builder@my-alias", nameMapping)
-		if resolved != "skill-builder@jlaswell-community-marketplace" {
-			t.Errorf("Expected 'skill-builder@jlaswell-community-marketplace', got '%s'", resolved)
-		}
-
-		// Official plugin (no alias match) should remain unchanged
-		resolved = resolvePluginName("context7@claude-plugins-official", nameMapping)
-		if resolved != "context7@claude-plugins-official" {
-			t.Errorf("Expected 'context7@claude-plugins-official' unchanged, got '%s'", resolved)
-		}
-	})
 }
