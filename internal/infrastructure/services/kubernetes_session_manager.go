@@ -2590,18 +2590,11 @@ if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
     exec claude-agentapi $CLAUDE_AGENTAPI_OPTS
 
 elif [ "$AGENTAPI_AGENT_TYPE" = "codex-agentapi" ]; then
-    # Update codex-agentapi to the latest version
-    echo "[STARTUP] Updating codex-agentapi to the latest version"
-    if bun install -g @takutakahashi/codex-agentapi; then
-        echo "[STARTUP] codex-agentapi update successful"
-    else
-        echo "[STARTUP] Warning: Failed to update codex-agentapi, continuing with existing version"
-    fi
-
-    # Start codex-agentapi (configured via environment variables: HOST, PORT, OPENAI_API_KEY, etc.)
+    # Start codex-agentapi via bunx (uses bun runtime, no node required)
+    # Configured via environment variables: HOST, PORT, OPENAI_API_KEY, etc.
     echo "[STARTUP] Starting codex-agentapi on $HOST:$PORT"
-    echo "[STARTUP] Executing: codex-agentapi"
-    exec codex-agentapi
+    echo "[STARTUP] Executing: bunx @takutakahashi/codex-agentapi"
+    exec bunx @takutakahashi/codex-agentapi
 
 else
     # Start agentapi with Claude (original behavior)
