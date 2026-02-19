@@ -175,21 +175,34 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 		outputDir = DefaultCompileOptions().OutputDir
 	}
 
-	syncOpts := startup.SyncOptions{
-		OutputDir:                 outputDir,
-		SettingsFile:              opts.SettingsFile,
-		CredentialsFile:           opts.CredentialsFile,
-		ClaudeMDFile:              opts.ClaudeMDFile,
-		NotificationSubscriptions: opts.NotificationSubscriptions,
-		NotificationsDir:          opts.NotificationsDir,
-		RegisterMarketplaces:      opts.RegisterMarketplaces,
-	}
-
 	// Set env so marketplace clone / claude CLI picks up GITHUB_TOKEN etc.
 	for k, v := range settings.Env {
 		if err := os.Setenv(k, v); err != nil {
 			log.Printf("[SETUP] Warning: failed to set env %s: %v", k, err)
 		}
+	}
+
+	// Prefer the compile-generated ~/.claude/settings.json as the settings source,
+	// since it already contains enabled_plugins and marketplaces merged from
+	// all layers (base/team/user). Fall back to the explicitly configured SettingsFile
+	// (e.g. from claude-config-user ConfigMap) if provided.
+	settingsFile := opts.SettingsFile
+	if settingsFile == "" {
+		generatedSettingsPath := filepath.Join(outputDir, ".claude", "settings.json")
+		if _, err := os.Stat(generatedSettingsPath); err == nil {
+			settingsFile = generatedSettingsPath
+			log.Printf("[SETUP] Using compile-generated settings.json for marketplace/plugin sync: %s", settingsFile)
+		}
+	}
+
+	syncOpts := startup.SyncOptions{
+		OutputDir:                 outputDir,
+		SettingsFile:              settingsFile,
+		CredentialsFile:           opts.CredentialsFile,
+		ClaudeMDFile:              opts.ClaudeMDFile,
+		NotificationSubscriptions: opts.NotificationSubscriptions,
+		NotificationsDir:          opts.NotificationsDir,
+		RegisterMarketplaces:      opts.RegisterMarketplaces,
 	}
 
 	// Use Sync (not SyncExtra) to also handle marketplace cloning and plugin registration
