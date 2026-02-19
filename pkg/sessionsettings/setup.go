@@ -167,8 +167,9 @@ func cloneRepo(settings *SessionSettings) error {
 	return nil
 }
 
-// syncExtra handles credentials, CLAUDE.md, and notification subscriptions.
-// This replaces the corresponding parts of the sync-config init container.
+// syncExtra handles credentials, CLAUDE.md, notification subscriptions,
+// and marketplace/plugin registration.
+// ~/.claude.json and ~/.claude/settings.json are already written by the compile step.
 func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 	outputDir := opts.CompileOptions.OutputDir
 	if outputDir == "" {
@@ -182,22 +183,8 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 		}
 	}
 
-	// Prefer the compile-generated ~/.claude/settings.json as the settings source,
-	// since it already contains enabled_plugins and marketplaces merged from
-	// all layers (base/team/user). Fall back to the explicitly configured SettingsFile
-	// (e.g. from claude-config-user ConfigMap) if provided.
-	settingsFile := opts.SettingsFile
-	if settingsFile == "" {
-		generatedSettingsPath := filepath.Join(outputDir, ".claude", "settings.json")
-		if _, err := os.Stat(generatedSettingsPath); err == nil {
-			settingsFile = generatedSettingsPath
-			log.Printf("[SETUP] Using compile-generated settings.json for marketplace/plugin sync: %s", settingsFile)
-		}
-	}
-
 	syncOpts := startup.SyncOptions{
 		OutputDir:                 outputDir,
-		SettingsFile:              settingsFile,
 		CredentialsFile:           opts.CredentialsFile,
 		ClaudeMDFile:              opts.ClaudeMDFile,
 		NotificationSubscriptions: opts.NotificationSubscriptions,
@@ -205,6 +192,5 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 		RegisterMarketplaces:      opts.RegisterMarketplaces,
 	}
 
-	// Use Sync (not SyncExtra) to also handle marketplace cloning and plugin registration
 	return startup.Sync(syncOpts)
 }

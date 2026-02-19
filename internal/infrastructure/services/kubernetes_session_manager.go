@@ -715,11 +715,6 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	memoryRequest := resource.MustParse(m.k8sConfig.MemoryRequest)
 	memoryLimit := resource.MustParse(m.k8sConfig.MemoryLimit)
 
-	// Build user-specific ConfigMap name
-	userConfigMapName := fmt.Sprintf("%s-%s",
-		m.k8sConfig.ClaudeConfigUserConfigMapPrefix,
-		sanitizeLabelValue(req.UserID))
-
 	// No init containers — setup is performed by the main container on startup
 
 	// Determine working directory
@@ -918,7 +913,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	}
 
 	// Build volumes
-	volumes := m.buildVolumes(session, userConfigMapName)
+	volumes := m.buildVolumes(session)
 
 	// Build containers list (main container + credentials sync sidecar)
 	containers := []corev1.Container{container}
@@ -1672,7 +1667,7 @@ func (m *KubernetesSessionManager) createPersonalAPIKeySecret(
 }
 
 // buildVolumes builds the volume configuration for the session pod
-func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, userConfigMapName string) []corev1.Volume {
+func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []corev1.Volume {
 	// Build workdir volume - use PVC if enabled, otherwise EmptyDir
 	var workdirVolume corev1.Volume
 	if m.isPVCEnabled() {
@@ -1733,18 +1728,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession, user
 			Name: "dot-claude",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		},
-		// claude-config-user ConfigMap – contains user settings.json with marketplace/plugin config
-		{
-			Name: "claude-config-user",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: userConfigMapName,
-					},
-					Optional: boolPtr(true),
-				},
 			},
 		},
 	}
@@ -2512,12 +2495,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			MountPath: "/credentials-config",
 			ReadOnly:  true,
 		},
-		// claude-config-user ConfigMap – user settings.json with marketplace/plugin config
-		{
-			Name:      "claude-config-user",
-			MountPath: "/claude-config-user",
-			ReadOnly:  true,
-		},
 		// notification subscriptions source – read by setup on startup
 		{
 			Name:      "notification-subscriptions-source",
@@ -2557,7 +2534,6 @@ func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
 echo "[STARTUP] Running session setup"
 agentapi-proxy helpers setup \
   --input /session-settings/settings.yaml \
-  --settings-file /claude-config-user/settings.json \
   --credentials-file /credentials-config/credentials.json \
   --notification-subscriptions /notification-subscriptions-source \
   --notifications-dir /home/agentapi/notifications \

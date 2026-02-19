@@ -65,36 +65,22 @@ type marketplacePluginJSON struct {
 	Name string `json:"name"`
 }
 
-// marketplaceSource represents the source configuration for extraKnownMarketplaces
-// Source must be one of: 'url' | 'github' | 'git' | 'npm' | 'file' | 'directory'
-type marketplaceSource struct {
-	Source string `json:"source"`
-	Path   string `json:"path"`
-}
-
-// extraKnownMarketplace represents an entry in extraKnownMarketplaces
-type extraKnownMarketplace struct {
-	Source marketplaceSource `json:"source"`
-}
-
-// Sync synchronizes settings from Settings Secret to Claude configuration files
+// Sync synchronizes settings from Settings Secret to Claude configuration files.
+// It assumes ~/.claude.json and ~/.claude/settings.json have already been written
+// by the compile step; it handles marketplace clone/register and plugin install only.
 func Sync(opts SyncOptions) error {
-	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, register marketplaces: %v",
-		opts.SettingsFile, opts.OutputDir, opts.RegisterMarketplaces)
+	log.Printf("[SYNC] Starting sync: output dir: %s, register marketplaces: %v",
+		opts.OutputDir, opts.RegisterMarketplaces)
 
-	// Load settings from file (optional - file may not exist)
+	// Load custom marketplace config if provided (optional)
 	settings, err := loadSettingsFile(opts.SettingsFile)
 	if err != nil {
-		log.Printf("[SYNC] Settings file not found or invalid, using defaults: %v", err)
+		// Normal when SettingsFile is empty or not needed
 		settings = nil
 	}
 
-	// Generate ~/.claude.json
-	if err := generateClaudeJSON(opts.OutputDir); err != nil {
-		return fmt.Errorf("failed to generate .claude.json: %w", err)
-	}
-
-	// Clone marketplaces and generate ~/.claude/settings.json
+	// Register marketplaces and install plugins (reads enabled_plugins from
+	// the already-written ~/.claude/settings.json)
 	if err := syncMarketplaces(opts, settings); err != nil {
 		return fmt.Errorf("failed to sync marketplaces: %w", err)
 	}
@@ -182,7 +168,9 @@ func generateClaudeJSON(outputDir string) error {
 	return nil
 }
 
-// syncMarketplaces clones marketplace repositories and generates settings.json
+// syncMarketplaces clones custom marketplace repositories and registers marketplaces
+// and plugins via claude CLI. settings.json is assumed to already be written by
+// the compile step; this function does NOT overwrite it.
 func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	// Create directories
 	claudeDir := filepath.Join(opts.OutputDir, ".claude")
@@ -196,28 +184,11 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		return fmt.Errorf("failed to create marketplaces directory: %w", err)
 	}
 
-	// Build settings.json content
-	settingsContent := make(map[string]interface{})
-
-	// Add GITHUB_TOKEN to env if available
-	if githubToken := os.Getenv("GITHUB_TOKEN"); githubToken != "" {
-		settingsContent["env"] = map[string]string{
-			"GITHUB_TOKEN": githubToken,
-		}
-	}
-
-	// Enable MCP
-	settingsContent["settings"] = map[string]interface{}{
-		"mcp.enabled": true,
-	}
-
-	// nameMapping maps alias keys to real marketplace names
+	// nameMapping maps alias keys to real marketplace names (for custom marketplaces)
 	nameMapping := make(map[string]string)
 
-	// Process marketplaces if available
+	// Clone custom marketplace repositories if configured
 	if settings != nil && len(settings.Marketplaces) > 0 {
-		extraKnownMarketplaces := make(map[string]extraKnownMarketplace)
-
 		for aliasKey, marketplace := range settings.Marketplaces {
 			if marketplace.URL == "" {
 				log.Printf("[SYNC] Skipping marketplace %s: no URL configured", aliasKey)
@@ -227,7 +198,6 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 			// Clone to a temporary directory first to read the real marketplace name
 			tempDir := filepath.Join(marketplacesDir, ".tmp-"+aliasKey)
 
-			// Clone repository
 			log.Printf("[SYNC] Cloning marketplace %s from %s", aliasKey, marketplace.URL)
 			if err := cloneMarketplace(marketplace.URL, tempDir); err != nil {
 				log.Printf("[SYNC] Warning: failed to clone marketplace %s: %v", aliasKey, err)
@@ -254,81 +224,62 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 				continue
 			}
 
-			// Store mapping for plugin name resolution
 			nameMapping[aliasKey] = realName
-
-			// Add to extraKnownMarketplaces with real name
-			extraKnownMarketplaces[realName] = extraKnownMarketplace{
-				Source: marketplaceSource{
-					Source: "directory",
-					Path:   targetDir,
-				},
-			}
-
-			log.Printf("[SYNC] Successfully registered marketplace %s (alias: %s) at %s", realName, aliasKey, targetDir)
-		}
-
-		if len(extraKnownMarketplaces) > 0 {
-			settingsContent["extraKnownMarketplaces"] = extraKnownMarketplaces
+			log.Printf("[SYNC] Cloned marketplace %s (alias: %s) at %s", realName, aliasKey, targetDir)
 		}
 	}
 
-	// Process enabled plugins - resolve alias names to real marketplace names
-	if settings != nil && len(settings.EnabledPlugins) > 0 {
-		enabledPlugins := make(map[string]bool)
-		for _, plugin := range settings.EnabledPlugins {
-			resolvedPlugin := resolvePluginName(plugin, nameMapping)
-			enabledPlugins[resolvedPlugin] = true
+	if !opts.RegisterMarketplaces {
+		return nil
+	}
+
+	// Register the official Anthropic marketplace
+	if err := registerOfficialMarketplace(opts.OutputDir); err != nil {
+		log.Printf("[SYNC] Warning: failed to register official marketplace: %v", err)
+	}
+
+	// Register custom cloned marketplaces
+	if settings != nil && len(settings.Marketplaces) > 0 {
+		if err := registerMarketplaces(opts.OutputDir, marketplacesDir); err != nil {
+			log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
 		}
-		settingsContent["enabledPlugins"] = enabledPlugins
-		log.Printf("[SYNC] Added %d enabled plugins (with resolved marketplace names)", len(settings.EnabledPlugins))
 	}
 
-	// Process hooks if available
-	if settings != nil && len(settings.Hooks) > 0 {
-		settingsContent["hooks"] = settings.Hooks
-		log.Printf("[SYNC] Added %d hook(s)", len(settings.Hooks))
-	}
-
-	// Write settings.json
+	// Install enabled plugins.
+	// enabled_plugins is read from the already-written ~/.claude/settings.json
+	// (generated by the compile step) so we don't need to re-parse opts.SettingsFile.
 	settingsPath := filepath.Join(claudeDir, "settings.json")
-	data, err := json.MarshalIndent(settingsContent, "", "  ")
+	enabledPlugins, err := readEnabledPluginsFromSettingsJSON(settingsPath)
 	if err != nil {
-		return fmt.Errorf("failed to marshal settings.json: %w", err)
+		log.Printf("[SYNC] Warning: could not read enabled_plugins from %s: %v", settingsPath, err)
 	}
 
-	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write settings.json: %w", err)
-	}
-
-	log.Printf("[SYNC] Generated %s", settingsPath)
-
-	// Register marketplaces using claude CLI if enabled
-	if opts.RegisterMarketplaces {
-		// Always register the official Anthropic marketplace
-		if err := registerOfficialMarketplace(opts.OutputDir); err != nil {
-			log.Printf("[SYNC] Warning: failed to register official marketplace: %v", err)
-		}
-
-		// Register custom cloned marketplaces if any
-		if settings != nil && len(settings.Marketplaces) > 0 {
-			if err := registerMarketplaces(opts.OutputDir, marketplacesDir); err != nil {
-				log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
-			}
-		}
-
-		// Install enabled plugins after marketplaces are registered
-		if settings != nil && len(settings.EnabledPlugins) > 0 {
-			for _, plugin := range settings.EnabledPlugins {
-				resolvedPlugin := resolvePluginName(plugin, nameMapping)
-				if err := installPlugin(opts.OutputDir, resolvedPlugin); err != nil {
-					log.Printf("[SYNC] Warning: failed to install plugin %s: %v", resolvedPlugin, err)
-				}
-			}
+	for _, plugin := range enabledPlugins {
+		resolvedPlugin := resolvePluginName(plugin, nameMapping)
+		if err := installPlugin(opts.OutputDir, resolvedPlugin); err != nil {
+			log.Printf("[SYNC] Warning: failed to install plugin %s: %v", resolvedPlugin, err)
 		}
 	}
 
 	return nil
+}
+
+// readEnabledPluginsFromSettingsJSON reads the enabled_plugins list from a
+// settings.json file that was already written by the compile step.
+func readEnabledPluginsFromSettingsJSON(settingsPath string) ([]string, error) {
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", settingsPath, err)
+	}
+
+	var content struct {
+		EnabledPlugins []string `json:"enabled_plugins"`
+	}
+	if err := json.Unmarshal(data, &content); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", settingsPath, err)
+	}
+
+	return content.EnabledPlugins, nil
 }
 
 // cloneMarketplace clones a marketplace repository.
