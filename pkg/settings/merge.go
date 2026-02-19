@@ -214,3 +214,39 @@ func MergeAndWrite(inputDirs []string, outputPath string, opts MergeOptions) err
 
 	return WriteConfig(config, outputPath)
 }
+
+// MergeInMemory merges a slice of SettingsConfig values in order (later overrides earlier)
+// without reading from the filesystem. Returns nil if the input slice is empty.
+func MergeInMemory(cfgs []SettingsConfig) *SettingsConfig {
+	if len(cfgs) == 0 {
+		return nil
+	}
+
+	result := &SettingsConfig{
+		Marketplaces:   make(map[string]MarketplaceConfig),
+		EnabledPlugins: []string{},
+		Hooks:          make(map[string]interface{}),
+	}
+	enabledPluginsSet := make(map[string]bool)
+
+	for _, cfg := range cfgs {
+		for name, mp := range cfg.Marketplaces {
+			result.Marketplaces[name] = mp
+		}
+		for _, plugin := range cfg.EnabledPlugins {
+			if plugin != "" {
+				enabledPluginsSet[plugin] = true
+			}
+		}
+		for event, hook := range cfg.Hooks {
+			result.Hooks[event] = hook
+		}
+	}
+
+	for plugin := range enabledPluginsSet {
+		result.EnabledPlugins = append(result.EnabledPlugins, plugin)
+	}
+	sort.Strings(result.EnabledPlugins)
+
+	return result
+}

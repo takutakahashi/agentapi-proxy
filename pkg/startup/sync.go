@@ -65,62 +65,38 @@ type marketplacePluginJSON struct {
 	Name string `json:"name"`
 }
 
-// marketplaceSource represents the source configuration for extraKnownMarketplaces
-// Source must be one of: 'url' | 'github' | 'git' | 'npm' | 'file' | 'directory'
-type marketplaceSource struct {
-	Source string `json:"source"`
-	Path   string `json:"path"`
-}
-
-// extraKnownMarketplace represents an entry in extraKnownMarketplaces
-type extraKnownMarketplace struct {
-	Source marketplaceSource `json:"source"`
-}
-
-// Sync synchronizes settings from Settings Secret to Claude configuration files
+// Sync synchronizes settings from Settings Secret to Claude configuration files.
+// It assumes ~/.claude.json and ~/.claude/settings.json have already been written
+// by the compile step; it handles marketplace clone/register and plugin install only.
 func Sync(opts SyncOptions) error {
-	log.Printf("[SYNC] Starting sync with settings file: %s, output dir: %s, register marketplaces: %v",
-		opts.SettingsFile, opts.OutputDir, opts.RegisterMarketplaces)
+	log.Printf("[SYNC] Starting sync: output dir: %s, register marketplaces: %v",
+		opts.OutputDir, opts.RegisterMarketplaces)
 
-	// Load settings from file (optional - file may not exist)
 	settings, err := loadSettingsFile(opts.SettingsFile)
 	if err != nil {
-		log.Printf("[SYNC] Settings file not found or invalid, using defaults: %v", err)
 		settings = nil
 	}
 
-	// Generate ~/.claude.json
-	if err := generateClaudeJSON(opts.OutputDir); err != nil {
-		return fmt.Errorf("failed to generate .claude.json: %w", err)
-	}
-
-	// Clone marketplaces and generate ~/.claude/settings.json
 	if err := syncMarketplaces(opts, settings); err != nil {
 		return fmt.Errorf("failed to sync marketplaces: %w", err)
 	}
 
-	// Copy credentials.json if provided
 	if opts.CredentialsFile != "" {
 		if err := syncCredentials(opts.CredentialsFile, opts.OutputDir); err != nil {
-			// Log warning but don't fail - credentials are optional
 			log.Printf("[SYNC] Warning: failed to sync credentials: %v", err)
 		}
 	}
 
-	// Copy CLAUDE.md if available
 	claudeMDPath := opts.ClaudeMDFile
 	if claudeMDPath == "" {
-		claudeMDPath = "/tmp/config/CLAUDE.md" // Default path in Docker image
+		claudeMDPath = "/tmp/config/CLAUDE.md"
 	}
 	if err := syncClaudeMD(claudeMDPath, opts.OutputDir); err != nil {
-		// Log warning but don't fail - CLAUDE.md is optional
 		log.Printf("[SYNC] Warning: failed to sync CLAUDE.md: %v", err)
 	}
 
-	// Copy notification subscriptions if provided
 	if opts.NotificationSubscriptions != "" && opts.NotificationsDir != "" {
 		if err := syncNotificationSubscriptions(opts.NotificationSubscriptions, opts.NotificationsDir); err != nil {
-			// Log warning but don't fail - notifications are optional
 			log.Printf("[SYNC] Warning: failed to sync notification subscriptions: %v", err)
 		}
 	}
@@ -149,26 +125,22 @@ func loadSettingsFile(settingsFile string) (*settingsJSON, error) {
 	return &settings, nil
 }
 
-// generateClaudeJSON generates ~/.claude.json with onboarding settings
+// generateClaudeJSON generates ~/.claude.json with onboarding settings,
+// preserving any existing fields.
 func generateClaudeJSON(outputDir string) error {
 	claudeJSONPath := filepath.Join(outputDir, ".claude.json")
 
-	// Read existing file if present
-	var existing map[string]interface{}
+	existing := make(map[string]interface{})
 	if data, err := os.ReadFile(claudeJSONPath); err == nil {
 		if err := json.Unmarshal(data, &existing); err != nil {
 			log.Printf("[SYNC] Warning: failed to parse existing .claude.json: %v", err)
 			existing = make(map[string]interface{})
 		}
-	} else {
-		existing = make(map[string]interface{})
 	}
 
-	// Set required fields
 	existing["hasCompletedOnboarding"] = true
 	existing["bypassPermissionsModeAccepted"] = true
 
-	// Write file
 	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal .claude.json: %w", err)
@@ -182,176 +154,187 @@ func generateClaudeJSON(outputDir string) error {
 	return nil
 }
 
-// syncMarketplaces clones marketplace repositories and generates settings.json
+// syncMarketplaces clones custom marketplace repositories and registers marketplaces
+// and plugins via claude CLI. settings.json is assumed to already be written by
+// the compile step; this function does NOT overwrite it.
 func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
-	// Create directories
 	claudeDir := filepath.Join(opts.OutputDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .claude directory: %w", err)
-	}
-
-	// Marketplaces are cloned to .claude/plugins/marketplaces/<marketplace-name>
 	marketplacesDir := filepath.Join(claudeDir, "plugins", "marketplaces")
 	if err := os.MkdirAll(marketplacesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create marketplaces directory: %w", err)
 	}
 
-	// Build settings.json content
-	settingsContent := make(map[string]interface{})
-
-	// Add GITHUB_TOKEN to env if available
-	if githubToken := os.Getenv("GITHUB_TOKEN"); githubToken != "" {
-		settingsContent["env"] = map[string]string{
-			"GITHUB_TOKEN": githubToken,
-		}
-	}
-
-	// Enable MCP
-	settingsContent["settings"] = map[string]interface{}{
-		"mcp.enabled": true,
-	}
-
-	// nameMapping maps alias keys to real marketplace names
 	nameMapping := make(map[string]string)
 
-	// Process marketplaces if available
-	if settings != nil && len(settings.Marketplaces) > 0 {
-		extraKnownMarketplaces := make(map[string]extraKnownMarketplace)
-
-		for aliasKey, marketplace := range settings.Marketplaces {
-			if marketplace.URL == "" {
-				log.Printf("[SYNC] Skipping marketplace %s: no URL configured", aliasKey)
-				continue
-			}
-
-			// Clone to a temporary directory first to read the real marketplace name
-			tempDir := filepath.Join(marketplacesDir, ".tmp-"+aliasKey)
-
-			// Clone repository
-			log.Printf("[SYNC] Cloning marketplace %s from %s", aliasKey, marketplace.URL)
-			if err := cloneMarketplace(marketplace.URL, tempDir); err != nil {
-				log.Printf("[SYNC] Warning: failed to clone marketplace %s: %v", aliasKey, err)
-				continue
-			}
-
-			// Read the real marketplace name from .claude-plugin/marketplace.json
-			realName, err := readMarketplaceName(tempDir)
-			if err != nil {
-				log.Printf("[SYNC] Error: failed to read marketplace name for %s: %v", aliasKey, err)
-				if removeErr := os.RemoveAll(tempDir); removeErr != nil {
-					log.Printf("[SYNC] Warning: failed to remove temp dir %s: %v", tempDir, removeErr)
-				}
-				continue
-			}
-
-			// Rename to the real marketplace name
-			targetDir := filepath.Join(marketplacesDir, realName)
-			if err := os.Rename(tempDir, targetDir); err != nil {
-				log.Printf("[SYNC] Error: failed to rename marketplace dir from %s to %s: %v", tempDir, targetDir, err)
-				if removeErr := os.RemoveAll(tempDir); removeErr != nil {
-					log.Printf("[SYNC] Warning: failed to remove temp dir %s: %v", tempDir, removeErr)
-				}
-				continue
-			}
-
-			// Store mapping for plugin name resolution
-			nameMapping[aliasKey] = realName
-
-			// Add to extraKnownMarketplaces with real name
-			extraKnownMarketplaces[realName] = extraKnownMarketplace{
-				Source: marketplaceSource{
-					Source: "directory",
-					Path:   targetDir,
-				},
-			}
-
-			log.Printf("[SYNC] Successfully registered marketplace %s (alias: %s) at %s", realName, aliasKey, targetDir)
-		}
-
-		if len(extraKnownMarketplaces) > 0 {
-			settingsContent["extraKnownMarketplaces"] = extraKnownMarketplaces
-		}
-	}
-
-	// Process enabled plugins - resolve alias names to real marketplace names
-	if settings != nil && len(settings.EnabledPlugins) > 0 {
-		enabledPlugins := make(map[string]bool)
-		for _, plugin := range settings.EnabledPlugins {
-			resolvedPlugin := resolvePluginName(plugin, nameMapping)
-			enabledPlugins[resolvedPlugin] = true
-		}
-		settingsContent["enabledPlugins"] = enabledPlugins
-		log.Printf("[SYNC] Added %d enabled plugins (with resolved marketplace names)", len(settings.EnabledPlugins))
-	}
-
-	// Process hooks if available
-	if settings != nil && len(settings.Hooks) > 0 {
-		settingsContent["hooks"] = settings.Hooks
-		log.Printf("[SYNC] Added %d hook(s)", len(settings.Hooks))
-	}
-
-	// Write settings.json
+	// Read marketplace config from compile-generated ~/.claude/settings.json
 	settingsPath := filepath.Join(claudeDir, "settings.json")
-	data, err := json.MarshalIndent(settingsContent, "", "  ")
+	compileSettings, err := readClaudeSettingsJSON(settingsPath)
 	if err != nil {
-		return fmt.Errorf("failed to marshal settings.json: %w", err)
+		log.Printf("[SYNC] Warning: could not read %s: %v", settingsPath, err)
+		compileSettings = &claudeSettingsJSON{}
 	}
 
-	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write settings.json: %w", err)
+	// Merge marketplaces: compile-generated settings take precedence,
+	// external settings provide additional custom marketplace URLs.
+	mergedMarketplaces := make(map[string]*marketplaceJSON)
+	for k, v := range compileSettings.Marketplaces {
+		mergedMarketplaces[k] = v
+	}
+	if settings != nil {
+		for k, v := range settings.Marketplaces {
+			if _, exists := mergedMarketplaces[k]; !exists {
+				mergedMarketplaces[k] = v
+			}
+		}
 	}
 
-	log.Printf("[SYNC] Generated %s", settingsPath)
-
-	// Register marketplaces using claude CLI if enabled
-	if opts.RegisterMarketplaces {
-		// Always register the official Anthropic marketplace
-		if err := registerOfficialMarketplace(opts.OutputDir); err != nil {
-			log.Printf("[SYNC] Warning: failed to register official marketplace: %v", err)
+	// Clone custom marketplace repositories
+	for aliasKey, marketplace := range mergedMarketplaces {
+		if marketplace.URL == "" {
+			log.Printf("[SYNC] Skipping marketplace %s: no URL configured", aliasKey)
+			continue
 		}
 
-		// Register custom cloned marketplaces if any
-		if settings != nil && len(settings.Marketplaces) > 0 {
-			if err := registerMarketplaces(opts.OutputDir, marketplacesDir); err != nil {
-				log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
-			}
+		tempDir := filepath.Join(marketplacesDir, ".tmp-"+aliasKey)
+		log.Printf("[SYNC] Cloning marketplace %s from %s", aliasKey, marketplace.URL)
+
+		if err := cloneMarketplace(marketplace.URL, tempDir); err != nil {
+			log.Printf("[SYNC] Warning: failed to clone marketplace %s: %v", aliasKey, err)
+			continue
+		}
+
+		realName, err := readMarketplaceName(tempDir)
+		if err != nil {
+			log.Printf("[SYNC] Error: failed to read marketplace name for %s: %v", aliasKey, err)
+			removeTempDir(tempDir)
+			continue
+		}
+
+		targetDir := filepath.Join(marketplacesDir, realName)
+		if err := os.Rename(tempDir, targetDir); err != nil {
+			log.Printf("[SYNC] Error: failed to rename marketplace dir from %s to %s: %v", tempDir, targetDir, err)
+			removeTempDir(tempDir)
+			continue
+		}
+
+		nameMapping[aliasKey] = realName
+		log.Printf("[SYNC] Cloned marketplace %s (alias: %s) at %s", realName, aliasKey, targetDir)
+	}
+
+	if !opts.RegisterMarketplaces {
+		return nil
+	}
+
+	if err := registerOfficialMarketplace(opts.OutputDir); err != nil {
+		log.Printf("[SYNC] Warning: failed to register official marketplace: %v", err)
+	}
+
+	if err := registerMarketplaces(opts.OutputDir, marketplacesDir); err != nil {
+		log.Printf("[SYNC] Warning: failed to register marketplaces: %v", err)
+	}
+
+	// Install enabled plugins from the compile-generated settings.json
+	for _, plugin := range compileSettings.EnabledPlugins {
+		resolvedPlugin := resolvePluginName(plugin, nameMapping)
+		if err := installPlugin(opts.OutputDir, resolvedPlugin); err != nil {
+			log.Printf("[SYNC] Warning: failed to install plugin %s: %v", resolvedPlugin, err)
 		}
 	}
 
 	return nil
 }
 
-// cloneMarketplace clones a marketplace repository.
-// It extracts the repo fullname from the URL and sets up GitHub authentication
-// via gh CLI (credential helper) before cloning, so private repositories can be accessed.
-func cloneMarketplace(url, targetDir string) error {
-	// Extract repo fullname from URL for GitHub App auth (Installation ID discovery)
-	repoFullName := github_pkg.ParseRepositoryURL(url)
-	if repoFullName != "" {
-		log.Printf("[SYNC] Setting up GitHub authentication for marketplace repo: %s", repoFullName)
-		if err := SetupGitHubAuth(repoFullName); err != nil {
-			// Warning only - continue (public repos may work without auth)
-			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
-		}
+// removeTempDir removes a temporary directory, logging a warning on failure.
+func removeTempDir(dir string) {
+	if err := os.RemoveAll(dir); err != nil {
+		log.Printf("[SYNC] Warning: failed to remove temp dir %s: %v", dir, err)
+	}
+}
+
+// claudeSettingsJSON represents the subset of ~/.claude/settings.json we care about
+type claudeSettingsJSON struct {
+	EnabledPlugins []string                    `json:"enabled_plugins"`
+	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
+}
+
+// readClaudeSettingsJSON reads enabled_plugins and marketplaces from the
+// settings.json file written by the compile step.
+func readClaudeSettingsJSON(settingsPath string) (*claudeSettingsJSON, error) {
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", settingsPath, err)
 	}
 
-	// Check if already cloned
+	var content claudeSettingsJSON
+	if err := json.Unmarshal(data, &content); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", settingsPath, err)
+	}
+
+	return &content, nil
+}
+
+// buildGitHubEnv builds environment variables for GitHub CLI/git commands,
+// setting GH_HOST for GitHub Enterprise Server when GITHUB_API points to a GHE instance.
+func buildGitHubEnv() []string {
+	env := os.Environ()
+	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+		githubHost := strings.TrimPrefix(githubAPI, "https://")
+		githubHost = strings.TrimPrefix(githubHost, "http://")
+		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+		env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+		log.Printf("[SYNC] GHE detected, setting GH_HOST=%s", githubHost)
+	}
+	return env
+}
+
+// cloneMarketplace clones a marketplace repository. For GitHub URLs (github.com
+// or GitHub Enterprise), it uses `gh repo clone` so that GITHUB_TOKEN /
+// GitHub App auth and GHE host routing work correctly.
+// For other URLs (e.g., local file paths used in tests), it falls back to
+// plain `git clone`. If the target already exists it pulls updates instead.
+func cloneMarketplace(url, targetDir string) error {
+	env := buildGitHubEnv()
+
 	if _, err := os.Stat(filepath.Join(targetDir, ".git")); err == nil {
 		log.Printf("[SYNC] Marketplace already cloned at %s, pulling updates", targetDir)
 		cmd := exec.Command("git", "pull")
 		cmd.Dir = targetDir
+		cmd.Env = env
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git pull failed: %w, output: %s", err, string(output))
 		}
 		return nil
 	}
 
-	// Clone with shallow depth; authentication is handled by gh credential helper
+	repoFullName := github_pkg.ParseRepositoryURL(url)
+	if repoFullName != "" {
+		// GitHub URL: use gh repo clone so token auth and GHE host work.
+		log.Printf("[SYNC] Setting up GitHub authentication for marketplace repo: %s", repoFullName)
+		if err := SetupGitHubAuth(repoFullName); err != nil {
+			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
+		}
+
+		log.Printf("[SYNC] Cloning marketplace %s via gh repo clone", repoFullName)
+		parentDir := filepath.Dir(targetDir)
+		if err := os.MkdirAll(parentDir, 0755); err != nil {
+			return fmt.Errorf("failed to create parent directory: %w", err)
+		}
+		cmd := exec.Command("gh", "repo", "clone", repoFullName, targetDir)
+		cmd.Env = env
+		cmd.Dir = parentDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("gh repo clone failed: %w, output: %s", err, string(output))
+		}
+		return nil
+	}
+
+	// Non-GitHub URL (e.g., local path): fall back to git clone.
+	log.Printf("[SYNC] Cloning marketplace via git clone: %s", url)
 	cmd := exec.Command("git", "clone", "--depth", "1", url, targetDir)
+	cmd.Env = env
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 	}
-
 	return nil
 }
 
@@ -400,86 +383,81 @@ const officialMarketplace = "anthropics/claude-plugins-official"
 // claudeBinPath is the path to the claude CLI binary
 const claudeBinPath = "/opt/claude/bin/claude"
 
+// runClaudeCLI executes a claude CLI command with HOME set to outputDir.
+func runClaudeCLI(outputDir string, args ...string) error {
+	cmd := exec.Command(claudeBinPath, args...)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("claude %s failed: %w, output: %s", args[0], err, string(output))
+	}
+	return nil
+}
+
 // registerOfficialMarketplace registers the official Anthropic marketplace
 func registerOfficialMarketplace(outputDir string) error {
 	log.Printf("[SYNC] Registering official marketplace: %s", officialMarketplace)
-
-	cmd := exec.Command(claudeBinPath, "plugin", "marketplace", "add", officialMarketplace)
-	// Set HOME to outputDir so claude CLI writes to the correct location
-	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to register official marketplace: %w, output: %s", err, string(output))
+	if err := runClaudeCLI(outputDir, "plugin", "marketplace", "add", officialMarketplace); err != nil {
+		return err
 	}
-
 	log.Printf("[SYNC] Successfully registered official marketplace: %s", officialMarketplace)
 	return nil
 }
 
 // registerMarketplaces uses claude CLI to register cloned marketplaces
 func registerMarketplaces(outputDir string, marketplacesDir string) error {
-	// Read marketplace directories
 	entries, err := os.ReadDir(marketplacesDir)
 	if err != nil {
 		return fmt.Errorf("failed to read marketplaces directory: %w", err)
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		// Skip temp directories
-		if strings.HasPrefix(entry.Name(), ".tmp-") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".tmp-") {
 			continue
 		}
 
 		marketplacePath := filepath.Join(marketplacesDir, entry.Name())
-
 		log.Printf("[SYNC] Registering marketplace at %s", marketplacePath)
-
-		cmd := exec.Command(claudeBinPath, "plugin", "marketplace", "add", marketplacePath)
-		// Set HOME to outputDir so claude CLI writes to the correct location
-		cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
-
-		if output, err := cmd.CombinedOutput(); err != nil {
-			log.Printf("[SYNC] Warning: failed to register marketplace at %s: %v, output: %s",
-				marketplacePath, err, string(output))
+		if err := runClaudeCLI(outputDir, "plugin", "marketplace", "add", marketplacePath); err != nil {
+			log.Printf("[SYNC] Warning: failed to register marketplace at %s: %v", marketplacePath, err)
 			continue
 		}
-
 		log.Printf("[SYNC] Successfully registered marketplace at %s", marketplacePath)
 	}
 	return nil
 }
 
+// installPlugin installs a plugin using claude CLI.
+// pluginIdentifier is in "plugin-name@marketplace-name" format.
+func installPlugin(outputDir string, pluginIdentifier string) error {
+	log.Printf("[SYNC] Installing plugin: %s", pluginIdentifier)
+	if err := runClaudeCLI(outputDir, "plugin", "install", pluginIdentifier); err != nil {
+		return err
+	}
+	log.Printf("[SYNC] Successfully installed plugin: %s", pluginIdentifier)
+	return nil
+}
+
 // syncCredentials copies credentials.json from the mounted Secret to ~/.claude/.credentials.json
 func syncCredentials(credentialsFile, outputDir string) error {
-	// Check if source file exists
 	if _, err := os.Stat(credentialsFile); os.IsNotExist(err) {
 		log.Printf("[SYNC] Credentials file not found at %s, skipping", credentialsFile)
 		return nil
 	}
 
-	// Read credentials file
 	data, err := os.ReadFile(credentialsFile)
 	if err != nil {
 		return fmt.Errorf("failed to read credentials file: %w", err)
 	}
 
-	// Validate that it's valid JSON
-	var jsonCheck interface{}
-	if err := json.Unmarshal(data, &jsonCheck); err != nil {
-		return fmt.Errorf("credentials file is not valid JSON: %w", err)
+	if !json.Valid(data) {
+		return fmt.Errorf("credentials file is not valid JSON")
 	}
 
-	// Create .claude directory if needed
 	claudeDir := filepath.Join(outputDir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .claude directory: %w", err)
 	}
 
-	// Write to destination
 	destPath := filepath.Join(claudeDir, ".credentials.json")
 	if err := os.WriteFile(destPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write credentials file: %w", err)
@@ -491,25 +469,21 @@ func syncCredentials(credentialsFile, outputDir string) error {
 
 // syncClaudeMD copies CLAUDE.md from the Docker image to ~/.claude/CLAUDE.md
 func syncClaudeMD(claudeMDPath, outputDir string) error {
-	// Check if source file exists
 	if _, err := os.Stat(claudeMDPath); os.IsNotExist(err) {
 		log.Printf("[SYNC] CLAUDE.md not found at %s, skipping", claudeMDPath)
 		return nil
 	}
 
-	// Read CLAUDE.md file
 	data, err := os.ReadFile(claudeMDPath)
 	if err != nil {
 		return fmt.Errorf("failed to read CLAUDE.md: %w", err)
 	}
 
-	// Create .claude directory if needed
 	claudeDir := filepath.Join(outputDir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .claude directory: %w", err)
 	}
 
-	// Write to destination
 	destPath := filepath.Join(claudeDir, "CLAUDE.md")
 	if err := os.WriteFile(destPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write CLAUDE.md: %w", err)
@@ -519,20 +493,44 @@ func syncClaudeMD(claudeMDPath, outputDir string) error {
 	return nil
 }
 
-// syncNotificationSubscriptions copies notification subscriptions from mounted Secret to notifications directory
+// SyncExtra copies credentials, CLAUDE.md, and notification subscriptions.
+// Config files (.claude.json / settings.json) are handled by sessionsettings.Compile.
+func SyncExtra(opts SyncOptions) error {
+	if opts.CredentialsFile != "" {
+		if err := syncCredentials(opts.CredentialsFile, opts.OutputDir); err != nil {
+			log.Printf("[SYNC-EXTRA] Warning: failed to sync credentials: %v", err)
+		}
+	}
+
+	claudeMDPath := opts.ClaudeMDFile
+	if claudeMDPath == "" {
+		claudeMDPath = "/tmp/config/CLAUDE.md"
+	}
+	if err := syncClaudeMD(claudeMDPath, opts.OutputDir); err != nil {
+		log.Printf("[SYNC-EXTRA] Warning: failed to sync CLAUDE.md: %v", err)
+	}
+
+	if opts.NotificationSubscriptions != "" && opts.NotificationsDir != "" {
+		if err := syncNotificationSubscriptions(opts.NotificationSubscriptions, opts.NotificationsDir); err != nil {
+			log.Printf("[SYNC-EXTRA] Warning: failed to sync notification subscriptions: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// syncNotificationSubscriptions copies notification subscription files from a mounted
+// Secret directory to the notifications output directory, following symlinks.
 func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) error {
-	// Check if source directory exists
 	if _, err := os.Stat(subscriptionsDir); os.IsNotExist(err) {
 		log.Printf("[SYNC] Notification subscriptions directory not found at %s, skipping", subscriptionsDir)
 		return nil
 	}
 
-	// Create notifications directory if needed
 	if err := os.MkdirAll(notificationsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create notifications directory: %w", err)
 	}
 
-	// Read source directory
 	entries, err := os.ReadDir(subscriptionsDir)
 	if err != nil {
 		return fmt.Errorf("failed to read subscriptions directory: %w", err)
@@ -543,7 +541,6 @@ func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) er
 		return nil
 	}
 
-	// Copy each file (following symlinks since Secrets use symlinks)
 	copiedCount := 0
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -553,14 +550,12 @@ func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) er
 		srcPath := filepath.Join(subscriptionsDir, entry.Name())
 		destPath := filepath.Join(notificationsDir, entry.Name())
 
-		// Read file (follows symlinks)
 		data, err := os.ReadFile(srcPath)
 		if err != nil {
 			log.Printf("[SYNC] Warning: failed to read subscription file %s: %v", srcPath, err)
 			continue
 		}
 
-		// Write to destination
 		if err := os.WriteFile(destPath, data, 0644); err != nil {
 			log.Printf("[SYNC] Warning: failed to write subscription file %s: %v", destPath, err)
 			continue

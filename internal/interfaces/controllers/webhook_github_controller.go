@@ -379,12 +379,12 @@ func (c *WebhookGitHubController) matchTrigger(trigger *entities.WebhookTrigger,
 func (c *WebhookGitHubController) buildDefaultInitialMessage(event string, payload *GitHubPayload) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("GitHub %s event received.\n\n", event))
+	fmt.Fprintf(&sb, "GitHub %s event received.\n\n", event)
 
 	if payload.Repository != nil {
-		sb.WriteString(fmt.Sprintf("Repository: %s\n", payload.Repository.FullName))
+		fmt.Fprintf(&sb, "Repository: %s\n", payload.Repository.FullName)
 		if payload.Repository.HTMLURL != "" {
-			sb.WriteString(fmt.Sprintf("URL: %s\n", payload.Repository.HTMLURL))
+			fmt.Fprintf(&sb, "URL: %s\n", payload.Repository.HTMLURL)
 		}
 	}
 
@@ -392,39 +392,39 @@ func (c *WebhookGitHubController) buildDefaultInitialMessage(event string, paylo
 	case "push":
 		if payload.Ref != "" {
 			branch := strings.TrimPrefix(payload.Ref, "refs/heads/")
-			sb.WriteString(fmt.Sprintf("Branch: %s\n", branch))
+			fmt.Fprintf(&sb, "Branch: %s\n", branch)
 		}
 		if payload.HeadCommit != nil {
-			sb.WriteString(fmt.Sprintf("Commit: %s\n", payload.HeadCommit.ID[:7]))
-			sb.WriteString(fmt.Sprintf("Message: %s\n", payload.HeadCommit.Message))
+			fmt.Fprintf(&sb, "Commit: %s\n", payload.HeadCommit.ID[:7])
+			fmt.Fprintf(&sb, "Message: %s\n", payload.HeadCommit.Message)
 		}
 
 	case "pull_request":
 		if payload.PullRequest != nil {
-			sb.WriteString(fmt.Sprintf("\nPull Request #%d: %s\n", payload.PullRequest.Number, payload.PullRequest.Title))
-			sb.WriteString(fmt.Sprintf("Action: %s\n", payload.Action))
-			sb.WriteString(fmt.Sprintf("URL: %s\n", payload.PullRequest.HTMLURL))
+			fmt.Fprintf(&sb, "\nPull Request #%d: %s\n", payload.PullRequest.Number, payload.PullRequest.Title)
+			fmt.Fprintf(&sb, "Action: %s\n", payload.Action)
+			fmt.Fprintf(&sb, "URL: %s\n", payload.PullRequest.HTMLURL)
 			if payload.PullRequest.Base != nil && payload.PullRequest.Head != nil {
-				sb.WriteString(fmt.Sprintf("Base: %s <- Head: %s\n", payload.PullRequest.Base.Ref, payload.PullRequest.Head.Ref))
+				fmt.Fprintf(&sb, "Base: %s <- Head: %s\n", payload.PullRequest.Base.Ref, payload.PullRequest.Head.Ref)
 			}
 			if payload.PullRequest.Body != "" {
-				sb.WriteString(fmt.Sprintf("\nDescription:\n%s\n", payload.PullRequest.Body))
+				fmt.Fprintf(&sb, "\nDescription:\n%s\n", payload.PullRequest.Body)
 			}
 		}
 
 	case "issues":
 		if payload.Issue != nil {
-			sb.WriteString(fmt.Sprintf("\nIssue #%d: %s\n", payload.Issue.Number, payload.Issue.Title))
-			sb.WriteString(fmt.Sprintf("Action: %s\n", payload.Action))
-			sb.WriteString(fmt.Sprintf("URL: %s\n", payload.Issue.HTMLURL))
+			fmt.Fprintf(&sb, "\nIssue #%d: %s\n", payload.Issue.Number, payload.Issue.Title)
+			fmt.Fprintf(&sb, "Action: %s\n", payload.Action)
+			fmt.Fprintf(&sb, "URL: %s\n", payload.Issue.HTMLURL)
 			if payload.Issue.Body != "" {
-				sb.WriteString(fmt.Sprintf("\nDescription:\n%s\n", payload.Issue.Body))
+				fmt.Fprintf(&sb, "\nDescription:\n%s\n", payload.Issue.Body)
 			}
 		}
 	}
 
 	if payload.Sender != nil {
-		sb.WriteString(fmt.Sprintf("\nTriggered by: %s\n", payload.Sender.Login))
+		fmt.Fprintf(&sb, "\nTriggered by: %s\n", payload.Sender.Login)
 	}
 
 	return sb.String()

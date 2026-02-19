@@ -197,7 +197,7 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 			nil, // No webhook payload for test
 		)
 
-		volumes := manager.buildVolumes(session, "claude-config-user")
+		volumes := manager.buildVolumes(session)
 
 		// Look for initial-message and initial-message-state volumes
 		var hasInitialMessage, hasInitialMessageState bool
@@ -242,7 +242,7 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 			nil, // No webhook payload for test
 		)
 
-		volumes := manager.buildVolumes(session, "claude-config-user")
+		volumes := manager.buildVolumes(session)
 
 		// Look for initial-message volume
 		for _, vol := range volumes {

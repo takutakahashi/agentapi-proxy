@@ -344,8 +344,8 @@ func saveEnvironmentVariables(token, cloneDir string) error {
 	envFile := fmt.Sprintf("/tmp/github_env_%d", pid)
 
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("GITHUB_TOKEN=%s\n", token))
-	buf.WriteString(fmt.Sprintf("GITHUB_CLONE_DIR=%s\n", cloneDir))
+	fmt.Fprintf(&buf, "GITHUB_TOKEN=%s\n", token)
+	fmt.Fprintf(&buf, "GITHUB_CLONE_DIR=%s\n", cloneDir)
 
 	return os.WriteFile(envFile, buf.Bytes(), 0600)
 }

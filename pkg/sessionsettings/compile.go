@@ -18,7 +18,7 @@ type CompileOptions struct {
 	OutputDir     string // Base output directory (default: /home/agentapi)
 	EnvFilePath   string // Path for env file output (default: /session-settings/env)
 	StartupPath   string // Path for startup script (default: /session-settings/startup.sh)
-	MCPOutputPath string // Path for MCP config (default: /mcp-config/merged.json)
+	MCPOutputPath string // Path for MCP config (default: /home/agentapi/.mcp-config/merged.json, written during setup)
 }
 
 // DefaultCompileOptions returns the default compile options.
@@ -26,9 +26,9 @@ func DefaultCompileOptions() CompileOptions {
 	return CompileOptions{
 		InputPath:     "/session-settings/settings.yaml",
 		OutputDir:     "/home/agentapi",
-		EnvFilePath:   "/session-settings/env",
-		StartupPath:   "/session-settings/startup.sh",
-		MCPOutputPath: "/mcp-config/merged.json",
+		EnvFilePath:   "/home/agentapi/.session/env",
+		StartupPath:   "/home/agentapi/.session/startup.sh",
+		MCPOutputPath: "/home/agentapi/.mcp-config/merged.json",
 	}
 }
 
@@ -122,6 +122,15 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}) err
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s", claudeJSONPath)
 	return nil
+}
+
+// patchClaudeJSON reads the existing ~/.claude.json (written by Claude CLI or
+// compile step) and ensures the required onboarding fields are set to true.
+// This is called after syncExtra so that any Claude CLI invocations during
+// marketplace/plugin setup cannot leave the file in a state that triggers
+// the "Welcome to Claude Code" screen.
+func patchClaudeJSON(outputDir string, extra map[string]interface{}) error {
+	return generateClaudeJSON(outputDir, extra)
 }
 
 // generateSettingsJSON creates ~/.claude/settings.json.
