@@ -273,33 +273,68 @@ func readClaudeSettingsJSON(settingsPath string) (*claudeSettingsJSON, error) {
 	return &content, nil
 }
 
-// cloneMarketplace clones a marketplace repository, setting up GitHub
-// authentication via gh CLI so that private repositories can be accessed.
-// If the target already exists, it pulls updates instead.
-func cloneMarketplace(url, targetDir string) error {
-	repoFullName := github_pkg.ParseRepositoryURL(url)
-	if repoFullName != "" {
-		log.Printf("[SYNC] Setting up GitHub authentication for marketplace repo: %s", repoFullName)
-		if err := SetupGitHubAuth(repoFullName); err != nil {
-			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
-		}
+// buildGitHubEnv builds environment variables for GitHub CLI/git commands,
+// setting GH_HOST for GitHub Enterprise Server when GITHUB_API points to a GHE instance.
+func buildGitHubEnv() []string {
+	env := os.Environ()
+	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+		githubHost := strings.TrimPrefix(githubAPI, "https://")
+		githubHost = strings.TrimPrefix(githubHost, "http://")
+		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+		env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+		log.Printf("[SYNC] GHE detected, setting GH_HOST=%s", githubHost)
 	}
+	return env
+}
+
+// cloneMarketplace clones a marketplace repository. For GitHub URLs (github.com
+// or GitHub Enterprise), it uses `gh repo clone` so that GITHUB_TOKEN /
+// GitHub App auth and GHE host routing work correctly.
+// For other URLs (e.g., local file paths used in tests), it falls back to
+// plain `git clone`. If the target already exists it pulls updates instead.
+func cloneMarketplace(url, targetDir string) error {
+	env := buildGitHubEnv()
 
 	if _, err := os.Stat(filepath.Join(targetDir, ".git")); err == nil {
 		log.Printf("[SYNC] Marketplace already cloned at %s, pulling updates", targetDir)
 		cmd := exec.Command("git", "pull")
 		cmd.Dir = targetDir
+		cmd.Env = env
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git pull failed: %w, output: %s", err, string(output))
 		}
 		return nil
 	}
 
+	repoFullName := github_pkg.ParseRepositoryURL(url)
+	if repoFullName != "" {
+		// GitHub URL: use gh repo clone so token auth and GHE host work.
+		log.Printf("[SYNC] Setting up GitHub authentication for marketplace repo: %s", repoFullName)
+		if err := SetupGitHubAuth(repoFullName); err != nil {
+			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
+		}
+
+		log.Printf("[SYNC] Cloning marketplace %s via gh repo clone", repoFullName)
+		parentDir := filepath.Dir(targetDir)
+		if err := os.MkdirAll(parentDir, 0755); err != nil {
+			return fmt.Errorf("failed to create parent directory: %w", err)
+		}
+		cmd := exec.Command("gh", "repo", "clone", repoFullName, targetDir)
+		cmd.Env = env
+		cmd.Dir = parentDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("gh repo clone failed: %w, output: %s", err, string(output))
+		}
+		return nil
+	}
+
+	// Non-GitHub URL (e.g., local path): fall back to git clone.
+	log.Printf("[SYNC] Cloning marketplace via git clone: %s", url)
 	cmd := exec.Command("git", "clone", "--depth", "1", url, targetDir)
+	cmd.Env = env
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 	}
-
 	return nil
 }
 
