@@ -124,6 +124,15 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}) err
 	return nil
 }
 
+// patchClaudeJSON reads the existing ~/.claude.json (written by Claude CLI or
+// compile step) and ensures the required onboarding fields are set to true.
+// This is called after syncExtra so that any Claude CLI invocations during
+// marketplace/plugin setup cannot leave the file in a state that triggers
+// the "Welcome to Claude Code" screen.
+func patchClaudeJSON(outputDir string, extra map[string]interface{}) error {
+	return generateClaudeJSON(outputDir, extra)
+}
+
 // generateSettingsJSON creates ~/.claude/settings.json.
 func generateSettingsJSON(outputDir string, settingsJSON map[string]interface{}) error {
 	claudeDir := filepath.Join(outputDir, ".claude")

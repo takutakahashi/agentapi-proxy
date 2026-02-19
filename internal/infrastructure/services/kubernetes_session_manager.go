@@ -2554,23 +2554,6 @@ if [ -d /home/agentapi/workdir/repo ]; then
     cd /home/agentapi/workdir/repo
 fi
 
-# Ensure .claude.json has required onboarding fields just before agent start.
-# Claude may rewrite .claude.json on first launch (adding firstStartTime etc.)
-# and drop bypassPermissionsModeAccepted, causing the Welcome screen to appear.
-echo "[STARTUP] Patching .claude.json to suppress Welcome screen"
-if command -v jq > /dev/null 2>&1; then
-    _claudejson=/home/agentapi/.claude.json
-    _tmp=$(mktemp)
-    if [ -f "$_claudejson" ]; then
-        jq '.hasCompletedOnboarding = true | .bypassPermissionsModeAccepted = true' "$_claudejson" > "$_tmp" && mv "$_tmp" "$_claudejson"
-    else
-        printf '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}\n' > "$_claudejson"
-    fi
-    echo "[STARTUP] .claude.json patched"
-else
-    echo "[STARTUP] Warning: jq not found, skipping .claude.json patch"
-fi
-
 # Determine which agent to start based on AGENTAPI_AGENT_TYPE
 if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
     # Update claude-agentapi to the latest version

@@ -94,6 +94,18 @@ func Setup(opts SetupOptions) error {
 		return fmt.Errorf("sync-extra failed: %w", err)
 	}
 
+	// 5. Re-patch ~/.claude.json to ensure onboarding fields are set.
+	//    The sync step (marketplace clone / plugin install) may trigger Claude
+	//    CLI which rewrites ~/.claude.json and drops bypassPermissionsModeAccepted,
+	//    causing the "Welcome to Claude Code" screen on next launch.
+	outputDir := opts.CompileOptions.OutputDir
+	if outputDir == "" {
+		outputDir = DefaultCompileOptions().OutputDir
+	}
+	if err := patchClaudeJSON(outputDir, settings.Claude.ClaudeJSON); err != nil {
+		log.Printf("[SETUP] Warning: failed to re-patch .claude.json: %v", err)
+	}
+
 	log.Printf("[SETUP] Setup completed successfully")
 	return nil
 }
