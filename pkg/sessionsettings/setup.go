@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
+	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
 
@@ -131,12 +133,13 @@ func writePEM(settings *SessionSettings, pemOutputPath string) error {
 	return nil
 }
 
-// cloneRepo sets up GitHub auth and clones the repository.
-// This replaces the clone-repo init container.
+// cloneRepo sets up GitHub auth and clones the repository using gh repo clone
+// so that GITHUB_TOKEN / GitHub App auth and GitHub Enterprise Server host
+// routing work correctly.
 func cloneRepo(settings *SessionSettings) error {
 	repo := settings.Repository
 
-	// Set environment variables from session env so git/gh tools pick them up
+	// Set environment variables from session env so git/gh tools pick them up.
 	for k, v := range settings.Env {
 		if err := os.Setenv(k, v); err != nil {
 			log.Printf("[SETUP] Warning: failed to set env %s: %v", k, err)
@@ -164,15 +167,33 @@ func cloneRepo(settings *SessionSettings) error {
 		return fmt.Errorf("failed to create parent dir for clone: %w", err)
 	}
 
-	log.Printf("[SETUP] Cloning %s into %s", repo.FullName, cloneDir)
-	cmd := exec.Command("git", "clone", "--depth", "1",
-		fmt.Sprintf("https://github.com/%s.git", repo.FullName),
-		cloneDir,
-	)
+	// Build env with GH_HOST for GitHub Enterprise Server.
+	env := os.Environ()
+	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+		githubHost := strings.TrimPrefix(githubAPI, "https://")
+		githubHost = strings.TrimPrefix(githubHost, "http://")
+		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+		env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+		log.Printf("[SETUP] GHE detected, setting GH_HOST=%s for clone", githubHost)
+	}
+
+	log.Printf("[SETUP] Cloning %s into %s via gh repo clone", repo.FullName, cloneDir)
+	cmd := exec.Command("gh", "repo", "clone", repo.FullName, cloneDir, "--", "--depth", "1")
+	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git clone failed: %w", err)
+		// Fallback: try GITHUB_URL-based git clone for non-GitHub hosts
+		githubURL := github_pkg.GetGitHubURL()
+		cloneURL := fmt.Sprintf("%s/%s.git", githubURL, repo.FullName)
+		log.Printf("[SETUP] gh repo clone failed, falling back to git clone: %s", cloneURL)
+		cmd2 := exec.Command("git", "clone", "--depth", "1", cloneURL, cloneDir)
+		cmd2.Env = env
+		cmd2.Stdout = os.Stdout
+		cmd2.Stderr = os.Stderr
+		if err2 := cmd2.Run(); err2 != nil {
+			return fmt.Errorf("git clone failed: %w", err2)
+		}
 	}
 
 	log.Printf("[SETUP] Cloned %s to %s", repo.FullName, cloneDir)
