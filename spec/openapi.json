@@ -1940,6 +1940,12 @@
             "type": "boolean",
             "description": "When true, the session will automatically delete itself after Claude stops responding. Uses Claude Code Stop hook to execute session deletion.",
             "default": false
+          },
+          "initial_message_wait_second": {
+            "type": "integer",
+            "description": "Number of seconds to wait after the agent becomes stable before sending the initial message. Defaults to 2 seconds if not specified.",
+            "default": 2,
+            "example": 5
           }
         }
       },
