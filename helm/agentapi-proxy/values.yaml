@@ -395,6 +395,37 @@ kubernetesSession:
   # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
   # The Secret will be used by the clone-repo init container
 
+  # Settings base Secret name for proxy-side merge of settings.json and mcp-servers.json
+  # This Kubernetes Secret is read by agentapi-proxy before session pods start and merged
+  # into the session's settings.yaml. It supports two keys:
+  #   - settings.json: Claude settings (marketplaces, enabled_plugins, hooks, etc.)
+  #   - mcp-servers.json: Base MCP server configurations (merged with team/user MCP secrets)
+  #
+  # Secret naming conventions for team/user overrides:
+  #   - Team settings: agentapi-settings-{team-name}
+  #   - User settings: agentapi-settings-{user-id}
+  #   - Team MCP:      mcp-servers-{team-name}
+  #   - User MCP:      mcp-servers-{user-id}
+  #
+  # Example base Secret:
+  #   apiVersion: v1
+  #   kind: Secret
+  #   metadata:
+  #     name: agentapi-settings-base
+  #   stringData:
+  #     settings.json: |
+  #       {
+  #         "marketplaces": {"myorg": {"url": "https://github.com/myorg/marketplace"}},
+  #         "enabled_plugins": ["my-plugin@myorg"]
+  #       }
+  #     mcp-servers.json: |
+  #       {
+  #         "mcpServers": {
+  #           "github": {"type": "http", "url": "https://mcp-github.example.com"}
+  #         }
+  #       }
+  settingsBaseSecret: "agentapi-settings-base"
+
   # MCP (Model Context Protocol) server configuration
   # Allows loading MCP servers from Kubernetes Secrets with 3-tier hierarchy:
   # base (organization-wide) -> team (team-specific) -> user (user-specific)

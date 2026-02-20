@@ -520,6 +520,9 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.mcp_servers_enabled", "AGENTAPI_K8S_SESSION_MCP_SERVERS_ENABLED")
 	_ = v.BindEnv("kubernetes_session.mcp_servers_base_secret", "AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_SECRET")
 
+	// Settings base secret configuration
+	_ = v.BindEnv("kubernetes_session.settings_base_secret", "AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET")
+
 	// OpenTelemetry Collector configuration
 	_ = v.BindEnv("kubernetes_session.otel_collector_enabled", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED")
 	_ = v.BindEnv("kubernetes_session.otel_collector_image", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IMAGE")
@@ -592,6 +595,9 @@ func setDefaults(v *viper.Viper) {
 	// MCP servers defaults
 	v.SetDefault("kubernetes_session.mcp_servers_enabled", true)
 	v.SetDefault("kubernetes_session.mcp_servers_base_secret", "mcp-servers-base")
+
+	// Settings base secret default (used for proxy-side merge of settings.json and mcp-servers.json)
+	v.SetDefault("kubernetes_session.settings_base_secret", "agentapi-settings-base")
 
 	// Schedule worker defaults
 	v.SetDefault("schedule_worker.enabled", true)
