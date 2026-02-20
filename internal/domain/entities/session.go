@@ -34,6 +34,9 @@ type SessionParams struct {
 	Slack *SlackParams `json:"slack,omitempty"`
 	// Oneshot indicates whether the session should automatically delete itself after stopping
 	Oneshot bool `json:"oneshot,omitempty"`
+	// InitialMessageWaitSecond is the number of seconds to wait before sending the initial message.
+	// Defaults to 2 seconds if not specified.
+	InitialMessageWaitSecond *int `json:"initial_message_wait_second,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -56,18 +59,19 @@ type RepositoryInfo struct {
 
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
-	UserID         string
-	Environment    map[string]string
-	Tags           map[string]string
-	RepoInfo       *RepositoryInfo
-	InitialMessage string
-	Teams          []string      // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
-	GithubToken    string        // GitHub token passed via params.github_token
-	Scope          ResourceScope // Resource scope ("user" or "team")
-	TeamID         string        // Team identifier when Scope is "team"
-	AgentType      string        // Agent type for the session
-	SlackParams    *SlackParams  // Slack integration parameters
-	Oneshot        bool          // Oneshot indicates whether the session should automatically delete itself after stopping
+	UserID                   string
+	Environment              map[string]string
+	Tags                     map[string]string
+	RepoInfo                 *RepositoryInfo
+	InitialMessage           string
+	Teams                    []string      // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
+	GithubToken              string        // GitHub token passed via params.github_token
+	Scope                    ResourceScope // Resource scope ("user" or "team")
+	TeamID                   string        // Team identifier when Scope is "team"
+	AgentType                string        // Agent type for the session
+	SlackParams              *SlackParams  // Slack integration parameters
+	Oneshot                  bool          // Oneshot indicates whether the session should automatically delete itself after stopping
+	InitialMessageWaitSecond *int          // Seconds to wait before sending initial message (default: 2)
 }
 
 // Session represents a running agentapi session

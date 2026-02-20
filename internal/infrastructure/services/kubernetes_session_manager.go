@@ -1167,6 +1167,7 @@ MESSAGE_FILE="/initial-message/message"
 SENT_FLAG="/initial-message-state/sent"
 MAX_READY_RETRIES=120
 MAX_STABLE_RETRIES=60
+WAIT_SECOND="${INITIAL_MESSAGE_WAIT_SECOND:-2}"
 
 echo "[INITIAL-MSG] Starting initial message sender sidecar"
 
@@ -1225,6 +1226,10 @@ while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
     fi
     sleep 1
 done
+
+# Wait for the configured number of seconds before sending the initial message
+echo "[INITIAL-MSG] Waiting ${WAIT_SECOND} second(s) before sending initial message..."
+sleep "$WAIT_SECOND"
 
 # Double-check user message count before sending (race condition prevention)
 USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
@@ -1338,6 +1343,7 @@ func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *Kub
 		},
 		Env: []corev1.EnvVar{
 			{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+			{Name: "INITIAL_MESSAGE_WAIT_SECOND", Value: initialMessageWaitSecond(session.Request())},
 		},
 		Command: []string{"/bin/sh", "-c"},
 		Args:    []string{initialMessageSenderScript},
@@ -1346,6 +1352,15 @@ func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *Kub
 			RunAsGroup: int64Ptr(999),
 		},
 	}
+}
+
+// initialMessageWaitSecond returns the wait duration string for the initial message sender.
+// Defaults to "2" if not specified.
+func initialMessageWaitSecond(req *entities.RunServerRequest) string {
+	if req != nil && req.InitialMessageWaitSecond != nil {
+		return fmt.Sprintf("%d", *req.InitialMessageWaitSecond)
+	}
+	return "2"
 }
 
 // buildSlackSidecar builds the sidecar container for Slack integration

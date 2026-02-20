@@ -449,20 +449,27 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		oneshot = startReq.Params.Oneshot
 	}
 
+	// Determine initial message wait second from Params.InitialMessageWaitSecond
+	var initialMessageWaitSecond *int
+	if startReq.Params != nil && startReq.Params.InitialMessageWaitSecond != nil {
+		initialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
-		UserID:         userID,
-		Environment:    startReq.Environment,
-		Tags:           startReq.Tags,
-		RepoInfo:       repoInfo,
-		InitialMessage: initialMessage,
-		Teams:          teams,
-		GithubToken:    githubToken,
-		Scope:          startReq.Scope,
-		TeamID:         startReq.TeamID,
-		AgentType:      agentType,
-		SlackParams:    slackParams,
-		Oneshot:        oneshot,
+		UserID:                   userID,
+		Environment:              startReq.Environment,
+		Tags:                     startReq.Tags,
+		RepoInfo:                 repoInfo,
+		InitialMessage:           initialMessage,
+		Teams:                    teams,
+		GithubToken:              githubToken,
+		Scope:                    startReq.Scope,
+		TeamID:                   startReq.TeamID,
+		AgentType:                agentType,
+		SlackParams:              slackParams,
+		Oneshot:                  oneshot,
+		InitialMessageWaitSecond: initialMessageWaitSecond,
 	}
 
 	// Delegate to session manager
