@@ -26,6 +26,7 @@ type MCPHandler struct {
 	shareRepo      repositories.ShareRepository
 	taskRepo       repositories.TaskRepository
 	taskGroupRepo  repositories.TaskGroupRepository
+	memoryRepo     repositories.MemoryRepository
 	httpHandler    http.Handler
 }
 
@@ -36,6 +37,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 	shareRepo := server.GetShareRepository()
 	taskRepo := server.GetTaskRepository()
 	taskGroupRepo := server.GetTaskGroupRepository()
+	memoryRepo := server.GetMemoryRepository()
 
 	// Create HTTP handler using go-sdk's streamable HTTP handler
 	// Use stateless mode for simpler session management
@@ -49,6 +51,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		shareRepo:      shareRepo,
 		taskRepo:       taskRepo,
 		taskGroupRepo:  taskGroupRepo,
+		memoryRepo:     memoryRepo,
 	}
 
 	// Create factory function that creates a new MCP server per request with authenticated user
@@ -83,8 +86,8 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 			},
 		}
 
-		// Create new MCP server instance with authenticated user and task repositories
-		mcpServer := NewMCPServer(sessionManager, shareRepo, taskRepo, taskGroupRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, opts)
+		// Create new MCP server instance with authenticated user and repositories
+		mcpServer := NewMCPServer(sessionManager, shareRepo, taskRepo, taskGroupRepo, memoryRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, opts)
 
 		// Register all tools
 		mcpServer.RegisterTools()
