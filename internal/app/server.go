@@ -559,6 +559,16 @@ func (s *Server) SetMemoryRepository(repo portrepos.MemoryRepository) {
 	s.memoryRepo = repo
 }
 
+// GetTaskRepository returns the task repository
+func (s *Server) GetTaskRepository() portrepos.TaskRepository {
+	return s.taskRepo
+}
+
+// GetTaskGroupRepository returns the task group repository
+func (s *Server) GetTaskGroupRepository() portrepos.TaskGroupRepository {
+	return s.taskGroupRepo
+}
+
 // ExtractRepositoryInfo extracts repository information from tags.
 // This is a public function that can be used by other packages (e.g., schedule).
 // The cloneDir parameter is typically the session ID.
