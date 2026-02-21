@@ -2589,11 +2589,7 @@ if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
     CLAUDE_AGENTAPI_OPTS="--output-file /opt/claude-agentapi/history.jsonl"
     echo "[STARTUP] Using history output file: /opt/claude-agentapi/history.jsonl"
 
-    # Add --mcp-config if MCP config file exists
-    if [ -f /home/agentapi/.mcp-config/merged.json ]; then
-        CLAUDE_AGENTAPI_OPTS="$CLAUDE_AGENTAPI_OPTS --mcp-config /home/agentapi/.mcp-config/merged.json"
-        echo "[STARTUP] Using MCP config: /home/agentapi/.mcp-config/merged.json"
-    fi
+    # MCP servers are configured in ~/.claude.json (mcpServers key) and read natively by Claude Code
 
     # Append CLAUDE_ARGS if set (as CLI options)
     if [ -n "$CLAUDE_ARGS" ]; then
@@ -2617,11 +2613,7 @@ else
 
     CLAUDE_ARGS_FULL=""
 
-    # Add --mcp-config if MCP config file exists
-    if [ -f /home/agentapi/.mcp-config/merged.json ]; then
-        CLAUDE_ARGS_FULL="--mcp-config /home/agentapi/.mcp-config/merged.json"
-        echo "[STARTUP] Using MCP config: /home/agentapi/.mcp-config/merged.json"
-    fi
+    # MCP servers are configured in ~/.claude.json (mcpServers key) and read natively by Claude Code
 
     # Add CLAUDE_ARGS if set
     if [ -n "$CLAUDE_ARGS" ]; then

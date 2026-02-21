@@ -60,14 +60,12 @@ func TestCompile_FullSettings(t *testing.T) {
 	outputDir := filepath.Join(tmpDir, "output")
 	envFile := filepath.Join(tmpDir, "env")
 	startupFile := filepath.Join(tmpDir, "startup.sh")
-	mcpFile := filepath.Join(tmpDir, "mcp-config.json")
 
 	opts := CompileOptions{
-		InputPath:     inputPath,
-		OutputDir:     outputDir,
-		EnvFilePath:   envFile,
-		StartupPath:   startupFile,
-		MCPOutputPath: mcpFile,
+		InputPath:   inputPath,
+		OutputDir:   outputDir,
+		EnvFilePath: envFile,
+		StartupPath: startupFile,
 	}
 
 	err = Compile(opts)
@@ -78,7 +76,15 @@ func TestCompile_FullSettings(t *testing.T) {
 	assert.FileExists(t, filepath.Join(outputDir, ".claude/settings.json"))
 	assert.FileExists(t, envFile)
 	assert.FileExists(t, startupFile)
-	assert.FileExists(t, mcpFile)
+
+	// Verify mcpServers is written into claude.json
+	claudeJSONPath := filepath.Join(outputDir, ".claude.json")
+	data, err := os.ReadFile(claudeJSONPath)
+	require.NoError(t, err)
+	var claudeJSON map[string]interface{}
+	err = json.Unmarshal(data, &claudeJSON)
+	require.NoError(t, err)
+	assert.Contains(t, claudeJSON, "mcpServers")
 }
 
 func TestCompile_MinimalSettings(t *testing.T) {
@@ -104,14 +110,12 @@ func TestCompile_MinimalSettings(t *testing.T) {
 	outputDir := filepath.Join(tmpDir, "output")
 	envFile := filepath.Join(tmpDir, "env")
 	startupFile := filepath.Join(tmpDir, "startup.sh")
-	mcpFile := filepath.Join(tmpDir, "mcp-config.json")
 
 	opts := CompileOptions{
-		InputPath:     inputPath,
-		OutputDir:     outputDir,
-		EnvFilePath:   envFile,
-		StartupPath:   startupFile,
-		MCPOutputPath: mcpFile,
+		InputPath:   inputPath,
+		OutputDir:   outputDir,
+		EnvFilePath: envFile,
+		StartupPath: startupFile,
 	}
 
 	err = Compile(opts)
@@ -124,8 +128,14 @@ func TestCompile_MinimalSettings(t *testing.T) {
 	// Empty env file should be created
 	assert.FileExists(t, envFile)
 
-	// MCP config should not be created (no servers)
-	assert.NoFileExists(t, mcpFile)
+	// No mcpServers key when no servers configured
+	claudeJSONPath := filepath.Join(outputDir, ".claude.json")
+	data, err := os.ReadFile(claudeJSONPath)
+	require.NoError(t, err)
+	var claudeJSON map[string]interface{}
+	err = json.Unmarshal(data, &claudeJSON)
+	require.NoError(t, err)
+	assert.NotContains(t, claudeJSON, "mcpServers")
 }
 
 func TestCompile_ClaudeJSON(t *testing.T) {
@@ -155,11 +165,10 @@ func TestCompile_ClaudeJSON(t *testing.T) {
 	outputDir := tmpDir
 
 	opts := CompileOptions{
-		InputPath:     inputPath,
-		OutputDir:     outputDir,
-		EnvFilePath:   filepath.Join(tmpDir, "env"),
-		StartupPath:   filepath.Join(tmpDir, "startup.sh"),
-		MCPOutputPath: filepath.Join(tmpDir, "mcp.json"),
+		InputPath:   inputPath,
+		OutputDir:   outputDir,
+		EnvFilePath: filepath.Join(tmpDir, "env"),
+		StartupPath: filepath.Join(tmpDir, "startup.sh"),
 	}
 
 	err = Compile(opts)
@@ -211,11 +220,10 @@ func TestCompile_EnvFile(t *testing.T) {
 	envFile := filepath.Join(tmpDir, "env")
 
 	opts := CompileOptions{
-		InputPath:     inputPath,
-		OutputDir:     tmpDir,
-		EnvFilePath:   envFile,
-		StartupPath:   filepath.Join(tmpDir, "startup.sh"),
-		MCPOutputPath: filepath.Join(tmpDir, "mcp.json"),
+		InputPath:   inputPath,
+		OutputDir:   tmpDir,
+		EnvFilePath: envFile,
+		StartupPath: filepath.Join(tmpDir, "startup.sh"),
 	}
 
 	err = Compile(opts)
@@ -264,11 +272,10 @@ func TestCompile_StartupScript(t *testing.T) {
 	startupFile := filepath.Join(tmpDir, "startup.sh")
 
 	opts := CompileOptions{
-		InputPath:     inputPath,
-		OutputDir:     tmpDir,
-		EnvFilePath:   filepath.Join(tmpDir, "env"),
-		StartupPath:   startupFile,
-		MCPOutputPath: filepath.Join(tmpDir, "mcp.json"),
+		InputPath:   inputPath,
+		OutputDir:   tmpDir,
+		EnvFilePath: filepath.Join(tmpDir, "env"),
+		StartupPath: startupFile,
 	}
 
 	err = Compile(opts)
@@ -294,7 +301,7 @@ func TestCompile_StartupScript(t *testing.T) {
 	assert.Equal(t, os.FileMode(0755), info.Mode().Perm())
 }
 
-func TestCompile_MCPConfig(t *testing.T) {
+func TestCompile_MCPServersInClaudeJSON(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "compile-mcp-*")
 	require.NoError(t, err)
 	defer func() { _ = os.RemoveAll(tmpDir) }()
@@ -325,42 +332,43 @@ func TestCompile_MCPConfig(t *testing.T) {
 	err = os.WriteFile(inputPath, yamlData, 0644)
 	require.NoError(t, err)
 
-	mcpFile := filepath.Join(tmpDir, "mcp-config.json")
-
 	opts := CompileOptions{
-		InputPath:     inputPath,
-		OutputDir:     tmpDir,
-		EnvFilePath:   filepath.Join(tmpDir, "env"),
-		StartupPath:   filepath.Join(tmpDir, "startup.sh"),
-		MCPOutputPath: mcpFile,
+		InputPath:   inputPath,
+		OutputDir:   tmpDir,
+		EnvFilePath: filepath.Join(tmpDir, "env"),
+		StartupPath: filepath.Join(tmpDir, "startup.sh"),
 	}
 
 	err = Compile(opts)
 	require.NoError(t, err)
 
-	// Read and verify MCP config
-	data, err := os.ReadFile(mcpFile)
+	// Read and verify .claude.json contains mcpServers
+	claudeJSONPath := filepath.Join(tmpDir, ".claude.json")
+	data, err := os.ReadFile(claudeJSONPath)
 	require.NoError(t, err)
 
-	var mcpConfig map[string]interface{}
-	err = json.Unmarshal(data, &mcpConfig)
+	var claudeJSON map[string]interface{}
+	err = json.Unmarshal(data, &claudeJSON)
 	require.NoError(t, err)
 
-	// Verify mcpServers wrapper
-	assert.Contains(t, mcpConfig, "mcpServers")
-	servers := mcpConfig["mcpServers"].(map[string]interface{})
+	// Verify mcpServers is embedded in claude.json
+	assert.Contains(t, claudeJSON, "mcpServers")
+	servers := claudeJSON["mcpServers"].(map[string]interface{})
 	assert.Len(t, servers, 2)
 	assert.Contains(t, servers, "server1")
 	assert.Contains(t, servers, "server2")
+
+	// Verify onboarding flags are still present
+	assert.Equal(t, true, claudeJSON["hasCompletedOnboarding"])
+	assert.Equal(t, true, claudeJSON["bypassPermissionsModeAccepted"])
 }
 
 func TestCompile_MissingInput(t *testing.T) {
 	opts := CompileOptions{
-		InputPath:     "/nonexistent/settings.yaml",
-		OutputDir:     "/tmp",
-		EnvFilePath:   "/tmp/env",
-		StartupPath:   "/tmp/startup.sh",
-		MCPOutputPath: "/tmp/mcp.json",
+		InputPath:   "/nonexistent/settings.yaml",
+		OutputDir:   "/tmp",
+		EnvFilePath: "/tmp/env",
+		StartupPath: "/tmp/startup.sh",
 	}
 
 	err := Compile(opts)
@@ -375,5 +383,4 @@ func TestDefaultCompileOptions(t *testing.T) {
 	assert.Equal(t, "/home/agentapi", opts.OutputDir)
 	assert.Equal(t, "/home/agentapi/.session/env", opts.EnvFilePath)
 	assert.Equal(t, "/home/agentapi/.session/startup.sh", opts.StartupPath)
-	assert.Equal(t, "/home/agentapi/.mcp-config/merged.json", opts.MCPOutputPath)
 }
