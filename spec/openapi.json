@@ -2992,7 +2992,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Custom environment variables to be injected into agent sessions. Keys are environment variable names, values are the variable values. These variables will be available in all sessions for this user/team. Empty string values preserve existing values (for updates)."
+            "description": "Custom environment variables to be injected into agent sessions. Keys are environment variable names, values are the variable values. These variables will be available in all sessions for this user/team. Empty string values explicitly delete the variable. Keys not included in the request are automatically preserved."
           }
         }
       },
