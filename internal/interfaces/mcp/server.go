@@ -13,13 +13,14 @@ type MCPServer struct {
 	server                   *mcp.Server
 	useCase                  *mcpusecases.MCPSessionToolsUseCase
 	taskUseCase              *mcpusecases.MCPTaskToolsUseCase
+	memoryUseCase            *mcpusecases.MCPMemoryToolsUseCase
 	authenticatedUserID      string
 	authenticatedTeams       []string // GitHub team slugs (e.g., ["org/team-a"])
 	authenticatedGithubToken string   // GitHub token from Authorization header
 }
 
 // NewMCPServer creates a new MCP server instance
-func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, taskRepo repositories.TaskRepository, taskGroupRepo repositories.TaskGroupRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, opts *mcp.ServerOptions) *MCPServer {
+func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, taskRepo repositories.TaskRepository, taskGroupRepo repositories.TaskGroupRepository, memoryRepo repositories.MemoryRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, opts *mcp.ServerOptions) *MCPServer {
 	// Create session use case with actual dependencies
 	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, shareRepo)
 
@@ -27,6 +28,12 @@ func NewMCPServer(sessionManager repositories.SessionManager, shareRepo reposito
 	var taskUseCase *mcpusecases.MCPTaskToolsUseCase
 	if taskRepo != nil || taskGroupRepo != nil {
 		taskUseCase = mcpusecases.NewMCPTaskToolsUseCase(taskRepo, taskGroupRepo)
+	}
+
+	// Create memory use case (may be nil if repo is not configured)
+	var memoryUseCase *mcpusecases.MCPMemoryToolsUseCase
+	if memoryRepo != nil {
+		memoryUseCase = mcpusecases.NewMCPMemoryToolsUseCase(memoryRepo)
 	}
 
 	// Create MCP server
@@ -41,6 +48,7 @@ func NewMCPServer(sessionManager repositories.SessionManager, shareRepo reposito
 		server:                   server,
 		useCase:                  useCase,
 		taskUseCase:              taskUseCase,
+		memoryUseCase:            memoryUseCase,
 		authenticatedUserID:      authenticatedUserID,
 		authenticatedTeams:       authenticatedTeams,
 		authenticatedGithubToken: authenticatedGithubToken,
@@ -55,6 +63,11 @@ func (s *MCPServer) RegisterTools() {
 	// Register task tools if available
 	if s.taskUseCase != nil {
 		s.registerTaskTools()
+	}
+
+	// Register memory tools if available
+	if s.memoryUseCase != nil {
+		s.registerMemoryTools()
 	}
 }
 
@@ -164,6 +177,46 @@ func (s *MCPServer) registerTaskTools() {
 	mcp.AddTool(s.server, deleteTaskGroupTool, s.handleDeleteTaskGroup)
 
 	slog.Info("[MCP] Registered 8 task tools: list_tasks, get_task, create_task, update_task, delete_task, list_task_groups, create_task_group, delete_task_group")
+}
+
+// registerMemoryTools registers memory management MCP tools
+func (s *MCPServer) registerMemoryTools() {
+	// Register list_memories tool
+	listMemoriesTool := &mcp.Tool{
+		Name:        "list_memories",
+		Description: "List memories with optional filters (scope, team_id, tags, query)",
+	}
+	mcp.AddTool(s.server, listMemoriesTool, s.handleListMemories)
+
+	// Register get_memory tool
+	getMemoryTool := &mcp.Tool{
+		Name:        "get_memory",
+		Description: "Get details of a specific memory by ID",
+	}
+	mcp.AddTool(s.server, getMemoryTool, s.handleGetMemory)
+
+	// Register create_memory tool
+	createMemoryTool := &mcp.Tool{
+		Name:        "create_memory",
+		Description: "Create a new memory entry. scope must be 'user' or 'team'.",
+	}
+	mcp.AddTool(s.server, createMemoryTool, s.handleCreateMemory)
+
+	// Register update_memory tool
+	updateMemoryTool := &mcp.Tool{
+		Name:        "update_memory",
+		Description: "Update an existing memory entry. Only provided fields are updated.",
+	}
+	mcp.AddTool(s.server, updateMemoryTool, s.handleUpdateMemory)
+
+	// Register delete_memory tool
+	deleteMemoryTool := &mcp.Tool{
+		Name:        "delete_memory",
+		Description: "Delete a memory entry by ID",
+	}
+	mcp.AddTool(s.server, deleteMemoryTool, s.handleDeleteMemory)
+
+	slog.Info("[MCP] Registered 5 memory tools: list_memories, get_memory, create_memory, update_memory, delete_memory")
 }
 
 // GetServer returns the underlying MCP server
