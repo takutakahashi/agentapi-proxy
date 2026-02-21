@@ -1883,10 +1883,297 @@
           }
         }
       }
+    },
+    "/memories": {
+      "post": {
+        "summary": "Create a memory entry",
+        "description": "Creates a new memory entry for a user or team. User-scoped memories are private to the owner. Team-scoped memories are accessible to all team members.",
+        "operationId": "createMemory",
+        "tags": ["Memory"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateMemoryRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Memory entry created",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Memory"}
+              }
+            }
+          },
+          "400": {"description": "Invalid request"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"}
+        }
+      },
+      "get": {
+        "summary": "List memory entries",
+        "description": "Lists memory entries accessible to the authenticated user. User-scoped queries return only the user's own entries. Team-scoped queries return entries for teams the user belongs to.",
+        "operationId": "listMemories",
+        "tags": ["Memory"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
+            "required": false,
+            "schema": {"type": "string", "enum": ["user", "team"]}
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter by team ID (required when scope=team)",
+            "required": false,
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Full-text search query applied to title and content (case-insensitive)",
+            "required": false,
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of memory entries",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/MemoryListResponse"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"}
+        }
+      }
+    },
+    "/memories/{memoryId}": {
+      "get": {
+        "summary": "Get a memory entry",
+        "description": "Retrieves a specific memory entry by ID. Access is restricted to the owner (user-scoped) or team members (team-scoped). Admin privilege does NOT bypass these restrictions.",
+        "operationId": "getMemory",
+        "tags": ["Memory"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "memoryId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the memory entry",
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Memory entry",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Memory"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Memory entry not found"}
+        }
+      },
+      "put": {
+        "summary": "Update a memory entry",
+        "description": "Updates a memory entry. Only the owner (user-scoped) or team members (team-scoped) can update. Omitted fields are not changed.",
+        "operationId": "updateMemory",
+        "tags": ["Memory"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "memoryId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the memory entry",
+            "schema": {"type": "string"}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/UpdateMemoryRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated memory entry",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Memory"}
+              }
+            }
+          },
+          "400": {"description": "Invalid request"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Memory entry not found"}
+        }
+      },
+      "delete": {
+        "summary": "Delete a memory entry",
+        "description": "Deletes a memory entry. Only the owner (user-scoped) or team members (team-scoped) can delete.",
+        "operationId": "deleteMemory",
+        "tags": ["Memory"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "memoryId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the memory entry",
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deletion result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {"type": "boolean"}
+                  }
+                }
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Memory entry not found"}
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Memory": {
+        "type": "object",
+        "description": "A memory entry belonging to a user or team",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier (UUID)"
+          },
+          "title": {
+            "type": "string",
+            "description": "Title of the memory entry"
+          },
+          "content": {
+            "type": "string",
+            "description": "Text content of the memory entry"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["user", "team"],
+            "description": "Scope of the memory entry"
+          },
+          "owner_id": {
+            "type": "string",
+            "description": "User ID of the owner who created this entry"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID (populated when scope is 'team')"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "description": "Key-value tags for filtering"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp"
+          }
+        },
+        "required": ["id", "title", "content", "scope", "owner_id", "created_at", "updated_at"]
+      },
+      "CreateMemoryRequest": {
+        "type": "object",
+        "description": "Request body for creating a memory entry",
+        "required": ["title", "scope"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Title of the memory entry"
+          },
+          "content": {
+            "type": "string",
+            "description": "Text content of the memory entry"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["user", "team"],
+            "description": "Scope of the memory entry"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID (required when scope is 'team')"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "description": "Key-value tags for filtering"
+          }
+        }
+      },
+      "UpdateMemoryRequest": {
+        "type": "object",
+        "description": "Request body for updating a memory entry. All fields are optional; omitted fields are not changed.",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "New title (omit to keep existing)"
+          },
+          "content": {
+            "type": "string",
+            "description": "New content (omit to keep existing)"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "description": "New tags (when present, replaces ALL existing tags; omit to keep existing)"
+          }
+        }
+      },
+      "MemoryListResponse": {
+        "type": "object",
+        "description": "Response containing a list of memory entries",
+        "properties": {
+          "memories": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/Memory"},
+            "description": "List of memory entries"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total number of entries in the response"
+          }
+        },
+        "required": ["memories", "total"]
+      },
       "StartRequest": {
         "type": "object",
         "properties": {
@@ -3223,6 +3510,10 @@
     {
       "name": "Notifications",
       "description": "Push notification management"
+    },
+    {
+      "name": "Memory",
+      "description": "User and team memory management. Supports tagging, full-text search, and fine-grained access control. User-scoped memories are completely private (admin cannot bypass)."
     }
   ]
 }

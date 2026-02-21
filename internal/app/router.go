@@ -29,6 +29,7 @@ type HandlerRegistry struct {
 	userController           *controllers.UserController
 	shareController          *controllers.ShareController
 	personalAPIKeyController *controllers.PersonalAPIKeyController
+	memoryController         *controllers.MemoryController
 	customHandlers           []CustomHandler
 }
 
@@ -100,6 +101,13 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Personal API key controller initialized")
 	}
 
+	// Create memory controller if memory repository is available
+	var memoryController *controllers.MemoryController
+	if server.memoryRepo != nil {
+		memoryController = controllers.NewMemoryController(server.memoryRepo)
+		log.Printf("[ROUTER] Memory controller initialized")
+	}
+
 	return &Router{
 		echo:   e,
 		server: server,
@@ -111,6 +119,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			userController:           controllers.NewUserController(),
 			shareController:          shareController,
 			personalAPIKeyController: personalAPIKeyController,
+			memoryController:         memoryController,
 			customHandlers:           make([]CustomHandler, 0),
 		},
 	}
@@ -246,6 +255,19 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Personal API key endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Personal API key controller not available, skipping personal API key routes")
+	}
+
+	// Add memory routes if memory repository is available (Kubernetes mode only)
+	if r.server.memoryRepo != nil && r.handlers.memoryController != nil {
+		log.Printf("[ROUTES] Registering memory endpoints...")
+		r.echo.POST("/memories", r.handlers.memoryController.CreateMemory, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/memories", r.handlers.memoryController.ListMemories, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/memories/:memoryId", r.handlers.memoryController.GetMemory, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/memories/:memoryId", r.handlers.memoryController.UpdateMemory, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/memories/:memoryId", r.handlers.memoryController.DeleteMemory, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Memory endpoints registered")
+	} else {
+		log.Printf("[ROUTES] Memory repository not available, skipping memory routes")
 	}
 
 	return nil

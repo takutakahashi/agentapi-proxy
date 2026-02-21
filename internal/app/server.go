@@ -44,6 +44,7 @@ type Server struct {
 	settingsRepo       portrepos.SettingsRepository   // Settings repository
 	shareRepo          portrepos.ShareRepository      // Share repository for session sharing
 	teamConfigRepo     portrepos.TeamConfigRepository // Team configuration repository
+	memoryRepo         portrepos.MemoryRepository     // Memory repository
 	router             *Router                        // Router for custom handler registration
 }
 
@@ -83,7 +84,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories"
 			}
 			return false
 		},
@@ -200,6 +201,13 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	k8sSessionManager.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
 	log.Printf("[SERVER] Personal API key repository initialized")
 
+	// Initialize memory repository
+	memoryRepo := repositories.NewKubernetesMemoryRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] Memory repository initialized")
+
 	s := &Server{
 		config:         cfg,
 		echo:           e,
@@ -210,6 +218,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		settingsRepo:   settingsRepo,
 		shareRepo:      shareRepo,
 		teamConfigRepo: teamConfigRepo,
+		memoryRepo:     memoryRepo,
 	}
 
 	// Add logging middleware if verbose
@@ -509,6 +518,16 @@ func (s *Server) GetNotificationService() *notification.Service {
 // GetSettingsRepository returns the settings repository
 func (s *Server) GetSettingsRepository() portrepos.SettingsRepository {
 	return s.settingsRepo
+}
+
+// GetMemoryRepository returns the memory repository
+func (s *Server) GetMemoryRepository() portrepos.MemoryRepository {
+	return s.memoryRepo
+}
+
+// SetMemoryRepository allows configuration of a custom memory repository (for testing)
+func (s *Server) SetMemoryRepository(repo portrepos.MemoryRepository) {
+	s.memoryRepo = repo
 }
 
 // ExtractRepositoryInfo extracts repository information from tags.
