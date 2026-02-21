@@ -31,6 +31,8 @@ type HandlerRegistry struct {
 	shareController          *controllers.ShareController
 	personalAPIKeyController *controllers.PersonalAPIKeyController
 	memoryController         *controllers.MemoryController
+	taskController           *controllers.TaskController
+	taskGroupController      *controllers.TaskGroupController
 	customHandlers           []CustomHandler
 }
 
@@ -109,6 +111,20 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Memory controller initialized")
 	}
 
+	// Create task controller if task repository is available
+	var taskController *controllers.TaskController
+	if server.taskRepo != nil {
+		taskController = controllers.NewTaskController(server.taskRepo)
+		log.Printf("[ROUTER] Task controller initialized")
+	}
+
+	// Create task group controller if task group repository is available
+	var taskGroupController *controllers.TaskGroupController
+	if server.taskGroupRepo != nil {
+		taskGroupController = controllers.NewTaskGroupController(server.taskGroupRepo)
+		log.Printf("[ROUTER] Task group controller initialized")
+	}
+
 	return &Router{
 		echo:   e,
 		server: server,
@@ -121,6 +137,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			shareController:          shareController,
 			personalAPIKeyController: personalAPIKeyController,
 			memoryController:         memoryController,
+			taskController:           taskController,
+			taskGroupController:      taskGroupController,
 			customHandlers:           make([]CustomHandler, 0),
 		},
 	}
@@ -275,6 +293,32 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Memory endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Memory repository not available, skipping memory routes")
+	}
+
+	// Add task routes if task repository is available (Kubernetes mode only)
+	if r.server.taskRepo != nil && r.handlers.taskController != nil {
+		log.Printf("[ROUTES] Registering task endpoints...")
+		r.echo.POST("/tasks", r.handlers.taskController.CreateTask, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/tasks", r.handlers.taskController.ListTasks, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/tasks/:taskId", r.handlers.taskController.GetTask, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/tasks/:taskId", r.handlers.taskController.UpdateTask, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/tasks/:taskId", r.handlers.taskController.DeleteTask, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Task endpoints registered")
+	} else {
+		log.Printf("[ROUTES] Task repository not available, skipping task routes")
+	}
+
+	// Add task group routes if task group repository is available (Kubernetes mode only)
+	if r.server.taskGroupRepo != nil && r.handlers.taskGroupController != nil {
+		log.Printf("[ROUTES] Registering task group endpoints...")
+		r.echo.POST("/task-groups", r.handlers.taskGroupController.CreateTaskGroup, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/task-groups", r.handlers.taskGroupController.ListTaskGroups, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/task-groups/:groupId", r.handlers.taskGroupController.GetTaskGroup, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/task-groups/:groupId", r.handlers.taskGroupController.UpdateTaskGroup, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/task-groups/:groupId", r.handlers.taskGroupController.DeleteTaskGroup, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Task group endpoints registered")
+	} else {
+		log.Printf("[ROUTES] Task group repository not available, skipping task group routes")
 	}
 
 	return nil

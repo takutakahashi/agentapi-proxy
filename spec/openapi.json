@@ -2058,6 +2058,363 @@
           "404": {"description": "Memory entry not found"}
         }
       }
+    },
+    "/tasks": {
+      "post": {
+        "summary": "Create a task",
+        "description": "Creates a new task for a user or team. User-scoped tasks are private to the owner. Team-scoped tasks are accessible to all team members.",
+        "operationId": "createTask",
+        "tags": ["Tasks"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateTaskRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Task created",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Task"}
+              }
+            }
+          },
+          "400": {"description": "Invalid request"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"}
+        }
+      },
+      "get": {
+        "summary": "List tasks",
+        "description": "Lists tasks accessible to the authenticated user. Supports filtering by scope, team, group, status, and task type.",
+        "operationId": "listTasks",
+        "tags": ["Tasks"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
+            "required": false,
+            "schema": {"type": "string", "enum": ["user", "team"]}
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter by team ID (required when scope=team)",
+            "required": false,
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "group_id",
+            "in": "query",
+            "description": "Filter by task group ID",
+            "required": false,
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by status: 'todo' or 'done'",
+            "required": false,
+            "schema": {"type": "string", "enum": ["todo", "done"]}
+          },
+          {
+            "name": "task_type",
+            "in": "query",
+            "description": "Filter by task type: 'user' or 'agent'",
+            "required": false,
+            "schema": {"type": "string", "enum": ["user", "agent"]}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of tasks",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TaskListResponse"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"}
+        }
+      }
+    },
+    "/tasks/{taskId}": {
+      "get": {
+        "summary": "Get a task",
+        "description": "Retrieves a specific task by ID.",
+        "operationId": "getTask",
+        "tags": ["Tasks"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the task",
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Task"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Task not found"}
+        }
+      },
+      "put": {
+        "summary": "Update a task",
+        "description": "Updates a task. Only the owner (user-scoped) or team members (team-scoped) can update. Omitted fields are not changed.",
+        "operationId": "updateTask",
+        "tags": ["Tasks"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the task",
+            "schema": {"type": "string"}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/UpdateTaskRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated task",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Task"}
+              }
+            }
+          },
+          "400": {"description": "Invalid request"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Task not found"}
+        }
+      },
+      "delete": {
+        "summary": "Delete a task",
+        "description": "Deletes a task. Only the owner (user-scoped) or team members (team-scoped) can delete.",
+        "operationId": "deleteTask",
+        "tags": ["Tasks"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the task",
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deletion result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {"type": "boolean"}
+                  }
+                }
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Task not found"}
+        }
+      }
+    },
+    "/task-groups": {
+      "post": {
+        "summary": "Create a task group",
+        "description": "Creates a new task group for organizing tasks. Groups support user and team scopes.",
+        "operationId": "createTaskGroup",
+        "tags": ["TaskGroups"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateTaskGroupRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Task group created",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TaskGroup"}
+              }
+            }
+          },
+          "400": {"description": "Invalid request"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"}
+        }
+      },
+      "get": {
+        "summary": "List task groups",
+        "description": "Lists task groups accessible to the authenticated user.",
+        "operationId": "listTaskGroups",
+        "tags": ["TaskGroups"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
+            "required": false,
+            "schema": {"type": "string", "enum": ["user", "team"]}
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter by team ID (required when scope=team)",
+            "required": false,
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of task groups",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TaskGroupListResponse"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"}
+        }
+      }
+    },
+    "/task-groups/{groupId}": {
+      "get": {
+        "summary": "Get a task group",
+        "description": "Retrieves a specific task group by ID.",
+        "operationId": "getTaskGroup",
+        "tags": ["TaskGroups"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "groupId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the task group",
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task group",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TaskGroup"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Task group not found"}
+        }
+      },
+      "put": {
+        "summary": "Update a task group",
+        "description": "Updates a task group. Omitted fields are not changed.",
+        "operationId": "updateTaskGroup",
+        "tags": ["TaskGroups"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "groupId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the task group",
+            "schema": {"type": "string"}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/UpdateTaskGroupRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated task group",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TaskGroup"}
+              }
+            }
+          },
+          "400": {"description": "Invalid request"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Task group not found"}
+        }
+      },
+      "delete": {
+        "summary": "Delete a task group",
+        "description": "Deletes a task group.",
+        "operationId": "deleteTaskGroup",
+        "tags": ["TaskGroups"],
+        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "parameters": [
+          {
+            "name": "groupId",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the task group",
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deletion result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {"type": "boolean"}
+                  }
+                }
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Task group not found"}
+        }
+      }
     }
   },
   "components": {
@@ -2173,6 +2530,298 @@
           }
         },
         "required": ["memories", "total"]
+      },
+      "TaskLink": {
+        "type": "object",
+        "description": "A URL link associated with a task",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier (UUID)"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of the link"
+          },
+          "title": {
+            "type": "string",
+            "description": "Optional label for the link"
+          }
+        },
+        "required": ["id", "url"]
+      },
+      "TaskLinkRequest": {
+        "type": "object",
+        "description": "A URL link to associate with a task",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of the link"
+          },
+          "title": {
+            "type": "string",
+            "description": "Optional label for the link"
+          }
+        },
+        "required": ["url"]
+      },
+      "Task": {
+        "type": "object",
+        "description": "A task belonging to a user or team",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier (UUID)"
+          },
+          "title": {
+            "type": "string",
+            "description": "Title of the task"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description of the task"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["todo", "done"],
+            "description": "Current status of the task"
+          },
+          "task_type": {
+            "type": "string",
+            "enum": ["user", "agent"],
+            "description": "Who manages the task: 'user' for human-managed, 'agent' for AI agent-managed"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["user", "team"],
+            "description": "Scope of the task"
+          },
+          "owner_id": {
+            "type": "string",
+            "description": "User ID of the task creator/owner"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID (populated only when scope is 'team')"
+          },
+          "group_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the task group this task belongs to (optional)"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Session ID for agent tasks (optional)"
+          },
+          "links": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/TaskLink"},
+            "description": "List of associated links"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp (ISO 8601)"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp (ISO 8601)"
+          }
+        },
+        "required": ["id", "title", "status", "task_type", "scope", "owner_id", "links", "created_at", "updated_at"]
+      },
+      "CreateTaskRequest": {
+        "type": "object",
+        "description": "Request body for creating a task",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Title of the task"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description of the task"
+          },
+          "task_type": {
+            "type": "string",
+            "enum": ["user", "agent"],
+            "description": "Who manages the task"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["user", "team"],
+            "description": "Scope of the task"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID (required when scope is 'team')"
+          },
+          "group_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the task group (optional)"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Session ID for agent tasks (optional)"
+          },
+          "links": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/TaskLinkRequest"},
+            "description": "Associated links"
+          }
+        },
+        "required": ["title", "task_type", "scope"]
+      },
+      "UpdateTaskRequest": {
+        "type": "object",
+        "description": "Request body for updating a task. All fields are optional.",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "New title"
+          },
+          "description": {
+            "type": "string",
+            "description": "New description"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["todo", "done"],
+            "description": "New status"
+          },
+          "group_id": {
+            "type": "string",
+            "description": "New group ID (set to empty string to remove from group)"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "New session ID"
+          },
+          "links": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/TaskLinkRequest"},
+            "description": "Replaces all existing links when present"
+          }
+        }
+      },
+      "TaskListResponse": {
+        "type": "object",
+        "description": "Response containing a list of tasks",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/Task"},
+            "description": "List of tasks"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total number of tasks in the response"
+          }
+        },
+        "required": ["tasks", "total"]
+      },
+      "TaskGroup": {
+        "type": "object",
+        "description": "A group for organizing tasks",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier (UUID)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the task group"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the task group"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["user", "team"],
+            "description": "Scope of the task group"
+          },
+          "owner_id": {
+            "type": "string",
+            "description": "User ID of the group creator/owner"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID (populated only when scope is 'team')"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp (ISO 8601)"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp (ISO 8601)"
+          }
+        },
+        "required": ["id", "name", "scope", "owner_id", "created_at", "updated_at"]
+      },
+      "CreateTaskGroupRequest": {
+        "type": "object",
+        "description": "Request body for creating a task group",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the task group"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the task group"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["user", "team"],
+            "description": "Scope of the task group"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID (required when scope is 'team')"
+          }
+        },
+        "required": ["name", "scope"]
+      },
+      "UpdateTaskGroupRequest": {
+        "type": "object",
+        "description": "Request body for updating a task group. All fields are optional.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "New name"
+          },
+          "description": {
+            "type": "string",
+            "description": "New description"
+          }
+        }
+      },
+      "TaskGroupListResponse": {
+        "type": "object",
+        "description": "Response containing a list of task groups",
+        "properties": {
+          "task_groups": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/TaskGroup"},
+            "description": "List of task groups"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total number of task groups in the response"
+          }
+        },
+        "required": ["task_groups", "total"]
       },
       "StartRequest": {
         "type": "object",
@@ -3514,6 +4163,14 @@
     {
       "name": "Memory",
       "description": "User and team memory management. Supports tagging, full-text search, and fine-grained access control. User-scoped memories are completely private (admin cannot bypass)."
+    },
+    {
+      "name": "Tasks",
+      "description": "Task management for users and AI agents. Supports user-scoped (private) and team-scoped tasks with CRUD operations, status tracking, links, and grouping."
+    },
+    {
+      "name": "TaskGroups",
+      "description": "Task group management for organizing tasks into logical collections. Groups support user and team scopes."
     }
   ]
 }

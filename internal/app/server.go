@@ -45,6 +45,8 @@ type Server struct {
 	shareRepo          portrepos.ShareRepository      // Share repository for session sharing
 	teamConfigRepo     portrepos.TeamConfigRepository // Team configuration repository
 	memoryRepo         portrepos.MemoryRepository     // Memory repository
+	taskRepo           portrepos.TaskRepository       // Task repository
+	taskGroupRepo      portrepos.TaskGroupRepository  // Task group repository
 	router             *Router                        // Router for custom handler registration
 }
 
@@ -84,7 +86,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups"
 			}
 			return false
 		},
@@ -219,6 +221,20 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		log.Printf("[SERVER] Memory repository initialized (backend: kubernetes)")
 	}
 
+	// Initialize task repository (Kubernetes ConfigMap-backed)
+	taskRepo := repositories.NewKubernetesTaskRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] Task repository initialized")
+
+	// Initialize task group repository (Kubernetes ConfigMap-backed)
+	taskGroupRepo := repositories.NewKubernetesTaskGroupRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] Task group repository initialized")
+
 	s := &Server{
 		config:         cfg,
 		echo:           e,
@@ -230,6 +246,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		shareRepo:      shareRepo,
 		teamConfigRepo: teamConfigRepo,
 		memoryRepo:     memoryRepo,
+		taskRepo:       taskRepo,
+		taskGroupRepo:  taskGroupRepo,
 	}
 
 	// Add logging middleware if verbose
