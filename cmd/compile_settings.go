@@ -13,7 +13,6 @@ var (
 	compileOutputDir   string
 	compileEnvFilePath string
 	compileStartupPath string
-	compileMCPOutput   string
 )
 
 var compileSettingsCmd = &cobra.Command{
@@ -22,11 +21,13 @@ var compileSettingsCmd = &cobra.Command{
 	Long: `Compile a unified session settings YAML file into individual configuration files.
 
 This command reads a settings YAML file and generates:
-- ~/.claude.json (Claude onboarding configuration)
+- ~/.claude.json (Claude onboarding configuration and MCP server configurations)
 - ~/.claude/settings.json (Claude settings with marketplaces)
-- /home/agentapi/.mcp-config/merged.json (MCP server configurations)
 - /home/agentapi/.session/env (environment variables as KEY=VALUE)
 - /home/agentapi/.session/startup.sh (startup command script)
+
+MCP server configurations are written directly to ~/.claude.json under the "mcpServers" key,
+which Claude Code reads natively without requiring a separate --mcp-config flag.
 
 This is typically run as an init container in the session Pod.
 
@@ -52,19 +53,16 @@ func init() {
 		"Output path for environment variables file")
 	compileSettingsCmd.Flags().StringVar(&compileStartupPath, "startup-script", defaults.StartupPath,
 		"Output path for startup script")
-	compileSettingsCmd.Flags().StringVar(&compileMCPOutput, "mcp-output", defaults.MCPOutputPath,
-		"Output path for MCP server configuration")
 
 	HelpersCmd.AddCommand(compileSettingsCmd)
 }
 
 func runCompileSettings(cmd *cobra.Command, args []string) error {
 	opts := sessionsettings.CompileOptions{
-		InputPath:     compileInputPath,
-		OutputDir:     compileOutputDir,
-		EnvFilePath:   compileEnvFilePath,
-		StartupPath:   compileStartupPath,
-		MCPOutputPath: compileMCPOutput,
+		InputPath:   compileInputPath,
+		OutputDir:   compileOutputDir,
+		EnvFilePath: compileEnvFilePath,
+		StartupPath: compileStartupPath,
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Compiling settings from %s", opts.InputPath)

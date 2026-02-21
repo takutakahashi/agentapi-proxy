@@ -14,21 +14,19 @@ import (
 
 // CompileOptions configures the compile-settings behavior.
 type CompileOptions struct {
-	InputPath     string // Path to settings YAML (default: /session-settings/settings.yaml)
-	OutputDir     string // Base output directory (default: /home/agentapi)
-	EnvFilePath   string // Path for env file output (default: /session-settings/env)
-	StartupPath   string // Path for startup script (default: /session-settings/startup.sh)
-	MCPOutputPath string // Path for MCP config (default: /home/agentapi/.mcp-config/merged.json, written during setup)
+	InputPath   string // Path to settings YAML (default: /session-settings/settings.yaml)
+	OutputDir   string // Base output directory (default: /home/agentapi)
+	EnvFilePath string // Path for env file output (default: /session-settings/env)
+	StartupPath string // Path for startup script (default: /session-settings/startup.sh)
 }
 
 // DefaultCompileOptions returns the default compile options.
 func DefaultCompileOptions() CompileOptions {
 	return CompileOptions{
-		InputPath:     "/session-settings/settings.yaml",
-		OutputDir:     "/home/agentapi",
-		EnvFilePath:   "/home/agentapi/.session/env",
-		StartupPath:   "/home/agentapi/.session/startup.sh",
-		MCPOutputPath: "/home/agentapi/.mcp-config/merged.json",
+		InputPath:   "/session-settings/settings.yaml",
+		OutputDir:   "/home/agentapi",
+		EnvFilePath: "/home/agentapi/.session/env",
+		StartupPath: "/home/agentapi/.session/startup.sh",
 	}
 }
 
@@ -49,8 +47,8 @@ func Compile(opts CompileOptions) error {
 
 	log.Printf("[COMPILE-SETTINGS] Loaded settings for session %s (user: %s)", settings.Session.ID, settings.Session.UserID)
 
-	// 2. Generate ~/.claude.json
-	if err := generateClaudeJSON(opts.OutputDir, settings.Claude.ClaudeJSON); err != nil {
+	// 2. Generate ~/.claude.json (includes mcpServers if present)
+	if err := generateClaudeJSON(opts.OutputDir, settings.Claude.ClaudeJSON, settings.Claude.MCPServers); err != nil {
 		return fmt.Errorf("failed to generate .claude.json: %w", err)
 	}
 
@@ -59,19 +57,12 @@ func Compile(opts CompileOptions) error {
 		return fmt.Errorf("failed to generate settings.json: %w", err)
 	}
 
-	// 4. Generate MCP config
-	if len(settings.Claude.MCPServers) > 0 {
-		if err := generateMCPConfig(opts.MCPOutputPath, settings.Claude.MCPServers); err != nil {
-			return fmt.Errorf("failed to generate MCP config: %w", err)
-		}
-	}
-
-	// 5. Generate env file
+	// 4. Generate env file
 	if err := generateEnvFile(opts.EnvFilePath, settings.Env); err != nil {
 		return fmt.Errorf("failed to generate env file: %w", err)
 	}
 
-	// 6. Generate startup script
+	// 5. Generate startup script
 	if err := generateStartupScript(opts.StartupPath, settings.Startup); err != nil {
 		return fmt.Errorf("failed to generate startup script: %w", err)
 	}
@@ -80,9 +71,10 @@ func Compile(opts CompileOptions) error {
 	return nil
 }
 
-// generateClaudeJSON creates ~/.claude.json with onboarding settings.
+// generateClaudeJSON creates ~/.claude.json with onboarding settings and MCP server configuration.
 // Mirrors the pattern from pkg/startup/sync.go generateClaudeJSON (lines 157-188).
-func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}) error {
+// mcpServers, if non-empty, is written to the "mcpServers" key so Claude Code can read it natively.
+func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcpServers map[string]interface{}) error {
 	// Create output directory if needed
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -110,6 +102,11 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}) err
 	existing["hasCompletedOnboarding"] = true
 	existing["bypassPermissionsModeAccepted"] = true
 
+	// Write MCP servers directly into claude.json so Claude Code reads them natively
+	if len(mcpServers) > 0 {
+		existing["mcpServers"] = mcpServers
+	}
+
 	// Write file
 	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
@@ -130,7 +127,7 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}) err
 // marketplace/plugin setup cannot leave the file in a state that triggers
 // the "Welcome to Claude Code" screen.
 func patchClaudeJSON(outputDir string, extra map[string]interface{}) error {
-	return generateClaudeJSON(outputDir, extra)
+	return generateClaudeJSON(outputDir, extra, nil)
 }
 
 // generateSettingsJSON creates ~/.claude/settings.json.
@@ -161,33 +158,6 @@ func generateSettingsJSON(outputDir string, settingsJSON map[string]interface{})
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s", settingsPath)
-	return nil
-}
-
-// generateMCPConfig creates /mcp-config/merged.json with {"mcpServers": {...}} wrapper.
-// Mirrors the pattern from pkg/mcp/merge.go.
-func generateMCPConfig(mcpOutputPath string, mcpServers map[string]interface{}) error {
-	// Create parent directory if needed
-	mcpDir := filepath.Dir(mcpOutputPath)
-	if err := os.MkdirAll(mcpDir, 0755); err != nil {
-		return fmt.Errorf("failed to create MCP config directory: %w", err)
-	}
-
-	// Wrap in mcpServers key
-	wrapped := map[string]interface{}{
-		"mcpServers": mcpServers,
-	}
-
-	data, err := json.MarshalIndent(wrapped, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal MCP config: %w", err)
-	}
-
-	if err := os.WriteFile(mcpOutputPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write MCP config: %w", err)
-	}
-
-	log.Printf("[COMPILE-SETTINGS] Generated %s", mcpOutputPath)
 	return nil
 }
 
