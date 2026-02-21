@@ -16,6 +16,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Update embedded openapi.json with the latest spec before building
+RUN cp spec/openapi.json internal/static/public/openapi.json
+
 # Build the application with optimizations
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
 

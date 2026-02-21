@@ -54,6 +54,11 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				return next(c)
 			}
 
+			// Skip auth for public static files
+			if strings.HasPrefix(path, "/public") {
+				return next(c)
+			}
+
 			var user *entities.User
 			var err error
 
