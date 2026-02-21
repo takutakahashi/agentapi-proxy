@@ -14,5 +14,24 @@ services:
     working_dir: /home/agentapi
     restart: unless-stopped
 
+  # rustfs: S3-compatible object storage (used for local development of the S3 memory backend)
+  # Access key / secret: rustfsadmin / rustfsadmin
+  # S3 API endpoint : http://localhost:9000
+  # Management console: http://localhost:9001
+  rustfs:
+    image: rustfs/rustfs:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - RUSTFS_ADDRESS=0.0.0.0:9000
+      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9001
+      - RUSTFS_ACCESS_KEY=rustfsadmin
+      - RUSTFS_SECRET_KEY=rustfsadmin
+      - RUSTFS_CONSOLE_ENABLE=true
+    volumes:
+      - rustfs-data:/data
+
 volumes:
   agentapi-proxy-home:
+  rustfs-data:

@@ -263,6 +263,25 @@ type KubernetesSessionConfig struct {
 	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
 }
 
+// MemoryConfig represents memory backend configuration
+type MemoryConfig struct {
+	// Backend is the storage backend type: "kubernetes" (default) or "s3"
+	Backend string          `json:"backend" mapstructure:"backend"`
+	S3      *MemoryS3Config `json:"s3,omitempty" mapstructure:"s3"`
+}
+
+// MemoryS3Config represents S3 backend configuration for memory storage
+type MemoryS3Config struct {
+	// Bucket is the S3 bucket name (required)
+	Bucket string `json:"bucket" mapstructure:"bucket"`
+	// Region is the AWS region (optional, uses AWS default config if empty)
+	Region string `json:"region" mapstructure:"region"`
+	// Prefix is the key prefix for all memory objects (default: "agentapi-memory/")
+	Prefix string `json:"prefix" mapstructure:"prefix"`
+	// Endpoint is a custom S3-compatible endpoint URL (e.g., for rustfs or other S3-compatible services)
+	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
 	// Auth represents authentication configuration
@@ -277,6 +296,8 @@ type Config struct {
 	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
 	// Webhook is the configuration for webhook functionality
 	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
+	// Memory is the configuration for memory storage backend
+	Memory MemoryConfig `json:"memory" mapstructure:"memory"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -545,6 +566,13 @@ func bindEnvVars(v *viper.Viper) {
 	// Webhook configuration
 	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
 	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
+
+	// Memory backend configuration
+	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
+	_ = v.BindEnv("memory.s3.bucket", "AGENTAPI_MEMORY_S3_BUCKET")
+	_ = v.BindEnv("memory.s3.region", "AGENTAPI_MEMORY_S3_REGION")
+	_ = v.BindEnv("memory.s3.prefix", "AGENTAPI_MEMORY_S3_PREFIX")
+	_ = v.BindEnv("memory.s3.endpoint", "AGENTAPI_MEMORY_S3_ENDPOINT")
 }
 
 // setDefaults sets default values for viper configuration
@@ -610,6 +638,12 @@ func setDefaults(v *viper.Viper) {
 	// Webhook defaults
 	v.SetDefault("webhook.base_url", "")
 	v.SetDefault("webhook.github_enterprise_host", "")
+
+	// Memory backend defaults
+	v.SetDefault("memory.backend", "kubernetes")
+	v.SetDefault("memory.s3.prefix", "agentapi-memory/")
+	v.SetDefault("memory.s3.region", "")
+	v.SetDefault("memory.s3.endpoint", "")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
