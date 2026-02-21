@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,16 +15,19 @@ import (
 type MCPSessionToolsUseCase struct {
 	sessionManager repositories.SessionManager
 	shareRepo      repositories.ShareRepository
+	taskRepo       repositories.TaskRepository
 }
 
 // NewMCPSessionToolsUseCase creates a new MCPSessionToolsUseCase
 func NewMCPSessionToolsUseCase(
 	sessionManager repositories.SessionManager,
 	shareRepo repositories.ShareRepository,
+	taskRepo repositories.TaskRepository,
 ) *MCPSessionToolsUseCase {
 	return &MCPSessionToolsUseCase{
 		sessionManager: sessionManager,
 		shareRepo:      shareRepo,
+		taskRepo:       taskRepo,
 	}
 }
 
@@ -236,6 +240,23 @@ func (uc *MCPSessionToolsUseCase) DeleteSession(ctx context.Context, sessionID, 
 	// Delete associated share link if exists (ignore errors as share may not exist)
 	if uc.shareRepo != nil {
 		_ = uc.shareRepo.Delete(sessionID)
+	}
+
+	// Delete associated tasks for this session (cascade delete)
+	if uc.taskRepo != nil {
+		tasks, err := uc.taskRepo.List(ctx, repositories.TaskFilter{SessionID: sessionID})
+		if err != nil {
+			log.Printf("[MCP] Warning: failed to list tasks for session %s: %v", sessionID, err)
+		} else {
+			for _, task := range tasks {
+				if err := uc.taskRepo.Delete(ctx, task.ID()); err != nil {
+					log.Printf("[MCP] Warning: failed to delete task %s for session %s: %v", task.ID(), sessionID, err)
+				}
+			}
+			if len(tasks) > 0 {
+				log.Printf("[MCP] Deleted %d tasks associated with session %s", len(tasks), sessionID)
+			}
+		}
 	}
 
 	return uc.sessionManager.DeleteSession(sessionID)

@@ -22,7 +22,7 @@ type MCPServer struct {
 // NewMCPServer creates a new MCP server instance
 func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, taskRepo repositories.TaskRepository, taskGroupRepo repositories.TaskGroupRepository, memoryRepo repositories.MemoryRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, opts *mcp.ServerOptions) *MCPServer {
 	// Create session use case with actual dependencies
-	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, shareRepo)
+	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, shareRepo, taskRepo)
 
 	// Create task use case (may be nil if repos are not configured)
 	var taskUseCase *mcpusecases.MCPTaskToolsUseCase
@@ -137,7 +137,7 @@ func (s *MCPServer) registerTaskTools() {
 	// Register create_task tool
 	createTaskTool := &mcp.Tool{
 		Name:        "create_task",
-		Description: "Create a new task. task_type must be 'user' or 'agent'. scope must be 'user' or 'team'.",
+		Description: "Create a new task. task_type must be 'user' or 'agent'. scope must be 'user' or 'team'. session_id is required.",
 	}
 	mcp.AddTool(s.server, createTaskTool, s.handleCreateTask)
 

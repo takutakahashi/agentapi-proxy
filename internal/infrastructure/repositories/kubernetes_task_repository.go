@@ -33,6 +33,8 @@ const (
 	LabelTaskGroupID = "agentapi.proxy/group-id"
 	// LabelTaskStatus is the label key for the task status
 	LabelTaskStatus = "agentapi.proxy/task-status"
+	// LabelTaskSessionID is the label key for the session ID
+	LabelTaskSessionID = "agentapi.proxy/session-id"
 
 	// AnnotationTaskOwnerID is the annotation key for the raw owner ID
 	AnnotationTaskOwnerID = "agentapi.proxy/owner-id"
@@ -254,6 +256,9 @@ func (r *KubernetesTaskRepository) buildLabelSelector(filter repositories.TaskFi
 	if filter.Status != "" {
 		parts = append(parts, fmt.Sprintf("%s=%s", LabelTaskStatus, string(filter.Status)))
 	}
+	if filter.SessionID != "" {
+		parts = append(parts, fmt.Sprintf("%s=%s", LabelTaskSessionID, filter.SessionID))
+	}
 
 	return strings.Join(parts, ",")
 }
@@ -273,6 +278,10 @@ func (r *KubernetesTaskRepository) buildLabels(t *entities.Task) map[string]stri
 	if t.GroupID() != "" {
 		// GroupID is a UUID so it's safe to use as a label value directly
 		labels[LabelTaskGroupID] = t.GroupID()
+	}
+	if t.SessionID() != "" {
+		// SessionID is a UUID so it's safe to use as a label value directly
+		labels[LabelTaskSessionID] = t.SessionID()
 	}
 	return labels
 }
