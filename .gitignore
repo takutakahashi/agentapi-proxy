@@ -40,7 +40,6 @@ logs/
 !api_keys.example.json
 !docs/*.json
 !spec/*.json
-!internal/static/public/*.json
 !go.mod
 !go.sum
 !.tool-versions

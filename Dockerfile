@@ -16,8 +16,6 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Update embedded openapi.json with the latest spec before building
-RUN cp spec/openapi.json internal/static/public/openapi.json
 
 # Build the application with optimizations
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
@@ -134,6 +132,8 @@ RUN sudo chmod +x /usr/local/bin/entrypoint.sh
 
 # Copy wrapped_claude script
 COPY --chmod=755 scripts/wrapped_claude.sh /usr/local/bin/wrapped_claude
+
+COPY --chown=agentapi:agentapi spec/openapi.json /home/agentapi/workdir/public/openapi.json
 
 # Expose port
 EXPOSE 8080
