@@ -201,12 +201,23 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	k8sSessionManager.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
 	log.Printf("[SERVER] Personal API key repository initialized")
 
-	// Initialize memory repository
-	memoryRepo := repositories.NewKubernetesMemoryRepository(
-		k8sSessionManager.GetClient(),
-		k8sSessionManager.GetNamespace(),
-	)
-	log.Printf("[SERVER] Memory repository initialized")
+	// Initialize memory repository based on backend configuration.
+	// Default is "kubernetes" (ConfigMap-backed). Set memory.backend = "s3" to use S3.
+	var memoryRepo portrepos.MemoryRepository
+	if cfg.Memory.Backend == "s3" && cfg.Memory.S3 != nil {
+		s3MemRepo, s3Err := repositories.NewS3MemoryRepository(context.Background(), cfg.Memory.S3)
+		if s3Err != nil {
+			log.Fatalf("[SERVER] Failed to initialize S3 memory repository: %v", s3Err)
+		}
+		memoryRepo = s3MemRepo
+		log.Printf("[SERVER] Memory repository initialized (backend: s3, bucket: %s)", cfg.Memory.S3.Bucket)
+	} else {
+		memoryRepo = repositories.NewKubernetesMemoryRepository(
+			k8sSessionManager.GetClient(),
+			k8sSessionManager.GetNamespace(),
+		)
+		log.Printf("[SERVER] Memory repository initialized (backend: kubernetes)")
+	}
 
 	s := &Server{
 		config:         cfg,
