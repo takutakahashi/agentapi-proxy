@@ -16,6 +16,7 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+
 # Build the application with optimizations
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
 

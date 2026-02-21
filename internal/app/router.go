@@ -11,6 +11,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/spec"
 )
 
 // Router handles route registration and management
@@ -155,6 +156,12 @@ func (r *Router) RegisterRoutes() error {
 func (r *Router) registerCoreRoutes() error {
 	// Health check endpoint
 	r.echo.GET("/health", r.handlers.healthController.HealthCheck)
+
+	// Static file serving for /public/* (no authentication required)
+	// Embedded from spec/openapi.json - independent of working directory
+	// Must be registered before the /:sessionId/* catch-all route
+	r.echo.StaticFS("/public", spec.FS())
+	log.Printf("[ROUTES] Static file serving registered at /public/*")
 
 	// Session management routes
 	log.Printf("[ROUTES] Registering session management endpoints...")
