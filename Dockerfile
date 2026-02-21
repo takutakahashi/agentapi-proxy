@@ -133,8 +133,6 @@ RUN sudo chmod +x /usr/local/bin/entrypoint.sh
 # Copy wrapped_claude script
 COPY --chmod=755 scripts/wrapped_claude.sh /usr/local/bin/wrapped_claude
 
-COPY --chown=agentapi:agentapi spec/openapi.json /home/agentapi/workdir/public/openapi.json
-
 # Expose port
 EXPOSE 8080
 
