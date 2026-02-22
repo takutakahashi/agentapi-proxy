@@ -426,52 +426,6 @@ kubernetesSession:
   #       }
   settingsBaseSecret: "agentapi-settings-base"
 
-  # MCP (Model Context Protocol) server configuration
-  # Allows loading MCP servers from Kubernetes Secrets with 3-tier hierarchy:
-  # base (organization-wide) -> team (team-specific) -> user (user-specific)
-  # Later tiers override earlier ones for servers with the same name
-  #
-  # Secret naming convention:
-  # - Base: mcp-servers-base (configurable via baseSecret)
-  # - Team: mcp-servers-{team-name} (e.g., mcp-servers-myorg-backend-team)
-  # - User: mcp-servers-{user-id} (e.g., mcp-servers-johndoe)
-  mcpServers:
-    # Enable MCP server loading from Secrets
-    enabled: true
-
-    # Base MCP config Secret (organization-wide default servers)
-    # The Secret should contain a key 'mcp-servers.json' with the MCP server configuration
-    # Format: {"mcpServers": {"server-name": {"type": "http|stdio|sse", ...}}}
-    baseSecret: "mcp-servers-base"
-
-    # Example Secret structure:
-    # apiVersion: v1
-    # kind: Secret
-    # metadata:
-    #   name: mcp-servers-base
-    # stringData:
-    #   mcp-servers.json: |
-    #     {
-    #       "mcpServers": {
-    #         "github": {
-    #           "type": "http",
-    #           "url": "https://mcp-github.example.com",
-    #           "headers": {
-    #             "Authorization": "Bearer ${GITHUB_TOKEN}"
-    #           }
-    #         },
-    #         "database": {
-    #           "type": "stdio",
-    #           "command": "mcp-database-server",
-    #           "args": ["--host", "db.example.com"]
-    #         }
-    #       }
-    #     }
-    #
-    # Environment variable expansion is supported in the configuration:
-    # - ${VAR} - expands to the value of VAR, empty if not set
-    # - ${VAR:-default} - expands to VAR if set, otherwise "default"
-
   # OpenTelemetry Collector Configuration
   # Enables Prometheus metrics collection from Claude Code in session pods
   otelCollector:

@@ -95,3 +95,13 @@ func Int64Ptr(i int64) *int64 {
 func BoolPtr(b bool) *bool {
 	return &b
 }
+
+// sanitizeLabelValue is an unexported wrapper for SanitizeLabelValue.
+func sanitizeLabelValue(s string) string {
+	return SanitizeLabelValue(s)
+}
+
+// sanitizeSecretName is an unexported wrapper for SanitizeSecretName.
+func sanitizeSecretName(s string) string {
+	return SanitizeSecretName(s)
+}
