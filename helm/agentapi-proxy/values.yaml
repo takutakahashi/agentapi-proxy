@@ -426,6 +426,25 @@ kubernetesSession:
   #       }
   settingsBaseSecret: "agentapi-settings-base"
 
+  # Slack Integration (claude-posts sidecar)
+  # Watches the JSONL history file produced by claude-agentapi and posts messages to Slack.
+  # Requires agent_type=claude-agentapi to produce the history file.
+  slackIntegration:
+    # Container image for the claude-posts Slack integration sidecar
+    # Defaults to ghcr.io/takutakahashi/claude-posts:0.2.0
+    image: ""
+
+    # Kubernetes Secret containing the Slack bot token.
+    # The Secret must exist in the same namespace as the session pods.
+    # Create it with:
+    #   kubectl create secret generic slack-bot-token --from-literal=bot-token=xoxb-...
+    botToken:
+      # Secret name (required to enable the sidecar)
+      secretName: ""
+      # Key within the Secret that contains the bot token
+      # Defaults to "bot-token"
+      key: "bot-token"
+
   # OpenTelemetry Collector Configuration
   # Enables Prometheus metrics collection from Claude Code in session pods
   otelCollector:

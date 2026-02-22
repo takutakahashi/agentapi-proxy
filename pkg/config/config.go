@@ -253,6 +253,17 @@ type KubernetesSessionConfig struct {
 	OtelCollectorMemoryRequest string `json:"otel_collector_memory_request" mapstructure:"otel_collector_memory_request"`
 	// OtelCollectorMemoryLimit is the memory limit for otelcol sidecar
 	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
+
+	// Slack Integration configuration (claude-posts sidecar)
+	// SlackIntegrationImage is the container image for the claude-posts Slack integration sidecar
+	// Defaults to ghcr.io/takutakahashi/claude-posts:0.2.0
+	SlackIntegrationImage string `json:"slack_integration_image" mapstructure:"slack_integration_image"`
+	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token
+	// The token is exposed as SLACK_BOT_TOKEN env var in the sidecar
+	SlackBotTokenSecretName string `json:"slack_bot_token_secret_name" mapstructure:"slack_bot_token_secret_name"`
+	// SlackBotTokenSecretKey is the key within the Secret that holds the Slack bot token
+	// Defaults to "bot-token"
+	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
 }
 
 // MemoryConfig represents memory backend configuration
@@ -544,6 +555,11 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_LIMIT")
 	_ = v.BindEnv("kubernetes_session.otel_collector_memory_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_REQUEST")
 	_ = v.BindEnv("kubernetes_session.otel_collector_memory_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT")
+
+	// Slack Integration configuration
+	_ = v.BindEnv("kubernetes_session.slack_integration_image", "AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE")
+	_ = v.BindEnv("kubernetes_session.slack_bot_token_secret_name", "AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_NAME")
+	_ = v.BindEnv("kubernetes_session.slack_bot_token_secret_key", "AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY")
 
 	// Schedule worker configuration
 	_ = v.BindEnv("schedule_worker.enabled", "AGENTAPI_SCHEDULE_WORKER_ENABLED")

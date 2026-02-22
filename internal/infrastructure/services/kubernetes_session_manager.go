@@ -814,7 +814,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	}
 
 	// Add Slack integration sidecar
-	// This sidecar handles Slack integration (currently just waits with sleep infinity)
+	// This sidecar runs claude-posts to watch the JSONL history file and post messages to Slack
 	if sidecar := m.buildSlackSidecar(session); sidecar != nil {
 		containers = append(containers, *sidecar)
 		log.Printf("[K8S_SESSION] Added slack-integration sidecar for session %s", session.id)
@@ -1244,8 +1244,18 @@ func initialMessageWaitSecond(req *entities.RunServerRequest) string {
 	return "2"
 }
 
-// buildSlackSidecar builds the sidecar container for Slack integration
-// This sidecar currently just waits with sleep infinity
+// defaultSlackIntegrationImage is the default container image for the claude-posts sidecar
+const defaultSlackIntegrationImage = "ghcr.io/takutakahashi/claude-posts:0.2.0"
+
+// defaultSlackBotTokenSecretKey is the default key within the Secret that holds the Slack bot token
+const defaultSlackBotTokenSecretKey = "bot-token"
+
+// buildSlackSidecar builds the sidecar container for Slack integration using claude-posts.
+// claude-posts watches the JSONL history file written by claude-agentapi and posts
+// assistant messages and tool executions to a Slack channel/thread.
+//
+// Required: req.SlackParams.Channel must be non-empty and SlackBotTokenSecretName must be configured.
+// Optional: req.SlackParams.ThreadTS - if empty, messages are posted as top-level channel messages.
 func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession) *corev1.Container {
 	// Only create sidecar if Slack parameters are provided
 	req := session.Request()
@@ -1253,19 +1263,55 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 		return nil
 	}
 
-	// Use alpine as a lightweight image for sleep infinity
-	sidecarImage := "alpine:latest"
+	// Require a Slack bot token Secret to be configured
+	if m.k8sConfig.SlackBotTokenSecretName == "" {
+		log.Printf("[K8S_SESSION] Slack bot token secret not configured; skipping slack-integration sidecar for session %s", session.id)
+		return nil
+	}
+
+	// Determine claude-posts image
+	sidecarImage := m.k8sConfig.SlackIntegrationImage
+	if sidecarImage == "" {
+		sidecarImage = defaultSlackIntegrationImage
+	}
+
+	// Determine the Secret key for the bot token
+	botTokenSecretKey := m.k8sConfig.SlackBotTokenSecretKey
+	if botTokenSecretKey == "" {
+		botTokenSecretKey = defaultSlackBotTokenSecretKey
+	}
+
+	envVars := []corev1.EnvVar{
+		// SLACK_BOT_TOKEN is read from a cluster Secret
+		{
+			Name: "SLACK_BOT_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.SlackBotTokenSecretName,
+					},
+					Key: botTokenSecretKey,
+				},
+			},
+		},
+		// claude-posts expects SLACK_CHANNEL_ID (not SLACK_CHANNEL)
+		{Name: "SLACK_CHANNEL_ID", Value: req.SlackParams.Channel},
+		{Name: "SLACK_THREAD_TS", Value: req.SlackParams.ThreadTS},
+	}
 
 	return &corev1.Container{
 		Name:            "slack-integration",
 		Image:           sidecarImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"/bin/sh", "-c"},
-		Args:            []string{"sleep infinity"},
-		Env: []corev1.EnvVar{
-			{Name: "SLACK_CHANNEL", Value: req.SlackParams.Channel},
-			{Name: "SLACK_THREAD_TS", Value: req.SlackParams.ThreadTS},
+		// Run claude-posts watching the JSONL history file produced by claude-agentapi.
+		// The file is created at /opt/claude-agentapi/history.jsonl when agent_type=claude-agentapi.
+		// We wait for the file to exist before starting to avoid missing early messages.
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{
+			`until [ -f /opt/claude-agentapi/history.jsonl ]; do sleep 1; done; ` +
+				`/root/claude-posts --file /opt/claude-agentapi/history.jsonl`,
 		},
+		Env: envVars,
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      "claude-agentapi-history",
@@ -1275,16 +1321,16 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("16Mi"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
 			},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
+			RunAsUser:  int64Ptr(0),
+			RunAsGroup: int64Ptr(0),
 		},
 	}
 }

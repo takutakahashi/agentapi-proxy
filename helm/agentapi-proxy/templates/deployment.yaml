@@ -236,6 +236,19 @@ spec:
             - name: AGENTAPI_K8S_SESSION_CONFIG_FILE
               value: "/etc/k8s-session-config/k8s-session-config.yaml"
             {{- end }}
+            # Slack Integration (claude-posts sidecar) configuration
+            {{- $slackIntegration := (.Values.kubernetesSession).slackIntegration }}
+            {{- $slackBotToken := ($slackIntegration).botToken }}
+            {{- if and $slackBotToken $slackBotToken.secretName }}
+            - name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_NAME
+              value: {{ $slackBotToken.secretName | quote }}
+            - name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY
+              value: {{ $slackBotToken.key | default "bot-token" | quote }}
+            {{- if ($slackIntegration).image }}
+            - name: AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE
+              value: {{ $slackIntegration.image | quote }}
+            {{- end }}
+            {{- end }}
             # OpenTelemetry Collector configuration
             {{- if .Values.kubernetesSession.otelCollector.enabled }}
             - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED
