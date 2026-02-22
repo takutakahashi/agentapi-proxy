@@ -3,6 +3,16 @@
     "pr": "🤖🐮 Generated with [Claude Code](https://claude.com/claude-code)"
   },
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"⚠️ 作業完了時の必須チェック（該当する場合は必ず実行）:\\n1. PR を作成する\\n2. agentapi-proxy client task create または task update でユーザータスクを作成・更新する\\n3. agentapi-proxy helpers send-notification で通知を送る\"}}'"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
