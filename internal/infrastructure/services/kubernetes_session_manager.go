@@ -196,20 +196,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
-	// Create team env Secret for team-scoped sessions
-	if err := m.createTeamEnvSecret(ctx, session, req); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to create team env secret: %v", err)
-		// Continue anyway - session will work without team environment variables
-	}
-
-	// Create personal API key Secret for user-scoped sessions
-	if req.Scope == entities.ScopeUser {
-		if err := m.createPersonalAPIKeySecret(ctx, session, req.UserID); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create personal API key secret: %v", err)
-			// Continue anyway - session will work without personal API key
-		}
-	}
-
 	// Create oneshot settings Secret if oneshot is enabled
 	if req.Oneshot {
 		if err := m.createOneshotSettingsSecret(ctx, session); err != nil {
@@ -218,10 +204,10 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
-	// Create unified session settings Secret (for future migration)
+	// Create unified session settings Secret (single source of truth for the session pod)
 	if err := m.createSessionSettingsSecret(ctx, session, req, webhookPayload); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to create session settings secret: %v", err)
-		// Continue anyway - this is additive and not required for current operation
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create session settings secret: %w", err)
 	}
 
 	// Create Deployment
@@ -781,35 +767,6 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				},
 			})
 		}
-	}
-
-	// Add personal API key Secret as envFrom for user-scoped sessions
-	if req.Scope == entities.ScopeUser {
-		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: personalAPIKeySecretName,
-				},
-				Optional: boolPtr(true), // Optional - user may not have generated a personal API key yet
-			},
-		})
-		log.Printf("[K8S_SESSION] Adding personal API key Secret %s for user-scoped session %s", personalAPIKeySecretName, session.id)
-	}
-
-	// Mount team-specific env vars from TeamConfig (includes service account API key)
-	// Note: agent-env-* secrets are no longer mounted here; credentials are expanded from settings.json
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: teamEnvSecretName,
-				},
-				Optional: boolPtr(true), // Secret may not exist if team has no config
-			},
-		})
-		log.Printf("[K8S_SESSION] Adding team env Secret %s for team-scoped session %s", teamEnvSecretName, session.id)
 	}
 
 	// Build container spec
@@ -1446,16 +1403,6 @@ func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Contex
 	return nil
 }
 
-// deleteTeamEnvSecret deletes the team env Secret for a session
-func (m *KubernetesSessionManager) deleteTeamEnvSecret(ctx context.Context, session *KubernetesSession) error {
-	secretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete team env secret: %w", err)
-	}
-	return nil
-}
-
 // getInitialMessageFromSecret retrieves the initial message from Secret for session restoration
 func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) string {
 	secretName := fmt.Sprintf("%s-initial-message", serviceName)
@@ -1567,69 +1514,6 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 	}
 
 	log.Printf("[K8S_SESSION] Created oneshot settings Secret %s for session %s", secretName, session.id)
-	return nil
-}
-
-// createPersonalAPIKeySecret creates a Secret containing the personal API key
-// This is used for user-scoped sessions to provide the user's personal API key
-func (m *KubernetesSessionManager) createPersonalAPIKeySecret(
-	ctx context.Context,
-	session *KubernetesSession,
-	userID string,
-) error {
-	// Skip if personal API key repository is not set
-	if m.personalAPIKeyRepo == nil {
-		log.Printf("[K8S_SESSION] Personal API key repository not set, skipping secret creation")
-		return nil
-	}
-
-	// Try to get existing personal API key
-	apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(userID))
-	if err != nil {
-		// If no API key exists, create a new one automatically
-		log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", userID)
-
-		// Generate API key
-		generatedKey, err := generatePersonalAPIKey()
-		if err != nil {
-			return fmt.Errorf("failed to generate personal API key: %w", err)
-		}
-
-		// Create new PersonalAPIKey entity
-		apiKey = entities.NewPersonalAPIKey(entities.UserID(userID), generatedKey)
-
-		// Save to repository
-		if err := m.personalAPIKeyRepo.Save(ctx, apiKey); err != nil {
-			return fmt.Errorf("failed to save personal API key for user %s: %w", userID, err)
-		}
-
-		log.Printf("[K8S_SESSION] Created personal API key for user %s", userID)
-	}
-
-	secretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/user-id":    sanitizeLabelValue(userID),
-				"agentapi.proxy/resource":   "personal-api-key",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"AGENTAPI_KEY": apiKey.APIKey(),
-		},
-	}
-
-	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create personal API key secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created personal API key Secret %s for session %s", secretName, session.id)
 	return nil
 }
 
@@ -1761,9 +1645,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		})
 	}
 
-	// Note: Personal API key is now mounted as environment variable via envFrom
-	// No need to mount as volume
-
 	// Add OpenTelemetry Collector ConfigMap volume
 	if m.k8sConfig.OtelCollectorEnabled {
 		volumes = append(volumes, corev1.Volume{
@@ -1818,73 +1699,6 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 
 	_, err := m.client.CoreV1().Services(m.namespace).Create(ctx, service, metav1.CreateOptions{})
 	return err
-}
-
-// createTeamEnvSecret creates a Secret with team configuration environment variables
-// for team-scoped sessions. This includes service account API key and team-specific env vars.
-func (m *KubernetesSessionManager) createTeamEnvSecret(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
-	// Only create for team-scoped sessions
-	if req.Scope != entities.ScopeTeam || req.TeamID == "" {
-		return nil
-	}
-
-	// Skip if team config repository is not set
-	if m.teamConfigRepo == nil {
-		log.Printf("[K8S_SESSION] TeamConfigRepository not set, skipping team env secret creation for session %s", session.id)
-		return nil
-	}
-
-	// Fetch team config
-	teamConfig, err := m.teamConfigRepo.FindByTeamID(ctx, req.TeamID)
-	if err != nil {
-		// Team config not found is not an error - team may not have configuration yet
-		log.Printf("[K8S_SESSION] Team config not found for team %s, skipping team env secret: %v", req.TeamID, err)
-		return nil
-	}
-
-	// Build environment variables map
-	envData := make(map[string][]byte)
-
-	// Add service account API key if present
-	if sa := teamConfig.ServiceAccount(); sa != nil {
-		envData["AGENTAPI_KEY"] = []byte(sa.APIKey())
-		log.Printf("[K8S_SESSION] Adding service account API key (AGENTAPI_KEY) to team env secret for session %s", session.id)
-	}
-
-	// Add team-specific environment variables
-	for key, value := range teamConfig.EnvVars() {
-		envData[key] = []byte(value)
-	}
-
-	// Skip if no environment variables to add
-	if len(envData) == 0 {
-		log.Printf("[K8S_SESSION] No environment variables in team config for team %s, skipping secret creation", req.TeamID)
-		return nil
-	}
-
-	// Create Secret
-	secretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/team-id":    sanitizeLabelValue(req.TeamID),
-				"agentapi.proxy/managed-by": "session-manager",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: envData,
-	}
-
-	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create team env secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created team env secret %s for session %s with %d environment variables", secretName, session.id, len(envData))
-	return nil
 }
 
 // watchSession monitors the session deployment status
@@ -2014,19 +1828,9 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		errs = append(errs, fmt.Sprintf("webhook-payload-secret: %v", err))
 	}
 
-	// Delete team env Secret (for team-scoped sessions)
-	if err := m.deleteTeamEnvSecret(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("team-env-secret: %v", err))
-	}
-
 	// Delete session settings Secret
 	if err := m.deleteSessionSettingsSecret(ctx, session); err != nil {
 		errs = append(errs, fmt.Sprintf("session-settings-secret: %v", err))
-	}
-
-	// Delete personal API key Secret (bug fix - was not being deleted before)
-	if err := m.deletePersonalAPIKeySecret(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("personal-api-key-secret: %v", err))
 	}
 
 	// Delete oneshot settings Secret (bug fix - was not being deleted before)
@@ -2385,9 +2189,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			ReadOnly:  true,
 		})
 	}
-
-	// Note: Personal API key is now mounted as environment variable via envFrom
-	// No need to mount as volume
 
 	// Add claude-agentapi history volume mount
 	volumeMounts = append(volumeMounts, corev1.VolumeMount{
@@ -3047,19 +2848,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	// Add personal API key Secret for user-scoped sessions
-	if req.Scope == entities.ScopeUser {
-		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-		secretNames = append(secretNames, personalAPIKeySecretName)
-	}
-
-	// Add team-env Secret for team-scoped sessions (TeamConfig env vars)
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-		secretNames = append(secretNames, teamEnvSecretName)
-	}
-
-	// Expand secrets into env map
+	// Expand secrets into env map (GitHub secrets only)
 	for _, secretName := range secretNames {
 		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
 			ctx,
@@ -3077,6 +2866,45 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// Merge secret data into env map (later secrets override earlier ones due to iteration order)
 		for k, v := range secret.Data {
 			env[k] = string(v)
+		}
+	}
+
+	// Expand personal API key directly from repository for user-scoped sessions
+	if req.Scope == entities.ScopeUser && m.personalAPIKeyRepo != nil {
+		apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(req.UserID))
+		if err != nil {
+			// If no API key exists, create a new one automatically
+			log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", req.UserID)
+			generatedKey, genErr := generatePersonalAPIKey()
+			if genErr != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to generate personal API key: %v", genErr)
+			} else {
+				apiKey = entities.NewPersonalAPIKey(entities.UserID(req.UserID), generatedKey)
+				if saveErr := m.personalAPIKeyRepo.Save(ctx, apiKey); saveErr != nil {
+					log.Printf("[K8S_SESSION] Warning: failed to save personal API key for user %s: %v", req.UserID, saveErr)
+					apiKey = nil
+				}
+			}
+		}
+		if apiKey != nil {
+			env["AGENTAPI_KEY"] = apiKey.APIKey()
+			log.Printf("[K8S_SESSION] Added personal API key to session settings env for user %s", req.UserID)
+		}
+	}
+
+	// Expand team env vars directly from repository for team-scoped sessions
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.teamConfigRepo != nil {
+		teamConfig, err := m.teamConfigRepo.FindByTeamID(ctx, req.TeamID)
+		if err != nil {
+			log.Printf("[K8S_SESSION] Team config not found for team %s in session settings: %v", req.TeamID, err)
+		} else {
+			if sa := teamConfig.ServiceAccount(); sa != nil {
+				env["AGENTAPI_KEY"] = sa.APIKey()
+				log.Printf("[K8S_SESSION] Added service account API key to session settings env for team %s", req.TeamID)
+			}
+			for k, v := range teamConfig.EnvVars() {
+				env[k] = v
+			}
 		}
 	}
 
@@ -3214,17 +3042,6 @@ func (m *KubernetesSessionManager) deleteSessionSettingsSecret(ctx context.Conte
 	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete session settings secret: %w", err)
-	}
-	return nil
-}
-
-// deletePersonalAPIKeySecret deletes the personal API key Secret.
-// This fixes the existing bug where personal-api-key secrets were not being cleaned up.
-func (m *KubernetesSessionManager) deletePersonalAPIKeySecret(ctx context.Context, session *KubernetesSession) error {
-	secretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete personal API key secret: %w", err)
 	}
 	return nil
 }
