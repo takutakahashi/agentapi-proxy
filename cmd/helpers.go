@@ -37,6 +37,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  merge-settings-config - Merge multiple settings configuration directories")
 		fmt.Println("  sync - Sync Claude configuration from Settings Secret")
 		fmt.Println("  migrate - Migrate derived Secrets into agentapi-settings-* (unified source)")
+		fmt.Println("  prune-stale-resources - Delete stale Kubernetes resources for sessions missing their settings secret")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
 }
