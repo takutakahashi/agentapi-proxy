@@ -47,25 +47,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create settings controller
 	settingsController := controllers.NewSettingsController(server.settingsRepo)
 
-	// Set credentials secret syncer and MCP secret syncer if Kubernetes mode is enabled
-	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
-		// Set credentials secret syncer
-		credSyncer := services.NewKubernetesCredentialsSecretSyncer(
-			k8sManager.GetClient(),
-			k8sManager.GetNamespace(),
-		)
-		settingsController.SetCredentialsSecretSyncer(credSyncer)
-		log.Printf("[ROUTER] Credentials secret syncer configured for settings controller")
-
-		// Set MCP secret syncer
-		mcpSyncer := services.NewKubernetesMCPSecretSyncer(
-			k8sManager.GetClient(),
-			k8sManager.GetNamespace(),
-		)
-		settingsController.SetMCPSecretSyncer(mcpSyncer)
-		log.Printf("[ROUTER] MCP secret syncer configured for settings controller")
-	}
-
 	// Create session controller with proper dependencies
 	// server implements SessionManagerProvider interface via GetSessionManager()
 	// Note: ServiceAccount creation for team-scoped sessions is now handled in

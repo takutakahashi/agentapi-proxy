@@ -29,7 +29,6 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
-	"github.com/takutakahashi/agentapi-proxy/pkg/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settings"
 )
@@ -798,66 +797,19 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Adding personal API key Secret %s for user-scoped session %s", personalAPIKeySecretName, session.id)
 	}
 
-	// Add credentials Secrets based on scope
-	// For team-scoped sessions: only mount the team's secret (not user secrets)
-	// For user-scoped sessions: mount all team secrets and user secret
-	if req.Scope == entities.ScopeTeam {
-		// Team-scoped: only mount the specific team's credentials
-		if req.TeamID != "" {
-			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.TeamID))
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: secretName,
-					},
-					Optional: boolPtr(true),
+	// Mount team-specific env vars from TeamConfig (includes service account API key)
+	// Note: agent-env-* secrets are no longer mounted here; credentials are expanded from settings.json
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: teamEnvSecretName,
 				},
-			})
-			log.Printf("[K8S_SESSION] Adding team credentials Secret %s for team-scoped session %s", secretName, session.id)
-
-			// Mount team-specific env vars from TeamConfig (includes service account API key)
-			teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: teamEnvSecretName,
-					},
-					Optional: boolPtr(true), // Secret may not exist if team has no config
-				},
-			})
-			log.Printf("[K8S_SESSION] Adding team env Secret %s for team-scoped session %s", teamEnvSecretName, session.id)
-		}
-		// Note: user-specific credentials are NOT mounted for team-scoped sessions
-	} else {
-		// User-scoped (or unspecified): mount all team secrets and user secret
-		// Add team-based credentials Secrets (agent-env-{org}-{team})
-		for _, team := range req.Teams {
-			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(team))
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: secretName,
-					},
-					Optional: boolPtr(true), // Secret may not exist for all teams
-				},
-			})
-			log.Printf("[K8S_SESSION] Adding team credentials Secret %s for session %s", secretName, session.id)
-		}
-
-		// Add user-specific credentials Secret (agent-env-{user-id})
-		// This is added last so user-specific values override team values
-		if req.UserID != "" {
-			userSecretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.UserID))
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: userSecretName,
-					},
-					Optional: boolPtr(true), // Secret may not exist for all users
-				},
-			})
-			log.Printf("[K8S_SESSION] Adding user credentials Secret %s for session %s", userSecretName, session.id)
-		}
+				Optional: boolPtr(true), // Secret may not exist if team has no config
+			},
+		})
+		log.Printf("[K8S_SESSION] Adding team env Secret %s for team-scoped session %s", teamEnvSecretName, session.id)
 	}
 
 	// Build container spec
@@ -1812,12 +1764,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 	// Note: Personal API key is now mounted as environment variable via envFrom
 	// No need to mount as volume
 
-	// Add MCP server configuration volumes if enabled
-	// mcp-config EmptyDir is written by setup on main container startup (via Compile)
-	if m.k8sConfig.MCPServersEnabled {
-		volumes = append(volumes, m.buildMCPVolumes(session)...)
-	}
-
 	// Add OpenTelemetry Collector ConfigMap volume
 	if m.k8sConfig.OtelCollectorEnabled {
 		volumes = append(volumes, corev1.Volume{
@@ -1839,94 +1785,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
 	})
-
-	return volumes
-}
-
-// buildMCPVolumes builds the volumes for MCP server configuration
-func (m *KubernetesSessionManager) buildMCPVolumes(session *KubernetesSession) []corev1.Volume {
-	volumes := []corev1.Volume{}
-
-	// Build projected volume sources for mcp-config-source
-	var projectedSources []corev1.VolumeProjection
-
-	// Add base MCP config Secret
-	if m.k8sConfig.MCPServersBaseSecret != "" {
-		projectedSources = append(projectedSources, corev1.VolumeProjection{
-			Secret: &corev1.SecretProjection{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: m.k8sConfig.MCPServersBaseSecret,
-				},
-				Items: []corev1.KeyToPath{
-					{
-						Key:  "mcp-servers.json",
-						Path: "base/mcp-servers.json",
-					},
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
-
-	// Add team MCP config Secrets
-	if m.k8sConfig.MCPServersEnabled && session.Request() != nil {
-		for i, team := range session.Request().Teams {
-			secretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(team))
-			projectedSources = append(projectedSources, corev1.VolumeProjection{
-				Secret: &corev1.SecretProjection{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: secretName,
-					},
-					Items: []corev1.KeyToPath{
-						{
-							Key:  "mcp-servers.json",
-							Path: fmt.Sprintf("team/%d/mcp-servers.json", i),
-						},
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
-	}
-
-	// Add user MCP config Secret
-	if m.k8sConfig.MCPServersEnabled && session.Request() != nil && session.Request().UserID != "" {
-		userSecretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(session.Request().UserID))
-		projectedSources = append(projectedSources, corev1.VolumeProjection{
-			Secret: &corev1.SecretProjection{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: userSecretName,
-				},
-				Items: []corev1.KeyToPath{
-					{
-						Key:  "mcp-servers.json",
-						Path: "user/mcp-servers.json",
-					},
-				},
-				Optional: boolPtr(true),
-			},
-		})
-	}
-
-	// Add mcp-config-source as projected volume
-	if len(projectedSources) > 0 {
-		volumes = append(volumes, corev1.Volume{
-			Name: "mcp-config-source",
-			VolumeSource: corev1.VolumeSource{
-				Projected: &corev1.ProjectedVolumeSource{
-					Sources: projectedSources,
-				},
-			},
-		})
-	} else {
-		// Use an EmptyDir if no secrets configured
-		volumes = append(volumes, corev1.Volume{
-			Name: "mcp-config-source",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		})
-	}
 
 	return volumes
 }
@@ -3195,29 +3053,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		secretNames = append(secretNames, personalAPIKeySecretName)
 	}
 
-	// Add credentials Secrets based on scope
-	if req.Scope == entities.ScopeTeam {
-		// Team-scoped: only mount the specific team's credentials
-		if req.TeamID != "" {
-			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.TeamID))
-			secretNames = append(secretNames, secretName)
-
-			// Mount team-specific env vars from TeamConfig
-			teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-			secretNames = append(secretNames, teamEnvSecretName)
-		}
-	} else {
-		// User-scoped: mount all team secrets and user secret
-		for _, team := range req.Teams {
-			secretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(team))
-			secretNames = append(secretNames, secretName)
-		}
-
-		// Add user-specific credentials Secret (added last for highest priority)
-		if req.UserID != "" {
-			userSecretName := fmt.Sprintf("agent-env-%s", sanitizeSecretName(req.UserID))
-			secretNames = append(secretNames, userSecretName)
-		}
+	// Add team-env Secret for team-scoped sessions (TeamConfig env vars)
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
+		secretNames = append(secretNames, teamEnvSecretName)
 	}
 
 	// Expand secrets into env map
@@ -3238,6 +3077,33 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// Merge secret data into env map (later secrets override earlier ones due to iteration order)
 		for k, v := range secret.Data {
 			env[k] = string(v)
+		}
+	}
+
+	// Expand credentials from agentapi-settings-* secrets (env_vars, bedrock, oauth)
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
+		if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
+			for k, v := range expandSettingsToEnv(cfg) {
+				env[k] = v
+			}
+		}
+	} else {
+		for _, team := range req.Teams {
+			settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
+			if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
+				for k, v := range expandSettingsToEnv(cfg) {
+					env[k] = v
+				}
+			}
+		}
+		if req.UserID != "" {
+			settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
+			if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
+				for k, v := range expandSettingsToEnv(cfg) {
+					env[k] = v
+				}
+			}
 		}
 	}
 
@@ -3374,6 +3240,100 @@ func (m *KubernetesSessionManager) deleteOneshotSettingsSecret(ctx context.Conte
 	return nil
 }
 
+// agentapiSettingsJSON is the JSON representation of settings stored in agentapi-settings-* Secrets.
+// This mirrors the settingsJSON struct in kubernetes_settings_repository.go.
+type agentapiSettingsJSON struct {
+	Name                 string                          `json:"name"`
+	Bedrock              *agentapiBedrockJSON            `json:"bedrock,omitempty"`
+	MCPServers           map[string]*agentapiMCPServerJSON `json:"mcp_servers,omitempty"`
+	ClaudeCodeOAuthToken string                          `json:"claude_code_oauth_token,omitempty"`
+	AuthMode             string                          `json:"auth_mode,omitempty"`
+	EnvVars              map[string]string               `json:"env_vars,omitempty"`
+}
+
+// agentapiBedrockJSON is the JSON representation of Bedrock settings.
+type agentapiBedrockJSON struct {
+	Enabled         bool   `json:"enabled"`
+	Model           string `json:"model,omitempty"`
+	AccessKeyID     string `json:"access_key_id,omitempty"`
+	SecretAccessKey string `json:"secret_access_key,omitempty"`
+	RoleARN         string `json:"role_arn,omitempty"`
+	Profile         string `json:"profile,omitempty"`
+}
+
+// agentapiMCPServerJSON is the JSON representation of a single MCP server.
+type agentapiMCPServerJSON struct {
+	Type    string            `json:"type"`
+	URL     string            `json:"url,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// readAgentapiSettingsSecret reads the settings.json from an agentapi-settings-* Secret
+// and returns the full settings including EnvVars, AuthMode, Bedrock, MCPServers.
+func (m *KubernetesSessionManager) readAgentapiSettingsSecret(ctx context.Context, secretName string) *agentapiSettingsJSON {
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Printf("[K8S_SESSION] Warning: failed to read agentapi settings secret %s: %v", secretName, err)
+		}
+		return nil
+	}
+	data, ok := secret.Data["settings.json"]
+	if !ok {
+		return nil
+	}
+	var cfg agentapiSettingsJSON
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to parse settings.json from secret %s: %v", secretName, err)
+		return nil
+	}
+	return &cfg
+}
+
+// expandSettingsToEnv expands an agentapiSettingsJSON into environment variable key-value pairs.
+// This replicates the logic previously done by CredentialsSecretSyncer.
+func expandSettingsToEnv(cfg *agentapiSettingsJSON) map[string]string {
+	env := make(map[string]string)
+	if cfg == nil {
+		return env
+	}
+
+	// Custom env vars
+	for k, v := range cfg.EnvVars {
+		env[k] = v
+	}
+
+	// Auth mode and credentials
+	switch cfg.AuthMode {
+	case "bedrock":
+		env["CLAUDE_CODE_USE_BEDROCK"] = "1"
+		if cfg.Bedrock != nil {
+			env["ANTHROPIC_MODEL"] = cfg.Bedrock.Model
+			env["AWS_ACCESS_KEY_ID"] = cfg.Bedrock.AccessKeyID
+			env["AWS_SECRET_ACCESS_KEY"] = cfg.Bedrock.SecretAccessKey
+			env["AWS_ROLE_ARN"] = cfg.Bedrock.RoleARN
+			env["AWS_PROFILE"] = cfg.Bedrock.Profile
+		}
+	default: // "oauth" or empty
+		env["CLAUDE_CODE_USE_BEDROCK"] = "0"
+		env["ANTHROPIC_MODEL"] = ""
+		env["AWS_ACCESS_KEY_ID"] = ""
+		env["AWS_SECRET_ACCESS_KEY"] = ""
+		env["AWS_ROLE_ARN"] = ""
+		env["AWS_PROFILE"] = ""
+	}
+
+	// OAuth token
+	if cfg.ClaudeCodeOAuthToken != "" {
+		env["CLAUDE_CODE_OAUTH_TOKEN"] = cfg.ClaudeCodeOAuthToken
+	}
+
+	return env
+}
+
 // mergeSettingsAndMCP reads settings.json and mcp-servers.json from the relevant
 // Kubernetes Secrets (base, team[], user, oneshot) and merges them on the proxy side,
 // returning the merged structures ready to embed into SessionSettings.
@@ -3386,7 +3346,7 @@ func (m *KubernetesSessionManager) mergeSettingsAndMCP(
 	// --- settings.json merge ---
 	settingsDirs := []settings.SettingsConfig{}
 
-	// Helper: read settings.json from a Secret key and unmarshal
+	// Helper: read settings.json from a Secret key and unmarshal (for pkg/settings fields only)
 	readSettingsSecret := func(secretName, key string) *settings.SettingsConfig {
 		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
 		if err != nil {
@@ -3459,76 +3419,56 @@ func (m *KubernetesSessionManager) mergeSettingsAndMCP(
 		}
 	}
 
-	// --- mcp-servers.json merge ---
-	if m.k8sConfig.MCPServersEnabled {
-		readMCPSecret := func(secretName, key string) *mcp.MCPConfig {
-			secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	// --- mcp_servers merge from agentapi-settings-* secrets ---
+	// Instead of reading separate mcp-servers-* Secrets, we collect mcp_servers from
+	// the agentapi-settings-* secrets (same source used for env vars).
+	{
+		mergedMCPServers := make(map[string]interface{})
+
+		// Helper to merge mcp_servers from a settings secret into mergedMCPServers
+		mergeMCPFromSettings := func(secretName string) {
+			cfg := m.readAgentapiSettingsSecret(ctx, secretName)
+			if cfg == nil || len(cfg.MCPServers) == 0 {
+				return
+			}
+			raw, err := json.Marshal(cfg.MCPServers)
 			if err != nil {
-				if !errors.IsNotFound(err) {
-					log.Printf("[K8S_SESSION] Warning: failed to read mcp secret %s: %v", secretName, err)
-				}
-				return nil
+				log.Printf("[K8S_SESSION] Warning: failed to marshal mcp_servers from secret %s: %v", secretName, err)
+				return
 			}
-			data, ok := secret.Data[key]
-			if !ok {
-				return nil
+			var servers map[string]interface{}
+			if err := json.Unmarshal(raw, &servers); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to unmarshal mcp_servers from secret %s: %v", secretName, err)
+				return
 			}
-			var cfg mcp.MCPConfig
-			if err := json.Unmarshal(data, &cfg); err != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to parse mcp-servers.json from secret %s: %v", secretName, err)
-				return nil
+			for name, server := range servers {
+				mergedMCPServers[name] = server
 			}
-			return &cfg
 		}
 
-		mcpConfigs := []*mcp.MCPConfig{}
-
-		// base MCP
+		// base settings
 		if m.k8sConfig.SettingsBaseSecret != "" {
-			if cfg := readMCPSecret(m.k8sConfig.SettingsBaseSecret, "mcp-servers.json"); cfg != nil {
-				mcpConfigs = append(mcpConfigs, cfg)
-			}
+			mergeMCPFromSettings(m.k8sConfig.SettingsBaseSecret)
 		}
 
-		// team MCP (in order)
-		for i, team := range req.Teams {
-			secretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(team))
-			_ = i
-			if cfg := readMCPSecret(secretName, "mcp-servers.json"); cfg != nil {
-				mcpConfigs = append(mcpConfigs, cfg)
-			}
+		// team settings (in order)
+		for _, team := range req.Teams {
+			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
+			mergeMCPFromSettings(secretName)
 		}
 		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-			secretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(req.TeamID))
-			if cfg := readMCPSecret(secretName, "mcp-servers.json"); cfg != nil {
-				mcpConfigs = append(mcpConfigs, cfg)
-			}
+			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
+			mergeMCPFromSettings(secretName)
 		}
 
-		// user MCP
+		// user settings
 		if req.UserID != "" {
-			secretName := fmt.Sprintf("mcp-servers-%s", sanitizeSecretName(req.UserID))
-			if cfg := readMCPSecret(secretName, "mcp-servers.json"); cfg != nil {
-				mcpConfigs = append(mcpConfigs, cfg)
-			}
+			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
+			mergeMCPFromSettings(secretName)
 		}
 
-		// Merge all MCP configs (later overrides earlier)
-		merged := &mcp.MCPConfig{MCPServers: make(map[string]mcp.MCPServer)}
-		for _, cfg := range mcpConfigs {
-			for name, server := range cfg.MCPServers {
-				merged.MCPServers[name] = server
-			}
-		}
-
-		if len(merged.MCPServers) > 0 {
-			raw, err := json.Marshal(merged.MCPServers)
-			if err == nil {
-				if err := json.Unmarshal(raw, &mcpServers); err != nil {
-					log.Printf("[K8S_SESSION] Warning: failed to convert merged MCP servers to map: %v", err)
-					mcpServers = nil
-				}
-			}
+		if len(mergedMCPServers) > 0 {
+			mcpServers = mergedMCPServers
 		}
 	}
 

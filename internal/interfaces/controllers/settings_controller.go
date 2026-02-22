@@ -9,16 +9,12 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
 // SettingsController handles settings-related HTTP requests
 type SettingsController struct {
-	repo              repositories.SettingsRepository
-	syncer            services.CredentialsSecretSyncer
-	mcpSyncer         services.MCPSecretSyncer
-	marketplaceSyncer services.MarketplaceSecretSyncer
+	repo repositories.SettingsRepository
 }
 
 // NewSettingsController creates new settings controller
@@ -26,21 +22,6 @@ func NewSettingsController(repo repositories.SettingsRepository) *SettingsContro
 	return &SettingsController{
 		repo: repo,
 	}
-}
-
-// SetCredentialsSecretSyncer sets the credentials secret syncer
-func (c *SettingsController) SetCredentialsSecretSyncer(syncer services.CredentialsSecretSyncer) {
-	c.syncer = syncer
-}
-
-// SetMCPSecretSyncer sets the MCP secret syncer
-func (c *SettingsController) SetMCPSecretSyncer(syncer services.MCPSecretSyncer) {
-	c.mcpSyncer = syncer
-}
-
-// SetMarketplaceSecretSyncer sets the marketplace secret syncer
-func (c *SettingsController) SetMarketplaceSecretSyncer(syncer services.MarketplaceSecretSyncer) {
-	c.marketplaceSyncer = syncer
 }
 
 // GetName returns the name of this controller for logging
@@ -295,30 +276,6 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 
-	// Sync credentials secret
-	if c.syncer != nil {
-		if err := c.syncer.Sync(ctx.Request().Context(), settings); err != nil {
-			log.Printf("[SETTINGS] Failed to sync credentials secret for %s: %v", name, err)
-			// Don't fail the request, just log the error
-		}
-	}
-
-	// Sync MCP servers secret
-	if c.mcpSyncer != nil {
-		if err := c.mcpSyncer.Sync(ctx.Request().Context(), settings); err != nil {
-			log.Printf("[SETTINGS] Failed to sync MCP servers secret for %s: %v", name, err)
-			// Don't fail the request, just log the error
-		}
-	}
-
-	// Sync marketplace secret
-	if c.marketplaceSyncer != nil {
-		if err := c.marketplaceSyncer.Sync(ctx.Request().Context(), settings); err != nil {
-			log.Printf("[SETTINGS] Failed to sync marketplace secret for %s: %v", name, err)
-			// Don't fail the request, just log the error
-		}
-	}
-
 	return ctx.JSON(http.StatusOK, c.toResponse(settings))
 }
 
@@ -345,30 +302,6 @@ func (c *SettingsController) DeleteSettings(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "Settings not found")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete settings")
-	}
-
-	// Delete credentials secret
-	if c.syncer != nil {
-		if err := c.syncer.Delete(ctx.Request().Context(), name); err != nil {
-			log.Printf("[SETTINGS] Failed to delete credentials secret for %s: %v", name, err)
-			// Don't fail the request, just log the error
-		}
-	}
-
-	// Delete MCP servers secret
-	if c.mcpSyncer != nil {
-		if err := c.mcpSyncer.Delete(ctx.Request().Context(), name); err != nil {
-			log.Printf("[SETTINGS] Failed to delete MCP servers secret for %s: %v", name, err)
-			// Don't fail the request, just log the error
-		}
-	}
-
-	// Delete marketplace secret
-	if c.marketplaceSyncer != nil {
-		if err := c.marketplaceSyncer.Delete(ctx.Request().Context(), name); err != nil {
-			log.Printf("[SETTINGS] Failed to delete marketplace secret for %s: %v", name, err)
-			// Don't fail the request, just log the error
-		}
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]bool{
