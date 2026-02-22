@@ -31,7 +31,8 @@ go.work.sum
 # .idea/
 # .vscode/
 bin/
-.claude/
+.claude/*
+!.claude/settings.json
 
 # Session and log files
 logs/
@@ -40,6 +41,7 @@ logs/
 !api_keys.example.json
 !docs/*.json
 !spec/*.json
+!.claude/settings.json
 !go.mod
 !go.sum
 !.tool-versions
