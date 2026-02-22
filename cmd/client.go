@@ -36,6 +36,34 @@ var (
 	taskLinks         []string
 )
 
+// resolveClient creates a client using flags if provided, otherwise falling back
+// to environment variables (AGENTAPI_PROXY_SERVICE_HOST, AGENTAPI_PROXY_SERVICE_PORT_HTTP,
+// AGENTAPI_SESSION_ID, AGENTAPI_KEY).
+// Returns the client and the resolved session ID.
+func resolveClient() (*client.Client, string, error) {
+	resolvedEndpoint := endpoint
+	resolvedSessionID := sessionID
+
+	if resolvedEndpoint == "" {
+		envEndpoint, err := client.EndpointFromEnv()
+		if err != nil {
+			return nil, "", fmt.Errorf("--endpoint not specified and %w", err)
+		}
+		resolvedEndpoint = envEndpoint
+	}
+
+	if resolvedSessionID == "" {
+		resolvedSessionID = os.Getenv("AGENTAPI_SESSION_ID")
+		if resolvedSessionID == "" {
+			return nil, "", fmt.Errorf("--session-id not specified and AGENTAPI_SESSION_ID is not set")
+		}
+	}
+
+	apiKey := os.Getenv("AGENTAPI_KEY")
+	c := client.NewClient(resolvedEndpoint, client.WithAPIKeyAuth(apiKey))
+	return c, resolvedSessionID, nil
+}
+
 var ClientCmd = &cobra.Command{
 	Use:   "client",
 	Short: "AgentAPI Client CLI",
@@ -209,8 +237,9 @@ func init() {
 }
 
 func runSend(cmd *cobra.Command, args []string) {
-	if endpoint == "" || sessionID == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint and --session-id flags are required\n")
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -234,8 +263,6 @@ func runSend(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Create client and send message
-	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
 	msg := &client.Message{
@@ -243,7 +270,7 @@ func runSend(cmd *cobra.Command, args []string) {
 		Type:    "user",
 	}
 
-	msgResp, err := c.SendMessage(ctx, sessionID, msg)
+	msgResp, err := c.SendMessage(ctx, resolvedSessionID, msg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
 		return
@@ -257,15 +284,15 @@ func runSend(cmd *cobra.Command, args []string) {
 }
 
 func runHistory(cmd *cobra.Command, args []string) {
-	if endpoint == "" || sessionID == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint and --session-id flags are required\n")
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
-	messagesResp, err := c.GetMessages(ctx, sessionID)
+	messagesResp, err := c.GetMessages(ctx, resolvedSessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting history: %v\n", err)
 		return
@@ -278,15 +305,15 @@ func runHistory(cmd *cobra.Command, args []string) {
 }
 
 func runStatus(cmd *cobra.Command, args []string) {
-	if endpoint == "" || sessionID == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint and --session-id flags are required\n")
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
-	statusResp, err := c.GetStatus(ctx, sessionID)
+	statusResp, err := c.GetStatus(ctx, resolvedSessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting status: %v\n", err)
 		return
@@ -296,15 +323,15 @@ func runStatus(cmd *cobra.Command, args []string) {
 }
 
 func runEvents(cmd *cobra.Command, args []string) {
-	if endpoint == "" || sessionID == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint and --session-id flags are required\n")
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
-	eventChan, errorChan := c.StreamEvents(ctx, sessionID)
+	eventChan, errorChan := c.StreamEvents(ctx, resolvedSessionID)
 
 	fmt.Println("Monitoring events... (Press Ctrl+C to stop)")
 
@@ -333,20 +360,17 @@ func runEvents(cmd *cobra.Command, args []string) {
 }
 
 func runTaskCreate(cmd *cobra.Command, args []string) {
-	if endpoint == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
-		os.Exit(1)
-	}
-	if sessionID == "" {
-		fmt.Fprintf(os.Stderr, "Error: --session-id flag is required\n")
-		os.Exit(1)
-	}
 	if taskTitle == "" {
 		fmt.Fprintf(os.Stderr, "Error: --title flag is required\n")
 		os.Exit(1)
 	}
 
-	c := client.NewClient(endpoint)
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	ctx := context.Background()
 
 	links := make([]client.TaskLink, 0, len(taskLinks))
@@ -369,7 +393,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) {
 		Links:       links,
 	}
 
-	taskResp, err := c.CreateTask(ctx, sessionID, req)
+	taskResp, err := c.CreateTask(ctx, resolvedSessionID, req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating task: %v\n", err)
 		os.Exit(1)
@@ -384,12 +408,12 @@ func runTaskCreate(cmd *cobra.Command, args []string) {
 }
 
 func runTaskList(cmd *cobra.Command, args []string) {
-	if endpoint == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+	c, _, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
 	opts := &client.ListTasksOptions{
@@ -413,13 +437,13 @@ func runTaskList(cmd *cobra.Command, args []string) {
 }
 
 func runTaskGet(cmd *cobra.Command, args []string) {
-	if endpoint == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+	c, _, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	taskID := args[0]
-	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
 	taskResp, err := c.GetTask(ctx, taskID)
@@ -437,13 +461,13 @@ func runTaskGet(cmd *cobra.Command, args []string) {
 }
 
 func runTaskUpdate(cmd *cobra.Command, args []string) {
-	if endpoint == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+	c, _, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	taskID := args[0]
-	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
 	req := &client.UpdateTaskRequest{}
@@ -478,13 +502,13 @@ func runTaskUpdate(cmd *cobra.Command, args []string) {
 }
 
 func runTaskDelete(cmd *cobra.Command, args []string) {
-	if endpoint == "" {
-		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+	c, _, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	taskID := args[0]
-	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
 	if err := c.DeleteTask(ctx, taskID); err != nil {
