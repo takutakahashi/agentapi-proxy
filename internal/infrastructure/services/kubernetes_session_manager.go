@@ -3243,12 +3243,12 @@ func (m *KubernetesSessionManager) deleteOneshotSettingsSecret(ctx context.Conte
 // agentapiSettingsJSON is the JSON representation of settings stored in agentapi-settings-* Secrets.
 // This mirrors the settingsJSON struct in kubernetes_settings_repository.go.
 type agentapiSettingsJSON struct {
-	Name                 string                          `json:"name"`
-	Bedrock              *agentapiBedrockJSON            `json:"bedrock,omitempty"`
+	Name                 string                            `json:"name"`
+	Bedrock              *agentapiBedrockJSON              `json:"bedrock,omitempty"`
 	MCPServers           map[string]*agentapiMCPServerJSON `json:"mcp_servers,omitempty"`
-	ClaudeCodeOAuthToken string                          `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             string                          `json:"auth_mode,omitempty"`
-	EnvVars              map[string]string               `json:"env_vars,omitempty"`
+	ClaudeCodeOAuthToken string                            `json:"claude_code_oauth_token,omitempty"`
+	AuthMode             string                            `json:"auth_mode,omitempty"`
+	EnvVars              map[string]string                 `json:"env_vars,omitempty"`
 }
 
 // agentapiBedrockJSON is the JSON representation of Bedrock settings.

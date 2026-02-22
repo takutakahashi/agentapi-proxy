@@ -257,14 +257,7 @@ spec:
             - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT
               value: {{ .Values.kubernetesSession.otelCollector.resources.limits.memory | quote }}
             {{- end }}
-            # MCP server configuration
-            {{- if .Values.kubernetesSession.mcpServers.enabled }}
-            - name: AGENTAPI_K8S_SESSION_MCP_SERVERS_ENABLED
-              value: "true"
-            - name: AGENTAPI_K8S_SESSION_MCP_SERVERS_BASE_SECRET
-              value: {{ .Values.kubernetesSession.mcpServers.baseSecret | quote }}
-            {{- end }}
-            # Settings base secret (proxy-side merge of settings.json and mcp-servers.json)
+            # Settings base secret (proxy-side merge of settings.json)
             - name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET
               value: {{ .Values.kubernetesSession.settingsBaseSecret | default "agentapi-settings-base" | quote }}
             # Schedule Worker configuration (enabled by default)
