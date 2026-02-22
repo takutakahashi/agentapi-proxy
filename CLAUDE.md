@@ -27,34 +27,32 @@
   - プルリクエストを作成して変更内容をレビューしてもらう
   - チーム内での作業状況を共有し、進捗を可視化する
 
-- **commit 前に必ず以下のコマンドを実行する**
-  - `make lint` - コードの品質チェック
-  - `make test` - テストの実行
-
 - **API の変更時は必ず OpenAPI 仕様を更新する**
   - 新しいエンドポイントを追加した場合は `spec/openapi.json` に追加する
   - 既存エンドポイントのリクエスト/レスポンス形式を変更した場合も更新する
   - スキーマ（components/schemas）の追加・変更も忘れずに行う
   - タグ（tags）の追加が必要な場合は追加する
 
-### ユーザーへの通知
+### ✅ 作業完了時の必須チェックリスト
 
-作業完了時にユーザーへ通知する前に、以下を**必ず**実施してください：
+作業完了時は以下を**順番に必ず実行**してください。1つでも省略してはいけません：
 
-- **ユーザーに実施してほしいネクストアクションを agentapi-proxy のタスク機能で1件作成する**
-  - `agentapi-proxy client task create` コマンドを使用する
-  - `--task-type user`、`--scope user` を指定する
-  - ネクストアクションは最も重要なもの**1つだけ**に絞る（複数作らない）
-  - PR を作成した場合は `--link "url|title"` 形式で PR の URL をリンクとして含める
-  - 例：PR レビュー依頼タスクの作成
-    ```bash
-    agentapi-proxy client task create \
-      --endpoint http://$AGENTAPI_PROXY_SERVICE_HOST:$AGENTAPI_PROXY_SERVICE_PORT \
-      --session-id $AGENTAPI_SESSION_ID \
-      --title "PR をレビューしてください" \
-      --task-type user \
-      --scope user \
-      --link "https://github.com/owner/repo/pull/123|PR #123"
-    ```
-
-- **PR を作成した場合は、通知の `--url` に PR の URL を指定する**
+1. **`make lint` を実行する** - コードの品質チェック
+2. **`make test` を実行する** - テストの実行
+3. **変更をブランチにプッシュし PR を作成する**
+4. **`agentapi-proxy client task create` でユーザータスクを1件作成する**
+   - `--task-type user`、`--scope user` を指定する
+   - ネクストアクションは最も重要なもの**1つだけ**に絞る（複数作らない）
+   - PR を作成した場合は `--link "url|title"` 形式で PR の URL をリンクとして含める
+   - 例：PR レビュー依頼タスクの作成
+     ```bash
+     agentapi-proxy client task create \
+       --endpoint http://$AGENTAPI_PROXY_SERVICE_HOST:$AGENTAPI_PROXY_SERVICE_PORT \
+       --session-id $AGENTAPI_SESSION_ID \
+       --title "PR をレビューしてください" \
+       --task-type user \
+       --scope user \
+       --link "https://github.com/owner/repo/pull/123|PR #123"
+     ```
+5. **`agentapi-proxy helpers send-notification` で通知を送る**
+   - PR を作成した場合は `--url` に PR の URL を指定する
