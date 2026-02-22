@@ -521,6 +521,24 @@ func (s *Server) DeleteSessionByID(sessionID string) error {
 		_ = s.shareRepo.Delete(sessionID)
 	}
 
+	// Delete associated tasks for this session (cascade delete)
+	if s.taskRepo != nil {
+		ctx := context.Background()
+		tasks, err := s.taskRepo.List(ctx, portrepos.TaskFilter{SessionID: sessionID})
+		if err != nil {
+			log.Printf("[SESSION] Warning: failed to list tasks for session %s: %v", sessionID, err)
+		} else {
+			for _, task := range tasks {
+				if err := s.taskRepo.Delete(ctx, task.ID()); err != nil {
+					log.Printf("[SESSION] Warning: failed to delete task %s for session %s: %v", task.ID(), sessionID, err)
+				}
+			}
+			if len(tasks) > 0 {
+				log.Printf("[SESSION] Deleted %d tasks associated with session %s", len(tasks), sessionID)
+			}
+		}
+	}
+
 	return s.sessionManager.DeleteSession(sessionID)
 }
 

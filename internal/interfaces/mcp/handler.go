@@ -78,6 +78,9 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 			authenticatedGithubToken = auth.ExtractTokenFromHeader(authHeader)
 		}
 
+		// Extract session ID from X-Session-ID header
+		authenticatedSessionID := req.Header.Get("X-Session-ID")
+
 		// Create MCP server with options
 		opts := &mcp.ServerOptions{
 			Logger: slog.Default(),
@@ -87,7 +90,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		}
 
 		// Create new MCP server instance with authenticated user and repositories
-		mcpServer := NewMCPServer(sessionManager, shareRepo, taskRepo, taskGroupRepo, memoryRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, opts)
+		mcpServer := NewMCPServer(sessionManager, shareRepo, taskRepo, taskGroupRepo, memoryRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, opts)
 
 		// Register all tools
 		mcpServer.RegisterTools()

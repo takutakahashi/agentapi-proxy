@@ -255,6 +255,9 @@ func (uc *MCPTaskToolsUseCase) CreateTask(ctx context.Context, input CreateTaskI
 	if input.Title == "" {
 		return nil, fmt.Errorf("title is required")
 	}
+	if input.SessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
 	if input.TaskType != string(entities.TaskTypeUser) && input.TaskType != string(entities.TaskTypeAgent) {
 		return nil, fmt.Errorf("task_type must be 'user' or 'agent'")
 	}
