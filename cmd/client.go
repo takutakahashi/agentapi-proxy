@@ -33,6 +33,7 @@ var (
 	taskFilterScope   string
 	taskFilterTeamID  string
 	taskFilterGroupID string
+	taskLinks         []string
 )
 
 var ClientCmd = &cobra.Command{
@@ -109,7 +110,25 @@ Examples:
     --session-id my-session \
     --title "My task" \
     --task-type agent \
-    --scope user`,
+    --scope user
+
+  # With links (url only)
+  agentapi-proxy client task create \
+    --endpoint http://proxy:8080 \
+    --session-id my-session \
+    --title "Review PR" \
+    --task-type user \
+    --scope user \
+    --link "https://github.com/owner/repo/pull/123"
+
+  # With links (url and title)
+  agentapi-proxy client task create \
+    --endpoint http://proxy:8080 \
+    --session-id my-session \
+    --title "Review PR" \
+    --task-type user \
+    --scope user \
+    --link "https://github.com/owner/repo/pull/123|PR #123"`,
 	Run: runTaskCreate,
 }
 
@@ -158,6 +177,7 @@ func init() {
 	taskCreateCmd.Flags().StringVar(&taskScope, "scope", "user", `Task scope: "user" or "team"`)
 	taskCreateCmd.Flags().StringVar(&taskTeamID, "team-id", "", "Team ID (required when scope is 'team')")
 	taskCreateCmd.Flags().StringVar(&taskGroupID, "group-id", "", "Task group ID (optional)")
+	taskCreateCmd.Flags().StringArrayVar(&taskLinks, "link", nil, `Link to associate with the task. Format: "url" or "url|title". Can be specified multiple times.`)
 
 	// task list flags
 	taskListCmd.Flags().StringVar(&taskFilterScope, "scope", "", `Filter by scope: "user" or "team"`)
@@ -329,6 +349,16 @@ func runTaskCreate(cmd *cobra.Command, args []string) {
 	c := client.NewClient(endpoint)
 	ctx := context.Background()
 
+	links := make([]client.TaskLink, 0, len(taskLinks))
+	for _, l := range taskLinks {
+		parts := strings.SplitN(l, "|", 2)
+		link := client.TaskLink{URL: parts[0]}
+		if len(parts) == 2 {
+			link.Title = parts[1]
+		}
+		links = append(links, link)
+	}
+
 	req := &client.CreateTaskRequest{
 		Title:       taskTitle,
 		Description: taskDescription,
@@ -336,6 +366,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) {
 		Scope:       taskScope,
 		TeamID:      taskTeamID,
 		GroupID:     taskGroupID,
+		Links:       links,
 	}
 
 	taskResp, err := c.CreateTask(ctx, sessionID, req)

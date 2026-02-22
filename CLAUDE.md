@@ -36,3 +36,25 @@
   - 既存エンドポイントのリクエスト/レスポンス形式を変更した場合も更新する
   - スキーマ（components/schemas）の追加・変更も忘れずに行う
   - タグ（tags）の追加が必要な場合は追加する
+
+### ユーザーへの通知
+
+作業完了時にユーザーへ通知する前に、以下を**必ず**実施してください：
+
+- **ユーザーに実施してほしいネクストアクションを agentapi-proxy のタスク機能で1件作成する**
+  - `agentapi-proxy client task create` コマンドを使用する
+  - `--task-type user`、`--scope user` を指定する
+  - ネクストアクションは最も重要なもの**1つだけ**に絞る（複数作らない）
+  - PR を作成した場合は `--link "url|title"` 形式で PR の URL をリンクとして含める
+  - 例：PR レビュー依頼タスクの作成
+    ```bash
+    agentapi-proxy client task create \
+      --endpoint http://$AGENTAPI_PROXY_SERVICE_HOST:$AGENTAPI_PROXY_SERVICE_PORT \
+      --session-id $AGENTAPI_SESSION_ID \
+      --title "PR をレビューしてください" \
+      --task-type user \
+      --scope user \
+      --link "https://github.com/owner/repo/pull/123|PR #123"
+    ```
+
+- **PR を作成した場合は、通知の `--url` に PR の URL を指定する**
