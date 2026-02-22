@@ -162,22 +162,9 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		log.Printf("[K8S_SESSION] PVC disabled, using EmptyDir for session %s", id)
 	}
 
-	// Create initial message Secret if initial message is provided
+	// Cache initial message as description
 	if req.InitialMessage != "" {
-		if err := m.createInitialMessageSecret(ctx, session, req.InitialMessage); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create initial message secret: %v", err)
-			// Continue anyway - sidecar will handle missing secret gracefully
-		}
-		// Cache initial message as description
 		session.SetDescription(req.InitialMessage)
-	}
-
-	// Create GitHub token Secret if github_token is provided via params
-	if req.GithubToken != "" {
-		if err := m.createGithubTokenSecret(ctx, session, req.GithubToken); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create github token secret: %v", err)
-			// Continue anyway - will fall back to GitHub App authentication if available
-		}
 	}
 
 	// Create webhook payload Secret if webhook payload is provided
@@ -715,11 +702,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	if req.GithubToken != "" {
 		// When params.github_token is provided:
-		// - Do NOT mount GitHubSecretName (to avoid exposing GITHUB_APP_PEM and other auth credentials)
-		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
-		// - Mount session-specific Secret for GITHUB_TOKEN
-
-		// Mount GitHub config Secret (GITHUB_API, GITHUB_URL) if available
+		// - GITHUB_TOKEN is embedded directly in session-settings env (no per-session secret)
+		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings only
 		if m.k8sConfig.GitHubConfigSecretName != "" {
 			envFrom = append(envFrom, corev1.EnvFromSource{
 				SecretRef: &corev1.SecretEnvSource{
@@ -731,18 +715,6 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			})
 			log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
 		}
-
-		// Mount session-specific Secret for GITHUB_TOKEN
-		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: githubTokenSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-		log.Printf("[K8S_SESSION] Using session-specific GitHub token Secret %s for session %s", githubTokenSecretName, session.id)
 	} else if m.k8sConfig.GitHubSecretName != "" {
 		// When params.github_token is NOT provided:
 		// - Mount GitHubSecretName for full GitHub App authentication
@@ -1072,7 +1044,7 @@ const initialMessageSenderScript = `
 set -e
 
 AGENTAPI_URL="http://localhost:${AGENTAPI_PORT}"
-MESSAGE_FILE="/initial-message/message"
+MESSAGE_FILE="/session-settings/initial-message"
 SENT_FLAG="/initial-message-state/sent"
 MAX_READY_RETRIES=120
 MAX_STABLE_RETRIES=60
@@ -1241,8 +1213,8 @@ func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *Kub
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
-				Name:      "initial-message",
-				MountPath: "/initial-message",
+				Name:      "session-settings",
+				MountPath: "/session-settings",
 				ReadOnly:  true,
 			},
 			{
@@ -1317,39 +1289,6 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 	}
 }
 
-// createInitialMessageSecret creates a Secret containing the initial message
-func (m *KubernetesSessionManager) createInitialMessageSecret(
-	ctx context.Context,
-	session *KubernetesSession,
-	message string,
-) error {
-	secretName := fmt.Sprintf("%s-initial-message", session.ServiceName())
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
-				"agentapi.proxy/resource":   "initial-message",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"message": []byte(message),
-		},
-	}
-
-	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create initial message secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created initial message Secret %s for session %s", secretName, session.id)
-	return nil
-}
-
 // createWebhookPayloadSecret creates a Secret containing the webhook payload JSON
 func (m *KubernetesSessionManager) createWebhookPayloadSecret(
 	ctx context.Context,
@@ -1383,16 +1322,6 @@ func (m *KubernetesSessionManager) createWebhookPayloadSecret(
 	return nil
 }
 
-// deleteInitialMessageSecret deletes the initial message Secret for a session
-func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Context, session *KubernetesSession) error {
-	secretName := fmt.Sprintf("%s-initial-message", session.ServiceName())
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete initial message secret: %w", err)
-	}
-	return nil
-}
-
 // deleteWebhookPayloadSecret deletes the webhook payload Secret for a session
 func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Context, session *KubernetesSession) error {
 	secretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
@@ -1403,64 +1332,19 @@ func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Contex
 	return nil
 }
 
-// getInitialMessageFromSecret retrieves the initial message from Secret for session restoration
+// getInitialMessageFromSecret retrieves the initial message from the session-settings Secret.
+// The initial message is stored as "initial-message" key alongside "settings.yaml".
+// serviceName follows the pattern "agentapi-session-{id}-svc"; the settings secret is "agentapi-session-{id}-settings".
 func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) string {
-	secretName := fmt.Sprintf("%s-initial-message", serviceName)
-	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	settingsSecretName := strings.TrimSuffix(serviceName, "-svc") + "-settings"
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, settingsSecretName, metav1.GetOptions{})
 	if err != nil {
-		// Secret may not exist if no initial message was provided
 		return ""
 	}
-	if message, ok := secret.Data["message"]; ok {
+	if message, ok := secret.Data["initial-message"]; ok {
 		return string(message)
 	}
 	return ""
-}
-
-// deleteGithubTokenSecret deletes the GitHub token Secret for a session
-func (m *KubernetesSessionManager) deleteGithubTokenSecret(ctx context.Context, session *KubernetesSession) error {
-	secretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete github token secret: %w", err)
-	}
-	return nil
-}
-
-// createGithubTokenSecret creates a Secret containing the GitHub token
-// This is used when params.github_token is provided to override GITHUB_TOKEN
-// from GitHubSecretName. Other GitHub settings (GITHUB_API, GITHUB_URL) are
-// still read from GitHubSecretName.
-func (m *KubernetesSessionManager) createGithubTokenSecret(
-	ctx context.Context,
-	session *KubernetesSession,
-	token string,
-) error {
-	secretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
-				"agentapi.proxy/resource":   "github-token",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"GITHUB_TOKEN": token,
-		},
-	}
-
-	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create github token secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created GitHub token Secret %s for session %s", secretName, session.id)
-	return nil
 }
 
 // createOneshotSettingsSecret creates a Secret containing settings.json with Stop hook
@@ -1607,20 +1491,10 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		},
 	})
 
-	// Add initial message volumes if initial message is provided
+	// Add initial message state volume if initial message is provided
+	// (initial message content is now stored in session-settings Secret as "initial-message" key)
 	if session.Request() != nil && session.Request().InitialMessage != "" {
-		initialMsgSecretName := fmt.Sprintf("%s-initial-message", session.ServiceName())
 		volumes = append(volumes,
-			// Secret containing the initial message content
-			corev1.Volume{
-				Name: "initial-message",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: initialMsgSecretName,
-						Optional:   boolPtr(true),
-					},
-				},
-			},
 			// EmptyDir for tracking sent state (prevents double-send on container restart)
 			corev1.Volume{
 				Name: "initial-message-state",
@@ -1811,16 +1685,6 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		if err != nil && !errors.IsNotFound(err) {
 			errs = append(errs, fmt.Sprintf("pvc: %v", err))
 		}
-	}
-
-	// Delete initial message Secret
-	if err := m.deleteInitialMessageSecret(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("initial-message-secret: %v", err))
-	}
-
-	// Delete GitHub token Secret
-	if err := m.deleteGithubTokenSecret(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("github-token-secret: %v", err))
 	}
 
 	// Delete webhook payload Secret
@@ -2834,12 +2698,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	var secretNames []string
 
 	if req.GithubToken != "" {
-		// When params.github_token is provided
+		// When params.github_token is provided: embed token directly, no per-session secret needed
 		if m.k8sConfig.GitHubConfigSecretName != "" {
 			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
 		}
-		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-		secretNames = append(secretNames, githubTokenSecretName)
+		env["GITHUB_TOKEN"] = req.GithubToken
 	} else if m.k8sConfig.GitHubSecretName != "" {
 		// When params.github_token is NOT provided
 		secretNames = append(secretNames, m.k8sConfig.GitHubSecretName)
@@ -3025,6 +2888,12 @@ func (m *KubernetesSessionManager) createSessionSettingsSecret(
 		Data: map[string][]byte{
 			"settings.yaml": yamlData,
 		},
+	}
+
+	// Embed initial message as a separate flat file so the sidecar can read it directly
+	// without YAML parsing (maintains the same interface as the old initial-message Secret)
+	if req.InitialMessage != "" {
+		secret.Data["initial-message"] = []byte(req.InitialMessage)
 	}
 
 	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
