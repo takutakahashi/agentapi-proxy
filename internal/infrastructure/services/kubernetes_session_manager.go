@@ -162,22 +162,9 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		log.Printf("[K8S_SESSION] PVC disabled, using EmptyDir for session %s", id)
 	}
 
-	// Create initial message Secret if initial message is provided
+	// Cache initial message as description
 	if req.InitialMessage != "" {
-		if err := m.createInitialMessageSecret(ctx, session, req.InitialMessage); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create initial message secret: %v", err)
-			// Continue anyway - sidecar will handle missing secret gracefully
-		}
-		// Cache initial message as description
 		session.SetDescription(req.InitialMessage)
-	}
-
-	// Create GitHub token Secret if github_token is provided via params
-	if req.GithubToken != "" {
-		if err := m.createGithubTokenSecret(ctx, session, req.GithubToken); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create github token secret: %v", err)
-			// Continue anyway - will fall back to GitHub App authentication if available
-		}
 	}
 
 	// Create webhook payload Secret if webhook payload is provided
@@ -196,20 +183,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
-	// Create team env Secret for team-scoped sessions
-	if err := m.createTeamEnvSecret(ctx, session, req); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to create team env secret: %v", err)
-		// Continue anyway - session will work without team environment variables
-	}
-
-	// Create personal API key Secret for user-scoped sessions
-	if req.Scope == entities.ScopeUser {
-		if err := m.createPersonalAPIKeySecret(ctx, session, req.UserID); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create personal API key secret: %v", err)
-			// Continue anyway - session will work without personal API key
-		}
-	}
-
 	// Create oneshot settings Secret if oneshot is enabled
 	if req.Oneshot {
 		if err := m.createOneshotSettingsSecret(ctx, session); err != nil {
@@ -218,10 +191,10 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
-	// Create unified session settings Secret (for future migration)
+	// Create unified session settings Secret (single source of truth for the session pod)
 	if err := m.createSessionSettingsSecret(ctx, session, req, webhookPayload); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to create session settings secret: %v", err)
-		// Continue anyway - this is additive and not required for current operation
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create session settings secret: %w", err)
 	}
 
 	// Create Deployment
@@ -729,11 +702,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	if req.GithubToken != "" {
 		// When params.github_token is provided:
-		// - Do NOT mount GitHubSecretName (to avoid exposing GITHUB_APP_PEM and other auth credentials)
-		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings
-		// - Mount session-specific Secret for GITHUB_TOKEN
-
-		// Mount GitHub config Secret (GITHUB_API, GITHUB_URL) if available
+		// - GITHUB_TOKEN is embedded directly in session-settings env (no per-session secret)
+		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings only
 		if m.k8sConfig.GitHubConfigSecretName != "" {
 			envFrom = append(envFrom, corev1.EnvFromSource{
 				SecretRef: &corev1.SecretEnvSource{
@@ -745,18 +715,6 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			})
 			log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
 		}
-
-		// Mount session-specific Secret for GITHUB_TOKEN
-		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: githubTokenSecretName,
-				},
-				Optional: boolPtr(true),
-			},
-		})
-		log.Printf("[K8S_SESSION] Using session-specific GitHub token Secret %s for session %s", githubTokenSecretName, session.id)
 	} else if m.k8sConfig.GitHubSecretName != "" {
 		// When params.github_token is NOT provided:
 		// - Mount GitHubSecretName for full GitHub App authentication
@@ -781,35 +739,6 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				},
 			})
 		}
-	}
-
-	// Add personal API key Secret as envFrom for user-scoped sessions
-	if req.Scope == entities.ScopeUser {
-		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: personalAPIKeySecretName,
-				},
-				Optional: boolPtr(true), // Optional - user may not have generated a personal API key yet
-			},
-		})
-		log.Printf("[K8S_SESSION] Adding personal API key Secret %s for user-scoped session %s", personalAPIKeySecretName, session.id)
-	}
-
-	// Mount team-specific env vars from TeamConfig (includes service account API key)
-	// Note: agent-env-* secrets are no longer mounted here; credentials are expanded from settings.json
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: teamEnvSecretName,
-				},
-				Optional: boolPtr(true), // Secret may not exist if team has no config
-			},
-		})
-		log.Printf("[K8S_SESSION] Adding team env Secret %s for team-scoped session %s", teamEnvSecretName, session.id)
 	}
 
 	// Build container spec
@@ -1115,7 +1044,7 @@ const initialMessageSenderScript = `
 set -e
 
 AGENTAPI_URL="http://localhost:${AGENTAPI_PORT}"
-MESSAGE_FILE="/initial-message/message"
+MESSAGE_FILE="/session-settings/initial-message"
 SENT_FLAG="/initial-message-state/sent"
 MAX_READY_RETRIES=120
 MAX_STABLE_RETRIES=60
@@ -1284,8 +1213,8 @@ func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *Kub
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
-				Name:      "initial-message",
-				MountPath: "/initial-message",
+				Name:      "session-settings",
+				MountPath: "/session-settings",
 				ReadOnly:  true,
 			},
 			{
@@ -1360,39 +1289,6 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 	}
 }
 
-// createInitialMessageSecret creates a Secret containing the initial message
-func (m *KubernetesSessionManager) createInitialMessageSecret(
-	ctx context.Context,
-	session *KubernetesSession,
-	message string,
-) error {
-	secretName := fmt.Sprintf("%s-initial-message", session.ServiceName())
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
-				"agentapi.proxy/resource":   "initial-message",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"message": []byte(message),
-		},
-	}
-
-	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create initial message secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created initial message Secret %s for session %s", secretName, session.id)
-	return nil
-}
-
 // createWebhookPayloadSecret creates a Secret containing the webhook payload JSON
 func (m *KubernetesSessionManager) createWebhookPayloadSecret(
 	ctx context.Context,
@@ -1426,16 +1322,6 @@ func (m *KubernetesSessionManager) createWebhookPayloadSecret(
 	return nil
 }
 
-// deleteInitialMessageSecret deletes the initial message Secret for a session
-func (m *KubernetesSessionManager) deleteInitialMessageSecret(ctx context.Context, session *KubernetesSession) error {
-	secretName := fmt.Sprintf("%s-initial-message", session.ServiceName())
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete initial message secret: %w", err)
-	}
-	return nil
-}
-
 // deleteWebhookPayloadSecret deletes the webhook payload Secret for a session
 func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Context, session *KubernetesSession) error {
 	secretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
@@ -1446,74 +1332,19 @@ func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Contex
 	return nil
 }
 
-// deleteTeamEnvSecret deletes the team env Secret for a session
-func (m *KubernetesSessionManager) deleteTeamEnvSecret(ctx context.Context, session *KubernetesSession) error {
-	secretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete team env secret: %w", err)
-	}
-	return nil
-}
-
-// getInitialMessageFromSecret retrieves the initial message from Secret for session restoration
+// getInitialMessageFromSecret retrieves the initial message from the session-settings Secret.
+// The initial message is stored as "initial-message" key alongside "settings.yaml".
+// serviceName follows the pattern "agentapi-session-{id}-svc"; the settings secret is "agentapi-session-{id}-settings".
 func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) string {
-	secretName := fmt.Sprintf("%s-initial-message", serviceName)
-	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	settingsSecretName := strings.TrimSuffix(serviceName, "-svc") + "-settings"
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, settingsSecretName, metav1.GetOptions{})
 	if err != nil {
-		// Secret may not exist if no initial message was provided
 		return ""
 	}
-	if message, ok := secret.Data["message"]; ok {
+	if message, ok := secret.Data["initial-message"]; ok {
 		return string(message)
 	}
 	return ""
-}
-
-// deleteGithubTokenSecret deletes the GitHub token Secret for a session
-func (m *KubernetesSessionManager) deleteGithubTokenSecret(ctx context.Context, session *KubernetesSession) error {
-	secretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete github token secret: %w", err)
-	}
-	return nil
-}
-
-// createGithubTokenSecret creates a Secret containing the GitHub token
-// This is used when params.github_token is provided to override GITHUB_TOKEN
-// from GitHubSecretName. Other GitHub settings (GITHUB_API, GITHUB_URL) are
-// still read from GitHubSecretName.
-func (m *KubernetesSessionManager) createGithubTokenSecret(
-	ctx context.Context,
-	session *KubernetesSession,
-	token string,
-) error {
-	secretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
-				"agentapi.proxy/resource":   "github-token",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"GITHUB_TOKEN": token,
-		},
-	}
-
-	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create github token secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created GitHub token Secret %s for session %s", secretName, session.id)
-	return nil
 }
 
 // createOneshotSettingsSecret creates a Secret containing settings.json with Stop hook
@@ -1567,69 +1398,6 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 	}
 
 	log.Printf("[K8S_SESSION] Created oneshot settings Secret %s for session %s", secretName, session.id)
-	return nil
-}
-
-// createPersonalAPIKeySecret creates a Secret containing the personal API key
-// This is used for user-scoped sessions to provide the user's personal API key
-func (m *KubernetesSessionManager) createPersonalAPIKeySecret(
-	ctx context.Context,
-	session *KubernetesSession,
-	userID string,
-) error {
-	// Skip if personal API key repository is not set
-	if m.personalAPIKeyRepo == nil {
-		log.Printf("[K8S_SESSION] Personal API key repository not set, skipping secret creation")
-		return nil
-	}
-
-	// Try to get existing personal API key
-	apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(userID))
-	if err != nil {
-		// If no API key exists, create a new one automatically
-		log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", userID)
-
-		// Generate API key
-		generatedKey, err := generatePersonalAPIKey()
-		if err != nil {
-			return fmt.Errorf("failed to generate personal API key: %w", err)
-		}
-
-		// Create new PersonalAPIKey entity
-		apiKey = entities.NewPersonalAPIKey(entities.UserID(userID), generatedKey)
-
-		// Save to repository
-		if err := m.personalAPIKeyRepo.Save(ctx, apiKey); err != nil {
-			return fmt.Errorf("failed to save personal API key for user %s: %w", userID, err)
-		}
-
-		log.Printf("[K8S_SESSION] Created personal API key for user %s", userID)
-	}
-
-	secretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/user-id":    sanitizeLabelValue(userID),
-				"agentapi.proxy/resource":   "personal-api-key",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"AGENTAPI_KEY": apiKey.APIKey(),
-		},
-	}
-
-	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create personal API key secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created personal API key Secret %s for session %s", secretName, session.id)
 	return nil
 }
 
@@ -1723,20 +1491,10 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		},
 	})
 
-	// Add initial message volumes if initial message is provided
+	// Add initial message state volume if initial message is provided
+	// (initial message content is now stored in session-settings Secret as "initial-message" key)
 	if session.Request() != nil && session.Request().InitialMessage != "" {
-		initialMsgSecretName := fmt.Sprintf("%s-initial-message", session.ServiceName())
 		volumes = append(volumes,
-			// Secret containing the initial message content
-			corev1.Volume{
-				Name: "initial-message",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: initialMsgSecretName,
-						Optional:   boolPtr(true),
-					},
-				},
-			},
 			// EmptyDir for tracking sent state (prevents double-send on container restart)
 			corev1.Volume{
 				Name: "initial-message-state",
@@ -1760,9 +1518,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 			},
 		})
 	}
-
-	// Note: Personal API key is now mounted as environment variable via envFrom
-	// No need to mount as volume
 
 	// Add OpenTelemetry Collector ConfigMap volume
 	if m.k8sConfig.OtelCollectorEnabled {
@@ -1818,73 +1573,6 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 
 	_, err := m.client.CoreV1().Services(m.namespace).Create(ctx, service, metav1.CreateOptions{})
 	return err
-}
-
-// createTeamEnvSecret creates a Secret with team configuration environment variables
-// for team-scoped sessions. This includes service account API key and team-specific env vars.
-func (m *KubernetesSessionManager) createTeamEnvSecret(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
-	// Only create for team-scoped sessions
-	if req.Scope != entities.ScopeTeam || req.TeamID == "" {
-		return nil
-	}
-
-	// Skip if team config repository is not set
-	if m.teamConfigRepo == nil {
-		log.Printf("[K8S_SESSION] TeamConfigRepository not set, skipping team env secret creation for session %s", session.id)
-		return nil
-	}
-
-	// Fetch team config
-	teamConfig, err := m.teamConfigRepo.FindByTeamID(ctx, req.TeamID)
-	if err != nil {
-		// Team config not found is not an error - team may not have configuration yet
-		log.Printf("[K8S_SESSION] Team config not found for team %s, skipping team env secret: %v", req.TeamID, err)
-		return nil
-	}
-
-	// Build environment variables map
-	envData := make(map[string][]byte)
-
-	// Add service account API key if present
-	if sa := teamConfig.ServiceAccount(); sa != nil {
-		envData["AGENTAPI_KEY"] = []byte(sa.APIKey())
-		log.Printf("[K8S_SESSION] Adding service account API key (AGENTAPI_KEY) to team env secret for session %s", session.id)
-	}
-
-	// Add team-specific environment variables
-	for key, value := range teamConfig.EnvVars() {
-		envData[key] = []byte(value)
-	}
-
-	// Skip if no environment variables to add
-	if len(envData) == 0 {
-		log.Printf("[K8S_SESSION] No environment variables in team config for team %s, skipping secret creation", req.TeamID)
-		return nil
-	}
-
-	// Create Secret
-	secretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/team-id":    sanitizeLabelValue(req.TeamID),
-				"agentapi.proxy/managed-by": "session-manager",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: envData,
-	}
-
-	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create team env secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created team env secret %s for session %s with %d environment variables", secretName, session.id, len(envData))
-	return nil
 }
 
 // watchSession monitors the session deployment status
@@ -1999,34 +1687,14 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		}
 	}
 
-	// Delete initial message Secret
-	if err := m.deleteInitialMessageSecret(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("initial-message-secret: %v", err))
-	}
-
-	// Delete GitHub token Secret
-	if err := m.deleteGithubTokenSecret(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("github-token-secret: %v", err))
-	}
-
 	// Delete webhook payload Secret
 	if err := m.deleteWebhookPayloadSecret(ctx, session); err != nil {
 		errs = append(errs, fmt.Sprintf("webhook-payload-secret: %v", err))
 	}
 
-	// Delete team env Secret (for team-scoped sessions)
-	if err := m.deleteTeamEnvSecret(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("team-env-secret: %v", err))
-	}
-
 	// Delete session settings Secret
 	if err := m.deleteSessionSettingsSecret(ctx, session); err != nil {
 		errs = append(errs, fmt.Sprintf("session-settings-secret: %v", err))
-	}
-
-	// Delete personal API key Secret (bug fix - was not being deleted before)
-	if err := m.deletePersonalAPIKeySecret(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("personal-api-key-secret: %v", err))
 	}
 
 	// Delete oneshot settings Secret (bug fix - was not being deleted before)
@@ -2385,9 +2053,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			ReadOnly:  true,
 		})
 	}
-
-	// Note: Personal API key is now mounted as environment variable via envFrom
-	// No need to mount as volume
 
 	// Add claude-agentapi history volume mount
 	volumeMounts = append(volumeMounts, corev1.VolumeMount{
@@ -3033,12 +2698,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	var secretNames []string
 
 	if req.GithubToken != "" {
-		// When params.github_token is provided
+		// When params.github_token is provided: embed token directly, no per-session secret needed
 		if m.k8sConfig.GitHubConfigSecretName != "" {
 			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
 		}
-		githubTokenSecretName := fmt.Sprintf("%s-github-token", session.ServiceName())
-		secretNames = append(secretNames, githubTokenSecretName)
+		env["GITHUB_TOKEN"] = req.GithubToken
 	} else if m.k8sConfig.GitHubSecretName != "" {
 		// When params.github_token is NOT provided
 		secretNames = append(secretNames, m.k8sConfig.GitHubSecretName)
@@ -3047,19 +2711,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	// Add personal API key Secret for user-scoped sessions
-	if req.Scope == entities.ScopeUser {
-		personalAPIKeySecretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-		secretNames = append(secretNames, personalAPIKeySecretName)
-	}
-
-	// Add team-env Secret for team-scoped sessions (TeamConfig env vars)
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		teamEnvSecretName := fmt.Sprintf("agentapi-session-%s-team-env", session.id)
-		secretNames = append(secretNames, teamEnvSecretName)
-	}
-
-	// Expand secrets into env map
+	// Expand secrets into env map (GitHub secrets only)
 	for _, secretName := range secretNames {
 		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
 			ctx,
@@ -3077,6 +2729,45 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// Merge secret data into env map (later secrets override earlier ones due to iteration order)
 		for k, v := range secret.Data {
 			env[k] = string(v)
+		}
+	}
+
+	// Expand personal API key directly from repository for user-scoped sessions
+	if req.Scope == entities.ScopeUser && m.personalAPIKeyRepo != nil {
+		apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(req.UserID))
+		if err != nil {
+			// If no API key exists, create a new one automatically
+			log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", req.UserID)
+			generatedKey, genErr := generatePersonalAPIKey()
+			if genErr != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to generate personal API key: %v", genErr)
+			} else {
+				apiKey = entities.NewPersonalAPIKey(entities.UserID(req.UserID), generatedKey)
+				if saveErr := m.personalAPIKeyRepo.Save(ctx, apiKey); saveErr != nil {
+					log.Printf("[K8S_SESSION] Warning: failed to save personal API key for user %s: %v", req.UserID, saveErr)
+					apiKey = nil
+				}
+			}
+		}
+		if apiKey != nil {
+			env["AGENTAPI_KEY"] = apiKey.APIKey()
+			log.Printf("[K8S_SESSION] Added personal API key to session settings env for user %s", req.UserID)
+		}
+	}
+
+	// Expand team env vars directly from repository for team-scoped sessions
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.teamConfigRepo != nil {
+		teamConfig, err := m.teamConfigRepo.FindByTeamID(ctx, req.TeamID)
+		if err != nil {
+			log.Printf("[K8S_SESSION] Team config not found for team %s in session settings: %v", req.TeamID, err)
+		} else {
+			if sa := teamConfig.ServiceAccount(); sa != nil {
+				env["AGENTAPI_KEY"] = sa.APIKey()
+				log.Printf("[K8S_SESSION] Added service account API key to session settings env for team %s", req.TeamID)
+			}
+			for k, v := range teamConfig.EnvVars() {
+				env[k] = v
+			}
 		}
 	}
 
@@ -3199,6 +2890,12 @@ func (m *KubernetesSessionManager) createSessionSettingsSecret(
 		},
 	}
 
+	// Embed initial message as a separate flat file so the sidecar can read it directly
+	// without YAML parsing (maintains the same interface as the old initial-message Secret)
+	if req.InitialMessage != "" {
+		secret.Data["initial-message"] = []byte(req.InitialMessage)
+	}
+
 	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create session settings secret: %w", err)
@@ -3214,17 +2911,6 @@ func (m *KubernetesSessionManager) deleteSessionSettingsSecret(ctx context.Conte
 	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete session settings secret: %w", err)
-	}
-	return nil
-}
-
-// deletePersonalAPIKeySecret deletes the personal API key Secret.
-// This fixes the existing bug where personal-api-key secrets were not being cleaned up.
-func (m *KubernetesSessionManager) deletePersonalAPIKeySecret(ctx context.Context, session *KubernetesSession) error {
-	secretName := fmt.Sprintf("%s-personal-api-key", session.ServiceName())
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete personal API key secret: %w", err)
 	}
 	return nil
 }
