@@ -58,6 +58,12 @@ var (
 	migrateVerbose   bool
 )
 
+// migrate verify subcommand flags
+var (
+	migrateVerifyNamespace string
+	migrateVerifyVerbose   bool
+)
+
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Migrate derived Secrets into agentapi-settings-* (unified source)",
@@ -81,12 +87,34 @@ Examples:
   # Step 1: Verify settings data is complete (no deletions)
   agentapi-proxy helpers migrate --namespace agentapi-ui
 
+  # Step 1 (subcommand form): Verify settings data is complete
+  agentapi-proxy helpers migrate verify --namespace agentapi-ui
+
   # Step 2: Preview what would be deleted
   agentapi-proxy helpers migrate --namespace agentapi-ui --cleanup --dry-run
 
   # Step 3: Delete derived Secrets after verification
   agentapi-proxy helpers migrate --namespace agentapi-ui --cleanup`,
 	RunE: runMigrate,
+}
+
+var migrateVerifyCmd = &cobra.Command{
+	Use:   "verify",
+	Short: "Verify that agentapi-settings-* Secrets contain all required data",
+	Long: `Verify that agentapi-settings-* Secrets already contain all configuration data
+that was previously split into separate derived Secrets.
+
+This command lists all agentapi-settings-* Secrets and reports their contents
+so you can confirm that all data (MCP servers, marketplaces, env vars, credentials)
+is present before running cleanup.
+
+Examples:
+  # Verify settings data is complete
+  agentapi-proxy helpers migrate verify --namespace agentapi-ui
+
+  # Verbose output showing details of each Secret
+  agentapi-proxy helpers migrate verify --namespace agentapi-ui --verbose`,
+	RunE: runMigrateVerify,
 }
 
 func init() {
@@ -99,29 +127,22 @@ func init() {
 	migrateCmd.Flags().BoolVarP(&migrateVerbose, "verbose", "v", false,
 		"Verbose output")
 
+	migrateVerifyCmd.Flags().StringVar(&migrateVerifyNamespace, "namespace", "agentapi-ui",
+		"Kubernetes namespace to operate in")
+	migrateVerifyCmd.Flags().BoolVarP(&migrateVerifyVerbose, "verbose", "v", false,
+		"Verbose output")
+
+	migrateCmd.AddCommand(migrateVerifyCmd)
 	HelpersCmd.AddCommand(migrateCmd)
 }
 
-func runMigrate(cmd *cobra.Command, args []string) error {
-	// Build Kubernetes client
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		return fmt.Errorf("failed to get Kubernetes config: %w", err)
-	}
+// runVerifyPhase runs the Phase 1 verification logic against agentapi-settings-* Secrets.
+// namespace and verbose are passed explicitly so the logic can be reused by both
+// runMigrate (--namespace / --verbose flags) and runMigrateVerify (its own flags).
+func runVerifyPhase(ctx context.Context, client *kubernetes.Clientset, namespace string, verbose bool) error {
+	fmt.Printf("=== Phase 1: Verifying agentapi-settings-* Secrets (namespace: %s) ===\n", namespace)
 
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
-	ctx := context.Background()
-
-	// -------------------------------------------------------------------------
-	// Phase 1: Verify agentapi-settings-* Secrets
-	// -------------------------------------------------------------------------
-	fmt.Printf("=== Phase 1: Verifying agentapi-settings-* Secrets (namespace: %s) ===\n", migrateNamespace)
-
-	settingsList, err := client.CoreV1().Secrets(migrateNamespace).List(ctx, metav1.ListOptions{
+	settingsList, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "agentapi.proxy/settings=true",
 	})
 	if err != nil {
@@ -186,7 +207,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("  [OK] %s (name=%s): %s\n", secret.Name, sj.Name, strings.Join(parts, ", "))
 
-		if migrateVerbose && len(sj.MCPServers) > 0 {
+		if verbose && len(sj.MCPServers) > 0 {
 			for serverName, server := range sj.MCPServers {
 				fmt.Printf("       MCP: %s (type=%s", serverName, server.Type)
 				if server.URL != "" {
@@ -199,13 +220,51 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if migrateVerbose && len(sj.EnvVars) > 0 {
+		if verbose && len(sj.EnvVars) > 0 {
 			envKeys := make([]string, 0, len(sj.EnvVars))
 			for k := range sj.EnvVars {
 				envKeys = append(envKeys, k)
 			}
 			fmt.Printf("       EnvVars: %s\n", strings.Join(envKeys, ", "))
 		}
+	}
+
+	return nil
+}
+
+func runMigrateVerify(cmd *cobra.Command, args []string) error {
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get Kubernetes config: %w", err)
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	return runVerifyPhase(context.Background(), client, migrateVerifyNamespace, migrateVerifyVerbose)
+}
+
+func runMigrate(cmd *cobra.Command, args []string) error {
+	// Build Kubernetes client
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get Kubernetes config: %w", err)
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	ctx := context.Background()
+
+	// -------------------------------------------------------------------------
+	// Phase 1: Verify agentapi-settings-* Secrets
+	// -------------------------------------------------------------------------
+	if err := runVerifyPhase(ctx, client, migrateNamespace, migrateVerbose); err != nil {
+		return err
 	}
 
 	// -------------------------------------------------------------------------
