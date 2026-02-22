@@ -237,14 +237,16 @@ spec:
               value: "/etc/k8s-session-config/k8s-session-config.yaml"
             {{- end }}
             # Slack Integration (claude-posts sidecar) configuration
-            {{- if .Values.kubernetesSession.slackIntegration.botToken.secretName }}
+            {{- $slackIntegration := (.Values.kubernetesSession).slackIntegration }}
+            {{- $slackBotToken := ($slackIntegration).botToken }}
+            {{- if and $slackBotToken $slackBotToken.secretName }}
             - name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_NAME
-              value: {{ .Values.kubernetesSession.slackIntegration.botToken.secretName | quote }}
+              value: {{ $slackBotToken.secretName | quote }}
             - name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY
-              value: {{ .Values.kubernetesSession.slackIntegration.botToken.key | default "bot-token" | quote }}
-            {{- if .Values.kubernetesSession.slackIntegration.image }}
+              value: {{ $slackBotToken.key | default "bot-token" | quote }}
+            {{- if ($slackIntegration).image }}
             - name: AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE
-              value: {{ .Values.kubernetesSession.slackIntegration.image | quote }}
+              value: {{ $slackIntegration.image | quote }}
             {{- end }}
             {{- end }}
             # OpenTelemetry Collector configuration
