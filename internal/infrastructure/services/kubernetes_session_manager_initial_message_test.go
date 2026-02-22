@@ -83,9 +83,35 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 			t.Errorf("Expected image 'test-image:latest', got %s", sidecar.Image)
 		}
 
-		// Verify volume mounts
+		// Verify volume mounts: session-settings (read-only) and initial-message-state
 		if len(sidecar.VolumeMounts) != 2 {
 			t.Errorf("Expected 2 volume mounts, got %d", len(sidecar.VolumeMounts))
+		}
+
+		// Verify session-settings volume mount (initial message is stored here)
+		var hasSessionSettings, hasInitialMessageState bool
+		for _, vm := range sidecar.VolumeMounts {
+			if vm.Name == "session-settings" {
+				hasSessionSettings = true
+				if vm.MountPath != "/session-settings" {
+					t.Errorf("Expected session-settings mount at /session-settings, got %s", vm.MountPath)
+				}
+				if !vm.ReadOnly {
+					t.Error("Expected session-settings volume mount to be read-only")
+				}
+			}
+			if vm.Name == "initial-message-state" {
+				hasInitialMessageState = true
+				if vm.MountPath != "/initial-message-state" {
+					t.Errorf("Expected initial-message-state mount at /initial-message-state, got %s", vm.MountPath)
+				}
+			}
+		}
+		if !hasSessionSettings {
+			t.Error("Expected session-settings volume mount")
+		}
+		if !hasInitialMessageState {
+			t.Error("Expected initial-message-state volume mount")
 		}
 
 		// Verify environment variables
@@ -104,28 +130,32 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 	})
 }
 
-func TestCreateInitialMessageSecret(t *testing.T) {
+// TestInitialMessageInSettingsSecret verifies that the initial message is stored
+// in the session-settings Secret under the "initial-message" key.
+func TestInitialMessageInSettingsSecret(t *testing.T) {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	}
+	k8sClient := fake.NewSimpleClientset(ns)
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Namespace: "test-ns",
+			Namespace:              "test-ns",
+			Image:                  "test-image:latest",
+			BasePort:               9000,
+			PVCEnabled:             boolPtrForTest(false),
+			ClaudeConfigBaseSecret: "claude-config-base",
+			CPURequest:             "100m",
+			CPULimit:               "1",
+			MemoryRequest:          "128Mi",
+			MemoryLimit:            "512Mi",
 		},
 	}
 	lgr := logger.NewLogger()
-	k8sClient := fake.NewSimpleClientset()
 	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
 	manager.namespace = "test-ns"
-
-	// Create the namespace first
-	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
-	}
-	_, err = k8sClient.CoreV1().Namespaces().Create(context.Background(), ns, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatalf("Failed to create namespace: %v", err)
-	}
 
 	session := NewKubernetesSession(
 		"test-session",
@@ -142,29 +172,32 @@ func TestCreateInitialMessageSecret(t *testing.T) {
 	)
 
 	message := "This is a test initial message"
-	err = manager.createInitialMessageSecret(context.Background(), session, message)
+	req := &entities.RunServerRequest{
+		UserID:         "test-user",
+		InitialMessage: message,
+	}
+
+	err = manager.createSessionSettingsSecret(context.Background(), session, req, nil)
 	if err != nil {
-		t.Fatalf("Failed to create initial message secret: %v", err)
+		t.Fatalf("Failed to create session settings secret: %v", err)
 	}
 
-	// Verify the secret was created
-	secretName := "agentapi-session-test-svc-initial-message"
-	secret, err := k8sClient.CoreV1().Secrets("test-ns").Get(context.Background(), secretName, metav1.GetOptions{})
+	// Verify the settings secret was created and contains initial-message key
+	// Secret name: agentapi-session-{session.id}-settings = agentapi-session-test-session-settings
+	settingsSecretName := "agentapi-session-test-session-settings"
+	secret, err := k8sClient.CoreV1().Secrets("test-ns").Get(context.Background(), settingsSecretName, metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("Failed to get secret: %v", err)
+		t.Fatalf("Failed to get settings secret: %v", err)
 	}
 
-	// Verify secret labels
-	if secret.Labels["agentapi.proxy/session-id"] != "test-session" {
-		t.Errorf("Expected session-id label 'test-session', got %s", secret.Labels["agentapi.proxy/session-id"])
-	}
-	if secret.Labels["agentapi.proxy/resource"] != "initial-message" {
-		t.Errorf("Expected resource label 'initial-message', got %s", secret.Labels["agentapi.proxy/resource"])
+	// Verify initial-message key in secret data
+	if string(secret.Data["initial-message"]) != message {
+		t.Errorf("Expected initial-message '%s', got '%s'", message, string(secret.Data["initial-message"]))
 	}
 
-	// Verify secret data
-	if string(secret.Data["message"]) != message {
-		t.Errorf("Expected message '%s', got '%s'", message, string(secret.Data["message"]))
+	// Verify settings.yaml key also exists
+	if _, ok := secret.Data["settings.yaml"]; !ok {
+		t.Error("Expected settings.yaml key in secret data")
 	}
 }
 
@@ -181,7 +214,7 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
 
-	t.Run("includes initial message volumes when message is provided", func(t *testing.T) {
+	t.Run("includes initial-message-state volume when message is provided", func(t *testing.T) {
 		session := NewKubernetesSession(
 			"test-session",
 			&entities.RunServerRequest{
@@ -199,16 +232,12 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 
 		volumes := manager.buildVolumes(session)
 
-		// Look for initial-message and initial-message-state volumes
-		var hasInitialMessage, hasInitialMessageState bool
+		// Look for initial-message-state volume (EmptyDir for tracking send state)
+		// The initial message content is now in session-settings Secret, not a separate volume
+		var hasInitialMessageState bool
 		for _, vol := range volumes {
 			if vol.Name == "initial-message" {
-				hasInitialMessage = true
-				if vol.Secret == nil {
-					t.Error("initial-message volume should be a Secret")
-				} else if vol.Secret.SecretName != "agentapi-session-test-svc-initial-message" {
-					t.Errorf("Expected secret name 'agentapi-session-test-svc-initial-message', got %s", vol.Secret.SecretName)
-				}
+				t.Error("initial-message volume should NOT be present (content is in session-settings Secret)")
 			}
 			if vol.Name == "initial-message-state" {
 				hasInitialMessageState = true
@@ -218,9 +247,6 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 			}
 		}
 
-		if !hasInitialMessage {
-			t.Error("Expected initial-message volume to be present")
-		}
 		if !hasInitialMessageState {
 			t.Error("Expected initial-message-state volume to be present")
 		}
@@ -293,7 +319,7 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 
 	session, err := manager.CreateSession(ctx, sessionID, req, nil)
 	if err != nil {
-		t.Fatalf("Failed to create session: %v", err)
+		t.Fatalf("Failed to create session: %v\n", err)
 	}
 	defer func() {
 		_ = manager.DeleteSession(sessionID)
@@ -303,15 +329,23 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		t.Fatal("Expected session to be created")
 	}
 
-	// Verify initial message secret was created
-	secretName := fmt.Sprintf("agentapi-session-%s-svc-initial-message", sessionID)
-	secret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, secretName, metav1.GetOptions{})
+	// Verify initial message is stored in the settings Secret under "initial-message" key
+	// Settings secret name: agentapi-session-{id}-settings
+	settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
+	secret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, settingsSecretName, metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("Failed to get initial message secret: %v", err)
+		t.Fatalf("Failed to get settings secret: %v", err)
 	}
 
-	if string(secret.Data["message"]) != initialMessage {
-		t.Errorf("Expected message '%s', got '%s'", initialMessage, string(secret.Data["message"]))
+	if string(secret.Data["initial-message"]) != initialMessage {
+		t.Errorf("Expected initial-message '%s', got '%s'", initialMessage, string(secret.Data["initial-message"]))
+	}
+
+	// Verify the old per-session initial-message Secret does NOT exist
+	oldSecretName := fmt.Sprintf("agentapi-session-%s-svc-initial-message", sessionID)
+	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, oldSecretName, metav1.GetOptions{})
+	if err == nil {
+		t.Errorf("Old per-session initial-message Secret %s should not exist", oldSecretName)
 	}
 
 	// Verify deployment has initial-message-sender sidecar
@@ -334,20 +368,17 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		t.Error("Expected initial-message-sender sidecar in deployment")
 	}
 
-	// Verify volumes are present
-	var hasInitialMessageVol, hasInitialMessageStateVol bool
+	// Verify initial-message-state volume is present (but NOT a separate initial-message Secret volume)
+	var hasInitialMessageStateVol bool
 	for _, vol := range podSpec.Volumes {
 		if vol.Name == "initial-message" {
-			hasInitialMessageVol = true
+			t.Error("initial-message Secret volume should not be present (content is in session-settings)")
 		}
 		if vol.Name == "initial-message-state" {
 			hasInitialMessageStateVol = true
 		}
 	}
 
-	if !hasInitialMessageVol {
-		t.Error("Expected initial-message volume in deployment")
-	}
 	if !hasInitialMessageStateVol {
 		t.Error("Expected initial-message-state volume in deployment")
 	}
