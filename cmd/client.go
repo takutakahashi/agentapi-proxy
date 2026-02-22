@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -15,6 +16,23 @@ var (
 	endpoint      string
 	sessionID     string
 	confirmDelete bool
+)
+
+// task subcommand flags
+var (
+	taskTitle         string
+	taskDescription   string
+	taskType          string
+	taskScope         string
+	taskTeamID        string
+	taskGroupID       string
+	taskStatus        string
+	taskNewSessionID  string
+	taskFilterStatus  string
+	taskFilterType    string
+	taskFilterScope   string
+	taskFilterTeamID  string
+	taskFilterGroupID string
 )
 
 var ClientCmd = &cobra.Command{
@@ -72,6 +90,60 @@ Examples:
 	Run: runDeleteSession,
 }
 
+var taskCmd = &cobra.Command{
+	Use:   "task",
+	Short: "Manage tasks",
+	Long:  "Create, list, get, update, and delete tasks",
+}
+
+var taskCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new task",
+	Long: `Create a new task associated with the current session.
+
+--session-id and --endpoint flags are required.
+
+Examples:
+  agentapi-proxy client task create \
+    --endpoint http://proxy:8080 \
+    --session-id my-session \
+    --title "My task" \
+    --task-type agent \
+    --scope user`,
+	Run: runTaskCreate,
+}
+
+var taskListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List tasks",
+	Long:  "List tasks with optional filters. --endpoint is required.",
+	Run:   runTaskList,
+}
+
+var taskGetCmd = &cobra.Command{
+	Use:   "get <taskId>",
+	Short: "Get a task by ID",
+	Long:  "Retrieve details of a specific task. --endpoint is required.",
+	Args:  cobra.ExactArgs(1),
+	Run:   runTaskGet,
+}
+
+var taskUpdateCmd = &cobra.Command{
+	Use:   "update <taskId>",
+	Short: "Update a task",
+	Long:  "Partially update an existing task. --endpoint is required.",
+	Args:  cobra.ExactArgs(1),
+	Run:   runTaskUpdate,
+}
+
+var taskDeleteCmd = &cobra.Command{
+	Use:   "delete <taskId>",
+	Short: "Delete a task",
+	Long:  "Delete a task by ID. --endpoint is required.",
+	Args:  cobra.ExactArgs(1),
+	Run:   runTaskDelete,
+}
+
 func init() {
 	ClientCmd.PersistentFlags().StringVarP(&endpoint, "endpoint", "e", "", "AgentAPI endpoint URL (required for most commands)")
 	ClientCmd.PersistentFlags().StringVarP(&sessionID, "session-id", "s", "", "Session ID for the agent (required for most commands)")
@@ -79,11 +151,41 @@ func init() {
 	// delete-session command flags
 	deleteSessionCmd.Flags().BoolVar(&confirmDelete, "confirm", false, "Skip confirmation prompt")
 
+	// task create flags
+	taskCreateCmd.Flags().StringVar(&taskTitle, "title", "", "Task title (required)")
+	taskCreateCmd.Flags().StringVar(&taskDescription, "description", "", "Task description")
+	taskCreateCmd.Flags().StringVar(&taskType, "task-type", "agent", `Task type: "user" or "agent"`)
+	taskCreateCmd.Flags().StringVar(&taskScope, "scope", "user", `Task scope: "user" or "team"`)
+	taskCreateCmd.Flags().StringVar(&taskTeamID, "team-id", "", "Team ID (required when scope is 'team')")
+	taskCreateCmd.Flags().StringVar(&taskGroupID, "group-id", "", "Task group ID (optional)")
+
+	// task list flags
+	taskListCmd.Flags().StringVar(&taskFilterScope, "scope", "", `Filter by scope: "user" or "team"`)
+	taskListCmd.Flags().StringVar(&taskFilterTeamID, "team-id", "", "Filter by team ID")
+	taskListCmd.Flags().StringVar(&taskFilterGroupID, "group-id", "", "Filter by group ID")
+	taskListCmd.Flags().StringVar(&taskFilterStatus, "status", "", `Filter by status: "todo" or "done"`)
+	taskListCmd.Flags().StringVar(&taskFilterType, "task-type", "", `Filter by type: "user" or "agent"`)
+
+	// task update flags
+	taskUpdateCmd.Flags().StringVar(&taskTitle, "title", "", "New title")
+	taskUpdateCmd.Flags().StringVar(&taskDescription, "description", "", "New description")
+	taskUpdateCmd.Flags().StringVar(&taskStatus, "status", "", `New status: "todo" or "done"`)
+	taskUpdateCmd.Flags().StringVar(&taskGroupID, "group-id", "", "New group ID")
+	taskUpdateCmd.Flags().StringVar(&taskNewSessionID, "session-id-new", "", "New session ID to associate with the task")
+
+	// task subcommands
+	taskCmd.AddCommand(taskCreateCmd)
+	taskCmd.AddCommand(taskListCmd)
+	taskCmd.AddCommand(taskGetCmd)
+	taskCmd.AddCommand(taskUpdateCmd)
+	taskCmd.AddCommand(taskDeleteCmd)
+
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
 	ClientCmd.AddCommand(eventsCmd)
 	ClientCmd.AddCommand(deleteSessionCmd)
+	ClientCmd.AddCommand(taskCmd)
 }
 
 func runSend(cmd *cobra.Command, args []string) {
@@ -208,6 +310,158 @@ func runEvents(cmd *cobra.Command, args []string) {
 			return
 		}
 	}
+}
+
+func runTaskCreate(cmd *cobra.Command, args []string) {
+	if endpoint == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+		os.Exit(1)
+	}
+	if sessionID == "" {
+		fmt.Fprintf(os.Stderr, "Error: --session-id flag is required\n")
+		os.Exit(1)
+	}
+	if taskTitle == "" {
+		fmt.Fprintf(os.Stderr, "Error: --title flag is required\n")
+		os.Exit(1)
+	}
+
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
+
+	req := &client.CreateTaskRequest{
+		Title:       taskTitle,
+		Description: taskDescription,
+		TaskType:    taskType,
+		Scope:       taskScope,
+		TeamID:      taskTeamID,
+		GroupID:     taskGroupID,
+	}
+
+	taskResp, err := c.CreateTask(ctx, sessionID, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating task: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(taskResp, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+func runTaskList(cmd *cobra.Command, args []string) {
+	if endpoint == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+		os.Exit(1)
+	}
+
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
+
+	opts := &client.ListTasksOptions{
+		Scope:    taskFilterScope,
+		TeamID:   taskFilterTeamID,
+		GroupID:  taskFilterGroupID,
+		Status:   taskFilterStatus,
+		TaskType: taskFilterType,
+	}
+
+	listResp, err := c.ListTasks(ctx, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing tasks: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Tasks (%d total):\n", listResp.Total)
+	for _, t := range listResp.Tasks {
+		fmt.Printf("  [%s] %s (%s/%s) session=%s\n", t.Status, t.Title, t.TaskType, t.Scope, t.SessionID)
+	}
+}
+
+func runTaskGet(cmd *cobra.Command, args []string) {
+	if endpoint == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+		os.Exit(1)
+	}
+
+	taskID := args[0]
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
+
+	taskResp, err := c.GetTask(ctx, taskID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting task: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(taskResp, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+func runTaskUpdate(cmd *cobra.Command, args []string) {
+	if endpoint == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+		os.Exit(1)
+	}
+
+	taskID := args[0]
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
+
+	req := &client.UpdateTaskRequest{}
+	if cmd.Flags().Changed("title") {
+		req.Title = &taskTitle
+	}
+	if cmd.Flags().Changed("description") {
+		req.Description = &taskDescription
+	}
+	if cmd.Flags().Changed("status") {
+		req.Status = &taskStatus
+	}
+	if cmd.Flags().Changed("group-id") {
+		req.GroupID = &taskGroupID
+	}
+	if cmd.Flags().Changed("session-id-new") {
+		req.SessionID = &taskNewSessionID
+	}
+
+	taskResp, err := c.UpdateTask(ctx, taskID, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error updating task: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(taskResp, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+func runTaskDelete(cmd *cobra.Command, args []string) {
+	if endpoint == "" {
+		fmt.Fprintf(os.Stderr, "Error: --endpoint flag is required\n")
+		os.Exit(1)
+	}
+
+	taskID := args[0]
+	c := client.NewClient(endpoint)
+	ctx := context.Background()
+
+	if err := c.DeleteTask(ctx, taskID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting task: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Task %s deleted successfully\n", taskID)
 }
 
 func runDeleteSession(cmd *cobra.Command, args []string) {

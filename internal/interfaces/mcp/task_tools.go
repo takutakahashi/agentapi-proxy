@@ -74,7 +74,6 @@ type CreateTaskToolInput struct {
 	Scope       string          `json:"scope"`
 	TeamID      string          `json:"team_id,omitempty"`
 	GroupID     string          `json:"group_id,omitempty"`
-	SessionID   string          `json:"session_id,omitempty"`
 	Links       []TaskLinkInput `json:"links,omitempty"`
 }
 
@@ -277,7 +276,7 @@ func (s *MCPServer) handleCreateTask(ctx context.Context, req *mcp.CallToolReque
 		Scope:       input.Scope,
 		TeamID:      input.TeamID,
 		GroupID:     input.GroupID,
-		SessionID:   input.SessionID,
+		SessionID:   s.sessionID, // injected from X-Session-ID header
 		Links:       links,
 	}
 

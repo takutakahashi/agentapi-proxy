@@ -31,6 +31,9 @@ type TaskFilter struct {
 
 	// TaskType restricts to tasks with the given type (empty = all types)
 	TaskType entities.TaskType
+
+	// SessionID restricts to tasks associated with a specific session (empty = all sessions)
+	SessionID string
 }
 
 // TaskRepository defines the interface for task persistence.
