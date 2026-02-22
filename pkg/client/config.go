@@ -36,6 +36,12 @@ func ConfigFromEnv() (*Config, error) {
 	}, nil
 }
 
+// EndpointFromEnv builds the endpoint URL from environment variables.
+// It reads AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP.
+func EndpointFromEnv() (string, error) {
+	return buildEndpointFromEnv()
+}
+
 // buildEndpointFromEnv builds the endpoint URL from environment variables
 func buildEndpointFromEnv() (string, error) {
 	proxyHost := os.Getenv("AGENTAPI_PROXY_SERVICE_HOST")
