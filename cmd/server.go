@@ -416,6 +416,9 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 	// Create SlackBot repository
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
 
+	// Create channel resolver for Slack channel ID → name resolution with ConfigMap cache
+	channelResolver := services.NewSlackChannelResolver(client, namespace)
+
 	// Create and register SlackBot handlers
 	slackbotHandlers := slackbot.NewHandlers(
 		slackbotRepo,
@@ -424,6 +427,7 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 		configData.KubernetesSession.SlackBotTokenSecretName,
 		configData.KubernetesSession.SlackBotTokenSecretKey,
 		configData.Webhook.BaseURL,
+		channelResolver,
 	)
 	proxyServer.AddCustomHandler(slackbotHandlers)
 

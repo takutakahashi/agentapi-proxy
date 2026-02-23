@@ -1520,7 +1520,7 @@
                     "signing_secret": "your-slack-signing-secret",
                     "bot_token_secret_name": "my-slack-bot-token",
                     "bot_token_secret_key": "bot-token",
-                    "allowed_channel_ids": ["C01234567", "C07654321"],
+                    "allowed_channel_names": ["dev", "backend"],
                     "session_config": {
                       "initial_message_template": "{{.event.text}}",
                       "tags": {
@@ -4550,13 +4550,13 @@
           "description": "Slack event types to process. Empty means all event types are allowed.",
           "example": ["message", "app_mention"]
         },
-        "allowed_channel_ids": {
+        "allowed_channel_names": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Slack channel IDs to listen to. Empty means all channels are allowed.",
-          "example": ["C01234567", "C07654321"]
+          "description": "Slack channel name patterns to listen to (partial match). Empty means all channels are allowed.",
+          "example": ["dev", "backend"]
         },
         "session_config": {
           "$ref": "#/components/schemas/SlackBotSessionConfig"
@@ -4598,12 +4598,12 @@
           },
           "description": "Slack event types to process. Empty means all event types are allowed."
         },
-        "allowed_channel_ids": {
+        "allowed_channel_names": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Slack channel IDs to listen to. Empty means all channels are allowed."
+          "description": "Slack channel name patterns to listen to (partial match). Empty means all channels are allowed."
         },
         "session_config": {
           "$ref": "#/components/schemas/SlackBotSessionConfig"
@@ -4666,12 +4666,12 @@
           },
           "description": "Slack event types processed by this bot"
         },
-        "allowed_channel_ids": {
+        "allowed_channel_names": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Slack channel IDs monitored by this bot"
+          "description": "Slack channel name patterns monitored by this bot (partial match)"
         },
         "session_config": {
           "$ref": "#/components/schemas/SlackBotSessionConfig"

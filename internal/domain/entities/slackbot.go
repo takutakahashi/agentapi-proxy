@@ -2,6 +2,7 @@ package entities
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -19,21 +20,21 @@ const (
 // Each SlackBot corresponds to a Slack App installation (one signing secret, one bot token)
 // and gets its own hook URL: /hooks/slack/:id
 type SlackBot struct {
-	id                 string
-	name               string
-	userID             string
-	scope              ResourceScope
-	teamID             string
-	status             SlackBotStatus
-	signingSecret      string
-	botTokenSecretName string                // K8s Secret name for xoxb-... token; empty = use global default
-	botTokenSecretKey  string                // Key within the Secret; default: "bot-token"
-	allowedEventTypes  []string              // Empty means all event types
-	allowedChannelIDs  []string              // Empty means all channels
-	sessionConfig      *WebhookSessionConfig // Reuse existing type
-	maxSessions        int
-	createdAt          time.Time
-	updatedAt          time.Time
+	id                  string
+	name                string
+	userID              string
+	scope               ResourceScope
+	teamID              string
+	status              SlackBotStatus
+	signingSecret       string
+	botTokenSecretName  string                // K8s Secret name for xoxb-... token; empty = use global default
+	botTokenSecretKey   string                // Key within the Secret; default: "bot-token"
+	allowedEventTypes   []string              // Empty means all event types
+	allowedChannelNames []string              // Empty means all channels; partial match on resolved channel name
+	sessionConfig       *WebhookSessionConfig // Reuse existing type
+	maxSessions         int
+	createdAt           time.Time
+	updatedAt           time.Time
 }
 
 // NewSlackBot creates a new SlackBot entity with defaults
@@ -150,13 +151,13 @@ func (s *SlackBot) SetAllowedEventTypes(types []string) {
 	s.updatedAt = time.Now()
 }
 
-// AllowedChannelIDs returns the list of allowed Slack channel IDs.
-// Empty means all channels are allowed.
-func (s *SlackBot) AllowedChannelIDs() []string { return s.allowedChannelIDs }
+// AllowedChannelNames returns the list of allowed Slack channel name patterns.
+// Empty means all channels are allowed. Matching is partial (substring).
+func (s *SlackBot) AllowedChannelNames() []string { return s.allowedChannelNames }
 
-// SetAllowedChannelIDs sets the list of allowed Slack channel IDs
-func (s *SlackBot) SetAllowedChannelIDs(channelIDs []string) {
-	s.allowedChannelIDs = channelIDs
+// SetAllowedChannelNames sets the list of allowed Slack channel name patterns
+func (s *SlackBot) SetAllowedChannelNames(names []string) {
+	s.allowedChannelNames = names
 	s.updatedAt = time.Now()
 }
 
@@ -209,13 +210,15 @@ func (s *SlackBot) IsEventTypeAllowed(eventType string) bool {
 	return false
 }
 
-// IsChannelAllowed returns true if the given channel ID is allowed
-func (s *SlackBot) IsChannelAllowed(channelID string) bool {
-	if len(s.allowedChannelIDs) == 0 {
+// IsChannelNameAllowed returns true if the given channel name matches any of the allowed patterns.
+// Matching is partial (substring): a pattern is considered matched if the channel name contains it.
+// If no patterns are configured, all channels are allowed.
+func (s *SlackBot) IsChannelNameAllowed(channelName string) bool {
+	if len(s.allowedChannelNames) == 0 {
 		return true
 	}
-	for _, c := range s.allowedChannelIDs {
-		if c == channelID {
+	for _, pattern := range s.allowedChannelNames {
+		if strings.Contains(channelName, pattern) {
 			return true
 		}
 	}
