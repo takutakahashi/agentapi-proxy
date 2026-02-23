@@ -24,7 +24,7 @@ func NewHandlers(
 	defaultBotTokenSecretKey string,
 	baseURL string,
 ) *Handlers {
-	controller := controllers.NewSlackBotController(repo, baseURL)
+	controller := controllers.NewSlackBotController(repo, baseURL, defaultSigningSecret)
 	eventHandler := controllers.NewSlackBotEventHandler(
 		repo,
 		sessionManager,
