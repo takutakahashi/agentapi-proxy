@@ -1476,6 +1476,353 @@
         }
       }
     },
+    "/slackbots": {
+      "post": {
+        "summary": "Create a new SlackBot",
+        "description": "Creates a new SlackBot configuration. Each SlackBot corresponds to a Slack App installation and receives a unique hook URL at /hooks/slack/{id}.",
+        "operationId": "createSlackBot",
+        "tags": [
+          "SlackBots"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSlackBotRequest"
+              },
+              "examples": {
+                "basic": {
+                  "summary": "Basic SlackBot",
+                  "value": {
+                    "name": "My Slack Bot",
+                    "signing_secret": "your-slack-signing-secret",
+                    "session_config": {
+                      "initial_message_template": "New Slack message from {{.event.user}} in <#{{.event.channel}}>: {{.event.text}}"
+                    }
+                  }
+                },
+                "team-scoped": {
+                  "summary": "Team-scoped SlackBot with channel filter",
+                  "value": {
+                    "name": "Team Bot",
+                    "scope": "team",
+                    "team_id": "myorg/backend",
+                    "signing_secret": "your-slack-signing-secret",
+                    "bot_token_secret_name": "my-slack-bot-token",
+                    "bot_token_secret_key": "bot-token",
+                    "allowed_channel_ids": ["C01234567", "C07654321"],
+                    "session_config": {
+                      "initial_message_template": "{{.event.text}}",
+                      "tags": {
+                        "channel": "{{.event.channel}}"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "SlackBot created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackBotResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "summary": "List SlackBots",
+        "description": "Returns a list of SlackBots. Non-admin users can see their own SlackBots and team-scoped SlackBots they have access to.",
+        "operationId": "listSlackBots",
+        "tags": [
+          "SlackBots"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by SlackBot status",
+            "schema": {
+              "$ref": "#/components/schemas/SlackBotStatus"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by resource scope",
+            "schema": {
+              "$ref": "#/components/schemas/ResourceScope"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter by team ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of SlackBots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SlackBotResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/slackbots/{id}": {
+      "get": {
+        "summary": "Get a SlackBot",
+        "description": "Returns a specific SlackBot by ID.",
+        "operationId": "getSlackBot",
+        "tags": [
+          "SlackBots"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "SlackBot ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SlackBot details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackBotResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - can only access own SlackBots"
+          },
+          "404": {
+            "description": "SlackBot not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a SlackBot",
+        "description": "Updates an existing SlackBot.",
+        "operationId": "updateSlackBot",
+        "tags": [
+          "SlackBots"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "SlackBot ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSlackBotRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SlackBot updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackBotResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Forbidden - can only update own SlackBots"
+          },
+          "404": {
+            "description": "SlackBot not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a SlackBot",
+        "description": "Deletes a SlackBot by ID.",
+        "operationId": "deleteSlackBot",
+        "tags": [
+          "SlackBots"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "SlackBot ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "SlackBot deleted successfully"
+          },
+          "403": {
+            "description": "Forbidden - can only delete own SlackBots"
+          },
+          "404": {
+            "description": "SlackBot not found"
+          }
+        }
+      }
+    },
+    "/hooks/slack/{id}": {
+      "post": {
+        "summary": "Receive Slack event",
+        "description": "Receives Slack Events API payloads. The id parameter is either a registered SlackBot UUID or 'default' (uses server startup configuration). Verifies the Slack v0 HMAC-SHA256 signature. Handles URL verification challenges. Creates or reuses a session per Slack thread, and triggers the claude-posts sidecar for Slack thread replies.",
+        "operationId": "handleSlackEvent",
+        "tags": [
+          "SlackBots"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "SlackBot ID (UUID) or 'default' for server-configured default bot",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Slack Events API payload",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "Event type (e.g. 'url_verification', 'event_callback')",
+                    "example": "event_callback"
+                  },
+                  "challenge": {
+                    "type": "string",
+                    "description": "Challenge token for URL verification"
+                  },
+                  "event": {
+                    "type": "object",
+                    "description": "Slack event object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "example": "message"
+                      },
+                      "channel": {
+                        "type": "string",
+                        "example": "C01234567"
+                      },
+                      "user": {
+                        "type": "string",
+                        "example": "U01234567"
+                      },
+                      "text": {
+                        "type": "string",
+                        "example": "Hello, world!"
+                      },
+                      "ts": {
+                        "type": "string",
+                        "example": "1628000000.000000"
+                      },
+                      "thread_ts": {
+                        "type": "string",
+                        "description": "Thread timestamp (present when posting in a thread)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Event processed successfully or URL verification challenge response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "challenge": {
+                      "type": "string",
+                      "description": "Echo of challenge token (for URL verification only)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Slack signature verification failed"
+          },
+          "404": {
+            "description": "SlackBot not found"
+          },
+          "500": {
+            "description": "Failed to process event"
+          }
+        }
+      }
+    },
     "/settings/{name}": {
       "get": {
         "summary": "Get settings",
@@ -4101,6 +4448,239 @@
         }
       }
     },
+    "SlackBotStatus": {
+      "type": "string",
+      "enum": ["active", "paused"],
+      "description": "SlackBot operational status"
+    },
+    "SlackBotSessionParams": {
+      "type": "object",
+      "properties": {
+        "agent_type": {
+          "type": "string",
+          "description": "Agent type to use (default: 'claude-agentapi')",
+          "example": "claude-agentapi"
+        },
+        "oneshot": {
+          "type": "boolean",
+          "description": "If true, session exits after one response",
+          "default": false
+        }
+      }
+    },
+    "SlackBotSessionConfig": {
+      "type": "object",
+      "description": "Session configuration for SlackBot-triggered sessions",
+      "properties": {
+        "initial_message_template": {
+          "type": "string",
+          "description": "Go template for the initial message sent to the agent when a new thread session is created. Template variables: .event (Slack event), .team_id, .api_app_id",
+          "example": "New message from {{.event.user}} in <#{{.event.channel}}>: {{.event.text}}"
+        },
+        "reuse_message_template": {
+          "type": "string",
+          "description": "Go template for the message sent to the agent when reusing an existing session (existing thread). Defaults to the raw event text if empty.",
+          "example": "{{.event.text}}"
+        },
+        "tags": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Additional tags to attach to created sessions (Go template values supported)"
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables to set for created sessions (Go template values supported)"
+        },
+        "params": {
+          "$ref": "#/components/schemas/SlackBotSessionParams"
+        }
+      }
+    },
+    "CreateSlackBotRequest": {
+      "type": "object",
+      "required": ["name", "signing_secret"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable name for the SlackBot",
+          "example": "My Slack Bot"
+        },
+        "scope": {
+          "$ref": "#/components/schemas/ResourceScope"
+        },
+        "team_id": {
+          "type": "string",
+          "description": "Team ID for team-scoped SlackBots (format: 'org/team-slug')",
+          "example": "myorg/backend"
+        },
+        "signing_secret": {
+          "type": "string",
+          "description": "Slack App signing secret for verifying event payloads",
+          "example": "your-slack-signing-secret"
+        },
+        "bot_token_secret_name": {
+          "type": "string",
+          "description": "Kubernetes Secret name containing the Slack bot token (xoxb-...). If empty, falls back to server default.",
+          "example": "my-slack-bot-token"
+        },
+        "bot_token_secret_key": {
+          "type": "string",
+          "description": "Key within the Kubernetes Secret for the bot token (default: 'bot-token')",
+          "example": "bot-token"
+        },
+        "allowed_event_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack event types to process. Empty means all event types are allowed.",
+          "example": ["message", "app_mention"]
+        },
+        "allowed_channel_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack channel IDs to listen to. Empty means all channels are allowed.",
+          "example": ["C01234567", "C07654321"]
+        },
+        "session_config": {
+          "$ref": "#/components/schemas/SlackBotSessionConfig"
+        },
+        "max_sessions": {
+          "type": "integer",
+          "description": "Maximum number of concurrent sessions for this SlackBot (default: 10)",
+          "default": 10,
+          "example": 10
+        }
+      }
+    },
+    "UpdateSlackBotRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable name for the SlackBot"
+        },
+        "status": {
+          "$ref": "#/components/schemas/SlackBotStatus"
+        },
+        "signing_secret": {
+          "type": "string",
+          "description": "Slack App signing secret for verifying event payloads"
+        },
+        "bot_token_secret_name": {
+          "type": "string",
+          "description": "Kubernetes Secret name containing the Slack bot token"
+        },
+        "bot_token_secret_key": {
+          "type": "string",
+          "description": "Key within the Kubernetes Secret for the bot token"
+        },
+        "allowed_event_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack event types to process. Empty means all event types are allowed."
+        },
+        "allowed_channel_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack channel IDs to listen to. Empty means all channels are allowed."
+        },
+        "session_config": {
+          "$ref": "#/components/schemas/SlackBotSessionConfig"
+        },
+        "max_sessions": {
+          "type": "integer",
+          "description": "Maximum number of concurrent sessions for this SlackBot"
+        }
+      }
+    },
+    "SlackBotResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "SlackBot UUID",
+          "example": "550e8400-e29b-41d4-a716-446655440000"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name",
+          "example": "My Slack Bot"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "scope": {
+          "$ref": "#/components/schemas/ResourceScope"
+        },
+        "team_id": {
+          "type": "string",
+          "description": "Team ID for team-scoped SlackBots"
+        },
+        "status": {
+          "$ref": "#/components/schemas/SlackBotStatus"
+        },
+        "signing_secret": {
+          "type": "string",
+          "description": "Masked signing secret (only first 4 and last 4 characters shown)",
+          "example": "your...cret"
+        },
+        "hook_url": {
+          "type": "string",
+          "description": "Slack Events API hook URL to configure in your Slack App",
+          "example": "https://proxy.example.com/hooks/slack/550e8400-e29b-41d4-a716-446655440000"
+        },
+        "bot_token_secret_name": {
+          "type": "string",
+          "description": "Kubernetes Secret name for the bot token"
+        },
+        "bot_token_secret_key": {
+          "type": "string",
+          "description": "Key within the Kubernetes Secret for the bot token"
+        },
+        "allowed_event_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack event types processed by this bot"
+        },
+        "allowed_channel_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack channel IDs monitored by this bot"
+        },
+        "session_config": {
+          "$ref": "#/components/schemas/SlackBotSessionConfig"
+        },
+        "max_sessions": {
+          "type": "integer",
+          "description": "Maximum number of concurrent sessions"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "securitySchemes": {
       "bearerAuth": {
         "type": "http",
@@ -4147,6 +4727,10 @@
     {
       "name": "Webhooks",
       "description": "Webhook management for receiving GitHub events and triggering sessions"
+    },
+    {
+      "name": "SlackBots",
+      "description": "SlackBot management for receiving Slack events and creating thread-based sessions. Each SlackBot corresponds to a Slack App installation and provides a unique hook URL."
     },
     {
       "name": "Settings",

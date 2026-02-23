@@ -18,6 +18,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
+	"github.com/takutakahashi/agentapi-proxy/pkg/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -89,6 +90,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register import/export handlers (requires Kubernetes mode)
 	registerImportExportHandlers(configData, proxyServer)
+
+	// Register SlackBot handlers (requires Kubernetes mode)
+	registerSlackBotHandlers(configData, proxyServer)
 
 	// Register MCP handler
 	registerMCPHandler(proxyServer, port)
@@ -381,6 +385,54 @@ func registerImportExportHandlers(configData *config.Config, proxyServer *app.Se
 	proxyServer.AddCustomHandler(importExportHandlers)
 
 	log.Printf("[IMPORT_EXPORT_HANDLERS] Import/export handlers registered successfully")
+}
+
+// registerSlackBotHandlers registers SlackBot management and event receiver REST API handlers
+func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[SLACKBOT_HANDLERS] Registering slackbot handlers...")
+
+	// Create Kubernetes client
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[SLACKBOT_HANDLERS] Kubernetes config not available, skipping slackbot handlers: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[SLACKBOT_HANDLERS] Failed to create Kubernetes client, skipping slackbot handlers: %v", err)
+		return
+	}
+
+	// Determine namespace
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Create SlackBot repository
+	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
+
+	// Create and register SlackBot handlers
+	slackbotHandlers := slackbot.NewHandlers(
+		slackbotRepo,
+		proxyServer.GetSessionManager(),
+		configData.Slack.SigningSecret,
+		configData.KubernetesSession.SlackBotTokenSecretName,
+		configData.KubernetesSession.SlackBotTokenSecretKey,
+		configData.Webhook.BaseURL,
+	)
+	proxyServer.AddCustomHandler(slackbotHandlers)
+
+	if configData.Slack.SigningSecret != "" {
+		log.Printf("[SLACKBOT_HANDLERS] Default SlackBot enabled at /hooks/slack/default")
+	} else {
+		log.Printf("[SLACKBOT_HANDLERS] No default signing secret configured; /hooks/slack/default disabled")
+	}
+	log.Printf("[SLACKBOT_HANDLERS] SlackBot handlers registered successfully")
 }
 
 // registerMCPHandler registers MCP HTTP handler

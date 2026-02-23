@@ -301,6 +301,16 @@ type Config struct {
 	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
 	// Memory is the configuration for memory storage backend
 	Memory MemoryConfig `json:"memory" mapstructure:"memory"`
+	// Slack is the configuration for Slack bot inbound webhook functionality
+	Slack SlackConfig `json:"slack" mapstructure:"slack"`
+}
+
+// SlackConfig represents Slack inbound webhook (SlackBot) configuration
+type SlackConfig struct {
+	// SigningSecret is the default Slack App signing secret used to verify incoming events.
+	// When set, enables the /hooks/slack/default endpoint.
+	// Set via AGENTAPI_SLACK_SIGNING_SECRET environment variable.
+	SigningSecret string `json:"signing_secret" mapstructure:"signing_secret"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -572,6 +582,9 @@ func bindEnvVars(v *viper.Viper) {
 	// Webhook configuration
 	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
 	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
+
+	// Slack configuration
+	_ = v.BindEnv("slack.signing_secret", "AGENTAPI_SLACK_SIGNING_SECRET")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
