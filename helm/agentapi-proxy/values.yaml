@@ -431,7 +431,7 @@ kubernetesSession:
   # Requires agent_type=claude-agentapi to produce the history file.
   slackIntegration:
     # Container image for the claude-posts Slack integration sidecar
-    # Defaults to ghcr.io/takutakahashi/claude-posts:0.2.0
+    # Defaults to ghcr.io/takutakahashi/claude-posts:0.3.0
     image: ""
 
     # Kubernetes Secret containing the Slack bot token.

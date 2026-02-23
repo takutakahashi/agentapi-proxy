@@ -20,8 +20,8 @@ import (
 // --- Mock SlackBot repository ---
 
 type mockSlackBotRepository struct {
-	bots   map[string]*entities.SlackBot
-	errOn  string // if set, returns error for this method
+	bots  map[string]*entities.SlackBot
+	errOn string // if set, returns error for this method
 }
 
 func newMockSlackBotRepository() *mockSlackBotRepository {
