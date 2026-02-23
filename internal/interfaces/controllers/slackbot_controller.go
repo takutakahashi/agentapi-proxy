@@ -114,30 +114,21 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
-	// When no custom signing_secret is provided, use the server default hook endpoint
-	// instead of creating a new bot entity with a UUID-based hook URL.
-	if req.SigningSecret == "" {
+	// Resolve signing secret: use request value if provided, fall back to server default.
+	// Track whether we are using the server default so we can return the default hook URL.
+	signingSecret := req.SigningSecret
+	usesDefaultSecret := false
+	if signingSecret == "" {
 		if c.defaultSigningSecret == "" {
 			return echo.NewHTTPError(http.StatusBadRequest, "signing_secret is required (no server default configured)")
 		}
-		now := time.Now()
-		return ctx.JSON(http.StatusCreated, &SlackBotResponse{
-			ID:            slackBotDefaultID,
-			Name:          req.Name,
-			UserID:        userID,
-			Scope:         entities.ScopeUser,
-			Status:        entities.SlackBotStatusActive,
-			SigningSecret: maskSecret(c.defaultSigningSecret),
-			HookURL:       c.hookURL(slackBotDefaultID),
-			MaxSessions:   10,
-			CreatedAt:     now,
-			UpdatedAt:     now,
-		})
+		signingSecret = c.defaultSigningSecret
+		usesDefaultSecret = true
 	}
 
 	id := uuid.New().String()
 	bot := entities.NewSlackBot(id, req.Name, userID)
-	bot.SetSigningSecret(req.SigningSecret)
+	bot.SetSigningSecret(signingSecret)
 
 	if req.Scope != "" {
 		bot.SetScope(req.Scope)
@@ -172,7 +163,13 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create slackbot")
 	}
 
-	return ctx.JSON(http.StatusCreated, c.toResponse(bot))
+	resp := c.toResponse(bot)
+	// When using the server default signing secret, the hook URL must point to the
+	// shared default endpoint (/hooks/slack/default) regardless of the bot's UUID.
+	if usesDefaultSecret {
+		resp.HookURL = c.hookURL(slackBotDefaultID)
+	}
+	return ctx.JSON(http.StatusCreated, resp)
 }
 
 // ListSlackBots handles GET /slackbots
@@ -319,14 +316,6 @@ func (c *SlackBotController) hookURL(id string) string {
 		return c.baseURL + "/hooks/slack/" + id
 	}
 	return "/hooks/slack/" + id
-}
-
-// maskSecret returns a masked version of a secret showing only the last 4 characters.
-func maskSecret(secret string) string {
-	if len(secret) <= 4 {
-		return "****"
-	}
-	return "****" + secret[len(secret)-4:]
 }
 
 func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotResponse {

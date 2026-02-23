@@ -191,7 +191,7 @@ func TestCreateSlackBot_UsesServerDefaultSigningSecret(t *testing.T) {
 
 	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
 		Name: "Bot Without Secret",
-		// No signing_secret in request — should use the server default hook endpoint
+		// No signing_secret in request — should fall back to server default
 	}, "user-1")
 
 	err := controller.CreateSlackBot(c)
@@ -202,11 +202,38 @@ func TestCreateSlackBot_UsesServerDefaultSigningSecret(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, "Bot Without Secret", resp.Name)
 	assert.Contains(t, resp.SigningSecret, "****")
-	// When no signing_secret is provided, the response must point to the "default" hook
-	assert.Equal(t, slackBotDefaultID, resp.ID)
+	// The bot is assigned a UUID (not "default")
+	assert.NotEmpty(t, resp.ID)
+	assert.NotEqual(t, slackBotDefaultID, resp.ID)
+	// But since the server default signing secret is used, the hook URL must be "default"
 	assert.Equal(t, "/hooks/slack/default", resp.HookURL)
-	// No new bot entity should be stored in the repository
-	assert.Len(t, repo.bots, 0, "default-hook bots are not persisted in the repository")
+	// The bot entity IS persisted so it can be managed (listed, updated, deleted)
+	assert.Len(t, repo.bots, 1, "bot should be persisted in the repository")
+}
+
+func TestCreateSlackBot_UsesServerDefaultSigningSecret_TeamScope(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo, "https://example.com", "default-server-secret")
+
+	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
+		Name:   "Team Bot Without Secret",
+		Scope:  entities.ScopeTeam,
+		TeamID: "myorg/backend",
+		// No signing_secret — falls back to server default
+	}, "user-1")
+
+	err := controller.CreateSlackBot(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, string(entities.ScopeTeam), string(resp.Scope))
+	assert.Equal(t, "myorg/backend", resp.TeamID)
+	assert.NotEqual(t, slackBotDefaultID, resp.ID)
+	// Hook URL must use the default path even for team-scoped bots using server default
+	assert.Equal(t, "https://example.com/hooks/slack/default", resp.HookURL)
+	assert.Len(t, repo.bots, 1)
 }
 
 func TestCreateSlackBot_MissingName(t *testing.T) {
