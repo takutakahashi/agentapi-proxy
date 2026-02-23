@@ -1479,7 +1479,7 @@
     "/slackbots": {
       "post": {
         "summary": "Create a new SlackBot",
-        "description": "Creates a new SlackBot configuration. Each SlackBot corresponds to a Slack App installation and receives a unique hook URL at /hooks/slack/{id}.",
+        "description": "Creates a new SlackBot configuration. Each SlackBot corresponds to a Slack App installation and receives a unique hook URL at /hooks/slack/{id}. signing_secret is optional if the server has a default signing secret configured (AGENTAPI_SLACK_SIGNING_SECRET environment variable).",
         "operationId": "createSlackBot",
         "tags": [
           "SlackBots"
@@ -1497,6 +1497,15 @@
                   "value": {
                     "name": "My Slack Bot",
                     "signing_secret": "your-slack-signing-secret",
+                    "session_config": {
+                      "initial_message_template": "New Slack message from {{.event.user}} in <#{{.event.channel}}>: {{.event.text}}"
+                    }
+                  }
+                },
+                "use-server-default": {
+                  "summary": "SlackBot using server default signing secret",
+                  "value": {
+                    "name": "My Slack Bot",
                     "session_config": {
                       "initial_message_template": "New Slack message from {{.event.user}} in <#{{.event.channel}}>: {{.event.text}}"
                     }
@@ -4503,7 +4512,7 @@
     },
     "CreateSlackBotRequest": {
       "type": "object",
-      "required": ["name", "signing_secret"],
+      "required": ["name"],
       "properties": {
         "name": {
           "type": "string",
@@ -4520,7 +4529,7 @@
         },
         "signing_secret": {
           "type": "string",
-          "description": "Slack App signing secret for verifying event payloads",
+          "description": "Slack App signing secret for verifying event payloads. Optional if the server has a default signing secret configured (AGENTAPI_SLACK_SIGNING_SECRET). If omitted and no server default is configured, a 400 error is returned.",
           "example": "your-slack-signing-secret"
         },
         "bot_token_secret_name": {
