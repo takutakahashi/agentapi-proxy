@@ -191,7 +191,7 @@ func TestCreateSlackBot_UsesServerDefaultSigningSecret(t *testing.T) {
 
 	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
 		Name: "Bot Without Secret",
-		// No signing_secret in request — should fall back to server default
+		// No signing_secret in request — should use the server default hook endpoint
 	}, "user-1")
 
 	err := controller.CreateSlackBot(c)
@@ -202,6 +202,11 @@ func TestCreateSlackBot_UsesServerDefaultSigningSecret(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, "Bot Without Secret", resp.Name)
 	assert.Contains(t, resp.SigningSecret, "****")
+	// When no signing_secret is provided, the response must point to the "default" hook
+	assert.Equal(t, slackBotDefaultID, resp.ID)
+	assert.Equal(t, "/hooks/slack/default", resp.HookURL)
+	// No new bot entity should be stored in the repository
+	assert.Len(t, repo.bots, 0, "default-hook bots are not persisted in the repository")
 }
 
 func TestCreateSlackBot_MissingName(t *testing.T) {

@@ -109,23 +109,35 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
 
-	// Resolve signing secret: use request value if provided, fall back to server default
-	signingSecret := req.SigningSecret
-	if signingSecret == "" {
-		if c.defaultSigningSecret == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "signing_secret is required (no server default configured)")
-		}
-		signingSecret = c.defaultSigningSecret
-	}
-
 	userID := getSlackBotUserID(ctx)
 	if userID == "" {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
+	// When no custom signing_secret is provided, use the server default hook endpoint
+	// instead of creating a new bot entity with a UUID-based hook URL.
+	if req.SigningSecret == "" {
+		if c.defaultSigningSecret == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "signing_secret is required (no server default configured)")
+		}
+		now := time.Now()
+		return ctx.JSON(http.StatusCreated, &SlackBotResponse{
+			ID:            slackBotDefaultID,
+			Name:          req.Name,
+			UserID:        userID,
+			Scope:         entities.ScopeUser,
+			Status:        entities.SlackBotStatusActive,
+			SigningSecret: maskSecret(c.defaultSigningSecret),
+			HookURL:       c.hookURL(slackBotDefaultID),
+			MaxSessions:   10,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		})
+	}
+
 	id := uuid.New().String()
 	bot := entities.NewSlackBot(id, req.Name, userID)
-	bot.SetSigningSecret(signingSecret)
+	bot.SetSigningSecret(req.SigningSecret)
 
 	if req.Scope != "" {
 		bot.SetScope(req.Scope)
@@ -307,6 +319,14 @@ func (c *SlackBotController) hookURL(id string) string {
 		return c.baseURL + "/hooks/slack/" + id
 	}
 	return "/hooks/slack/" + id
+}
+
+// maskSecret returns a masked version of a secret showing only the last 4 characters.
+func maskSecret(secret string) string {
+	if len(secret) <= 4 {
+		return "****"
+	}
+	return "****" + secret[len(secret)-4:]
 }
 
 func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotResponse {

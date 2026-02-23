@@ -288,6 +288,10 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 		scope = bot.Scope()
 		userID = bot.UserID()
 		teamID = bot.TeamID()
+	} else if event.User != "" {
+		// For the "default" hook (no registered bot), use the Slack event user
+		// as the session owner so session creation has a valid user identity.
+		userID = event.User
 	}
 
 	req := &entities.RunServerRequest{
