@@ -167,8 +167,15 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 func (c *SlackBotController) ListSlackBots(ctx echo.Context) error {
 	userID := getSlackBotUserID(ctx)
 
+	// Collect team IDs the user belongs to for team-scoped bot visibility
+	var teamIDs []string
+	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {
+		teamIDs = authzCtx.TeamScope.Teams
+	}
+
 	filter := repositories.SlackBotFilter{
-		UserID: userID,
+		UserID:  userID,
+		TeamIDs: teamIDs,
 	}
 
 	bots, err := c.repo.List(ctx.Request().Context(), filter)

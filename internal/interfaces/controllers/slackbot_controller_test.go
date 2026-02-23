@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
 // --- Mock SlackBot repository ---
@@ -52,7 +53,23 @@ func (r *mockSlackBotRepository) List(_ context.Context, filter portrepos.SlackB
 	}
 	var result []*entities.SlackBot
 	for _, bot := range r.bots {
-		if filter.UserID != "" && bot.UserID() != filter.UserID {
+		accessible := false
+		if bot.Scope() == entities.ScopeTeam && len(filter.TeamIDs) > 0 {
+			for _, teamID := range filter.TeamIDs {
+				if bot.TeamID() == teamID {
+					accessible = true
+					break
+				}
+			}
+			if !accessible && filter.UserID != "" && bot.UserID() == filter.UserID {
+				accessible = true
+			}
+		} else {
+			if filter.UserID == "" || bot.UserID() == filter.UserID {
+				accessible = true
+			}
+		}
+		if !accessible {
 			continue
 		}
 		result = append(result, bot)
@@ -86,6 +103,12 @@ func (r *mockSlackBotRepository) Delete(_ context.Context, id string) error {
 
 func makeSlackBotEchoContext(t *testing.T, method, path string, body interface{}, userID string) (echo.Context, *httptest.ResponseRecorder) {
 	t.Helper()
+	return makeSlackBotEchoContextWithTeams(t, method, path, body, userID, nil)
+}
+
+// makeSlackBotEchoContextWithTeams creates an echo context with user ID and team IDs set in auth context.
+func makeSlackBotEchoContextWithTeams(t *testing.T, method, path string, body interface{}, userID string, teamIDs []string) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
 	e := echo.New()
 	var reqBody *bytes.Reader
 	if body != nil {
@@ -102,6 +125,32 @@ func makeSlackBotEchoContext(t *testing.T, method, path string, body interface{}
 	if userID != "" {
 		user := entities.NewUser(entities.UserID(userID), entities.UserTypeAPIKey, userID)
 		c.Set("internal_user", user)
+
+		authzCtx := &auth.AuthorizationContext{
+			User: user,
+			PersonalScope: auth.PersonalScopeAuth{
+				UserID:    userID,
+				CanCreate: true,
+				CanRead:   true,
+				CanUpdate: true,
+				CanDelete: true,
+			},
+			TeamScope: auth.TeamScopeAuth{
+				Teams:           teamIDs,
+				TeamPermissions: make(map[string]auth.TeamPermissions),
+				IsAdmin:         false,
+			},
+		}
+		for _, tid := range teamIDs {
+			authzCtx.TeamScope.TeamPermissions[tid] = auth.TeamPermissions{
+				TeamID:    tid,
+				CanCreate: true,
+				CanRead:   true,
+				CanUpdate: true,
+				CanDelete: true,
+			}
+		}
+		c.Set("authz_context", authzCtx)
 	}
 	return c, rec
 }
@@ -328,4 +377,79 @@ func TestCreateSlackBot_RequestSigningSecretTakesPrecedenceOverDefault(t *testin
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	// Masked secret should show last 4 chars of "request-secret-xyz" → "...-xyz"
 	assert.Equal(t, "****-xyz", resp.SigningSecret)
+}
+
+// --- ListSlackBots team visibility tests ---
+
+// TestListSlackBots_TeamMemberSeesTeamBot verifies that a team member can see
+// a team-scoped bot created by another user in the same team.
+func TestListSlackBots_TeamMemberSeesTeamBot(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo, "", "default-secret")
+
+	// user-a creates a team-scoped bot for "myorg/backend"
+	botID := "bot-team-123"
+	teamBot := entities.NewSlackBot(botID, "Team Bot", "user-a")
+	teamBot.SetSigningSecret("some-secret-value")
+	teamBot.SetScope(entities.ScopeTeam)
+	teamBot.SetTeamID("myorg/backend")
+	repo.bots[botID] = teamBot
+
+	// user-b is a member of "myorg/backend" and lists bots
+	c, rec := makeSlackBotEchoContextWithTeams(t, http.MethodGet, "/slackbots", nil, "user-b", []string{"myorg/backend"})
+	err := controller.ListSlackBots(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var bots []SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
+	assert.Len(t, bots, 1, "team member should see the team-scoped bot created by another user")
+	assert.Equal(t, botID, bots[0].ID)
+}
+
+// TestListSlackBots_NonTeamMemberCannotSeeTeamBot verifies that a user NOT in the team
+// cannot see the team-scoped bot.
+func TestListSlackBots_NonTeamMemberCannotSeeTeamBot(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo, "", "default-secret")
+
+	botID := "bot-team-456"
+	teamBot := entities.NewSlackBot(botID, "Team Bot", "user-a")
+	teamBot.SetSigningSecret("some-secret-value")
+	teamBot.SetScope(entities.ScopeTeam)
+	teamBot.SetTeamID("myorg/backend")
+	repo.bots[botID] = teamBot
+
+	// user-c is NOT in "myorg/backend"
+	c, rec := makeSlackBotEchoContextWithTeams(t, http.MethodGet, "/slackbots", nil, "user-c", []string{"myorg/frontend"})
+	err := controller.ListSlackBots(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var bots []SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
+	assert.Len(t, bots, 0, "user not in the team should not see the team-scoped bot")
+}
+
+// TestListSlackBots_CreatorSeesOwnTeamBot verifies that the creator can see their team bot.
+func TestListSlackBots_CreatorSeesOwnTeamBot(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo, "", "default-secret")
+
+	botID := "bot-team-789"
+	teamBot := entities.NewSlackBot(botID, "Team Bot", "user-a")
+	teamBot.SetSigningSecret("some-secret-value")
+	teamBot.SetScope(entities.ScopeTeam)
+	teamBot.SetTeamID("myorg/backend")
+	repo.bots[botID] = teamBot
+
+	// user-a is the creator and is also a member of "myorg/backend"
+	c, rec := makeSlackBotEchoContextWithTeams(t, http.MethodGet, "/slackbots", nil, "user-a", []string{"myorg/backend"})
+	err := controller.ListSlackBots(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var bots []SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
+	assert.Len(t, bots, 1, "creator should see their own team-scoped bot")
 }

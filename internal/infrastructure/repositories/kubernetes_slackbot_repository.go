@@ -122,9 +122,33 @@ func (r *KubernetesSlackBotRepository) List(ctx context.Context, filter repoport
 
 	var result []*entities.SlackBot
 	for _, sb := range slackBots {
-		if filter.UserID != "" && sb.UserID() != filter.UserID {
+		// Determine accessibility based on scope:
+		// - Team-scoped bots: accessible if user is a team member OR the creator
+		// - User-scoped bots: accessible if user is the owner
+		accessible := false
+		if sb.Scope() == entities.ScopeTeam && len(filter.TeamIDs) > 0 {
+			// Check team membership first
+			for _, teamID := range filter.TeamIDs {
+				if sb.TeamID() == teamID {
+					accessible = true
+					break
+				}
+			}
+			// Also allow if user is the creator (even without team ID match)
+			if !accessible && filter.UserID != "" && sb.UserID() == filter.UserID {
+				accessible = true
+			}
+		} else {
+			// User-scoped bot or no team filter: check by user ID
+			if filter.UserID == "" || sb.UserID() == filter.UserID {
+				accessible = true
+			}
+		}
+		if !accessible {
 			continue
 		}
+
+		// Apply additional explicit filters
 		if filter.Status != "" && sb.Status() != filter.Status {
 			continue
 		}
@@ -133,18 +157,6 @@ func (r *KubernetesSlackBotRepository) List(ctx context.Context, filter repoport
 		}
 		if filter.TeamID != "" && sb.TeamID() != filter.TeamID {
 			continue
-		}
-		if len(filter.TeamIDs) > 0 && sb.Scope() == entities.ScopeTeam {
-			teamMatch := false
-			for _, teamID := range filter.TeamIDs {
-				if sb.TeamID() == teamID {
-					teamMatch = true
-					break
-				}
-			}
-			if !teamMatch {
-				continue
-			}
 		}
 		result = append(result, sb)
 	}
