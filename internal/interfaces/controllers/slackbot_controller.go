@@ -27,29 +27,29 @@ func NewSlackBotController(repo repositories.SlackBotRepository, baseURL string,
 
 // CreateSlackBotRequest is the request body for creating a SlackBot
 type CreateSlackBotRequest struct {
-	Name               string                 `json:"name"`
-	Scope              entities.ResourceScope `json:"scope,omitempty"`
-	TeamID             string                 `json:"team_id,omitempty"`
-	SigningSecret      string                 `json:"signing_secret"`
-	BotTokenSecretName string                 `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey  string                 `json:"bot_token_secret_key,omitempty"`
-	AllowedEventTypes  []string               `json:"allowed_event_types,omitempty"`
-	AllowedChannelIDs  []string               `json:"allowed_channel_ids,omitempty"`
-	SessionConfig      *SlackBotSessionConfig `json:"session_config,omitempty"`
-	MaxSessions        int                    `json:"max_sessions,omitempty"`
+	Name                string                 `json:"name"`
+	Scope               entities.ResourceScope `json:"scope,omitempty"`
+	TeamID              string                 `json:"team_id,omitempty"`
+	SigningSecret       string                 `json:"signing_secret"`
+	BotTokenSecretName  string                 `json:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey   string                 `json:"bot_token_secret_key,omitempty"`
+	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
+	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
+	MaxSessions         int                    `json:"max_sessions,omitempty"`
 }
 
 // UpdateSlackBotRequest is the request body for updating a SlackBot
 type UpdateSlackBotRequest struct {
-	Name               string                  `json:"name,omitempty"`
-	Status             entities.SlackBotStatus `json:"status,omitempty"`
-	SigningSecret      string                  `json:"signing_secret,omitempty"`
-	BotTokenSecretName string                  `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey  string                  `json:"bot_token_secret_key,omitempty"`
-	AllowedEventTypes  []string                `json:"allowed_event_types,omitempty"`
-	AllowedChannelIDs  []string                `json:"allowed_channel_ids,omitempty"`
-	SessionConfig      *SlackBotSessionConfig  `json:"session_config,omitempty"`
-	MaxSessions        int                     `json:"max_sessions,omitempty"`
+	Name                string                  `json:"name,omitempty"`
+	Status              entities.SlackBotStatus `json:"status,omitempty"`
+	SigningSecret       string                  `json:"signing_secret,omitempty"`
+	BotTokenSecretName  string                  `json:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey   string                  `json:"bot_token_secret_key,omitempty"`
+	AllowedEventTypes   []string                `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames []string                `json:"allowed_channel_names,omitempty"`
+	SessionConfig       *SlackBotSessionConfig  `json:"session_config,omitempty"`
+	MaxSessions         int                     `json:"max_sessions,omitempty"`
 }
 
 // SlackBotSessionConfig is the session configuration for a SlackBot
@@ -69,22 +69,22 @@ type SlackBotSessionParams struct {
 
 // SlackBotResponse is the API response for a SlackBot
 type SlackBotResponse struct {
-	ID                 string                  `json:"id"`
-	Name               string                  `json:"name"`
-	UserID             string                  `json:"user_id"`
-	Scope              entities.ResourceScope  `json:"scope,omitempty"`
-	TeamID             string                  `json:"team_id,omitempty"`
-	Status             entities.SlackBotStatus `json:"status"`
-	SigningSecret      string                  `json:"signing_secret"` // masked
-	HookURL            string                  `json:"hook_url"`
-	BotTokenSecretName string                  `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey  string                  `json:"bot_token_secret_key,omitempty"`
-	AllowedEventTypes  []string                `json:"allowed_event_types,omitempty"`
-	AllowedChannelIDs  []string                `json:"allowed_channel_ids,omitempty"`
-	SessionConfig      *SlackBotSessionConfig  `json:"session_config,omitempty"`
-	MaxSessions        int                     `json:"max_sessions"`
-	CreatedAt          time.Time               `json:"created_at"`
-	UpdatedAt          time.Time               `json:"updated_at"`
+	ID                  string                  `json:"id"`
+	Name                string                  `json:"name"`
+	UserID              string                  `json:"user_id"`
+	Scope               entities.ResourceScope  `json:"scope,omitempty"`
+	TeamID              string                  `json:"team_id,omitempty"`
+	Status              entities.SlackBotStatus `json:"status"`
+	SigningSecret       string                  `json:"signing_secret"` // masked
+	HookURL             string                  `json:"hook_url"`
+	BotTokenSecretName  string                  `json:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey   string                  `json:"bot_token_secret_key,omitempty"`
+	AllowedEventTypes   []string                `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames []string                `json:"allowed_channel_names,omitempty"`
+	SessionConfig       *SlackBotSessionConfig  `json:"session_config,omitempty"`
+	MaxSessions         int                     `json:"max_sessions"`
+	CreatedAt           time.Time               `json:"created_at"`
+	UpdatedAt           time.Time               `json:"updated_at"`
 }
 
 // --- Handler methods ---
@@ -142,8 +142,8 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	if len(req.AllowedEventTypes) > 0 {
 		bot.SetAllowedEventTypes(req.AllowedEventTypes)
 	}
-	if len(req.AllowedChannelIDs) > 0 {
-		bot.SetAllowedChannelIDs(req.AllowedChannelIDs)
+	if len(req.AllowedChannelNames) > 0 {
+		bot.SetAllowedChannelNames(req.AllowedChannelNames)
 	}
 	if req.MaxSessions > 0 {
 		bot.SetMaxSessions(req.MaxSessions)
@@ -256,8 +256,8 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 	if req.AllowedEventTypes != nil {
 		bot.SetAllowedEventTypes(req.AllowedEventTypes)
 	}
-	if req.AllowedChannelIDs != nil {
-		bot.SetAllowedChannelIDs(req.AllowedChannelIDs)
+	if req.AllowedChannelNames != nil {
+		bot.SetAllowedChannelNames(req.AllowedChannelNames)
 	}
 	if req.MaxSessions > 0 {
 		bot.SetMaxSessions(req.MaxSessions)
@@ -311,21 +311,21 @@ func (c *SlackBotController) hookURL(id string) string {
 
 func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotResponse {
 	resp := &SlackBotResponse{
-		ID:                 bot.ID(),
-		Name:               bot.Name(),
-		UserID:             bot.UserID(),
-		Scope:              bot.Scope(),
-		TeamID:             bot.TeamID(),
-		Status:             bot.Status(),
-		SigningSecret:      bot.MaskSigningSecret(),
-		HookURL:            c.hookURL(bot.ID()),
-		BotTokenSecretName: bot.BotTokenSecretName(),
-		BotTokenSecretKey:  bot.BotTokenSecretKey(),
-		AllowedEventTypes:  bot.AllowedEventTypes(),
-		AllowedChannelIDs:  bot.AllowedChannelIDs(),
-		MaxSessions:        bot.MaxSessions(),
-		CreatedAt:          bot.CreatedAt(),
-		UpdatedAt:          bot.UpdatedAt(),
+		ID:                  bot.ID(),
+		Name:                bot.Name(),
+		UserID:              bot.UserID(),
+		Scope:               bot.Scope(),
+		TeamID:              bot.TeamID(),
+		Status:              bot.Status(),
+		SigningSecret:       bot.MaskSigningSecret(),
+		HookURL:             c.hookURL(bot.ID()),
+		BotTokenSecretName:  bot.BotTokenSecretName(),
+		BotTokenSecretKey:   bot.BotTokenSecretKey(),
+		AllowedEventTypes:   bot.AllowedEventTypes(),
+		AllowedChannelNames: bot.AllowedChannelNames(),
+		MaxSessions:         bot.MaxSessions(),
+		CreatedAt:           bot.CreatedAt(),
+		UpdatedAt:           bot.UpdatedAt(),
 	}
 	if bot.SessionConfig() != nil {
 		resp.SessionConfig = fromEntitySessionConfig(bot.SessionConfig())

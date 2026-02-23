@@ -249,13 +249,13 @@ func TestCreateSlackBot_WithAllOptionalFields(t *testing.T) {
 	controller := NewSlackBotController(repo, "https://proxy.example.com", "")
 
 	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:               "Full Bot",
-		SigningSecret:      "supersecret",
-		BotTokenSecretName: "my-k8s-secret",
-		BotTokenSecretKey:  "xoxb-token",
-		AllowedEventTypes:  []string{"message", "app_mention"},
-		AllowedChannelIDs:  []string{"C01234567"},
-		MaxSessions:        5,
+		Name:                "Full Bot",
+		SigningSecret:       "supersecret",
+		BotTokenSecretName:  "my-k8s-secret",
+		BotTokenSecretKey:   "xoxb-token",
+		AllowedEventTypes:   []string{"message", "app_mention"},
+		AllowedChannelNames: []string{"dev-alerts"},
+		MaxSessions:         5,
 		SessionConfig: &SlackBotSessionConfig{
 			InitialMessageTemplate: "Hello from Slack: {{.event.text}}",
 			ReuseMessageTemplate:   "Continue: {{.event.text}}",
@@ -274,7 +274,7 @@ func TestCreateSlackBot_WithAllOptionalFields(t *testing.T) {
 	assert.Equal(t, "my-k8s-secret", resp.BotTokenSecretName)
 	assert.Equal(t, "xoxb-token", resp.BotTokenSecretKey)
 	assert.Equal(t, []string{"message", "app_mention"}, resp.AllowedEventTypes)
-	assert.Equal(t, []string{"C01234567"}, resp.AllowedChannelIDs)
+	assert.Equal(t, []string{"dev-alerts"}, resp.AllowedChannelNames)
 	assert.Equal(t, 5, resp.MaxSessions)
 	require.NotNil(t, resp.SessionConfig)
 	assert.Equal(t, "Hello from Slack: {{.event.text}}", resp.SessionConfig.InitialMessageTemplate)

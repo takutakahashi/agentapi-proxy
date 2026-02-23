@@ -191,46 +191,70 @@ func TestSlackBot_IsEventTypeAllowed(t *testing.T) {
 	}
 }
 
-func TestSlackBot_IsChannelAllowed(t *testing.T) {
+func TestSlackBot_IsChannelNameAllowed(t *testing.T) {
 	tests := []struct {
-		name              string
-		allowedChannelIDs []string
-		channelID         string
-		want              bool
+		name                string
+		allowedChannelNames []string
+		channelName         string
+		want                bool
 	}{
 		{
-			name:              "all channels allowed (empty list)",
-			allowedChannelIDs: []string{},
-			channelID:         "C01234567",
-			want:              true,
+			name:                "all channels allowed (empty list)",
+			allowedChannelNames: []string{},
+			channelName:         "general",
+			want:                true,
 		},
 		{
-			name:              "channel in allowed list",
-			allowedChannelIDs: []string{"C01234567", "C07654321"},
-			channelID:         "C01234567",
-			want:              true,
+			name:                "nil allowed list (all channels allowed)",
+			allowedChannelNames: nil,
+			channelName:         "general",
+			want:                true,
 		},
 		{
-			name:              "channel not in allowed list",
-			allowedChannelIDs: []string{"C01234567"},
-			channelID:         "C99999999",
-			want:              false,
+			name:                "exact match",
+			allowedChannelNames: []string{"dev", "prod"},
+			channelName:         "dev",
+			want:                true,
 		},
 		{
-			name:              "nil allowed list (all channels allowed)",
-			allowedChannelIDs: nil,
-			channelID:         "C01234567",
-			want:              true,
+			name:                "partial match (prefix)",
+			allowedChannelNames: []string{"dev"},
+			channelName:         "dev-alerts",
+			want:                true,
+		},
+		{
+			name:                "partial match (suffix)",
+			allowedChannelNames: []string{"alerts"},
+			channelName:         "dev-alerts",
+			want:                true,
+		},
+		{
+			name:                "partial match (substring)",
+			allowedChannelNames: []string{"back"},
+			channelName:         "backend-team",
+			want:                true,
+		},
+		{
+			name:                "no match",
+			allowedChannelNames: []string{"dev", "prod"},
+			channelName:         "general",
+			want:                false,
+		},
+		{
+			name:                "second pattern matches",
+			allowedChannelNames: []string{"frontend", "backend"},
+			channelName:         "backend-alerts",
+			want:                true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bot := NewSlackBot("id-1", "bot", "user-1")
-			bot.SetAllowedChannelIDs(tt.allowedChannelIDs)
-			got := bot.IsChannelAllowed(tt.channelID)
+			bot.SetAllowedChannelNames(tt.allowedChannelNames)
+			got := bot.IsChannelNameAllowed(tt.channelName)
 			if got != tt.want {
-				t.Errorf("IsChannelAllowed(%q) = %v, want %v", tt.channelID, got, tt.want)
+				t.Errorf("IsChannelNameAllowed(%q) = %v, want %v", tt.channelName, got, tt.want)
 			}
 		})
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/webhook"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
@@ -24,8 +25,9 @@ const (
 
 // SlackBotEventHandler handles incoming Slack events and manages sessions
 type SlackBotEventHandler struct {
-	repo           repositories.SlackBotRepository
-	sessionManager repositories.SessionManager
+	repo            repositories.SlackBotRepository
+	sessionManager  repositories.SessionManager
+	channelResolver *services.SlackChannelResolver
 	// Default SlackBot configuration (from server startup config)
 	defaultSigningSecret      string
 	defaultBotTokenSecretName string
@@ -40,10 +42,12 @@ func NewSlackBotEventHandler(
 	defaultSigningSecret string,
 	defaultBotTokenSecretName string,
 	defaultBotTokenSecretKey string,
+	channelResolver *services.SlackChannelResolver,
 ) *SlackBotEventHandler {
 	return &SlackBotEventHandler{
 		repo:                      repo,
 		sessionManager:            sessionManager,
+		channelResolver:           channelResolver,
 		defaultSigningSecret:      defaultSigningSecret,
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
@@ -144,9 +148,29 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 			log.Printf("[SLACKBOT] Event type not allowed: id=%s, type=%s", id, event.Type)
 			return ctx.JSON(http.StatusOK, map[string]string{"message": "event type not allowed"})
 		}
-		if !bot.IsChannelAllowed(event.Channel) {
-			log.Printf("[SLACKBOT] Channel not allowed: id=%s, channel=%s", id, event.Channel)
-			return ctx.JSON(http.StatusOK, map[string]string{"message": "channel not allowed"})
+		// Channel name filter: resolve channel ID → name, then apply partial-match filter
+		if len(bot.AllowedChannelNames()) > 0 && h.channelResolver != nil {
+			secretName := bot.BotTokenSecretName()
+			if secretName == "" {
+				secretName = h.defaultBotTokenSecretName
+			}
+			secretKey := bot.BotTokenSecretKey()
+			if secretKey == "" {
+				secretKey = h.defaultBotTokenSecretKey
+			}
+			botToken, tokenErr := h.channelResolver.GetBotToken(ctx.Request().Context(), secretName, secretKey)
+			if tokenErr != nil {
+				log.Printf("[SLACKBOT] Failed to get bot token for channel filter: id=%s, err=%v", id, tokenErr)
+				return ctx.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get bot token"})
+			}
+			channelName, resolveErr := h.channelResolver.ResolveChannelName(ctx.Request().Context(), event.Channel, botToken)
+			if resolveErr != nil {
+				log.Printf("[SLACKBOT] Failed to resolve channel name: id=%s, channel=%s, err=%v", id, event.Channel, resolveErr)
+				// Non-fatal: skip filter and allow the event through
+			} else if !bot.IsChannelNameAllowed(channelName) {
+				log.Printf("[SLACKBOT] Channel name not allowed: id=%s, channel=%s, name=%s", id, event.Channel, channelName)
+				return ctx.JSON(http.StatusOK, map[string]string{"message": "channel not allowed"})
+			}
 		}
 	}
 

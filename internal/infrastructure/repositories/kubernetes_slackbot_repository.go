@@ -38,21 +38,21 @@ const (
 
 // slackBotJSON is the JSON representation for storage
 type slackBotJSON struct {
-	ID                 string                    `json:"id"`
-	Name               string                    `json:"name"`
-	UserID             string                    `json:"user_id"`
-	Scope              entities.ResourceScope    `json:"scope,omitempty"`
-	TeamID             string                    `json:"team_id,omitempty"`
-	Status             entities.SlackBotStatus   `json:"status"`
-	SigningSecret      string                    `json:"signing_secret"`
-	BotTokenSecretName string                    `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey  string                    `json:"bot_token_secret_key,omitempty"`
-	AllowedEventTypes  []string                  `json:"allowed_event_types,omitempty"`
-	AllowedChannelIDs  []string                  `json:"allowed_channel_ids,omitempty"`
-	SessionConfig      *webhookSessionConfigJSON `json:"session_config,omitempty"`
-	MaxSessions        int                       `json:"max_sessions,omitempty"`
-	CreatedAt          time.Time                 `json:"created_at"`
-	UpdatedAt          time.Time                 `json:"updated_at"`
+	ID                  string                    `json:"id"`
+	Name                string                    `json:"name"`
+	UserID              string                    `json:"user_id"`
+	Scope               entities.ResourceScope    `json:"scope,omitempty"`
+	TeamID              string                    `json:"team_id,omitempty"`
+	Status              entities.SlackBotStatus   `json:"status"`
+	SigningSecret       string                    `json:"signing_secret"`
+	BotTokenSecretName  string                    `json:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey   string                    `json:"bot_token_secret_key,omitempty"`
+	AllowedEventTypes   []string                  `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames []string                  `json:"allowed_channel_names,omitempty"`
+	SessionConfig       *webhookSessionConfigJSON `json:"session_config,omitempty"`
+	MaxSessions         int                       `json:"max_sessions,omitempty"`
+	CreatedAt           time.Time                 `json:"created_at"`
+	UpdatedAt           time.Time                 `json:"updated_at"`
 }
 
 // KubernetesSlackBotRepository implements SlackBotRepository using Kubernetes Secrets
@@ -346,8 +346,8 @@ func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities
 	if len(sbj.AllowedEventTypes) > 0 {
 		slackBot.SetAllowedEventTypes(sbj.AllowedEventTypes)
 	}
-	if len(sbj.AllowedChannelIDs) > 0 {
-		slackBot.SetAllowedChannelIDs(sbj.AllowedChannelIDs)
+	if len(sbj.AllowedChannelNames) > 0 {
+		slackBot.SetAllowedChannelNames(sbj.AllowedChannelNames)
 	}
 	if sbj.MaxSessions > 0 {
 		slackBot.SetMaxSessions(sbj.MaxSessions)
@@ -363,20 +363,20 @@ func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities
 // entityToJSON converts entity to JSON representation
 func (r *KubernetesSlackBotRepository) entityToJSON(sb *entities.SlackBot) *slackBotJSON {
 	sbj := &slackBotJSON{
-		ID:                 sb.ID(),
-		Name:               sb.Name(),
-		UserID:             sb.UserID(),
-		Scope:              sb.Scope(),
-		TeamID:             sb.TeamID(),
-		Status:             sb.Status(),
-		SigningSecret:      sb.SigningSecret(),
-		BotTokenSecretName: sb.BotTokenSecretName(),
-		BotTokenSecretKey:  sb.BotTokenSecretKey(),
-		AllowedEventTypes:  sb.AllowedEventTypes(),
-		AllowedChannelIDs:  sb.AllowedChannelIDs(),
-		MaxSessions:        sb.MaxSessions(),
-		CreatedAt:          sb.CreatedAt(),
-		UpdatedAt:          sb.UpdatedAt(),
+		ID:                  sb.ID(),
+		Name:                sb.Name(),
+		UserID:              sb.UserID(),
+		Scope:               sb.Scope(),
+		TeamID:              sb.TeamID(),
+		Status:              sb.Status(),
+		SigningSecret:       sb.SigningSecret(),
+		BotTokenSecretName:  sb.BotTokenSecretName(),
+		BotTokenSecretKey:   sb.BotTokenSecretKey(),
+		AllowedEventTypes:   sb.AllowedEventTypes(),
+		AllowedChannelNames: sb.AllowedChannelNames(),
+		MaxSessions:         sb.MaxSessions(),
+		CreatedAt:           sb.CreatedAt(),
+		UpdatedAt:           sb.UpdatedAt(),
 	}
 
 	if sc := sb.SessionConfig(); sc != nil {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
@@ -23,6 +24,7 @@ func NewHandlers(
 	defaultBotTokenSecretName string,
 	defaultBotTokenSecretKey string,
 	baseURL string,
+	channelResolver *services.SlackChannelResolver,
 ) *Handlers {
 	controller := controllers.NewSlackBotController(repo, baseURL, defaultSigningSecret)
 	eventHandler := controllers.NewSlackBotEventHandler(
@@ -31,6 +33,7 @@ func NewHandlers(
 		defaultSigningSecret,
 		defaultBotTokenSecretName,
 		defaultBotTokenSecretKey,
+		channelResolver,
 	)
 	return &Handlers{
 		controller:   controller,
