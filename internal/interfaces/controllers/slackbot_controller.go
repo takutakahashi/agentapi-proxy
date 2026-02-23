@@ -12,13 +12,14 @@ import (
 
 // SlackBotController handles SlackBot management API requests
 type SlackBotController struct {
-	repo    repositories.SlackBotRepository
-	baseURL string
+	repo                 repositories.SlackBotRepository
+	baseURL              string
+	defaultSigningSecret string
 }
 
 // NewSlackBotController creates a new SlackBotController
-func NewSlackBotController(repo repositories.SlackBotRepository, baseURL string) *SlackBotController {
-	return &SlackBotController{repo: repo, baseURL: baseURL}
+func NewSlackBotController(repo repositories.SlackBotRepository, baseURL string, defaultSigningSecret string) *SlackBotController {
+	return &SlackBotController{repo: repo, baseURL: baseURL, defaultSigningSecret: defaultSigningSecret}
 }
 
 // --- Request/Response DTOs ---
@@ -106,8 +107,14 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	if req.Name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
-	if req.SigningSecret == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "signing_secret is required")
+
+	// Resolve signing secret: use request value if provided, fall back to server default
+	signingSecret := req.SigningSecret
+	if signingSecret == "" {
+		if c.defaultSigningSecret == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "signing_secret is required (no server default configured)")
+		}
+		signingSecret = c.defaultSigningSecret
 	}
 
 	userID := getSlackBotUserID(ctx)
@@ -117,7 +124,7 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 
 	id := uuid.New().String()
 	bot := entities.NewSlackBot(id, req.Name, userID)
-	bot.SetSigningSecret(req.SigningSecret)
+	bot.SetSigningSecret(signingSecret)
 
 	if req.Scope != "" {
 		bot.SetScope(req.Scope)
