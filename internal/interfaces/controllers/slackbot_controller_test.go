@@ -453,3 +453,81 @@ func TestListSlackBots_CreatorSeesOwnTeamBot(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
 	assert.Len(t, bots, 1, "creator should see their own team-scoped bot")
 }
+
+// --- hookURL "default" behavior tests ---
+
+// TestCreateSlackBot_DefaultTokenAndSecret_HookURLIsDefault verifies that when a bot is created
+// without a custom bot token and without a custom signing secret (uses server defaults),
+// the returned hook URL is the shared /hooks/slack/default endpoint.
+func TestCreateSlackBot_DefaultTokenAndSecret_HookURLIsDefault(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	// Controller configured with a default signing secret and base URL
+	controller := NewSlackBotController(repo, "https://proxy.example.com", "server-default-secret")
+
+	// Create bot without signing_secret and without bot_token_secret_name
+	// → will use server default signing secret, no custom bot token
+	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
+		Name: "Default Bot",
+		// SigningSecret omitted → falls back to server default
+		// BotTokenSecretName omitted → uses server default
+	}, "user-1")
+
+	err := controller.CreateSlackBot(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	// Hook URL should point to the /default shared endpoint
+	assert.Equal(t, "https://proxy.example.com/hooks/slack/default", resp.HookURL,
+		"bot using server defaults should share the /default endpoint")
+}
+
+// TestCreateSlackBot_CustomSigningSecret_HookURLIsUUID verifies that a bot with a
+// custom signing secret gets a UUID-based hook URL (not the default endpoint).
+func TestCreateSlackBot_CustomSigningSecret_HookURLIsUUID(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo, "https://proxy.example.com", "server-default-secret")
+
+	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
+		Name:          "Custom Secret Bot",
+		SigningSecret: "my-custom-signing-secret", // custom → UUID URL
+	}, "user-1")
+
+	err := controller.CreateSlackBot(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	// Hook URL should be UUID-based, NOT /default
+	assert.NotContains(t, resp.HookURL, "/hooks/slack/default",
+		"bot with custom signing secret must not share the default endpoint")
+	assert.Contains(t, resp.HookURL, "/hooks/slack/"+resp.ID,
+		"bot with custom signing secret should have a UUID-based hook URL")
+}
+
+// TestCreateSlackBot_CustomBotToken_HookURLIsUUID verifies that a bot with a
+// custom bot token secret gets a UUID-based hook URL even when signing secret is default.
+func TestCreateSlackBot_CustomBotToken_HookURLIsUUID(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo, "https://proxy.example.com", "server-default-secret")
+
+	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
+		Name: "Custom Token Bot",
+		// SigningSecret omitted → uses server default
+		BotTokenSecretName: "my-k8s-secret", // custom bot token → UUID URL
+	}, "user-1")
+
+	err := controller.CreateSlackBot(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	// Hook URL should be UUID-based, NOT /default
+	assert.NotContains(t, resp.HookURL, "/hooks/slack/default",
+		"bot with custom bot token must not share the default endpoint")
+	assert.Contains(t, resp.HookURL, "/hooks/slack/"+resp.ID,
+		"bot with custom bot token should have a UUID-based hook URL")
+}
