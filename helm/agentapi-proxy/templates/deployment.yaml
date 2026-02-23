@@ -244,6 +244,12 @@ spec:
               value: {{ $slackBotToken.secretName | quote }}
             - name: AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY
               value: {{ $slackBotToken.key | default "bot-token" | quote }}
+            - name: AGENTAPI_SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $slackBotToken.secretName | quote }}
+                  key: {{ (($slackIntegration).signingSecret).key | default "signing-secret" | quote }}
+                  optional: true
             {{- if ($slackIntegration).image }}
             - name: AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE
               value: {{ $slackIntegration.image | quote }}

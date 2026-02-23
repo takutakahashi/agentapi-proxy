@@ -434,16 +434,26 @@ kubernetesSession:
     # Defaults to ghcr.io/takutakahashi/claude-posts:0.3.0
     image: ""
 
-    # Kubernetes Secret containing the Slack bot token.
+    # Kubernetes Secret containing the Slack credentials (bot token + signing secret).
+    # The bot token and signing secret are a pair belonging to the same Slack App,
+    # so both are stored in the same Secret.
     # The Secret must exist in the same namespace as the session pods.
     # Create it with:
-    #   kubectl create secret generic slack-bot-token --from-literal=bot-token=xoxb-...
+    #   kubectl create secret generic slack-credentials \
+    #     --from-literal=bot-token=xoxb-... \
+    #     --from-literal=signing-secret=xxxxxxxxxxxx
     botToken:
       # Secret name (required to enable the sidecar)
       secretName: ""
       # Key within the Secret that contains the bot token
       # Defaults to "bot-token"
       key: "bot-token"
+
+    signingSecret:
+      # Key within the Secret (same Secret as botToken.secretName) that contains the signing secret.
+      # Used to set AGENTAPI_SLACK_SIGNING_SECRET on the agentapi-proxy server.
+      # Defaults to "signing-secret"
+      key: "signing-secret"
 
   # OpenTelemetry Collector Configuration
   # Enables Prometheus metrics collection from Claude Code in session pods
