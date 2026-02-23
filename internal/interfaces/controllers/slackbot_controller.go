@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
 // SlackBotController handles SlackBot management API requests
@@ -89,10 +90,10 @@ type SlackBotResponse struct {
 // --- Handler methods ---
 
 // getSlackBotUserID extracts the user ID from the echo context (same pattern as webhook_controller.go)
-// It looks for the "user_id" stored in the context by auth middleware.
+// It looks for the internal_user stored in the context by auth middleware.
 func getSlackBotUserID(ctx echo.Context) string {
-	if uid, ok := ctx.Get("user_id").(string); ok {
-		return uid
+	if user := auth.GetUserFromContext(ctx); user != nil {
+		return string(user.ID())
 	}
 	return ""
 }
