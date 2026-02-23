@@ -1245,7 +1245,7 @@ func initialMessageWaitSecond(req *entities.RunServerRequest) string {
 }
 
 // defaultSlackIntegrationImage is the default container image for the claude-posts sidecar
-const defaultSlackIntegrationImage = "ghcr.io/takutakahashi/claude-posts:0.2.0"
+const defaultSlackIntegrationImage = "ghcr.io/takutakahashi/claude-posts:0.3.0"
 
 // defaultSlackBotTokenSecretKey is the default key within the Secret that holds the Slack bot token
 const defaultSlackBotTokenSecretKey = "bot-token"

@@ -256,7 +256,7 @@ type KubernetesSessionConfig struct {
 
 	// Slack Integration configuration (claude-posts sidecar)
 	// SlackIntegrationImage is the container image for the claude-posts Slack integration sidecar
-	// Defaults to ghcr.io/takutakahashi/claude-posts:0.2.0
+	// Defaults to ghcr.io/takutakahashi/claude-posts:0.3.0
 	SlackIntegrationImage string `json:"slack_integration_image" mapstructure:"slack_integration_image"`
 	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token
 	// The token is exposed as SLACK_BOT_TOKEN env var in the sidecar
