@@ -34,6 +34,7 @@ func NewHandlers(
 		defaultBotTokenSecretName,
 		defaultBotTokenSecretKey,
 		channelResolver,
+		baseURL,
 	)
 	return &Handlers{
 		controller:   controller,

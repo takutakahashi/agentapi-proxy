@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,8 @@ const (
 	slackChannelCacheLabelValue = "slack-channel-cache"
 	// slackAPIConversationsInfo is the Slack API endpoint for channel info
 	slackAPIConversationsInfo = "https://slack.com/api/conversations.info"
+	// slackAPIChatPostMessage is the Slack API endpoint for posting messages
+	slackAPIChatPostMessage = "https://slack.com/api/chat.postMessage"
 )
 
 // SlackChannelResolver resolves Slack channel IDs to names using the Slack API,
@@ -214,4 +217,75 @@ func (r *SlackChannelResolver) fetchFromSlack(ctx context.Context, channelID, bo
 
 	log.Printf("[CHANNEL_RESOLVER] Resolved channel %s → %s", channelID, result.Channel.Name)
 	return result.Channel.Name, nil
+}
+
+// postMessageRequest is the request body for chat.postMessage
+type postMessageRequest struct {
+	Channel  string `json:"channel"`
+	Text     string `json:"text"`
+	ThreadTS string `json:"thread_ts,omitempty"`
+}
+
+// postMessageResponse is the response from chat.postMessage
+type postMessageResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// PostMessage posts a message to a Slack channel, optionally in a thread.
+// If threadTS is non-empty, the message is posted as a thread reply.
+// Requires a bot token with chat:write scope.
+func (r *SlackChannelResolver) PostMessage(ctx context.Context, channel, threadTS, text, botToken string) error {
+	if botToken == "" {
+		return fmt.Errorf("bot token is empty; cannot post message to Slack")
+	}
+
+	payload := postMessageRequest{
+		Channel:  channel,
+		Text:     text,
+		ThreadTS: threadTS,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, slackAPIChatPostMessage, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+botToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("slack API request failed: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("[CHANNEL_RESOLVER] Failed to close PostMessage response body: %v", closeErr)
+		}
+	}()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read Slack API response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("slack API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result postMessageResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return fmt.Errorf("failed to parse Slack API response: %w", err)
+	}
+
+	if !result.OK {
+		return fmt.Errorf("slack API error: %s", result.Error)
+	}
+
+	log.Printf("[CHANNEL_RESOLVER] Posted message to channel=%s thread=%s", channel, threadTS)
+	return nil
 }

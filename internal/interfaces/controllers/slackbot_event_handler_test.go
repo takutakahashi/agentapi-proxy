@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,9 +31,11 @@ import (
 
 // mockSessionManager implements repositories.SessionManager for testing
 type mockSessionManager struct {
-	createdSessions []*mockSession
-	createErr       error
-	sentMessages    []string
+	mu               sync.Mutex
+	createdSessions  []*mockSession
+	createErr        error
+	sentMessages     []string
+	existingSessions []entities.Session // pre-seeded sessions returned by ListSessions
 }
 
 func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *entities.RunServerRequest, _ []byte) (entities.Session, error) {
@@ -44,7 +47,9 @@ func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *en
 		tags:  req.Tags,
 		scope: req.Scope,
 	}
+	m.mu.Lock()
 	m.createdSessions = append(m.createdSessions, sess)
+	m.mu.Unlock()
 	return sess, nil
 }
 
@@ -53,7 +58,7 @@ func (m *mockSessionManager) DeleteSession(_ string) error         { return nil 
 func (m *mockSessionManager) Shutdown(_ time.Duration) error       { return nil }
 
 func (m *mockSessionManager) ListSessions(_ entities.SessionFilter) []entities.Session {
-	return nil
+	return m.existingSessions
 }
 
 func (m *mockSessionManager) SendMessage(_ context.Context, _ string, msg string) error {
@@ -63,6 +68,20 @@ func (m *mockSessionManager) SendMessage(_ context.Context, _ string, msg string
 
 func (m *mockSessionManager) GetMessages(_ context.Context, _ string) ([]portrepos.Message, error) {
 	return nil, nil
+}
+
+// createdCount returns the number of sessions created so far (thread-safe).
+func (m *mockSessionManager) createdCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.createdSessions)
+}
+
+// getCreatedSession returns the created session at index i (thread-safe).
+func (m *mockSessionManager) getCreatedSession(i int) *mockSession {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createdSessions[i]
 }
 
 // mockSession implements entities.Session
@@ -100,6 +119,26 @@ func buildSlackEventPayload(channel, text string) string {
 		`{"type":"event_callback","team_id":"T1","event":{"type":"message","text":%q,"user":"U1","channel":%q,"ts":"123.456"}}`,
 		text, channel,
 	)
+}
+
+// buildSlackEventPayloadWithTs builds an event_callback payload with a specific event ts.
+func buildSlackEventPayloadWithTs(channel, text, ts string) string {
+	return fmt.Sprintf(
+		`{"type":"event_callback","team_id":"T1","event":{"type":"message","text":%q,"user":"U1","channel":%q,"ts":%q}}`,
+		text, channel, ts,
+	)
+}
+
+// waitForCondition polls fn up to maxWait in pollInterval steps.
+func waitForCondition(maxWait, pollInterval time.Duration, fn func() bool) bool {
+	deadline := time.Now().Add(maxWait)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return true
+		}
+		time.Sleep(pollInterval)
+	}
+	return fn()
 }
 
 // newSlackEchoContext creates an echo.Context for a Slack event with proper HMAC signature.
@@ -148,7 +187,7 @@ func TestResolveBotByChannel_Success(t *testing.T) {
 	// BotTokenSecretName = "" → uses default
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -185,7 +224,7 @@ func TestResolveBotByChannel_NoMatch(t *testing.T) {
 	bot.SetAllowedChannelNames([]string{"dev"})
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -222,7 +261,7 @@ func TestResolveBotByChannel_BotWithCustomToken_Skipped(t *testing.T) {
 	bot.SetBotTokenSecretName("custom-k8s-secret") // has custom bot token → must be skipped
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -236,7 +275,7 @@ func TestResolveBotByChannel_BotWithCustomToken_Skipped(t *testing.T) {
 func TestResolveBotByChannel_NilResolver_ReturnsNil(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	// channelResolver = nil → early return
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "secret-name", "bot-token", nil)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "secret-name", "bot-token", nil, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -252,7 +291,7 @@ func TestResolveBotByChannel_EmptyDefaultTokenSecret_ReturnsNil(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	resolver := services.NewSlackChannelResolver(fakeClient, "test-ns")
 	// defaultBotTokenSecretName = "" → early return
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "", "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "", "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -288,7 +327,7 @@ func TestResolveBotByChannel_EmptyAllowedChannelNames_Skipped(t *testing.T) {
 	// AllowedChannelNames is empty → not identifiable via channel filter
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -334,7 +373,7 @@ func TestHandleSlackEvent_DefaultID_ResolveBotByChannel_UsesCorrectBotID(t *test
 	repo.bots["registered-bot-uuid"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver, "")
 
 	body := buildSlackEventPayload(channelID, "hello bot")
 	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
@@ -343,17 +382,20 @@ func TestHandleSlackEvent_DefaultID_ResolveBotByChannel_UsesCorrectBotID(t *test
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	// Verify the session was created with the correct bot's UUID tag (not "default")
-	require.Len(t, sessionMgr.createdSessions, 1, "should have created one session")
-	createdTags := sessionMgr.createdSessions[0].tags
-	assert.Equal(t, "registered-bot-uuid", createdTags["slackbot_id"],
-		"session must be tagged with the registered bot's UUID, not 'default'")
-
-	// Verify the response slackbot_id
+	// Verify the response slackbot_id immediately (response is synchronous)
 	var respBody map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
 	assert.Equal(t, "registered-bot-uuid", respBody["slackbot_id"],
 		"response slackbot_id must be the registered bot's UUID")
+
+	// Verify the session was created with the correct bot's UUID tag (async)
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "should have created one session")
+	createdTags := sessionMgr.getCreatedSession(0).tags
+	assert.Equal(t, "registered-bot-uuid", createdTags["slackbot_id"],
+		"session must be tagged with the registered bot's UUID, not 'default'")
 }
 
 // TestHandleSlackEvent_DefaultID_BotIsPaused_Rejected verifies that when a matched bot is paused,
@@ -386,7 +428,7 @@ func TestHandleSlackEvent_DefaultID_BotIsPaused_Rejected(t *testing.T) {
 	repo.bots["paused-bot-uuid"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver, "")
 
 	body := buildSlackEventPayload(channelID, "hello")
 	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
@@ -399,7 +441,134 @@ func TestHandleSlackEvent_DefaultID_BotIsPaused_Rejected(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
 	assert.Equal(t, "bot paused", respBody["message"],
 		"paused bot should return 'bot paused' message even when accessed via default endpoint")
-	assert.Empty(t, sessionMgr.createdSessions, "no session should be created for paused bot")
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no session should be created for paused bot")
+}
+
+// ---- Tests for event deduplication (session-state based + pending map) ----
+
+// TestHandleSlackEvent_IgnoresIfActiveSessionExists verifies that when an active session
+// already exists for the same channel+thread, the event is ignored (no new session created).
+func TestHandleSlackEvent_IgnoresIfActiveSessionExists(t *testing.T) {
+	const (
+		signingSecret = "dedup-test-secret"
+		channelID     = "C-dedup"
+	)
+
+	existingSession := &mockSession{
+		id:   "existing-session-id",
+		tags: map[string]string{},
+	}
+	sessionMgr := &mockSessionManager{
+		existingSessions: []entities.Session{existingSession},
+	}
+	repo := newMockSlackBotRepository()
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, "", "", nil, "")
+
+	body := buildSlackEventPayloadWithTs(channelID, "hello again", "111.111")
+	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
+
+	require.NoError(t, handler.HandleSlackEvent(ctx))
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var respBody map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "session already running", respBody["message"])
+	assert.Equal(t, "existing-session-id", respBody["session_id"])
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no new session should be created when one is already active")
+}
+
+// TestHandleSlackEvent_PendingRequestIgnored verifies that a Slack retry arriving while
+// session creation is still in progress is silently ignored.
+func TestHandleSlackEvent_PendingRequestIgnored(t *testing.T) {
+	const (
+		signingSecret = "dedup-pending-secret"
+		channelID     = "C-pending"
+	)
+
+	sessionMgr := &mockSessionManager{}
+	repo := newMockSlackBotRepository()
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, "", "", nil, "")
+
+	// Inject the pending key directly to simulate in-flight session creation.
+	// This avoids a timing race where the goroutine could delete the key before the
+	// second request is made.
+	pendingKey := channelID + ":555.555"
+	handler.pendingRequests.Store(pendingKey, "in-flight-session-id")
+
+	body := buildSlackEventPayloadWithTs(channelID, "retry msg", "555.555")
+	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
+	require.NoError(t, handler.HandleSlackEvent(ctx))
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var respBody map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "session creation in progress", respBody["message"])
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no session should be created while one is pending")
+}
+
+// TestHandleSlackEvent_AsyncSessionCreation verifies that the handler responds immediately
+// and creates the session asynchronously, clearing the pending key on completion.
+func TestHandleSlackEvent_AsyncSessionCreation(t *testing.T) {
+	const (
+		signingSecret = "async-test-secret"
+		channelID     = "C-async"
+	)
+
+	sessionMgr := &mockSessionManager{}
+	repo := newMockSlackBotRepository()
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, "", "", nil, "")
+
+	body := buildSlackEventPayloadWithTs(channelID, "hello async", "444.444")
+	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
+
+	require.NoError(t, handler.HandleSlackEvent(ctx))
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var respBody map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "processing", respBody["message"])
+	assert.NotEmpty(t, respBody["session_id"])
+
+	// Session creation is async; wait for the goroutine to complete
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	assert.True(t, ok, "session should be created asynchronously")
+
+	// After goroutine completes, pending key should be cleared
+	_, stillPending := handler.pendingRequests.Load(channelID + ":444.444")
+	assert.False(t, stillPending, "pending key should be cleared after session creation")
+}
+
+// TestHandleSlackEvent_DifferentThreadsAllowed verifies that events from different
+// threads in the same channel are each processed independently.
+func TestHandleSlackEvent_DifferentThreadsAllowed(t *testing.T) {
+	const (
+		signingSecret = "dedup-test-secret2"
+		channelID     = "C-dedup2"
+	)
+
+	sessionMgr := &mockSessionManager{}
+	repo := newMockSlackBotRepository()
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, "", "", nil, "")
+
+	// Two distinct messages (different ts → different thread keys)
+	body1 := buildSlackEventPayloadWithTs(channelID, "msg1", "111.111")
+	body2 := buildSlackEventPayloadWithTs(channelID, "msg2", "222.222")
+
+	ctx1, rec1 := newSlackEchoContext(body1, signingSecret, "default")
+	require.NoError(t, handler.HandleSlackEvent(ctx1))
+	assert.Equal(t, http.StatusOK, rec1.Code)
+
+	ctx2, rec2 := newSlackEchoContext(body2, signingSecret, "default")
+	require.NoError(t, handler.HandleSlackEvent(ctx2))
+	assert.Equal(t, http.StatusOK, rec2.Code)
+
+	// Both events should result in session creation (async), wait briefly
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 2
+	})
+	assert.True(t, ok, "events with different thread keys should each create a session")
 }
 
 // TestHandleSlackEvent_DefaultID_NoBotMatch_FallsThrough verifies that when no registered bot
@@ -432,7 +601,7 @@ func TestHandleSlackEvent_DefaultID_NoBotMatch_FallsThrough(t *testing.T) {
 	repo.bots["dev-bot-uuid"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver, "")
 
 	body := buildSlackEventPayload(channelID, "hello")
 	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
@@ -441,9 +610,12 @@ func TestHandleSlackEvent_DefaultID_NoBotMatch_FallsThrough(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	// When no bot is matched, session is created with fallback slackbot_id="default"
-	require.Len(t, sessionMgr.createdSessions, 1, "session should still be created with default fallback")
-	createdTags := sessionMgr.createdSessions[0].tags
+	// When no bot is matched, session is created with fallback slackbot_id="default" (async)
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "session should still be created with default fallback")
+	createdTags := sessionMgr.getCreatedSession(0).tags
 	assert.Equal(t, "default", createdTags["slackbot_id"],
 		"when no bot is matched, session should be tagged with 'default'")
 }
