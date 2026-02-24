@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -29,6 +30,13 @@ type SlackSocketWorker struct {
 
 	channelResolver *services.SlackChannelResolver
 	eventHandler    *controllers.SlackBotEventHandler
+
+	// botUserID is the Slack user ID of this bot (e.g. "U01234567").
+	// Resolved via auth.test during Run() and used to filter incoming events:
+	// only app_mention events or messages that explicitly mention <@botUserID>
+	// are forwarded to the event handler.
+	// If empty (auth.test failed), mention filtering is disabled as a fallback.
+	botUserID string
 }
 
 // NewSlackSocketWorker creates a new SlackSocketWorker
@@ -75,6 +83,16 @@ func (w *SlackSocketWorker) Run(ctx context.Context) {
 		botToken,
 		slack.OptionAppLevelToken(appToken),
 	)
+
+	// Resolve our own Slack user ID so we can filter events to only those
+	// that mention this bot, preventing it from reacting to every channel message.
+	if authResp, err := api.AuthTestContext(ctx); err != nil {
+		log.Printf("[SOCKET_WORKER] Failed to resolve bot user ID via auth.test for botID=%s: %v (mention filtering disabled)", w.botID, err)
+	} else {
+		w.botUserID = authResp.UserID
+		log.Printf("[SOCKET_WORKER] Resolved bot user ID: botID=%s, userID=%s", w.botID, w.botUserID)
+	}
+
 	client := socketmode.New(api)
 
 	// Dispatch events in a separate goroutine
@@ -179,6 +197,19 @@ func (w *SlackSocketWorker) processEventsAPIEvent(ctx context.Context, eventsAPI
 
 	log.Printf("[SOCKET_WORKER] Received event: botID=%s, type=%s, eventType=%s, channel=%s",
 		w.botID, payload.Type, payload.Event.Type, payload.Event.Channel)
+
+	// Mention filter: only process events that are directed at this bot.
+	// - app_mention: Slack already guarantees the bot was @-mentioned → always process.
+	// - message: only process if the text contains <@botUserID> (explicit mention).
+	// - other event types (e.g. reaction_added): pass through unchanged.
+	// If botUserID is empty (auth.test failed at startup), skip the filter as a fallback.
+	if w.botUserID != "" {
+		evt := payload.Event
+		if evt.Type == "message" && !strings.Contains(evt.Text, "<@"+w.botUserID+">") {
+			log.Printf("[SOCKET_WORKER] Skipping message without mention: botID=%s userID=%s", w.botID, w.botUserID)
+			return
+		}
+	}
 
 	if err := w.eventHandler.ProcessEvent(ctx, w.botID, payload); err != nil {
 		log.Printf("[SOCKET_WORKER] Failed to process event: botID=%s, err=%v", w.botID, err)
