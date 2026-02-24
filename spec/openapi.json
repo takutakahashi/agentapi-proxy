@@ -1479,7 +1479,7 @@
     "/slackbots": {
       "post": {
         "summary": "Create a new SlackBot",
-        "description": "Creates a new SlackBot configuration. Each SlackBot corresponds to a Slack App installation and receives a unique hook URL at /hooks/slack/{id}. signing_secret is optional if the server has a default signing secret configured (AGENTAPI_SLACK_SIGNING_SECRET environment variable).",
+        "description": "Creates a new SlackBot configuration. Each SlackBot corresponds to a Slack App installation. Events are received via Socket Mode (WebSocket).",
         "operationId": "createSlackBot",
         "tags": [
           "SlackBots"
@@ -1496,16 +1496,6 @@
                   "summary": "Basic SlackBot",
                   "value": {
                     "name": "My Slack Bot",
-                    "signing_secret": "your-slack-signing-secret",
-                    "session_config": {
-                      "initial_message_template": "New Slack message from {{.event.user}} in <#{{.event.channel}}>: {{.event.text}}"
-                    }
-                  }
-                },
-                "use-server-default": {
-                  "summary": "SlackBot using server default signing secret",
-                  "value": {
-                    "name": "My Slack Bot",
                     "session_config": {
                       "initial_message_template": "New Slack message from {{.event.user}} in <#{{.event.channel}}>: {{.event.text}}"
                     }
@@ -1517,7 +1507,6 @@
                     "name": "Team Bot",
                     "scope": "team",
                     "team_id": "myorg/backend",
-                    "signing_secret": "your-slack-signing-secret",
                     "bot_token_secret_name": "my-slack-bot-token",
                     "bot_token_secret_key": "bot-token",
                     "allowed_channel_names": ["dev", "backend"],
@@ -4527,11 +4516,6 @@
           "description": "Team ID for team-scoped SlackBots (format: 'org/team-slug')",
           "example": "myorg/backend"
         },
-        "signing_secret": {
-          "type": "string",
-          "description": "Slack App signing secret for verifying event payloads. Optional if the server has a default signing secret configured (AGENTAPI_SLACK_SIGNING_SECRET). If omitted and no server default is configured, a 400 error is returned.",
-          "example": "your-slack-signing-secret"
-        },
         "bot_token_secret_name": {
           "type": "string",
           "description": "Kubernetes Secret name containing the Slack bot token (xoxb-...). If empty, falls back to server default.",
@@ -4578,10 +4562,6 @@
         },
         "status": {
           "$ref": "#/components/schemas/SlackBotStatus"
-        },
-        "signing_secret": {
-          "type": "string",
-          "description": "Slack App signing secret for verifying event payloads"
         },
         "bot_token_secret_name": {
           "type": "string",
@@ -4640,16 +4620,6 @@
         },
         "status": {
           "$ref": "#/components/schemas/SlackBotStatus"
-        },
-        "signing_secret": {
-          "type": "string",
-          "description": "Masked signing secret (only first 4 and last 4 characters shown)",
-          "example": "your...cret"
-        },
-        "hook_url": {
-          "type": "string",
-          "description": "Slack Events API hook URL to configure in your Slack App",
-          "example": "https://proxy.example.com/hooks/slack/550e8400-e29b-41d4-a716-446655440000"
         },
         "bot_token_secret_name": {
           "type": "string",

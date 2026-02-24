@@ -27,7 +27,6 @@ type SlackBotEventHandler struct {
 	sessionManager  repositories.SessionManager
 	channelResolver *services.SlackChannelResolver
 	// Default SlackBot configuration (from server startup config)
-	defaultSigningSecret      string
 	defaultBotTokenSecretName string
 	defaultBotTokenSecretKey  string
 	// baseURL is used to construct session URLs posted back to Slack threads.
@@ -48,7 +47,6 @@ type SlackBotEventHandler struct {
 func NewSlackBotEventHandler(
 	repo repositories.SlackBotRepository,
 	sessionManager repositories.SessionManager,
-	defaultSigningSecret string,
 	defaultBotTokenSecretName string,
 	defaultBotTokenSecretKey string,
 	channelResolver *services.SlackChannelResolver,
@@ -59,7 +57,6 @@ func NewSlackBotEventHandler(
 		repo:                      repo,
 		sessionManager:            sessionManager,
 		channelResolver:           channelResolver,
-		defaultSigningSecret:      defaultSigningSecret,
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
 		baseURL:                   baseURL,
@@ -109,7 +106,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	}
 
 	// Resolve the bot entity (nil for "default" when no registered bot matches)
-	_, bot, err := h.resolveSlackBot(ctx, botID)
+	bot, err := h.resolveSlackBot(ctx, botID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve slackbot: %w", err)
 	}
@@ -317,19 +314,18 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	return nil
 }
 
-// resolveSlackBot retrieves the signing secret and optionally the SlackBot entity.
-// Returns (signingSecret, bot, error)
-// For id="default", returns the server-configured secret and nil bot.
-func (h *SlackBotEventHandler) resolveSlackBot(ctx context.Context, id string) (string, *entities.SlackBot, error) {
+// resolveSlackBot retrieves the SlackBot entity.
+// Returns (bot, error). For id="default", returns nil bot (uses server defaults).
+func (h *SlackBotEventHandler) resolveSlackBot(ctx context.Context, id string) (*entities.SlackBot, error) {
 	if id == slackBotDefaultID {
-		return h.defaultSigningSecret, nil, nil
+		return nil, nil
 	}
 
 	bot, err := h.repo.Get(ctx, id)
 	if err != nil {
-		return "", nil, fmt.Errorf("slackbot not found: %s", id)
+		return nil, fmt.Errorf("slackbot not found: %s", id)
 	}
-	return bot.SigningSecret(), bot, nil
+	return bot, nil
 }
 
 // resolveBotByChannel attempts to identify a registered SlackBot by the Slack channel ID.

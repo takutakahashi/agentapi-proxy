@@ -17,7 +17,7 @@ const (
 )
 
 // SlackBot represents a Slack bot registration entity.
-// Each SlackBot corresponds to a Slack App installation (one signing secret, one bot token).
+// Each SlackBot corresponds to a Slack App installation (one bot token).
 // In Socket Mode, events are received via WebSocket rather than HTTP webhook.
 type SlackBot struct {
 	id                  string
@@ -26,7 +26,6 @@ type SlackBot struct {
 	scope               ResourceScope
 	teamID              string
 	status              SlackBotStatus
-	signingSecret       string
 	botTokenSecretName  string                // K8s Secret name for xoxb-... token; empty = use global default
 	botTokenSecretKey   string                // Key within the Secret; default: "bot-token"
 	appTokenSecretKey   string                // Key within botTokenSecretName Secret for xapp-... token; default: "app-token"
@@ -98,23 +97,6 @@ func (s *SlackBot) Status() SlackBotStatus { return s.status }
 func (s *SlackBot) SetStatus(status SlackBotStatus) {
 	s.status = status
 	s.updatedAt = time.Now()
-}
-
-// SigningSecret returns the Slack App signing secret
-func (s *SlackBot) SigningSecret() string { return s.signingSecret }
-
-// SetSigningSecret sets the Slack App signing secret
-func (s *SlackBot) SetSigningSecret(secret string) {
-	s.signingSecret = secret
-	s.updatedAt = time.Now()
-}
-
-// MaskSigningSecret returns the signing secret with only the last 4 characters visible
-func (s *SlackBot) MaskSigningSecret() string {
-	if len(s.signingSecret) <= 4 {
-		return "****"
-	}
-	return "****" + s.signingSecret[len(s.signingSecret)-4:]
 }
 
 // BotTokenSecretName returns the K8s Secret name for the Slack bot token.

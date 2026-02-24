@@ -16,12 +16,8 @@ type Handlers struct {
 
 // NewHandlers creates a new SlackBot Handlers instance (management API only).
 // Socket Mode event handling is managed separately by SlackSocketManager.
-func NewHandlers(
-	repo repositories.SlackBotRepository,
-	baseURL string,
-	defaultSigningSecret string,
-) *Handlers {
-	controller := controllers.NewSlackBotController(repo, baseURL, defaultSigningSecret)
+func NewHandlers(repo repositories.SlackBotRepository) *Handlers {
+	controller := controllers.NewSlackBotController(repo)
 	return &Handlers{
 		controller: controller,
 	}
