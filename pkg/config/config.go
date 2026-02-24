@@ -320,6 +320,10 @@ type SlackConfig struct {
 	// Defaults to "app-token".
 	// Set via AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY environment variable.
 	AppTokenSecretKey string `json:"app_token_secret_key" mapstructure:"app_token_secret_key"`
+	// DryRun enables dry-run mode: session creation and Slack posts are logged but not executed.
+	// Useful for testing event routing without side effects.
+	// Set via AGENTAPI_SLACK_DRY_RUN environment variable.
+	DryRun bool `json:"dry_run" mapstructure:"dry_run"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -596,6 +600,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slack.signing_secret", "AGENTAPI_SLACK_SIGNING_SECRET")
 	_ = v.BindEnv("slack.app_token_secret_name", "AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME")
 	_ = v.BindEnv("slack.app_token_secret_key", "AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY")
+	_ = v.BindEnv("slack.dry_run", "AGENTAPI_SLACK_DRY_RUN")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")

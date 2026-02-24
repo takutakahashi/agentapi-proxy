@@ -33,6 +33,9 @@ type SlackBotEventHandler struct {
 	// baseURL is used to construct session URLs posted back to Slack threads.
 	// If empty, NOTIFICATION_BASE_URL env var is checked as a fallback.
 	baseURL string
+	// dryRun disables actual session creation and Slack posts; actions are only logged.
+	// Enabled via AGENTAPI_SLACK_DRY_RUN environment variable.
+	dryRun bool
 	// pendingThreads tracks channel+thread combinations that have a session creation
 	// in-flight. Slack may emit both "message" and "app_mention" events for the same
 	// @mention within milliseconds of each other. Without this guard both events would
@@ -50,6 +53,7 @@ func NewSlackBotEventHandler(
 	defaultBotTokenSecretKey string,
 	channelResolver *services.SlackChannelResolver,
 	baseURL string,
+	dryRun bool,
 ) *SlackBotEventHandler {
 	return &SlackBotEventHandler{
 		repo:                      repo,
@@ -59,6 +63,7 @@ func NewSlackBotEventHandler(
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
 		baseURL:                   baseURL,
+		dryRun:                    dryRun,
 	}
 }
 
@@ -292,6 +297,14 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	go func() {
 		defer h.pendingThreads.Delete(pendingKey)
 		bgCtx := context.Background()
+
+		if h.dryRun {
+			log.Printf("[SLACKBOT] [DRY-RUN] Would create session: id=%s, channel=%s, thread=%s, agentType=%s, scope=%s",
+				sessionID, channel, threadKey, agentType, scope)
+			h.postSessionURLToSlack(bgCtx, channel, threadKey, sessionID, bot)
+			return
+		}
+
 		session, err := h.sessionManager.CreateSession(bgCtx, sessionID, req, nil)
 		if err != nil {
 			log.Printf("[SLACKBOT] Failed to create session: %v", err)
@@ -405,11 +418,8 @@ func (h *SlackBotEventHandler) getBotToken(ctx context.Context, bot *entities.Sl
 
 // postSessionURLToSlack posts the session URL back to the Slack thread.
 // This is a best-effort operation; errors are logged but never propagated.
+// In dry-run mode the post is only logged and not sent to Slack.
 func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channel, threadTS, sessionID string, bot *entities.SlackBot) {
-	if h.channelResolver == nil {
-		return
-	}
-
 	// Determine the base URL: prefer NOTIFICATION_BASE_URL env, then h.baseURL
 	sessionBaseURL := os.Getenv("NOTIFICATION_BASE_URL")
 	if sessionBaseURL == "" {
@@ -422,6 +432,15 @@ func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channe
 
 	sessionURL := fmt.Sprintf("%s/sessions/%s", strings.TrimRight(sessionBaseURL, "/"), sessionID)
 	message := fmt.Sprintf("セッションを作成しました :robot_face:\n%s", sessionURL)
+
+	if h.dryRun {
+		log.Printf("[SLACKBOT] [DRY-RUN] Would post to Slack: channel=%s, thread=%s, message=%q", channel, threadTS, message)
+		return
+	}
+
+	if h.channelResolver == nil {
+		return
+	}
 
 	botToken, err := h.getBotToken(ctx, bot)
 	if err != nil {

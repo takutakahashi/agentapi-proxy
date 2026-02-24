@@ -469,7 +469,11 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 		configData.KubernetesSession.SlackBotTokenSecretKey,
 		channelResolver,
 		configData.Webhook.BaseURL,
+		configData.Slack.DryRun,
 	)
+	if configData.Slack.DryRun {
+		log.Printf("[SOCKET_MANAGER] Slack dry-run mode enabled: session creation and Slack posts will be logged only")
+	}
 
 	// Resolve App token secret (defaults to SlackBotTokenSecretName if not set)
 	appTokenSecretName := configData.Slack.AppTokenSecretName
