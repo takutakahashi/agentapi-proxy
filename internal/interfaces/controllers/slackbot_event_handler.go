@@ -2,11 +2,14 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -33,6 +36,9 @@ type SlackBotEventHandler struct {
 	defaultBotTokenSecretName string
 	defaultBotTokenSecretKey  string
 	sigVerifier               *webhook.SlackSignatureVerifier
+	// baseURL is used to construct session URLs posted back to Slack threads.
+	// If empty, NOTIFICATION_BASE_URL env var is checked as a fallback.
+	baseURL string
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -43,6 +49,7 @@ func NewSlackBotEventHandler(
 	defaultBotTokenSecretName string,
 	defaultBotTokenSecretKey string,
 	channelResolver *services.SlackChannelResolver,
+	baseURL string,
 ) *SlackBotEventHandler {
 	return &SlackBotEventHandler{
 		repo:                      repo,
@@ -52,6 +59,7 @@ func NewSlackBotEventHandler(
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
 		sigVerifier:               webhook.NewSlackSignatureVerifier(),
+		baseURL:                   baseURL,
 	}
 }
 
@@ -322,6 +330,9 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 
 	log.Printf("[SLACKBOT] Created session %s for thread %s", session.ID(), threadKey)
 
+	// Post session URL back to the Slack thread (best-effort, non-fatal)
+	h.postSessionURLToSlack(ctx.Request().Context(), channel, threadKey, session.ID(), bot)
+
 	return ctx.JSON(http.StatusOK, map[string]string{
 		"message":     "session created",
 		"session_id":  session.ID(),
@@ -412,4 +423,57 @@ func (h *SlackBotEventHandler) buildMessage(bot *entities.SlackBot, payload map[
 		}
 	}
 	return fallbackText
+}
+
+// getBotToken retrieves the Slack bot token for the given bot.
+// Falls back to the default bot token secret when the bot has no custom one.
+func (h *SlackBotEventHandler) getBotToken(ctx context.Context, bot *entities.SlackBot) (string, error) {
+	if h.channelResolver == nil {
+		return "", fmt.Errorf("channel resolver is nil; cannot get bot token")
+	}
+	secretName := h.defaultBotTokenSecretName
+	secretKey := h.defaultBotTokenSecretKey
+	if bot != nil {
+		if bot.BotTokenSecretName() != "" {
+			secretName = bot.BotTokenSecretName()
+		}
+		if bot.BotTokenSecretKey() != "" {
+			secretKey = bot.BotTokenSecretKey()
+		}
+	}
+	return h.channelResolver.GetBotToken(ctx, secretName, secretKey)
+}
+
+// postSessionURLToSlack posts the session URL back to the Slack thread.
+// This is a best-effort operation; errors are logged but never propagated.
+func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channel, threadTS, sessionID string, bot *entities.SlackBot) {
+	if h.channelResolver == nil {
+		return
+	}
+
+	// Determine the base URL: prefer NOTIFICATION_BASE_URL env, then h.baseURL
+	sessionBaseURL := os.Getenv("NOTIFICATION_BASE_URL")
+	if sessionBaseURL == "" {
+		sessionBaseURL = h.baseURL
+	}
+	if sessionBaseURL == "" {
+		log.Printf("[SLACKBOT] Skipping session URL notification: no base URL configured (set NOTIFICATION_BASE_URL or webhook.base_url)")
+		return
+	}
+
+	sessionURL := fmt.Sprintf("%s/agentapi?session=%s", strings.TrimRight(sessionBaseURL, "/"), sessionID)
+	message := fmt.Sprintf("セッションを作成しました :robot_face:\n%s", sessionURL)
+
+	botToken, err := h.getBotToken(ctx, bot)
+	if err != nil {
+		log.Printf("[SLACKBOT] Failed to get bot token for Slack notification: %v", err)
+		return
+	}
+
+	if err := h.channelResolver.PostMessage(ctx, channel, threadTS, message, botToken); err != nil {
+		log.Printf("[SLACKBOT] Failed to post session URL to Slack thread: %v", err)
+		return
+	}
+
+	log.Printf("[SLACKBOT] Posted session URL to Slack thread: sessionID=%s, channel=%s, thread=%s", sessionID, channel, threadTS)
 }

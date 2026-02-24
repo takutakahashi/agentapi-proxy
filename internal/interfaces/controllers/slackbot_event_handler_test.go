@@ -148,7 +148,7 @@ func TestResolveBotByChannel_Success(t *testing.T) {
 	// BotTokenSecretName = "" → uses default
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -185,7 +185,7 @@ func TestResolveBotByChannel_NoMatch(t *testing.T) {
 	bot.SetAllowedChannelNames([]string{"dev"})
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -222,7 +222,7 @@ func TestResolveBotByChannel_BotWithCustomToken_Skipped(t *testing.T) {
 	bot.SetBotTokenSecretName("custom-k8s-secret") // has custom bot token → must be skipped
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -236,7 +236,7 @@ func TestResolveBotByChannel_BotWithCustomToken_Skipped(t *testing.T) {
 func TestResolveBotByChannel_NilResolver_ReturnsNil(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	// channelResolver = nil → early return
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "secret-name", "bot-token", nil)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "secret-name", "bot-token", nil, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -252,7 +252,7 @@ func TestResolveBotByChannel_EmptyDefaultTokenSecret_ReturnsNil(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	resolver := services.NewSlackChannelResolver(fakeClient, "test-ns")
 	// defaultBotTokenSecretName = "" → early return
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "", "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "", "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -288,7 +288,7 @@ func TestResolveBotByChannel_EmptyAllowedChannelNames_Skipped(t *testing.T) {
 	// AllowedChannelNames is empty → not identifiable via channel filter
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", secretName, "bot-token", resolver, "")
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/hooks/slack/default", nil)
@@ -334,7 +334,7 @@ func TestHandleSlackEvent_DefaultID_ResolveBotByChannel_UsesCorrectBotID(t *test
 	repo.bots["registered-bot-uuid"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver, "")
 
 	body := buildSlackEventPayload(channelID, "hello bot")
 	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
@@ -386,7 +386,7 @@ func TestHandleSlackEvent_DefaultID_BotIsPaused_Rejected(t *testing.T) {
 	repo.bots["paused-bot-uuid"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver, "")
 
 	body := buildSlackEventPayload(channelID, "hello")
 	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
@@ -432,7 +432,7 @@ func TestHandleSlackEvent_DefaultID_NoBotMatch_FallsThrough(t *testing.T) {
 	repo.bots["dev-bot-uuid"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, secretName, "bot-token", resolver, "")
 
 	body := buildSlackEventPayload(channelID, "hello")
 	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
