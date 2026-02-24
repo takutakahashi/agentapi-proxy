@@ -77,6 +77,7 @@ type SlackEvent struct {
 // botID should be the SlackBot entity ID or slackBotDefaultID ("default").
 // This method is called by SlackSocketWorker after acknowledging the event to Slack.
 func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, payload SlackPayload) error {
+	log.Printf("[SLACKBOT] ProcessEvent called: botID=%s, type=%s", botID, payload.Type)
 	// We only process event_callback type
 	if payload.Type != "event_callback" || payload.Event == nil {
 		log.Printf("[SLACKBOT] Ignoring non-event payload: id=%s, type=%s", botID, payload.Type)

@@ -124,6 +124,7 @@ func (w *SlackSocketWorker) dispatchEvent(ctx context.Context, client *socketmod
 		}
 
 	case socketmode.EventTypeEventsAPI:
+		log.Printf("[SOCKET_WORKER] EventsAPI event received: botID=%s", w.botID)
 		eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 		if !ok {
 			log.Printf("[SOCKET_WORKER] Unexpected EventsAPI data type: %T", evt.Data)
