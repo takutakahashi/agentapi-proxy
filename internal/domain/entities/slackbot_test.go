@@ -108,14 +108,14 @@ func TestSlackBot_Validate_RequiredFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bot := &SlackBot{
-				id:            tt.id,
-				name:          tt.botName,
-				userID:        tt.userID,
-				maxSessions:   10,
-				status:        SlackBotStatusActive,
-				scope:         ScopeUser,
-				createdAt:     time.Now(),
-				updatedAt:     time.Now(),
+				id:          tt.id,
+				name:        tt.botName,
+				userID:      tt.userID,
+				maxSessions: 10,
+				status:      SlackBotStatusActive,
+				scope:       ScopeUser,
+				createdAt:   time.Now(),
+				updatedAt:   time.Now(),
 			}
 			err := bot.Validate()
 			if err == nil {

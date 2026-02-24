@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -1600,6 +1601,11 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 	if session.Request().AgentType != "" {
 		annotations["agentapi.proxy/agent-type"] = session.Request().AgentType
 	}
+	// For Slackbot sessions, record the initial message time as the last message time.
+	// This annotation is updated by UpdateSlackLastMessageAt when follow-up messages arrive.
+	if _, hasSlackbot := session.Request().Tags["slackbot_id"]; hasSlackbot {
+		annotations["agentapi.proxy/slack-last-message-at"] = session.startedAt.UTC().Format(time.RFC3339)
+	}
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1952,6 +1958,33 @@ func (m *KubernetesSessionManager) buildOtelcolEnvVars(session *KubernetesSessio
 }
 
 // sanitizeLabelKey sanitizes a string to be used as a Kubernetes label key
+// UpdateSlackLastMessageAt updates the agentapi.proxy/slack-last-message-at annotation
+// on the session's Kubernetes Service. This is internal metadata used by the Slackbot
+// cleanup worker to determine when the last message was sent to a session.
+// It is NOT exposed via session.Tags() and will not affect session reuse filtering.
+func (m *KubernetesSessionManager) UpdateSlackLastMessageAt(id string, t time.Time) error {
+	svcName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	return m.patchSlackLastMessageAt(context.Background(), svcName, t)
+}
+
+// patchSlackLastMessageAt applies a MergePatch to update the slack-last-message-at annotation.
+func (m *KubernetesSessionManager) patchSlackLastMessageAt(ctx context.Context, svcName string, t time.Time) error {
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]string{
+				"agentapi.proxy/slack-last-message-at": t.UTC().Format(time.RFC3339),
+			},
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch: %w", err)
+	}
+	_, err = m.client.CoreV1().Services(m.namespace).Patch(
+		ctx, svcName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	return err
+}
+
 func sanitizeLabelKey(s string) string {
 	// Label keys must be 63 characters or less
 	// Must start and end with alphanumeric character
