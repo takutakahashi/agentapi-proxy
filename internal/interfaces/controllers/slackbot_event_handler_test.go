@@ -71,8 +71,24 @@ func (m *mockSessionManager) ListSessions(filter entities.SessionFilter) []entit
 }
 
 func (m *mockSessionManager) SendMessage(_ context.Context, _ string, msg string) error {
+	m.mu.Lock()
 	m.sentMessages = append(m.sentMessages, msg)
+	m.mu.Unlock()
 	return nil
+}
+
+// sentCount returns the number of messages sent so far (thread-safe).
+func (m *mockSessionManager) sentCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.sentMessages)
+}
+
+// getSentMessage returns the sent message at index i (thread-safe).
+func (m *mockSessionManager) getSentMessage(i int) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sentMessages[i]
 }
 
 func (m *mockSessionManager) GetMessages(_ context.Context, _ string) ([]portrepos.Message, error) {
@@ -651,10 +667,10 @@ func TestProcessEvent_ReuseSession_RoutesToExistingSession(t *testing.T) {
 	require.NoError(t, err)
 
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
-		return len(sessionMgr.sentMessages) == 1
+		return sessionMgr.sentCount() == 1
 	})
 	require.True(t, ok, "message should be routed to existing session")
-	assert.Equal(t, "follow-up message", sessionMgr.sentMessages[0])
+	assert.Equal(t, "follow-up message", sessionMgr.getSentMessage(0))
 	assert.Equal(t, 0, sessionMgr.createdCount(), "no new session should be created when reusing")
 }
 
@@ -676,7 +692,7 @@ func TestProcessEvent_ReuseSession_NewSessionWhenNoActive(t *testing.T) {
 		return sessionMgr.createdCount() == 1
 	})
 	require.True(t, ok, "new session should be created when no active session exists")
-	assert.Empty(t, sessionMgr.sentMessages, "no message should be sent to existing session")
+	assert.Equal(t, 0, sessionMgr.sentCount(), "no message should be sent to existing session")
 }
 
 // TestProcessEvent_ConcurrentDuplicateEvents verifies that when Slack emits both "message"
