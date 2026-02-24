@@ -489,26 +489,21 @@ func TestHandleSlackEvent_PendingRequestIgnored(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, "", "", nil, "")
 
-	body := buildSlackEventPayloadWithTs(channelID, "first msg", "333.333")
+	// Inject the pending key directly to simulate in-flight session creation.
+	// This avoids a timing race where the goroutine could delete the key before the
+	// second request is made.
+	pendingKey := channelID + ":555.555"
+	handler.pendingRequests.Store(pendingKey, "in-flight-session-id")
 
-	// First request: responds "processing" and registers the pending key
-	ctx1, rec1 := newSlackEchoContext(body, signingSecret, "default")
-	require.NoError(t, handler.HandleSlackEvent(ctx1))
-	assert.Equal(t, http.StatusOK, rec1.Code)
-	var resp1 map[string]string
-	require.NoError(t, json.Unmarshal(rec1.Body.Bytes(), &resp1))
-	assert.Equal(t, "processing", resp1["message"])
+	body := buildSlackEventPayloadWithTs(channelID, "retry msg", "555.555")
+	ctx, rec := newSlackEchoContext(body, signingSecret, "default")
+	require.NoError(t, handler.HandleSlackEvent(ctx))
+	assert.Equal(t, http.StatusOK, rec.Code)
 
-	// Ensure the pending key is present (either set by the handler or injected)
-	handler.pendingRequests.Store(channelID+":333.333", resp1["session_id"])
-
-	// Second request (Slack retry): should be ignored because key is pending
-	ctx2, rec2 := newSlackEchoContext(body, signingSecret, "default")
-	require.NoError(t, handler.HandleSlackEvent(ctx2))
-	assert.Equal(t, http.StatusOK, rec2.Code)
-	var resp2 map[string]string
-	require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &resp2))
-	assert.Equal(t, "session creation in progress", resp2["message"])
+	var respBody map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
+	assert.Equal(t, "session creation in progress", respBody["message"])
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no session should be created while one is pending")
 }
 
 // TestHandleSlackEvent_AsyncSessionCreation verifies that the handler responds immediately
