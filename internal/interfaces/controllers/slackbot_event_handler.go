@@ -138,6 +138,16 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 
 	event := payload.Event
 
+	// For default ID: try to identify the registered bot by channel name filter.
+	// This resolves the correct scope, userID, teamID, and session config for the session.
+	if id == slackBotDefaultID && bot == nil {
+		if resolvedBot := h.resolveBotByChannel(ctx, event.Channel); resolvedBot != nil {
+			bot = resolvedBot
+			id = resolvedBot.ID()
+			log.Printf("[SLACKBOT] Default endpoint: identified bot by channel filter: id=%s, channel=%s", id, event.Channel)
+		}
+	}
+
 	// Apply filters (if this is a registered bot, not default)
 	if bot != nil {
 		if bot.Status() == entities.SlackBotStatusPaused {
@@ -335,6 +345,53 @@ func (h *SlackBotEventHandler) resolveSlackBot(ctx echo.Context, id string) (str
 		return "", nil, fmt.Errorf("slackbot not found: %s", id)
 	}
 	return bot.SigningSecret(), bot, nil
+}
+
+// resolveBotByChannel attempts to identify a registered SlackBot by the Slack channel ID.
+// It resolves the channel ID to a name using the server-default bot token, then
+// searches active bots (those using default credentials) whose AllowedChannelNames matches.
+// Returns nil if the bot cannot be identified.
+func (h *SlackBotEventHandler) resolveBotByChannel(ctx echo.Context, channelID string) *entities.SlackBot {
+	if h.channelResolver == nil || h.defaultBotTokenSecretName == "" {
+		return nil
+	}
+	botToken, err := h.channelResolver.GetBotToken(
+		ctx.Request().Context(),
+		h.defaultBotTokenSecretName,
+		h.defaultBotTokenSecretKey,
+	)
+	if err != nil {
+		log.Printf("[SLACKBOT] resolveBotByChannel: failed to get default bot token: %v", err)
+		return nil
+	}
+	channelName, err := h.channelResolver.ResolveChannelName(ctx.Request().Context(), channelID, botToken)
+	if err != nil {
+		log.Printf("[SLACKBOT] resolveBotByChannel: failed to resolve channel name: channelID=%s, err=%v", channelID, err)
+		return nil
+	}
+	allBots, err := h.repo.List(ctx.Request().Context(), repositories.SlackBotFilter{})
+	if err != nil {
+		log.Printf("[SLACKBOT] resolveBotByChannel: failed to list bots: %v", err)
+		return nil
+	}
+	for _, candidate := range allBots {
+		// Only match bots that rely on the default bot token
+		// Note: status (paused/active) is intentionally not filtered here;
+		// the filter block in HandleSlackEvent will handle paused bots appropriately.
+		if candidate.BotTokenSecretName() != "" {
+			continue
+		}
+		// Must have at least one AllowedChannelName to be identifiable via the default endpoint
+		if len(candidate.AllowedChannelNames()) == 0 {
+			continue
+		}
+		if candidate.IsChannelNameAllowed(channelName) {
+			log.Printf("[SLACKBOT] resolveBotByChannel: matched bot id=%s for channel=%s (name=%s)",
+				candidate.ID(), channelID, channelName)
+			return candidate
+		}
+	}
+	return nil
 }
 
 // buildMessage constructs the message to send to the session

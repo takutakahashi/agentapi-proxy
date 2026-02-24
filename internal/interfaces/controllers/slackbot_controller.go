@@ -302,7 +302,16 @@ func (c *SlackBotController) DeleteSlackBot(ctx echo.Context) error {
 
 // --- Helpers ---
 
-func (c *SlackBotController) hookURL(id string) string {
+// hookURL returns the webhook URL for a SlackBot.
+// If the bot uses neither a custom bot token nor a custom signing secret
+// (i.e., both come from the server defaults), it shares the /default endpoint.
+func (c *SlackBotController) hookURL(bot *entities.SlackBot) string {
+	id := bot.ID()
+	if c.defaultSigningSecret != "" &&
+		bot.BotTokenSecretName() == "" &&
+		bot.SigningSecret() == c.defaultSigningSecret {
+		id = slackBotDefaultID
+	}
 	if c.baseURL != "" {
 		return c.baseURL + "/hooks/slack/" + id
 	}
@@ -318,7 +327,7 @@ func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotRespons
 		TeamID:              bot.TeamID(),
 		Status:              bot.Status(),
 		SigningSecret:       bot.MaskSigningSecret(),
-		HookURL:             c.hookURL(bot.ID()),
+		HookURL:             c.hookURL(bot),
 		BotTokenSecretName:  bot.BotTokenSecretName(),
 		BotTokenSecretKey:   bot.BotTokenSecretKey(),
 		AllowedEventTypes:   bot.AllowedEventTypes(),
