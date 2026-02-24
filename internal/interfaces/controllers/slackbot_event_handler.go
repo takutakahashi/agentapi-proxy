@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -32,6 +33,12 @@ type SlackBotEventHandler struct {
 	// baseURL is used to construct session URLs posted back to Slack threads.
 	// If empty, NOTIFICATION_BASE_URL env var is checked as a fallback.
 	baseURL string
+	// pendingThreads tracks channel+thread combinations that have a session creation
+	// in-flight. Slack may emit both "message" and "app_mention" events for the same
+	// @mention within milliseconds of each other. Without this guard both events would
+	// pass the reuse check (no session exists yet) and spawn duplicate sessions.
+	// Key: "channel:threadKey"  Value: struct{}
+	pendingThreads sync.Map
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -270,8 +277,20 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		},
 	}
 
+	// Dedup guard: Slack can emit both "message" and "app_mention" events for the same
+	// @mention within milliseconds. Both would pass the reuse check above (the session
+	// doesn't exist yet when they run concurrently) and would each spawn a new session.
+	// Use LoadOrStore so that only the first event proceeds; the second is dropped.
+	// The key is released once session creation completes (success or failure).
+	pendingKey := channel + ":" + threadKey
+	if _, alreadyPending := h.pendingThreads.LoadOrStore(pendingKey, struct{}{}); alreadyPending {
+		log.Printf("[SLACKBOT] Session creation already in progress for thread %s (event type=%s), skipping duplicate", threadKey, event.Type)
+		return nil
+	}
+
 	// Create session asynchronously so we don't block event processing
 	go func() {
+		defer h.pendingThreads.Delete(pendingKey)
 		bgCtx := context.Background()
 		session, err := h.sessionManager.CreateSession(bgCtx, sessionID, req, nil)
 		if err != nil {

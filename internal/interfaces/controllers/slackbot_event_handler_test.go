@@ -113,10 +113,10 @@ func (s *mockSession) Status() string {
 	}
 	return s.status
 }
-func (s *mockSession) StartedAt() time.Time          { return time.Time{} }
-func (s *mockSession) UpdatedAt() time.Time          { return time.Time{} }
-func (s *mockSession) Description() string           { return "" }
-func (s *mockSession) Cancel()                       {}
+func (s *mockSession) StartedAt() time.Time { return time.Time{} }
+func (s *mockSession) UpdatedAt() time.Time { return time.Time{} }
+func (s *mockSession) Description() string  { return "" }
+func (s *mockSession) Cancel()              {}
 
 // --- Helpers ---
 
@@ -677,4 +677,53 @@ func TestProcessEvent_ReuseSession_NewSessionWhenNoActive(t *testing.T) {
 	})
 	require.True(t, ok, "new session should be created when no active session exists")
 	assert.Empty(t, sessionMgr.sentMessages, "no message should be sent to existing session")
+}
+
+// TestProcessEvent_ConcurrentDuplicateEvents verifies that when Slack emits both "message"
+// and "app_mention" for the same @mention (same channel+thread), only one session is created.
+// This mirrors real Slack behaviour where both events arrive within milliseconds of each other,
+// before any session exists, so the reuse-check alone cannot catch the duplicate.
+func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
+	const (
+		channelID = "C-concurrent"
+		threadTS  = "700.000"
+	)
+
+	repo := newMockSlackBotRepository()
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", "", nil, "")
+
+	makePayload := func(eventType string) SlackPayload {
+		return SlackPayload{
+			Type:   "event_callback",
+			TeamID: "T1",
+			Event: &SlackEvent{
+				Type:    eventType,
+				Text:    "@bot hello",
+				User:    "U1",
+				Channel: channelID,
+				Ts:      threadTS,
+			},
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Fire "message" and "app_mention" concurrently, simulating Slack's duplicate delivery
+	go func() {
+		defer wg.Done()
+		_ = handler.ProcessEvent(context.Background(), "default", makePayload("message"))
+	}()
+	go func() {
+		defer wg.Done()
+		_ = handler.ProcessEvent(context.Background(), "default", makePayload("app_mention"))
+	}()
+
+	wg.Wait()
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "exactly one session should be created even when two events fire concurrently")
 }
