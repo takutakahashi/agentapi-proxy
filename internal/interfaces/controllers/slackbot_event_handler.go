@@ -66,6 +66,8 @@ type SlackPayload struct {
 // SlackEvent represents the inner Slack event
 type SlackEvent struct {
 	Type     string `json:"type"`
+	SubType  string `json:"subtype,omitempty"`
+	BotID    string `json:"bot_id,omitempty"`
 	Text     string `json:"text"`
 	User     string `json:"user"`
 	Channel  string `json:"channel"`
@@ -85,6 +87,14 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	}
 
 	event := payload.Event
+
+	// Ignore messages posted by bots (including this bot itself) to prevent
+	// recursive session creation: bot posts "session created" → triggers another event
+	// → creates another session → infinite loop.
+	if event.BotID != "" || event.SubType == "bot_message" {
+		log.Printf("[SLACKBOT] Ignoring bot message: botID=%s, event.bot_id=%s, subtype=%s", botID, event.BotID, event.SubType)
+		return nil
+	}
 
 	// Resolve the bot entity (nil for "default" when no registered bot matches)
 	_, bot, err := h.resolveSlackBot(ctx, botID)
@@ -197,6 +207,20 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		if bot.SessionConfig().Params().AgentType != "" {
 			agentType = bot.SessionConfig().Params().AgentType
 		}
+	}
+
+	// Check for duplicate session: if a session already exists for this channel+thread,
+	// skip creation to avoid multiple sessions triggered by subsequent messages in the
+	// same thread (e.g. replies after the initial message).
+	dupFilter := entities.SessionFilter{
+		Tags: map[string]string{
+			"slack_channel":   channel,
+			"slack_thread_ts": threadKey,
+		},
+	}
+	if existing := h.sessionManager.ListSessions(dupFilter); len(existing) > 0 {
+		log.Printf("[SLACKBOT] Session already exists for channel=%s thread=%s, skipping", channel, threadKey)
+		return nil
 	}
 
 	// Check session limit
