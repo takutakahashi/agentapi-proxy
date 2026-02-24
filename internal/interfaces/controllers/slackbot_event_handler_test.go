@@ -48,21 +48,24 @@ func (m *mockSessionManager) DeleteSession(_ string) error         { return nil 
 func (m *mockSessionManager) Shutdown(_ time.Duration) error       { return nil }
 
 func (m *mockSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
-	if len(filter.Tags) == 0 {
-		return m.existingSessions
-	}
 	var result []entities.Session
 	for _, s := range m.existingSessions {
-		match := true
-		for k, v := range filter.Tags {
-			if s.Tags()[k] != v {
-				match = false
-				break
+		if filter.Status != "" && s.Status() != filter.Status {
+			continue
+		}
+		if len(filter.Tags) > 0 {
+			match := true
+			for k, v := range filter.Tags {
+				if s.Tags()[k] != v {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
 			}
 		}
-		if match {
-			result = append(result, s)
-		}
+		result = append(result, s)
 	}
 	return result
 }
@@ -92,9 +95,10 @@ func (m *mockSessionManager) getCreatedSession(i int) *mockSession {
 
 // mockSession implements entities.Session
 type mockSession struct {
-	id    string
-	tags  map[string]string
-	scope entities.ResourceScope
+	id     string
+	tags   map[string]string
+	scope  entities.ResourceScope
+	status string // defaults to "active" when empty
 }
 
 func (s *mockSession) ID() string                    { return s.id }
@@ -103,7 +107,12 @@ func (s *mockSession) UserID() string                { return "" }
 func (s *mockSession) Scope() entities.ResourceScope { return s.scope }
 func (s *mockSession) TeamID() string                { return "" }
 func (s *mockSession) Tags() map[string]string       { return s.tags }
-func (s *mockSession) Status() string                { return "active" }
+func (s *mockSession) Status() string {
+	if s.status == "" {
+		return "active"
+	}
+	return s.status
+}
 func (s *mockSession) StartedAt() time.Time          { return time.Time{} }
 func (s *mockSession) UpdatedAt() time.Time          { return time.Time{} }
 func (s *mockSession) Description() string           { return "" }
@@ -601,3 +610,71 @@ func TestProcessEvent_BotMessage_Subtype_Ignored(t *testing.T) {
 	assert.Equal(t, 0, sessionMgr.createdCount(), "bot_message subtype must be ignored to prevent recursion")
 }
 
+// TestProcessEvent_ReuseSession_RoutesToExistingSession verifies that a follow-up message in the
+// same channel+thread is routed to the existing active session via SendMessage, not a new session.
+func TestProcessEvent_ReuseSession_RoutesToExistingSession(t *testing.T) {
+	const (
+		channelID = "C-reuse"
+		threadTS  = "600.000"
+	)
+
+	repo := newMockSlackBotRepository()
+
+	// Pre-seed an existing active session for the same channel+thread
+	existingSessions := []entities.Session{
+		&mockSession{
+			id:     "existing-session-id",
+			status: "active",
+			tags: map[string]string{
+				"slack_channel":   channelID,
+				"slack_thread_ts": threadTS,
+			},
+		},
+	}
+	sessionMgr := &mockSessionManager{existingSessions: existingSessions}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", "", nil, "")
+
+	payload := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:     "message",
+			Text:     "follow-up message",
+			User:     "U1",
+			Channel:  channelID,
+			Ts:       "600.001",
+			ThreadTs: threadTS,
+		},
+	}
+
+	err := handler.ProcessEvent(context.Background(), "default", payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return len(sessionMgr.sentMessages) == 1
+	})
+	require.True(t, ok, "message should be routed to existing session")
+	assert.Equal(t, "follow-up message", sessionMgr.sentMessages[0])
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no new session should be created when reusing")
+}
+
+// TestProcessEvent_ReuseSession_NewSessionWhenNoActive verifies that a new session is created
+// when no active session exists for the channel+thread, even if terminated sessions exist.
+func TestProcessEvent_ReuseSession_NewSessionWhenNoActive(t *testing.T) {
+	const channelID = "C-newthread"
+
+	repo := newMockSlackBotRepository()
+	// No pre-seeded sessions → should always create a new session
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", "", nil, "")
+
+	payload := buildEventPayload(channelID, "first message")
+	err := handler.ProcessEvent(context.Background(), "default", payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "new session should be created when no active session exists")
+	assert.Empty(t, sessionMgr.sentMessages, "no message should be sent to existing session")
+}

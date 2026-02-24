@@ -209,6 +209,30 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
+	// Try to reuse an existing active session for this channel+thread.
+	// Follow-up messages in the same Slack thread are routed to the existing session
+	// rather than spawning a new one (mirrors the webhook reuse-session behaviour).
+	reuseFilter := entities.SessionFilter{
+		Tags: map[string]string{
+			"slack_channel":   channel,
+			"slack_thread_ts": threadKey,
+		},
+		Status: "active",
+	}
+	if activeSessions := h.sessionManager.ListSessions(reuseFilter); len(activeSessions) > 0 {
+		existingSession := activeSessions[0]
+		reuseMessage := h.buildMessage(bot, payloadMap, event.Text, true)
+		go func() {
+			bgCtx := context.Background()
+			if err := h.sessionManager.SendMessage(bgCtx, existingSession.ID(), reuseMessage); err != nil {
+				log.Printf("[SLACKBOT] Failed to route message to existing session %s: %v", existingSession.ID(), err)
+				return
+			}
+			log.Printf("[SLACKBOT] Routed message to existing session %s for thread %s", existingSession.ID(), threadKey)
+		}()
+		return nil
+	}
+
 	// Check session limit
 	if bot != nil {
 		limitFilter := entities.SessionFilter{
