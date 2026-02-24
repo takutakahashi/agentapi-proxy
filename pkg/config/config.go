@@ -677,6 +677,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("memory.s3.prefix", "agentapi-memory/")
 	v.SetDefault("memory.s3.region", "")
 	v.SetDefault("memory.s3.endpoint", "")
+
+	// Slack defaults
+	v.SetDefault("slack.dry_run", true)
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields
