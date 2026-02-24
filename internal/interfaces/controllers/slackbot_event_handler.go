@@ -11,7 +11,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -26,50 +25,7 @@ const (
 	slackBotDefaultID = "default"
 	// defaultSlackAgentType is the default agent type for SlackBot sessions
 	defaultSlackAgentType = "claude-agentapi"
-	// slackEventDedupeTTL is the deduplication window for Slack events.
-	// Events with the same channel+thread key within this window are ignored.
-	slackEventDedupeTTL = 5 * time.Minute
 )
-
-// eventDedupeCache provides in-memory deduplication of Slack events within a configurable
-// time window. It prevents duplicate processing caused by Slack's at-least-once delivery.
-type eventDedupeCache struct {
-	mu      sync.Mutex
-	entries map[string]time.Time
-	ttl     time.Duration
-}
-
-// newEventDedupeCache creates a new eventDedupeCache with the given TTL.
-func newEventDedupeCache(ttl time.Duration) *eventDedupeCache {
-	return &eventDedupeCache{
-		entries: make(map[string]time.Time),
-		ttl:     ttl,
-	}
-}
-
-// isDuplicate returns true if the key was already seen within the TTL window.
-// As a side effect, it records the key when it is first seen (or after the TTL has expired).
-// Expired entries are cleaned up on each call to prevent unbounded memory growth.
-func (c *eventDedupeCache) isDuplicate(key string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := time.Now()
-
-	// Clean up expired entries
-	for k, t := range c.entries {
-		if now.Sub(t) >= c.ttl {
-			delete(c.entries, k)
-		}
-	}
-
-	if t, ok := c.entries[key]; ok && now.Sub(t) < c.ttl {
-		return true // seen within TTL — duplicate
-	}
-
-	c.entries[key] = now
-	return false
-}
 
 // SlackBotEventHandler handles incoming Slack events and manages sessions
 type SlackBotEventHandler struct {
@@ -84,8 +40,9 @@ type SlackBotEventHandler struct {
 	// baseURL is used to construct session URLs posted back to Slack threads.
 	// If empty, NOTIFICATION_BASE_URL env var is checked as a fallback.
 	baseURL string
-	// dedupeCache deduplicates Slack events by channel+thread key within slackEventDedupeTTL.
-	dedupeCache *eventDedupeCache
+	// pendingRequests tracks channel+thread keys for which session creation is in progress.
+	// Prevents duplicate session creation when Slack retries an event before we respond.
+	pendingRequests sync.Map
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -107,7 +64,6 @@ func NewSlackBotEventHandler(
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
 		sigVerifier:               webhook.NewSlackSignatureVerifier(),
 		baseURL:                   baseURL,
-		dedupeCache:               newEventDedupeCache(slackEventDedupeTTL),
 	}
 }
 
@@ -249,12 +205,32 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 	channel := event.Channel
 	log.Printf("[SLACKBOT] Processing event: id=%s, type=%s, channel=%s, thread=%s", id, event.Type, channel, threadKey)
 
-	// Deduplicate: if the same channel+thread combination has been processed within the TTL,
-	// ignore this event. This guards against Slack's at-least-once event delivery retries.
-	dedupeKey := channel + ":" + threadKey
-	if h.dedupeCache.isDuplicate(dedupeKey) {
-		log.Printf("[SLACKBOT] Duplicate event ignored (within %s window): id=%s, channel=%s, thread=%s", slackEventDedupeTTL, id, channel, threadKey)
-		return ctx.JSON(http.StatusOK, map[string]string{"message": "duplicate event ignored"})
+	// Deduplication via session state: if an active session already exists for this
+	// channel+thread, the event is a Slack retry or duplicate – ignore it.
+	searchTags := map[string]string{
+		"slackbot_id":     id,
+		"slack_channel":   channel,
+		"slack_thread_ts": threadKey,
+	}
+	existingSessions := h.sessionManager.ListSessions(entities.SessionFilter{
+		Tags:   searchTags,
+		Status: "active",
+	})
+	if len(existingSessions) > 0 {
+		existingSession := existingSessions[0]
+		log.Printf("[SLACKBOT] Active session %s already running for channel=%s, thread=%s; ignoring event", existingSession.ID(), channel, threadKey)
+		return ctx.JSON(http.StatusOK, map[string]string{
+			"message":    "session already running",
+			"session_id": existingSession.ID(),
+		})
+	}
+
+	// Pending check: another request for this channel+thread is already being processed
+	// (guards the race window between receiving the event and the session becoming "active").
+	pendingKey := channel + ":" + threadKey
+	if _, inFlight := h.pendingRequests.Load(pendingKey); inFlight {
+		log.Printf("[SLACKBOT] Session creation in progress for channel=%s, thread=%s; ignoring event", channel, threadKey)
+		return ctx.JSON(http.StatusOK, map[string]string{"message": "session creation in progress"})
 	}
 
 	// Build payload map for template rendering
@@ -269,38 +245,6 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 		},
 		"team_id": payload.TeamID,
 	}
-
-	// Search for existing active session with matching tags
-	searchTags := map[string]string{
-		"slackbot_id":     id,
-		"slack_channel":   channel,
-		"slack_thread_ts": threadKey,
-	}
-	existingSessions := h.sessionManager.ListSessions(entities.SessionFilter{
-		Tags:   searchTags,
-		Status: "active",
-	})
-
-	if len(existingSessions) > 0 {
-		// Reuse existing session
-		existingSession := existingSessions[0]
-		log.Printf("[SLACKBOT] Reusing session %s for thread %s", existingSession.ID(), threadKey)
-
-		reuseMessage := h.buildMessage(bot, payloadMap, event.Text, true)
-		if err := h.sessionManager.SendMessage(ctx.Request().Context(), existingSession.ID(), reuseMessage); err != nil {
-			log.Printf("[SLACKBOT] Failed to send message to session %s: %v", existingSession.ID(), err)
-			return ctx.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to send message"})
-		}
-
-		return ctx.JSON(http.StatusOK, map[string]string{
-			"message":     "message sent to existing session",
-			"session_id":  existingSession.ID(),
-			"slackbot_id": id,
-		})
-	}
-
-	// Create new session
-	sessionID := uuid.New().String()
 
 	// Build session tags
 	tags := map[string]string{
@@ -364,6 +308,7 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 		teamID = bot.TeamID()
 	}
 
+	sessionID := uuid.New().String()
 	req := &entities.RunServerRequest{
 		UserID:         userID,
 		Environment:    env,
@@ -378,22 +323,33 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 		},
 	}
 
-	session, err := h.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req, nil)
-	if err != nil {
-		log.Printf("[SLACKBOT] Failed to create session: %v", err)
-		return ctx.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
+	// Register as pending to prevent duplicate creation from concurrent Slack retries.
+	// The goroutine below clears this entry when session creation completes.
+	h.pendingRequests.Store(pendingKey, sessionID)
+
+	// Respond to Slack immediately (before session creation) to prevent Slack from
+	// retrying due to the 3-second response timeout. Session creation runs asynchronously.
+	if err := ctx.JSON(http.StatusOK, map[string]string{
+		"message":     "processing",
+		"session_id":  sessionID,
+		"slackbot_id": id,
+	}); err != nil {
+		log.Printf("[SLACKBOT] Failed to write response: %v", err)
 	}
 
-	log.Printf("[SLACKBOT] Created session %s for thread %s", session.ID(), threadKey)
+	go func() {
+		defer h.pendingRequests.Delete(pendingKey)
+		bgCtx := context.Background()
+		session, err := h.sessionManager.CreateSession(bgCtx, sessionID, req, nil)
+		if err != nil {
+			log.Printf("[SLACKBOT] Failed to create session: %v", err)
+			return
+		}
+		log.Printf("[SLACKBOT] Created session %s for thread %s", session.ID(), threadKey)
+		h.postSessionURLToSlack(bgCtx, channel, threadKey, session.ID(), bot)
+	}()
 
-	// Post session URL back to the Slack thread (best-effort, non-fatal)
-	h.postSessionURLToSlack(ctx.Request().Context(), channel, threadKey, session.ID(), bot)
-
-	return ctx.JSON(http.StatusOK, map[string]string{
-		"message":     "session created",
-		"session_id":  session.ID(),
-		"slackbot_id": id,
-	})
+	return nil
 }
 
 // resolveSlackBot retrieves the signing secret and optionally the SlackBot entity.
