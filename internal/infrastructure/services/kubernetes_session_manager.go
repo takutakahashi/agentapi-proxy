@@ -3039,6 +3039,9 @@ func expandSettingsToEnv(cfg *agentapiSettingsJSON) map[string]string {
 	}
 
 	// Auth mode and credentials
+	// Only set auth-related env vars when auth_mode is explicitly specified.
+	// If auth_mode is empty (not set), leave auth-related env vars untouched so that
+	// settings from a higher-priority source (e.g. team) are not overwritten.
 	switch cfg.AuthMode {
 	case "bedrock":
 		env["CLAUDE_CODE_USE_BEDROCK"] = "1"
@@ -3049,13 +3052,14 @@ func expandSettingsToEnv(cfg *agentapiSettingsJSON) map[string]string {
 			env["AWS_ROLE_ARN"] = cfg.Bedrock.RoleARN
 			env["AWS_PROFILE"] = cfg.Bedrock.Profile
 		}
-	default: // "oauth" or empty
+	case "oauth":
 		env["CLAUDE_CODE_USE_BEDROCK"] = "0"
 		env["ANTHROPIC_MODEL"] = ""
 		env["AWS_ACCESS_KEY_ID"] = ""
 		env["AWS_SECRET_ACCESS_KEY"] = ""
 		env["AWS_ROLE_ARN"] = ""
 		env["AWS_PROFILE"] = ""
+		// default (empty auth_mode): do not override auth-related env vars
 	}
 
 	// OAuth token
