@@ -47,6 +47,7 @@ type slackBotJSON struct {
 	SigningSecret       string                    `json:"signing_secret"`
 	BotTokenSecretName  string                    `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey   string                    `json:"bot_token_secret_key,omitempty"`
+	AppTokenSecretKey   string                    `json:"app_token_secret_key,omitempty"`
 	AllowedEventTypes   []string                  `json:"allowed_event_types,omitempty"`
 	AllowedChannelNames []string                  `json:"allowed_channel_names,omitempty"`
 	SessionConfig       *webhookSessionConfigJSON `json:"session_config,omitempty"`
@@ -343,6 +344,9 @@ func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities
 	if sbj.BotTokenSecretKey != "" {
 		slackBot.SetBotTokenSecretKey(sbj.BotTokenSecretKey)
 	}
+	if sbj.AppTokenSecretKey != "" {
+		slackBot.SetAppTokenSecretKey(sbj.AppTokenSecretKey)
+	}
 	if len(sbj.AllowedEventTypes) > 0 {
 		slackBot.SetAllowedEventTypes(sbj.AllowedEventTypes)
 	}
@@ -372,6 +376,7 @@ func (r *KubernetesSlackBotRepository) entityToJSON(sb *entities.SlackBot) *slac
 		SigningSecret:       sb.SigningSecret(),
 		BotTokenSecretName:  sb.BotTokenSecretName(),
 		BotTokenSecretKey:   sb.BotTokenSecretKey(),
+		AppTokenSecretKey:   sb.AppTokenSecretKey(),
 		AllowedEventTypes:   sb.AllowedEventTypes(),
 		AllowedChannelNames: sb.AllowedChannelNames(),
 		MaxSessions:         sb.MaxSessions(),

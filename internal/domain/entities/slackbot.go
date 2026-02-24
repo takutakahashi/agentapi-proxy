@@ -17,8 +17,8 @@ const (
 )
 
 // SlackBot represents a Slack bot registration entity.
-// Each SlackBot corresponds to a Slack App installation (one signing secret, one bot token)
-// and gets its own hook URL: /hooks/slack/:id
+// Each SlackBot corresponds to a Slack App installation (one signing secret, one bot token).
+// In Socket Mode, events are received via WebSocket rather than HTTP webhook.
 type SlackBot struct {
 	id                  string
 	name                string
@@ -29,6 +29,7 @@ type SlackBot struct {
 	signingSecret       string
 	botTokenSecretName  string                // K8s Secret name for xoxb-... token; empty = use global default
 	botTokenSecretKey   string                // Key within the Secret; default: "bot-token"
+	appTokenSecretKey   string                // Key within botTokenSecretName Secret for xapp-... token; default: "app-token"
 	allowedEventTypes   []string              // Empty means all event types
 	allowedChannelNames []string              // Empty means all channels; partial match on resolved channel name
 	sessionConfig       *WebhookSessionConfig // Reuse existing type
@@ -141,6 +142,22 @@ func (s *SlackBot) SetBotTokenSecretKey(key string) {
 	s.updatedAt = time.Now()
 }
 
+// AppTokenSecretKey returns the key within the K8s Secret for the App-level token (xapp-...).
+// The App-level token is stored in the same Secret as the bot token.
+// Defaults to "app-token".
+func (s *SlackBot) AppTokenSecretKey() string {
+	if s.appTokenSecretKey == "" {
+		return "app-token"
+	}
+	return s.appTokenSecretKey
+}
+
+// SetAppTokenSecretKey sets the key within the K8s Secret for the App-level token
+func (s *SlackBot) SetAppTokenSecretKey(key string) {
+	s.appTokenSecretKey = key
+	s.updatedAt = time.Now()
+}
+
 // AllowedEventTypes returns the list of allowed Slack event types.
 // Empty means all event types are allowed.
 func (s *SlackBot) AllowedEventTypes() []string { return s.allowedEventTypes }
@@ -235,9 +252,6 @@ func (s *SlackBot) Validate() error {
 	}
 	if s.userID == "" {
 		return ErrInvalidSlackBot{Field: "user_id", Message: "user_id is required"}
-	}
-	if s.signingSecret == "" {
-		return ErrInvalidSlackBot{Field: "signing_secret", Message: "signing_secret is required"}
 	}
 	if s.maxSessions < 0 {
 		return ErrInvalidSlackBot{Field: "max_sessions", Message: "max_sessions must be non-negative"}

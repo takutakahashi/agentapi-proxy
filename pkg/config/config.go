@@ -305,12 +305,21 @@ type Config struct {
 	Slack SlackConfig `json:"slack" mapstructure:"slack"`
 }
 
-// SlackConfig represents Slack inbound webhook (SlackBot) configuration
+// SlackConfig represents Slack bot (Socket Mode) configuration
 type SlackConfig struct {
-	// SigningSecret is the default Slack App signing secret used to verify incoming events.
-	// When set, enables the /hooks/slack/default endpoint.
+	// SigningSecret is the default Slack App signing secret (kept for backward compatibility,
+	// no longer required for Socket Mode operation).
 	// Set via AGENTAPI_SLACK_SIGNING_SECRET environment variable.
 	SigningSecret string `json:"signing_secret" mapstructure:"signing_secret"`
+	// AppTokenSecretName is the K8s Secret name containing the default App-level token (xapp-...).
+	// Used for the default Socket Mode connection.
+	// If empty, falls back to KubernetesSession.SlackBotTokenSecretName.
+	// Set via AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME environment variable.
+	AppTokenSecretName string `json:"app_token_secret_name" mapstructure:"app_token_secret_name"`
+	// AppTokenSecretKey is the key within the Secret for the App-level token.
+	// Defaults to "app-token".
+	// Set via AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY environment variable.
+	AppTokenSecretKey string `json:"app_token_secret_key" mapstructure:"app_token_secret_key"`
 }
 
 // LoadConfig loads configuration using viper with support for JSON, YAML, and environment variables
@@ -585,6 +594,8 @@ func bindEnvVars(v *viper.Viper) {
 
 	// Slack configuration
 	_ = v.BindEnv("slack.signing_secret", "AGENTAPI_SLACK_SIGNING_SECRET")
+	_ = v.BindEnv("slack.app_token_secret_name", "AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME")
+	_ = v.BindEnv("slack.app_token_secret_key", "AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
