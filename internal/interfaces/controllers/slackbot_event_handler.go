@@ -1,22 +1,15 @@
 package controllers
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/webhook"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
@@ -27,7 +20,7 @@ const (
 	defaultSlackAgentType = "claude-agentapi"
 )
 
-// SlackBotEventHandler handles incoming Slack events and manages sessions
+// SlackBotEventHandler handles incoming Slack events (via Socket Mode) and manages sessions
 type SlackBotEventHandler struct {
 	repo            repositories.SlackBotRepository
 	sessionManager  repositories.SessionManager
@@ -36,13 +29,9 @@ type SlackBotEventHandler struct {
 	defaultSigningSecret      string
 	defaultBotTokenSecretName string
 	defaultBotTokenSecretKey  string
-	sigVerifier               *webhook.SlackSignatureVerifier
 	// baseURL is used to construct session URLs posted back to Slack threads.
 	// If empty, NOTIFICATION_BASE_URL env var is checked as a fallback.
 	baseURL string
-	// pendingRequests tracks channel+thread keys for which session creation is in progress.
-	// Prevents duplicate session creation when Slack retries an event before we respond.
-	pendingRequests sync.Map
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -62,21 +51,20 @@ func NewSlackBotEventHandler(
 		defaultSigningSecret:      defaultSigningSecret,
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
-		sigVerifier:               webhook.NewSlackSignatureVerifier(),
 		baseURL:                   baseURL,
 	}
 }
 
-// slackPayload represents the outer Slack event payload structure
-type slackPayload struct {
+// SlackPayload represents the outer Slack event payload structure
+type SlackPayload struct {
 	Type      string      `json:"type"`
 	Challenge string      `json:"challenge,omitempty"`
 	TeamID    string      `json:"team_id,omitempty"`
-	Event     *slackEvent `json:"event,omitempty"`
+	Event     *SlackEvent `json:"event,omitempty"`
 }
 
-// slackEvent represents the inner Slack event
-type slackEvent struct {
+// SlackEvent represents the inner Slack event
+type SlackEvent struct {
 	Type     string `json:"type"`
 	Text     string `json:"text"`
 	User     string `json:"user"`
@@ -85,90 +73,43 @@ type slackEvent struct {
 	ThreadTs string `json:"thread_ts,omitempty"`
 }
 
-// HandleSlackEvent handles POST /hooks/slack/:id
-func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
-	id := ctx.Param("id")
-	if id == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "missing slackbot id"})
-	}
-
-	// Read raw body for signature verification
-	body, err := io.ReadAll(ctx.Request().Body)
-	if err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "failed to read body"})
-	}
-	ctx.Request().Body = io.NopCloser(bytes.NewBuffer(body))
-
-	log.Printf("[SLACKBOT] Received event: id=%s, size=%d", id, len(body))
-
-	// Quick parse to handle url_verification challenge (before signature check per Slack docs)
-	var quickParse struct {
-		Type      string `json:"type"`
-		Challenge string `json:"challenge"`
-	}
-	if err := json.Unmarshal(body, &quickParse); err == nil && quickParse.Type == "url_verification" {
-		log.Printf("[SLACKBOT] Responding to url_verification challenge")
-		return ctx.JSON(http.StatusOK, map[string]string{"challenge": quickParse.Challenge})
-	}
-
-	// Resolve signing secret (default or from repo)
-	signingSecret, bot, err := h.resolveSlackBot(ctx, id)
-	if err != nil {
-		return ctx.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
-	}
-
-	// Verify Slack v0 HMAC-SHA256 signature
-	timestamp := ctx.Request().Header.Get("X-Slack-Request-Timestamp")
-	signature := ctx.Request().Header.Get("X-Slack-Signature")
-	if timestamp == "" || signature == "" {
-		log.Printf("[SLACKBOT] Missing signature headers: id=%s", id)
-		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "missing signature headers"})
-	}
-
-	valid, verifyErr := h.sigVerifier.Verify(body, timestamp, signature, signingSecret)
-	if verifyErr != nil {
-		log.Printf("[SLACKBOT] Signature timestamp error: id=%s, err=%v", id, verifyErr)
-		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "request timestamp expired"})
-	}
-	if !valid {
-		log.Printf("[SLACKBOT] Signature verification failed: id=%s", id)
-		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "signature verification failed"})
-	}
-
-	// Parse full payload
-	var payload slackPayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		log.Printf("[SLACKBOT] Failed to parse payload: id=%s, err=%v", id, err)
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
-	}
-
+// ProcessEvent processes a parsed Slack event received via Socket Mode.
+// botID should be the SlackBot entity ID or slackBotDefaultID ("default").
+// This method is called by SlackSocketWorker after acknowledging the event to Slack.
+func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, payload SlackPayload) error {
+	log.Printf("[SLACKBOT] ProcessEvent called: botID=%s, type=%s", botID, payload.Type)
 	// We only process event_callback type
 	if payload.Type != "event_callback" || payload.Event == nil {
-		log.Printf("[SLACKBOT] Ignoring non-event payload: id=%s, type=%s", id, payload.Type)
-		return ctx.JSON(http.StatusOK, map[string]string{"message": "ignored"})
+		log.Printf("[SLACKBOT] Ignoring non-event payload: id=%s, type=%s", botID, payload.Type)
+		return nil
 	}
 
 	event := payload.Event
 
+	// Resolve the bot entity (nil for "default" when no registered bot matches)
+	_, bot, err := h.resolveSlackBot(ctx, botID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve slackbot: %w", err)
+	}
+
 	// For default ID: try to identify the registered bot by channel name filter.
-	// This resolves the correct scope, userID, teamID, and session config for the session.
-	if id == slackBotDefaultID && bot == nil {
+	if botID == slackBotDefaultID && bot == nil {
 		if resolvedBot := h.resolveBotByChannel(ctx, event.Channel); resolvedBot != nil {
 			bot = resolvedBot
-			id = resolvedBot.ID()
-			log.Printf("[SLACKBOT] Default endpoint: identified bot by channel filter: id=%s, channel=%s", id, event.Channel)
+			botID = resolvedBot.ID()
+			log.Printf("[SLACKBOT] Default endpoint: identified bot by channel filter: id=%s, channel=%s", botID, event.Channel)
 		}
 	}
 
 	// Apply filters (if this is a registered bot, not default)
 	if bot != nil {
 		if bot.Status() == entities.SlackBotStatusPaused {
-			log.Printf("[SLACKBOT] Bot is paused: id=%s", id)
-			return ctx.JSON(http.StatusOK, map[string]string{"message": "bot paused"})
+			log.Printf("[SLACKBOT] Bot is paused: id=%s", botID)
+			return nil
 		}
 		if !bot.IsEventTypeAllowed(event.Type) {
-			log.Printf("[SLACKBOT] Event type not allowed: id=%s, type=%s", id, event.Type)
-			return ctx.JSON(http.StatusOK, map[string]string{"message": "event type not allowed"})
+			log.Printf("[SLACKBOT] Event type not allowed: id=%s, type=%s", botID, event.Type)
+			return nil
 		}
 		// Channel name filter: resolve channel ID → name, then apply partial-match filter
 		if len(bot.AllowedChannelNames()) > 0 && h.channelResolver != nil {
@@ -180,18 +121,18 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 			if secretKey == "" {
 				secretKey = h.defaultBotTokenSecretKey
 			}
-			botToken, tokenErr := h.channelResolver.GetBotToken(ctx.Request().Context(), secretName, secretKey)
+			botToken, tokenErr := h.channelResolver.GetBotToken(ctx, secretName, secretKey)
 			if tokenErr != nil {
-				log.Printf("[SLACKBOT] Failed to get bot token for channel filter: id=%s, err=%v", id, tokenErr)
-				return ctx.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get bot token"})
+				log.Printf("[SLACKBOT] Failed to get bot token for channel filter: id=%s, err=%v", botID, tokenErr)
+				return fmt.Errorf("failed to get bot token: %w", tokenErr)
 			}
-			channelName, resolveErr := h.channelResolver.ResolveChannelName(ctx.Request().Context(), event.Channel, botToken)
+			channelName, resolveErr := h.channelResolver.ResolveChannelName(ctx, event.Channel, botToken)
 			if resolveErr != nil {
-				log.Printf("[SLACKBOT] Failed to resolve channel name: id=%s, channel=%s, err=%v", id, event.Channel, resolveErr)
+				log.Printf("[SLACKBOT] Failed to resolve channel name: id=%s, channel=%s, err=%v", botID, event.Channel, resolveErr)
 				// Non-fatal: skip filter and allow the event through
 			} else if !bot.IsChannelNameAllowed(channelName) {
-				log.Printf("[SLACKBOT] Channel name not allowed: id=%s, channel=%s, name=%s", id, event.Channel, channelName)
-				return ctx.JSON(http.StatusOK, map[string]string{"message": "channel not allowed"})
+				log.Printf("[SLACKBOT] Channel name not allowed: id=%s, channel=%s, name=%s", botID, event.Channel, channelName)
+				return nil
 			}
 		}
 	}
@@ -203,35 +144,7 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 	}
 
 	channel := event.Channel
-	log.Printf("[SLACKBOT] Processing event: id=%s, type=%s, channel=%s, thread=%s", id, event.Type, channel, threadKey)
-
-	// Deduplication via session state: if an active session already exists for this
-	// channel+thread, the event is a Slack retry or duplicate – ignore it.
-	searchTags := map[string]string{
-		"slackbot_id":     id,
-		"slack_channel":   channel,
-		"slack_thread_ts": threadKey,
-	}
-	existingSessions := h.sessionManager.ListSessions(entities.SessionFilter{
-		Tags:   searchTags,
-		Status: "active",
-	})
-	if len(existingSessions) > 0 {
-		existingSession := existingSessions[0]
-		log.Printf("[SLACKBOT] Active session %s already running for channel=%s, thread=%s; ignoring event", existingSession.ID(), channel, threadKey)
-		return ctx.JSON(http.StatusOK, map[string]string{
-			"message":    "session already running",
-			"session_id": existingSession.ID(),
-		})
-	}
-
-	// Pending check: another request for this channel+thread is already being processed
-	// (guards the race window between receiving the event and the session becoming "active").
-	pendingKey := channel + ":" + threadKey
-	if _, inFlight := h.pendingRequests.Load(pendingKey); inFlight {
-		log.Printf("[SLACKBOT] Session creation in progress for channel=%s, thread=%s; ignoring event", channel, threadKey)
-		return ctx.JSON(http.StatusOK, map[string]string{"message": "session creation in progress"})
-	}
+	log.Printf("[SLACKBOT] Processing event: id=%s, type=%s, channel=%s, thread=%s", botID, event.Type, channel, threadKey)
 
 	// Build payload map for template rendering
 	payloadMap := map[string]interface{}{
@@ -248,7 +161,7 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 
 	// Build session tags
 	tags := map[string]string{
-		"slackbot_id":     id,
+		"slackbot_id":     botID,
 		"slack_channel":   channel,
 		"slack_thread_ts": threadKey,
 	}
@@ -289,12 +202,12 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 	// Check session limit
 	if bot != nil {
 		limitFilter := entities.SessionFilter{
-			Tags: map[string]string{"slackbot_id": id},
+			Tags: map[string]string{"slackbot_id": botID},
 		}
 		activeSessions := h.sessionManager.ListSessions(limitFilter)
 		if len(activeSessions) >= bot.MaxSessions() {
-			log.Printf("[SLACKBOT] Session limit reached: id=%s, limit=%d", id, bot.MaxSessions())
-			return ctx.JSON(http.StatusTooManyRequests, map[string]string{"error": fmt.Sprintf("session limit reached: maximum %d sessions", bot.MaxSessions())})
+			log.Printf("[SLACKBOT] Session limit reached: id=%s, limit=%d", botID, bot.MaxSessions())
+			return fmt.Errorf("session limit reached: maximum %d sessions", bot.MaxSessions())
 		}
 	}
 
@@ -323,22 +236,8 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 		},
 	}
 
-	// Register as pending to prevent duplicate creation from concurrent Slack retries.
-	// The goroutine below clears this entry when session creation completes.
-	h.pendingRequests.Store(pendingKey, sessionID)
-
-	// Respond to Slack immediately (before session creation) to prevent Slack from
-	// retrying due to the 3-second response timeout. Session creation runs asynchronously.
-	if err := ctx.JSON(http.StatusOK, map[string]string{
-		"message":     "processing",
-		"session_id":  sessionID,
-		"slackbot_id": id,
-	}); err != nil {
-		log.Printf("[SLACKBOT] Failed to write response: %v", err)
-	}
-
+	// Create session asynchronously so we don't block event processing
 	go func() {
-		defer h.pendingRequests.Delete(pendingKey)
 		bgCtx := context.Background()
 		session, err := h.sessionManager.CreateSession(bgCtx, sessionID, req, nil)
 		if err != nil {
@@ -355,15 +254,12 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 // resolveSlackBot retrieves the signing secret and optionally the SlackBot entity.
 // Returns (signingSecret, bot, error)
 // For id="default", returns the server-configured secret and nil bot.
-func (h *SlackBotEventHandler) resolveSlackBot(ctx echo.Context, id string) (string, *entities.SlackBot, error) {
+func (h *SlackBotEventHandler) resolveSlackBot(ctx context.Context, id string) (string, *entities.SlackBot, error) {
 	if id == slackBotDefaultID {
-		if h.defaultSigningSecret == "" {
-			return "", nil, fmt.Errorf("default slackbot not configured")
-		}
 		return h.defaultSigningSecret, nil, nil
 	}
 
-	bot, err := h.repo.Get(ctx.Request().Context(), id)
+	bot, err := h.repo.Get(ctx, id)
 	if err != nil {
 		return "", nil, fmt.Errorf("slackbot not found: %s", id)
 	}
@@ -374,12 +270,12 @@ func (h *SlackBotEventHandler) resolveSlackBot(ctx echo.Context, id string) (str
 // It resolves the channel ID to a name using the server-default bot token, then
 // searches active bots (those using default credentials) whose AllowedChannelNames matches.
 // Returns nil if the bot cannot be identified.
-func (h *SlackBotEventHandler) resolveBotByChannel(ctx echo.Context, channelID string) *entities.SlackBot {
+func (h *SlackBotEventHandler) resolveBotByChannel(ctx context.Context, channelID string) *entities.SlackBot {
 	if h.channelResolver == nil || h.defaultBotTokenSecretName == "" {
 		return nil
 	}
 	botToken, err := h.channelResolver.GetBotToken(
-		ctx.Request().Context(),
+		ctx,
 		h.defaultBotTokenSecretName,
 		h.defaultBotTokenSecretKey,
 	)
@@ -387,20 +283,18 @@ func (h *SlackBotEventHandler) resolveBotByChannel(ctx echo.Context, channelID s
 		log.Printf("[SLACKBOT] resolveBotByChannel: failed to get default bot token: %v", err)
 		return nil
 	}
-	channelName, err := h.channelResolver.ResolveChannelName(ctx.Request().Context(), channelID, botToken)
+	channelName, err := h.channelResolver.ResolveChannelName(ctx, channelID, botToken)
 	if err != nil {
 		log.Printf("[SLACKBOT] resolveBotByChannel: failed to resolve channel name: channelID=%s, err=%v", channelID, err)
 		return nil
 	}
-	allBots, err := h.repo.List(ctx.Request().Context(), repositories.SlackBotFilter{})
+	allBots, err := h.repo.List(ctx, repositories.SlackBotFilter{})
 	if err != nil {
 		log.Printf("[SLACKBOT] resolveBotByChannel: failed to list bots: %v", err)
 		return nil
 	}
 	for _, candidate := range allBots {
 		// Only match bots that rely on the default bot token
-		// Note: status (paused/active) is intentionally not filtered here;
-		// the filter block in HandleSlackEvent will handle paused bots appropriately.
 		if candidate.BotTokenSecretName() != "" {
 			continue
 		}

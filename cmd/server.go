@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
@@ -93,6 +94,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register SlackBot handlers (requires Kubernetes mode)
 	registerSlackBotHandlers(configData, proxyServer)
+
+	// Start Slack Socket Mode manager (requires Kubernetes mode)
+	startSlackSocketManager(configData, proxyServer)
 
 	// Register MCP handler
 	registerMCPHandler(proxyServer, port)
@@ -387,7 +391,7 @@ func registerImportExportHandlers(configData *config.Config, proxyServer *app.Se
 	log.Printf("[IMPORT_EXPORT_HANDLERS] Import/export handlers registered successfully")
 }
 
-// registerSlackBotHandlers registers SlackBot management and event receiver REST API handlers
+// registerSlackBotHandlers registers SlackBot management REST API handlers
 func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[SLACKBOT_HANDLERS] Registering slackbot handlers...")
 
@@ -416,27 +420,108 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 	// Create SlackBot repository
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
 
-	// Create channel resolver for Slack channel ID → name resolution with ConfigMap cache
+	// Create and register SlackBot management handlers (no event reception - handled by Socket Mode)
+	slackbotHandlers := slackbot.NewHandlers(
+		slackbotRepo,
+		configData.Webhook.BaseURL,
+		configData.Slack.SigningSecret,
+	)
+	proxyServer.AddCustomHandler(slackbotHandlers)
+
+	log.Printf("[SLACKBOT_HANDLERS] SlackBot management handlers registered successfully")
+}
+
+// startSlackSocketManager starts the Slack Socket Mode manager with per-bot leader election
+func startSlackSocketManager(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[SOCKET_MANAGER] Initializing Slack Socket Mode manager...")
+
+	// Create Kubernetes client
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[SOCKET_MANAGER] Kubernetes config not available, skipping Socket Mode: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[SOCKET_MANAGER] Failed to create Kubernetes client, skipping Socket Mode: %v", err)
+		return
+	}
+
+	// Determine namespace
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Create dependencies
+	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
 	channelResolver := services.NewSlackChannelResolver(client, namespace)
 
-	// Create and register SlackBot handlers
-	slackbotHandlers := slackbot.NewHandlers(
+	eventHandler := controllers.NewSlackBotEventHandler(
 		slackbotRepo,
 		proxyServer.GetSessionManager(),
 		configData.Slack.SigningSecret,
 		configData.KubernetesSession.SlackBotTokenSecretName,
 		configData.KubernetesSession.SlackBotTokenSecretKey,
-		configData.Webhook.BaseURL,
 		channelResolver,
+		configData.Webhook.BaseURL,
 	)
-	proxyServer.AddCustomHandler(slackbotHandlers)
 
-	if configData.Slack.SigningSecret != "" {
-		log.Printf("[SLACKBOT_HANDLERS] Default SlackBot enabled at /hooks/slack/default")
-	} else {
-		log.Printf("[SLACKBOT_HANDLERS] No default signing secret configured; /hooks/slack/default disabled")
+	// Resolve App token secret (defaults to SlackBotTokenSecretName if not set)
+	appTokenSecretName := configData.Slack.AppTokenSecretName
+	if appTokenSecretName == "" {
+		appTokenSecretName = configData.KubernetesSession.SlackBotTokenSecretName
 	}
-	log.Printf("[SLACKBOT_HANDLERS] SlackBot handlers registered successfully")
+	appTokenSecretKey := configData.Slack.AppTokenSecretKey
+	if appTokenSecretKey == "" {
+		appTokenSecretKey = "app-token"
+	}
+
+	// Parse leader election config durations
+	leaseDuration, err := time.ParseDuration(configData.ScheduleWorker.LeaseDuration)
+	if err != nil {
+		leaseDuration = 15 * time.Second
+	}
+	renewDeadline, err := time.ParseDuration(configData.ScheduleWorker.RenewDeadline)
+	if err != nil {
+		renewDeadline = 10 * time.Second
+	}
+	retryPeriod, err := time.ParseDuration(configData.ScheduleWorker.RetryPeriod)
+	if err != nil {
+		retryPeriod = 2 * time.Second
+	}
+
+	electionConfig := schedule.LeaderElectionConfig{
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod:   retryPeriod,
+		Namespace:     namespace,
+	}
+
+	managerConfig := slackbot.SlackSocketManagerConfig{
+		DefaultAppTokenSecretName: appTokenSecretName,
+		DefaultAppTokenSecretKey:  appTokenSecretKey,
+		DefaultBotTokenSecretName: configData.KubernetesSession.SlackBotTokenSecretName,
+		DefaultBotTokenSecretKey:  configData.KubernetesSession.SlackBotTokenSecretKey,
+		LeaderElectionConfig:      electionConfig,
+	}
+
+	manager := slackbot.NewSlackSocketManager(
+		client,
+		namespace,
+		slackbotRepo,
+		eventHandler,
+		channelResolver,
+		managerConfig,
+	)
+
+	go manager.Run(context.Background())
+
+	log.Printf("[SOCKET_MANAGER] Slack Socket Mode manager started in namespace: %s", namespace)
 }
 
 // registerMCPHandler registers MCP HTTP handler

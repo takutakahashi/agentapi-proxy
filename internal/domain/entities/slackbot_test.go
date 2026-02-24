@@ -53,12 +53,11 @@ func TestSlackBot_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "missing signing_secret",
+			name: "missing signing_secret is allowed (Socket Mode does not require it)",
 			modify: func(b *SlackBot) {
-				// no signing secret set
+				// no signing secret set — valid in Socket Mode
 			},
-			wantErr: true,
-			errMsg:  "signing_secret",
+			wantErr: false,
 		},
 	}
 
