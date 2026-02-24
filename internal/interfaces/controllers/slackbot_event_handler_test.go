@@ -576,7 +576,6 @@ func TestProcessEvent_BotMessage_BotID_Ignored(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
-
 	payload := SlackPayload{
 		Type:   "event_callback",
 		TeamID: "T1",
@@ -602,7 +601,6 @@ func TestProcessEvent_BotMessage_Subtype_Ignored(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
-
 	payload := SlackPayload{
 		Type:   "event_callback",
 		TeamID: "T1",
@@ -645,7 +643,6 @@ func TestProcessEvent_ReuseSession_RoutesToExistingSession(t *testing.T) {
 	}
 	sessionMgr := &mockSessionManager{existingSessions: existingSessions}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
-
 	payload := SlackPayload{
 		Type:   "event_callback",
 		TeamID: "T1",
@@ -679,7 +676,6 @@ func TestProcessEvent_ReuseSession_NewSessionWhenNoActive(t *testing.T) {
 	// No pre-seeded sessions → should always create a new session
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
-
 	payload := buildEventPayload(channelID, "first message")
 	err := handler.ProcessEvent(context.Background(), "default", payload)
 	require.NoError(t, err)
@@ -704,7 +700,6 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
-
 	makePayload := func(eventType string) SlackPayload {
 		return SlackPayload{
 			Type:   "event_callback",
