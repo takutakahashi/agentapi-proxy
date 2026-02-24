@@ -115,6 +115,14 @@ func (w *SlackSocketWorker) dispatchEvent(ctx context.Context, client *socketmod
 	case socketmode.EventTypeConnectionError:
 		log.Printf("[SOCKET_WORKER] Connection error: botID=%s, data=%v", w.botID, evt.Data)
 
+	case socketmode.EventTypeHello:
+		// Hello is sent by Slack after the WebSocket connection is established.
+		// It is informational only and must NOT be acknowledged (no envelope_id).
+		if evt.Request != nil {
+			log.Printf("[SOCKET_WORKER] Hello from Slack: botID=%s num_connections=%d host=%s",
+				w.botID, evt.Request.NumConnections, evt.Request.DebugInfo.Host)
+		}
+
 	case socketmode.EventTypeEventsAPI:
 		eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 		if !ok {
@@ -128,8 +136,9 @@ func (w *SlackSocketWorker) dispatchEvent(ctx context.Context, client *socketmod
 		go w.processEventsAPIEvent(ctx, eventsAPIEvent)
 
 	default:
-		// Acknowledge unknown event types to prevent connection issues
-		if evt.Request != nil {
+		// For unknown event types, only ack if there is a valid envelope ID.
+		// Events like "hello" and "disconnect" have no envelope_id and must not be acked.
+		if evt.Request != nil && evt.Request.EnvelopeID != "" {
 			client.Ack(*evt.Request)
 		}
 	}
