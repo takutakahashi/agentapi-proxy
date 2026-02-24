@@ -461,7 +461,7 @@ func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channe
 		return
 	}
 
-	sessionURL := fmt.Sprintf("%s/agentapi?session=%s", strings.TrimRight(sessionBaseURL, "/"), sessionID)
+	sessionURL := fmt.Sprintf("%s/sessions/%s", strings.TrimRight(sessionBaseURL, "/"), sessionID)
 	message := fmt.Sprintf("セッションを作成しました :robot_face:\n%s", sessionURL)
 
 	botToken, err := h.getBotToken(ctx, bot)
