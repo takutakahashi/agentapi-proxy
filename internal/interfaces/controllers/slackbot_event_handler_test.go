@@ -102,6 +102,14 @@ func buildSlackEventPayload(channel, text string) string {
 	)
 }
 
+// buildSlackEventPayloadWithTs builds an event_callback payload with a specific event ts
+func buildSlackEventPayloadWithTs(channel, text, ts string) string {
+	return fmt.Sprintf(
+		`{"type":"event_callback","team_id":"T1","event":{"type":"message","text":%q,"user":"U1","channel":%q,"ts":%q}}`,
+		text, channel, ts,
+	)
+}
+
 // newSlackEchoContext creates an echo.Context for a Slack event with proper HMAC signature.
 func newSlackEchoContext(body, signingSecret, slackbotID string) (echo.Context, *httptest.ResponseRecorder) {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
@@ -400,6 +408,95 @@ func TestHandleSlackEvent_DefaultID_BotIsPaused_Rejected(t *testing.T) {
 	assert.Equal(t, "bot paused", respBody["message"],
 		"paused bot should return 'bot paused' message even when accessed via default endpoint")
 	assert.Empty(t, sessionMgr.createdSessions, "no session should be created for paused bot")
+}
+
+// ---- Tests for event deduplication ----
+
+// TestEventDedupeCache_DuplicateWithinTTL verifies that the same key is recognized
+// as a duplicate within the TTL window.
+func TestEventDedupeCache_DuplicateWithinTTL(t *testing.T) {
+	cache := newEventDedupeCache(5 * time.Minute)
+
+	assert.False(t, cache.isDuplicate("C1:111.000"), "first occurrence should not be a duplicate")
+	assert.True(t, cache.isDuplicate("C1:111.000"), "second occurrence within TTL should be a duplicate")
+	assert.True(t, cache.isDuplicate("C1:111.000"), "third occurrence within TTL should be a duplicate")
+}
+
+// TestEventDedupeCache_DifferentKeys verifies that different keys are not deduplicated.
+func TestEventDedupeCache_DifferentKeys(t *testing.T) {
+	cache := newEventDedupeCache(5 * time.Minute)
+
+	assert.False(t, cache.isDuplicate("C1:111.000"), "first key should not be a duplicate")
+	assert.False(t, cache.isDuplicate("C2:111.000"), "different channel should not be a duplicate")
+	assert.False(t, cache.isDuplicate("C1:222.000"), "different thread should not be a duplicate")
+}
+
+// TestEventDedupeCache_AfterTTLExpiry verifies that entries are not considered duplicates
+// after the TTL has expired.
+func TestEventDedupeCache_AfterTTLExpiry(t *testing.T) {
+	cache := newEventDedupeCache(10 * time.Millisecond) // very short TTL
+
+	assert.False(t, cache.isDuplicate("C1:111.000"), "first occurrence should not be a duplicate")
+	time.Sleep(20 * time.Millisecond) // wait for TTL to expire
+	assert.False(t, cache.isDuplicate("C1:111.000"), "occurrence after TTL expiry should not be a duplicate")
+}
+
+// TestHandleSlackEvent_Dedup_SecondEventIgnored verifies that a duplicate Slack event
+// (same channel + thread key within TTL) is ignored with HTTP 200 and no new session.
+func TestHandleSlackEvent_Dedup_SecondEventIgnored(t *testing.T) {
+	const (
+		signingSecret = "dedup-test-secret"
+		channelID     = "C-dedup"
+	)
+
+	repo := newMockSlackBotRepository()
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, "", "", nil, "")
+
+	body := buildSlackEventPayloadWithTs(channelID, "hello", "111.111")
+
+	// First request: should create a session
+	ctx1, rec1 := newSlackEchoContext(body, signingSecret, "default")
+	require.NoError(t, handler.HandleSlackEvent(ctx1))
+	assert.Equal(t, http.StatusOK, rec1.Code)
+	require.Len(t, sessionMgr.createdSessions, 1, "first event should create a session")
+
+	// Second request: same channel + ts (threadKey) → should be ignored
+	ctx2, rec2 := newSlackEchoContext(body, signingSecret, "default")
+	require.NoError(t, handler.HandleSlackEvent(ctx2))
+	assert.Equal(t, http.StatusOK, rec2.Code)
+	assert.Len(t, sessionMgr.createdSessions, 1, "duplicate event should not create another session")
+
+	var respBody map[string]string
+	require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &respBody))
+	assert.Equal(t, "duplicate event ignored", respBody["message"])
+}
+
+// TestHandleSlackEvent_Dedup_DifferentThreadsAllowed verifies that events from different
+// threads in the same channel are each processed (not deduplicated against each other).
+func TestHandleSlackEvent_Dedup_DifferentThreadsAllowed(t *testing.T) {
+	const (
+		signingSecret = "dedup-test-secret2"
+		channelID     = "C-dedup2"
+	)
+
+	repo := newMockSlackBotRepository()
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, signingSecret, "", "", nil, "")
+
+	// Two distinct messages (different ts) in the same channel
+	body1 := buildSlackEventPayloadWithTs(channelID, "msg1", "111.111")
+	body2 := buildSlackEventPayloadWithTs(channelID, "msg2", "222.222")
+
+	ctx1, rec1 := newSlackEchoContext(body1, signingSecret, "default")
+	require.NoError(t, handler.HandleSlackEvent(ctx1))
+	assert.Equal(t, http.StatusOK, rec1.Code)
+
+	ctx2, rec2 := newSlackEchoContext(body2, signingSecret, "default")
+	require.NoError(t, handler.HandleSlackEvent(ctx2))
+	assert.Equal(t, http.StatusOK, rec2.Code)
+
+	assert.Len(t, sessionMgr.createdSessions, 2, "events with different thread keys should each create a session")
 }
 
 // TestHandleSlackEvent_DefaultID_NoBotMatch_FallsThrough verifies that when no registered bot

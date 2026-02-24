@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -24,7 +26,50 @@ const (
 	slackBotDefaultID = "default"
 	// defaultSlackAgentType is the default agent type for SlackBot sessions
 	defaultSlackAgentType = "claude-agentapi"
+	// slackEventDedupeTTL is the deduplication window for Slack events.
+	// Events with the same channel+thread key within this window are ignored.
+	slackEventDedupeTTL = 5 * time.Minute
 )
+
+// eventDedupeCache provides in-memory deduplication of Slack events within a configurable
+// time window. It prevents duplicate processing caused by Slack's at-least-once delivery.
+type eventDedupeCache struct {
+	mu      sync.Mutex
+	entries map[string]time.Time
+	ttl     time.Duration
+}
+
+// newEventDedupeCache creates a new eventDedupeCache with the given TTL.
+func newEventDedupeCache(ttl time.Duration) *eventDedupeCache {
+	return &eventDedupeCache{
+		entries: make(map[string]time.Time),
+		ttl:     ttl,
+	}
+}
+
+// isDuplicate returns true if the key was already seen within the TTL window.
+// As a side effect, it records the key when it is first seen (or after the TTL has expired).
+// Expired entries are cleaned up on each call to prevent unbounded memory growth.
+func (c *eventDedupeCache) isDuplicate(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+
+	// Clean up expired entries
+	for k, t := range c.entries {
+		if now.Sub(t) >= c.ttl {
+			delete(c.entries, k)
+		}
+	}
+
+	if t, ok := c.entries[key]; ok && now.Sub(t) < c.ttl {
+		return true // seen within TTL — duplicate
+	}
+
+	c.entries[key] = now
+	return false
+}
 
 // SlackBotEventHandler handles incoming Slack events and manages sessions
 type SlackBotEventHandler struct {
@@ -39,6 +84,8 @@ type SlackBotEventHandler struct {
 	// baseURL is used to construct session URLs posted back to Slack threads.
 	// If empty, NOTIFICATION_BASE_URL env var is checked as a fallback.
 	baseURL string
+	// dedupeCache deduplicates Slack events by channel+thread key within slackEventDedupeTTL.
+	dedupeCache *eventDedupeCache
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -60,6 +107,7 @@ func NewSlackBotEventHandler(
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
 		sigVerifier:               webhook.NewSlackSignatureVerifier(),
 		baseURL:                   baseURL,
+		dedupeCache:               newEventDedupeCache(slackEventDedupeTTL),
 	}
 }
 
@@ -200,6 +248,14 @@ func (h *SlackBotEventHandler) HandleSlackEvent(ctx echo.Context) error {
 
 	channel := event.Channel
 	log.Printf("[SLACKBOT] Processing event: id=%s, type=%s, channel=%s, thread=%s", id, event.Type, channel, threadKey)
+
+	// Deduplicate: if the same channel+thread combination has been processed within the TTL,
+	// ignore this event. This guards against Slack's at-least-once event delivery retries.
+	dedupeKey := channel + ":" + threadKey
+	if h.dedupeCache.isDuplicate(dedupeKey) {
+		log.Printf("[SLACKBOT] Duplicate event ignored (within %s window): id=%s, channel=%s, thread=%s", slackEventDedupeTTL, id, channel, threadKey)
+		return ctx.JSON(http.StatusOK, map[string]string{"message": "duplicate event ignored"})
+	}
 
 	// Build payload map for template rendering
 	payloadMap := map[string]interface{}{
