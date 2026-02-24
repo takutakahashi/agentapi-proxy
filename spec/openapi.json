@@ -1479,7 +1479,7 @@
     "/slackbots": {
       "post": {
         "summary": "Create a new SlackBot",
-        "description": "Creates a new SlackBot configuration. Each SlackBot corresponds to a Slack App installation and receives a unique hook URL at /hooks/slack/{id}. signing_secret is optional if the server has a default signing secret configured (AGENTAPI_SLACK_SIGNING_SECRET environment variable).",
+        "description": "Creates a new SlackBot configuration. Each SlackBot corresponds to a Slack App installation and receives a unique hook URL at /hooks/slack/{id}. signing_secret is optional.",
         "operationId": "createSlackBot",
         "tags": [
           "SlackBots"
@@ -4529,7 +4529,7 @@
         },
         "signing_secret": {
           "type": "string",
-          "description": "Slack App signing secret for verifying event payloads. Optional if the server has a default signing secret configured (AGENTAPI_SLACK_SIGNING_SECRET). If omitted and no server default is configured, a 400 error is returned.",
+          "description": "Slack App signing secret for verifying event payloads. Optional.",
           "example": "your-slack-signing-secret"
         },
         "bot_token_secret_name": {

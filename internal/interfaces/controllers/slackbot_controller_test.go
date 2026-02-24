@@ -219,16 +219,17 @@ func TestCreateSlackBot_MissingName(t *testing.T) {
 
 func TestCreateSlackBot_MissingSigningSecretAndNoDefault(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	// No default signing secret configured
+	// No default signing secret configured — signing_secret is no longer required
 	controller := NewSlackBotController(repo, "", "")
 
-	c, _ := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
+	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
 		Name: "My Bot",
-		// No signing_secret, no server default
+		// No signing_secret, no server default — should succeed
 	}, "user-1")
 
 	err := controller.CreateSlackBot(c)
-	assertHTTPError(t, err, http.StatusBadRequest)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, rec.Code)
 }
 
 func TestCreateSlackBot_Unauthenticated(t *testing.T) {

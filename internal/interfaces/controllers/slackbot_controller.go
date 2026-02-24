@@ -109,23 +109,22 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
 
-	// Resolve signing secret: use request value if provided, fall back to server default
-	signingSecret := req.SigningSecret
-	if signingSecret == "" {
-		if c.defaultSigningSecret == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "signing_secret is required (no server default configured)")
-		}
-		signingSecret = c.defaultSigningSecret
-	}
-
 	userID := getSlackBotUserID(ctx)
 	if userID == "" {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
+	// Use request signing secret if provided, fall back to server default
+	signingSecret := req.SigningSecret
+	if signingSecret == "" {
+		signingSecret = c.defaultSigningSecret
+	}
+
 	id := uuid.New().String()
 	bot := entities.NewSlackBot(id, req.Name, userID)
-	bot.SetSigningSecret(signingSecret)
+	if signingSecret != "" {
+		bot.SetSigningSecret(signingSecret)
+	}
 
 	if req.Scope != "" {
 		bot.SetScope(req.Scope)
