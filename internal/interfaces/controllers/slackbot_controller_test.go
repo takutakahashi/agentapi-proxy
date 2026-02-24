@@ -159,11 +159,10 @@ func makeSlackBotEchoContextWithTeams(t *testing.T, method, path string, body in
 
 func TestCreateSlackBot_Success(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "https://example.com", "")
+	controller := NewSlackBotController(repo)
 
 	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:          "My Bot",
-		SigningSecret: "secret-abc123",
+		Name: "My Bot",
 	}, "user-1")
 
 	err := controller.CreateSlackBot(c)
@@ -176,40 +175,13 @@ func TestCreateSlackBot_Success(t *testing.T) {
 	assert.Equal(t, "user-1", resp.UserID)
 	assert.NotEmpty(t, resp.ID)
 	assert.Equal(t, entities.SlackBotStatusActive, resp.Status)
-	// Signing secret must be masked
-	assert.Contains(t, resp.SigningSecret, "****")
-	assert.NotEqual(t, "secret-abc123", resp.SigningSecret)
-	// Hook URL must be set
-	assert.Contains(t, resp.HookURL, "/hooks/slack/")
-	assert.Contains(t, resp.HookURL, "https://example.com")
-}
-
-func TestCreateSlackBot_UsesServerDefaultSigningSecret(t *testing.T) {
-	repo := newMockSlackBotRepository()
-	// Controller configured with a default signing secret
-	controller := NewSlackBotController(repo, "", "default-server-secret")
-
-	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name: "Bot Without Secret",
-		// No signing_secret in request — should fall back to server default
-	}, "user-1")
-
-	err := controller.CreateSlackBot(c)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusCreated, rec.Code)
-
-	var resp SlackBotResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Equal(t, "Bot Without Secret", resp.Name)
-	assert.Contains(t, resp.SigningSecret, "****")
 }
 
 func TestCreateSlackBot_MissingName(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "", "default-secret")
+	controller := NewSlackBotController(repo)
 
 	c, _ := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		SigningSecret: "secret",
 		// Name is missing
 	}, "user-1")
 
@@ -217,28 +189,12 @@ func TestCreateSlackBot_MissingName(t *testing.T) {
 	assertHTTPError(t, err, http.StatusBadRequest)
 }
 
-func TestCreateSlackBot_MissingSigningSecretAndNoDefault(t *testing.T) {
-	repo := newMockSlackBotRepository()
-	// No default signing secret configured — signing_secret is no longer required
-	controller := NewSlackBotController(repo, "", "")
-
-	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name: "My Bot",
-		// No signing_secret, no server default — should succeed
-	}, "user-1")
-
-	err := controller.CreateSlackBot(c)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusCreated, rec.Code)
-}
-
 func TestCreateSlackBot_Unauthenticated(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "", "default-secret")
+	controller := NewSlackBotController(repo)
 
 	c, _ := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:          "My Bot",
-		SigningSecret: "secret",
+		Name: "My Bot",
 	}, "") // no user_id
 
 	err := controller.CreateSlackBot(c)
@@ -247,11 +203,10 @@ func TestCreateSlackBot_Unauthenticated(t *testing.T) {
 
 func TestCreateSlackBot_WithAllOptionalFields(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "https://proxy.example.com", "")
+	controller := NewSlackBotController(repo)
 
 	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
 		Name:                "Full Bot",
-		SigningSecret:       "supersecret",
 		BotTokenSecretName:  "my-k8s-secret",
 		BotTokenSecretKey:   "xoxb-token",
 		AllowedEventTypes:   []string{"message", "app_mention"},
@@ -286,13 +241,12 @@ func TestCreateSlackBot_WithAllOptionalFields(t *testing.T) {
 
 func TestCreateSlackBot_WithTeamScope(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "", "")
+	controller := NewSlackBotController(repo)
 
 	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:          "Team Bot",
-		SigningSecret: "team-secret",
-		Scope:         entities.ScopeTeam,
-		TeamID:        "myorg/backend",
+		Name:   "Team Bot",
+		Scope:  entities.ScopeTeam,
+		TeamID: "myorg/backend",
 	}, "user-1")
 
 	err := controller.CreateSlackBot(c)
@@ -308,11 +262,10 @@ func TestCreateSlackBot_WithTeamScope(t *testing.T) {
 func TestCreateSlackBot_StorageError(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	repo.errOn = "Create"
-	controller := NewSlackBotController(repo, "", "")
+	controller := NewSlackBotController(repo)
 
 	c, _ := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:          "My Bot",
-		SigningSecret: "secret",
+		Name: "My Bot",
 	}, "user-1")
 
 	err := controller.CreateSlackBot(c)
@@ -321,11 +274,10 @@ func TestCreateSlackBot_StorageError(t *testing.T) {
 
 func TestCreateSlackBot_DefaultMaxSessions(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "", "")
+	controller := NewSlackBotController(repo)
 
 	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:          "My Bot",
-		SigningSecret: "secret",
+		Name: "My Bot",
 		// MaxSessions not set → should default to 10
 	}, "user-1")
 
@@ -338,60 +290,17 @@ func TestCreateSlackBot_DefaultMaxSessions(t *testing.T) {
 	assert.Equal(t, 10, resp.MaxSessions)
 }
 
-func TestCreateSlackBot_HookURLWithoutBaseURL(t *testing.T) {
-	repo := newMockSlackBotRepository()
-	// No base URL configured
-	controller := NewSlackBotController(repo, "", "")
-
-	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:          "My Bot",
-		SigningSecret: "secret",
-	}, "user-1")
-
-	err := controller.CreateSlackBot(c)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusCreated, rec.Code)
-
-	var resp SlackBotResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	// Without base URL, hook URL should still contain /hooks/slack/<id>
-	assert.Contains(t, resp.HookURL, "/hooks/slack/")
-	assert.NotEmpty(t, resp.ID)
-	assert.True(t, resp.HookURL == "/hooks/slack/"+resp.ID)
-}
-
-func TestCreateSlackBot_RequestSigningSecretTakesPrecedenceOverDefault(t *testing.T) {
-	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "", "default-secret")
-
-	// Request provides its own signing secret
-	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:          "My Bot",
-		SigningSecret: "request-secret-xyz",
-	}, "user-1")
-
-	err := controller.CreateSlackBot(c)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusCreated, rec.Code)
-
-	var resp SlackBotResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	// Masked secret should show last 4 chars of "request-secret-xyz" → "...-xyz"
-	assert.Equal(t, "****-xyz", resp.SigningSecret)
-}
-
 // --- ListSlackBots team visibility tests ---
 
 // TestListSlackBots_TeamMemberSeesTeamBot verifies that a team member can see
 // a team-scoped bot created by another user in the same team.
 func TestListSlackBots_TeamMemberSeesTeamBot(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "", "default-secret")
+	controller := NewSlackBotController(repo)
 
 	// user-a creates a team-scoped bot for "myorg/backend"
 	botID := "bot-team-123"
 	teamBot := entities.NewSlackBot(botID, "Team Bot", "user-a")
-	teamBot.SetSigningSecret("some-secret-value")
 	teamBot.SetScope(entities.ScopeTeam)
 	teamBot.SetTeamID("myorg/backend")
 	repo.bots[botID] = teamBot
@@ -412,11 +321,10 @@ func TestListSlackBots_TeamMemberSeesTeamBot(t *testing.T) {
 // cannot see the team-scoped bot.
 func TestListSlackBots_NonTeamMemberCannotSeeTeamBot(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "", "default-secret")
+	controller := NewSlackBotController(repo)
 
 	botID := "bot-team-456"
 	teamBot := entities.NewSlackBot(botID, "Team Bot", "user-a")
-	teamBot.SetSigningSecret("some-secret-value")
 	teamBot.SetScope(entities.ScopeTeam)
 	teamBot.SetTeamID("myorg/backend")
 	repo.bots[botID] = teamBot
@@ -435,11 +343,10 @@ func TestListSlackBots_NonTeamMemberCannotSeeTeamBot(t *testing.T) {
 // TestListSlackBots_CreatorSeesOwnTeamBot verifies that the creator can see their team bot.
 func TestListSlackBots_CreatorSeesOwnTeamBot(t *testing.T) {
 	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "", "default-secret")
+	controller := NewSlackBotController(repo)
 
 	botID := "bot-team-789"
 	teamBot := entities.NewSlackBot(botID, "Team Bot", "user-a")
-	teamBot.SetSigningSecret("some-secret-value")
 	teamBot.SetScope(entities.ScopeTeam)
 	teamBot.SetTeamID("myorg/backend")
 	repo.bots[botID] = teamBot
@@ -453,82 +360,4 @@ func TestListSlackBots_CreatorSeesOwnTeamBot(t *testing.T) {
 	var bots []SlackBotResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
 	assert.Len(t, bots, 1, "creator should see their own team-scoped bot")
-}
-
-// --- hookURL "default" behavior tests ---
-
-// TestCreateSlackBot_DefaultTokenAndSecret_HookURLIsDefault verifies that when a bot is created
-// without a custom bot token and without a custom signing secret (uses server defaults),
-// the returned hook URL is the shared /hooks/slack/default endpoint.
-func TestCreateSlackBot_DefaultTokenAndSecret_HookURLIsDefault(t *testing.T) {
-	repo := newMockSlackBotRepository()
-	// Controller configured with a default signing secret and base URL
-	controller := NewSlackBotController(repo, "https://proxy.example.com", "server-default-secret")
-
-	// Create bot without signing_secret and without bot_token_secret_name
-	// → will use server default signing secret, no custom bot token
-	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name: "Default Bot",
-		// SigningSecret omitted → falls back to server default
-		// BotTokenSecretName omitted → uses server default
-	}, "user-1")
-
-	err := controller.CreateSlackBot(c)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusCreated, rec.Code)
-
-	var resp SlackBotResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	// Hook URL should point to the /default shared endpoint
-	assert.Equal(t, "https://proxy.example.com/hooks/slack/default", resp.HookURL,
-		"bot using server defaults should share the /default endpoint")
-}
-
-// TestCreateSlackBot_CustomSigningSecret_HookURLIsUUID verifies that a bot with a
-// custom signing secret gets a UUID-based hook URL (not the default endpoint).
-func TestCreateSlackBot_CustomSigningSecret_HookURLIsUUID(t *testing.T) {
-	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "https://proxy.example.com", "server-default-secret")
-
-	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name:          "Custom Secret Bot",
-		SigningSecret: "my-custom-signing-secret", // custom → UUID URL
-	}, "user-1")
-
-	err := controller.CreateSlackBot(c)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusCreated, rec.Code)
-
-	var resp SlackBotResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	// Hook URL should be UUID-based, NOT /default
-	assert.NotContains(t, resp.HookURL, "/hooks/slack/default",
-		"bot with custom signing secret must not share the default endpoint")
-	assert.Contains(t, resp.HookURL, "/hooks/slack/"+resp.ID,
-		"bot with custom signing secret should have a UUID-based hook URL")
-}
-
-// TestCreateSlackBot_CustomBotToken_HookURLIsUUID verifies that a bot with a
-// custom bot token secret gets a UUID-based hook URL even when signing secret is default.
-func TestCreateSlackBot_CustomBotToken_HookURLIsUUID(t *testing.T) {
-	repo := newMockSlackBotRepository()
-	controller := NewSlackBotController(repo, "https://proxy.example.com", "server-default-secret")
-
-	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
-		Name: "Custom Token Bot",
-		// SigningSecret omitted → uses server default
-		BotTokenSecretName: "my-k8s-secret", // custom bot token → UUID URL
-	}, "user-1")
-
-	err := controller.CreateSlackBot(c)
-	require.NoError(t, err)
-	assert.Equal(t, http.StatusCreated, rec.Code)
-
-	var resp SlackBotResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	// Hook URL should be UUID-based, NOT /default
-	assert.NotContains(t, resp.HookURL, "/hooks/slack/default",
-		"bot with custom bot token must not share the default endpoint")
-	assert.Contains(t, resp.HookURL, "/hooks/slack/"+resp.ID,
-		"bot with custom bot token should have a UUID-based hook URL")
 }

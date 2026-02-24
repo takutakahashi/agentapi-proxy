@@ -421,11 +421,7 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
 
 	// Create and register SlackBot management handlers (no event reception - handled by Socket Mode)
-	slackbotHandlers := slackbot.NewHandlers(
-		slackbotRepo,
-		configData.Webhook.BaseURL,
-		configData.Slack.SigningSecret,
-	)
+	slackbotHandlers := slackbot.NewHandlers(slackbotRepo)
 	proxyServer.AddCustomHandler(slackbotHandlers)
 
 	log.Printf("[SLACKBOT_HANDLERS] SlackBot management handlers registered successfully")
@@ -464,7 +460,6 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 	eventHandler := controllers.NewSlackBotEventHandler(
 		slackbotRepo,
 		proxyServer.GetSessionManager(),
-		configData.Slack.SigningSecret,
 		configData.KubernetesSession.SlackBotTokenSecretName,
 		configData.KubernetesSession.SlackBotTokenSecretKey,
 		channelResolver,

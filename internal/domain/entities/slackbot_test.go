@@ -46,17 +46,8 @@ func TestSlackBot_Validate(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			name: "valid bot",
-			modify: func(b *SlackBot) {
-				b.SetSigningSecret("secret123")
-			},
-			wantErr: false,
-		},
-		{
-			name: "missing signing_secret is allowed (Socket Mode does not require it)",
-			modify: func(b *SlackBot) {
-				// no signing secret set — valid in Socket Mode
-			},
+			name:    "valid bot",
+			modify:  func(b *SlackBot) {},
 			wantErr: false,
 		},
 	}
@@ -120,7 +111,6 @@ func TestSlackBot_Validate_RequiredFields(t *testing.T) {
 				id:            tt.id,
 				name:          tt.botName,
 				userID:        tt.userID,
-				signingSecret: "secret",
 				maxSessions:   10,
 				status:        SlackBotStatusActive,
 				scope:         ScopeUser,
@@ -259,46 +249,6 @@ func TestSlackBot_IsChannelNameAllowed(t *testing.T) {
 	}
 }
 
-func TestSlackBot_MaskSigningSecret(t *testing.T) {
-	tests := []struct {
-		name   string
-		secret string
-		want   string
-	}{
-		{
-			name:   "normal secret",
-			secret: "abcdefghijklmnop",
-			want:   "****mnop",
-		},
-		{
-			name:   "short secret (4 chars)",
-			secret: "abcd",
-			want:   "****",
-		},
-		{
-			name:   "very short secret (3 chars)",
-			secret: "abc",
-			want:   "****",
-		},
-		{
-			name:   "empty secret",
-			secret: "",
-			want:   "****",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			bot := NewSlackBot("id-1", "bot", "user-1")
-			bot.SetSigningSecret(tt.secret)
-			got := bot.MaskSigningSecret()
-			if got != tt.want {
-				t.Errorf("MaskSigningSecret() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestSlackBot_BotTokenSecretKey_Default(t *testing.T) {
 	bot := NewSlackBot("id-1", "bot", "user-1")
 	// When not set, should return default "bot-token"
@@ -355,8 +305,8 @@ func TestErrSlackBotNotFound(t *testing.T) {
 }
 
 func TestErrInvalidSlackBot(t *testing.T) {
-	err := ErrInvalidSlackBot{Field: "signing_secret", Message: "signing_secret is required"}
-	if !strings.Contains(err.Error(), "signing_secret") {
-		t.Errorf("ErrInvalidSlackBot.Error() = %q, want to contain 'signing_secret'", err.Error())
+	err := ErrInvalidSlackBot{Field: "name", Message: "name is required"}
+	if !strings.Contains(err.Error(), "name") {
+		t.Errorf("ErrInvalidSlackBot.Error() = %q, want to contain 'name'", err.Error())
 	}
 }

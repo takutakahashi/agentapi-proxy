@@ -13,14 +13,12 @@ import (
 
 // SlackBotController handles SlackBot management API requests
 type SlackBotController struct {
-	repo                 repositories.SlackBotRepository
-	baseURL              string
-	defaultSigningSecret string
+	repo repositories.SlackBotRepository
 }
 
 // NewSlackBotController creates a new SlackBotController
-func NewSlackBotController(repo repositories.SlackBotRepository, baseURL string, defaultSigningSecret string) *SlackBotController {
-	return &SlackBotController{repo: repo, baseURL: baseURL, defaultSigningSecret: defaultSigningSecret}
+func NewSlackBotController(repo repositories.SlackBotRepository) *SlackBotController {
+	return &SlackBotController{repo: repo}
 }
 
 // --- Request/Response DTOs ---
@@ -30,7 +28,6 @@ type CreateSlackBotRequest struct {
 	Name                string                 `json:"name"`
 	Scope               entities.ResourceScope `json:"scope,omitempty"`
 	TeamID              string                 `json:"team_id,omitempty"`
-	SigningSecret       string                 `json:"signing_secret"`
 	BotTokenSecretName  string                 `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey   string                 `json:"bot_token_secret_key,omitempty"`
 	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
@@ -43,7 +40,6 @@ type CreateSlackBotRequest struct {
 type UpdateSlackBotRequest struct {
 	Name                string                  `json:"name,omitempty"`
 	Status              entities.SlackBotStatus `json:"status,omitempty"`
-	SigningSecret       string                  `json:"signing_secret,omitempty"`
 	BotTokenSecretName  string                  `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey   string                  `json:"bot_token_secret_key,omitempty"`
 	AllowedEventTypes   []string                `json:"allowed_event_types,omitempty"`
@@ -75,8 +71,6 @@ type SlackBotResponse struct {
 	Scope               entities.ResourceScope  `json:"scope,omitempty"`
 	TeamID              string                  `json:"team_id,omitempty"`
 	Status              entities.SlackBotStatus `json:"status"`
-	SigningSecret       string                  `json:"signing_secret"` // masked
-	HookURL             string                  `json:"hook_url"`
 	BotTokenSecretName  string                  `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey   string                  `json:"bot_token_secret_key,omitempty"`
 	AllowedEventTypes   []string                `json:"allowed_event_types,omitempty"`
@@ -114,17 +108,8 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
-	// Use request signing secret if provided, fall back to server default
-	signingSecret := req.SigningSecret
-	if signingSecret == "" {
-		signingSecret = c.defaultSigningSecret
-	}
-
 	id := uuid.New().String()
 	bot := entities.NewSlackBot(id, req.Name, userID)
-	if signingSecret != "" {
-		bot.SetSigningSecret(signingSecret)
-	}
 
 	if req.Scope != "" {
 		bot.SetScope(req.Scope)
@@ -243,9 +228,6 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 	if req.Status != "" {
 		bot.SetStatus(req.Status)
 	}
-	if req.SigningSecret != "" {
-		bot.SetSigningSecret(req.SigningSecret)
-	}
 	if req.BotTokenSecretName != "" {
 		bot.SetBotTokenSecretName(req.BotTokenSecretName)
 	}
@@ -301,22 +283,6 @@ func (c *SlackBotController) DeleteSlackBot(ctx echo.Context) error {
 
 // --- Helpers ---
 
-// hookURL returns the webhook URL for a SlackBot.
-// If the bot uses neither a custom bot token nor a custom signing secret
-// (i.e., both come from the server defaults), it shares the /default endpoint.
-func (c *SlackBotController) hookURL(bot *entities.SlackBot) string {
-	id := bot.ID()
-	if c.defaultSigningSecret != "" &&
-		bot.BotTokenSecretName() == "" &&
-		bot.SigningSecret() == c.defaultSigningSecret {
-		id = slackBotDefaultID
-	}
-	if c.baseURL != "" {
-		return c.baseURL + "/hooks/slack/" + id
-	}
-	return "/hooks/slack/" + id
-}
-
 func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotResponse {
 	resp := &SlackBotResponse{
 		ID:                  bot.ID(),
@@ -325,8 +291,6 @@ func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotRespons
 		Scope:               bot.Scope(),
 		TeamID:              bot.TeamID(),
 		Status:              bot.Status(),
-		SigningSecret:       bot.MaskSigningSecret(),
-		HookURL:             c.hookURL(bot),
 		BotTokenSecretName:  bot.BotTokenSecretName(),
 		BotTokenSecretKey:   bot.BotTokenSecretKey(),
 		AllowedEventTypes:   bot.AllowedEventTypes(),
