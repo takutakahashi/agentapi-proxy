@@ -209,20 +209,6 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
-	// Check for duplicate session: if a session already exists for this channel+thread,
-	// skip creation to avoid multiple sessions triggered by subsequent messages in the
-	// same thread (e.g. replies after the initial message).
-	dupFilter := entities.SessionFilter{
-		Tags: map[string]string{
-			"slack_channel":   channel,
-			"slack_thread_ts": threadKey,
-		},
-	}
-	if existing := h.sessionManager.ListSessions(dupFilter); len(existing) > 0 {
-		log.Printf("[SLACKBOT] Session already exists for channel=%s thread=%s, skipping", channel, threadKey)
-		return nil
-	}
-
 	// Check session limit
 	if bot != nil {
 		limitFilter := entities.SessionFilter{
