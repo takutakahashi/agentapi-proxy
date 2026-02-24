@@ -98,6 +98,7 @@ func (w *SlackSocketWorker) handleEvents(ctx context.Context, client *socketmode
 			if !ok {
 				return
 			}
+			log.Printf("[SOCKET_WORKER] Raw event from Slack: botID=%s type=%s", w.botID, evt.Type)
 			w.dispatchEvent(ctx, client, evt)
 		}
 	}
