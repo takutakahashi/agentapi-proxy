@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 
 // mockSessionManager implements repositories.SessionManager for testing
 type mockSessionManager struct {
+	mu               sync.Mutex
 	createdSessions  []*mockSession
 	createErr        error
 	sentMessages     []string
@@ -45,7 +47,9 @@ func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *en
 		tags:  req.Tags,
 		scope: req.Scope,
 	}
+	m.mu.Lock()
 	m.createdSessions = append(m.createdSessions, sess)
+	m.mu.Unlock()
 	return sess, nil
 }
 
@@ -64,6 +68,20 @@ func (m *mockSessionManager) SendMessage(_ context.Context, _ string, msg string
 
 func (m *mockSessionManager) GetMessages(_ context.Context, _ string) ([]portrepos.Message, error) {
 	return nil, nil
+}
+
+// createdCount returns the number of sessions created so far (thread-safe).
+func (m *mockSessionManager) createdCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.createdSessions)
+}
+
+// getCreatedSession returns the created session at index i (thread-safe).
+func (m *mockSessionManager) getCreatedSession(i int) *mockSession {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createdSessions[i]
 }
 
 // mockSession implements entities.Session
@@ -372,10 +390,10 @@ func TestHandleSlackEvent_DefaultID_ResolveBotByChannel_UsesCorrectBotID(t *test
 
 	// Verify the session was created with the correct bot's UUID tag (async)
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
-		return len(sessionMgr.createdSessions) == 1
+		return sessionMgr.createdCount() == 1
 	})
 	require.True(t, ok, "should have created one session")
-	createdTags := sessionMgr.createdSessions[0].tags
+	createdTags := sessionMgr.getCreatedSession(0).tags
 	assert.Equal(t, "registered-bot-uuid", createdTags["slackbot_id"],
 		"session must be tagged with the registered bot's UUID, not 'default'")
 }
@@ -423,7 +441,7 @@ func TestHandleSlackEvent_DefaultID_BotIsPaused_Rejected(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
 	assert.Equal(t, "bot paused", respBody["message"],
 		"paused bot should return 'bot paused' message even when accessed via default endpoint")
-	assert.Empty(t, sessionMgr.createdSessions, "no session should be created for paused bot")
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no session should be created for paused bot")
 }
 
 // ---- Tests for event deduplication (session-state based + pending map) ----
@@ -456,7 +474,7 @@ func TestHandleSlackEvent_IgnoresIfActiveSessionExists(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &respBody))
 	assert.Equal(t, "session already running", respBody["message"])
 	assert.Equal(t, "existing-session-id", respBody["session_id"])
-	assert.Empty(t, sessionMgr.createdSessions, "no new session should be created when one is already active")
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no new session should be created when one is already active")
 }
 
 // TestHandleSlackEvent_PendingRequestIgnored verifies that a Slack retry arriving while
@@ -518,7 +536,7 @@ func TestHandleSlackEvent_AsyncSessionCreation(t *testing.T) {
 
 	// Session creation is async; wait for the goroutine to complete
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
-		return len(sessionMgr.createdSessions) == 1
+		return sessionMgr.createdCount() == 1
 	})
 	assert.True(t, ok, "session should be created asynchronously")
 
@@ -553,7 +571,7 @@ func TestHandleSlackEvent_DifferentThreadsAllowed(t *testing.T) {
 
 	// Both events should result in session creation (async), wait briefly
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
-		return len(sessionMgr.createdSessions) == 2
+		return sessionMgr.createdCount() == 2
 	})
 	assert.True(t, ok, "events with different thread keys should each create a session")
 }
@@ -599,10 +617,10 @@ func TestHandleSlackEvent_DefaultID_NoBotMatch_FallsThrough(t *testing.T) {
 
 	// When no bot is matched, session is created with fallback slackbot_id="default" (async)
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
-		return len(sessionMgr.createdSessions) == 1
+		return sessionMgr.createdCount() == 1
 	})
 	require.True(t, ok, "session should still be created with default fallback")
-	createdTags := sessionMgr.createdSessions[0].tags
+	createdTags := sessionMgr.getCreatedSession(0).tags
 	assert.Equal(t, "default", createdTags["slackbot_id"],
 		"when no bot is matched, session should be tagged with 'default'")
 }
