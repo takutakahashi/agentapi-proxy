@@ -240,6 +240,7 @@ func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *en
 		}
 		req.AgentType = schedule.SessionConfig.Params.AgentType
 		req.SlackParams = schedule.SessionConfig.Params.Slack
+		req.Oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
 	// Extract repository information from tags

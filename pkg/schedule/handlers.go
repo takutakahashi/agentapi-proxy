@@ -159,6 +159,22 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		}
 	}
 
+	// For user-scoped schedules, auto-populate github_token from auth header if not provided
+	sessionConfig := req.SessionConfig
+	if req.Scope != entities.ScopeTeam {
+		if sessionConfig.Params == nil {
+			sessionConfig.Params = &entities.SessionParams{}
+		}
+		if sessionConfig.Params.GithubToken == "" {
+			if cfg := auth.GetConfigFromContext(c); cfg != nil && cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
+				tokenHeader := c.Request().Header.Get(cfg.Auth.GitHub.TokenHeader)
+				if token := auth.ExtractTokenFromHeader(tokenHeader); token != "" {
+					sessionConfig.Params.GithubToken = token
+				}
+			}
+		}
+	}
+
 	// Create schedule
 	schedule := &Schedule{
 		ID:            uuid.New().String(),
@@ -170,7 +186,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		ScheduledAt:   req.ScheduledAt,
 		CronExpr:      req.CronExpr,
 		Timezone:      timezone,
-		SessionConfig: req.SessionConfig,
+		SessionConfig: sessionConfig,
 	}
 
 	// Calculate next execution time
@@ -457,6 +473,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		req.GithubToken = schedule.SessionConfig.Params.GithubToken
 		req.AgentType = schedule.SessionConfig.Params.AgentType
 		req.SlackParams = schedule.SessionConfig.Params.Slack
+		req.Oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
 	// Extract repository information from tags
