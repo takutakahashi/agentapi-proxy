@@ -3046,11 +3046,23 @@ func expandSettingsToEnv(cfg *agentapiSettingsJSON) map[string]string {
 	case "bedrock":
 		env["CLAUDE_CODE_USE_BEDROCK"] = "1"
 		if cfg.Bedrock != nil {
-			env["ANTHROPIC_MODEL"] = cfg.Bedrock.Model
-			env["AWS_ACCESS_KEY_ID"] = cfg.Bedrock.AccessKeyID
-			env["AWS_SECRET_ACCESS_KEY"] = cfg.Bedrock.SecretAccessKey
-			env["AWS_ROLE_ARN"] = cfg.Bedrock.RoleARN
-			env["AWS_PROFILE"] = cfg.Bedrock.Profile
+			// Only set each credential if non-empty, so that a user settings with
+			// auth_mode=bedrock but no credentials does not overwrite a team's valid credentials.
+			if cfg.Bedrock.Model != "" {
+				env["ANTHROPIC_MODEL"] = cfg.Bedrock.Model
+			}
+			if cfg.Bedrock.AccessKeyID != "" {
+				env["AWS_ACCESS_KEY_ID"] = cfg.Bedrock.AccessKeyID
+			}
+			if cfg.Bedrock.SecretAccessKey != "" {
+				env["AWS_SECRET_ACCESS_KEY"] = cfg.Bedrock.SecretAccessKey
+			}
+			if cfg.Bedrock.RoleARN != "" {
+				env["AWS_ROLE_ARN"] = cfg.Bedrock.RoleARN
+			}
+			if cfg.Bedrock.Profile != "" {
+				env["AWS_PROFILE"] = cfg.Bedrock.Profile
+			}
 		}
 	case "oauth":
 		env["CLAUDE_CODE_USE_BEDROCK"] = "0"
