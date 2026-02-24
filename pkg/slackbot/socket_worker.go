@@ -149,9 +149,18 @@ func (w *SlackSocketWorker) dispatchEvent(ctx context.Context, client *socketmod
 // processEventsAPIEvent converts a Slack SDK event to our internal payload format
 // and delegates to the event handler
 func (w *SlackSocketWorker) processEventsAPIEvent(ctx context.Context, eventsAPIEvent slackevents.EventsAPIEvent) {
-	// Marshal the SDK event to JSON then unmarshal into our internal payload struct.
-	// This decouples SDK types from our domain logic.
-	raw, err := json.Marshal(eventsAPIEvent)
+	// Marshal eventsAPIEvent.Data (which is *EventsAPICallbackEvent for event_callback type)
+	// rather than eventsAPIEvent itself.
+	//
+	// EventsAPIEvent has Data and InnerEvent fields with NO json tags, so they would
+	// serialize as "Data" and "InnerEvent" (Go field names). EventsAPICallbackEvent,
+	// on the other hand, has InnerEvent *json.RawMessage `json:"event"` which is
+	// the "event" key that our SlackPayload struct expects.
+	if eventsAPIEvent.Data == nil {
+		log.Printf("[SOCKET_WORKER] EventsAPI event has no data: botID=%s, type=%s", w.botID, eventsAPIEvent.Type)
+		return
+	}
+	raw, err := json.Marshal(eventsAPIEvent.Data)
 	if err != nil {
 		log.Printf("[SOCKET_WORKER] Failed to marshal Slack event: botID=%s, err=%v", w.botID, err)
 		return
