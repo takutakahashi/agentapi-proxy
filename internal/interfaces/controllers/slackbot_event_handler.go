@@ -267,10 +267,16 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		scope = bot.Scope()
 		userID = bot.UserID()
 		teamID = bot.TeamID()
-		// Use team memberships snapshotted at bot creation/update time so that
-		// team-level settings (MCP servers, env vars, Bedrock config, etc.) are
-		// merged into the session without any runtime user lookup.
-		teams = bot.Teams()
+		// Follow the same pattern as the schedule worker:
+		// - team-scoped bot: use only the bot's teamID as the sole team credential
+		//   so that exactly the team's settings (MCP, env, Bedrock, etc.) are applied.
+		// - user-scoped bot: use the explicit team list stored on the bot
+		//   (set at create/update time via the teams field).
+		if scope == entities.ScopeTeam && teamID != "" {
+			teams = []string{teamID}
+		} else {
+			teams = bot.Teams()
+		}
 	}
 
 	sessionID := uuid.New().String()
