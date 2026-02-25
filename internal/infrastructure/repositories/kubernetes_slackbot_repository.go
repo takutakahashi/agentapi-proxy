@@ -43,6 +43,7 @@ type slackBotJSON struct {
 	UserID              string                    `json:"user_id"`
 	Scope               entities.ResourceScope    `json:"scope,omitempty"`
 	TeamID              string                    `json:"team_id,omitempty"`
+	Teams               []string                  `json:"teams,omitempty"`
 	Status              entities.SlackBotStatus   `json:"status"`
 	BotTokenSecretName  string                    `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey   string                    `json:"bot_token_secret_key,omitempty"`
@@ -335,6 +336,9 @@ func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities
 	slackBot := entities.NewSlackBot(sbj.ID, sbj.Name, sbj.UserID)
 	slackBot.SetScope(sbj.Scope)
 	slackBot.SetTeamID(sbj.TeamID)
+	if len(sbj.Teams) > 0 {
+		slackBot.SetTeams(sbj.Teams)
+	}
 	slackBot.SetStatus(sbj.Status)
 	if sbj.BotTokenSecretName != "" {
 		slackBot.SetBotTokenSecretName(sbj.BotTokenSecretName)
@@ -370,6 +374,7 @@ func (r *KubernetesSlackBotRepository) entityToJSON(sb *entities.SlackBot) *slac
 		UserID:              sb.UserID(),
 		Scope:               sb.Scope(),
 		TeamID:              sb.TeamID(),
+		Teams:               sb.Teams(),
 		Status:              sb.Status(),
 		BotTokenSecretName:  sb.BotTokenSecretName(),
 		BotTokenSecretKey:   sb.BotTokenSecretKey(),

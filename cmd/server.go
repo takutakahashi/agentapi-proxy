@@ -555,11 +555,6 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 		configData.Webhook.BaseURL,
 		configData.Slack.DryRun,
 	)
-	// Wire user repository so the event handler can resolve the bot owner's team
-	// memberships and pass them to the session (for team-level settings merging).
-	if container := proxyServer.GetContainer(); container != nil {
-		eventHandler.SetUserRepository(container.UserRepo)
-	}
 	if configData.Slack.DryRun {
 		log.Printf("[SOCKET_MANAGER] Slack dry-run mode enabled: session creation and Slack posts will be logged only")
 	}

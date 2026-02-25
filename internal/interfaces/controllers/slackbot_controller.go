@@ -70,6 +70,7 @@ type SlackBotResponse struct {
 	UserID              string                  `json:"user_id"`
 	Scope               entities.ResourceScope  `json:"scope,omitempty"`
 	TeamID              string                  `json:"team_id,omitempty"`
+	Teams               []string                `json:"teams,omitempty"`
 	Status              entities.SlackBotStatus `json:"status"`
 	BotTokenSecretName  string                  `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey   string                  `json:"bot_token_secret_key,omitempty"`
@@ -134,6 +135,13 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	}
 	if req.SessionConfig != nil {
 		bot.SetSessionConfig(toEntitySessionConfig(req.SessionConfig))
+	}
+
+	// Snapshot the bot owner's current team memberships so that sessions created
+	// by this bot will automatically receive team-level settings (MCP servers,
+	// Bedrock config, env vars, etc.) without a runtime user lookup.
+	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {
+		bot.SetTeams(authzCtx.TeamScope.Teams)
 	}
 
 	if err := bot.Validate(); err != nil {
@@ -247,6 +255,12 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 		bot.SetSessionConfig(toEntitySessionConfig(req.SessionConfig))
 	}
 
+	// Refresh team memberships from the requester's current auth context so that
+	// any changes in GitHub team membership are picked up on the next bot update.
+	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {
+		bot.SetTeams(authzCtx.TeamScope.Teams)
+	}
+
 	if err := c.repo.Update(ctx.Request().Context(), bot); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update slackbot")
 	}
@@ -290,6 +304,7 @@ func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotRespons
 		UserID:              bot.UserID(),
 		Scope:               bot.Scope(),
 		TeamID:              bot.TeamID(),
+		Teams:               bot.Teams(),
 		Status:              bot.Status(),
 		BotTokenSecretName:  bot.BotTokenSecretName(),
 		BotTokenSecretKey:   bot.BotTokenSecretKey(),
