@@ -209,8 +209,8 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// Build initial message
 	initialMessage := h.buildMessage(bot, payloadMap, event.Text, false)
 
-	// Determine agent type (empty string = proxy default; bot session_config may override)
-	agentType := ""
+	// Determine agent type: default to "claude-agentapi"; bot session_config may override.
+	agentType := "claude-agentapi"
 	if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
 		if bot.SessionConfig().Params().AgentType != "" {
 			agentType = bot.SessionConfig().Params().AgentType
