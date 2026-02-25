@@ -30,6 +30,11 @@ type Schedule struct {
 	Scope entities.ResourceScope `json:"scope,omitempty"`
 	// TeamID is the team identifier (e.g., "org/team-slug") when Scope is "team"
 	TeamID string `json:"team_id,omitempty"`
+	// UserTeams is the list of GitHub team slugs the creating user belonged to at
+	// schedule creation time (e.g., ["org/team-a", "org/team-b"]).
+	// Used by the worker to inject team-level settings (Bedrock credentials, etc.)
+	// when executing user-scoped schedules without an HTTP request context.
+	UserTeams []string `json:"user_teams,omitempty"`
 	// Status is the current status of the schedule
 	Status ScheduleStatus `json:"status"`
 

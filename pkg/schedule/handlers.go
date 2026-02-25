@@ -175,6 +175,16 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		}
 	}
 
+	// For user-scoped schedules, capture the creator's team memberships so that
+	// the background worker can inject team-level settings (Bedrock, MCP, etc.)
+	// when executing the schedule without an HTTP auth context.
+	var userTeams []string
+	if req.Scope != entities.ScopeTeam {
+		if azCtx := auth.GetAuthorizationContext(c); azCtx != nil {
+			userTeams = azCtx.TeamScope.Teams
+		}
+	}
+
 	// Create schedule
 	schedule := &Schedule{
 		ID:            uuid.New().String(),
@@ -182,6 +192,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		UserID:        userID,
 		Scope:         req.Scope,
 		TeamID:        req.TeamID,
+		UserTeams:     userTeams,
 		Status:        ScheduleStatusActive,
 		ScheduledAt:   req.ScheduledAt,
 		CronExpr:      req.CronExpr,
@@ -383,6 +394,14 @@ func (h *Handlers) UpdateSchedule(c echo.Context) error {
 		schedule.SessionConfig = *req.SessionConfig
 	}
 
+	// Refresh UserTeams from the current auth context so that team membership
+	// changes since schedule creation are picked up.
+	if schedule.GetScope() != entities.ScopeTeam {
+		if azCtx := auth.GetAuthorizationContext(c); azCtx != nil {
+			schedule.UserTeams = azCtx.TeamScope.Teams
+		}
+	}
+
 	// Recalculate next execution if schedule changed
 	if req.ScheduledAt != nil || req.CronExpr != nil || req.Status != nil {
 		nextAt, err := CalculateNextExecution(schedule, time.Now())
@@ -461,20 +480,48 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 	// Create session with schedule's scope
 	sessionID := uuid.New().String()
+	scheduleScope := schedule.GetScope() // Use GetScope() to handle default value
 	req := &entities.RunServerRequest{
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
-		Scope:       schedule.GetScope(), // Use GetScope() to handle default value
+		Scope:       scheduleScope,
 		TeamID:      schedule.TeamID,
 	}
+
+	// Set Teams based on scope so the session manager can inject the correct
+	// team-level settings (Bedrock credentials, MCP servers, etc.).
+	// User-scoped schedules can only be triggered by their owner (enforced by
+	// userCanAccessSchedule), so authzCtx reflects the correct user.
+	authzCtx := auth.GetAuthorizationContext(c)
+	if scheduleScope == entities.ScopeTeam && schedule.TeamID != "" {
+		req.Teams = []string{schedule.TeamID}
+	} else if authzCtx != nil {
+		// Prefer live auth context (most up-to-date team memberships).
+		req.Teams = authzCtx.TeamScope.Teams
+	} else {
+		// Fallback: use team memberships captured at schedule creation time.
+		req.Teams = schedule.UserTeams
+	}
+
 	if schedule.SessionConfig.Params != nil {
 		req.InitialMessage = schedule.SessionConfig.Params.Message
-		req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		// For team-scoped schedules, do not use the creator's github_token
+		// (matches worker.go behavior)
+		if scheduleScope != entities.ScopeTeam {
+			req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		}
 		req.AgentType = schedule.SessionConfig.Params.AgentType
 		req.SlackParams = schedule.SessionConfig.Params.Slack
 		req.Oneshot = schedule.SessionConfig.Params.Oneshot
 	}
+
+	// Add schedule metadata to tags (matches worker.go behavior)
+	if req.Tags == nil {
+		req.Tags = make(map[string]string)
+	}
+	req.Tags["schedule_id"] = schedule.ID
+	req.Tags["schedule_name"] = schedule.Name
 
 	// Extract repository information from tags
 	req.RepoInfo = app.ExtractRepositoryInfo(req.Tags, sessionID)
