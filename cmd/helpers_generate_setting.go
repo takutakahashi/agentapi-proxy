@@ -15,10 +15,11 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Input types
+// Input types – SlackBot mode (--input)
 // ---------------------------------------------------------------------------
 
-// generateSettingInput is the top-level input structure for the generate-setting command.
+// generateSettingInput is the top-level input structure for the generate-setting command
+// when using the --input (SlackBot) mode.
 // It contains the SlackBot configuration and optional user/team settings, ordered from
 // lowest priority to highest priority.
 type generateSettingInput struct {
@@ -43,15 +44,52 @@ type generateSettingSessionConfig struct {
 	Params                 *generateSettingParams `json:"params,omitempty"`
 }
 
-// generateSettingParams holds session-creation parameters.
+// generateSettingParams holds session-creation parameters (SlackBot mode).
 type generateSettingParams struct {
 	AgentType string `json:"agent_type,omitempty"`
 	Oneshot   bool   `json:"oneshot,omitempty"`
 }
 
+// ---------------------------------------------------------------------------
+// Input types – Schedule mode (--schedule)
+// ---------------------------------------------------------------------------
+
+// generateSettingSchedule represents a Schedule configuration.
+// Matches the JSON schema used by POST /schedules.
+type generateSettingSchedule struct {
+	Name          string                          `json:"name,omitempty"`
+	UserID        string                          `json:"user_id,omitempty"`
+	Scope         string                          `json:"scope,omitempty"` // "user" or "team"
+	TeamID        string                          `json:"team_id,omitempty"`
+	Teams         []string                        `json:"teams,omitempty"`
+	CronExpr      string                          `json:"cron_expr,omitempty"`
+	ScheduledAt   string                          `json:"scheduled_at,omitempty"` // ISO8601 string
+	Timezone      string                          `json:"timezone,omitempty"`
+	SessionConfig *generateSettingScheduleSession `json:"session_config,omitempty"`
+}
+
+// generateSettingScheduleSession is the session_config block inside a Schedule.
+type generateSettingScheduleSession struct {
+	Environment map[string]string              `json:"environment,omitempty"`
+	Tags        map[string]string              `json:"tags,omitempty"`
+	Params      *generateSettingScheduleParams `json:"params,omitempty"`
+}
+
+// generateSettingScheduleParams holds session-creation parameters (Schedule mode).
+type generateSettingScheduleParams struct {
+	Message                  string `json:"message,omitempty"`
+	AgentType                string `json:"agent_type,omitempty"`
+	Oneshot                  bool   `json:"oneshot,omitempty"`
+	InitialMessageWaitSecond *int   `json:"initial_message_wait_second,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// Settings type (shared between all modes)
+// ---------------------------------------------------------------------------
+
 // generateSettingSettings represents user or team settings that influence the session.
-// Entries in the settings array are applied in order (index 0 = lowest priority,
-// last entry = highest priority). Typically: base → teams… → user.
+// Applied in order (index 0 = lowest priority, last entry = highest priority).
+// Typically: base → teams… → user.
 type generateSettingSettings struct {
 	Name                 string                  `json:"name,omitempty"`
 	AuthMode             string                  `json:"auth_mode,omitempty"` // "bedrock", "oauth", or "" (empty = no-op)
@@ -75,9 +113,12 @@ type generateSettingBedrock struct {
 // ---------------------------------------------------------------------------
 
 var (
-	generateSettingInputPath string
-	generateSettingOutputFmt string
-	generateSettingVerbose   bool
+	generateSettingInputPath    string
+	generateSettingSchedulePath string
+	generateSettingUserSetting  string
+	generateSettingTeamSettings []string
+	generateSettingOutputFmt    string
+	generateSettingVerbose      bool
 )
 
 // ---------------------------------------------------------------------------
@@ -86,68 +127,106 @@ var (
 
 var generateSettingCmd = &cobra.Command{
 	Use:   "generate-setting",
-	Short: "SlackBot 設定から session settings JSON を組み立てて出力する",
-	Long: `SlackBot の設定をもとに、実際のセッション起動時と同じ手順で session settings を組み立て、
-その過程をログに出しながら最終的な JSON / YAML を標準出力します。
+	Short: "SlackBot / Schedule 設定から session settings JSON を組み立てて出力する",
+	Long: `SlackBot または Schedule の設定をもとに、実際のセッション起動時と同じ手順で
+session settings を組み立て、その過程をログに出しながら最終的な JSON / YAML を標準出力します。
 
 手順ログには以下が含まれます:
-  1. settings エントリの適用 (base → team(s) → user の優先度順)
-  2. Bedrock 設定を env に入れる際の判断基準
-  3. SlackBot の session_config.environment の上書き適用
+  1. team settings の適用 (--team-setting の順で低→高優先度)
+  2. user settings の適用 (--user-setting)
+  3. Bedrock 設定を env に入れる際の判断基準
+  4. session_config.environment の上書き適用 (最高優先度)
 
-入力 JSON の形式:
+■ Schedule モード (--schedule)
+
+  スケジュール設定 JSON を直接指定します。
+  --team-setting と --user-setting で対応する settings ファイルを指定してください。
+
+  スケジュール JSON の形式:
+  {
+    "name": "daily-review",
+    "user_id": "alice",
+    "scope": "user",
+    "teams": ["myorg/backend-team"],
+    "cron_expr": "0 9 * * 1-5",
+    "timezone": "Asia/Tokyo",
+    "session_config": {
+      "environment": { "MY_VAR": "value" },
+      "tags": { "repo": "myorg/myrepo" },
+      "params": {
+        "agent_type": "claude-agentapi",
+        "message": "Run daily checks",
+        "oneshot": true
+      }
+    }
+  }
+
+■ SlackBot モード (--input、デフォルト)
+
+  SlackBot 設定と settings を一つの JSON にまとめて指定します。
+  settings 配列と --team-setting / --user-setting フラグの両方が使えます。
+
   {
     "slackbot": {
       "user_id": "alice",
       "scope": "user",
       "teams": ["myorg/backend-team"],
       "session_config": {
-        "environment": { "MY_VAR": "my_value" },
+        "environment": { "MY_VAR": "value" },
         "initial_message_template": "Hello!",
         "params": { "agent_type": "claude-agentapi", "oneshot": false }
       }
     },
-    "settings": [
-      {
-        "name": "myorg/backend-team",
-        "auth_mode": "bedrock",
-        "bedrock": {
-          "enabled": true,
-          "model": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-          "role_arn": "arn:aws:iam::123456789012:role/bedrock-role"
-        },
-        "env_vars": { "TEAM_VAR": "team_value" }
-      },
-      {
-        "name": "alice",
-        "auth_mode": "bedrock",
-        "bedrock": {
-          "enabled": true,
-          "access_key_id": "AKIAIOSFODNN7EXAMPLE",
-          "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-        }
-      }
-    ]
+    "settings": [...]
   }
 
-settings エントリは配列の先頭が最低優先度、末尾が最高優先度です。
-後から適用されたエントリが前のエントリの値を上書きします。
+■ settings ファイルの形式 (--user-setting / --team-setting)
+
+  {
+    "name": "alice",
+    "auth_mode": "bedrock",
+    "bedrock": {
+      "enabled": true,
+      "model": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "role_arn": "arn:aws:iam::123456789012:role/bedrock-role"
+    },
+    "env_vars": { "MY_KEY": "my_value" }
+  }
 
 使用例:
-  # ファイルから読み込み
-  agentapi-proxy helpers generate-setting --input config.json
+  # Schedule モード
+  agentapi-proxy helpers generate-setting \
+    --schedule schedule.json \
+    --team-setting team-settings.json \
+    --user-setting user-settings.json
 
-  # 標準入力から読み込み
-  cat config.json | agentapi-proxy helpers generate-setting
+  # 複数チーム設定 (--team-setting は繰り返し可)
+  agentapi-proxy helpers generate-setting \
+    --schedule schedule.json \
+    --team-setting base-team.json \
+    --team-setting backend-team.json \
+    --user-setting alice-settings.json
+
+  # SlackBot モード (既存)
+  agentapi-proxy helpers generate-setting \
+    --input slackbot-config.json \
+    --team-setting team-settings.json \
+    --user-setting user-settings.json
 
   # YAML 形式で出力
-  agentapi-proxy helpers generate-setting --input config.json --format yaml`,
+  agentapi-proxy helpers generate-setting --schedule schedule.json --format yaml`,
 	RunE: runGenerateSetting,
 }
 
 func init() {
-	generateSettingCmd.Flags().StringVarP(&generateSettingInputPath, "input", "i", "-",
-		"入力 JSON ファイルパス (\"-\" で標準入力)")
+	generateSettingCmd.Flags().StringVarP(&generateSettingInputPath, "input", "i", "",
+		"SlackBot モード: 入力 JSON ファイルパス (\"-\" で標準入力)。--schedule 未指定時はデフォルト stdin")
+	generateSettingCmd.Flags().StringVar(&generateSettingSchedulePath, "schedule", "",
+		"Schedule モード: スケジュール設定 JSON ファイルパス (指定時は --input より優先)")
+	generateSettingCmd.Flags().StringVar(&generateSettingUserSetting, "user-setting", "",
+		"ユーザー settings JSON ファイルパス (最高優先度で適用)")
+	generateSettingCmd.Flags().StringArrayVar(&generateSettingTeamSettings, "team-setting", nil,
+		"チーム settings JSON ファイルパス (複数回指定可、指定順で低→高優先度)")
 	generateSettingCmd.Flags().StringVar(&generateSettingOutputFmt, "format", "json",
 		"出力形式 (json または yaml)")
 	generateSettingCmd.Flags().BoolVarP(&generateSettingVerbose, "verbose", "v", false,
@@ -161,15 +240,128 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runGenerateSetting(cmd *cobra.Command, args []string) error {
-	// Validate format flag
 	if generateSettingOutputFmt != "json" && generateSettingOutputFmt != "yaml" {
 		return fmt.Errorf("invalid format %q: must be json or yaml", generateSettingOutputFmt)
 	}
 
-	// --- Step 0: Read input ---
-	log.Printf("[GENERATE-SETTING] ▶ 入力 JSON を読み込んでいます...")
+	if generateSettingSchedulePath != "" {
+		return runGenerateSettingSchedule()
+	}
+	return runGenerateSettingSlackBot(cmd)
+}
 
-	inputData, err := readGenerateSettingInput(generateSettingInputPath)
+// ---------------------------------------------------------------------------
+// Schedule mode
+// ---------------------------------------------------------------------------
+
+func runGenerateSettingSchedule() error {
+	log.Printf("[GENERATE-SETTING] モード: Schedule")
+	log.Printf("[GENERATE-SETTING] ▶ スケジュール設定 JSON を読み込んでいます: %s", generateSettingSchedulePath)
+
+	data, err := os.ReadFile(generateSettingSchedulePath)
+	if err != nil {
+		return fmt.Errorf("スケジュール設定の読み込みに失敗しました: %w", err)
+	}
+
+	var sched generateSettingSchedule
+	if err := json.Unmarshal(data, &sched); err != nil {
+		return fmt.Errorf("スケジュール設定 JSON の解析に失敗しました: %w", err)
+	}
+
+	// Log schedule summary
+	log.Printf("[GENERATE-SETTING] スケジュール情報:")
+	log.Printf("[GENERATE-SETTING]   name=%q", sched.Name)
+	log.Printf("[GENERATE-SETTING]   user_id=%q scope=%q team_id=%q", sched.UserID, sched.Scope, sched.TeamID)
+	if len(sched.Teams) > 0 {
+		log.Printf("[GENERATE-SETTING]   teams=%v", sched.Teams)
+	}
+	if sched.CronExpr != "" {
+		log.Printf("[GENERATE-SETTING]   cron_expr=%q timezone=%q", sched.CronExpr, sched.Timezone)
+	}
+	if sched.ScheduledAt != "" {
+		log.Printf("[GENERATE-SETTING]   scheduled_at=%q", sched.ScheduledAt)
+	}
+
+	// Collect settings from flags
+	settingsList, err := loadSettingsFromFlags(nil)
+	if err != nil {
+		return err
+	}
+
+	// Build env map
+	env := make(map[string]string)
+	applyAllSettings(env, settingsList)
+
+	// Apply session_config.environment (highest priority)
+	log.Printf("[GENERATE-SETTING]")
+	log.Printf("[GENERATE-SETTING] ▶ 手順 3: session_config.environment の適用 (最高優先度)")
+	var sessionEnv map[string]string
+	var agentType, initialMessage string
+	var oneshot bool
+	if sched.SessionConfig != nil {
+		sessionEnv = sched.SessionConfig.Environment
+		if sched.SessionConfig.Params != nil {
+			agentType = sched.SessionConfig.Params.AgentType
+			oneshot = sched.SessionConfig.Params.Oneshot
+			initialMessage = sched.SessionConfig.Params.Message
+		}
+	}
+	applySessionEnv(env, sessionEnv)
+
+	// Build SessionSettings
+	log.Printf("[GENERATE-SETTING]")
+	log.Printf("[GENERATE-SETTING] ▶ 手順 4: SessionSettings の組み立て")
+
+	scope := sched.Scope
+	if scope == "" {
+		scope = "user"
+	}
+
+	result := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{
+			UserID:    sched.UserID,
+			Scope:     scope,
+			TeamID:    sched.TeamID,
+			AgentType: agentType,
+			Oneshot:   oneshot,
+			Teams:     sched.Teams,
+		},
+		Env:            env,
+		InitialMessage: initialMessage,
+		Claude: sessionsettings.ClaudeConfig{
+			ClaudeJSON: map[string]interface{}{
+				"hasCompletedOnboarding":        true,
+				"bypassPermissionsModeAccepted": true,
+			},
+		},
+	}
+	result.Startup = buildStartupConfig(agentType)
+	logSessionSettingsSummary(result)
+
+	return outputSessionSettings(result, generateSettingOutputFmt)
+}
+
+// ---------------------------------------------------------------------------
+// SlackBot mode
+// ---------------------------------------------------------------------------
+
+func runGenerateSettingSlackBot(cmd *cobra.Command) error {
+	log.Printf("[GENERATE-SETTING] モード: SlackBot")
+
+	// Determine input source
+	inputPath := generateSettingInputPath
+	if inputPath == "" {
+		inputPath = "-" // default to stdin
+	}
+
+	log.Printf("[GENERATE-SETTING] ▶ 入力 JSON を読み込んでいます: %s", func() string {
+		if inputPath == "-" {
+			return "stdin"
+		}
+		return inputPath
+	}())
+
+	inputData, err := readGenerateSettingInput(inputPath)
 	if err != nil {
 		return fmt.Errorf("入力の読み込みに失敗しました: %w", err)
 	}
@@ -180,70 +372,50 @@ func runGenerateSetting(cmd *cobra.Command, args []string) error {
 	}
 
 	if input.SlackBot == nil {
-		return fmt.Errorf("入力 JSON に \"slackbot\" フィールドが必要です")
+		return fmt.Errorf("入力 JSON に \"slackbot\" フィールドが必要です (--schedule を使うと Schedule モードになります)")
 	}
 
 	bot := input.SlackBot
 	log.Printf("[GENERATE-SETTING] SlackBot: user_id=%q scope=%q team_id=%q teams=%v",
 		bot.UserID, bot.Scope, bot.TeamID, bot.Teams)
-	log.Printf("[GENERATE-SETTING] settings エントリ数: %d", len(input.Settings))
+	log.Printf("[GENERATE-SETTING] 入力内 settings エントリ数: %d", len(input.Settings))
 
-	// --- Build env map step by step ---
+	// Collect settings: embedded + flags (flags are higher priority)
+	settingsList, err := loadSettingsFromFlags(input.Settings)
+	if err != nil {
+		return err
+	}
+
+	// Build env map
 	env := make(map[string]string)
+	applyAllSettings(env, settingsList)
 
-	// --- Step 1: Apply settings in order (lowest priority first) ---
+	// Apply session_config.environment (highest priority)
 	log.Printf("[GENERATE-SETTING]")
-	log.Printf("[GENERATE-SETTING] ▶ 手順 1: settings の適用 (優先度: 低→高)")
-	printBedrockCriteria()
-
-	for idx, s := range input.Settings {
-		name := s.Name
-		if name == "" {
-			name = fmt.Sprintf("<settings[%d]>", idx)
-		}
-		log.Printf("[GENERATE-SETTING]   [%d/%d] settings 適用: name=%q", idx+1, len(input.Settings), name)
-		applySettingsToEnv(env, s, generateSettingVerbose)
-	}
-
-	// --- Step 2: Apply SlackBot session_config.environment (highest priority) ---
-	log.Printf("[GENERATE-SETTING]")
-	log.Printf("[GENERATE-SETTING] ▶ 手順 2: SlackBot session_config.environment の適用 (最高優先度)")
-	if bot.SessionConfig != nil && len(bot.SessionConfig.Environment) > 0 {
-		keys := sortedKeys(bot.SessionConfig.Environment)
-		for _, k := range keys {
-			v := bot.SessionConfig.Environment[k]
-			if old, exists := env[k]; exists && old != v {
-				log.Printf("[GENERATE-SETTING]   上書き: %s=%q (旧値: %q)", k, v, old)
-			} else {
-				log.Printf("[GENERATE-SETTING]   設定: %s=%q", k, v)
-			}
-			env[k] = v
-		}
-	} else {
-		log.Printf("[GENERATE-SETTING]   (session_config.environment は空です)")
-	}
-
-	// --- Step 3: Build SessionSettings struct ---
-	log.Printf("[GENERATE-SETTING]")
-	log.Printf("[GENERATE-SETTING] ▶ 手順 3: SessionSettings の組み立て")
-
-	agentType := ""
-	oneshot := false
-	initialMessage := ""
+	log.Printf("[GENERATE-SETTING] ▶ 手順 3: SlackBot session_config.environment の適用 (最高優先度)")
+	var sessionEnv map[string]string
+	var agentType, initialMessage string
+	var oneshot bool
 	if bot.SessionConfig != nil {
+		sessionEnv = bot.SessionConfig.Environment
 		initialMessage = bot.SessionConfig.InitialMessageTemplate
 		if bot.SessionConfig.Params != nil {
 			agentType = bot.SessionConfig.Params.AgentType
 			oneshot = bot.SessionConfig.Params.Oneshot
 		}
 	}
+	applySessionEnv(env, sessionEnv)
+
+	// Build SessionSettings
+	log.Printf("[GENERATE-SETTING]")
+	log.Printf("[GENERATE-SETTING] ▶ 手順 4: SessionSettings の組み立て")
 
 	scope := bot.Scope
 	if scope == "" {
 		scope = "user"
 	}
 
-	settings := &sessionsettings.SessionSettings{
+	result := &sessionsettings.SessionSettings{
 		Session: sessionsettings.SessionMeta{
 			UserID:    bot.UserID,
 			Scope:     scope,
@@ -261,29 +433,127 @@ func runGenerateSetting(cmd *cobra.Command, args []string) error {
 			},
 		},
 	}
+	result.Startup = buildStartupConfig(agentType)
+	logSessionSettingsSummary(result)
 
-	// Determine startup command from agent type
-	if agentType == "claude-agentapi" {
-		settings.Startup = sessionsettings.StartupConfig{
-			Command: []string{"claude-agentapi"},
+	return outputSessionSettings(result, generateSettingOutputFmt)
+}
+
+// ---------------------------------------------------------------------------
+// Settings loading helpers
+// ---------------------------------------------------------------------------
+
+// loadSettingsFromFlags builds the final ordered settings list.
+// Order (lowest → highest priority):
+//  1. embedded settings (from --input JSON's settings array)
+//  2. --team-setting files (in the order specified)
+//  3. --user-setting file
+func loadSettingsFromFlags(embedded []*generateSettingSettings) ([]*generateSettingSettings, error) {
+	var list []*generateSettingSettings
+
+	// 1. Embedded settings (lowest priority)
+	list = append(list, embedded...)
+
+	// 2. --team-setting files
+	for _, path := range generateSettingTeamSettings {
+		s, err := loadSettingsFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("--team-setting %q の読み込みに失敗しました: %w", path, err)
 		}
-		log.Printf("[GENERATE-SETTING]   startup.command: [claude-agentapi]")
-	} else {
-		settings.Startup = sessionsettings.StartupConfig{
-			Command: []string{"agentapi", "server"},
-			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*"},
-		}
-		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi server --allowed-hosts * --allowed-origins *]")
+		log.Printf("[GENERATE-SETTING]   --team-setting %q を読み込みました (name=%q)", path, s.Name)
+		list = append(list, s)
 	}
 
+	// 3. --user-setting file (highest among settings)
+	if generateSettingUserSetting != "" {
+		s, err := loadSettingsFile(generateSettingUserSetting)
+		if err != nil {
+			return nil, fmt.Errorf("--user-setting %q の読み込みに失敗しました: %w", generateSettingUserSetting, err)
+		}
+		log.Printf("[GENERATE-SETTING]   --user-setting %q を読み込みました (name=%q)", generateSettingUserSetting, s.Name)
+		list = append(list, s)
+	}
+
+	return list, nil
+}
+
+// loadSettingsFile reads and parses a settings JSON file.
+func loadSettingsFile(path string) (*generateSettingSettings, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var s generateSettingSettings
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("JSON 解析エラー: %w", err)
+	}
+	return &s, nil
+}
+
+// applyAllSettings applies the full ordered settings list to the env map with logging.
+func applyAllSettings(env map[string]string, list []*generateSettingSettings) {
+	total := len(list)
+	if total == 0 {
+		log.Printf("[GENERATE-SETTING]")
+		log.Printf("[GENERATE-SETTING] ▶ 手順 1: settings の適用 (設定なし)")
+		printBedrockCriteria()
+		return
+	}
+
+	log.Printf("[GENERATE-SETTING]")
+	log.Printf("[GENERATE-SETTING] ▶ 手順 1: settings の適用 (優先度: 低→高、計 %d 件)", total)
+	printBedrockCriteria()
+
+	for idx, s := range list {
+		name := s.Name
+		if name == "" {
+			name = fmt.Sprintf("<settings[%d]>", idx)
+		}
+		log.Printf("[GENERATE-SETTING]   [%d/%d] settings 適用: name=%q", idx+1, total, name)
+		applySettingsToEnv(env, s, generateSettingVerbose)
+	}
+}
+
+// applySessionEnv applies session_config.environment to the env map (highest priority).
+func applySessionEnv(env map[string]string, sessionEnv map[string]string) {
+	if len(sessionEnv) == 0 {
+		log.Printf("[GENERATE-SETTING]   (session_config.environment は空です)")
+		return
+	}
+	keys := sortedKeys(sessionEnv)
+	for _, k := range keys {
+		v := sessionEnv[k]
+		if old, exists := env[k]; exists && old != v {
+			log.Printf("[GENERATE-SETTING]   上書き: %s=%q (旧値: %q)", k, v, old)
+		} else {
+			log.Printf("[GENERATE-SETTING]   設定: %s=%q", k, v)
+		}
+		env[k] = v
+	}
+}
+
+// buildStartupConfig returns the startup command config for the given agent type.
+func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
+	if agentType == "claude-agentapi" {
+		log.Printf("[GENERATE-SETTING]   startup.command: [claude-agentapi]")
+		return sessionsettings.StartupConfig{
+			Command: []string{"claude-agentapi"},
+		}
+	}
+	log.Printf("[GENERATE-SETTING]   startup.command: [agentapi server --allowed-hosts * --allowed-origins *]")
+	return sessionsettings.StartupConfig{
+		Command: []string{"agentapi", "server"},
+		Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*"},
+	}
+}
+
+// logSessionSettingsSummary logs a summary of the built SessionSettings.
+func logSessionSettingsSummary(s *sessionsettings.SessionSettings) {
 	log.Printf("[GENERATE-SETTING]   session.user_id=%q scope=%q agent_type=%q oneshot=%v",
-		settings.Session.UserID, settings.Session.Scope, settings.Session.AgentType, settings.Session.Oneshot)
-	log.Printf("[GENERATE-SETTING]   env 変数数: %d", len(env))
+		s.Session.UserID, s.Session.Scope, s.Session.AgentType, s.Session.Oneshot)
+	log.Printf("[GENERATE-SETTING]   env 変数数: %d", len(s.Env))
 	log.Printf("[GENERATE-SETTING]")
 	log.Printf("[GENERATE-SETTING] ✓ SessionSettings の組み立て完了")
-
-	// --- Output ---
-	return outputSessionSettings(settings, generateSettingOutputFmt)
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +564,7 @@ func runGenerateSetting(cmd *cobra.Command, args []string) error {
 // settings are translated into environment variables.
 func printBedrockCriteria() {
 	log.Printf("[GENERATE-SETTING]")
-	log.Printf("[GENERATE-SETTING]   ┌─ Bedrock 設定を env に入れる際の判断基準 ────────────────────────────────┐")
+	log.Printf("[GENERATE-SETTING]   ┌─ Bedrock 設定を env に入れる際の判断基準 ─────────────────────────────────┐")
 	log.Printf("[GENERATE-SETTING]   │")
 	log.Printf("[GENERATE-SETTING]   │  auth_mode の値によって以下のように判断します:")
 	log.Printf("[GENERATE-SETTING]   │")
@@ -319,10 +589,9 @@ func printBedrockCriteria() {
 	log.Printf("[GENERATE-SETTING]   │       例) team: auth_mode=bedrock  user: auth_mode=\"\"")
 	log.Printf("[GENERATE-SETTING]   │           → team の CLAUDE_CODE_USE_BEDROCK=1 が保持される")
 	log.Printf("[GENERATE-SETTING]   │")
-	log.Printf("[GENERATE-SETTING]   │  優先度: settings 配列の先頭が最低、末尾が最高 (後勝ち)")
-	log.Printf("[GENERATE-SETTING]   │  設定後に SlackBot session_config.environment が最高優先度で適用")
+	log.Printf("[GENERATE-SETTING]   │  優先度: --team-setting(複数、順)→ --user-setting → session_config.environment")
 	log.Printf("[GENERATE-SETTING]   │")
-	log.Printf("[GENERATE-SETTING]   └───────────────────────────────────────────────────────────────────────────┘")
+	log.Printf("[GENERATE-SETTING]   └────────────────────────────────────────────────────────────────────────────┘")
 	log.Printf("[GENERATE-SETTING]")
 }
 
@@ -380,7 +649,7 @@ func applySettingsToEnv(env map[string]string, s *generateSettingSettings, verbo
 		}
 
 	case "":
-		log.Printf("[GENERATE-SETTING]     auth_mode=\" \" (未設定) → auth 関連 env vars を変更しない")
+		log.Printf("[GENERATE-SETTING]     auth_mode=\"\" (未設定) → auth 関連 env vars を変更しない")
 		// Do not touch any auth-related env vars.
 		// This ensures that a team's Bedrock settings are preserved when a user
 		// settings entry has no auth_mode configured.
@@ -442,7 +711,7 @@ func outputSessionSettings(s *sessionsettings.SessionSettings, format string) er
 		if err := yaml.Unmarshal(yamlBytes, &generic); err != nil {
 			return fmt.Errorf("YAML の解析に失敗しました: %w", err)
 		}
-		// yaml.Unmarshal returns map[interface{}]interface{} on older versions; normalize.
+		// yaml.Unmarshal returns map[interface{}]interface{} in some cases; normalize.
 		normalized := normalizeYAMLValue(generic)
 		jsonBytes, err := json.MarshalIndent(normalized, "", "  ")
 		if err != nil {
