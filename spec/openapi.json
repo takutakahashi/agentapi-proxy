@@ -3986,7 +3986,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Custom environment variables to be injected into agent sessions. Keys are environment variable names, values are the variable values. These variables will be available in all sessions for this user/team. Empty string values explicitly delete the variable. Keys not included in the request are automatically preserved."
+            "description": "Custom environment variables to be injected into agent sessions. Keys are environment variable names, values are the variable values. These variables will be available in all sessions for this user/team. Empty string values are ignored (existing values are preserved). Keys not included in the request are automatically preserved."
           }
         }
       },
@@ -4054,14 +4054,14 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Environment variables for the server"
+            "description": "Environment variables for the server. Empty string values are ignored (existing values are preserved). Keys not included in the request are automatically preserved."
           },
           "headers": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Headers for http/sse servers"
+            "description": "Headers for http/sse servers. Empty string values are ignored (existing values are preserved). Keys not included in the request are automatically preserved."
           }
         }
       },
