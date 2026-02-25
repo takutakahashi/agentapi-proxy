@@ -613,6 +613,15 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("schedule_worker.renew_deadline", "AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("schedule_worker.retry_period", "AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD")
 
+	// Slackbot cleanup worker configuration
+	_ = v.BindEnv("slackbot_cleanup_worker.enabled", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED")
+	_ = v.BindEnv("slackbot_cleanup_worker.check_interval", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("slackbot_cleanup_worker.session_ttl", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL")
+	_ = v.BindEnv("slackbot_cleanup_worker.namespace", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_NAMESPACE")
+	_ = v.BindEnv("slackbot_cleanup_worker.lease_duration", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("slackbot_cleanup_worker.retry_period", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD")
+
 	// Webhook configuration
 	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
 	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
@@ -688,6 +697,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("schedule_worker.lease_duration", "15s")
 	v.SetDefault("schedule_worker.renew_deadline", "10s")
 	v.SetDefault("schedule_worker.retry_period", "2s")
+
+	// Slackbot cleanup worker defaults
+	v.SetDefault("slackbot_cleanup_worker.enabled", false)
+	v.SetDefault("slackbot_cleanup_worker.check_interval", "1h")
+	v.SetDefault("slackbot_cleanup_worker.session_ttl", "72h")
+	v.SetDefault("slackbot_cleanup_worker.namespace", "")
+	v.SetDefault("slackbot_cleanup_worker.lease_duration", "15s")
+	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "10s")
+	v.SetDefault("slackbot_cleanup_worker.retry_period", "2s")
 
 	// Webhook defaults
 	v.SetDefault("webhook.base_url", "")
