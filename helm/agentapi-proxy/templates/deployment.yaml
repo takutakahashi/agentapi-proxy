@@ -302,6 +302,29 @@ spec:
             - name: AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD
               value: {{ .Values.scheduleWorker.retryPeriod | quote }}
             {{- end }}
+            # Slackbot Cleanup Worker configuration
+            - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED
+              value: {{ ((.Values.slackbotCleanupWorker).enabled) | default false | quote }}
+            {{- if (.Values.slackbotCleanupWorker).sessionTTL }}
+            - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL
+              value: {{ .Values.slackbotCleanupWorker.sessionTTL | quote }}
+            {{- end }}
+            {{- if (.Values.slackbotCleanupWorker).checkInterval }}
+            - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL
+              value: {{ .Values.slackbotCleanupWorker.checkInterval | quote }}
+            {{- end }}
+            {{- if ((.Values.slackbotCleanupWorker).leaderElection).leaseDuration }}
+            - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION
+              value: {{ .Values.slackbotCleanupWorker.leaderElection.leaseDuration | quote }}
+            {{- end }}
+            {{- if ((.Values.slackbotCleanupWorker).leaderElection).renewDeadline }}
+            - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE
+              value: {{ .Values.slackbotCleanupWorker.leaderElection.renewDeadline | quote }}
+            {{- end }}
+            {{- if ((.Values.slackbotCleanupWorker).leaderElection).retryPeriod }}
+            - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD
+              value: {{ .Values.slackbotCleanupWorker.leaderElection.retryPeriod | quote }}
+            {{- end }}
             {{- if .Values.config.encryption.key }}
             - name: AGENTAPI_ENCRYPTION_KEY
               value: {{ .Values.config.encryption.key | quote }}
