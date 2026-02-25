@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -236,6 +237,11 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			if err := h.sessionManager.SendMessage(bgCtx, existingSession.ID(), reuseMessage); err != nil {
 				log.Printf("[SLACKBOT] Failed to route message to existing session %s: %v", existingSession.ID(), err)
 				return
+			}
+			// Update internal slack-last-message-at annotation (not a tag/label) so the
+			// Slackbot cleanup worker knows this session has received a follow-up message.
+			if err := h.sessionManager.UpdateSlackLastMessageAt(existingSession.ID(), time.Now()); err != nil {
+				log.Printf("[SLACKBOT] Failed to update slack-last-message-at for session %s: %v", existingSession.ID(), err)
 			}
 			log.Printf("[SLACKBOT] Routed message to existing session %s for thread %s", existingSession.ID(), threadKey)
 		}()

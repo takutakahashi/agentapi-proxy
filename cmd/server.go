@@ -20,6 +20,7 @@ import (
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/slackbot"
+	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -81,6 +82,11 @@ func runProxy(cmd *cobra.Command, args []string) {
 	var scheduleWorker *schedule.LeaderWorker
 	if configData.ScheduleWorker.Enabled {
 		scheduleWorker = startScheduleWorker(configData, proxyServer)
+	}
+
+	// Start Slackbot cleanup worker if enabled
+	if configData.SlackbotCleanupWorker.Enabled {
+		startSlackbotCleanupWorker(configData, proxyServer)
 	}
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
@@ -286,6 +292,89 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 
 	log.Printf("[SCHEDULE_WORKER] Schedule worker started in namespace: %s", namespace)
 	return leaderWorker
+}
+
+// startSlackbotCleanupWorker starts the Slackbot session cleanup worker with leader election.
+// It follows the same pattern as startScheduleWorker.
+func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Server) *slackbotcleanup.LeaderCleanupWorker {
+	log.Printf("[SLACKBOT_CLEANUP] Initializing Slackbot cleanup worker...")
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[SLACKBOT_CLEANUP] Kubernetes config not available, cleanup worker disabled: %v", err)
+		return nil
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[SLACKBOT_CLEANUP] Failed to create Kubernetes client, cleanup worker disabled: %v", err)
+		return nil
+	}
+
+	namespace := configData.SlackbotCleanupWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	checkInterval, err := time.ParseDuration(configData.SlackbotCleanupWorker.CheckInterval)
+	if err != nil || checkInterval <= 0 {
+		log.Printf("[SLACKBOT_CLEANUP] Invalid check_interval, using default 1h: %v", err)
+		checkInterval = 1 * time.Hour
+	}
+
+	sessionTTL, err := time.ParseDuration(configData.SlackbotCleanupWorker.SessionTTL)
+	if err != nil || sessionTTL <= 0 {
+		log.Printf("[SLACKBOT_CLEANUP] Invalid session_ttl, using default 72h: %v", err)
+		sessionTTL = 72 * time.Hour
+	}
+
+	workerConfig := slackbotcleanup.CleanupWorkerConfig{
+		CheckInterval: checkInterval,
+		SessionTTL:    sessionTTL,
+		Enabled:       true,
+	}
+
+	leaseDuration, err := time.ParseDuration(configData.SlackbotCleanupWorker.LeaseDuration)
+	if err != nil || leaseDuration <= 0 {
+		log.Printf("[SLACKBOT_CLEANUP] Invalid lease_duration, using default 15s: %v", err)
+		leaseDuration = 15 * time.Second
+	}
+
+	renewDeadline, err := time.ParseDuration(configData.SlackbotCleanupWorker.RenewDeadline)
+	if err != nil || renewDeadline <= 0 {
+		log.Printf("[SLACKBOT_CLEANUP] Invalid renew_deadline, using default 10s: %v", err)
+		renewDeadline = 10 * time.Second
+	}
+
+	retryPeriod, err := time.ParseDuration(configData.SlackbotCleanupWorker.RetryPeriod)
+	if err != nil || retryPeriod <= 0 {
+		log.Printf("[SLACKBOT_CLEANUP] Invalid retry_period, using default 2s: %v", err)
+		retryPeriod = 2 * time.Second
+	}
+
+	electionConfig := schedule.LeaderElectionConfig{
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod:   retryPeriod,
+		Namespace:     namespace,
+		// LeaseName is overridden inside NewLeaderCleanupWorker to "agentapi-slackbot-cleanup-worker"
+	}
+
+	leaderCleanupWorker := slackbotcleanup.NewLeaderCleanupWorker(
+		proxyServer.GetSessionManager(),
+		client,
+		namespace,
+		workerConfig,
+		electionConfig,
+	)
+
+	go leaderCleanupWorker.Run(context.Background())
+
+	log.Printf("[SLACKBOT_CLEANUP] Slackbot cleanup worker started in namespace: %s (TTL: %v)", namespace, sessionTTL)
+	return leaderCleanupWorker
 }
 
 // registerWebhookHandlers registers webhook REST API handlers

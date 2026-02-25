@@ -34,6 +34,12 @@ type SessionManager interface {
 	// GetMessages retrieves conversation history from a session
 	GetMessages(ctx context.Context, id string) ([]Message, error)
 
+	// UpdateSlackLastMessageAt updates the internal slack-last-message-at annotation
+	// on the session's Kubernetes Service. This is internal metadata and is NOT
+	// exposed via session.Tags(). Used by the Slackbot cleanup worker to track
+	// when the last message was sent to a session.
+	UpdateSlackLastMessageAt(id string, t time.Time) error
+
 	// Shutdown gracefully stops all sessions
 	Shutdown(timeout time.Duration) error
 }

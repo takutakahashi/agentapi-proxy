@@ -85,6 +85,10 @@ func (m *mockProxySessionManager) GetMessages(ctx context.Context, id string) ([
 	return nil, nil
 }
 
+func (m *mockProxySessionManager) UpdateSlackLastMessageAt(id string, t time.Time) error {
+	return nil
+}
+
 func (m *mockProxySessionManager) Shutdown(timeout time.Duration) error {
 	return nil
 }

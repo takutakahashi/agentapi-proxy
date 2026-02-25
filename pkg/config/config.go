@@ -158,6 +158,25 @@ type ScheduleWorkerConfig struct {
 	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
 }
 
+// SlackbotCleanupWorkerConfig represents Slackbot session cleanup worker configuration.
+// The worker deletes Slackbot sessions whose last message is older than SessionTTL.
+type SlackbotCleanupWorkerConfig struct {
+	// Enabled enables the Slackbot cleanup worker
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// CheckInterval is how often to scan for stale sessions (e.g., "1h", "30m")
+	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
+	// SessionTTL is the duration after the last message before a session is deleted (e.g., "72h")
+	SessionTTL string `json:"session_ttl" mapstructure:"session_ttl"`
+	// Namespace is the Kubernetes namespace to scan. Defaults to KubernetesSession.Namespace.
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions
+	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
+}
+
 // WebhookConfig represents webhook configuration
 type WebhookConfig struct {
 	// BaseURL is the base URL for webhook endpoints (e.g., "https://example.com")
@@ -297,6 +316,8 @@ type Config struct {
 	KubernetesSession KubernetesSessionConfig `json:"kubernetes_session" mapstructure:"kubernetes_session"`
 	// ScheduleWorker is the configuration for the schedule worker
 	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
+	// SlackbotCleanupWorker is the configuration for the Slackbot session cleanup worker
+	SlackbotCleanupWorker SlackbotCleanupWorkerConfig `json:"slackbot_cleanup_worker" mapstructure:"slackbot_cleanup_worker"`
 	// Webhook is the configuration for webhook functionality
 	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
 	// Memory is the configuration for memory storage backend
@@ -592,6 +613,15 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("schedule_worker.renew_deadline", "AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("schedule_worker.retry_period", "AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD")
 
+	// Slackbot cleanup worker configuration
+	_ = v.BindEnv("slackbot_cleanup_worker.enabled", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED")
+	_ = v.BindEnv("slackbot_cleanup_worker.check_interval", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("slackbot_cleanup_worker.session_ttl", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL")
+	_ = v.BindEnv("slackbot_cleanup_worker.namespace", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_NAMESPACE")
+	_ = v.BindEnv("slackbot_cleanup_worker.lease_duration", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("slackbot_cleanup_worker.retry_period", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD")
+
 	// Webhook configuration
 	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
 	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
@@ -667,6 +697,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("schedule_worker.lease_duration", "15s")
 	v.SetDefault("schedule_worker.renew_deadline", "10s")
 	v.SetDefault("schedule_worker.retry_period", "2s")
+
+	// Slackbot cleanup worker defaults
+	v.SetDefault("slackbot_cleanup_worker.enabled", false)
+	v.SetDefault("slackbot_cleanup_worker.check_interval", "1h")
+	v.SetDefault("slackbot_cleanup_worker.session_ttl", "72h")
+	v.SetDefault("slackbot_cleanup_worker.namespace", "")
+	v.SetDefault("slackbot_cleanup_worker.lease_duration", "15s")
+	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "10s")
+	v.SetDefault("slackbot_cleanup_worker.retry_period", "2s")
 
 	// Webhook defaults
 	v.SetDefault("webhook.base_url", "")
