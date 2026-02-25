@@ -18,8 +18,6 @@ import (
 const (
 	// slackBotDefaultID is the special ID for the server-configured default SlackBot
 	slackBotDefaultID = "default"
-	// defaultSlackAgentType is the default agent type for SlackBot sessions
-	defaultSlackAgentType = "claude-agentapi"
 )
 
 // SlackBotEventHandler handles incoming Slack events (via Socket Mode) and manages sessions
@@ -211,8 +209,8 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// Build initial message
 	initialMessage := h.buildMessage(bot, payloadMap, event.Text, false)
 
-	// Determine agent type
-	agentType := defaultSlackAgentType
+	// Determine agent type: default to "claude-agentapi"; bot session_config may override.
+	agentType := "claude-agentapi"
 	if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
 		if bot.SessionConfig().Params().AgentType != "" {
 			agentType = bot.SessionConfig().Params().AgentType
@@ -264,10 +262,21 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	scope := entities.ScopeUser
 	userID := ""
 	teamID := ""
+	var teams []string
 	if bot != nil {
 		scope = bot.Scope()
 		userID = bot.UserID()
 		teamID = bot.TeamID()
+		// Follow the same pattern as the schedule worker:
+		// - team-scoped bot: use only the bot's teamID as the sole team credential
+		//   so that exactly the team's settings (MCP, env, Bedrock, etc.) are applied.
+		// - user-scoped bot: use the explicit team list stored on the bot
+		//   (set at create/update time via the teams field).
+		if scope == entities.ScopeTeam && teamID != "" {
+			teams = []string{teamID}
+		} else {
+			teams = bot.Teams()
+		}
 	}
 
 	sessionID := uuid.New().String()
@@ -277,6 +286,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		Tags:           tags,
 		Scope:          scope,
 		TeamID:         teamID,
+		Teams:          teams,
 		InitialMessage: initialMessage,
 		AgentType:      agentType,
 		SlackParams: &entities.SlackParams{

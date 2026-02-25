@@ -25,6 +25,7 @@ type SlackBot struct {
 	userID              string
 	scope               ResourceScope
 	teamID              string
+	teams               []string // GitHub team slugs (e.g., ["org/team-a"]) resolved at create/update time
 	status              SlackBotStatus
 	botTokenSecretName  string                // K8s Secret name for xoxb-... token; empty = use global default
 	botTokenSecretKey   string                // Key within the Secret; default: "bot-token"
@@ -87,6 +88,22 @@ func (s *SlackBot) TeamID() string { return s.teamID }
 // SetTeamID sets the team ID
 func (s *SlackBot) SetTeamID(teamID string) {
 	s.teamID = teamID
+	s.updatedAt = time.Now()
+}
+
+// Teams returns the GitHub team slugs stored at bot creation/update time.
+// These are used to merge team-level settings (MCP servers, env vars, etc.)
+// into sessions created by this bot.
+func (s *SlackBot) Teams() []string {
+	result := make([]string, len(s.teams))
+	copy(result, s.teams)
+	return result
+}
+
+// SetTeams stores the GitHub team slugs for settings merging.
+// This should be called with the bot owner's current team memberships.
+func (s *SlackBot) SetTeams(teams []string) {
+	s.teams = teams
 	s.updatedAt = time.Now()
 }
 

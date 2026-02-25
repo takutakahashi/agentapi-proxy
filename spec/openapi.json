@@ -4618,6 +4618,13 @@
           "type": "string",
           "description": "Team ID for team-scoped SlackBots"
         },
+        "teams": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "GitHub team slugs (e.g. [\"org/team-a\"]) snapshotted from the bot owner's team memberships at create/update time. Used to merge team-level settings into sessions created by this bot."
+        },
         "status": {
           "$ref": "#/components/schemas/SlackBotStatus"
         },

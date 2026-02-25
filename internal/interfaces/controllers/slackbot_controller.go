@@ -25,9 +25,14 @@ func NewSlackBotController(repo repositories.SlackBotRepository) *SlackBotContro
 
 // CreateSlackBotRequest is the request body for creating a SlackBot
 type CreateSlackBotRequest struct {
-	Name                string                 `json:"name"`
-	Scope               entities.ResourceScope `json:"scope,omitempty"`
-	TeamID              string                 `json:"team_id,omitempty"`
+	Name   string                 `json:"name"`
+	Scope  entities.ResourceScope `json:"scope,omitempty"`
+	TeamID string                 `json:"team_id,omitempty"`
+	// Teams is an explicit list of team IDs (e.g. ["org/team-slug"]) whose settings
+	// (MCP servers, env vars, Bedrock config, etc.) will be merged into sessions
+	// created by this bot. When omitted, the server falls back to the authenticated
+	// user's team memberships at creation time.
+	Teams               []string               `json:"teams,omitempty"`
 	BotTokenSecretName  string                 `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey   string                 `json:"bot_token_secret_key,omitempty"`
 	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
@@ -38,14 +43,18 @@ type CreateSlackBotRequest struct {
 
 // UpdateSlackBotRequest is the request body for updating a SlackBot
 type UpdateSlackBotRequest struct {
-	Name                string                  `json:"name,omitempty"`
-	Status              entities.SlackBotStatus `json:"status,omitempty"`
-	BotTokenSecretName  string                  `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey   string                  `json:"bot_token_secret_key,omitempty"`
-	AllowedEventTypes   []string                `json:"allowed_event_types,omitempty"`
-	AllowedChannelNames []string                `json:"allowed_channel_names,omitempty"`
-	SessionConfig       *SlackBotSessionConfig  `json:"session_config,omitempty"`
-	MaxSessions         int                     `json:"max_sessions,omitempty"`
+	Name   string                  `json:"name,omitempty"`
+	Status entities.SlackBotStatus `json:"status,omitempty"`
+	// Teams is an explicit list of team IDs (e.g. ["org/team-slug"]) whose settings
+	// will be merged into sessions created by this bot. When omitted, the server
+	// refreshes from the authenticated user's current team memberships.
+	Teams               []string               `json:"teams,omitempty"`
+	BotTokenSecretName  string                 `json:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey   string                 `json:"bot_token_secret_key,omitempty"`
+	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
+	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
+	MaxSessions         int                    `json:"max_sessions,omitempty"`
 }
 
 // SlackBotSessionConfig is the session configuration for a SlackBot
@@ -70,6 +79,7 @@ type SlackBotResponse struct {
 	UserID              string                  `json:"user_id"`
 	Scope               entities.ResourceScope  `json:"scope,omitempty"`
 	TeamID              string                  `json:"team_id,omitempty"`
+	Teams               []string                `json:"teams,omitempty"`
 	Status              entities.SlackBotStatus `json:"status"`
 	BotTokenSecretName  string                  `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey   string                  `json:"bot_token_secret_key,omitempty"`
@@ -134,6 +144,16 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	}
 	if req.SessionConfig != nil {
 		bot.SetSessionConfig(toEntitySessionConfig(req.SessionConfig))
+	}
+
+	// Set team memberships so that sessions created by this bot receive team-level
+	// settings (MCP servers, Bedrock config, env vars, etc.).
+	// Prefer an explicitly supplied list from the request; fall back to snapshotting
+	// the authenticated user's current memberships (useful for GitHub OAuth users).
+	if req.Teams != nil {
+		bot.SetTeams(req.Teams)
+	} else if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {
+		bot.SetTeams(authzCtx.TeamScope.Teams)
 	}
 
 	if err := bot.Validate(); err != nil {
@@ -247,6 +267,16 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 		bot.SetSessionConfig(toEntitySessionConfig(req.SessionConfig))
 	}
 
+	// Update team memberships.
+	// If an explicit list is supplied in the request, use it (allows API-key users
+	// to pin specific teams). Otherwise refresh from the requester's current auth
+	// context (picks up GitHub team membership changes for OAuth users).
+	if req.Teams != nil {
+		bot.SetTeams(req.Teams)
+	} else if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {
+		bot.SetTeams(authzCtx.TeamScope.Teams)
+	}
+
 	if err := c.repo.Update(ctx.Request().Context(), bot); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update slackbot")
 	}
@@ -290,6 +320,7 @@ func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotRespons
 		UserID:              bot.UserID(),
 		Scope:               bot.Scope(),
 		TeamID:              bot.TeamID(),
+		Teams:               bot.Teams(),
 		Status:              bot.Status(),
 		BotTokenSecretName:  bot.BotTokenSecretName(),
 		BotTokenSecretKey:   bot.BotTokenSecretKey(),
