@@ -147,7 +147,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			channelName, resolveErr := h.channelResolver.ResolveChannelName(ctx, event.Channel, botToken)
 			if resolveErr != nil {
 				log.Printf("[SLACKBOT] Failed to resolve channel name: id=%s, channel=%s, err=%v", botID, event.Channel, resolveErr)
-				// Non-fatal: skip filter and allow the event through
+				return fmt.Errorf("failed to resolve channel name for channel %s: %w", event.Channel, resolveErr)
 			} else if !bot.IsChannelNameAllowed(channelName) {
 				log.Printf("[SLACKBOT] Channel name not allowed: id=%s, channel=%s, name=%s", botID, event.Channel, channelName)
 				return nil

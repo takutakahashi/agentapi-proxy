@@ -691,6 +691,49 @@ func TestProcessEvent_ReuseSession_NewSessionWhenNoActive(t *testing.T) {
 	assert.Equal(t, 0, sessionMgr.sentCount(), "no message should be sent to existing session")
 }
 
+// TestProcessEvent_ChannelNameResolveError_ReturnsError verifies that when channel name
+// resolution fails (e.g. the bot token is empty/invalid), ProcessEvent returns an error
+// instead of allowing the event through as it did previously.
+func TestProcessEvent_ChannelNameResolveError_ReturnsError(t *testing.T) {
+	const (
+		namespace  = "test-ns"
+		secretName = "bot-token-secret"
+		botID      = "channel-filter-bot"
+		channelID  = "C-unknown"
+	)
+
+	// Secret exists but has an empty token value.
+	// GetBotToken will succeed returning "", then fetchFromSlack fails with
+	// "bot token is empty; cannot call Slack API" — no real HTTP call is made.
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			Data:       map[string][]byte{"bot-token": []byte("")},
+		},
+		// No ConfigMap → cache miss → falls through to Slack API (which fails)
+	)
+	resolver := services.NewSlackChannelResolver(fakeClient, namespace)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Channel Filter Bot", "user-1")
+	bot.SetAllowedChannelNames([]string{"dev"})
+	// No custom bot token secret → uses defaultBotTokenSecretName
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false)
+
+	payload := buildEventPayload(channelID, "hello bot")
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+
+	assert.Error(t, err, "ProcessEvent should return error when channel name cannot be resolved")
+	assert.Contains(t, err.Error(), "failed to resolve channel name")
+
+	// Ensure no session was created despite the resolve failure
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no session should be created when channel name resolution fails")
+}
+
 // TestProcessEvent_ConcurrentDuplicateEvents verifies that when Slack emits both "message"
 // and "app_mention" for the same @mention (same channel+thread), only one session is created.
 // This mirrors real Slack behaviour where both events arrive within milliseconds of each other,
