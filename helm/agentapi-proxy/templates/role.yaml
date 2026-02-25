@@ -1,5 +1,6 @@
 {{- $scheduleWorkerEnabled := ((.Values.scheduleWorker).enabled) | default true }}
-{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled }}
+{{- $slackbotCleanupWorkerEnabled := ((.Values.slackbotCleanupWorker).enabled) | default false }}
+{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -16,7 +17,9 @@ rules:
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "list", "create", "delete"]
+    # patch: required for UpdateSlackLastMessageAt (agentapi.proxy/slack-last-message-at annotation)
+    # update: required for UpdateServiceAnnotation (e.g. agentapi.proxy/updated-at annotation)
+    verbs: ["get", "list", "create", "delete", "patch", "update"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "create", "delete"]
@@ -30,8 +33,8 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
-  {{- if $scheduleWorkerEnabled }}
-  # Leader election for schedule worker (enabled by default)
+  {{- if or $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled }}
+  # Leader election for schedule worker and/or slackbot cleanup worker
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

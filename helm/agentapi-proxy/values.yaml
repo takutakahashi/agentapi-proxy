@@ -505,3 +505,26 @@ scheduleWorker:
     # Secret name for schedule data
     secretName: "agentapi-schedules"
 
+# Slackbot Session Cleanup Worker Configuration
+# Periodically deletes Slackbot sessions whose last message is older than sessionTTL.
+# Uses the agentapi.proxy/slack-last-message-at annotation (or created-at as fallback).
+slackbotCleanupWorker:
+  # Enable slackbot session cleanup worker
+  enabled: true
+
+  # Session TTL: duration after last Slack message before a session is deleted
+  # Supports Go duration format: "3h", "30m", "72h", etc.
+  sessionTTL: "3h"
+
+  # How often to scan for stale sessions
+  checkInterval: "30m"
+
+  # Leader election configuration (prevents duplicate deletions in multi-replica deployments)
+  leaderElection:
+    # Lease duration (how long the leader holds the lock)
+    leaseDuration: "15s"
+    # Renew deadline (how often the leader refreshes the lock)
+    renewDeadline: "10s"
+    # Retry period (how often non-leaders try to acquire the lock)
+    retryPeriod: "2s"
+
