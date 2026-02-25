@@ -111,12 +111,26 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	}
 
 	// For default ID: try to identify the registered bot by channel name filter.
+	// If no matching bot is found, notify the user via Slack and drop the event
+	// to avoid creating sessions with empty userID.
 	if botID == slackBotDefaultID && bot == nil {
-		if resolvedBot := h.resolveBotByChannel(ctx, event.Channel); resolvedBot != nil {
-			bot = resolvedBot
-			botID = resolvedBot.ID()
-			log.Printf("[SLACKBOT] Default endpoint: identified bot by channel filter: id=%s, channel=%s", botID, event.Channel)
+		resolvedBot := h.resolveBotByChannel(ctx, event.Channel)
+		if resolvedBot == nil {
+			log.Printf("[SLACKBOT] Default endpoint: no matching bot found for channel=%s, dropping event", event.Channel)
+			threadKey := event.ThreadTs
+			if threadKey == "" {
+				threadKey = event.Ts
+			}
+			if botToken, tokenErr := h.getBotToken(ctx, nil); tokenErr == nil {
+				h.postErrorToSlack(ctx, event.Channel, threadKey,
+					":warning: このチャンネルに対応する bot が登録されていません。チャンネルの設定を確認してください。",
+					botToken)
+			}
+			return nil
 		}
+		bot = resolvedBot
+		botID = resolvedBot.ID()
+		log.Printf("[SLACKBOT] Default endpoint: identified bot by channel filter: id=%s, channel=%s", botID, event.Channel)
 	}
 
 	// Apply filters (if this is a registered bot, not default)
