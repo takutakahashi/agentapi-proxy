@@ -27,6 +27,8 @@ agentapi-proxy helpers setup-gh
 ```
 
 このコマンドは自動的に現在のリポジトリの情報を `git config --get remote.origin.url` から取得し、適切な GitHub 認証を設定します。
+また、ローカルリポジトリ配下でない場合からリポジトリをクローンする場合、`--repo-fullname org/repo` の引数を付けてこのコマンドを実行してください。
+`xxx/xxx` という形式の文字列を与えられた場合はリポジトリ情報である可能性が高いです。
 
 ### ユーザーへの通知
 
