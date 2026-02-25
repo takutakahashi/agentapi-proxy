@@ -11,6 +11,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -18,6 +19,7 @@ import (
 type Handlers struct {
 	manager         Manager
 	sessionManager  portrepos.SessionManager
+	launcher        *sessionuc.LaunchUseCase
 	defaultTimezone string
 }
 
@@ -26,6 +28,7 @@ func NewHandlers(manager Manager, sessionManager portrepos.SessionManager) *Hand
 	return &Handlers{
 		manager:         manager,
 		sessionManager:  sessionManager,
+		launcher:        sessionuc.NewLaunchUseCase(sessionManager),
 		defaultTimezone: "Asia/Tokyo",
 	}
 }
@@ -35,6 +38,7 @@ func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionMa
 	return &Handlers{
 		manager:         manager,
 		sessionManager:  sessionManager,
+		launcher:        sessionuc.NewLaunchUseCase(sessionManager),
 		defaultTimezone: defaultTimezone,
 	}
 }
@@ -478,55 +482,58 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to trigger this schedule")
 	}
 
-	// Create session with schedule's scope
-	sessionID := uuid.New().String()
+	// Build the launch request for this manual trigger.
+	// For the Teams field we prefer the live auth context (most up-to-date team
+	// memberships), falling back to the memberships captured at schedule creation time.
 	scheduleScope := schedule.GetScope() // Use GetScope() to handle default value
-	req := &entities.RunServerRequest{
-		UserID:      schedule.UserID,
-		Environment: schedule.SessionConfig.Environment,
-		Tags:        schedule.SessionConfig.Tags,
-		Scope:       scheduleScope,
-		TeamID:      schedule.TeamID,
-	}
+	sessionID := uuid.New().String()
 
-	// Set Teams based on scope so the session manager can inject the correct
-	// team-level settings (Bedrock credentials, MCP servers, etc.).
-	// User-scoped schedules can only be triggered by their owner (enforced by
-	// userCanAccessSchedule), so authzCtx reflects the correct user.
+	// Resolve user teams: prefer live auth context, fall back to saved UserTeams
+	var userTeams []string
 	authzCtx := auth.GetAuthorizationContext(c)
-	if scheduleScope == entities.ScopeTeam && schedule.TeamID != "" {
-		req.Teams = []string{schedule.TeamID}
-	} else if authzCtx != nil {
-		// Prefer live auth context (most up-to-date team memberships).
-		req.Teams = authzCtx.TeamScope.Teams
+	if authzCtx != nil {
+		userTeams = authzCtx.TeamScope.Teams
 	} else {
-		// Fallback: use team memberships captured at schedule creation time.
-		req.Teams = schedule.UserTeams
+		userTeams = schedule.UserTeams
 	}
+	teams := sessionuc.ResolveTeams(scheduleScope, schedule.TeamID, userTeams)
 
+	// Collect tags and add schedule metadata
+	tags := schedule.SessionConfig.Tags
+	if tags == nil {
+		tags = make(map[string]string)
+	}
+	tags["schedule_id"] = schedule.ID
+	tags["schedule_name"] = schedule.Name
+
+	var initialMessage, githubToken, agentType string
+	var slackParams *entities.SlackParams
+	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
-		req.InitialMessage = schedule.SessionConfig.Params.Message
+		initialMessage = schedule.SessionConfig.Params.Message
 		// For team-scoped schedules, do not use the creator's github_token
-		// (matches worker.go behavior)
 		if scheduleScope != entities.ScopeTeam {
-			req.GithubToken = schedule.SessionConfig.Params.GithubToken
+			githubToken = schedule.SessionConfig.Params.GithubToken
 		}
-		req.AgentType = schedule.SessionConfig.Params.AgentType
-		req.SlackParams = schedule.SessionConfig.Params.Slack
-		req.Oneshot = schedule.SessionConfig.Params.Oneshot
+		agentType = schedule.SessionConfig.Params.AgentType
+		slackParams = schedule.SessionConfig.Params.Slack
+		oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
-	// Add schedule metadata to tags (matches worker.go behavior)
-	if req.Tags == nil {
-		req.Tags = make(map[string]string)
-	}
-	req.Tags["schedule_id"] = schedule.ID
-	req.Tags["schedule_name"] = schedule.Name
-
-	// Extract repository information from tags
-	req.RepoInfo = app.ExtractRepositoryInfo(req.Tags, sessionID)
-
-	session, err := h.sessionManager.CreateSession(c.Request().Context(), sessionID, req, nil)
+	result, err := h.launcher.Launch(c.Request().Context(), sessionID, sessionuc.LaunchRequest{
+		UserID:         schedule.UserID,
+		Scope:          scheduleScope,
+		TeamID:         schedule.TeamID,
+		Teams:          teams,
+		Environment:    schedule.SessionConfig.Environment,
+		Tags:           tags,
+		InitialMessage: initialMessage,
+		GithubToken:    githubToken,
+		AgentType:      agentType,
+		SlackParams:    slackParams,
+		Oneshot:        oneshot,
+		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
+	})
 	if err != nil {
 		log.Printf("Failed to trigger schedule %s: %v", id, err)
 
@@ -544,17 +551,17 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	// Record successful execution
 	record := ExecutionRecord{
 		ExecutedAt: time.Now(),
-		SessionID:  session.ID(),
+		SessionID:  result.SessionID,
 		Status:     "success",
 	}
 	if err := h.manager.RecordExecution(c.Request().Context(), id, record); err != nil {
 		log.Printf("Failed to record execution for schedule %s: %v", id, err)
 	}
 
-	log.Printf("Manually triggered schedule %s, created session %s", id, session.ID())
+	log.Printf("Manually triggered schedule %s, created session %s", id, result.SessionID)
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"session_id":   session.ID(),
+		"session_id":   result.SessionID,
 		"triggered_at": record.ExecutedAt,
 	})
 }

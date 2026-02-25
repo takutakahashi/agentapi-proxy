@@ -10,9 +10,9 @@ import (
 	"text/template"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 )
 
 // WebhookSessionService encapsulates common logic shared between
@@ -21,6 +21,7 @@ import (
 type WebhookSessionService struct {
 	repo           repositories.WebhookRepository
 	sessionManager repositories.SessionManager
+	launcher       *sessionuc.LaunchUseCase
 }
 
 // NewWebhookSessionService creates a new WebhookSessionService.
@@ -28,6 +29,7 @@ func NewWebhookSessionService(repo repositories.WebhookRepository, sessionManage
 	return &WebhookSessionService{
 		repo:           repo,
 		sessionManager: sessionManager,
+		launcher:       sessionuc.NewLaunchUseCase(sessionManager),
 	}
 }
 
@@ -44,7 +46,10 @@ type SessionCreationParams struct {
 
 // CreateSessionFromWebhook creates or reuses a session based on webhook and trigger configuration.
 // Returns sessionID, sessionReused flag, and error.
-func (s *WebhookSessionService) CreateSessionFromWebhook(ctx echo.Context, params SessionCreationParams) (string, bool, error) {
+//
+// The ctx parameter is a plain context.Context (not echo.Context) so that this method can be
+// called from background goroutines or unit tests without an HTTP request.
+func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, params SessionCreationParams) (string, bool, error) {
 	webhook := params.Webhook
 	trigger := params.Trigger
 
@@ -80,46 +85,20 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx echo.Context, param
 		return "", false, err
 	}
 
-	// Try to reuse an existing session
-	if sessionConfig != nil && sessionConfig.ReuseSession() {
-		sessionID, reused, reuseErr := s.tryReuseSession(ctx, sessionConfig, tags, initialMessage, params.Payload)
-		if reuseErr == nil && reused {
-			return sessionID, true, nil
-		}
-		if reuseErr != nil {
-			log.Printf("[WEBHOOK] Failed to reuse session: %v, creating new session instead", reuseErr)
-		}
-	}
-
-	// Check session limit
-	if err := s.checkSessionLimit(webhook); err != nil {
-		return "", false, err
-	}
-
-	// Build and create the session
-	sessionID := uuid.New().String()
-	req := &entities.RunServerRequest{
-		UserID:         webhook.UserID(),
-		Environment:    env,
-		Tags:           tags,
-		Scope:          webhook.Scope(),
-		TeamID:         webhook.TeamID(),
-		InitialMessage: initialMessage,
-	}
-
+	// Determine session params fields from rendered params
+	var githubToken, agentType string
+	var oneshot bool
 	if renderedParams != nil {
-		if renderedParams.GithubToken != "" {
-			req.GithubToken = renderedParams.GithubToken
-		}
-		if renderedParams.AgentType != "" {
-			req.AgentType = renderedParams.AgentType
-		}
-		req.Oneshot = renderedParams.Oneshot
+		githubToken = renderedParams.GithubToken
+		agentType = renderedParams.AgentType
+		oneshot = renderedParams.Oneshot
 	}
 
-	// Set repository info from tags
+	// Build repository info from tags
+	sessionID := uuid.New().String()
+	var repoInfo *entities.RepositoryInfo
 	if repoFullName, ok := tags["repository"]; ok && repoFullName != "" {
-		req.RepoInfo = &entities.RepositoryInfo{
+		repoInfo = &entities.RepositoryInfo{
 			FullName: repoFullName,
 			CloneDir: sessionID,
 		}
@@ -131,12 +110,43 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx echo.Context, param
 		webhookPayload = params.RawPayload
 	}
 
-	session, err := s.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req, webhookPayload)
+	// Resolve the reuse message (for existing-session route)
+	var reuseMessage string
+	if sessionConfig != nil && sessionConfig.ReuseMessageTemplate() != "" {
+		if rendered, renderErr := RenderTemplate(sessionConfig.ReuseMessageTemplate(), params.Payload); renderErr == nil {
+			reuseMessage = rendered
+		} else {
+			log.Printf("[WEBHOOK] Failed to render reuse message template: %v", renderErr)
+		}
+	}
+
+	// Delegate reuse, limit-check, and session creation to LaunchUseCase.
+	// Teams is resolved here so it is never accidentally omitted (fixes the bug where
+	// webhook-triggered sessions were created without team-level settings injection).
+	result, err := s.launcher.Launch(ctx, sessionID, sessionuc.LaunchRequest{
+		UserID:         webhook.UserID(),
+		Scope:          webhook.Scope(),
+		TeamID:         webhook.TeamID(),
+		Teams:          sessionuc.ResolveTeams(webhook.Scope(), webhook.TeamID(), webhook.UserTeams()),
+		Environment:    env,
+		Tags:           tags,
+		InitialMessage: initialMessage,
+		GithubToken:    githubToken,
+		AgentType:      agentType,
+		Oneshot:        oneshot,
+		RepoInfo:       repoInfo,
+		WebhookPayload: webhookPayload,
+		ReuseSession:   sessionConfig != nil && sessionConfig.ReuseSession(),
+		ReuseMatchTags: tags,
+		ReuseMessage:   reuseMessage,
+		MaxSessions:    webhook.MaxSessions(),
+		LimitMatchTags: map[string]string{"webhook_id": webhook.ID()},
+	})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	return session.ID(), false, nil
+	return result.SessionID, result.SessionReused, nil
 }
 
 // RecordDelivery records a webhook delivery event.
@@ -358,62 +368,6 @@ func (s *WebhookSessionService) determineInitialMessage(
 	}
 
 	return defaultMessage, nil
-}
-
-// tryReuseSession attempts to find and reuse an existing session.
-func (s *WebhookSessionService) tryReuseSession(
-	ctx echo.Context,
-	sessionConfig *entities.WebhookSessionConfig,
-	tags map[string]string,
-	initialMessage string,
-	payload map[string]interface{},
-) (string, bool, error) {
-	log.Printf("[WEBHOOK] Session reuse is enabled, searching for existing session with tags: %v", tags)
-
-	filter := entities.SessionFilter{
-		Tags:   tags,
-		Status: "active",
-	}
-	existingSessions := s.sessionManager.ListSessions(filter)
-	log.Printf("[WEBHOOK] Found %d existing sessions matching filter", len(existingSessions))
-
-	if len(existingSessions) == 0 {
-		log.Printf("[WEBHOOK] No existing sessions found with matching tags, creating new session")
-		return "", false, fmt.Errorf("no existing sessions found")
-	}
-
-	existingSession := existingSessions[0]
-	log.Printf("[WEBHOOK] Reusing existing session %s", existingSession.ID())
-
-	reuseMessage := initialMessage
-	if sessionConfig.ReuseMessageTemplate() != "" {
-		msg, err := RenderTemplate(sessionConfig.ReuseMessageTemplate(), payload)
-		if err != nil {
-			log.Printf("[WEBHOOK] Failed to render reuse message template: %v", err)
-		} else {
-			reuseMessage = msg
-		}
-	}
-
-	if err := s.sessionManager.SendMessage(ctx.Request().Context(), existingSession.ID(), reuseMessage); err != nil {
-		return "", false, fmt.Errorf("failed to send message to existing session: %w", err)
-	}
-
-	return existingSession.ID(), true, nil
-}
-
-// checkSessionLimit verifies the webhook has not exceeded its maximum session count.
-func (s *WebhookSessionService) checkSessionLimit(webhook *entities.Webhook) error {
-	filter := entities.SessionFilter{
-		Tags: map[string]string{
-			"webhook_id": webhook.ID(),
-		},
-	}
-	existingSessions := s.sessionManager.ListSessions(filter)
-	if len(existingSessions) >= webhook.MaxSessions() {
-		return fmt.Errorf("session limit reached: maximum %d sessions per webhook", webhook.MaxSessions())
-	}
-	return nil
 }
 
 // Helper functions

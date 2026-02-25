@@ -41,11 +41,15 @@ const (
 
 // webhookJSON is the JSON representation for storage
 type webhookJSON struct {
-	ID              string                        `json:"id"`
-	Name            string                        `json:"name"`
-	UserID          string                        `json:"user_id"`
-	Scope           entities.ResourceScope        `json:"scope,omitempty"`
-	TeamID          string                        `json:"team_id,omitempty"`
+	ID     string                 `json:"id"`
+	Name   string                 `json:"name"`
+	UserID string                 `json:"user_id"`
+	Scope  entities.ResourceScope `json:"scope,omitempty"`
+	TeamID string                 `json:"team_id,omitempty"`
+	// UserTeams holds the GitHub team slugs of the webhook creator, captured at
+	// create/update time.  Persisted so the webhook handler can inject team-level
+	// settings without a live auth context.
+	UserTeams       []string                      `json:"user_teams,omitempty"`
 	Status          entities.WebhookStatus        `json:"status"`
 	Type            entities.WebhookType          `json:"type"`
 	Secret          string                        `json:"secret"`
@@ -491,6 +495,9 @@ func (r *KubernetesWebhookRepository) jsonToEntity(wj *webhookJSON) *entities.We
 	webhook := entities.NewWebhook(wj.ID, wj.Name, wj.UserID, wj.Type)
 	webhook.SetScope(wj.Scope)
 	webhook.SetTeamID(wj.TeamID)
+	if len(wj.UserTeams) > 0 {
+		webhook.SetUserTeams(wj.UserTeams)
+	}
 	webhook.SetStatus(wj.Status)
 	webhook.SetSecret(wj.Secret)
 	if wj.SignatureHeader != "" {
@@ -574,6 +581,7 @@ func (r *KubernetesWebhookRepository) entityToJSON(w *entities.Webhook) *webhook
 		UserID:          w.UserID(),
 		Scope:           w.Scope(),
 		TeamID:          w.TeamID(),
+		UserTeams:       w.UserTeams(),
 		Status:          w.Status(),
 		Type:            w.WebhookType(),
 		Secret:          w.Secret(),

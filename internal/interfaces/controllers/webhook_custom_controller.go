@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/webhook"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 )
 
 // WebhookCustomController handles custom webhook reception
@@ -21,6 +22,7 @@ type WebhookCustomController struct {
 	repo                repositories.WebhookRepository
 	sessionService      *WebhookSessionService
 	sessionManager      repositories.SessionManager
+	launcher            *sessionuc.LaunchUseCase
 	signatureVerifier   *webhook.SignatureVerifier
 	gotemplateEvaluator *webhook.GoTemplateEvaluator
 }
@@ -34,6 +36,7 @@ func NewWebhookCustomController(
 		repo:                repo,
 		sessionService:      NewWebhookSessionService(repo, sessionManager),
 		sessionManager:      sessionManager,
+		launcher:            sessionuc.NewLaunchUseCase(sessionManager),
 		signatureVerifier:   webhook.NewSignatureVerifier(),
 		gotemplateEvaluator: webhook.NewGoTemplateEvaluator(),
 	}
@@ -110,7 +113,7 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 	}
 
 	// Create or reuse session via shared service
-	sessionID, sessionReused, err := c.sessionService.CreateSessionFromWebhook(ctx, SessionCreationParams{
+	sessionID, sessionReused, err := c.sessionService.CreateSessionFromWebhook(ctx.Request().Context(), SessionCreationParams{
 		Webhook:        matchedWebhook,
 		Trigger:        matchResult,
 		Payload:        payload,
@@ -266,44 +269,41 @@ Raw payload (first 500 chars):
 Please ensure the webhook payload is valid JSON.
 `, wh.Name(), parseErr.Error(), truncateString(string(rawBody), 500))
 
-	req := &entities.RunServerRequest{
-		UserID:         wh.UserID(),
-		Environment:    env,
-		Tags:           tags,
-		Scope:          wh.Scope(),
-		TeamID:         wh.TeamID(),
-		InitialMessage: initialMessage,
-	}
-
+	var githubToken, agentType string
+	var oneshot bool
 	if sessionConfig != nil && sessionConfig.Params() != nil {
 		params := sessionConfig.Params()
-		if params.GithubToken != "" {
-			req.GithubToken = params.GithubToken
-		}
-		if params.AgentType != "" {
-			req.AgentType = params.AgentType
-		}
-		req.Oneshot = params.Oneshot
+		githubToken = params.GithubToken
+		agentType = params.AgentType
+		oneshot = params.Oneshot
 	}
 
-	// Check session limit
-	if err := c.sessionService.checkSessionLimit(wh); err != nil {
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON payload"})
-	}
-
-	session, err := c.sessionManager.CreateSession(ctx.Request().Context(), sessionID, req, nil)
+	result, err := c.launcher.Launch(ctx.Request().Context(), sessionID, sessionuc.LaunchRequest{
+		UserID:         wh.UserID(),
+		Scope:          wh.Scope(),
+		TeamID:         wh.TeamID(),
+		Teams:          sessionuc.ResolveTeams(wh.Scope(), wh.TeamID(), wh.UserTeams()),
+		Environment:    env,
+		Tags:           tags,
+		InitialMessage: initialMessage,
+		GithubToken:    githubToken,
+		AgentType:      agentType,
+		Oneshot:        oneshot,
+		MaxSessions:    wh.MaxSessions(),
+		LimitMatchTags: map[string]string{"webhook_id": wh.ID()},
+	})
 	if err != nil {
 		log.Printf("[WEBHOOK_CUSTOM] Failed to create error session: %v", err)
 		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON payload"})
 	}
 
-	c.sessionService.RecordDelivery(ctx.Request().Context(), wh.ID(), "", entities.DeliveryStatusFailed, nil, session.ID(), false, fmt.Errorf("JSON parse error: %v", parseErr))
+	c.sessionService.RecordDelivery(ctx.Request().Context(), wh.ID(), "", entities.DeliveryStatusFailed, nil, result.SessionID, false, fmt.Errorf("JSON parse error: %v", parseErr))
 
-	log.Printf("[WEBHOOK_CUSTOM] Session created with parse error: %s", session.ID())
+	log.Printf("[WEBHOOK_CUSTOM] Session created with parse error: %s", result.SessionID)
 
 	return ctx.JSON(http.StatusOK, map[string]string{
 		"message":    "Session created with parse error",
-		"session_id": session.ID(),
+		"session_id": result.SessionID,
 		"webhook_id": wh.ID(),
 	})
 }

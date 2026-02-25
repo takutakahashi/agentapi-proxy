@@ -158,7 +158,7 @@ func (h *Handlers) triggerGitHubWebhook(ctx echo.Context, webhook *entities.Webh
 	}
 
 	// Actually create session (dry_run=false)
-	sessionID, sessionReused, err := h.githubController.SessionService().CreateSessionFromWebhook(ctx, controllers.SessionCreationParams{
+	sessionID, sessionReused, err := h.githubController.SessionService().CreateSessionFromWebhook(ctx.Request().Context(), controllers.SessionCreationParams{
 		Webhook:        webhook,
 		Trigger:        matchResult,
 		Payload:        req.Payload,
@@ -220,7 +220,7 @@ func (h *Handlers) triggerCustomWebhook(ctx echo.Context, webhook *entities.Webh
 
 	// Create actual session
 	payloadBytes, _ := json.Marshal(req.Payload)
-	sessionID, sessionReused, err := h.customController.SessionService().CreateSessionFromWebhook(ctx, controllers.SessionCreationParams{
+	sessionID, sessionReused, err := h.customController.SessionService().CreateSessionFromWebhook(ctx.Request().Context(), controllers.SessionCreationParams{
 		Webhook:        webhook,
 		Trigger:        matchResult,
 		Payload:        req.Payload,

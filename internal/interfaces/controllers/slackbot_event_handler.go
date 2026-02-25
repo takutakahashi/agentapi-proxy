@@ -13,6 +13,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 type SlackBotEventHandler struct {
 	repo            repositories.SlackBotRepository
 	sessionManager  repositories.SessionManager
+	launcher        *sessionuc.LaunchUseCase
 	channelResolver *services.SlackChannelResolver
 	// Default SlackBot configuration (from server startup config)
 	defaultBotTokenSecretName string
@@ -55,6 +57,7 @@ func NewSlackBotEventHandler(
 	return &SlackBotEventHandler{
 		repo:                      repo,
 		sessionManager:            sessionManager,
+		launcher:                  sessionuc.NewLaunchUseCase(sessionManager),
 		channelResolver:           channelResolver,
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
@@ -241,6 +244,8 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// Try to reuse an existing active session for this channel+thread.
 	// Follow-up messages in the same Slack thread are routed to the existing session
 	// rather than spawning a new one (mirrors the webhook reuse-session behaviour).
+	// NOTE: The slackbot reuse path is handled here (rather than via LaunchUseCase)
+	// because it requires the Slackbot-specific UpdateSlackLastMessageAt call.
 	reuseFilter := entities.SessionFilter{
 		Tags: map[string]string{
 			"slack_channel":   channel,
@@ -267,54 +272,37 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		return nil
 	}
 
-	// Check session limit
-	if bot != nil {
-		limitFilter := entities.SessionFilter{
-			Tags: map[string]string{"slackbot_id": botID},
-		}
-		activeSessions := h.sessionManager.ListSessions(limitFilter)
-		if len(activeSessions) >= bot.MaxSessions() {
-			log.Printf("[SLACKBOT] Session limit reached: id=%s, limit=%d", botID, bot.MaxSessions())
-			return fmt.Errorf("session limit reached: maximum %d sessions", bot.MaxSessions())
-		}
-	}
-
-	// Determine scope and ownership
+	// Determine scope and ownership.
+	// ResolveTeams ensures team-level settings are always injected correctly,
+	// using the same rule as schedule and webhook trigger sources.
 	scope := entities.ScopeUser
 	userID := ""
 	teamID := ""
 	var teams []string
+	var maxSessions int
 	if bot != nil {
 		scope = bot.Scope()
 		userID = bot.UserID()
 		teamID = bot.TeamID()
-		// Follow the same pattern as the schedule worker:
-		// - team-scoped bot: use only the bot's teamID as the sole team credential
-		//   so that exactly the team's settings (MCP, env, Bedrock, etc.) are applied.
-		// - user-scoped bot: use the explicit team list stored on the bot
-		//   (set at create/update time via the teams field).
-		if scope == entities.ScopeTeam && teamID != "" {
-			teams = []string{teamID}
-		} else {
-			teams = bot.Teams()
+		teams = sessionuc.ResolveTeams(scope, teamID, bot.Teams())
+		maxSessions = bot.MaxSessions()
+	}
+
+	// Check session limit synchronously so that the caller (and tests) can observe
+	// the error before a goroutine is launched.  LaunchUseCase receives MaxSessions=0
+	// to skip the duplicate check inside the goroutine.
+	if maxSessions > 0 {
+		limitFilter := entities.SessionFilter{
+			Tags: map[string]string{"slackbot_id": botID},
+		}
+		activeSessions := h.sessionManager.ListSessions(limitFilter)
+		if len(activeSessions) >= maxSessions {
+			log.Printf("[SLACKBOT] Session limit reached: id=%s, limit=%d", botID, maxSessions)
+			return fmt.Errorf("session limit reached: maximum %d sessions", maxSessions)
 		}
 	}
 
 	sessionID := uuid.New().String()
-	req := &entities.RunServerRequest{
-		UserID:         userID,
-		Environment:    env,
-		Tags:           tags,
-		Scope:          scope,
-		TeamID:         teamID,
-		Teams:          teams,
-		InitialMessage: initialMessage,
-		AgentType:      agentType,
-		SlackParams: &entities.SlackParams{
-			Channel:  channel,
-			ThreadTS: threadKey,
-		},
-	}
 
 	// Dedup guard: Slack can emit both "message" and "app_mention" events for the same
 	// @mention within milliseconds. Both would pass the reuse check above (the session
@@ -339,13 +327,28 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			return
 		}
 
-		session, err := h.sessionManager.CreateSession(bgCtx, sessionID, req, nil)
+		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
+			UserID:         userID,
+			Scope:          scope,
+			TeamID:         teamID,
+			Teams:          teams,
+			Environment:    env,
+			Tags:           tags,
+			InitialMessage: initialMessage,
+			AgentType:      agentType,
+			SlackParams: &entities.SlackParams{
+				Channel:  channel,
+				ThreadTS: threadKey,
+			},
+			// MaxSessions=0: limit was already checked synchronously above so we
+			// skip the redundant check inside LaunchUseCase.
+		})
 		if err != nil {
 			log.Printf("[SLACKBOT] Failed to create session: %v", err)
 			return
 		}
-		log.Printf("[SLACKBOT] Created session %s for thread %s", session.ID(), threadKey)
-		h.postSessionURLToSlack(bgCtx, channel, threadKey, session.ID(), bot)
+		log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
+		h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, bot)
 	}()
 
 	return nil
