@@ -461,20 +461,44 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 	// Create session with schedule's scope
 	sessionID := uuid.New().String()
+	scheduleScope := schedule.GetScope() // Use GetScope() to handle default value
 	req := &entities.RunServerRequest{
 		UserID:      schedule.UserID,
 		Environment: schedule.SessionConfig.Environment,
 		Tags:        schedule.SessionConfig.Tags,
-		Scope:       schedule.GetScope(), // Use GetScope() to handle default value
+		Scope:       scheduleScope,
 		TeamID:      schedule.TeamID,
 	}
+
+	// Set Teams based on scope - mirrors worker.go logic, but for manual trigger
+	// we can use the requesting user's auth context to get team memberships.
+	// User-scoped schedules can only be triggered by their owner (enforced by
+	// userCanAccessSchedule), so authzCtx reflects the correct user.
+	authzCtx := auth.GetAuthorizationContext(c)
+	if scheduleScope == entities.ScopeTeam && schedule.TeamID != "" {
+		req.Teams = []string{schedule.TeamID}
+	} else if authzCtx != nil {
+		req.Teams = authzCtx.TeamScope.Teams
+	}
+
 	if schedule.SessionConfig.Params != nil {
 		req.InitialMessage = schedule.SessionConfig.Params.Message
-		req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		// For team-scoped schedules, do not use the creator's github_token
+		// (matches worker.go behavior)
+		if scheduleScope != entities.ScopeTeam {
+			req.GithubToken = schedule.SessionConfig.Params.GithubToken
+		}
 		req.AgentType = schedule.SessionConfig.Params.AgentType
 		req.SlackParams = schedule.SessionConfig.Params.Slack
 		req.Oneshot = schedule.SessionConfig.Params.Oneshot
 	}
+
+	// Add schedule metadata to tags (matches worker.go behavior)
+	if req.Tags == nil {
+		req.Tags = make(map[string]string)
+	}
+	req.Tags["schedule_id"] = schedule.ID
+	req.Tags["schedule_name"] = schedule.Name
 
 	// Extract repository information from tags
 	req.RepoInfo = app.ExtractRepositoryInfo(req.Tags, sessionID)
