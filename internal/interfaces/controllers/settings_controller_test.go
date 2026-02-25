@@ -252,6 +252,105 @@ func TestUpdateSettings_PreserveExistingCredentials(t *testing.T) {
 	}
 }
 
+func TestDetermineAuthMode(t *testing.T) {
+	ctrl := &SettingsController{}
+
+	makeSettings := func(fn func(s *entities.Settings)) *entities.Settings {
+		s := entities.NewSettings("test")
+		fn(s)
+		return s
+	}
+
+	makeBedrock := func(enabled bool, accessKeyID, secretAccessKey, roleARN, profile string) *entities.BedrockSettings {
+		b := entities.NewBedrockSettings(enabled)
+		b.SetAccessKeyID(accessKeyID)
+		b.SetSecretAccessKey(secretAccessKey)
+		b.SetRoleARN(roleARN)
+		b.SetProfile(profile)
+		return b
+	}
+
+	t.Run("bedrock enabled → auth_mode=bedrock", func(t *testing.T) {
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetBedrock(makeBedrock(true, "", "", "", ""))
+		})
+		assert.Equal(t, entities.AuthModeBedrock, ctrl.determineAuthMode(s, nil))
+	})
+
+	t.Run("bedrock with access_key_id only → auth_mode=bedrock", func(t *testing.T) {
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetBedrock(makeBedrock(false, "AKIAEXAMPLE", "", "", ""))
+		})
+		assert.Equal(t, entities.AuthModeBedrock, ctrl.determineAuthMode(s, nil))
+	})
+
+	t.Run("bedrock with role_arn only → auth_mode=bedrock", func(t *testing.T) {
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetBedrock(makeBedrock(false, "", "", "arn:aws:iam::123:role/R", ""))
+		})
+		assert.Equal(t, entities.AuthModeBedrock, ctrl.determineAuthMode(s, nil))
+	})
+
+	t.Run("bedrock with profile only → auth_mode=bedrock", func(t *testing.T) {
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetBedrock(makeBedrock(false, "", "", "", "my-profile"))
+		})
+		assert.Equal(t, entities.AuthModeBedrock, ctrl.determineAuthMode(s, nil))
+	})
+
+	t.Run("bedrock variables take priority over oauth token", func(t *testing.T) {
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetBedrock(makeBedrock(true, "AKIAEXAMPLE", "secret", "", ""))
+			s.SetClaudeCodeOAuthToken("sk-ant-oat01-xxx")
+		})
+		assert.Equal(t, entities.AuthModeBedrock, ctrl.determineAuthMode(s, nil))
+	})
+
+	t.Run("oauth only → auth_mode=oauth", func(t *testing.T) {
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetClaudeCodeOAuthToken("sk-ant-oat01-xxx")
+		})
+		assert.Equal(t, entities.AuthModeOAuth, ctrl.determineAuthMode(s, nil))
+	})
+
+	t.Run("bedrock nil no credentials → auth_mode empty", func(t *testing.T) {
+		s := makeSettings(func(s *entities.Settings) {})
+		assert.Equal(t, entities.AuthMode(""), ctrl.determineAuthMode(s, nil))
+	})
+
+	t.Run("bedrock disabled no credentials → auth_mode empty", func(t *testing.T) {
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetBedrock(makeBedrock(false, "", "", "", ""))
+		})
+		assert.Equal(t, entities.AuthMode(""), ctrl.determineAuthMode(s, nil))
+	})
+
+	t.Run("explicit auth_mode=bedrock with credentials → respected", func(t *testing.T) {
+		mode := "bedrock"
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetBedrock(makeBedrock(true, "AKIAEXAMPLE", "", "", ""))
+		})
+		assert.Equal(t, entities.AuthModeBedrock, ctrl.determineAuthMode(s, &mode))
+	})
+
+	t.Run("explicit auth_mode=oauth with token → respected", func(t *testing.T) {
+		mode := "oauth"
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetClaudeCodeOAuthToken("sk-ant-oat01-xxx")
+		})
+		assert.Equal(t, entities.AuthModeOAuth, ctrl.determineAuthMode(s, &mode))
+	})
+
+	t.Run("explicit auth_mode=bedrock but no bedrock vars → falls through to oauth", func(t *testing.T) {
+		mode := "bedrock"
+		s := makeSettings(func(s *entities.Settings) {
+			s.SetClaudeCodeOAuthToken("sk-ant-oat01-xxx")
+		})
+		// No bedrock vars → falls through to auto-detect → oauth
+		assert.Equal(t, entities.AuthModeOAuth, ctrl.determineAuthMode(s, &mode))
+	})
+}
+
 func TestMergeSecrets(t *testing.T) {
 	ctrl := &SettingsController{}
 

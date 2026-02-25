@@ -410,7 +410,25 @@ func (c *SettingsController) sanitizeName(s string) string {
 	return sanitized
 }
 
-// determineAuthMode determines the auth mode based on request and available credentials
+// hasBedrock returns true if the settings contain any Bedrock variables.
+// This includes bedrock.enabled=true or any Bedrock credentials being set
+// (access_key_id, secret_access_key, role_arn, or profile).
+func (c *SettingsController) hasBedrock(settings *entities.Settings) bool {
+	bedrock := settings.Bedrock()
+	if bedrock == nil {
+		return false
+	}
+	return bedrock.Enabled() ||
+		bedrock.AccessKeyID() != "" ||
+		bedrock.SecretAccessKey() != "" ||
+		bedrock.RoleARN() != "" ||
+		bedrock.Profile() != ""
+}
+
+// determineAuthMode determines the auth mode based on request and available credentials.
+// If Bedrock variables are present (enabled=true or any credentials set), bedrock mode
+// takes priority over OAuth so that team settings with Bedrock credentials are always
+// assigned auth_mode=bedrock.
 func (c *SettingsController) determineAuthMode(settings *entities.Settings, requestedMode *string) entities.AuthMode {
 	// 1. If explicitly specified, use that mode (if credentials are available)
 	if requestedMode != nil && *requestedMode != "" {
@@ -421,19 +439,20 @@ func (c *SettingsController) determineAuthMode(settings *entities.Settings, requ
 				return entities.AuthModeOAuth
 			}
 		case entities.AuthModeBedrock:
-			if bedrock := settings.Bedrock(); bedrock != nil && bedrock.Enabled() {
+			if c.hasBedrock(settings) {
 				return entities.AuthModeBedrock
 			}
 		}
 		// Requested mode's credentials not available, fall through to auto-detection
 	}
 
-	// 2. Auto-detect: OAuth takes priority
+	// 2. Auto-detect: Bedrock takes priority when Bedrock variables are present.
+	// Any setting that has bedrock credentials or enabled=true must use bedrock mode.
+	if c.hasBedrock(settings) {
+		return entities.AuthModeBedrock
+	}
 	if settings.HasClaudeCodeOAuthToken() {
 		return entities.AuthModeOAuth
-	}
-	if bedrock := settings.Bedrock(); bedrock != nil && bedrock.Enabled() {
-		return entities.AuthModeBedrock
 	}
 
 	// 3. No credentials available
