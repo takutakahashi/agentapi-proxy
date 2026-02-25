@@ -147,6 +147,13 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			channelName, resolveErr := h.channelResolver.ResolveChannelName(ctx, event.Channel, botToken)
 			if resolveErr != nil {
 				log.Printf("[SLACKBOT] Failed to resolve channel name: id=%s, channel=%s, err=%v", botID, event.Channel, resolveErr)
+				threadTS := event.ThreadTs
+				if threadTS == "" {
+					threadTS = event.Ts
+				}
+				h.postErrorToSlack(ctx, event.Channel, threadTS,
+					":warning: チャンネル情報を取得できませんでした。しばらく待ってから再度お試しください。",
+					botToken)
 				return fmt.Errorf("failed to resolve channel name for channel %s: %w", event.Channel, resolveErr)
 			} else if !bot.IsChannelNameAllowed(channelName) {
 				log.Printf("[SLACKBOT] Channel name not allowed: id=%s, channel=%s, name=%s", botID, event.Channel, channelName)
@@ -426,6 +433,22 @@ func (h *SlackBotEventHandler) getBotToken(ctx context.Context, bot *entities.Sl
 		}
 	}
 	return h.channelResolver.GetBotToken(ctx, secretName, secretKey)
+}
+
+// postErrorToSlack posts an error message to the Slack thread where the triggering event occurred.
+// This is a best-effort operation; errors are logged but never propagated.
+// In dry-run mode the post is only logged and not sent to Slack.
+func (h *SlackBotEventHandler) postErrorToSlack(ctx context.Context, channel, threadTS, message, botToken string) {
+	if h.channelResolver == nil {
+		return
+	}
+	if h.dryRun {
+		log.Printf("[SLACKBOT] [DRY-RUN] Would post error to Slack: channel=%s, thread=%s, message=%q", channel, threadTS, message)
+		return
+	}
+	if err := h.channelResolver.PostMessage(ctx, channel, threadTS, message, botToken); err != nil {
+		log.Printf("[SLACKBOT] Failed to post error message to Slack thread: channel=%s, err=%v", channel, err)
+	}
 }
 
 // postSessionURLToSlack posts the session URL back to the Slack thread.
