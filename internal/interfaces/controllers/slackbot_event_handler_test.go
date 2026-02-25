@@ -330,14 +330,20 @@ func TestProcessEvent_NonEventCallbackIgnored(t *testing.T) {
 // TestProcessEvent_BasicEvent_CreatesSession verifies that a basic message event causes
 // a session to be created asynchronously.
 func TestProcessEvent_BasicEvent_CreatesSession(t *testing.T) {
-	const channelID = "C-basic"
+	const (
+		botID     = "basic-bot-uuid"
+		channelID = "C-basic"
+	)
 
 	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Basic Bot", "user-1")
+	repo.bots[botID] = bot
+
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
 
 	payload := buildEventPayload(channelID, "hello bot")
-	err := handler.ProcessEvent(context.Background(), "default", payload)
+	err := handler.ProcessEvent(context.Background(), botID, payload)
 	require.NoError(t, err)
 
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
@@ -346,7 +352,7 @@ func TestProcessEvent_BasicEvent_CreatesSession(t *testing.T) {
 	require.True(t, ok, "session should be created asynchronously")
 
 	createdTags := sessionMgr.getCreatedSession(0).tags
-	assert.Equal(t, "default", createdTags["slackbot_id"])
+	assert.Equal(t, botID, createdTags["slackbot_id"])
 	assert.Equal(t, channelID, createdTags["slack_channel"])
 }
 
@@ -470,9 +476,9 @@ func TestProcessEvent_DefaultID_ResolveBotByChannel_UsesCorrectBotID(t *testing.
 		"session must be tagged with the registered bot's UUID, not 'default'")
 }
 
-// TestProcessEvent_DefaultID_NoBotMatch_FallsThrough verifies that when no registered bot
-// matches the channel, the event falls through and creates a session with slackbot_id="default".
-func TestProcessEvent_DefaultID_NoBotMatch_FallsThrough(t *testing.T) {
+// TestProcessEvent_DefaultID_NoBotMatch_DropsEvent verifies that when no registered bot
+// matches the channel, the event is dropped (no session is created).
+func TestProcessEvent_DefaultID_NoBotMatch_DropsEvent(t *testing.T) {
 	const (
 		namespace  = "test-ns"
 		secretName = "bot-token-secret"
@@ -504,22 +510,24 @@ func TestProcessEvent_DefaultID_NoBotMatch_FallsThrough(t *testing.T) {
 	err := handler.ProcessEvent(context.Background(), "default", payload)
 	require.NoError(t, err)
 
-	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
-		return sessionMgr.createdCount() == 1
-	})
-	require.True(t, ok, "session should be created with default fallback")
-
-	createdTags := sessionMgr.getCreatedSession(0).tags
-	assert.Equal(t, "default", createdTags["slackbot_id"],
-		"when no bot is matched, session should be tagged with 'default'")
+	// No session should be created when no registered bot matches the channel.
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, sessionMgr.createdCount(),
+		"event should be dropped when no registered bot matches the channel")
 }
 
 // TestProcessEvent_ThreadTs_UsedAsThreadKey verifies that when thread_ts is present,
 // it is used as the slack_thread_ts tag instead of ts.
 func TestProcessEvent_ThreadTs_UsedAsThreadKey(t *testing.T) {
-	const channelID = "C-thread"
+	const (
+		botID     = "thread-bot-uuid"
+		channelID = "C-thread"
+	)
 
 	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Thread Bot", "user-1")
+	repo.bots[botID] = bot
+
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
 
@@ -536,7 +544,7 @@ func TestProcessEvent_ThreadTs_UsedAsThreadKey(t *testing.T) {
 		},
 	}
 
-	err := handler.ProcessEvent(context.Background(), "default", payload)
+	err := handler.ProcessEvent(context.Background(), botID, payload)
 	require.NoError(t, err)
 
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
@@ -628,11 +636,14 @@ func TestProcessEvent_BotMessage_Subtype_Ignored(t *testing.T) {
 // same channel+thread is routed to the existing active session via SendMessage, not a new session.
 func TestProcessEvent_ReuseSession_RoutesToExistingSession(t *testing.T) {
 	const (
+		botID     = "reuse-bot-uuid"
 		channelID = "C-reuse"
 		threadTS  = "600.000"
 	)
 
 	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Reuse Bot", "user-1")
+	repo.bots[botID] = bot
 
 	// Pre-seed an existing active session for the same channel+thread
 	existingSessions := []entities.Session{
@@ -660,7 +671,7 @@ func TestProcessEvent_ReuseSession_RoutesToExistingSession(t *testing.T) {
 		},
 	}
 
-	err := handler.ProcessEvent(context.Background(), "default", payload)
+	err := handler.ProcessEvent(context.Background(), botID, payload)
 	require.NoError(t, err)
 
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
@@ -674,14 +685,20 @@ func TestProcessEvent_ReuseSession_RoutesToExistingSession(t *testing.T) {
 // TestProcessEvent_ReuseSession_NewSessionWhenNoActive verifies that a new session is created
 // when no active session exists for the channel+thread, even if terminated sessions exist.
 func TestProcessEvent_ReuseSession_NewSessionWhenNoActive(t *testing.T) {
-	const channelID = "C-newthread"
+	const (
+		botID     = "newthread-bot-uuid"
+		channelID = "C-newthread"
+	)
 
 	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "NewThread Bot", "user-1")
+	repo.bots[botID] = bot
+
 	// No pre-seeded sessions → should always create a new session
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
 	payload := buildEventPayload(channelID, "first message")
-	err := handler.ProcessEvent(context.Background(), "default", payload)
+	err := handler.ProcessEvent(context.Background(), botID, payload)
 	require.NoError(t, err)
 
 	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
@@ -740,11 +757,15 @@ func TestProcessEvent_ChannelNameResolveError_ReturnsError(t *testing.T) {
 // before any session exists, so the reuse-check alone cannot catch the duplicate.
 func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 	const (
+		botID     = "concurrent-bot-uuid"
 		channelID = "C-concurrent"
 		threadTS  = "700.000"
 	)
 
 	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Concurrent Bot", "user-1")
+	repo.bots[botID] = bot
+
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
 	makePayload := func(eventType string) SlackPayload {
@@ -767,11 +788,11 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 	// Fire "message" and "app_mention" concurrently, simulating Slack's duplicate delivery
 	go func() {
 		defer wg.Done()
-		_ = handler.ProcessEvent(context.Background(), "default", makePayload("message"))
+		_ = handler.ProcessEvent(context.Background(), botID, makePayload("message"))
 	}()
 	go func() {
 		defer wg.Done()
-		_ = handler.ProcessEvent(context.Background(), "default", makePayload("app_mention"))
+		_ = handler.ProcessEvent(context.Background(), botID, makePayload("app_mention"))
 	}()
 
 	wg.Wait()
