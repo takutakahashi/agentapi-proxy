@@ -394,6 +394,14 @@ func (h *Handlers) UpdateSchedule(c echo.Context) error {
 		schedule.SessionConfig = *req.SessionConfig
 	}
 
+	// Refresh UserTeams from the current auth context so that team membership
+	// changes since schedule creation are picked up.
+	if schedule.GetScope() != entities.ScopeTeam {
+		if azCtx := auth.GetAuthorizationContext(c); azCtx != nil {
+			schedule.UserTeams = azCtx.TeamScope.Teams
+		}
+	}
+
 	// Recalculate next execution if schedule changed
 	if req.ScheduledAt != nil || req.CronExpr != nil || req.Status != nil {
 		nextAt, err := CalculateNextExecution(schedule, time.Now())
