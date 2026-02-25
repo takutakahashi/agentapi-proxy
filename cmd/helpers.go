@@ -30,6 +30,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("Available helpers:")
 		fmt.Println("  setup-claude-code - Setup Claude Code configuration")
 		fmt.Println("  generate-token - Generate API keys for agentapi-proxy authentication")
+		fmt.Println("  generate-setting - SlackBot 設定から session settings JSON を組み立てて出力する")
 		fmt.Println("  init - Initialize Claude configuration (alias for setup-claude-code)")
 		fmt.Println("  setup-gh - Setup GitHub authentication using gh CLI")
 		fmt.Println("  send-notification - Send push notifications to registered subscriptions")
