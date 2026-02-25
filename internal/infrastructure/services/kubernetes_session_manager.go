@@ -2850,37 +2850,20 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	// Expand credentials from agentapi-settings-* secrets (env_vars, bedrock, oauth)
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
-		if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
-			for k, v := range expandSettingsToEnv(cfg) {
-				env[k] = v
-			}
-		}
-	} else {
-		for _, team := range req.Teams {
-			settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
-			if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
-				for k, v := range expandSettingsToEnv(cfg) {
-					env[k] = v
-				}
-			}
-		}
-		if req.UserID != "" {
-			settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
-			if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
-				for k, v := range expandSettingsToEnv(cfg) {
-					env[k] = v
-				}
-			}
-		}
+	// Expand credentials from agentapi-settings-* secrets (env_vars, bedrock, oauth).
+	// Sources are collected in ascending priority order then deep-merged so that
+	// user settings always take precedence over team settings.
+	agentapiSources := m.collectAgentapiSettingsSources(ctx, req)
+	mergedAgentapiCfg := deepMergeAgentapiSettings(agentapiSources)
+	for k, v := range expandSettingsToEnv(mergedAgentapiCfg) {
+		env[k] = v
 	}
 
 	settings.Env = env
 
-	// Merge settings.json from base/team/user/oneshot Secrets (proxy-side, before Pod starts)
-	mergedSettingsJSON, mergedMCPServers := m.mergeSettingsAndMCP(ctx, session, req)
+	// Merge settings.json from base/team/user/oneshot Secrets (proxy-side, before Pod starts).
+	// Pass the pre-fetched agentapiSources to avoid re-reading the same Secrets.
+	mergedSettingsJSON, mergedMCPServers := m.mergeSettingsAndMCP(ctx, session, req, agentapiSources)
 
 	// Claude config
 	settings.Claude = sessionsettings.ClaudeConfig{
@@ -3119,10 +3102,15 @@ func expandSettingsToEnv(cfg *agentapiSettingsJSON) map[string]string {
 // Kubernetes Secrets (base, team[], user, oneshot) and merges them on the proxy side,
 // returning the merged structures ready to embed into SessionSettings.
 // This eliminates the need for separate merge-settings and setup-mcp init containers.
+//
+// agentapiSources contains the pre-fetched agentapiSettingsJSON values (in ascending
+// priority order) from collectAgentapiSettingsSources(). Passing them in avoids
+// re-reading the same Secrets that buildSessionSettings() already fetched.
 func (m *KubernetesSessionManager) mergeSettingsAndMCP(
 	ctx context.Context,
 	session *KubernetesSession,
 	req *entities.RunServerRequest,
+	agentapiSources []*agentapiSettingsJSON,
 ) (settingsJSON map[string]interface{}, mcpServers map[string]interface{}) {
 	// --- settings.json merge ---
 	settingsDirs := []settings.SettingsConfig{}
@@ -3170,8 +3158,8 @@ func (m *KubernetesSessionManager) mergeSettingsAndMCP(
 		}
 	}
 
-	// 3. user
-	if req.UserID != "" {
+	// 3. user — only for user-scoped sessions; team-scoped sessions use team settings only
+	if req.Scope != entities.ScopeTeam && req.UserID != "" {
 		secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
 		if cfg := readSettingsSecret(secretName, "settings.json"); cfg != nil {
 			settingsDirs = append(settingsDirs, *cfg)
@@ -3200,26 +3188,26 @@ func (m *KubernetesSessionManager) mergeSettingsAndMCP(
 		}
 	}
 
-	// --- mcp_servers merge from agentapi-settings-* secrets ---
-	// Instead of reading separate mcp-servers-* Secrets, we collect mcp_servers from
-	// the agentapi-settings-* secrets (same source used for env vars).
+	// --- mcp_servers merge ---
+	// We use the pre-fetched agentapiSources (passed in from buildSessionSettings) to
+	// avoid re-reading the same Secrets. The base secret is still read separately here
+	// because it is a system-wide default and not included in agentapiSources.
 	{
 		mergedMCPServers := make(map[string]interface{})
 
-		// Helper to merge mcp_servers from a settings secret into mergedMCPServers
-		mergeMCPFromSettings := func(secretName string) {
-			cfg := m.readAgentapiSettingsSecret(ctx, secretName)
-			if cfg == nil || len(cfg.MCPServers) == 0 {
+		// mergeMCPServersInto merges the MCPServers from src into dst.
+		mergeMCPServersInto := func(src map[string]*agentapiMCPServerJSON) {
+			if len(src) == 0 {
 				return
 			}
-			raw, err := json.Marshal(cfg.MCPServers)
+			raw, err := json.Marshal(src)
 			if err != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to marshal mcp_servers from secret %s: %v", secretName, err)
+				log.Printf("[K8S_SESSION] Warning: failed to marshal mcp_servers: %v", err)
 				return
 			}
 			var servers map[string]interface{}
 			if err := json.Unmarshal(raw, &servers); err != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to unmarshal mcp_servers from secret %s: %v", secretName, err)
+				log.Printf("[K8S_SESSION] Warning: failed to unmarshal mcp_servers: %v", err)
 				return
 			}
 			for name, server := range servers {
@@ -3227,25 +3215,18 @@ func (m *KubernetesSessionManager) mergeSettingsAndMCP(
 			}
 		}
 
-		// base settings
+		// 1. base settings (system-wide default; always applied first/lowest priority)
 		if m.k8sConfig.SettingsBaseSecret != "" {
-			mergeMCPFromSettings(m.k8sConfig.SettingsBaseSecret)
+			if baseCfg := m.readAgentapiSettingsSecret(ctx, m.k8sConfig.SettingsBaseSecret); baseCfg != nil {
+				mergeMCPServersInto(baseCfg.MCPServers)
+			}
 		}
 
-		// team settings (in order)
-		for _, team := range req.Teams {
-			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
-			mergeMCPFromSettings(secretName)
-		}
-		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
-			mergeMCPFromSettings(secretName)
-		}
-
-		// user settings
-		if req.UserID != "" {
-			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
-			mergeMCPFromSettings(secretName)
+		// 2. user/team sources in ascending priority order (re-uses pre-fetched data)
+		for _, src := range agentapiSources {
+			if src != nil {
+				mergeMCPServersInto(src.MCPServers)
+			}
 		}
 
 		if len(mergedMCPServers) > 0 {
