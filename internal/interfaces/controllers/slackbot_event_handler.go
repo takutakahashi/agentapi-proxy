@@ -18,8 +18,6 @@ import (
 const (
 	// slackBotDefaultID is the special ID for the server-configured default SlackBot
 	slackBotDefaultID = "default"
-	// defaultSlackAgentType is the default agent type for SlackBot sessions
-	defaultSlackAgentType = "claude-agentapi"
 )
 
 // SlackBotEventHandler handles incoming Slack events (via Socket Mode) and manages sessions
@@ -27,6 +25,7 @@ type SlackBotEventHandler struct {
 	repo            repositories.SlackBotRepository
 	sessionManager  repositories.SessionManager
 	channelResolver *services.SlackChannelResolver
+	userRepo        repositories.UserRepository
 	// Default SlackBot configuration (from server startup config)
 	defaultBotTokenSecretName string
 	defaultBotTokenSecretKey  string
@@ -42,6 +41,13 @@ type SlackBotEventHandler struct {
 	// pass the reuse check (no session exists yet) and spawn duplicate sessions.
 	// Key: "channel:threadKey"  Value: struct{}
 	pendingThreads sync.Map
+}
+
+// SetUserRepository sets the user repository used to resolve team memberships for bot owners.
+// When set, the handler looks up the bot owner's GitHub teams and passes them to the session
+// so that team-level settings (MCP servers, env vars, etc.) are applied.
+func (h *SlackBotEventHandler) SetUserRepository(repo repositories.UserRepository) {
+	h.userRepo = repo
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -211,8 +217,8 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// Build initial message
 	initialMessage := h.buildMessage(bot, payloadMap, event.Text, false)
 
-	// Determine agent type
-	agentType := defaultSlackAgentType
+	// Determine agent type (empty string = proxy default; bot session_config may override)
+	agentType := ""
 	if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
 		if bot.SessionConfig().Params().AgentType != "" {
 			agentType = bot.SessionConfig().Params().AgentType
@@ -270,6 +276,20 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		teamID = bot.TeamID()
 	}
 
+	// Resolve team memberships for the bot owner so that team-level settings
+	// (MCP servers, env vars, Bedrock config, etc.) are merged into the session.
+	var teams []string
+	if h.userRepo != nil && userID != "" {
+		if user, err := h.userRepo.FindByID(ctx, entities.UserID(userID)); err != nil {
+			log.Printf("[SLACKBOT] Warning: failed to lookup user %s for team resolution: %v", userID, err)
+		} else if user != nil && user.GitHubInfo() != nil {
+			for _, team := range user.GitHubInfo().Teams() {
+				teams = append(teams, team.Organization+"/"+team.TeamSlug)
+			}
+			log.Printf("[SLACKBOT] Resolved %d teams for user %s", len(teams), userID)
+		}
+	}
+
 	sessionID := uuid.New().String()
 	req := &entities.RunServerRequest{
 		UserID:         userID,
@@ -277,6 +297,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		Tags:           tags,
 		Scope:          scope,
 		TeamID:         teamID,
+		Teams:          teams,
 		InitialMessage: initialMessage,
 		AgentType:      agentType,
 		SlackParams: &entities.SlackParams{
