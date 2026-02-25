@@ -219,10 +219,16 @@ func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *en
 		TeamID:      schedule.TeamID,
 	}
 
-	// For team-scoped schedules, only include the team's credentials
-	// (not all teams the creating user belongs to)
+	// Set Teams based on scope so the session manager can inject the correct
+	// team-level settings (Bedrock credentials, MCP servers, etc.).
 	if scheduleScope == entities.ScopeTeam && schedule.TeamID != "" {
+		// Team-scoped: only use the schedule's designated team credentials.
 		req.Teams = []string{schedule.TeamID}
+	} else {
+		// User-scoped: use the team memberships captured at schedule creation time.
+		// This mirrors what session_controller.go does for regular sessions via
+		// authzCtx.TeamScope.Teams.
+		req.Teams = schedule.UserTeams
 	}
 
 	// Add schedule metadata to tags

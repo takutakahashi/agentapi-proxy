@@ -175,6 +175,16 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		}
 	}
 
+	// For user-scoped schedules, capture the creator's team memberships so that
+	// the background worker can inject team-level settings (Bedrock, MCP, etc.)
+	// when executing the schedule without an HTTP auth context.
+	var userTeams []string
+	if req.Scope != entities.ScopeTeam {
+		if azCtx := auth.GetAuthorizationContext(c); azCtx != nil {
+			userTeams = azCtx.TeamScope.Teams
+		}
+	}
+
 	// Create schedule
 	schedule := &Schedule{
 		ID:            uuid.New().String(),
@@ -182,6 +192,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		UserID:        userID,
 		Scope:         req.Scope,
 		TeamID:        req.TeamID,
+		UserTeams:     userTeams,
 		Status:        ScheduleStatusActive,
 		ScheduledAt:   req.ScheduledAt,
 		CronExpr:      req.CronExpr,
@@ -470,15 +481,19 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		TeamID:      schedule.TeamID,
 	}
 
-	// Set Teams based on scope - mirrors worker.go logic, but for manual trigger
-	// we can use the requesting user's auth context to get team memberships.
+	// Set Teams based on scope so the session manager can inject the correct
+	// team-level settings (Bedrock credentials, MCP servers, etc.).
 	// User-scoped schedules can only be triggered by their owner (enforced by
 	// userCanAccessSchedule), so authzCtx reflects the correct user.
 	authzCtx := auth.GetAuthorizationContext(c)
 	if scheduleScope == entities.ScopeTeam && schedule.TeamID != "" {
 		req.Teams = []string{schedule.TeamID}
 	} else if authzCtx != nil {
+		// Prefer live auth context (most up-to-date team memberships).
 		req.Teams = authzCtx.TeamScope.Teams
+	} else {
+		// Fallback: use team memberships captured at schedule creation time.
+		req.Teams = schedule.UserTeams
 	}
 
 	if schedule.SessionConfig.Params != nil {
