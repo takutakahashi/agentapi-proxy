@@ -139,15 +139,14 @@ func TestInitialMessageInSettingsSecret(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(ns)
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Namespace:              "test-ns",
-			Image:                  "test-image:latest",
-			BasePort:               9000,
-			PVCEnabled:             boolPtrForTest(false),
-			ClaudeConfigBaseSecret: "claude-config-base",
-			CPURequest:             "100m",
-			CPULimit:               "1",
-			MemoryRequest:          "128Mi",
-			MemoryLimit:            "512Mi",
+			Namespace:     "test-ns",
+			Image:         "test-image:latest",
+			BasePort:      9000,
+			PVCEnabled:    boolPtrForTest(false),
+			CPURequest:    "100m",
+			CPULimit:      "1",
+			MemoryRequest: "128Mi",
+			MemoryLimit:   "512Mi",
 		},
 	}
 	lgr := logger.NewLogger()
@@ -203,9 +202,7 @@ func TestInitialMessageInSettingsSecret(t *testing.T) {
 
 func TestBuildVolumesWithInitialMessage(t *testing.T) {
 	cfg := &config.Config{
-		KubernetesSession: config.KubernetesSessionConfig{
-			ClaudeConfigBaseSecret: "claude-config-base",
-		},
+		KubernetesSession: config.KubernetesSessionConfig{},
 	}
 	lgr := logger.NewLogger()
 	k8sClient := fake.NewSimpleClientset()
@@ -291,15 +288,14 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(ns)
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Namespace:              ns.Name,
-			Image:                  "test-image:latest",
-			BasePort:               9000,
-			PVCEnabled:             boolPtrForTest(false),
-			ClaudeConfigBaseSecret: "claude-config-base",
-			CPURequest:             "100m",
-			CPULimit:               "1",
-			MemoryRequest:          "128Mi",
-			MemoryLimit:            "512Mi",
+			Namespace:     ns.Name,
+			Image:         "test-image:latest",
+			BasePort:      9000,
+			PVCEnabled:    boolPtrForTest(false),
+			CPURequest:    "100m",
+			CPULimit:      "1",
+			MemoryRequest: "128Mi",
+			MemoryLimit:   "512Mi",
 		},
 	}
 	lgr := logger.NewLogger()
