@@ -44,6 +44,7 @@ type CreateWebhookRequest struct {
 	Scope           entities.ResourceScope        `json:"scope,omitempty"`
 	TeamID          string                        `json:"team_id,omitempty"`
 	Type            entities.WebhookType          `json:"type"`
+	Secret          string                        `json:"secret,omitempty"`
 	SignatureHeader string                        `json:"signature_header,omitempty"`
 	SignatureType   entities.WebhookSignatureType `json:"signature_type,omitempty"`
 	GitHub          *GitHubConfigRequest          `json:"github,omitempty"`
@@ -104,6 +105,7 @@ type SessionConfigRequest struct {
 type UpdateWebhookRequest struct {
 	Name            *string                        `json:"name,omitempty"`
 	Status          *entities.WebhookStatus        `json:"status,omitempty"`
+	Secret          *string                        `json:"secret,omitempty"`
 	SignatureHeader *string                        `json:"signature_header,omitempty"`
 	SignatureType   *entities.WebhookSignatureType `json:"signature_type,omitempty"`
 	GitHub          *GitHubConfigRequest           `json:"github,omitempty"`
@@ -281,6 +283,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	webhook := entities.NewWebhook(uuid.New().String(), req.Name, userID, req.Type)
 	webhook.SetScope(req.Scope)
 	webhook.SetTeamID(req.TeamID)
+	if req.Secret != "" {
+		webhook.SetSecret(req.Secret)
+	}
 	if req.SignatureHeader != "" {
 		webhook.SetSignatureHeader(req.SignatureHeader)
 	}
@@ -452,6 +457,9 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 	}
 	if req.Status != nil {
 		webhook.SetStatus(*req.Status)
+	}
+	if req.Secret != nil && *req.Secret != "" {
+		webhook.SetSecret(*req.Secret)
 	}
 	if req.SignatureHeader != nil {
 		webhook.SetSignatureHeader(*req.SignatureHeader)
