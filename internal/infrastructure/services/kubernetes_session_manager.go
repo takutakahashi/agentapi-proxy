@@ -146,12 +146,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 
 	log.Printf("[K8S_SESSION] Creating session %s in namespace %s", id, m.namespace)
 
-	// Ensure Base Secret exists (create if not present)
-	if err := m.ensureBaseSecret(ctx); err != nil {
-		m.cleanupSession(id)
-		return nil, fmt.Errorf("failed to ensure base Secret: %w", err)
-	}
-
 	// Create PVC if enabled
 	if m.isPVCEnabled() {
 		if err := m.createPVC(ctx, session); err != nil {
@@ -609,71 +603,6 @@ func (m *KubernetesSessionManager) createPVC(ctx context.Context, session *Kuber
 
 	_, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Create(ctx, pvc, metav1.CreateOptions{})
 	return err
-}
-
-// defaultClaudeJSON is the default claude.json content with required settings
-const defaultClaudeJSON = `{
-  "hasCompletedOnboarding": true,
-  "bypassPermissionsModeAccepted": true
-}`
-
-// defaultSettingsJSON is the default settings.json content
-const defaultSettingsJSON = `{
-  "workspaceFolders": [],
-  "recentWorkspaces": [],
-  "settings": {
-    "mcp.enabled": true
-  }
-}`
-
-// ensureBaseSecret ensures the base Secret exists, creating it if necessary
-func (m *KubernetesSessionManager) ensureBaseSecret(ctx context.Context) error {
-	secretName := m.k8sConfig.ClaudeConfigBaseSecret
-	if secretName == "" {
-		secretName = "claude-config-base"
-	}
-
-	// Check if Secret already exists
-	_, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err == nil {
-		// Secret already exists
-		return nil
-	}
-
-	if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check Secret existence: %w", err)
-	}
-
-	// Create the base Secret with default settings
-	// Note: GITHUB_TOKEN is added dynamically by init container per session
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "agentapi-proxy",
-				"app.kubernetes.io/managed-by": "agentapi-proxy",
-				"app.kubernetes.io/component":  "claude-config",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"claude.json":   defaultClaudeJSON,
-			"settings.json": defaultSettingsJSON,
-		},
-	}
-
-	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		// If another process created it concurrently, that's fine
-		if errors.IsAlreadyExists(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to create base Secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created base Secret %s in namespace %s", secretName, m.namespace)
-	return nil
 }
 
 // createDeployment creates a Deployment for the session
@@ -2851,6 +2780,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// Expand credentials from agentapi-settings-* secrets (env_vars, bedrock, oauth)
+	// Apply base settings first (lowest priority) so that team/user settings can override them.
+	if m.k8sConfig.SettingsBaseSecret != "" {
+		if cfg := m.readAgentapiSettingsSecret(ctx, m.k8sConfig.SettingsBaseSecret); cfg != nil {
+			for k, v := range expandSettingsToEnv(cfg) {
+				env[k] = v
+			}
+		}
+	}
+
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
 		if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {

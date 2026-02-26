@@ -395,17 +395,21 @@ kubernetesSession:
   # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
   # The Secret will be used by the clone-repo init container
 
-  # Settings base Secret name for proxy-side merge of settings.json and mcp-servers.json
-  # This Kubernetes Secret is read by agentapi-proxy before session pods start and merged
-  # into the session's settings.yaml. It supports two keys:
-  #   - settings.json: Claude settings (marketplaces, enabled_plugins, hooks, etc.)
-  #   - mcp-servers.json: Base MCP server configurations (merged with team/user MCP secrets)
+  # Single base Kubernetes Secret shared by all sessions.
+  # agentapi-proxy reads this Secret before each session starts and merges it at the lowest
+  # priority (base → team → user). It contains a single settings.json key in the agentapi
+  # settings format, which covers all per-session configuration in one place:
+  #   - env_vars:       arbitrary environment variables injected into every session
+  #   - auth_mode:      "bedrock" or "oauth" (overridden by team/user settings)
+  #   - bedrock:        AWS Bedrock credentials/model (auth_mode=bedrock)
+  #   - mcp_servers:    MCP server configurations merged into ~/.claude.json
+  #   - marketplaces:   Claude Code marketplace URLs
+  #   - enabled_plugins: Claude Code plugins to enable
+  #   - hooks:          Claude Code hooks
   #
   # Secret naming conventions for team/user overrides:
   #   - Team settings: agentapi-settings-{team-name}
   #   - User settings: agentapi-settings-{user-id}
-  #   - Team MCP:      mcp-servers-{team-name}
-  #   - User MCP:      mcp-servers-{user-id}
   #
   # Example base Secret:
   #   apiVersion: v1
@@ -415,14 +419,14 @@ kubernetesSession:
   #   stringData:
   #     settings.json: |
   #       {
-  #         "marketplaces": {"myorg": {"url": "https://github.com/myorg/marketplace"}},
-  #         "enabled_plugins": ["my-plugin@myorg"]
-  #       }
-  #     mcp-servers.json: |
-  #       {
-  #         "mcpServers": {
+  #         "auth_mode": "bedrock",
+  #         "bedrock": {"model": "anthropic.claude-3-5-sonnet-20241022-v2:0"},
+  #         "mcp_servers": {
   #           "github": {"type": "http", "url": "https://mcp-github.example.com"}
-  #         }
+  #         },
+  #         "marketplaces": {"myorg": {"url": "https://github.com/myorg/marketplace"}},
+  #         "enabled_plugins": ["my-plugin@myorg"],
+  #         "env_vars": {"MY_GLOBAL_VAR": "value"}
   #       }
   settingsBaseSecret: "agentapi-settings-base"
 

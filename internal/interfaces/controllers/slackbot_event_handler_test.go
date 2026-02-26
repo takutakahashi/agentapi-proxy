@@ -26,9 +26,13 @@ type mockSessionManager struct {
 	createErr        error
 	sentMessages     []string
 	existingSessions []entities.Session // pre-seeded sessions returned by ListSessions
+	createDelay      time.Duration      // optional delay to simulate slow session creation
 }
 
 func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *entities.RunServerRequest, _ []byte) (entities.Session, error) {
+	if m.createDelay > 0 {
+		time.Sleep(m.createDelay)
+	}
 	if m.createErr != nil {
 		return nil, m.createErr
 	}
@@ -766,7 +770,10 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 	bot := entities.NewSlackBot(botID, "Concurrent Bot", "user-1")
 	repo.bots[botID] = bot
 
-	sessionMgr := &mockSessionManager{}
+	// Use a createDelay so that the pendingThreads key is still present when the second
+	// goroutine reaches LoadOrStore. Without the delay the mock CreateSession completes
+	// instantly, the key gets deleted, and the second event slips through the dedup guard.
+	sessionMgr := &mockSessionManager{createDelay: 50 * time.Millisecond}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
 	makePayload := func(eventType string) SlackPayload {
 		return SlackPayload{
@@ -782,18 +789,31 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 		}
 	}
 
+	// Use a start barrier to ensure both goroutines reach ProcessEvent simultaneously,
+	// before the first one's async session creation goroutine can complete.
+	var ready, start sync.WaitGroup
+	ready.Add(2)
+	start.Add(1)
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	// Fire "message" and "app_mention" concurrently, simulating Slack's duplicate delivery
 	go func() {
 		defer wg.Done()
+		ready.Done()
+		start.Wait()
 		_ = handler.ProcessEvent(context.Background(), botID, makePayload("message"))
 	}()
 	go func() {
 		defer wg.Done()
+		ready.Done()
+		start.Wait()
 		_ = handler.ProcessEvent(context.Background(), botID, makePayload("app_mention"))
 	}()
+
+	ready.Wait() // wait until both goroutines are staged
+	start.Done() // release both simultaneously
 
 	wg.Wait()
 
