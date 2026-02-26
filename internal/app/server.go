@@ -259,7 +259,14 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
 		log.Printf("[AUTH_INIT] Initializing GitHub auth provider...")
 		s.githubAuthProvider = auth.NewGitHubAuthProvider(cfg.Auth.GitHub)
-		log.Printf("[AUTH_INIT] GitHub auth provider initialized successfully")
+
+		// Inject ConfigMap-backed team mapping cache (1 user = 1 key in the ConfigMap)
+		teamMappingRepo := repositories.NewKubernetesUserTeamMappingRepository(
+			k8sSessionManager.GetClient(),
+			k8sSessionManager.GetNamespace(),
+		)
+		s.githubAuthProvider.SetTeamMappingRepo(teamMappingRepo)
+		log.Printf("[AUTH_INIT] GitHub auth provider initialized with ConfigMap team mapping cache")
 
 		// Configure the internal auth service with GitHub settings
 		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
