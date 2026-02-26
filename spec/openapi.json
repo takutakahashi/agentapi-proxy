@@ -3547,6 +3547,11 @@
           "type": {
             "$ref": "#/components/schemas/WebhookType"
           },
+          "secret": {
+            "type": "string",
+            "description": "Custom secret for HMAC signature verification. If not provided, a random secret is auto-generated. Use this to set a pre-shared secret from external services (e.g., Sentry Client Secret).",
+            "example": "your-sentry-client-secret"
+          },
           "github": {
             "$ref": "#/components/schemas/GitHubWebhookConfig"
           },
@@ -3585,6 +3590,10 @@
           },
           "status": {
             "$ref": "#/components/schemas/WebhookStatus"
+          },
+          "secret": {
+            "type": "string",
+            "description": "New secret for HMAC signature verification. If not provided, the existing secret is kept."
           },
           "github": {
             "$ref": "#/components/schemas/GitHubWebhookConfig"
