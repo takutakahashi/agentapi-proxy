@@ -26,6 +26,7 @@ func (m *mockSessionManager) CreateSession(_ context.Context, id string, _ *enti
 func (m *mockSessionManager) GetSession(_ string) entities.Session                     { return nil }
 func (m *mockSessionManager) ListSessions(_ entities.SessionFilter) []entities.Session { return nil }
 func (m *mockSessionManager) SendMessage(_ context.Context, _ string, _ string) error  { return nil }
+func (m *mockSessionManager) StopAgent(_ context.Context, _ string) error              { return nil }
 func (m *mockSessionManager) GetMessages(_ context.Context, _ string) ([]portrepos.Message, error) {
 	return nil, nil
 }
