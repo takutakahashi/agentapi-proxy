@@ -311,10 +311,7 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 		return nil
 	}
 
-	namespace := configData.SlackbotCleanupWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
+	namespace := configData.KubernetesSession.Namespace
 	if namespace == "" {
 		namespace = "default"
 	}
@@ -335,6 +332,7 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 		CheckInterval: checkInterval,
 		SessionTTL:    sessionTTL,
 		Enabled:       true,
+		DryRun:        configData.SlackbotCleanupWorker.DryRun,
 	}
 
 	leaseDuration, err := time.ParseDuration(configData.SlackbotCleanupWorker.LeaseDuration)
@@ -373,7 +371,11 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 
 	go leaderCleanupWorker.Run(context.Background())
 
-	log.Printf("[SLACKBOT_CLEANUP] Slackbot cleanup worker started in namespace: %s (TTL: %v)", namespace, sessionTTL)
+	dryRunNote := ""
+	if configData.SlackbotCleanupWorker.DryRun {
+		dryRunNote = " [DRY-RUN]"
+	}
+	log.Printf("[SLACKBOT_CLEANUP] Slackbot cleanup worker started in namespace: %s (TTL: %v)%s", namespace, sessionTTL, dryRunNote)
 	return leaderCleanupWorker
 }
 

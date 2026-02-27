@@ -313,6 +313,8 @@ spec:
             - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL
               value: {{ .Values.slackbotCleanupWorker.checkInterval | quote }}
             {{- end }}
+            - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN
+              value: {{ ((.Values.slackbotCleanupWorker).dryRun) | default false | quote }}
             {{- if ((.Values.slackbotCleanupWorker).leaderElection).leaseDuration }}
             - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION
               value: {{ .Values.slackbotCleanupWorker.leaderElection.leaseDuration | quote }}

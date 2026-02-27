@@ -511,6 +511,9 @@ func (i *Importer) convertWebhookImport(ctx context.Context, webhookImport Webho
 	if webhookImport.SignatureType != "" {
 		webhookEntity.SetSignatureType(entities.WebhookSignatureType(webhookImport.SignatureType))
 	}
+	if webhookImport.SignaturePrefix != "" {
+		webhookEntity.SetSignaturePrefix(webhookImport.SignaturePrefix)
+	}
 
 	// Set max sessions
 	if webhookImport.MaxSessions > 0 {

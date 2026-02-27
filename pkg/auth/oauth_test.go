@@ -27,7 +27,7 @@ func TestGitHubOAuthProvider_GenerateAuthURL(t *testing.T) {
 		TokenHeader: "Authorization",
 	}
 
-	provider := NewGitHubOAuthProvider(cfg, githubCfg)
+	provider := NewGitHubOAuthProvider(cfg, NewGitHubAuthProvider(githubCfg))
 
 	redirectURI := "http://localhost:3000/callback"
 	authURL, state, err := provider.GenerateAuthURL(redirectURI)
@@ -90,7 +90,7 @@ func TestGitHubOAuthProvider_ExchangeCode(t *testing.T) {
 		},
 	}
 
-	provider := NewGitHubOAuthProvider(cfg, githubCfg)
+	provider := NewGitHubOAuthProvider(cfg, NewGitHubAuthProvider(githubCfg))
 
 	// Generate state first
 	_, state, err := provider.GenerateAuthURL("http://localhost:3000/callback")
@@ -124,7 +124,7 @@ func TestGitHubOAuthProvider_ExchangeCode_InvalidState(t *testing.T) {
 		TokenHeader: "Authorization",
 	}
 
-	provider := NewGitHubOAuthProvider(cfg, githubCfg)
+	provider := NewGitHubOAuthProvider(cfg, NewGitHubAuthProvider(githubCfg))
 
 	ctx := context.Background()
 	_, err := provider.ExchangeCode(ctx, "test-code", "invalid-state")
@@ -147,7 +147,7 @@ func TestGitHubOAuthProvider_ExchangeCode_ExpiredState(t *testing.T) {
 		TokenHeader: "Authorization",
 	}
 
-	provider := NewGitHubOAuthProvider(cfg, githubCfg)
+	provider := NewGitHubOAuthProvider(cfg, NewGitHubAuthProvider(githubCfg))
 
 	// Manually create an expired state
 	state := "expired-state"

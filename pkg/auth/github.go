@@ -57,24 +57,36 @@ type UserCache struct {
 
 // GitHubAuthProvider handles GitHub OAuth authentication
 type GitHubAuthProvider struct {
-	config    *config.GitHubAuthConfig
-	client    *http.Client
-	userCache *utils.TTLCache
+	config          *config.GitHubAuthConfig
+	client          *http.Client
+	userCache       *utils.TTLCache       // token hash → UserCache, TTL 1h
+	teamCache       *utils.TTLCache       // username → []GitHubTeamMembership, TTL 30s
+	teamMappingRepo TeamMappingRepository // ConfigMap persistent cache (optional, may be nil)
 }
 
 // NewGitHubAuthProvider creates a new GitHub authentication provider
 func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
 	// Use very short cache TTL in tests to reduce race conditions
 	cacheTTL := 1 * time.Hour
+	teamCacheTTL := 30 * time.Second
 	if isTestEnvironment() {
-		cacheTTL = 1 * time.Millisecond // Very short TTL for tests
+		cacheTTL = 1 * time.Millisecond     // Very short TTL for tests
+		teamCacheTTL = 1 * time.Millisecond // Very short TTL for tests
 	}
 
 	return &GitHubAuthProvider{
 		config:    cfg,
 		client:    utils.NewDefaultHTTPClient(),
 		userCache: utils.NewTTLCache(cacheTTL),
+		teamCache: utils.NewTTLCache(teamCacheTTL),
 	}
+}
+
+// SetTeamMappingRepo injects a persistent ConfigMap-backed team mapping repository.
+// When set, team memberships will be read from and written to the ConfigMap as a
+// secondary cache layer (behind the 30-second in-memory teamCache).
+func (p *GitHubAuthProvider) SetTeamMappingRepo(repo TeamMappingRepository) {
+	p.teamMappingRepo = repo
 }
 
 // isTestEnvironment detects if running in test environment
@@ -207,15 +219,56 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 	return &user, nil
 }
 
-// getUserTeamsOptimized retrieves only configured team memberships from GitHub API
+// getUserTeamsOptimized retrieves only configured team memberships from GitHub API.
+// It checks two cache layers before hitting the GitHub API:
+//  1. 30-second in-memory TTL cache (keyed by username)
+//  2. ConfigMap persistent cache (keyed by username) — populated across pod restarts
+//
+// On a cache miss, it fetches from GitHub and updates both cache layers.
 func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
-	// Check if we have wildcard patterns - if so, use /user/teams API
-	if p.hasWildcardPatterns() {
-		return p.getUserTeamsWithWildcard(ctx, token)
+	// Layer 1: 30-second in-memory cache
+	if cached, ok := p.teamCache.Get(username); ok {
+		log.Printf("[TEAM_CACHE] in-memory cache hit for user %s", username)
+		return cached.([]GitHubTeamMembership), nil
 	}
 
-	// No wildcard patterns - use the optimized approach (check only configured teams)
-	return p.getUserTeamsExactMatch(ctx, token, username)
+	// Layer 2: ConfigMap persistent cache
+	if p.teamMappingRepo != nil {
+		if teams, found, err := p.teamMappingRepo.Get(ctx, username); err != nil {
+			log.Printf("[TEAM_CACHE] Warning: failed to read ConfigMap cache for user %s: %v", username, err)
+		} else if found {
+			log.Printf("[TEAM_CACHE] ConfigMap cache hit for user %s (%d teams)", username, len(teams))
+			// Warm up the in-memory cache so subsequent requests within 30s are free
+			p.teamCache.Set(username, teams)
+			return teams, nil
+		}
+	}
+
+	// Layer 3: GitHub API
+	var (
+		teams []GitHubTeamMembership
+		err   error
+	)
+	if p.hasWildcardPatterns() {
+		teams, err = p.getUserTeamsWithWildcard(ctx, token)
+	} else {
+		teams, err = p.getUserTeamsExactMatch(ctx, token, username)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Populate both cache layers
+	p.teamCache.Set(username, teams)
+	if p.teamMappingRepo != nil {
+		if setErr := p.teamMappingRepo.Set(ctx, username, teams); setErr != nil {
+			log.Printf("[TEAM_CACHE] Warning: failed to write ConfigMap cache for user %s: %v", username, setErr)
+		} else {
+			log.Printf("[TEAM_CACHE] ConfigMap cache written for user %s (%d teams)", username, len(teams))
+		}
+	}
+
+	return teams, nil
 }
 
 // getUserTeamsWithWildcard retrieves user teams using /user/teams API and filters by configured patterns

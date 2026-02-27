@@ -168,6 +168,7 @@ func (c *WebhookCustomController) verifyWebhookSignature(ctx echo.Context, body 
 		config := webhook.SignatureConfig{
 			Secret:    wh.Secret(),
 			Algorithm: algorithm,
+			Prefix:    wh.SignaturePrefix(),
 		}
 		if !c.signatureVerifier.Verify(body, headerValue, config) {
 			log.Printf("[WEBHOOK_CUSTOM] Signature verification failed for webhook %s (header: %s)", wh.ID(), headerName)

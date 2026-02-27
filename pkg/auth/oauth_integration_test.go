@@ -188,7 +188,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 
 	// Create providers
 	authProvider := NewGitHubAuthProvider(githubCfg)
-	oauthProvider := NewGitHubOAuthProvider(oauthCfg, githubCfg)
+	oauthProvider := NewGitHubOAuthProvider(oauthCfg, NewGitHubAuthProvider(githubCfg))
 
 	t.Run("complete OAuth flow", func(t *testing.T) {
 		ctx := context.Background()
@@ -355,7 +355,7 @@ func TestGitHubOAuthEdgeCases(t *testing.T) {
 				BaseURL:      mockServer.URL,
 			}
 
-			oauthProvider := NewGitHubOAuthProvider(oauthCfg, githubCfg)
+			oauthProvider := NewGitHubOAuthProvider(oauthCfg, NewGitHubAuthProvider(githubCfg))
 
 			ctx := context.Background()
 			// Generate a valid state first
@@ -404,7 +404,7 @@ func BenchmarkGitHubOAuth(b *testing.B) {
 	}
 
 	authProvider := NewGitHubAuthProvider(githubCfg)
-	oauthProvider := NewGitHubOAuthProvider(oauthCfg, githubCfg)
+	oauthProvider := NewGitHubOAuthProvider(oauthCfg, NewGitHubAuthProvider(githubCfg))
 
 	ctx := context.Background()
 

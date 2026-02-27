@@ -274,11 +274,11 @@ func TestMergeSecrets(t *testing.T) {
 		assert.Equal(t, map[string]string{"A": "updated", "B": "2", "C": "3"}, result)
 	})
 
-	t.Run("empty string in new deletes the key", func(t *testing.T) {
+	t.Run("empty string in new is ignored, preserving existing value", func(t *testing.T) {
 		existing := map[string]string{"A": "1", "B": "2"}
 		newMap := map[string]string{"A": ""}
 		result := ctrl.mergeSecrets(existing, newMap)
-		assert.Equal(t, map[string]string{"B": "2"}, result)
+		assert.Equal(t, map[string]string{"A": "1", "B": "2"}, result)
 	})
 
 	t.Run("add new key while preserving existing keys", func(t *testing.T) {
@@ -288,11 +288,11 @@ func TestMergeSecrets(t *testing.T) {
 		assert.Equal(t, map[string]string{"A": "1", "B": "2", "C": "3"}, result)
 	})
 
-	t.Run("update and delete simultaneously while preserving others", func(t *testing.T) {
+	t.Run("update key while empty string for another is ignored", func(t *testing.T) {
 		existing := map[string]string{"A": "1", "B": "2", "C": "3"}
 		newMap := map[string]string{"A": "updated", "B": ""}
 		result := ctrl.mergeSecrets(existing, newMap)
-		assert.Equal(t, map[string]string{"A": "updated", "C": "3"}, result)
+		assert.Equal(t, map[string]string{"A": "updated", "B": "2", "C": "3"}, result)
 	})
 
 	t.Run("both nil returns nil", func(t *testing.T) {

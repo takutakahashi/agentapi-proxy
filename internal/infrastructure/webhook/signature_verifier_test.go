@@ -91,6 +91,70 @@ func TestSignatureVerifier_Verify(t *testing.T) {
 	}
 }
 
+func TestSignatureVerifier_Verify_WithPrefix(t *testing.T) {
+	verifier := NewSignatureVerifier()
+	payload := []byte(`{"event":"test","data":"value"}`)
+	secret := "my-secret-key"
+
+	computeHex := func() string {
+		h := hmac.New(sha256.New, []byte(secret))
+		h.Write(payload)
+		return hex.EncodeToString(h.Sum(nil))
+	}
+
+	tests := []struct {
+		name            string
+		signatureHeader string
+		prefix          string
+		expectedValid   bool
+	}{
+		{
+			name:            "Explicit sha256= prefix matches",
+			signatureHeader: "sha256=" + computeHex(),
+			prefix:          "sha256=",
+			expectedValid:   true,
+		},
+		{
+			name:            "Explicit prefix mismatch returns false",
+			signatureHeader: computeHex(),
+			prefix:          "sha256=",
+			expectedValid:   false,
+		},
+		{
+			name:            "Plain hex with empty prefix (auto-detect, no = in value)",
+			signatureHeader: computeHex(),
+			prefix:          "",
+			expectedValid:   true,
+		},
+		{
+			name:            "Sentry-style: plain hex without prefix",
+			signatureHeader: computeHex(),
+			prefix:          "",
+			expectedValid:   true,
+		},
+		{
+			name:            "Wrong explicit prefix returns false",
+			signatureHeader: "v0=" + computeHex(),
+			prefix:          "sha256=",
+			expectedValid:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := SignatureConfig{
+				Secret:    secret,
+				Algorithm: "sha256",
+				Prefix:    tt.prefix,
+			}
+			valid := verifier.Verify(payload, tt.signatureHeader, config)
+			if valid != tt.expectedValid {
+				t.Errorf("Verify() = %v, want %v", valid, tt.expectedValid)
+			}
+		})
+	}
+}
+
 func TestSignatureVerifier_VerifyGitHubSignature(t *testing.T) {
 	verifier := NewSignatureVerifier()
 

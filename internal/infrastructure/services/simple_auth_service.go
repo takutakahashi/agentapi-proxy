@@ -36,14 +36,25 @@ func NewSimpleAuthService() *SimpleAuthService {
 	}
 }
 
-// SetGitHubAuthConfig sets the GitHub authentication configuration
+// SetGitHubAuthConfig sets the GitHub authentication configuration.
+// If a provider has already been set via SetGitHubProvider, it is preserved.
+// Otherwise a new GitHubAuthProvider is created from the config.
 func (s *SimpleAuthService) SetGitHubAuthConfig(cfg *config.GitHubAuthConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.githubAuthConfig = cfg
-	if cfg != nil && cfg.Enabled {
+	if cfg != nil && cfg.Enabled && s.githubProvider == nil {
 		s.githubProvider = auth.NewGitHubAuthProvider(cfg)
 	}
+}
+
+// SetGitHubProvider injects a pre-configured GitHubAuthProvider.
+// This allows the caller to supply a provider that already has optional
+// dependencies (e.g. TeamMappingRepository) wired in.
+func (s *SimpleAuthService) SetGitHubProvider(provider *auth.GitHubAuthProvider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.githubProvider = provider
 }
 
 // AuthenticateUser authenticates a user with the given credentials

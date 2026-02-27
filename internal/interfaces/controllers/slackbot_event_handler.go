@@ -188,6 +188,12 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	channel := event.Channel
 	log.Printf("[SLACKBOT] Processing event: id=%s, type=%s, channel=%s, thread=%s", botID, event.Type, channel, threadKey)
 
+	// Handle /stop command: interrupt the running agent in the associated session
+	if isStopCommand(event.Text) {
+		h.handleStopCommand(ctx, channel, threadKey, bot)
+		return nil
+	}
+
 	// Build payload map for template rendering
 	payloadMap := map[string]interface{}{
 		"event": map[string]interface{}{
@@ -465,6 +471,97 @@ func (h *SlackBotEventHandler) postErrorToSlack(ctx context.Context, channel, th
 	}
 	if err := h.channelResolver.PostMessage(ctx, channel, threadTS, message, botToken); err != nil {
 		log.Printf("[SLACKBOT] Failed to post error message to Slack thread: channel=%s, err=%v", channel, err)
+	}
+}
+
+// isStopCommand checks whether the Slack message text is a /stop command.
+// It strips any bot mention tokens (<@UXXXXXXX>) from the text before comparing.
+func isStopCommand(text string) bool {
+	// Remove all Slack mention tokens of the form <@USER_ID> or <@USER_ID|username>
+	cleaned := text
+	for {
+		start := strings.Index(cleaned, "<@")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(cleaned[start:], ">")
+		if end == -1 {
+			break
+		}
+		cleaned = cleaned[:start] + cleaned[start+end+1:]
+	}
+	return strings.TrimSpace(cleaned) == "/stop"
+}
+
+// handleStopCommand processes a /stop command by finding the active session for the
+// given channel+thread and sending a stop signal (Ctrl+C) to its agent.
+// The result (success or failure) is posted back to the Slack thread.
+func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, threadKey string, bot *entities.SlackBot) {
+	stopFilter := entities.SessionFilter{
+		Tags: map[string]string{
+			"slack_channel":   channel,
+			"slack_thread_ts": threadKey,
+		},
+		Status: "active",
+	}
+	activeSessions := h.sessionManager.ListSessions(stopFilter)
+	if len(activeSessions) == 0 {
+		log.Printf("[SLACKBOT] /stop: no active session found for channel=%s, thread=%s", channel, threadKey)
+		botToken, tokenErr := h.getBotToken(ctx, bot)
+		if tokenErr == nil {
+			h.postErrorToSlack(ctx, channel, threadKey,
+				":warning: 停止するアクティブなセッションが見つかりません。",
+				botToken)
+		}
+		return
+	}
+
+	session := activeSessions[0]
+	go func() {
+		bgCtx := context.Background()
+
+		if h.dryRun {
+			log.Printf("[SLACKBOT] [DRY-RUN] Would stop agent for session %s", session.ID())
+			h.postStopConfirmationToSlack(bgCtx, channel, threadKey, bot)
+			return
+		}
+
+		if err := h.sessionManager.StopAgent(bgCtx, session.ID()); err != nil {
+			log.Printf("[SLACKBOT] Failed to stop agent for session %s: %v", session.ID(), err)
+			botToken, tokenErr := h.getBotToken(bgCtx, bot)
+			if tokenErr == nil {
+				h.postErrorToSlack(bgCtx, channel, threadKey,
+					fmt.Sprintf(":warning: セッションの停止に失敗しました: %v", err),
+					botToken)
+			}
+			return
+		}
+
+		log.Printf("[SLACKBOT] Successfully stopped agent for session %s", session.ID())
+		h.postStopConfirmationToSlack(bgCtx, channel, threadKey, bot)
+	}()
+}
+
+// postStopConfirmationToSlack posts a confirmation message to the Slack thread
+// after successfully sending the stop signal to the agent.
+func (h *SlackBotEventHandler) postStopConfirmationToSlack(ctx context.Context, channel, threadTS string, bot *entities.SlackBot) {
+	if h.channelResolver == nil {
+		return
+	}
+	if h.dryRun {
+		log.Printf("[SLACKBOT] [DRY-RUN] Would post stop confirmation to Slack: channel=%s, thread=%s", channel, threadTS)
+		return
+	}
+
+	botToken, err := h.getBotToken(ctx, bot)
+	if err != nil {
+		log.Printf("[SLACKBOT] Failed to get bot token for stop confirmation: %v", err)
+		return
+	}
+
+	message := "セッションを停止しました :stop_sign:"
+	if err := h.channelResolver.PostMessage(ctx, channel, threadTS, message, botToken); err != nil {
+		log.Printf("[SLACKBOT] Failed to post stop confirmation to Slack: %v", err)
 	}
 }
 

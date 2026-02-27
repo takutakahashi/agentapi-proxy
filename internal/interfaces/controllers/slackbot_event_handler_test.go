@@ -25,10 +25,15 @@ type mockSessionManager struct {
 	createdSessions  []*mockSession
 	createErr        error
 	sentMessages     []string
+	stoppedSessions  []string           // IDs of sessions stopped via StopAgent
 	existingSessions []entities.Session // pre-seeded sessions returned by ListSessions
+	createDelay      time.Duration      // optional delay to simulate slow session creation
 }
 
 func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *entities.RunServerRequest, _ []byte) (entities.Session, error) {
+	if m.createDelay > 0 {
+		time.Sleep(m.createDelay)
+	}
 	if m.createErr != nil {
 		return nil, m.createErr
 	}
@@ -75,6 +80,20 @@ func (m *mockSessionManager) SendMessage(_ context.Context, _ string, msg string
 	m.sentMessages = append(m.sentMessages, msg)
 	m.mu.Unlock()
 	return nil
+}
+
+func (m *mockSessionManager) StopAgent(_ context.Context, id string) error {
+	m.mu.Lock()
+	m.stoppedSessions = append(m.stoppedSessions, id)
+	m.mu.Unlock()
+	return nil
+}
+
+// stoppedCount returns the number of sessions stopped so far (thread-safe).
+func (m *mockSessionManager) stoppedCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.stoppedSessions)
 }
 
 // sentCount returns the number of messages sent so far (thread-safe).
@@ -766,7 +785,10 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 	bot := entities.NewSlackBot(botID, "Concurrent Bot", "user-1")
 	repo.bots[botID] = bot
 
-	sessionMgr := &mockSessionManager{}
+	// Use a createDelay so that the pendingThreads key is still present when the second
+	// goroutine reaches LoadOrStore. Without the delay the mock CreateSession completes
+	// instantly, the key gets deleted, and the second event slips through the dedup guard.
+	sessionMgr := &mockSessionManager{createDelay: 50 * time.Millisecond}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
 	makePayload := func(eventType string) SlackPayload {
 		return SlackPayload{
@@ -782,18 +804,31 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 		}
 	}
 
+	// Use a start barrier to ensure both goroutines reach ProcessEvent simultaneously,
+	// before the first one's async session creation goroutine can complete.
+	var ready, start sync.WaitGroup
+	ready.Add(2)
+	start.Add(1)
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	// Fire "message" and "app_mention" concurrently, simulating Slack's duplicate delivery
 	go func() {
 		defer wg.Done()
+		ready.Done()
+		start.Wait()
 		_ = handler.ProcessEvent(context.Background(), botID, makePayload("message"))
 	}()
 	go func() {
 		defer wg.Done()
+		ready.Done()
+		start.Wait()
 		_ = handler.ProcessEvent(context.Background(), botID, makePayload("app_mention"))
 	}()
+
+	ready.Wait() // wait until both goroutines are staged
+	start.Done() // release both simultaneously
 
 	wg.Wait()
 
@@ -801,4 +836,161 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 		return sessionMgr.createdCount() == 1
 	})
 	require.True(t, ok, "exactly one session should be created even when two events fire concurrently")
+}
+
+// ---- Tests for /stop command ----
+
+// TestIsStopCommand verifies that isStopCommand correctly identifies /stop messages
+// with or without bot mention tokens.
+func TestIsStopCommand(t *testing.T) {
+	cases := []struct {
+		text     string
+		expected bool
+	}{
+		{"/stop", true},
+		{"  /stop  ", true},
+		{"<@U1234567> /stop", true},
+		{"<@U1234567|botname> /stop", true},
+		{"/stop extra", false},
+		{"stop", false},
+		{"hello /stop", false},
+		{"", false},
+		{"<@U1234567>", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			assert.Equal(t, tc.expected, isStopCommand(tc.text))
+		})
+	}
+}
+
+// TestProcessEvent_StopCommand_StopsExistingSession verifies that a /stop message
+// calls StopAgent on the active session for the same channel+thread.
+func TestProcessEvent_StopCommand_StopsExistingSession(t *testing.T) {
+	const (
+		botID     = "stop-bot-uuid"
+		channelID = "C-stop"
+		threadTS  = "800.000"
+		sessionID = "existing-stop-session"
+	)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Stop Bot", "user-1")
+	repo.bots[botID] = bot
+
+	existingSessions := []entities.Session{
+		&mockSession{
+			id:     sessionID,
+			status: "active",
+			tags: map[string]string{
+				"slack_channel":   channelID,
+				"slack_thread_ts": threadTS,
+			},
+		},
+	}
+	sessionMgr := &mockSessionManager{existingSessions: existingSessions}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
+
+	payload := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:     "message",
+			Text:     "/stop",
+			User:     "U1",
+			Channel:  channelID,
+			Ts:       "800.001",
+			ThreadTs: threadTS,
+		},
+	}
+
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.stoppedCount() == 1
+	})
+	require.True(t, ok, "StopAgent should be called for the active session")
+
+	sessionMgr.mu.Lock()
+	stoppedID := sessionMgr.stoppedSessions[0]
+	sessionMgr.mu.Unlock()
+	assert.Equal(t, sessionID, stoppedID, "the active session should be stopped")
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no new session should be created for /stop")
+	assert.Equal(t, 0, sessionMgr.sentCount(), "no message should be sent to existing session for /stop")
+}
+
+// TestProcessEvent_StopCommand_WithMention verifies that /stop with a bot mention is also handled.
+func TestProcessEvent_StopCommand_WithMention(t *testing.T) {
+	const (
+		botID     = "stop-mention-bot-uuid"
+		channelID = "C-stop-mention"
+		threadTS  = "900.000"
+		sessionID = "existing-mention-session"
+	)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Stop Mention Bot", "user-1")
+	repo.bots[botID] = bot
+
+	existingSessions := []entities.Session{
+		&mockSession{
+			id:     sessionID,
+			status: "active",
+			tags: map[string]string{
+				"slack_channel":   channelID,
+				"slack_thread_ts": threadTS,
+			},
+		},
+	}
+	sessionMgr := &mockSessionManager{existingSessions: existingSessions}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
+
+	payload := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:     "message",
+			Text:     "<@UBOTID> /stop",
+			User:     "U1",
+			Channel:  channelID,
+			Ts:       "900.001",
+			ThreadTs: threadTS,
+		},
+	}
+
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.stoppedCount() == 1
+	})
+	require.True(t, ok, "StopAgent should be called even when message contains a bot mention")
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no new session should be created for /stop with mention")
+}
+
+// TestProcessEvent_StopCommand_NoActiveSession verifies that /stop when there is no
+// active session does not crash and does not create a new session.
+func TestProcessEvent_StopCommand_NoActiveSession(t *testing.T) {
+	const (
+		botID     = "stop-empty-bot-uuid"
+		channelID = "C-stop-empty"
+	)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Stop Empty Bot", "user-1")
+	repo.bots[botID] = bot
+
+	// No existing sessions
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
+
+	payload := buildEventPayload(channelID, "/stop")
+
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, sessionMgr.createdCount(), "no new session should be created for /stop with no active session")
+	assert.Equal(t, 0, sessionMgr.stoppedCount(), "StopAgent should not be called when there is no active session")
 }

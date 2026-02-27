@@ -146,12 +146,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 
 	log.Printf("[K8S_SESSION] Creating session %s in namespace %s", id, m.namespace)
 
-	// Ensure Base Secret exists (create if not present)
-	if err := m.ensureBaseSecret(ctx); err != nil {
-		m.cleanupSession(id)
-		return nil, fmt.Errorf("failed to ensure base Secret: %w", err)
-	}
-
 	// Create PVC if enabled
 	if m.isPVCEnabled() {
 		if err := m.createPVC(ctx, session); err != nil {
@@ -533,6 +527,65 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 	return fmt.Errorf("failed to send message after 3 retries: %w", lastErr)
 }
 
+// StopAgent sends a stop_agent action to the running agent in the session via the
+// claude-agentapi POST /action endpoint. This terminates the running agent task
+// without deleting the session.
+func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) error {
+	// Get session
+	session := m.GetSession(id)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	// Check session status
+	status := session.Status()
+	if status != "active" && status != "starting" {
+		return fmt.Errorf("session is not active: status=%s", status)
+	}
+
+	// Build service name and endpoint URL for the claude-agentapi /action endpoint
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/action",
+		serviceName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+	)
+
+	// Send stop_agent action as defined in the claude-agentapi OpenAPI spec
+	payload := map[string]interface{}{
+		"type": "stop_agent",
+	}
+
+	// Marshal JSON
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal stop_agent payload: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send stop_agent signal: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code from stop_agent signal: %d", resp.StatusCode)
+	}
+
+	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s", id)
+	return nil
+}
+
 // GetMessages retrieves conversation history from a session
 func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	// Get session
@@ -609,71 +662,6 @@ func (m *KubernetesSessionManager) createPVC(ctx context.Context, session *Kuber
 
 	_, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Create(ctx, pvc, metav1.CreateOptions{})
 	return err
-}
-
-// defaultClaudeJSON is the default claude.json content with required settings
-const defaultClaudeJSON = `{
-  "hasCompletedOnboarding": true,
-  "bypassPermissionsModeAccepted": true
-}`
-
-// defaultSettingsJSON is the default settings.json content
-const defaultSettingsJSON = `{
-  "workspaceFolders": [],
-  "recentWorkspaces": [],
-  "settings": {
-    "mcp.enabled": true
-  }
-}`
-
-// ensureBaseSecret ensures the base Secret exists, creating it if necessary
-func (m *KubernetesSessionManager) ensureBaseSecret(ctx context.Context) error {
-	secretName := m.k8sConfig.ClaudeConfigBaseSecret
-	if secretName == "" {
-		secretName = "claude-config-base"
-	}
-
-	// Check if Secret already exists
-	_, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err == nil {
-		// Secret already exists
-		return nil
-	}
-
-	if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check Secret existence: %w", err)
-	}
-
-	// Create the base Secret with default settings
-	// Note: GITHUB_TOKEN is added dynamically by init container per session
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "agentapi-proxy",
-				"app.kubernetes.io/managed-by": "agentapi-proxy",
-				"app.kubernetes.io/component":  "claude-config",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"claude.json":   defaultClaudeJSON,
-			"settings.json": defaultSettingsJSON,
-		},
-	}
-
-	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		// If another process created it concurrently, that's fine
-		if errors.IsAlreadyExists(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to create base Secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created base Secret %s in namespace %s", secretName, m.namespace)
-	return nil
 }
 
 // createDeployment creates a Deployment for the session
@@ -2851,6 +2839,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// Expand credentials from agentapi-settings-* secrets (env_vars, bedrock, oauth)
+	// Apply base settings first (lowest priority) so that team/user settings can override them.
+	if m.k8sConfig.SettingsBaseSecret != "" {
+		if cfg := m.readAgentapiSettingsSecret(ctx, m.k8sConfig.SettingsBaseSecret); cfg != nil {
+			for k, v := range expandSettingsToEnv(cfg) {
+				env[k] = v
+			}
+		}
+	}
+
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
 		if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {

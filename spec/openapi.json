@@ -3547,6 +3547,11 @@
           "type": {
             "$ref": "#/components/schemas/WebhookType"
           },
+          "secret": {
+            "type": "string",
+            "description": "Custom secret for HMAC signature verification. If not provided, a random secret is auto-generated. Use this to set a pre-shared secret from external services (e.g., Sentry Client Secret).",
+            "example": "your-sentry-client-secret"
+          },
           "github": {
             "$ref": "#/components/schemas/GitHubWebhookConfig"
           },
@@ -3568,6 +3573,10 @@
           "signature_type": {
             "$ref": "#/components/schemas/WebhookSignatureType"
           },
+          "signature_prefix": {
+            "type": "string",
+            "description": "Prefix to strip from the signature header value before HMAC comparison. When empty, auto-detection is used (strips 'algorithm=' prefix if present, e.g. 'sha256='). Set to an explicit value to strip that exact prefix (e.g. 'sha256=' for GitHub-style). Services that send plain hex digests without any prefix (e.g. Sentry) should leave this empty or set it to empty string."
+          },
           "max_sessions": {
             "type": "integer",
             "description": "Maximum number of concurrent sessions allowed for this webhook (default: 10)",
@@ -3585,6 +3594,10 @@
           },
           "status": {
             "$ref": "#/components/schemas/WebhookStatus"
+          },
+          "secret": {
+            "type": "string",
+            "description": "New secret for HMAC signature verification. If not provided, the existing secret is kept."
           },
           "github": {
             "$ref": "#/components/schemas/GitHubWebhookConfig"
@@ -3604,6 +3617,10 @@
           },
           "signature_type": {
             "$ref": "#/components/schemas/WebhookSignatureType"
+          },
+          "signature_prefix": {
+            "type": "string",
+            "description": "Prefix to strip from the signature header value before HMAC comparison. When empty, auto-detection is used."
           },
           "max_sessions": {
             "type": "integer",
@@ -3649,6 +3666,10 @@
           },
           "signature_type": {
             "$ref": "#/components/schemas/WebhookSignatureType"
+          },
+          "signature_prefix": {
+            "type": "string",
+            "description": "Prefix to strip from the signature header value before HMAC comparison. When empty, auto-detection is used."
           },
           "webhook_url": {
             "type": "string",
@@ -3986,7 +4007,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Custom environment variables to be injected into agent sessions. Keys are environment variable names, values are the variable values. These variables will be available in all sessions for this user/team. Empty string values explicitly delete the variable. Keys not included in the request are automatically preserved."
+            "description": "Custom environment variables to be injected into agent sessions. Keys are environment variable names, values are the variable values. These variables will be available in all sessions for this user/team. Empty string values are ignored (existing values are preserved). Keys not included in the request are automatically preserved."
           }
         }
       },
@@ -4054,14 +4075,14 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Environment variables for the server"
+            "description": "Environment variables for the server. Empty string values are ignored (existing values are preserved). Keys not included in the request are automatically preserved."
           },
           "headers": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Headers for http/sse servers"
+            "description": "Headers for http/sse servers. Empty string values are ignored (existing values are preserved). Keys not included in the request are automatically preserved."
           }
         }
       },

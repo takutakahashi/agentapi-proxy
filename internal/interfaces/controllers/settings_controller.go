@@ -496,14 +496,14 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 
 // mergeSecrets merges existing and new secret maps.
 // Keys in new with non-empty values are added or updated.
-// Keys in new with empty string values are explicitly deleted.
+// Keys in new with empty string values are ignored (existing values are preserved).
 // Keys in existing that are not present in new are preserved.
 func (c *SettingsController) mergeSecrets(existing, new map[string]string) map[string]string {
 	if new == nil {
 		return existing
 	}
 	if existing == nil {
-		// Filter out empty strings (deletions of non-existent keys)
+		// Filter out empty strings
 		result := make(map[string]string)
 		for k, v := range new {
 			if v != "" {
@@ -519,15 +519,13 @@ func (c *SettingsController) mergeSecrets(existing, new map[string]string) map[s
 		result[k] = v
 	}
 
-	// Apply changes from new
+	// Apply changes from new (empty strings are ignored)
 	for k, v := range new {
-		if v == "" {
-			// Empty string means explicitly delete this key
-			delete(result, k)
-		} else {
+		if v != "" {
 			// Non-empty value adds or updates the key
 			result[k] = v
 		}
+		// Empty string is ignored - existing values are preserved
 	}
 	return result
 }

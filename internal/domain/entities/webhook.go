@@ -63,6 +63,7 @@ type Webhook struct {
 	secret          string
 	signatureHeader string
 	signatureType   WebhookSignatureType
+	signaturePrefix string
 	github          *WebhookGitHubConfig
 	triggers        []WebhookTrigger
 	sessionConfig   *WebhookSessionConfig
@@ -196,6 +197,20 @@ func (w *Webhook) SignatureType() WebhookSignatureType {
 // SetSignatureType sets the signature verification type
 func (w *Webhook) SetSignatureType(sigType WebhookSignatureType) {
 	w.signatureType = sigType
+	w.updatedAt = time.Now()
+}
+
+// SignaturePrefix returns the signature prefix to strip from the header value.
+// When empty, auto-detection is used (e.g., "sha256=" prefix is detected automatically).
+// When set, this exact prefix is stripped before comparing the HMAC digest.
+// For example, set "sha256=" for GitHub-style, or "" for plain hex (Sentry-style).
+func (w *Webhook) SignaturePrefix() string {
+	return w.signaturePrefix
+}
+
+// SetSignaturePrefix sets the signature prefix to strip from the header value.
+func (w *Webhook) SetSignaturePrefix(prefix string) {
+	w.signaturePrefix = prefix
 	w.updatedAt = time.Now()
 }
 
