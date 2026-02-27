@@ -11,28 +11,27 @@ import "sort"
 func Apply(base, higher SettingsPatch) SettingsPatch {
 	result := base
 
-	// Scalar fields: higher wins if non-nil
-	if higher.AuthMode != nil {
+	// Scalar fields: higher wins if non-empty
+	if higher.AuthMode != "" {
 		result.AuthMode = higher.AuthMode
 	}
-	if higher.OAuthToken != nil {
+	if higher.OAuthToken != "" {
 		result.OAuthToken = higher.OAuthToken
 	}
 	if higher.Bedrock != nil {
 		result.Bedrock = mergeBedrockPatch(base.Bedrock, higher.Bedrock)
 	}
 
-	// Map fields: per-key merge (nil value = delete)
+	// Map fields: per-key merge
 	result.MCPServers = mergePatchMap(base.MCPServers, higher.MCPServers)
-	result.EnvVars = mergePatchMap(base.EnvVars, higher.EnvVars)
+	result.EnvVars = mergeStringMap(base.EnvVars, higher.EnvVars)
 	result.Marketplaces = mergePatchMap(base.Marketplaces, higher.Marketplaces)
 
-	// Hooks: last-wins per event name (no delete semantics needed)
+	// Hooks: last-wins per event name
 	result.Hooks = mergeHooks(base.Hooks, higher.Hooks)
 
 	// Plugins: accumulated union
-	result.AddPlugins = unionStrings(base.AddPlugins, higher.AddPlugins)
-	result.RemovePlugins = unionStrings(base.RemovePlugins, higher.RemovePlugins)
+	result.EnabledPlugins = unionStrings(base.EnabledPlugins, higher.EnabledPlugins)
 
 	return result
 }
@@ -52,7 +51,7 @@ func Resolve(layers ...SettingsPatch) SettingsPatch {
 }
 
 // mergeBedrockPatch merges Bedrock patches field-by-field.
-// When both base and higher are non-nil, higher's non-nil fields override base.
+// When both base and higher are non-nil, higher's non-empty fields override base.
 func mergeBedrockPatch(base, higher *BedrockPatch) *BedrockPatch {
 	if base == nil && higher == nil {
 		return nil
@@ -64,22 +63,19 @@ func mergeBedrockPatch(base, higher *BedrockPatch) *BedrockPatch {
 		return base
 	}
 	result := *base
-	if higher.Enabled != nil {
-		result.Enabled = higher.Enabled
-	}
-	if higher.Model != nil {
+	if higher.Model != "" {
 		result.Model = higher.Model
 	}
-	if higher.AccessKeyID != nil {
+	if higher.AccessKeyID != "" {
 		result.AccessKeyID = higher.AccessKeyID
 	}
-	if higher.SecretAccessKey != nil {
+	if higher.SecretAccessKey != "" {
 		result.SecretAccessKey = higher.SecretAccessKey
 	}
-	if higher.RoleARN != nil {
+	if higher.RoleARN != "" {
 		result.RoleARN = higher.RoleARN
 	}
-	if higher.Profile != nil {
+	if higher.Profile != "" {
 		result.Profile = higher.Profile
 	}
 	return &result
@@ -103,6 +99,21 @@ func mergePatchMap[V any](base, higher map[string]*V) map[string]*V {
 		} else {
 			result[k] = v
 		}
+	}
+	return result
+}
+
+// mergeStringMap merges two string maps; higher's keys override base's.
+func mergeStringMap(base, higher map[string]string) map[string]string {
+	if len(base) == 0 && len(higher) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(base)+len(higher))
+	for k, v := range base {
+		result[k] = v
+	}
+	for k, v := range higher {
+		result[k] = v
 	}
 	return result
 }

@@ -11,9 +11,9 @@ import (
 // These are the patterns that matter most for correct session configuration.
 func TestAuthMode_AllPatterns(t *testing.T) {
 
-	// Pattern 1: nil AuthMode — nothing should be set
-	t.Run("1: nil AuthMode → no bedrock env vars", func(t *testing.T) {
-		resolved := SettingsPatch{} // AuthMode is nil
+	// Pattern 1: empty AuthMode — nothing should be set
+	t.Run("1: empty AuthMode → no bedrock env vars", func(t *testing.T) {
+		resolved := SettingsPatch{} // AuthMode is ""
 		m, err := Materialize(resolved)
 		require.NoError(t, err)
 
@@ -28,13 +28,13 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 2: bedrock + full credentials
 	t.Run("2: bedrock + full credentials → all AWS vars set", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:           ptr("claude-3-5-sonnet"),
-				AccessKeyID:     ptr("AKIATEST"),
-				SecretAccessKey: ptr("secretkey"),
-				RoleARN:         ptr("arn:aws:iam::123:role/test"),
-				Profile:         ptr("myprofile"),
+				Model:           "claude-3-5-sonnet",
+				AccessKeyID:     "AKIATEST",
+				SecretAccessKey: "secretkey",
+				RoleARN:         "arn:aws:iam::123:role/test",
+				Profile:         "myprofile",
 			},
 		}
 		m, err := Materialize(resolved)
@@ -55,7 +55,7 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 3: bedrock without credentials → only USE_BEDROCK flag
 	t.Run("3: bedrock without credentials → CLAUDE_CODE_USE_BEDROCK=1 only", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			// No Bedrock struct = relies on external IAM / instance profile
 		}
 		m, err := Materialize(resolved)
@@ -73,8 +73,8 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 4: oauth mode → USE_BEDROCK=0, all AWS vars wiped
 	t.Run("4: oauth → CLAUDE_CODE_USE_BEDROCK=0, AWS vars cleared", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode:   ptr("oauth"),
-			OAuthToken: ptr("mytoken"),
+			AuthMode:   "oauth",
+			OAuthToken: "mytoken",
 		}
 		m, err := Materialize(resolved)
 		require.NoError(t, err)
@@ -92,12 +92,12 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 5: oauth with leftover bedrock env vars in EnvVars map → aws vars cleared
 	t.Run("5: oauth overrides leftover bedrock env vars", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode: ptr("oauth"),
-			EnvVars: map[string]*string{
+			AuthMode: "oauth",
+			EnvVars: map[string]string{
 				// These would survive if oauth didn't clean up
-				"AWS_ACCESS_KEY_ID":     ptr("stale-key"),
-				"AWS_SECRET_ACCESS_KEY": ptr("stale-secret"),
-				"ANTHROPIC_MODEL":       ptr("stale-model"),
+				"AWS_ACCESS_KEY_ID":     "stale-key",
+				"AWS_SECRET_ACCESS_KEY": "stale-secret",
+				"ANTHROPIC_MODEL":       "stale-model",
 			},
 		}
 		m, err := Materialize(resolved)
@@ -115,14 +115,14 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 6: base=oauth, team=bedrock → team wins (bedrock)
 	t.Run("6: base=oauth, team=bedrock → bedrock", func(t *testing.T) {
 		base := SettingsPatch{
-			AuthMode:   ptr("oauth"),
-			OAuthToken: ptr("base-token"),
+			AuthMode:   "oauth",
+			OAuthToken: "base-token",
 		}
 		team := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:       ptr("claude-3"),
-				AccessKeyID: ptr("AKIATEAM"),
+				Model:       "claude-3",
+				AccessKeyID: "AKIATEAM",
 			},
 		}
 
@@ -139,17 +139,17 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 		assert.Equal(t, "base-token", m.EnvVars["CLAUDE_CODE_OAUTH_TOKEN"])
 	})
 
-	// Pattern 7: base=bedrock, team=nil, user=nil → base bedrock inherited
-	t.Run("7: base=bedrock, team=nil, user=nil → bedrock inherited", func(t *testing.T) {
+	// Pattern 7: base=bedrock, team="", user="" → base bedrock inherited
+	t.Run("7: base=bedrock, team=\"\", user=\"\" → bedrock inherited", func(t *testing.T) {
 		base := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:       ptr("claude-base"),
-				AccessKeyID: ptr("AKIABASE"),
+				Model:       "claude-base",
+				AccessKeyID: "AKIABASE",
 			},
 		}
-		team := SettingsPatch{} // nil AuthMode = inherit
-		user := SettingsPatch{} // nil AuthMode = inherit
+		team := SettingsPatch{} // "" AuthMode = inherit
+		user := SettingsPatch{} // "" AuthMode = inherit
 
 		resolved := Resolve(base, team, user)
 		m, err := Materialize(resolved)
@@ -163,15 +163,15 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 8: base=bedrock, user=oauth → user wins (oauth)
 	t.Run("8: base=bedrock, user=oauth → oauth", func(t *testing.T) {
 		base := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:       ptr("claude-base"),
-				AccessKeyID: ptr("AKIABASE"),
+				Model:       "claude-base",
+				AccessKeyID: "AKIABASE",
 			},
 		}
 		user := SettingsPatch{
-			AuthMode:   ptr("oauth"),
-			OAuthToken: ptr("user-token"),
+			AuthMode:   "oauth",
+			OAuthToken: "user-token",
 		}
 
 		resolved := Resolve(base, user)
@@ -187,17 +187,17 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 		assert.False(t, hasModel, "oauth must clear ANTHROPIC_MODEL from base bedrock")
 	})
 
-	// Pattern 9: team=bedrock, user=nil → team bedrock inherited (nil = inherit)
-	t.Run("9: team=bedrock, user=nil → bedrock inherited (nil semantics)", func(t *testing.T) {
+	// Pattern 9: team=bedrock, user="" → team bedrock inherited ("" = inherit)
+	t.Run("9: team=bedrock, user=\"\" → bedrock inherited (empty string semantics)", func(t *testing.T) {
 		team := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:       ptr("claude-team"),
-				AccessKeyID: ptr("AKIATEAM"),
+				Model:       "claude-team",
+				AccessKeyID: "AKIATEAM",
 			},
 		}
 		user := SettingsPatch{
-			// AuthMode is nil → "not set by user" = inherit team's
+			// AuthMode is "" → "not set by user" = inherit team's
 		}
 
 		resolved := Resolve(team, user)
@@ -205,7 +205,7 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, "1", m.EnvVars["CLAUDE_CODE_USE_BEDROCK"],
-			"nil user AuthMode must NOT override team's bedrock")
+			"empty user AuthMode must NOT override team's bedrock")
 		assert.Equal(t, "claude-team", m.EnvVars["ANTHROPIC_MODEL"])
 		assert.Equal(t, "AKIATEAM", m.EnvVars["AWS_ACCESS_KEY_ID"])
 	})
@@ -213,15 +213,15 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 10: team=bedrock, user=oauth → user wins
 	t.Run("10: team=bedrock, user=oauth → oauth (user always wins)", func(t *testing.T) {
 		team := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:       ptr("claude-team"),
-				AccessKeyID: ptr("AKIATEAM"),
+				Model:       "claude-team",
+				AccessKeyID: "AKIATEAM",
 			},
 		}
 		user := SettingsPatch{
-			AuthMode:   ptr("oauth"),
-			OAuthToken: ptr("user-oauth-token"),
+			AuthMode:   "oauth",
+			OAuthToken: "user-oauth-token",
 		}
 
 		resolved := Resolve(team, user)
@@ -236,20 +236,20 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 		assert.False(t, hasModel, "user oauth must clear team's ANTHROPIC_MODEL")
 	})
 
-	// Pattern 11: base=oauth, team=bedrock, user=nil → team wins (bedrock)
-	t.Run("11: base=oauth, team=bedrock, user=nil → bedrock (team overrides base)", func(t *testing.T) {
+	// Pattern 11: base=oauth, team=bedrock, user="" → team wins (bedrock)
+	t.Run("11: base=oauth, team=bedrock, user=\"\" → bedrock (team overrides base)", func(t *testing.T) {
 		base := SettingsPatch{
-			AuthMode:   ptr("oauth"),
-			OAuthToken: ptr("base-oauth"),
+			AuthMode:   "oauth",
+			OAuthToken: "base-oauth",
 		}
 		team := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:       ptr("claude-team"),
-				AccessKeyID: ptr("AKIATEAM"),
+				Model:       "claude-team",
+				AccessKeyID: "AKIATEAM",
 			},
 		}
-		user := SettingsPatch{} // nil = inherit
+		user := SettingsPatch{} // "" = inherit
 
 		resolved := Resolve(base, team, user)
 		m, err := Materialize(resolved)
@@ -263,16 +263,16 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 12: user overrides only bedrock model, credentials from team
 	t.Run("12: user overrides bedrock model only, team credentials inherited", func(t *testing.T) {
 		team := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:           ptr("claude-3"),
-				AccessKeyID:     ptr("AKIATEAM"),
-				SecretAccessKey: ptr("teamsecret"),
+				Model:           "claude-3",
+				AccessKeyID:     "AKIATEAM",
+				SecretAccessKey: "teamsecret",
 			},
 		}
 		user := SettingsPatch{
 			Bedrock: &BedrockPatch{
-				Model: ptr("claude-3-5"), // only upgrade model
+				Model: "claude-3-5", // only upgrade model
 			},
 		}
 
@@ -289,7 +289,7 @@ func TestAuthMode_AllPatterns(t *testing.T) {
 	// Pattern 13: unknown auth_mode → ignored, no crash
 	t.Run("13: unknown auth_mode → ignored, no crash", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode: ptr("kerberos"), // unknown
+			AuthMode: "kerberos", // unknown
 		}
 		m, err := Materialize(resolved)
 		require.NoError(t, err)

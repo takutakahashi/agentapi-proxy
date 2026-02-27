@@ -8,23 +8,23 @@ import (
 )
 
 func TestMaterialize_AuthMode(t *testing.T) {
-	t.Run("nil AuthMode: no auth env vars set", func(t *testing.T) {
-		resolved := SettingsPatch{} // AuthMode is nil
+	t.Run("empty AuthMode: no auth env vars set", func(t *testing.T) {
+		resolved := SettingsPatch{} // AuthMode is ""
 
 		m, err := Materialize(resolved)
 		require.NoError(t, err)
 		_, ok := m.EnvVars["CLAUDE_CODE_USE_BEDROCK"]
-		assert.False(t, ok, "should not set CLAUDE_CODE_USE_BEDROCK when AuthMode is nil")
+		assert.False(t, ok, "should not set CLAUDE_CODE_USE_BEDROCK when AuthMode is empty")
 	})
 
 	t.Run("bedrock mode sets bedrock env vars", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:           ptr("claude-3"),
-				AccessKeyID:     ptr("AKIATEST"),
-				SecretAccessKey: ptr("secret"),
-				RoleARN:         ptr("arn:aws:iam::123:role/test"),
+				Model:           "claude-3",
+				AccessKeyID:     "AKIATEST",
+				SecretAccessKey: "secret",
+				RoleARN:         "arn:aws:iam::123:role/test",
 			},
 		}
 
@@ -39,8 +39,7 @@ func TestMaterialize_AuthMode(t *testing.T) {
 
 	t.Run("bedrock mode without credentials sets only CLAUDE_CODE_USE_BEDROCK", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode: ptr("bedrock"),
-			// No Bedrock struct = credentials not set
+			AuthMode: "bedrock",
 		}
 
 		m, err := Materialize(resolved)
@@ -52,9 +51,9 @@ func TestMaterialize_AuthMode(t *testing.T) {
 
 	t.Run("oauth mode clears all bedrock env vars", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode: ptr("oauth"),
-			EnvVars: map[string]*string{
-				"AWS_ACCESS_KEY_ID": ptr("leftover-key"), // would be overridden
+			AuthMode: "oauth",
+			EnvVars: map[string]string{
+				"AWS_ACCESS_KEY_ID": "leftover-key",
 			},
 		}
 
@@ -69,8 +68,8 @@ func TestMaterialize_AuthMode(t *testing.T) {
 
 	t.Run("oauth token is set when present", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AuthMode:   ptr("oauth"),
-			OAuthToken: ptr("mytoken"),
+			AuthMode:   "oauth",
+			OAuthToken: "mytoken",
 		}
 
 		m, err := Materialize(resolved)
@@ -80,20 +79,20 @@ func TestMaterialize_AuthMode(t *testing.T) {
 }
 
 func TestMaterialize_Plugins(t *testing.T) {
-	t.Run("active plugins = add minus remove", func(t *testing.T) {
+	t.Run("enabled plugins passed through", func(t *testing.T) {
 		resolved := Resolve(
-			SettingsPatch{AddPlugins: []string{"plugin-a", "plugin-b", "plugin-c"}},
-			SettingsPatch{RemovePlugins: []string{"plugin-b"}},
+			SettingsPatch{EnabledPlugins: []string{"plugin-a", "plugin-b", "plugin-c"}},
+			SettingsPatch{EnabledPlugins: []string{"plugin-d"}},
 		)
 
 		m, err := Materialize(resolved)
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"plugin-a", "plugin-c"}, m.ActivePlugins)
+		assert.ElementsMatch(t, []string{"plugin-a", "plugin-b", "plugin-c", "plugin-d"}, m.ActivePlugins)
 	})
 
 	t.Run("plugins appear in SettingsJSON", func(t *testing.T) {
 		resolved := SettingsPatch{
-			AddPlugins: []string{"commit@official"},
+			EnabledPlugins: []string{"commit@official"},
 		}
 
 		m, err := Materialize(resolved)
@@ -121,10 +120,10 @@ func TestMaterialize_Marketplaces(t *testing.T) {
 func TestMaterialize_EnvVarValidation(t *testing.T) {
 	t.Run("dangerous env vars are rejected", func(t *testing.T) {
 		resolved := SettingsPatch{
-			EnvVars: map[string]*string{
-				"PATH":       ptr("/evil/path"),
-				"SAFE_VAR":   ptr("safe-value"),
-				"LD_PRELOAD": ptr("/evil/lib.so"),
+			EnvVars: map[string]string{
+				"PATH":       "/evil/path",
+				"SAFE_VAR":   "safe-value",
+				"LD_PRELOAD": "/evil/lib.so",
 			},
 		}
 
@@ -139,9 +138,9 @@ func TestMaterialize_EnvVarValidation(t *testing.T) {
 
 	t.Run("env vars with dangerous chars are rejected", func(t *testing.T) {
 		resolved := SettingsPatch{
-			EnvVars: map[string]*string{
-				"SAFE_VAR":   ptr("safe"),
-				"DANGER_VAR": ptr("value|with|pipes"),
+			EnvVars: map[string]string{
+				"SAFE_VAR":   "safe",
+				"DANGER_VAR": "value|with|pipes",
 			},
 		}
 
@@ -149,19 +148,6 @@ func TestMaterialize_EnvVarValidation(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "safe", m.EnvVars["SAFE_VAR"])
 		_, ok := m.EnvVars["DANGER_VAR"]
-		assert.False(t, ok)
-	})
-
-	t.Run("deleted env vars (nil) are not output", func(t *testing.T) {
-		resolved := SettingsPatch{
-			EnvVars: map[string]*string{
-				"FOO": nil, // explicitly deleted
-			},
-		}
-
-		m, err := Materialize(resolved)
-		require.NoError(t, err)
-		_, ok := m.EnvVars["FOO"]
 		assert.False(t, ok)
 	})
 }
@@ -191,57 +177,48 @@ func TestMaterialize_MCPServers(t *testing.T) {
 
 func TestMaterialize_FullPipeline(t *testing.T) {
 	t.Run("base→team→user produces correct materialized settings", func(t *testing.T) {
-		// base: oauth mode, base marketplace
 		base := SettingsPatch{
-			AuthMode:   ptr("oauth"),
-			OAuthToken: ptr("base-token"),
+			AuthMode:   "oauth",
+			OAuthToken: "base-token",
 			Marketplaces: map[string]*MarketplacePatch{
 				"official": {URL: "https://github.com/official/plugins"},
 			},
-			AddPlugins: []string{"base-plugin"},
+			EnabledPlugins: []string{"base-plugin"},
 		}
 
-		// team: switch to bedrock, add team MCP server
 		team := SettingsPatch{
-			AuthMode: ptr("bedrock"),
+			AuthMode: "bedrock",
 			Bedrock: &BedrockPatch{
-				Model:           ptr("claude-3"),
-				AccessKeyID:     ptr("AKIATEAM"),
-				SecretAccessKey: ptr("teamsecret"),
+				Model:           "claude-3",
+				AccessKeyID:     "AKIATEAM",
+				SecretAccessKey: "teamsecret",
 			},
 			MCPServers: map[string]*MCPServerPatch{
 				"team-tool": {Type: "stdio", Command: "team-tool"},
 			},
-			AddPlugins: []string{"team-plugin"},
+			EnabledPlugins: []string{"team-plugin"},
 		}
 
-		// user: only change model, add personal MCP server
 		user := SettingsPatch{
 			Bedrock: &BedrockPatch{
-				Model: ptr("claude-3-5"), // only upgrade model
+				Model: "claude-3-5",
 			},
 			MCPServers: map[string]*MCPServerPatch{
 				"my-tool": {Type: "http", URL: "http://localhost:9090"},
 			},
-			AddPlugins: []string{"user-plugin"},
+			EnabledPlugins: []string{"user-plugin"},
 		}
 
 		resolved := Resolve(base, team, user)
 		m, err := Materialize(resolved)
 		require.NoError(t, err)
 
-		// Auth: team bedrock
 		assert.Equal(t, "1", m.EnvVars["CLAUDE_CODE_USE_BEDROCK"])
-		// Bedrock model: user's override
 		assert.Equal(t, "claude-3-5", m.EnvVars["ANTHROPIC_MODEL"])
-		// Bedrock credentials: team's
 		assert.Equal(t, "AKIATEAM", m.EnvVars["AWS_ACCESS_KEY_ID"])
-		// MCP servers: team-tool + my-tool
 		assert.Contains(t, m.MCPServers, "team-tool")
 		assert.Contains(t, m.MCPServers, "my-tool")
-		// Plugins: union of all three
 		assert.ElementsMatch(t, []string{"base-plugin", "team-plugin", "user-plugin"}, m.ActivePlugins)
-		// Marketplace from base
 		assert.NotNil(t, m.SettingsJSON["marketplaces"])
 	})
 }

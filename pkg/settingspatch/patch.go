@@ -1,15 +1,16 @@
 // Package settingspatch provides a unified type and merge algorithm for agentapi-proxy settings.
 //
-// # Design: JSON Merge Patch (RFC 7396)
+// # Design
 //
 // Every settings layer (base, team, user, oneshot) is represented as a SettingsPatch.
-// Merging is done by Apply() / Resolve(), and the result is converted to runtime
-// configuration by Materialize().
+// The JSON format is identical to the format stored in Kubernetes Secrets, so no
+// conversion is needed: json.Unmarshal(secretData, &patch) works directly.
 //
 // Merge semantics per field type:
-//   - Pointer fields:   nil = "not set, inherit from lower layer"; non-nil = override.
-//   - Map fields:       absent key = inherit; nil value = explicitly delete; non-nil = override.
-//   - Slice fields:     accumulated (union) across all layers (plugins).
+//   - String fields:  "" = "not set, inherit from lower layer"; non-empty = override.
+//   - Pointer fields: nil = "not set, inherit from lower layer"; non-nil = override.
+//   - Map fields:     absent key = inherit; nil value = explicitly delete; non-nil = override.
+//   - Slice fields:   accumulated (union) across all layers (plugins).
 package settingspatch
 
 // SettingsPatch represents a single layer of settings configuration.
@@ -20,16 +21,16 @@ package settingspatch
 //	base → team[0] → team[1] → ... → user → oneshot
 type SettingsPatch struct {
 	// AuthMode specifies the authentication mode: "oauth" or "bedrock".
-	// nil = inherit from lower layer (do not override auth-related env vars).
-	AuthMode *string `json:"auth_mode,omitempty"`
+	// "" = inherit from lower layer (do not override auth-related env vars).
+	AuthMode string `json:"auth_mode,omitempty"`
 
 	// OAuthToken is the Claude Code OAuth token.
-	// nil = inherit from lower layer.
-	OAuthToken *string `json:"claude_code_oauth_token,omitempty"`
+	// "" = inherit from lower layer.
+	OAuthToken string `json:"claude_code_oauth_token,omitempty"`
 
 	// Bedrock holds AWS Bedrock configuration.
 	// nil = inherit from lower layer entirely.
-	// Non-nil = merge field by field (nil sub-fields still inherit).
+	// Non-nil = merge field by field (empty sub-fields still inherit).
 	Bedrock *BedrockPatch `json:"bedrock,omitempty"`
 
 	// MCPServers is the MCP server configuration map.
@@ -40,9 +41,8 @@ type SettingsPatch struct {
 
 	// EnvVars are custom environment variables.
 	// Absent key = inherit from lower layer.
-	// nil value = explicitly delete variable.
-	// Non-nil value = set/override variable.
-	EnvVars map[string]*string `json:"env_vars,omitempty"`
+	// Last non-absent value wins (no delete semantics).
+	EnvVars map[string]string `json:"env_vars,omitempty"`
 
 	// Marketplaces is the plugin marketplace configuration map.
 	// Absent key = inherit from lower layer.
@@ -54,24 +54,19 @@ type SettingsPatch struct {
 	// Later layers override earlier layers for the same event name.
 	Hooks map[string]interface{} `json:"hooks,omitempty"`
 
-	// AddPlugins lists plugins contributed by this layer.
+	// EnabledPlugins lists plugins contributed by this layer.
 	// Accumulated (union) across all layers.
-	AddPlugins []string `json:"add_plugins,omitempty"`
-
-	// RemovePlugins lists plugins to subtract from the accumulated set.
-	// Applied after the union of all AddPlugins across all layers.
-	RemovePlugins []string `json:"remove_plugins,omitempty"`
+	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
 }
 
 // BedrockPatch holds AWS Bedrock configuration.
-// Pointer fields: nil = inherit from lower layer, non-nil = override.
+// Empty string fields are treated as "not set" and inherit from lower layers.
 type BedrockPatch struct {
-	Enabled         *bool   `json:"enabled,omitempty"`
-	Model           *string `json:"model,omitempty"`
-	AccessKeyID     *string `json:"access_key_id,omitempty"`
-	SecretAccessKey *string `json:"secret_access_key,omitempty"`
-	RoleARN         *string `json:"role_arn,omitempty"`
-	Profile         *string `json:"profile,omitempty"`
+	Model           string `json:"model,omitempty"`
+	AccessKeyID     string `json:"access_key_id,omitempty"`
+	SecretAccessKey string `json:"secret_access_key,omitempty"`
+	RoleARN         string `json:"role_arn,omitempty"`
+	Profile         string `json:"profile,omitempty"`
 }
 
 // MCPServerPatch represents a single MCP server configuration.
@@ -89,6 +84,3 @@ type MCPServerPatch struct {
 type MarketplacePatch struct {
 	URL string `json:"url"`
 }
-
-// ptr returns a pointer to v. Helper for constructing patches in tests.
-func ptr[T any](v T) *T { return &v }

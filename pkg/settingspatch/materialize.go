@@ -21,8 +21,7 @@ type MaterializedSettings struct {
 	// nil if no MCP servers are configured.
 	MCPServers map[string]interface{}
 
-	// ActivePlugins is the final list of enabled plugins
-	// (union of AddPlugins across all layers, minus RemovePlugins).
+	// ActivePlugins is the final list of enabled plugins.
 	ActivePlugins []string
 }
 
@@ -31,7 +30,7 @@ type MaterializedSettings struct {
 // This is the single place where all business logic lives:
 //   - Auth mode decision (bedrock vs oauth vs unset)
 //   - Env var validation and dangerous-variable filtering
-//   - Plugin set operations (AddPlugins minus RemovePlugins)
+//   - Plugin set operations
 //   - Claude settings JSON assembly (marketplaces, plugins, hooks)
 func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 	result := MaterializedSettings{
@@ -39,52 +38,50 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 	}
 
 	// 1. Custom env vars — applied first so auth overrides can trump them.
-	for k, vPtr := range resolved.EnvVars {
-		if vPtr != nil {
-			result.EnvVars[k] = *vPtr
-		}
+	for k, v := range resolved.EnvVars {
+		result.EnvVars[k] = v
 	}
 	result.EnvVars = validateEnvVars(result.EnvVars)
 
 	// 2. Auth mode and credentials.
-	//    nil AuthMode = "no layer configured auth" = do not touch auth env vars,
+	//    "" AuthMode = "no layer configured auth" = do not touch auth env vars,
 	//    so that externally-injected auth (e.g. node-level IAM) is preserved.
-	if resolved.AuthMode != nil {
-		switch *resolved.AuthMode {
-		case "bedrock":
-			result.EnvVars["CLAUDE_CODE_USE_BEDROCK"] = "1"
-			if b := resolved.Bedrock; b != nil {
-				if v := b.Model; v != nil && *v != "" {
-					result.EnvVars["ANTHROPIC_MODEL"] = *v
-				}
-				if v := b.AccessKeyID; v != nil && *v != "" {
-					result.EnvVars["AWS_ACCESS_KEY_ID"] = *v
-				}
-				if v := b.SecretAccessKey; v != nil && *v != "" {
-					result.EnvVars["AWS_SECRET_ACCESS_KEY"] = *v
-				}
-				if v := b.RoleARN; v != nil && *v != "" {
-					result.EnvVars["AWS_ROLE_ARN"] = *v
-				}
-				if v := b.Profile; v != nil && *v != "" {
-					result.EnvVars["AWS_PROFILE"] = *v
-				}
+	switch resolved.AuthMode {
+	case "bedrock":
+		result.EnvVars["CLAUDE_CODE_USE_BEDROCK"] = "1"
+		if b := resolved.Bedrock; b != nil {
+			if b.Model != "" {
+				result.EnvVars["ANTHROPIC_MODEL"] = b.Model
 			}
-		case "oauth":
-			result.EnvVars["CLAUDE_CODE_USE_BEDROCK"] = "0"
-			delete(result.EnvVars, "ANTHROPIC_MODEL")
-			delete(result.EnvVars, "AWS_ACCESS_KEY_ID")
-			delete(result.EnvVars, "AWS_SECRET_ACCESS_KEY")
-			delete(result.EnvVars, "AWS_ROLE_ARN")
-			delete(result.EnvVars, "AWS_PROFILE")
-		default:
-			log.Printf("[SETTINGSPATCH] Unknown auth_mode %q, ignoring", *resolved.AuthMode)
+			if b.AccessKeyID != "" {
+				result.EnvVars["AWS_ACCESS_KEY_ID"] = b.AccessKeyID
+			}
+			if b.SecretAccessKey != "" {
+				result.EnvVars["AWS_SECRET_ACCESS_KEY"] = b.SecretAccessKey
+			}
+			if b.RoleARN != "" {
+				result.EnvVars["AWS_ROLE_ARN"] = b.RoleARN
+			}
+			if b.Profile != "" {
+				result.EnvVars["AWS_PROFILE"] = b.Profile
+			}
 		}
+	case "oauth":
+		result.EnvVars["CLAUDE_CODE_USE_BEDROCK"] = "0"
+		delete(result.EnvVars, "ANTHROPIC_MODEL")
+		delete(result.EnvVars, "AWS_ACCESS_KEY_ID")
+		delete(result.EnvVars, "AWS_SECRET_ACCESS_KEY")
+		delete(result.EnvVars, "AWS_ROLE_ARN")
+		delete(result.EnvVars, "AWS_PROFILE")
+	case "":
+		// not set — preserve externally injected auth
+	default:
+		log.Printf("[SETTINGSPATCH] Unknown auth_mode %q, ignoring", resolved.AuthMode)
 	}
 
 	// 3. OAuth token.
-	if t := resolved.OAuthToken; t != nil && *t != "" {
-		result.EnvVars["CLAUDE_CODE_OAUTH_TOKEN"] = *t
+	if resolved.OAuthToken != "" {
+		result.EnvVars["CLAUDE_CODE_OAUTH_TOKEN"] = resolved.OAuthToken
 	}
 
 	// 4. MCP servers — serialize the typed map to map[string]interface{}.
@@ -98,16 +95,8 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 		}
 	}
 
-	// 5. Active plugins = union(AddPlugins) minus union(RemovePlugins).
-	removeSet := make(map[string]bool, len(resolved.RemovePlugins))
-	for _, p := range resolved.RemovePlugins {
-		removeSet[p] = true
-	}
-	for _, p := range resolved.AddPlugins {
-		if !removeSet[p] {
-			result.ActivePlugins = append(result.ActivePlugins, p)
-		}
-	}
+	// 5. Active plugins (union already computed by Resolve).
+	result.ActivePlugins = resolved.EnabledPlugins
 
 	// 6. Claude SettingsJSON (marketplaces, plugins, hooks).
 	settingsMap := make(map[string]interface{})
