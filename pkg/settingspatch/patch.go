@@ -61,12 +61,9 @@ type SettingsPatch struct {
 
 // BedrockPatch holds AWS Bedrock configuration.
 // Empty string fields are treated as "not set" and inherit from lower layers.
-//
-// Note: Enabled is stored for round-trip fidelity with the settings write path,
-// but bedrock activation is controlled by AuthMode ("bedrock" = on, "oauth" = off).
-// Enabled is not used by Materialize().
+// Bedrock activation is controlled solely by AuthMode ("bedrock" = on, "oauth" = off).
+// Legacy fields like "enabled" stored in Kubernetes Secrets are silently ignored.
 type BedrockPatch struct {
-	Enabled         bool   `json:"enabled,omitempty"`
 	Model           string `json:"model,omitempty"`
 	AccessKeyID     string `json:"access_key_id,omitempty"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"`

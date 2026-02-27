@@ -38,12 +38,11 @@ func TestFromJSON_DirectUnmarshal(t *testing.T) {
 		assert.Equal(t, "qux", patch.EnvVars["BAZ"])
 	})
 
-	t.Run("bedrock fields are read directly (enabled is preserved for round-trip)", func(t *testing.T) {
+	t.Run("bedrock fields are read directly (legacy enabled field silently ignored)", func(t *testing.T) {
 		data := []byte(`{"bedrock":{"enabled":true,"model":"claude-3","access_key_id":"AKIA"}}`)
 		patch, err := FromJSON(data)
 		require.NoError(t, err)
 		require.NotNil(t, patch.Bedrock)
-		assert.True(t, patch.Bedrock.Enabled, "enabled:true must be preserved")
 		assert.Equal(t, "claude-3", patch.Bedrock.Model)
 		assert.Equal(t, "AKIA", patch.Bedrock.AccessKeyID)
 		assert.Equal(t, "", patch.Bedrock.SecretAccessKey, "absent secret key should be empty string")
@@ -94,7 +93,6 @@ func TestFromJSON_DirectUnmarshal(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, "bedrock", patch.AuthMode)
-		assert.True(t, patch.Bedrock.Enabled, "enabled:true must be preserved in round-trip")
 		assert.Equal(t, "claude-3-5-sonnet-20241022", patch.Bedrock.Model)
 		assert.Equal(t, "AKIAIOSFODNN7EXAMPLE", patch.Bedrock.AccessKeyID)
 		assert.Equal(t, []string{"commit@official"}, patch.EnabledPlugins)
