@@ -205,6 +205,52 @@ func TestPruneStaleSlackbotSessions_DefensiveCheck(t *testing.T) {
 	}
 }
 
+// TestPruneStaleSlackbotSessions_DryRun verifies that dry-run mode logs stale
+// sessions but does NOT call DeleteSession.
+func TestPruneStaleSlackbotSessions_DryRun(t *testing.T) {
+	staleAt := time.Now().Add(-100 * time.Hour).Format(time.RFC3339)
+
+	svc := slackbotService("slack-svc", "slack-session-dry", "bot-123", staleAt)
+	mgr := &mockSessionManager{}
+
+	runtimeObjects := []k8sruntime.Object{&svc}
+	k8s := fake.NewSimpleClientset(runtimeObjects...)
+	w := NewCleanupWorker(mgr, k8s, "test", CleanupWorkerConfig{
+		CheckInterval: time.Hour,
+		SessionTTL:    72 * time.Hour,
+		DryRun:        true,
+	})
+
+	w.pruneStaleSlackbotSessions(context.Background())
+
+	if len(mgr.deletedIDs) != 0 {
+		t.Errorf("dry-run must not delete sessions, got deletions: %v", mgr.deletedIDs)
+	}
+}
+
+// TestPruneStaleSlackbotSessions_DryRun_FreshSession verifies that dry-run mode
+// does NOT count sessions that are within TTL.
+func TestPruneStaleSlackbotSessions_DryRun_FreshSession(t *testing.T) {
+	recentAt := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+
+	svc := slackbotService("slack-svc", "slack-session-fresh", "bot-123", recentAt)
+	mgr := &mockSessionManager{}
+
+	runtimeObjects := []k8sruntime.Object{&svc}
+	k8s := fake.NewSimpleClientset(runtimeObjects...)
+	w := NewCleanupWorker(mgr, k8s, "test", CleanupWorkerConfig{
+		CheckInterval: time.Hour,
+		SessionTTL:    72 * time.Hour,
+		DryRun:        true,
+	})
+
+	w.pruneStaleSlackbotSessions(context.Background())
+
+	if len(mgr.deletedIDs) != 0 {
+		t.Errorf("dry-run must not delete sessions, got deletions: %v", mgr.deletedIDs)
+	}
+}
+
 // TestResolveReferenceTime verifies the annotation-based time resolution.
 func TestResolveReferenceTime(t *testing.T) {
 	w := &CleanupWorker{}

@@ -37,6 +37,10 @@ type CleanupWorkerConfig struct {
 	SessionTTL time.Duration
 	// Enabled controls whether the worker actually runs.
 	Enabled bool
+	// DryRun disables actual session deletion; stale sessions are only logged.
+	// Useful for verifying TTL settings before enabling real cleanup.
+	// Default: false
+	DryRun bool
 }
 
 // DefaultCleanupWorkerConfig returns the default configuration.
@@ -45,6 +49,7 @@ func DefaultCleanupWorkerConfig() CleanupWorkerConfig {
 		CheckInterval: 1 * time.Hour,
 		SessionTTL:    72 * time.Hour,
 		Enabled:       true,
+		DryRun:        false,
 	}
 }
 
@@ -93,8 +98,12 @@ func (w *CleanupWorker) Start(ctx context.Context) error {
 	w.wg.Add(1)
 	go w.run(ctx)
 
-	log.Printf("[SLACKBOT_CLEANUP] Started with check interval %v, session TTL %v",
-		w.config.CheckInterval, w.config.SessionTTL)
+	dryRunNote := ""
+	if w.config.DryRun {
+		dryRunNote = " (dry-run mode: no sessions will be deleted)"
+	}
+	log.Printf("[SLACKBOT_CLEANUP] Started with check interval %v, session TTL %v%s",
+		w.config.CheckInterval, w.config.SessionTTL, dryRunNote)
 	return nil
 }
 
@@ -138,10 +147,16 @@ func (w *CleanupWorker) run(ctx context.Context) {
 }
 
 // pruneStaleSlackbotSessions lists all Slackbot sessions and deletes those whose
-// last message time (or creation time as fallback) is older than SessionTTL.
+// last message time is older than SessionTTL.  When DryRun is enabled the
+// worker only logs which sessions would be deleted without touching them.
 func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 	now := time.Now()
 	threshold := now.Add(-w.config.SessionTTL)
+
+	dryRunPrefix := ""
+	if w.config.DryRun {
+		dryRunPrefix = "[DRY-RUN] "
+	}
 
 	// List Services that have the slackbot_id label (value-independent existence check).
 	// The label selector "agentapi.proxy/tag-slackbot_id" matches any Service that has
@@ -154,7 +169,7 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 		LabelSelector: labelSelector,
 	})
 	if err != nil {
-		log.Printf("[SLACKBOT_CLEANUP] Failed to list Slackbot sessions: %v", err)
+		log.Printf("[SLACKBOT_CLEANUP] %sFailed to list Slackbot sessions: %v", dryRunPrefix, err)
 		return
 	}
 
@@ -162,8 +177,8 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[SLACKBOT_CLEANUP] Scanning %d Slackbot session(s) for TTL expiry (threshold: %s)",
-		len(svcList.Items), threshold.Format(time.RFC3339))
+	log.Printf("[SLACKBOT_CLEANUP] %sScanning %d Slackbot session(s) for TTL expiry (threshold: %s)",
+		dryRunPrefix, len(svcList.Items), threshold.Format(time.RFC3339))
 
 	deleted := 0
 	for _, svc := range svcList.Items {
@@ -171,25 +186,32 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 		// The label selector already filters by this key, but we re-check here to
 		// guard against any unexpected label selector behaviour.
 		if svc.Labels[slackbotIDLabelKey] == "" {
-			log.Printf("[SLACKBOT_CLEANUP] Service %s does not have slackbot label, skipping", svc.Name)
+			log.Printf("[SLACKBOT_CLEANUP] %sService %s does not have slackbot label, skipping", dryRunPrefix, svc.Name)
 			continue
 		}
 
 		sessionID := svc.Labels[sessionIDLabel]
 		if sessionID == "" {
-			log.Printf("[SLACKBOT_CLEANUP] Service %s missing session-id label, skipping", svc.Name)
+			log.Printf("[SLACKBOT_CLEANUP] %sService %s missing session-id label, skipping", dryRunPrefix, svc.Name)
 			continue
 		}
 
 		// Determine the reference time for TTL calculation from slack-last-message-at.
 		refTime, err := w.resolveReferenceTime(svc.Annotations)
 		if err != nil {
-			log.Printf("[SLACKBOT_CLEANUP] Session %s: cannot determine reference time (%v), skipping", sessionID, err)
+			log.Printf("[SLACKBOT_CLEANUP] %sSession %s: cannot determine reference time (%v), skipping", dryRunPrefix, sessionID, err)
 			continue
 		}
 
 		if refTime.After(threshold) {
 			// Session is still within TTL, skip
+			continue
+		}
+
+		if w.config.DryRun {
+			log.Printf("[SLACKBOT_CLEANUP] [DRY-RUN] Would delete session %s (last message at %s, threshold %s)",
+				sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339))
+			deleted++
 			continue
 		}
 
@@ -205,7 +227,11 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 	}
 
 	if deleted > 0 {
-		log.Printf("[SLACKBOT_CLEANUP] Deleted %d stale Slackbot session(s)", deleted)
+		if w.config.DryRun {
+			log.Printf("[SLACKBOT_CLEANUP] [DRY-RUN] Would delete %d stale Slackbot session(s)", deleted)
+		} else {
+			log.Printf("[SLACKBOT_CLEANUP] Deleted %d stale Slackbot session(s)", deleted)
+		}
 	}
 }
 

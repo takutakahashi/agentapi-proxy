@@ -169,6 +169,9 @@ type SlackbotCleanupWorkerConfig struct {
 	SessionTTL string `json:"session_ttl" mapstructure:"session_ttl"`
 	// Namespace is the Kubernetes namespace to scan. Defaults to KubernetesSession.Namespace.
 	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// DryRun disables actual deletion; stale sessions are only logged.
+	// Useful for verifying TTL settings before enabling real cleanup.
+	DryRun bool `json:"dry_run" mapstructure:"dry_run"`
 	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership
 	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
 	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up
