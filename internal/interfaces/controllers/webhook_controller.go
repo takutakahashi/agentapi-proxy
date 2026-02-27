@@ -47,6 +47,7 @@ type CreateWebhookRequest struct {
 	Secret          string                        `json:"secret,omitempty"`
 	SignatureHeader string                        `json:"signature_header,omitempty"`
 	SignatureType   entities.WebhookSignatureType `json:"signature_type,omitempty"`
+	SignaturePrefix string                        `json:"signature_prefix,omitempty"`
 	GitHub          *GitHubConfigRequest          `json:"github,omitempty"`
 	Triggers        []TriggerRequest              `json:"triggers"`
 	SessionConfig   *SessionConfigRequest         `json:"session_config,omitempty"`
@@ -108,6 +109,7 @@ type UpdateWebhookRequest struct {
 	Secret          *string                        `json:"secret,omitempty"`
 	SignatureHeader *string                        `json:"signature_header,omitempty"`
 	SignatureType   *entities.WebhookSignatureType `json:"signature_type,omitempty"`
+	SignaturePrefix *string                        `json:"signature_prefix,omitempty"`
 	GitHub          *GitHubConfigRequest           `json:"github,omitempty"`
 	Triggers        []TriggerRequest               `json:"triggers,omitempty"`
 	SessionConfig   *SessionConfigRequest          `json:"session_config,omitempty"`
@@ -126,6 +128,7 @@ type WebhookResponse struct {
 	Secret          string                        `json:"secret"`
 	SignatureHeader string                        `json:"signature_header,omitempty"`
 	SignatureType   entities.WebhookSignatureType `json:"signature_type,omitempty"`
+	SignaturePrefix string                        `json:"signature_prefix,omitempty"`
 	WebhookURL      string                        `json:"webhook_url"`
 	GitHub          *GitHubConfigResponse         `json:"github,omitempty"`
 	Triggers        []TriggerResponse             `json:"triggers"`
@@ -291,6 +294,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	}
 	if req.SignatureType != "" {
 		webhook.SetSignatureType(req.SignatureType)
+	}
+	if req.SignaturePrefix != "" {
+		webhook.SetSignaturePrefix(req.SignaturePrefix)
 	}
 	if req.MaxSessions > 0 {
 		webhook.SetMaxSessions(req.MaxSessions)
@@ -467,6 +473,9 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 	if req.SignatureType != nil {
 		webhook.SetSignatureType(*req.SignatureType)
 	}
+	if req.SignaturePrefix != nil {
+		webhook.SetSignaturePrefix(*req.SignaturePrefix)
+	}
 	if req.MaxSessions != nil && *req.MaxSessions > 0 {
 		webhook.SetMaxSessions(*req.MaxSessions)
 	}
@@ -640,6 +649,7 @@ func (c *WebhookController) toResponse(ctx echo.Context, w *entities.Webhook) We
 		Secret:          w.Secret(),
 		SignatureHeader: w.SignatureHeader(),
 		SignatureType:   w.SignatureType(),
+		SignaturePrefix: w.SignaturePrefix(),
 		WebhookURL:      c.getWebhookURL(ctx, w),
 		MaxSessions:     w.MaxSessions(),
 		CreatedAt:       w.CreatedAt().Format(time.RFC3339),

@@ -42,6 +42,7 @@ type WebhookImport struct {
 	SecretEncrypted *EncryptedSecretData   `yaml:"secret_encrypted,omitempty" toml:"secret_encrypted,omitempty" json:"secret_encrypted,omitempty"`
 	SignatureHeader string                 `yaml:"signature_header,omitempty" toml:"signature_header,omitempty" json:"signature_header,omitempty"`
 	SignatureType   string                 `yaml:"signature_type,omitempty" toml:"signature_type,omitempty" json:"signature_type,omitempty"`
+	SignaturePrefix string                 `yaml:"signature_prefix,omitempty" toml:"signature_prefix,omitempty" json:"signature_prefix,omitempty"`
 	MaxSessions     int                    `yaml:"max_sessions,omitempty" toml:"max_sessions,omitempty" json:"max_sessions,omitempty"`
 	GitHub          *GitHubConfigImport    `yaml:"github,omitempty" toml:"github,omitempty" json:"github,omitempty"`
 	Triggers        []WebhookTriggerImport `yaml:"triggers" toml:"triggers" json:"triggers"`
