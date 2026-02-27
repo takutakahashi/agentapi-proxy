@@ -523,6 +523,10 @@ slackbotCleanupWorker:
   # How often to scan for stale sessions
   checkInterval: "30m"
 
+  # Dry-run mode: log stale sessions without actually deleting them.
+  # Useful for verifying TTL settings before enabling real cleanup.
+  dryRun: false
+
   # Leader election configuration (prevents duplicate deletions in multi-replica deployments)
   leaderElection:
     # Lease duration (how long the leader holds the lock)

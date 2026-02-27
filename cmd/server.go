@@ -311,10 +311,7 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 		return nil
 	}
 
-	namespace := configData.SlackbotCleanupWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
+	namespace := configData.KubernetesSession.Namespace
 	if namespace == "" {
 		namespace = "default"
 	}

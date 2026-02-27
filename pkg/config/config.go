@@ -167,8 +167,6 @@ type SlackbotCleanupWorkerConfig struct {
 	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
 	// SessionTTL is the duration after the last message before a session is deleted (e.g., "72h")
 	SessionTTL string `json:"session_ttl" mapstructure:"session_ttl"`
-	// Namespace is the Kubernetes namespace to scan. Defaults to KubernetesSession.Namespace.
-	Namespace string `json:"namespace" mapstructure:"namespace"`
 	// DryRun disables actual deletion; stale sessions are only logged.
 	// Useful for verifying TTL settings before enabling real cleanup.
 	DryRun bool `json:"dry_run" mapstructure:"dry_run"`
@@ -615,7 +613,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slackbot_cleanup_worker.enabled", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED")
 	_ = v.BindEnv("slackbot_cleanup_worker.check_interval", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL")
 	_ = v.BindEnv("slackbot_cleanup_worker.session_ttl", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL")
-	_ = v.BindEnv("slackbot_cleanup_worker.namespace", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_NAMESPACE")
+	_ = v.BindEnv("slackbot_cleanup_worker.dry_run", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN")
 	_ = v.BindEnv("slackbot_cleanup_worker.lease_duration", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION")
 	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("slackbot_cleanup_worker.retry_period", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD")
