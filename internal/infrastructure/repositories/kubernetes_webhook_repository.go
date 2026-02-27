@@ -51,6 +51,7 @@ type webhookJSON struct {
 	Secret          string                        `json:"secret"`
 	SignatureHeader string                        `json:"signature_header,omitempty"`
 	SignatureType   entities.WebhookSignatureType `json:"signature_type,omitempty"`
+	SignaturePrefix string                        `json:"signature_prefix,omitempty"`
 	GitHub          *webhookGitHubConfigJSON      `json:"github,omitempty"`
 	Triggers        []webhookTriggerJSON          `json:"triggers"`
 	SessionConfig   *webhookSessionConfigJSON     `json:"session_config,omitempty"`
@@ -499,6 +500,9 @@ func (r *KubernetesWebhookRepository) jsonToEntity(wj *webhookJSON) *entities.We
 	if wj.SignatureType != "" {
 		webhook.SetSignatureType(wj.SignatureType)
 	}
+	if wj.SignaturePrefix != "" {
+		webhook.SetSignaturePrefix(wj.SignaturePrefix)
+	}
 	if wj.MaxSessions > 0 {
 		webhook.SetMaxSessions(wj.MaxSessions)
 	}
@@ -579,6 +583,7 @@ func (r *KubernetesWebhookRepository) entityToJSON(w *entities.Webhook) *webhook
 		Secret:          w.Secret(),
 		SignatureHeader: w.SignatureHeader(),
 		SignatureType:   w.SignatureType(),
+		SignaturePrefix: w.SignaturePrefix(),
 		MaxSessions:     w.MaxSessions(),
 		CreatedAt:       w.CreatedAt(),
 		UpdatedAt:       w.UpdatedAt(),

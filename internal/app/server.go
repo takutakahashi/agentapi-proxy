@@ -31,22 +31,22 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	config             *config.Config
-	echo               *echo.Echo
-	verbose            bool
-	logger             *logger.Logger
-	oauthProvider *auth.GitHubOAuthProvider
-	oauthSessions sync.Map // sessionID -> OAuthSession
-	notificationSvc    *notification.Service
-	container          *di.Container                  // Internal DI container
-	sessionManager     portrepos.SessionManager       // Session lifecycle manager
-	settingsRepo       portrepos.SettingsRepository   // Settings repository
-	shareRepo          portrepos.ShareRepository      // Share repository for session sharing
-	teamConfigRepo     portrepos.TeamConfigRepository // Team configuration repository
-	memoryRepo         portrepos.MemoryRepository     // Memory repository
-	taskRepo           portrepos.TaskRepository       // Task repository
-	taskGroupRepo      portrepos.TaskGroupRepository  // Task group repository
-	router             *Router                        // Router for custom handler registration
+	config          *config.Config
+	echo            *echo.Echo
+	verbose         bool
+	logger          *logger.Logger
+	oauthProvider   *auth.GitHubOAuthProvider
+	oauthSessions   sync.Map // sessionID -> OAuthSession
+	notificationSvc *notification.Service
+	container       *di.Container                  // Internal DI container
+	sessionManager  portrepos.SessionManager       // Session lifecycle manager
+	settingsRepo    portrepos.SettingsRepository   // Settings repository
+	shareRepo       portrepos.ShareRepository      // Share repository for session sharing
+	teamConfigRepo  portrepos.TeamConfigRepository // Team configuration repository
+	memoryRepo      portrepos.MemoryRepository     // Memory repository
+	taskRepo        portrepos.TaskRepository       // Task repository
+	taskGroupRepo   portrepos.TaskGroupRepository  // Task group repository
+	router          *Router                        // Router for custom handler registration
 }
 
 // NewServer creates a new server instance

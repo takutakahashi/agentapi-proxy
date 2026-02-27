@@ -59,8 +59,8 @@ type UserCache struct {
 type GitHubAuthProvider struct {
 	config          *config.GitHubAuthConfig
 	client          *http.Client
-	userCache       *utils.TTLCache      // token hash → UserCache, TTL 1h
-	teamCache       *utils.TTLCache      // username → []GitHubTeamMembership, TTL 30s
+	userCache       *utils.TTLCache       // token hash → UserCache, TTL 1h
+	teamCache       *utils.TTLCache       // username → []GitHubTeamMembership, TTL 30s
 	teamMappingRepo TeamMappingRepository // ConfigMap persistent cache (optional, may be nil)
 }
 

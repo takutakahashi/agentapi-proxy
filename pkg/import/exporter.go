@@ -191,6 +191,7 @@ func (e *Exporter) convertWebhookToImport(ctx context.Context, w *entities.Webho
 		WebhookType:     string(w.WebhookType()),
 		SignatureHeader: w.SignatureHeader(),
 		SignatureType:   string(w.SignatureType()),
+		SignaturePrefix: w.SignaturePrefix(),
 		MaxSessions:     w.MaxSessions(),
 	}
 
