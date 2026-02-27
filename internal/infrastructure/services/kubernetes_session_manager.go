@@ -527,8 +527,9 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 	return fmt.Errorf("failed to send message after 3 retries: %w", lastErr)
 }
 
-// StopAgent sends a stop signal (Ctrl+C as a raw keystroke) to the running agent in the session.
-// This interrupts any ongoing agent task without deleting the session.
+// StopAgent sends a stop_agent action to the running agent in the session via the
+// claude-agentapi POST /action endpoint. This terminates the running agent task
+// without deleting the session.
 func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) error {
 	// Get session
 	session := m.GetSession(id)
@@ -542,24 +543,23 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
 
-	// Build service name and endpoint URL
+	// Build service name and endpoint URL for the claude-agentapi /action endpoint
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
-	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/message",
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/action",
 		serviceName,
 		m.namespace,
 		m.k8sConfig.BasePort,
 	)
 
-	// Send Ctrl+C (\x03) as a raw keystroke to interrupt the running agent
+	// Send stop_agent action as defined in the claude-agentapi OpenAPI spec
 	payload := map[string]interface{}{
-		"content": "\x03",
-		"type":    "raw",
+		"type": "stop_agent",
 	}
 
 	// Marshal JSON
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal stop signal payload: %w", err)
+		return fmt.Errorf("failed to marshal stop_agent payload: %w", err)
 	}
 
 	// Create HTTP request
@@ -572,17 +572,17 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 	// Send request
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send stop signal: %w", err)
+		return fmt.Errorf("failed to send stop_agent signal: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code from stop signal: %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status code from stop_agent signal: %d", resp.StatusCode)
 	}
 
-	log.Printf("[K8S_SESSION] Successfully sent stop signal to session %s", id)
+	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s", id)
 	return nil
 }
 
