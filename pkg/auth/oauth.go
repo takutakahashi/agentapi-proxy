@@ -54,13 +54,16 @@ type GitHubOAuthProvider struct {
 	githubProvider *GitHubAuthProvider
 }
 
-// NewGitHubOAuthProvider creates a new GitHub OAuth provider
-func NewGitHubOAuthProvider(cfg *config.GitHubOAuthConfig, githubCfg *config.GitHubAuthConfig) *GitHubOAuthProvider {
+// NewGitHubOAuthProvider creates a new GitHub OAuth provider.
+// provider is the shared GitHubAuthProvider that handles token-based auth after
+// the OAuth callback. Sharing the same instance across the application ensures
+// a unified cache (userCache, teamCache, teamMappingRepo).
+func NewGitHubOAuthProvider(cfg *config.GitHubOAuthConfig, provider *GitHubAuthProvider) *GitHubOAuthProvider {
 	return &GitHubOAuthProvider{
 		config:         cfg,
 		client:         utils.NewDefaultHTTPClient(),
 		stateStore:     &sync.Map{},
-		githubProvider: NewGitHubAuthProvider(githubCfg),
+		githubProvider: provider,
 	}
 }
 
