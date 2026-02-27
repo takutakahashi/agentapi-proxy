@@ -268,10 +268,12 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		s.githubAuthProvider.SetTeamMappingRepo(teamMappingRepo)
 		log.Printf("[AUTH_INIT] GitHub auth provider initialized with ConfigMap team mapping cache")
 
-		// Configure the internal auth service with GitHub settings
+		// Inject the same pre-configured provider into SimpleAuthService so it shares
+		// the teamMappingRepo and teamCache (avoids creating a second provider instance).
 		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			simpleAuth.SetGitHubProvider(s.githubAuthProvider)
 			simpleAuth.SetGitHubAuthConfig(cfg.Auth.GitHub)
-			log.Printf("[AUTH_INIT] GitHub auth config set for internal auth service")
+			log.Printf("[AUTH_INIT] GitHub auth provider injected into internal auth service")
 		}
 	}
 
