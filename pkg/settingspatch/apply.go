@@ -63,6 +63,9 @@ func mergeBedrockPatch(base, higher *BedrockPatch) *BedrockPatch {
 		return base
 	}
 	result := *base
+	if higher.Enabled {
+		result.Enabled = higher.Enabled
+	}
 	if higher.Model != "" {
 		result.Model = higher.Model
 	}
