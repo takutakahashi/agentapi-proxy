@@ -232,7 +232,7 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 	}
 
 	// Create or reuse session via shared service
-	sessionID, sessionReused, err := c.sessionService.CreateSessionFromWebhook(ctx, SessionCreationParams{
+	sessionID, sessionReused, err := c.sessionService.CreateSessionFromWebhook(ctx.Request().Context(), SessionCreationParams{
 		Webhook:        matchedWebhook,
 		Trigger:        matchResult,
 		Payload:        payload.Raw,

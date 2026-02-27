@@ -48,11 +48,16 @@ const (
 
 // Webhook represents a webhook configuration entity
 type Webhook struct {
-	id              string
-	name            string
-	userID          string
-	scope           ResourceScope
-	teamID          string
+	id     string
+	name   string
+	userID string
+	scope  ResourceScope
+	teamID string
+	// userTeams holds the GitHub team slugs of the webhook creator, captured at
+	// create/update time.  Used to inject team-level settings (Bedrock, MCP, etc.)
+	// when the webhook fires, because there is no live auth context at trigger time.
+	// Mirrors the UserTeams field on Schedule.
+	userTeams       []string
 	status          WebhookStatus
 	webhookType     WebhookType
 	secret          string
@@ -120,6 +125,21 @@ func (w *Webhook) TeamID() string { return w.teamID }
 // SetTeamID sets the team ID
 func (w *Webhook) SetTeamID(teamID string) {
 	w.teamID = teamID
+	w.updatedAt = time.Now()
+}
+
+// UserTeams returns the GitHub team slugs captured at webhook creation/update time.
+// These are used to inject team-level settings into sessions spawned by this webhook.
+func (w *Webhook) UserTeams() []string {
+	result := make([]string, len(w.userTeams))
+	copy(result, w.userTeams)
+	return result
+}
+
+// SetUserTeams stores the GitHub team slugs for settings merging.
+// Should be called with the webhook owner's current team memberships on create/update.
+func (w *Webhook) SetUserTeams(teams []string) {
+	w.userTeams = teams
 	w.updatedAt = time.Now()
 }
 

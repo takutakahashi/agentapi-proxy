@@ -10,6 +10,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 )
 
 // WorkerConfig contains configuration for the schedule worker
@@ -32,6 +33,7 @@ func DefaultWorkerConfig() WorkerConfig {
 type Worker struct {
 	manager        Manager
 	sessionManager portrepos.SessionManager
+	launcher       *sessionuc.LaunchUseCase
 	config         WorkerConfig
 	logger         *log.Logger
 
@@ -47,6 +49,7 @@ func NewWorker(manager Manager, sessionManager portrepos.SessionManager, config 
 	return &Worker{
 		manager:        manager,
 		sessionManager: sessionManager,
+		launcher:       sessionuc.NewLaunchUseCase(sessionManager),
 		config:         config,
 		logger:         log.Default(),
 		stopCh:         make(chan struct{}),
@@ -154,9 +157,9 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 
 	// Create session
 	sessionID := uuid.New().String()
-	req := w.buildRunServerRequest(schedule, sessionID)
+	launchReq := w.buildLaunchRequest(schedule, sessionID)
 
-	session, err := w.sessionManager.CreateSession(ctx, sessionID, req, nil)
+	result, err := w.launcher.Launch(ctx, sessionID, launchReq)
 	if err != nil {
 		log.Printf("[SCHEDULE_WORKER] Failed to create session for schedule %s: %v",
 			schedule.ID, err)
@@ -169,14 +172,14 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 	}
 
 	log.Printf("[SCHEDULE_WORKER] Successfully created session %s for schedule %s",
-		session.ID(), schedule.ID)
+		result.SessionID, schedule.ID)
 
 	// Update schedule status
 	if schedule.IsRecurring() {
 		// Record execution first, then update next execution time
 		w.recordExecution(ctx, schedule, ExecutionRecord{
 			ExecutedAt: time.Now(),
-			SessionID:  session.ID(),
+			SessionID:  result.SessionID,
 			Status:     "success",
 		})
 		w.updateNextExecution(ctx, schedule)
@@ -185,7 +188,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 		// First record the execution
 		record := ExecutionRecord{
 			ExecutedAt: time.Now(),
-			SessionID:  session.ID(),
+			SessionID:  result.SessionID,
 			Status:     "success",
 		}
 		if err := w.manager.RecordExecution(ctx, schedule.ID, record); err != nil {
@@ -208,51 +211,49 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 	}
 }
 
-// buildRunServerRequest builds a RunServerRequest from a schedule
-func (w *Worker) buildRunServerRequest(schedule *Schedule, sessionID string) *entities.RunServerRequest {
+// buildLaunchRequest builds a LaunchRequest from a schedule.
+// It uses ResolveTeams to ensure team-level settings are always injected correctly.
+func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessionuc.LaunchRequest {
 	scheduleScope := schedule.GetScope() // Use GetScope() to handle default value
-	req := &entities.RunServerRequest{
-		UserID:      schedule.UserID,
-		Environment: schedule.SessionConfig.Environment,
-		Tags:        schedule.SessionConfig.Tags,
-		Scope:       scheduleScope,
-		TeamID:      schedule.TeamID,
-	}
 
-	// Set Teams based on scope so the session manager can inject the correct
-	// team-level settings (Bedrock credentials, MCP servers, etc.).
-	if scheduleScope == entities.ScopeTeam && schedule.TeamID != "" {
-		// Team-scoped: only use the schedule's designated team credentials.
-		req.Teams = []string{schedule.TeamID}
-	} else {
-		// User-scoped: use the team memberships captured at schedule creation time.
-		// This mirrors what session_controller.go does for regular sessions via
-		// authzCtx.TeamScope.Teams.
-		req.Teams = schedule.UserTeams
+	// Collect tags and add schedule metadata
+	tags := schedule.SessionConfig.Tags
+	if tags == nil {
+		tags = make(map[string]string)
 	}
+	tags["schedule_id"] = schedule.ID
+	tags["schedule_name"] = schedule.Name
 
-	// Add schedule metadata to tags
-	if req.Tags == nil {
-		req.Tags = make(map[string]string)
-	}
-	req.Tags["schedule_id"] = schedule.ID
-	req.Tags["schedule_name"] = schedule.Name
-
+	var initialMessage, githubToken, agentType string
+	var slackParams *entities.SlackParams
+	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
-		req.InitialMessage = schedule.SessionConfig.Params.Message
-		// For team-scoped schedules, do not use the creator's github_token
+		initialMessage = schedule.SessionConfig.Params.Message
+		// For team-scoped schedules, do not use the creator's github_token.
 		if scheduleScope != entities.ScopeTeam {
-			req.GithubToken = schedule.SessionConfig.Params.GithubToken
+			githubToken = schedule.SessionConfig.Params.GithubToken
 		}
-		req.AgentType = schedule.SessionConfig.Params.AgentType
-		req.SlackParams = schedule.SessionConfig.Params.Slack
-		req.Oneshot = schedule.SessionConfig.Params.Oneshot
+		agentType = schedule.SessionConfig.Params.AgentType
+		slackParams = schedule.SessionConfig.Params.Slack
+		oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
-	// Extract repository information from tags
-	req.RepoInfo = app.ExtractRepositoryInfo(req.Tags, sessionID)
-
-	return req
+	return sessionuc.LaunchRequest{
+		UserID: schedule.UserID,
+		Scope:  scheduleScope,
+		TeamID: schedule.TeamID,
+		// ResolveTeams centralises the scope-based teams logic so that it cannot
+		// accidentally diverge between the worker and the manual-trigger handler.
+		Teams:          sessionuc.ResolveTeams(scheduleScope, schedule.TeamID, schedule.UserTeams),
+		Environment:    schedule.SessionConfig.Environment,
+		Tags:           tags,
+		InitialMessage: initialMessage,
+		GithubToken:    githubToken,
+		AgentType:      agentType,
+		SlackParams:    slackParams,
+		Oneshot:        oneshot,
+		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
+	}
 }
 
 // isSessionActive checks if a session is still active

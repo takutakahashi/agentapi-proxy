@@ -302,6 +302,15 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 		webhook.SetMaxSessions(req.MaxSessions)
 	}
 
+	// Capture creator's team memberships for user-scoped webhooks so that the
+	// webhook handler can inject team-level settings without a live auth context.
+	// Mirrors the UserTeams pattern used by Schedule.
+	if req.Scope != entities.ScopeTeam {
+		if azCtx := auth.GetAuthorizationContext(ctx); azCtx != nil {
+			webhook.SetUserTeams(azCtx.TeamScope.Teams)
+		}
+	}
+
 	// Set GitHub config
 	if req.GitHub != nil {
 		webhook.SetGitHub(c.requestToGitHubConfig(req.GitHub))
@@ -487,6 +496,14 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 	}
 	if req.SessionConfig != nil {
 		webhook.SetSessionConfig(c.requestToSessionConfig(req.SessionConfig))
+	}
+
+	// Refresh UserTeams from the current auth context so that team membership
+	// changes since webhook creation are picked up (mirrors UpdateSchedule behaviour).
+	if webhook.Scope() != entities.ScopeTeam {
+		if azCtx := auth.GetAuthorizationContext(ctx); azCtx != nil {
+			webhook.SetUserTeams(azCtx.TeamScope.Teams)
+		}
 	}
 
 	if err := c.repo.Update(ctx.Request().Context(), webhook); err != nil {
