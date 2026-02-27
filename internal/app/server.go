@@ -35,9 +35,8 @@ type Server struct {
 	echo               *echo.Echo
 	verbose            bool
 	logger             *logger.Logger
-	oauthProvider      *auth.GitHubOAuthProvider
-	githubAuthProvider *auth.GitHubAuthProvider
-	oauthSessions      sync.Map // sessionID -> OAuthSession
+	oauthProvider *auth.GitHubOAuthProvider
+	oauthSessions sync.Map // sessionID -> OAuthSession
 	notificationSvc    *notification.Service
 	container          *di.Container                  // Internal DI container
 	sessionManager     portrepos.SessionManager       // Session lifecycle manager
@@ -255,23 +254,26 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		e.Use(s.loggingMiddleware())
 	}
 
-	// Initialize GitHub auth provider if configured
+	// Initialize GitHub auth provider if configured.
+	// A single *GitHubAuthProvider instance is shared across all subsystems
+	// (SimpleAuthService and GitHubOAuthProvider) so they use the same
+	// in-memory teamCache and ConfigMap-backed teamMappingRepo.
+	var githubAuthProvider *auth.GitHubAuthProvider
 	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
 		log.Printf("[AUTH_INIT] Initializing GitHub auth provider...")
-		s.githubAuthProvider = auth.NewGitHubAuthProvider(cfg.Auth.GitHub)
+		githubAuthProvider = auth.NewGitHubAuthProvider(cfg.Auth.GitHub)
 
 		// Inject ConfigMap-backed team mapping cache (1 user = 1 key in the ConfigMap)
 		teamMappingRepo := repositories.NewKubernetesUserTeamMappingRepository(
 			k8sSessionManager.GetClient(),
 			k8sSessionManager.GetNamespace(),
 		)
-		s.githubAuthProvider.SetTeamMappingRepo(teamMappingRepo)
+		githubAuthProvider.SetTeamMappingRepo(teamMappingRepo)
 		log.Printf("[AUTH_INIT] GitHub auth provider initialized with ConfigMap team mapping cache")
 
-		// Inject the same pre-configured provider into SimpleAuthService so it shares
-		// the teamMappingRepo and teamCache (avoids creating a second provider instance).
+		// Inject the shared provider into SimpleAuthService.
 		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
-			simpleAuth.SetGitHubProvider(s.githubAuthProvider)
+			simpleAuth.SetGitHubProvider(githubAuthProvider)
 			simpleAuth.SetGitHubAuthConfig(cfg.Auth.GitHub)
 			log.Printf("[AUTH_INIT] GitHub auth provider injected into internal auth service")
 		}
@@ -280,28 +282,18 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Add authentication middleware using internal auth service
 	e.Use(auth.AuthMiddleware(cfg, container.AuthService))
 
-	// Initialize OAuth provider if configured
-	log.Printf("[OAUTH_INIT] Checking OAuth configuration...")
-	log.Printf("[OAUTH_INIT] cfg.Auth.GitHub != nil: %v", cfg.Auth.GitHub != nil)
-	if cfg.Auth.GitHub != nil {
-		log.Printf("[OAUTH_INIT] cfg.Auth.GitHub.OAuth != nil: %v", cfg.Auth.GitHub.OAuth != nil)
-		if cfg.Auth.GitHub.OAuth != nil {
-			log.Printf("[OAUTH_INIT] OAuth ClientID configured: %v", cfg.Auth.GitHub.OAuth.ClientID != "")
-			log.Printf("[OAUTH_INIT] OAuth ClientSecret configured: %v", cfg.Auth.GitHub.OAuth.ClientSecret != "")
-		}
-	}
+	// Initialize OAuth provider if configured.
+	// Reuses the shared githubAuthProvider so OAuth-authenticated users benefit from
+	// the same teamCache and teamMappingRepo as token-based auth users.
 	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil &&
 		cfg.Auth.GitHub.OAuth.ClientID != "" && cfg.Auth.GitHub.OAuth.ClientSecret != "" {
 		log.Printf("[OAUTH_INIT] Initializing GitHub OAuth provider...")
-		s.oauthProvider = auth.NewGitHubOAuthProvider(cfg.Auth.GitHub.OAuth, cfg.Auth.GitHub)
+		s.oauthProvider = auth.NewGitHubOAuthProvider(cfg.Auth.GitHub.OAuth, githubAuthProvider)
 		log.Printf("[OAUTH_INIT] OAuth provider initialized successfully")
 		// Start cleanup goroutine for expired OAuth sessions
 		go s.cleanupExpiredOAuthSessions()
 	} else {
 		log.Printf("[OAUTH_INIT] OAuth provider not initialized - configuration missing or incomplete")
-		if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.OAuth != nil {
-			log.Printf("[OAUTH_INIT] OAuth configuration found but credentials are empty")
-		}
 	}
 
 	// Initialize notification service
