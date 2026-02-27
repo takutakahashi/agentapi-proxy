@@ -527,6 +527,65 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 	return fmt.Errorf("failed to send message after 3 retries: %w", lastErr)
 }
 
+// StopAgent sends a stop_agent action to the running agent in the session via the
+// claude-agentapi POST /action endpoint. This terminates the running agent task
+// without deleting the session.
+func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) error {
+	// Get session
+	session := m.GetSession(id)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	// Check session status
+	status := session.Status()
+	if status != "active" && status != "starting" {
+		return fmt.Errorf("session is not active: status=%s", status)
+	}
+
+	// Build service name and endpoint URL for the claude-agentapi /action endpoint
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/action",
+		serviceName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+	)
+
+	// Send stop_agent action as defined in the claude-agentapi OpenAPI spec
+	payload := map[string]interface{}{
+		"type": "stop_agent",
+	}
+
+	// Marshal JSON
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal stop_agent payload: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send stop_agent signal: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code from stop_agent signal: %d", resp.StatusCode)
+	}
+
+	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s", id)
+	return nil
+}
+
 // GetMessages retrieves conversation history from a session
 func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	// Get session

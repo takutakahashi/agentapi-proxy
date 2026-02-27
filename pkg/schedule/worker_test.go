@@ -81,6 +81,10 @@ func (m *mockProxySessionManager) SendMessage(ctx context.Context, id string, me
 	return nil
 }
 
+func (m *mockProxySessionManager) StopAgent(ctx context.Context, id string) error {
+	return nil
+}
+
 func (m *mockProxySessionManager) GetMessages(ctx context.Context, id string) ([]repositories.Message, error) {
 	return nil, nil
 }

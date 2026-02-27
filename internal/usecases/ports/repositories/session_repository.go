@@ -31,6 +31,9 @@ type SessionManager interface {
 	// SendMessage sends a message to an existing session
 	SendMessage(ctx context.Context, id string, message string) error
 
+	// StopAgent sends a stop signal (Ctrl+C) to the running agent in the session
+	StopAgent(ctx context.Context, id string) error
+
 	// GetMessages retrieves conversation history from a session
 	GetMessages(ctx context.Context, id string) ([]Message, error)
 
