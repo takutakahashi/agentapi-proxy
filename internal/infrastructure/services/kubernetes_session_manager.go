@@ -31,7 +31,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
-	"github.com/takutakahashi/agentapi-proxy/pkg/settings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
@@ -2838,46 +2838,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	// Expand credentials from agentapi-settings-* secrets (env_vars, bedrock, oauth)
-	// Apply base settings first (lowest priority) so that team/user settings can override them.
-	if m.k8sConfig.SettingsBaseSecret != "" {
-		if cfg := m.readAgentapiSettingsSecret(ctx, m.k8sConfig.SettingsBaseSecret); cfg != nil {
-			for k, v := range expandSettingsToEnv(cfg) {
-				env[k] = v
-			}
-		}
-	}
-
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
-		if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
-			for k, v := range expandSettingsToEnv(cfg) {
-				env[k] = v
-			}
-		}
-	} else {
-		for _, team := range req.Teams {
-			settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
-			if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
-				for k, v := range expandSettingsToEnv(cfg) {
-					env[k] = v
-				}
-			}
-		}
-		if req.UserID != "" {
-			settingsName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
-			if cfg := m.readAgentapiSettingsSecret(ctx, settingsName); cfg != nil {
-				for k, v := range expandSettingsToEnv(cfg) {
-					env[k] = v
-				}
-			}
-		}
+	// Resolve and materialize settings from agentapi-settings-* Secrets.
+	// This merges env_vars, bedrock credentials, oauth token, MCP servers,
+	// marketplaces, plugins, and hooks from base → team → user → oneshot layers.
+	materialized := m.resolveSettings(ctx, session, req)
+	for k, v := range materialized.EnvVars {
+		env[k] = v
 	}
 
 	settings.Env = env
-
-	// Merge settings.json from base/team/user/oneshot Secrets (proxy-side, before Pod starts)
-	mergedSettingsJSON, mergedMCPServers := m.mergeSettingsAndMCP(ctx, session, req)
 
 	// Claude config
 	settings.Claude = sessionsettings.ClaudeConfig{
@@ -2885,8 +2854,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			"hasCompletedOnboarding":        true,
 			"bypassPermissionsModeAccepted": true,
 		},
-		SettingsJSON: mergedSettingsJSON,
-		MCPServers:   mergedMCPServers,
+		SettingsJSON: materialized.SettingsJSON,
+		MCPServers:   materialized.MCPServers,
 	}
 
 	// Repository info
@@ -3002,44 +2971,13 @@ func (m *KubernetesSessionManager) deleteOneshotSettingsSecret(ctx context.Conte
 	return nil
 }
 
-// agentapiSettingsJSON is the JSON representation of settings stored in agentapi-settings-* Secrets.
-// This mirrors the settingsJSON struct in kubernetes_settings_repository.go.
-type agentapiSettingsJSON struct {
-	Name                 string                            `json:"name"`
-	Bedrock              *agentapiBedrockJSON              `json:"bedrock,omitempty"`
-	MCPServers           map[string]*agentapiMCPServerJSON `json:"mcp_servers,omitempty"`
-	ClaudeCodeOAuthToken string                            `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             string                            `json:"auth_mode,omitempty"`
-	EnvVars              map[string]string                 `json:"env_vars,omitempty"`
-}
-
-// agentapiBedrockJSON is the JSON representation of Bedrock settings.
-type agentapiBedrockJSON struct {
-	Enabled         bool   `json:"enabled"`
-	Model           string `json:"model,omitempty"`
-	AccessKeyID     string `json:"access_key_id,omitempty"`
-	SecretAccessKey string `json:"secret_access_key,omitempty"`
-	RoleARN         string `json:"role_arn,omitempty"`
-	Profile         string `json:"profile,omitempty"`
-}
-
-// agentapiMCPServerJSON is the JSON representation of a single MCP server.
-type agentapiMCPServerJSON struct {
-	Type    string            `json:"type"`
-	URL     string            `json:"url,omitempty"`
-	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
-}
-
-// readAgentapiSettingsSecret reads the settings.json from an agentapi-settings-* Secret
-// and returns the full settings including EnvVars, AuthMode, Bedrock, MCPServers.
-func (m *KubernetesSessionManager) readAgentapiSettingsSecret(ctx context.Context, secretName string) *agentapiSettingsJSON {
+// readSettingsPatch reads the settings.json from an agentapi-settings-* Secret
+// and returns it as a SettingsPatch. Returns nil if the secret does not exist or cannot be parsed.
+func (m *KubernetesSessionManager) readSettingsPatch(ctx context.Context, secretName string) *settingspatch.SettingsPatch {
 	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		if !errors.IsNotFound(err) {
-			log.Printf("[K8S_SESSION] Warning: failed to read agentapi settings secret %s: %v", secretName, err)
+			log.Printf("[K8S_SESSION] Warning: failed to read settings secret %s: %v", secretName, err)
 		}
 		return nil
 	}
@@ -3047,208 +2985,60 @@ func (m *KubernetesSessionManager) readAgentapiSettingsSecret(ctx context.Contex
 	if !ok {
 		return nil
 	}
-	var cfg agentapiSettingsJSON
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	patch, err := settingspatch.FromJSON(data)
+	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to parse settings.json from secret %s: %v", secretName, err)
 		return nil
 	}
-	return &cfg
+	return &patch
 }
 
-// expandSettingsToEnv expands an agentapiSettingsJSON into environment variable key-value pairs.
-// This replicates the logic previously done by CredentialsSecretSyncer.
-func expandSettingsToEnv(cfg *agentapiSettingsJSON) map[string]string {
-	env := make(map[string]string)
-	if cfg == nil {
-		return env
-	}
-
-	// Custom env vars
-	for k, v := range cfg.EnvVars {
-		env[k] = v
-	}
-
-	// Auth mode and credentials
-	// Only set auth-related env vars when auth_mode is explicitly specified.
-	// If auth_mode is empty (not set), leave auth-related env vars untouched so that
-	// settings from a higher-priority source (e.g. team) are not overwritten.
-	switch cfg.AuthMode {
-	case "bedrock":
-		env["CLAUDE_CODE_USE_BEDROCK"] = "1"
-		if cfg.Bedrock != nil {
-			// Only set each credential if non-empty, so that a user settings with
-			// auth_mode=bedrock but no credentials does not overwrite a team's valid credentials.
-			if cfg.Bedrock.Model != "" {
-				env["ANTHROPIC_MODEL"] = cfg.Bedrock.Model
-			}
-			if cfg.Bedrock.AccessKeyID != "" {
-				env["AWS_ACCESS_KEY_ID"] = cfg.Bedrock.AccessKeyID
-			}
-			if cfg.Bedrock.SecretAccessKey != "" {
-				env["AWS_SECRET_ACCESS_KEY"] = cfg.Bedrock.SecretAccessKey
-			}
-			if cfg.Bedrock.RoleARN != "" {
-				env["AWS_ROLE_ARN"] = cfg.Bedrock.RoleARN
-			}
-			if cfg.Bedrock.Profile != "" {
-				env["AWS_PROFILE"] = cfg.Bedrock.Profile
-			}
-		}
-	case "oauth":
-		env["CLAUDE_CODE_USE_BEDROCK"] = "0"
-		env["ANTHROPIC_MODEL"] = ""
-		env["AWS_ACCESS_KEY_ID"] = ""
-		env["AWS_SECRET_ACCESS_KEY"] = ""
-		env["AWS_ROLE_ARN"] = ""
-		env["AWS_PROFILE"] = ""
-		// default (empty auth_mode): do not override auth-related env vars
-	}
-
-	// OAuth token
-	if cfg.ClaudeCodeOAuthToken != "" {
-		env["CLAUDE_CODE_OAUTH_TOKEN"] = cfg.ClaudeCodeOAuthToken
-	}
-
-	return env
-}
-
-// mergeSettingsAndMCP reads settings.json and mcp-servers.json from the relevant
-// Kubernetes Secrets (base, team[], user, oneshot) and merges them on the proxy side,
-// returning the merged structures ready to embed into SessionSettings.
-// This eliminates the need for separate merge-settings and setup-mcp init containers.
-func (m *KubernetesSessionManager) mergeSettingsAndMCP(
+// resolveSettings reads settings patches from the relevant Kubernetes Secrets
+// (base → team[] → user → oneshot) and returns materialized session configuration.
+//
+// This is the single entry point for all settings merging. It replaces the previous
+// dual-path approach (readAgentapiSettingsSecret + expandSettingsToEnv for env vars,
+// and mergeSettingsAndMCP for Claude settings JSON).
+func (m *KubernetesSessionManager) resolveSettings(
 	ctx context.Context,
 	session *KubernetesSession,
 	req *entities.RunServerRequest,
-) (settingsJSON map[string]interface{}, mcpServers map[string]interface{}) {
-	// --- settings.json merge ---
-	settingsDirs := []settings.SettingsConfig{}
+) settingspatch.MaterializedSettings {
+	var layers []settingspatch.SettingsPatch
 
-	// Helper: read settings.json from a Secret key and unmarshal (for pkg/settings fields only)
-	readSettingsSecret := func(secretName, key string) *settings.SettingsConfig {
-		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
-		if err != nil {
-			if !errors.IsNotFound(err) {
-				log.Printf("[K8S_SESSION] Warning: failed to read settings secret %s: %v", secretName, err)
-			}
-			return nil
+	appendIfExists := func(secretName string) {
+		if p := m.readSettingsPatch(ctx, secretName); p != nil {
+			layers = append(layers, *p)
 		}
-		data, ok := secret.Data[key]
-		if !ok {
-			return nil
-		}
-		var cfg settings.SettingsConfig
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to parse settings.json from secret %s: %v", secretName, err)
-			return nil
-		}
-		return &cfg
 	}
 
-	// 1. base
+	// 1. base (lowest priority)
 	if m.k8sConfig.SettingsBaseSecret != "" {
-		if cfg := readSettingsSecret(m.k8sConfig.SettingsBaseSecret, "settings.json"); cfg != nil {
-			settingsDirs = append(settingsDirs, *cfg)
-		}
+		appendIfExists(m.k8sConfig.SettingsBaseSecret)
 	}
 
-	// 2. team (in order)
-	for _, team := range req.Teams {
-		secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
-		if cfg := readSettingsSecret(secretName, "settings.json"); cfg != nil {
-			settingsDirs = append(settingsDirs, *cfg)
-		}
-	}
-	// team-scoped single team
+	// 2. teams (in order)
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
-		if cfg := readSettingsSecret(secretName, "settings.json"); cfg != nil {
-			settingsDirs = append(settingsDirs, *cfg)
+		appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID)))
+	} else {
+		for _, team := range req.Teams {
+			appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team)))
 		}
-	}
-
-	// 3. user
-	if req.UserID != "" {
-		secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
-		if cfg := readSettingsSecret(secretName, "settings.json"); cfg != nil {
-			settingsDirs = append(settingsDirs, *cfg)
+		// 3. user
+		if req.UserID != "" {
+			appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID)))
 		}
 	}
 
 	// 4. oneshot (highest priority)
 	if req.Oneshot {
-		oneshotSecretName := fmt.Sprintf("%s-oneshot-settings", session.ServiceName())
-		if cfg := readSettingsSecret(oneshotSecretName, "settings.json"); cfg != nil {
-			settingsDirs = append(settingsDirs, *cfg)
-		}
+		appendIfExists(fmt.Sprintf("%s-oneshot-settings", session.ServiceName()))
 	}
 
-	// Merge all settings configs
-	mergedSettings := settings.MergeInMemory(settingsDirs)
-
-	// Convert merged SettingsConfig → map[string]interface{} for SessionSettings.Claude.SettingsJSON
-	if mergedSettings != nil {
-		raw, err := json.Marshal(mergedSettings)
-		if err == nil {
-			if err := json.Unmarshal(raw, &settingsJSON); err != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to convert merged settings to map: %v", err)
-				settingsJSON = nil
-			}
-		}
+	resolved := settingspatch.Resolve(layers...)
+	materialized, err := settingspatch.Materialize(resolved)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to materialize settings: %v", err)
 	}
-
-	// --- mcp_servers merge from agentapi-settings-* secrets ---
-	// Instead of reading separate mcp-servers-* Secrets, we collect mcp_servers from
-	// the agentapi-settings-* secrets (same source used for env vars).
-	{
-		mergedMCPServers := make(map[string]interface{})
-
-		// Helper to merge mcp_servers from a settings secret into mergedMCPServers
-		mergeMCPFromSettings := func(secretName string) {
-			cfg := m.readAgentapiSettingsSecret(ctx, secretName)
-			if cfg == nil || len(cfg.MCPServers) == 0 {
-				return
-			}
-			raw, err := json.Marshal(cfg.MCPServers)
-			if err != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to marshal mcp_servers from secret %s: %v", secretName, err)
-				return
-			}
-			var servers map[string]interface{}
-			if err := json.Unmarshal(raw, &servers); err != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to unmarshal mcp_servers from secret %s: %v", secretName, err)
-				return
-			}
-			for name, server := range servers {
-				mergedMCPServers[name] = server
-			}
-		}
-
-		// base settings
-		if m.k8sConfig.SettingsBaseSecret != "" {
-			mergeMCPFromSettings(m.k8sConfig.SettingsBaseSecret)
-		}
-
-		// team settings (in order)
-		for _, team := range req.Teams {
-			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team))
-			mergeMCPFromSettings(secretName)
-		}
-		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID))
-			mergeMCPFromSettings(secretName)
-		}
-
-		// user settings
-		if req.UserID != "" {
-			secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
-			mergeMCPFromSettings(secretName)
-		}
-
-		if len(mergedMCPServers) > 0 {
-			mcpServers = mergedMCPServers
-		}
-	}
-
-	return settingsJSON, mcpServers
+	return materialized
 }
