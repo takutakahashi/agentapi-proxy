@@ -57,6 +57,11 @@ type SettingsPatch struct {
 	// EnabledPlugins lists plugins contributed by this layer.
 	// Accumulated (union) across all layers.
 	EnabledPlugins []string `json:"enabled_plugins,omitempty"`
+
+	// PreferredTeamID specifies which team's settings to use exclusively.
+	// "" = use all teams in the default order.
+	// Non-empty = use only this team's settings (skip all other teams).
+	PreferredTeamID string `json:"preferred_team_id,omitempty"`
 }
 
 // BedrockPatch holds AWS Bedrock configuration.

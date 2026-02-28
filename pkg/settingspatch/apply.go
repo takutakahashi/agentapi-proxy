@@ -33,6 +33,11 @@ func Apply(base, higher SettingsPatch) SettingsPatch {
 	// Plugins: accumulated union
 	result.EnabledPlugins = unionStrings(base.EnabledPlugins, higher.EnabledPlugins)
 
+	// PreferredTeamID: higher wins if non-empty
+	if higher.PreferredTeamID != "" {
+		result.PreferredTeamID = higher.PreferredTeamID
+	}
+
 	return result
 }
 

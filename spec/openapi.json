@@ -4008,6 +4008,10 @@
               "type": "string"
             },
             "description": "Custom environment variables to be injected into agent sessions. Keys are environment variable names, values are the variable values. These variables will be available in all sessions for this user/team. Empty string values are ignored (existing values are preserved). Keys not included in the request are automatically preserved."
+          },
+          "preferred_team_id": {
+            "type": "string",
+            "description": "Team ID in 'org/team-slug' format whose settings to use exclusively. When set, only this team's settings (Bedrock, MCP servers, env vars, etc.) are applied in sessions. Empty string clears the setting and restores default behavior (all teams merged). If omitted on first save and the user belongs to exactly one team, it is auto-set to that team."
           }
         }
       },
@@ -4148,6 +4152,10 @@
               "type": "string"
             },
             "description": "List of configured environment variable keys (values are not returned for security)"
+          },
+          "preferred_team_id": {
+            "type": "string",
+            "description": "Team ID in 'org/team-slug' format whose settings are used exclusively in sessions. Empty string means all teams are merged in the default order."
           },
           "created_at": {
             "type": "string",

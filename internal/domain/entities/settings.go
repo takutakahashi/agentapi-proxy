@@ -102,6 +102,7 @@ type Settings struct {
 	authMode             AuthMode          // Authentication mode (oauth or bedrock)
 	enabledPlugins       []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
 	envVars              map[string]string // Custom environment variables
+	preferredTeamID      string            // "org/team-slug" format; if set, only this team's settings are used
 	createdAt            time.Time
 	updatedAt            time.Time
 }
@@ -245,6 +246,17 @@ func (s *Settings) EnvVarKeys() []string {
 		}
 	}
 	return keys
+}
+
+// PreferredTeamID returns the preferred team ID
+func (s *Settings) PreferredTeamID() string {
+	return s.preferredTeamID
+}
+
+// SetPreferredTeamID sets the preferred team ID
+func (s *Settings) SetPreferredTeamID(id string) {
+	s.preferredTeamID = id
+	s.updatedAt = time.Now()
 }
 
 // Validate validates the Settings

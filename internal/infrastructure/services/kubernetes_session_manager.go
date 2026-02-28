@@ -2999,6 +2999,10 @@ func (m *KubernetesSessionManager) readSettingsPatch(ctx context.Context, secret
 // This is the single entry point for all settings merging. It replaces the previous
 // dual-path approach (readAgentapiSettingsSecret + expandSettingsToEnv for env vars,
 // and mergeSettingsAndMCP for Claude settings JSON).
+//
+// When the user has preferred_team_id set in their personal settings, only that team's
+// settings are applied (instead of all teams). This allows users to explicitly choose
+// which team's settings (Bedrock, MCP servers, env vars, etc.) to use.
 func (m *KubernetesSessionManager) resolveSettings(
 	ctx context.Context,
 	session *KubernetesSession,
@@ -3019,10 +3023,20 @@ func (m *KubernetesSessionManager) resolveSettings(
 
 	// 2. teams (in order)
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
 		appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID)))
 	} else {
-		for _, team := range req.Teams {
-			appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team)))
+		// User-scoped session: check if the user has a preferred team set
+		preferredTeamID := m.resolvePreferredTeamID(ctx, req)
+		if preferredTeamID != "" {
+			// Use only the preferred team's settings
+			log.Printf("[K8S_SESSION] Using preferred team settings: %s", preferredTeamID)
+			appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(preferredTeamID)))
+		} else {
+			// Default: apply all teams in order
+			for _, team := range req.Teams {
+				appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team)))
+			}
 		}
 		// 3. user
 		if req.UserID != "" {
@@ -3041,4 +3055,26 @@ func (m *KubernetesSessionManager) resolveSettings(
 		log.Printf("[K8S_SESSION] Warning: failed to materialize settings: %v", err)
 	}
 	return materialized
+}
+
+// resolvePreferredTeamID reads the user's personal settings to determine if a preferred team
+// is configured. Returns the preferred team ID if it is set and the user belongs to that team,
+// otherwise returns "".
+func (m *KubernetesSessionManager) resolvePreferredTeamID(ctx context.Context, req *entities.RunServerRequest) string {
+	if req.UserID == "" {
+		return ""
+	}
+	userSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
+	userPatch := m.readSettingsPatch(ctx, userSecretName)
+	if userPatch == nil || userPatch.PreferredTeamID == "" {
+		return ""
+	}
+	// Security check: ensure the preferred team is one the user actually belongs to
+	for _, team := range req.Teams {
+		if team == userPatch.PreferredTeamID {
+			return userPatch.PreferredTeamID
+		}
+	}
+	log.Printf("[K8S_SESSION] Warning: preferred_team_id %q is not in user's team list, falling back to all teams", userPatch.PreferredTeamID)
+	return ""
 }

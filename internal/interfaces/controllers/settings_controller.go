@@ -60,9 +60,10 @@ type UpdateSettingsRequest struct {
 	MCPServers           map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
 	Marketplaces         map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
 	ClaudeCodeOAuthToken *string                        `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             *string                        `json:"auth_mode,omitempty"`       // "oauth" or "bedrock"
-	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"` // plugin@marketplace format
-	EnvVars              map[string]string              `json:"env_vars,omitempty"`        // Custom environment variables
+	AuthMode             *string                        `json:"auth_mode,omitempty"`         // "oauth" or "bedrock"
+	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
+	EnvVars              map[string]string              `json:"env_vars,omitempty"`          // Custom environment variables
+	PreferredTeamID      *string                        `json:"preferred_team_id,omitempty"` // "org/team-slug" format; "" to clear
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -98,8 +99,9 @@ type SettingsResponse struct {
 	Marketplaces            map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
 	HasClaudeCodeOAuthToken bool                            `json:"has_claude_code_oauth_token"`
 	AuthMode                string                          `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"` // plugin@marketplace format
-	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`    // only keys, not values
+	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
+	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`      // only keys, not values
+	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"` // "org/team-slug" format
 	CreatedAt               string                          `json:"created_at"`
 	UpdatedAt               string                          `json:"updated_at"`
 }
@@ -156,7 +158,8 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 
 	// Get existing settings or create new one
 	settings, err := c.repo.FindByName(ctx.Request().Context(), name)
-	if err != nil {
+	isNewSettings := err != nil
+	if isNewSettings {
 		// Create new settings if not exists
 		settings = entities.NewSettings(name)
 	}
@@ -260,6 +263,21 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Update Claude Code OAuth Token
 	if req.ClaudeCodeOAuthToken != nil {
 		settings.SetClaudeCodeOAuthToken(*req.ClaudeCodeOAuthToken)
+	}
+
+	// Update preferred team ID
+	if req.PreferredTeamID != nil {
+		// Explicitly specified (empty string "" clears the setting)
+		settings.SetPreferredTeamID(*req.PreferredTeamID)
+	} else if isNewSettings {
+		// Auto-select on first creation: if user belongs to exactly one team, set it
+		if user.GitHubInfo() != nil {
+			teams := user.GitHubInfo().Teams()
+			if len(teams) == 1 {
+				teamID := teams[0].Organization + "/" + teams[0].TeamSlug
+				settings.SetPreferredTeamID(teamID)
+			}
+		}
 	}
 
 	// Determine and set auth_mode
@@ -490,6 +508,8 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	if envVarKeys := settings.EnvVarKeys(); len(envVarKeys) > 0 {
 		resp.EnvVarKeys = envVarKeys
 	}
+
+	resp.PreferredTeamID = settings.PreferredTeamID()
 
 	return resp
 }
