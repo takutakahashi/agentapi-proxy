@@ -35,8 +35,9 @@ type settingsJSON struct {
 	Marketplaces         map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
 	ClaudeCodeOAuthToken string                      `json:"claude_code_oauth_token,omitempty"`
 	AuthMode             string                      `json:"auth_mode,omitempty"`
-	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
-	EnvVars              map[string]string           `json:"env_vars,omitempty"`        // Custom environment variables
+	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
+	EnvVars              map[string]string           `json:"env_vars,omitempty"`          // Custom environment variables
+	PreferredTeamID      string                      `json:"preferred_team_id,omitempty"` // "org/team-slug" format
 	CreatedAt            time.Time                   `json:"created_at"`
 	UpdatedAt            time.Time                   `json:"updated_at"`
 }
@@ -251,6 +252,10 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		sj.EnvVars = envVars
 	}
 
+	if preferredTeamID := settings.PreferredTeamID(); preferredTeamID != "" {
+		sj.PreferredTeamID = preferredTeamID
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -332,6 +337,12 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if len(sj.EnvVars) > 0 {
 		settings.SetEnvVars(sj.EnvVars)
 		// Reset updatedAt since SetEnvVars updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.PreferredTeamID != "" {
+		settings.SetPreferredTeamID(sj.PreferredTeamID)
+		// Reset updatedAt since SetPreferredTeamID updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
