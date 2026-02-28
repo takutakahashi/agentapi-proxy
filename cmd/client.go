@@ -36,6 +36,18 @@ var (
 	taskLinks         []string
 )
 
+// memory subcommand flags
+var (
+	memoryTitle       string
+	memoryContent     string
+	memoryContentFile string
+	memoryScope       string
+	memoryTeamID      string
+	memoryTags        []string
+	memoryKeys        []string
+	memoryFormat      string
+)
+
 // resolveClient creates a client using flags if provided, otherwise falling back
 // to environment variables (AGENTAPI_PROXY_SERVICE_HOST, AGENTAPI_PROXY_SERVICE_PORT_HTTP,
 // AGENTAPI_SESSION_ID, AGENTAPI_KEY).
@@ -62,6 +74,35 @@ func resolveClient() (*client.Client, string, error) {
 	apiKey := os.Getenv("AGENTAPI_KEY")
 	c := client.NewClient(resolvedEndpoint, client.WithAPIKeyAuth(apiKey))
 	return c, resolvedSessionID, nil
+}
+
+// resolveMemoryClient creates a client for memory operations using flags or env vars.
+// Unlike resolveClient, session-id is not required for memory operations.
+func resolveMemoryClient() (*client.Client, error) {
+	resolvedEndpoint := endpoint
+	if resolvedEndpoint == "" {
+		envEndpoint, err := client.EndpointFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("--endpoint not specified and %w", err)
+		}
+		resolvedEndpoint = envEndpoint
+	}
+
+	apiKey := os.Getenv("AGENTAPI_KEY")
+	return client.NewClient(resolvedEndpoint, client.WithAPIKeyAuth(apiKey)), nil
+}
+
+// parseKeyValueFlags parses a slice of "key=value" strings into a map.
+func parseKeyValueFlags(flags []string) (map[string]string, error) {
+	result := make(map[string]string, len(flags))
+	for _, f := range flags {
+		parts := strings.SplitN(f, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid key=value format: %q", f)
+		}
+		result[parts[0]] = parts[1]
+	}
+	return result, nil
 }
 
 var ClientCmd = &cobra.Command{
@@ -117,6 +158,90 @@ Examples:
   # Delete current session without confirmation
   agentapi-proxy client delete-session --confirm`,
 	Run: runDeleteSession,
+}
+
+var memoryCmd = &cobra.Command{
+	Use:   "memory",
+	Short: "Manage memory entries",
+	Long:  "Create, list, get, update, delete, and upsert memory entries",
+}
+
+var memoryListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List memory entries",
+	Long: `List memory entries with optional filters.
+
+Formats:
+  json     - JSON array (default)
+  markdown - Markdown with titles and content (suitable for injection into CLAUDE.md)
+  content  - Raw content only
+
+Examples:
+  agentapi-proxy client memory list --scope user
+  agentapi-proxy client memory list --scope team --team-id myorg/myteam
+  agentapi-proxy client memory list --tag project=myapp --format markdown`,
+	Run: runMemoryList,
+}
+
+var memoryGetCmd = &cobra.Command{
+	Use:   "get <id>",
+	Short: "Get a memory entry by ID",
+	Long:  "Retrieve details of a specific memory entry. --endpoint is required.",
+	Args:  cobra.ExactArgs(1),
+	Run:   runMemoryGet,
+}
+
+var memoryCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new memory entry",
+	Long: `Create a new memory entry.
+
+Examples:
+  agentapi-proxy client memory create \
+    --title "Project notes" \
+    --content "Key decisions..." \
+    --scope user
+
+  agentapi-proxy client memory create \
+    --title "Team knowledge" \
+    --content-file /tmp/notes.md \
+    --scope team --team-id myorg/myteam \
+    --tag project=myapp`,
+	Run: runMemoryCreate,
+}
+
+var memoryUpdateCmd = &cobra.Command{
+	Use:   "update <id>",
+	Short: "Update a memory entry",
+	Long:  "Update an existing memory entry. --endpoint is required.",
+	Args:  cobra.ExactArgs(1),
+	Run:   runMemoryUpdate,
+}
+
+var memoryDeleteCmd = &cobra.Command{
+	Use:   "delete <id>",
+	Short: "Delete a memory entry",
+	Long:  "Delete a memory entry by ID. --endpoint is required.",
+	Args:  cobra.ExactArgs(1),
+	Run:   runMemoryDelete,
+}
+
+var memoryUpsertCmd = &cobra.Command{
+	Use:   "upsert",
+	Short: "Create or update a memory entry by key tags",
+	Long: `Create or update a memory entry identified by key tags.
+
+The --key flags define the lookup criteria (AND logic). If a matching entry
+is found, it is updated. If not, a new entry is created with the key tags
+as its tags.
+
+Examples:
+  agentapi-proxy client memory upsert \
+    --title "Session summary" \
+    --content-file /tmp/content.md \
+    --key project=myapp --key env=prod \
+    --scope user`,
+	Run: runMemoryUpsert,
 }
 
 var taskCmd = &cobra.Command{
@@ -228,12 +353,50 @@ func init() {
 	taskCmd.AddCommand(taskUpdateCmd)
 	taskCmd.AddCommand(taskDeleteCmd)
 
+	// memory list flags
+	memoryListCmd.Flags().StringVar(&memoryScope, "scope", "user", `Memory scope: "user" or "team"`)
+	memoryListCmd.Flags().StringVar(&memoryTeamID, "team-id", "", "Team ID (required when scope is 'team')")
+	memoryListCmd.Flags().StringArrayVar(&memoryTags, "tag", nil, "Tag filter in key=value format (AND logic, can be specified multiple times)")
+	memoryListCmd.Flags().StringVar(&memoryFormat, "format", "json", `Output format: "json", "markdown", or "content"`)
+
+	// memory create flags
+	memoryCreateCmd.Flags().StringVar(&memoryTitle, "title", "", "Memory title (required)")
+	memoryCreateCmd.Flags().StringVar(&memoryContent, "content", "", "Memory content")
+	memoryCreateCmd.Flags().StringVar(&memoryContentFile, "content-file", "", "Path to file containing memory content")
+	memoryCreateCmd.Flags().StringVar(&memoryScope, "scope", "user", `Memory scope: "user" or "team"`)
+	memoryCreateCmd.Flags().StringVar(&memoryTeamID, "team-id", "", "Team ID (required when scope is 'team')")
+	memoryCreateCmd.Flags().StringArrayVar(&memoryTags, "tag", nil, "Tag in key=value format (can be specified multiple times)")
+
+	// memory update flags
+	memoryUpdateCmd.Flags().StringVar(&memoryTitle, "title", "", "New title")
+	memoryUpdateCmd.Flags().StringVar(&memoryContent, "content", "", "New content")
+	memoryUpdateCmd.Flags().StringVar(&memoryContentFile, "content-file", "", "Path to file containing new content")
+	memoryUpdateCmd.Flags().StringArrayVar(&memoryTags, "tag", nil, "New tags in key=value format (replaces all tags)")
+
+	// memory upsert flags
+	memoryUpsertCmd.Flags().StringVar(&memoryTitle, "title", "", "Memory title (required)")
+	memoryUpsertCmd.Flags().StringVar(&memoryContent, "content", "", "Memory content")
+	memoryUpsertCmd.Flags().StringVar(&memoryContentFile, "content-file", "", "Path to file containing memory content")
+	memoryUpsertCmd.Flags().StringVar(&memoryScope, "scope", "user", `Memory scope: "user" or "team"`)
+	memoryUpsertCmd.Flags().StringVar(&memoryTeamID, "team-id", "", "Team ID (required when scope is 'team')")
+	memoryUpsertCmd.Flags().StringArrayVar(&memoryKeys, "key", nil, "Key tag in key=value format for lookup (AND logic, can be specified multiple times)")
+	memoryUpsertCmd.Flags().StringArrayVar(&memoryTags, "tag", nil, "Additional tag in key=value format (merged with --key tags)")
+
+	// memory subcommands
+	memoryCmd.AddCommand(memoryListCmd)
+	memoryCmd.AddCommand(memoryGetCmd)
+	memoryCmd.AddCommand(memoryCreateCmd)
+	memoryCmd.AddCommand(memoryUpdateCmd)
+	memoryCmd.AddCommand(memoryDeleteCmd)
+	memoryCmd.AddCommand(memoryUpsertCmd)
+
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
 	ClientCmd.AddCommand(eventsCmd)
 	ClientCmd.AddCommand(deleteSessionCmd)
 	ClientCmd.AddCommand(taskCmd)
+	ClientCmd.AddCommand(memoryCmd)
 }
 
 func runSend(cmd *cobra.Command, args []string) {
@@ -517,6 +680,255 @@ func runTaskDelete(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("Task %s deleted successfully\n", taskID)
+}
+
+// readContentFlag reads the memory content from --content or --content-file flags.
+func readContentFlag(content, contentFile string) (string, error) {
+	if contentFile != "" {
+		data, err := os.ReadFile(contentFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read content file %q: %w", contentFile, err)
+		}
+		return string(data), nil
+	}
+	return content, nil
+}
+
+// formatMemoriesMarkdown formats memory entries as Markdown suitable for CLAUDE.md injection.
+func formatMemoriesMarkdown(memories []*client.MemoryEntry) string {
+	if len(memories) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("# Session Memory\n")
+	for _, m := range memories {
+		sb.WriteString("\n## ")
+		sb.WriteString(m.Title)
+		sb.WriteString("\n\n")
+		sb.WriteString(m.Content)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func runMemoryList(cmd *cobra.Command, args []string) {
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	tags, err := parseKeyValueFlags(memoryTags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid --tag flag: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	listResp, err := c.ListMemories(ctx, memoryScope, memoryTeamID, tags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing memories: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch memoryFormat {
+	case "markdown":
+		fmt.Print(formatMemoriesMarkdown(listResp.Memories))
+	case "content":
+		for _, m := range listResp.Memories {
+			fmt.Println(m.Content)
+		}
+	default: // "json"
+		out, err := json.MarshalIndent(listResp, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(out))
+	}
+}
+
+func runMemoryGet(cmd *cobra.Command, args []string) {
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	entry, err := c.GetMemory(ctx, args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+func runMemoryCreate(cmd *cobra.Command, args []string) {
+	if memoryTitle == "" {
+		fmt.Fprintf(os.Stderr, "Error: --title flag is required\n")
+		os.Exit(1)
+	}
+
+	content, err := readContentFlag(memoryContent, memoryContentFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	tags, err := parseKeyValueFlags(memoryTags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid --tag flag: %v\n", err)
+		os.Exit(1)
+	}
+
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	req := &client.CreateMemoryRequest{
+		Title:   memoryTitle,
+		Content: content,
+		Scope:   memoryScope,
+		TeamID:  memoryTeamID,
+		Tags:    tags,
+	}
+
+	entry, err := c.CreateMemory(ctx, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+func runMemoryUpdate(cmd *cobra.Command, args []string) {
+	content, err := readContentFlag(memoryContent, memoryContentFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	req := &client.UpdateMemoryRequest{}
+
+	if cmd.Flags().Changed("title") {
+		req.Title = memoryTitle
+	}
+	if cmd.Flags().Changed("content") || cmd.Flags().Changed("content-file") {
+		req.Content = content
+	}
+	if cmd.Flags().Changed("tag") {
+		tags, err := parseKeyValueFlags(memoryTags)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: invalid --tag flag: %v\n", err)
+			os.Exit(1)
+		}
+		req.Tags = tags
+	}
+
+	entry, err := c.UpdateMemory(ctx, args[0], req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error updating memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+func runMemoryDelete(cmd *cobra.Command, args []string) {
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	if err := c.DeleteMemory(ctx, args[0]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Memory %s deleted successfully\n", args[0])
+}
+
+func runMemoryUpsert(cmd *cobra.Command, args []string) {
+	if memoryTitle == "" {
+		fmt.Fprintf(os.Stderr, "Error: --title flag is required\n")
+		os.Exit(1)
+	}
+
+	content, err := readContentFlag(memoryContent, memoryContentFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	keyTags, err := parseKeyValueFlags(memoryKeys)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid --key flag: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Merge --tag flags into keyTags (key flags take precedence)
+	if len(memoryTags) > 0 {
+		extraTags, err := parseKeyValueFlags(memoryTags)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: invalid --tag flag: %v\n", err)
+			os.Exit(1)
+		}
+		for k, v := range extraTags {
+			if _, exists := keyTags[k]; !exists {
+				keyTags[k] = v
+			}
+		}
+	}
+
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	entry, err := c.UpsertMemory(ctx, memoryScope, memoryTeamID, memoryTitle, content, keyTags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error upserting memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
 }
 
 func runDeleteSession(cmd *cobra.Command, args []string) {

@@ -671,6 +671,301 @@ func (c *Client) DeleteTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// MemoryEntry represents a memory entry from the proxy
+type MemoryEntry struct {
+	ID        string            `json:"id"`
+	Title     string            `json:"title"`
+	Content   string            `json:"content"`
+	Tags      map[string]string `json:"tags,omitempty"`
+	Scope     string            `json:"scope"`
+	OwnerID   string            `json:"owner_id"`
+	TeamID    string            `json:"team_id,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+// MemoryListResponse represents the response from listing memories
+type MemoryListResponse struct {
+	Memories []*MemoryEntry `json:"memories"`
+	Total    int            `json:"total"`
+}
+
+// CreateMemoryRequest represents the request to create a memory entry
+type CreateMemoryRequest struct {
+	Title   string            `json:"title"`
+	Content string            `json:"content,omitempty"`
+	Scope   string            `json:"scope"`
+	TeamID  string            `json:"team_id,omitempty"`
+	Tags    map[string]string `json:"tags,omitempty"`
+}
+
+// UpdateMemoryRequest represents the request to update a memory entry
+type UpdateMemoryRequest struct {
+	Title   string            `json:"title,omitempty"`
+	Content string            `json:"content,omitempty"`
+	Tags    map[string]string `json:"tags,omitempty"`
+}
+
+// ListMemories lists memory entries with optional filters.
+// scope: "user" or "team". teamID: required when scope="team".
+// tags: AND-combined tag filter map.
+func (c *Client) ListMemories(ctx context.Context, scope, teamID string, tags map[string]string) (*MemoryListResponse, error) {
+	u, err := url.Parse(c.baseURL + "/memories")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if scope != "" {
+		q.Set("scope", scope)
+	}
+	if teamID != "" {
+		q.Set("team_id", teamID)
+	}
+	for k, v := range tags {
+		q.Set("tag."+k, v)
+	}
+	u.RawQuery = q.Encode()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var listResp MemoryListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &listResp, nil
+}
+
+// GetMemory retrieves a memory entry by ID
+func (c *Client) GetMemory(ctx context.Context, id string) (*MemoryEntry, error) {
+	if id == "" {
+		return nil, fmt.Errorf("memory ID is required")
+	}
+
+	reqURL := fmt.Sprintf("%s/memories/%s", c.baseURL, id)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("memory not found: %s", id)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var entry MemoryEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// CreateMemory creates a new memory entry
+func (c *Client) CreateMemory(ctx context.Context, req *CreateMemoryRequest) (*MemoryEntry, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/memories", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var entry MemoryEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// UpdateMemory updates an existing memory entry
+func (c *Client) UpdateMemory(ctx context.Context, id string, req *UpdateMemoryRequest) (*MemoryEntry, error) {
+	if id == "" {
+		return nil, fmt.Errorf("memory ID is required")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/memories/%s", c.baseURL, id)
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("memory not found: %s", id)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var entry MemoryEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &entry, nil
+}
+
+// DeleteMemory deletes a memory entry by ID
+func (c *Client) DeleteMemory(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("memory ID is required")
+	}
+
+	reqURL := fmt.Sprintf("%s/memories/%s", c.baseURL, id)
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("memory not found: %s", id)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// UpsertMemory creates or updates a memory entry matching the given key tags.
+// keyTags are used to look up existing memories (AND logic).
+// If exactly one match is found: update it.
+// If no match is found: create a new entry with keyTags merged into the entry's tags.
+// If multiple matches are found: update the most recently updated one.
+func (c *Client) UpsertMemory(ctx context.Context, scope, teamID, title, content string, keyTags map[string]string) (*MemoryEntry, error) {
+	// Search for existing memories matching keyTags
+	existing, err := c.ListMemories(ctx, scope, teamID, keyTags)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list memories for upsert: %w", err)
+	}
+
+	if len(existing.Memories) > 0 {
+		// Find the most recently updated entry
+		target := existing.Memories[0]
+		for _, m := range existing.Memories[1:] {
+			if m.UpdatedAt.After(target.UpdatedAt) {
+				target = m
+			}
+		}
+
+		// Update the existing entry
+		updateReq := &UpdateMemoryRequest{
+			Title:   title,
+			Content: content,
+		}
+		return c.UpdateMemory(ctx, target.ID, updateReq)
+	}
+
+	// No existing entry — create a new one with keyTags as tags
+	createReq := &CreateMemoryRequest{
+		Title:   title,
+		Content: content,
+		Scope:   scope,
+		TeamID:  teamID,
+		Tags:    keyTags,
+	}
+	return c.CreateMemory(ctx, createReq)
+}
+
 // StreamEvents subscribes to Server-Sent Events (SSE) from an agentapi session
 func (c *Client) StreamEvents(ctx context.Context, sessionID string) (<-chan string, <-chan error) {
 	eventChan := make(chan string, 100)

@@ -25,6 +25,7 @@ type KubernetesSession struct {
 	mutex          sync.RWMutex
 	description    string // Preserved description from Secret (not truncated by label limits)
 	webhookPayload []byte // Webhook payload JSON
+	resolvedAPIKey string // API key resolved during session creation, used by memory-sync sidecar
 }
 
 // NewKubernetesSession creates a new KubernetesSession
@@ -195,6 +196,17 @@ func (s *KubernetesSession) ServicePort() int {
 // Request returns the run server request
 func (s *KubernetesSession) Request() *entities.RunServerRequest {
 	return s.request
+}
+
+// SetResolvedAPIKey stores the API key resolved during session creation.
+// This is used by the memory-sync sidecar to authenticate with the proxy.
+func (s *KubernetesSession) SetResolvedAPIKey(key string) {
+	s.resolvedAPIKey = key
+}
+
+// ResolvedAPIKey returns the API key resolved during session creation.
+func (s *KubernetesSession) ResolvedAPIKey() string {
+	return s.resolvedAPIKey
 }
 
 // Ensure KubernetesSession implements entities.Session

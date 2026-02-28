@@ -49,6 +49,10 @@ type StartRequest struct {
 	Scope ResourceScope `json:"scope,omitempty"`
 	// TeamID is the team identifier (e.g., "org/team-slug") when Scope is "team"
 	TeamID string `json:"team_id,omitempty"`
+	// MemoryKey is a custom tag map to identify memories for this session.
+	// If nil or empty, the session Tags are used as the memory key.
+	// If both are empty, memory integration is disabled.
+	MemoryKey map[string]string `json:"memory_key,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -64,14 +68,15 @@ type RunServerRequest struct {
 	Tags                     map[string]string
 	RepoInfo                 *RepositoryInfo
 	InitialMessage           string
-	Teams                    []string      // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
-	GithubToken              string        // GitHub token passed via params.github_token
-	Scope                    ResourceScope // Resource scope ("user" or "team")
-	TeamID                   string        // Team identifier when Scope is "team"
-	AgentType                string        // Agent type for the session
-	SlackParams              *SlackParams  // Slack integration parameters
-	Oneshot                  bool          // Oneshot indicates whether the session should automatically delete itself after stopping
-	InitialMessageWaitSecond *int          // Seconds to wait before sending initial message (default: 2)
+	Teams                    []string          // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
+	GithubToken              string            // GitHub token passed via params.github_token
+	Scope                    ResourceScope     // Resource scope ("user" or "team")
+	TeamID                   string            // Team identifier when Scope is "team"
+	AgentType                string            // Agent type for the session
+	SlackParams              *SlackParams      // Slack integration parameters
+	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
+	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
+	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
 }
 
 // Session represents a running agentapi session

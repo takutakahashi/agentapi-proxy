@@ -22,13 +22,14 @@ type SessionSettings struct {
 
 // SessionMeta contains session identification metadata.
 type SessionMeta struct {
-	ID        string   `yaml:"id"`
-	UserID    string   `yaml:"user_id"`
-	Scope     string   `yaml:"scope"`
-	TeamID    string   `yaml:"team_id,omitempty"`
-	AgentType string   `yaml:"agent_type,omitempty"`
-	Oneshot   bool     `yaml:"oneshot,omitempty"`
-	Teams     []string `yaml:"teams,omitempty"`
+	ID        string            `yaml:"id"`
+	UserID    string            `yaml:"user_id"`
+	Scope     string            `yaml:"scope"`
+	TeamID    string            `yaml:"team_id,omitempty"`
+	AgentType string            `yaml:"agent_type,omitempty"`
+	Oneshot   bool              `yaml:"oneshot,omitempty"`
+	Teams     []string          `yaml:"teams,omitempty"`
+	MemoryKey map[string]string `yaml:"memory_key,omitempty"`
 }
 
 // ClaudeConfig holds Claude-related configuration data.
