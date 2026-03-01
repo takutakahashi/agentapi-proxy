@@ -1332,11 +1332,14 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 }
 
 // memorySyncScript is the shell script for the memory-sync sidecar.
-// It waits for agentapi to stop, then fetches the conversation messages and
-// logs what it would upsert (dry-run mode; actual upsert not yet implemented).
+// It periodically dumps the conversation messages as a draft memory entry
+// (upsert by session-id + draft=true keys), and performs a final upsert when
+// agentapi stops. The dump interval defaults to 60 seconds and can be
+// overridden via the MEMORY_DUMP_INTERVAL environment variable.
 const memorySyncScript = `#!/bin/sh
 AGENTAPI_URL="http://localhost:${AGENTAPI_PORT}"
 PROXY_ENDPOINT="http://${AGENTAPI_PROXY_SERVICE_HOST}:${AGENTAPI_PROXY_SERVICE_PORT_HTTP}"
+DUMP_INTERVAL="${MEMORY_DUMP_INTERVAL:-60}"
 
 log() { echo "[$(date -Is)] [memory-sync] $*"; }
 
@@ -1360,45 +1363,62 @@ if [ -z "${MEMORY_KEY_FLAGS}" ]; then
     exec sleep infinity
 fi
 
-log "Monitoring agentapi status..."
-# Poll until agentapi stops responding
-while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
-    sleep 3
-done
-
-log "agentapi stopped. Fetching messages..."
-MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null || echo "{}")
-COUNT=$(echo "$MESSAGES" | jq -r '.messages | length' 2>/dev/null)
-COUNT=${COUNT:-0}
-log "Found ${COUNT} messages"
-
-if [ "${COUNT}" = "0" ] || [ -z "${COUNT}" ]; then
-    log "No messages to sync, skipping"
-    exec sleep infinity
-fi
-
-# Write conversation as Markdown
-CONTENT_FILE=$(mktemp /tmp/memory-content-XXXXXX.md)
-echo "## Conversation Transcript" >> "$CONTENT_FILE"
-echo "" >> "$CONTENT_FILE"
-echo "$MESSAGES" | jq -r '.messages[] | if .role == "user" then "**User:** " + .content else "**Assistant:** " + .content end + "\n"' \
-    >> "$CONTENT_FILE" 2>/dev/null
-
 SCOPE="${AGENTAPI_SCOPE:-user}"
 TEAM_OPTS=""
 if [ "$SCOPE" = "team" ] && [ -n "${AGENTAPI_TEAM_ID}" ]; then
     TEAM_OPTS="--team-id ${AGENTAPI_TEAM_ID}"
 fi
 
-log "[DRY RUN] Would upsert memory with:"
-log "  flags:         ${MEMORY_KEY_FLAGS}"
-log "  title:         Session ${AGENTAPI_SESSION_ID}"
-log "  scope:         ${SCOPE}"
-log "  content lines: $(wc -l < "$CONTENT_FILE")"
-log "[DRY RUN] Skipping actual upsert (summary-based write not yet implemented)"
+# upsert_draft: fetch current messages and upsert a single draft memory entry.
+# Uses --key session-id + --key draft=true for idempotent create-or-update.
+upsert_draft() {
+    MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null || echo "{}")
+    COUNT=$(echo "$MESSAGES" | jq -r '.messages | length' 2>/dev/null)
+    COUNT=${COUNT:-0}
+    if [ "${COUNT}" = "0" ]; then
+        log "No messages yet, skipping"
+        return
+    fi
+    log "Upserting draft memory (${COUNT} messages)..."
+    CONTENT_FILE=$(mktemp /tmp/memory-content-XXXXXX.md)
+    echo "## Conversation Transcript" > "$CONTENT_FILE"
+    echo "" >> "$CONTENT_FILE"
+    echo "$MESSAGES" | jq -r '.messages[] | if .role == "user" then "**User:** " + .content else "**Assistant:** " + .content end + "\n"' \
+        >> "$CONTENT_FILE" 2>/dev/null
+    # shellcheck disable=SC2086
+    agentapi-proxy client memory upsert \
+        --endpoint "$PROXY_ENDPOINT" \
+        --key "session-id=${AGENTAPI_SESSION_ID}" \
+        --key "draft=true" \
+        ${MEMORY_KEY_FLAGS} \
+        --title "Draft: Session ${AGENTAPI_SESSION_ID}" \
+        --content-file "$CONTENT_FILE" \
+        --scope "$SCOPE" \
+        ${TEAM_OPTS} \
+        && log "Draft upserted successfully" \
+        || log "Failed to upsert draft memory"
+    rm -f "$CONTENT_FILE"
+}
 
-rm -f "$CONTENT_FILE"
-exec sleep infinity
+# Start periodic dump in background
+log "Starting periodic memory dump (interval: ${DUMP_INTERVAL}s)..."
+while true; do
+    sleep "$DUMP_INTERVAL"
+    upsert_draft
+done &
+DUMP_PID=$!
+
+# Poll until agentapi stops responding
+log "Monitoring agentapi status..."
+while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
+    sleep 3
+done
+
+# agentapi stopped: kill periodic dumper, perform final upsert, and exit
+kill "$DUMP_PID" 2>/dev/null
+log "agentapi stopped. Performing final memory upsert..."
+upsert_draft
+log "Memory sync complete."
 `
 
 // buildMemorySyncSidecar creates a sidecar container that syncs conversation
