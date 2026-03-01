@@ -92,12 +92,13 @@ type StartParams struct {
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
-	Environment map[string]string `json:"environment,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-	Params      *StartParams      `json:"params,omitempty"`
-	Scope       string            `json:"scope,omitempty"`
-	TeamID      string            `json:"team_id,omitempty"`
-	MemoryKey   map[string]string `json:"memory_key,omitempty"`
+	Environment           map[string]string `json:"environment,omitempty"`
+	Tags                  map[string]string `json:"tags,omitempty"`
+	Params                *StartParams      `json:"params,omitempty"`
+	Scope                 string            `json:"scope,omitempty"`
+	TeamID                string            `json:"team_id,omitempty"`
+	MemoryKey             map[string]string `json:"memory_key,omitempty"`
+	MemorySummarizeDrafts *bool             `json:"memory_summarize_drafts,omitempty"`
 }
 
 // StartResponse represents the response from starting a new agentapi server

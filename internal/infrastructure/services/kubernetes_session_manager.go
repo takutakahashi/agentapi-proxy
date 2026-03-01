@@ -1529,9 +1529,15 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 		scope = "team"
 	}
 
-	// Determine whether draft summarization is enabled (default: false).
+	// Determine whether draft summarization is enabled.
+	// Per-session override (req.MemorySummarizeDrafts) takes precedence over the global config.
+	// If neither is set, defaults to false.
 	summarizeDrafts := "false"
-	if m.k8sConfig.MemorySummarizeDrafts != nil && *m.k8sConfig.MemorySummarizeDrafts {
+	if req.MemorySummarizeDrafts != nil {
+		if *req.MemorySummarizeDrafts {
+			summarizeDrafts = "true"
+		}
+	} else if m.k8sConfig.MemorySummarizeDrafts != nil && *m.k8sConfig.MemorySummarizeDrafts {
 		summarizeDrafts = "true"
 	}
 
