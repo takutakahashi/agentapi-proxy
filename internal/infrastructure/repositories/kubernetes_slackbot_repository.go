@@ -38,22 +38,23 @@ const (
 
 // slackBotJSON is the JSON representation for storage
 type slackBotJSON struct {
-	ID                  string                    `json:"id"`
-	Name                string                    `json:"name"`
-	UserID              string                    `json:"user_id"`
-	Scope               entities.ResourceScope    `json:"scope,omitempty"`
-	TeamID              string                    `json:"team_id,omitempty"`
-	Teams               []string                  `json:"teams,omitempty"`
-	Status              entities.SlackBotStatus   `json:"status"`
-	BotTokenSecretName  string                    `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey   string                    `json:"bot_token_secret_key,omitempty"`
-	AppTokenSecretKey   string                    `json:"app_token_secret_key,omitempty"`
-	AllowedEventTypes   []string                  `json:"allowed_event_types,omitempty"`
-	AllowedChannelNames []string                  `json:"allowed_channel_names,omitempty"`
-	SessionConfig       *webhookSessionConfigJSON `json:"session_config,omitempty"`
-	MaxSessions         int                       `json:"max_sessions,omitempty"`
-	CreatedAt           time.Time                 `json:"created_at"`
-	UpdatedAt           time.Time                 `json:"updated_at"`
+	ID                     string                    `json:"id"`
+	Name                   string                    `json:"name"`
+	UserID                 string                    `json:"user_id"`
+	Scope                  entities.ResourceScope    `json:"scope,omitempty"`
+	TeamID                 string                    `json:"team_id,omitempty"`
+	Teams                  []string                  `json:"teams,omitempty"`
+	Status                 entities.SlackBotStatus   `json:"status"`
+	BotTokenSecretName     string                    `json:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey      string                    `json:"bot_token_secret_key,omitempty"`
+	AppTokenSecretKey      string                    `json:"app_token_secret_key,omitempty"`
+	AllowedEventTypes      []string                  `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames    []string                  `json:"allowed_channel_names,omitempty"`
+	SessionConfig          *webhookSessionConfigJSON `json:"session_config,omitempty"`
+	MaxSessions            int                       `json:"max_sessions,omitempty"`
+	NotifyOnSessionCreated *bool                     `json:"notify_on_session_created,omitempty"`
+	CreatedAt              time.Time                 `json:"created_at"`
+	UpdatedAt              time.Time                 `json:"updated_at"`
 }
 
 // KubernetesSlackBotRepository implements SlackBotRepository using Kubernetes Secrets
@@ -361,6 +362,7 @@ func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities
 	if sbj.SessionConfig != nil {
 		slackBot.SetSessionConfig(r.sessionConfigJSONToSlackBotEntity(sbj.SessionConfig))
 	}
+	slackBot.SetNotifyOnSessionCreated(sbj.NotifyOnSessionCreated)
 	slackBot.SetCreatedAt(sbj.CreatedAt)
 	slackBot.SetUpdatedAt(sbj.UpdatedAt)
 	return slackBot
@@ -384,6 +386,11 @@ func (r *KubernetesSlackBotRepository) entityToJSON(sb *entities.SlackBot) *slac
 		MaxSessions:         sb.MaxSessions(),
 		CreatedAt:           sb.CreatedAt(),
 		UpdatedAt:           sb.UpdatedAt(),
+	}
+	// Only store notify_on_session_created when explicitly set to false,
+	// to avoid bloating stored data for the default (true) case.
+	if v := sb.RawNotifyOnSessionCreated(); v != nil {
+		sbj.NotifyOnSessionCreated = v
 	}
 
 	if sc := sb.SessionConfig(); sc != nil {

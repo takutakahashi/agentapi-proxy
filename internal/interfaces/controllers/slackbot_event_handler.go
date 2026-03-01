@@ -329,7 +329,9 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		if h.dryRun {
 			log.Printf("[SLACKBOT] [DRY-RUN] Would create session: id=%s, channel=%s, thread=%s, agentType=%s, scope=%s",
 				sessionID, channel, threadKey, agentType, scope)
-			h.postSessionURLToSlack(bgCtx, channel, threadKey, sessionID, bot)
+			if bot.NotifyOnSessionCreated() {
+				h.postSessionURLToSlack(bgCtx, channel, threadKey, sessionID, bot)
+			}
 			return
 		}
 
@@ -354,7 +356,9 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			return
 		}
 		log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
-		h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, bot)
+		if bot.NotifyOnSessionCreated() {
+			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, bot)
+		}
 	}()
 
 	return nil
