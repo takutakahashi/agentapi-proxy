@@ -68,6 +68,9 @@ func (r *mockMemoryRepository) List(_ context.Context, filter portrepos.MemoryFi
 		if !m.MatchesTags(filter.Tags) {
 			continue
 		}
+		if len(filter.ExcludeTags) > 0 && m.MatchesTags(filter.ExcludeTags) {
+			continue
+		}
 		if !m.MatchesText(filter.Query) {
 			continue
 		}

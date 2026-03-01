@@ -2285,6 +2285,14 @@
             "description": "Full-text search query applied to title and content (case-insensitive)",
             "required": false,
             "schema": {"type": "string"}
+          },
+          {
+            "name": "exclude_tag.{key}",
+            "in": "query",
+            "description": "Exclude memories whose tags contain ALL of the specified key=value pairs. For example, `exclude_tag.draft=true` excludes memories tagged with `draft=true`. Multiple exclude_tag parameters are AND-combined.",
+            "required": false,
+            "schema": {"type": "string"},
+            "example": "exclude_tag.draft=true"
           }
         ],
         "responses": {

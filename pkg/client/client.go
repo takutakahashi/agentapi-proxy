@@ -721,7 +721,8 @@ type UpdateMemoryRequest struct {
 // ListMemories lists memory entries with optional filters.
 // scope: "user" or "team". teamID: required when scope="team".
 // tags: AND-combined tag filter map.
-func (c *Client) ListMemories(ctx context.Context, scope, teamID string, tags map[string]string) (*MemoryListResponse, error) {
+// excludeTags: memories matching ALL of these tags are excluded (nil = no exclusion).
+func (c *Client) ListMemories(ctx context.Context, scope, teamID string, tags map[string]string, excludeTags map[string]string) (*MemoryListResponse, error) {
 	u, err := url.Parse(c.baseURL + "/memories")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
@@ -736,6 +737,9 @@ func (c *Client) ListMemories(ctx context.Context, scope, teamID string, tags ma
 	}
 	for k, v := range tags {
 		q.Set("tag."+k, v)
+	}
+	for k, v := range excludeTags {
+		q.Set("exclude_tag."+k, v)
 	}
 	u.RawQuery = q.Encode()
 
@@ -944,8 +948,8 @@ func (c *Client) DeleteMemory(ctx context.Context, id string) error {
 // If no match is found: create a new entry with keyTags merged into the entry's tags.
 // If multiple matches are found: update the most recently updated one.
 func (c *Client) UpsertMemory(ctx context.Context, scope, teamID, title, content string, keyTags map[string]string) (*MemoryEntry, error) {
-	// Search for existing memories matching keyTags
-	existing, err := c.ListMemories(ctx, scope, teamID, keyTags)
+	// Search for existing memories matching keyTags (no exclusion for upsert lookups)
+	existing, err := c.ListMemories(ctx, scope, teamID, keyTags, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list memories for upsert: %w", err)
 	}

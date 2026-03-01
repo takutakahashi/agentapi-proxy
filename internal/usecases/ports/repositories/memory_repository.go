@@ -26,6 +26,10 @@ type MemoryFilter struct {
 	// Tags filters entries that contain ALL of the given key-value pairs
 	Tags map[string]string
 
+	// ExcludeTags excludes entries that contain ALL of the given key-value pairs.
+	// If a memory matches all exclude tag conditions, it is omitted from results.
+	ExcludeTags map[string]string
+
 	// Query is a case-insensitive full-text search string applied to title and content
 	Query string
 }

@@ -45,6 +45,7 @@ var (
 	memoryScope       string
 	memoryTeamID      string
 	memoryTags        []string
+	memoryExcludeTags []string
 	memoryKeys        []string
 	memoryFormat      string
 )
@@ -390,6 +391,7 @@ func init() {
 	memoryListCmd.Flags().StringVar(&memoryScope, "scope", "user", `Memory scope: "user" or "team"`)
 	memoryListCmd.Flags().StringVar(&memoryTeamID, "team-id", "", "Team ID (required when scope is 'team')")
 	memoryListCmd.Flags().StringArrayVar(&memoryTags, "tag", nil, "Tag filter in key=value format (AND logic, can be specified multiple times)")
+	memoryListCmd.Flags().StringArrayVar(&memoryExcludeTags, "exclude-tag", nil, "Exclude memories matching these tags in key=value format (AND logic, can be specified multiple times)")
 	memoryListCmd.Flags().StringVar(&memoryFormat, "format", "json", `Output format: "json", "markdown", or "content"`)
 
 	// memory create flags
@@ -764,8 +766,14 @@ func runMemoryList(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	excludeTags, err := parseKeyValueFlags(memoryExcludeTags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid --exclude-tag flag: %v\n", err)
+		os.Exit(1)
+	}
+
 	ctx := context.Background()
-	listResp, err := c.ListMemories(ctx, memoryScope, memoryTeamID, tags)
+	listResp, err := c.ListMemories(ctx, memoryScope, memoryTeamID, tags, excludeTags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing memories: %v\n", err)
 		os.Exit(1)
