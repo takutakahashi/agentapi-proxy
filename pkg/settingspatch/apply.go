@@ -38,6 +38,11 @@ func Apply(base, higher SettingsPatch) SettingsPatch {
 		result.PreferredTeamID = higher.PreferredTeamID
 	}
 
+	// MemorySummarizeDrafts: higher wins if non-nil
+	if higher.MemorySummarizeDrafts != nil {
+		result.MemorySummarizeDrafts = higher.MemorySummarizeDrafts
+	}
+
 	return result
 }
 

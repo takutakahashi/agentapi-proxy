@@ -516,6 +516,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		MemoryKey:                memoryKey,
+		MemorySummarizeDrafts:    startReq.MemorySummarizeDrafts,
 	}
 
 	// Delegate to session manager

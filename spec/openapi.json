@@ -3206,6 +3206,10 @@
               "project": "myapp",
               "env": "production"
             }
+          },
+          "memory_summarize_drafts": {
+            "type": "boolean",
+            "description": "Per-session override for automatic draft memory summarization. When true, a one-shot summarization session is started after this session ends to consolidate draft memories into the main memory. When false, summarization is skipped. When omitted, the global proxy configuration (kubernetesSession.memorySummarizeDrafts) is used."
           }
         }
       },

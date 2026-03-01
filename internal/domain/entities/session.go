@@ -53,6 +53,9 @@ type StartRequest struct {
 	// If nil or empty, the session Tags are used as the memory key.
 	// If both are empty, memory integration is disabled.
 	MemoryKey map[string]string `json:"memory_key,omitempty"`
+	// MemorySummarizeDrafts controls whether draft memories are automatically summarized
+	// after this session ends. When nil, the global proxy configuration is used.
+	MemorySummarizeDrafts *bool `json:"memory_summarize_drafts,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -77,6 +80,7 @@ type RunServerRequest struct {
 	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
+	MemorySummarizeDrafts    *bool             // Per-session draft summarization; nil means inherit from team/user settings layers
 }
 
 // Session represents a running agentapi session

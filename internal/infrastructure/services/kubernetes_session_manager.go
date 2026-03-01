@@ -1374,28 +1374,44 @@ fi
 MESSAGES_CACHE=$(mktemp /tmp/messages-cache-XXXXXX.json)
 echo '{"messages":[]}' > "$MESSAGES_CACHE"
 
+# count_messages: count "role" occurrences without JSON parsing.
+# Avoids jq failures when message content contains unescaped control chars
+# (e.g. raw newlines, ANSI codes) from terminal rendering.
+count_messages() {
+    echo "$1" | grep -c '"role":' 2>/dev/null || echo 0
+}
+
 # save_cache: write $1 (messages JSON) to MESSAGES_CACHE only when the
 # message array is non-empty, so a failed or empty fetch never clobbers a
 # previously captured snapshot.
 save_cache() {
-    _CNT=$(echo "$1" | jq -r '.messages | length' 2>/dev/null)
+    _CNT=$(count_messages "$1")
     if [ "${_CNT:-0}" -gt "0" ]; then
         echo "$1" > "$MESSAGES_CACHE"
     fi
+}
+
+# sanitize_json: remove ANSI escape sequences and control characters that
+# cause strict JSON parsers (e.g. jq 1.7+) to reject the input.
+# Strips 0x00-0x08, 0x0B (VT), 0x0C (FF), 0x0E-0x1F (includes ESC=0x1B),
+# and 0x7F (DEL).  Uses only POSIX tr available in busybox and alpine.
+sanitize_json() {
+    LC_ALL=C tr -d '\000\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177'
 }
 
 # upsert_draft: upsert a single draft memory entry.
 # Tries a live fetch first; falls back to the cached snapshot so that
 # short-lived (oneshot) sessions are handled correctly.
 upsert_draft() {
-    MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
-    if [ -n "$MESSAGES" ]; then
-        save_cache "$MESSAGES"
+    RAW_MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
+    if [ -n "$RAW_MESSAGES" ]; then
+        save_cache "$RAW_MESSAGES"
+        MESSAGES="$RAW_MESSAGES"
     else
         log "agentapi unreachable, using cached messages"
         MESSAGES=$(cat "$MESSAGES_CACHE" 2>/dev/null || echo '{"messages":[]}')
     fi
-    COUNT=$(echo "$MESSAGES" | jq -r '.messages | length' 2>/dev/null)
+    COUNT=$(count_messages "$MESSAGES")
     COUNT=${COUNT:-0}
     if [ "${COUNT}" = "0" ]; then
         log "No messages yet, skipping"
@@ -1405,8 +1421,14 @@ upsert_draft() {
     CONTENT_FILE=$(mktemp /tmp/memory-content-XXXXXX.md)
     echo "## Conversation Transcript" > "$CONTENT_FILE"
     echo "" >> "$CONTENT_FILE"
-    echo "$MESSAGES" | jq -r '.messages[] | if .role == "user" then "**User:** " + .content else "**Assistant:** " + .content end + "\n"' \
-        >> "$CONTENT_FILE" 2>/dev/null
+    # Try sanitize + jq for clean formatting; fall back to raw dump on parse error.
+    FORMATTED=$(echo "$MESSAGES" | sanitize_json | \
+        jq -r '.messages[] | if .role == "user" then "**User:** " + .content else "**Assistant:** " + .content end + "\n"' 2>/dev/null)
+    if [ -n "$FORMATTED" ]; then
+        printf '%s\n' "$FORMATTED" >> "$CONTENT_FILE"
+    else
+        echo "$MESSAGES" >> "$CONTENT_FILE"
+    fi
     # shellcheck disable=SC2086
     agentapi-proxy client memory upsert \
         --endpoint "$PROXY_ENDPOINT" \
@@ -1447,6 +1469,37 @@ log "agentapi stopped. Performing final memory upsert..."
 upsert_draft
 rm -f "$MESSAGES_CACHE"
 log "Memory sync complete."
+
+# --- Draft Summarization ---
+# After the final upsert, optionally start a one-shot summarization session to
+# condense the draft memory into the main memory.
+# Controlled by MEMORY_SUMMARIZE_DRAFTS (default: true). Set to "false" to disable.
+if [ "${MEMORY_SUMMARIZE_DRAFTS:-true}" = "true" ]; then
+    DRAFT_COUNT=$(agentapi-proxy client memory list \
+        --endpoint "$PROXY_ENDPOINT" \
+        --format json \
+        --tag "draft=true" \
+        --tag "session-id=${AGENTAPI_SESSION_ID}" \
+        --scope "$SCOPE" \
+        ${TEAM_OPTS} 2>/dev/null | jq -r '.total // 0' 2>/dev/null || echo 0)
+
+    if [ "${DRAFT_COUNT:-0}" -gt 0 ]; then
+        log "Draft memory found (count=${DRAFT_COUNT}), starting summarization session..."
+        # Convert --tag k=v flags to --key k=v flags expected by summarize-drafts
+        SUMMARIZE_KEY_FLAGS=$(echo "${MEMORY_KEY_FLAGS}" | sed 's/--tag /--key /g')
+        # shellcheck disable=SC2086
+        agentapi-proxy client summarize-drafts \
+            --endpoint "$PROXY_ENDPOINT" \
+            --source-session-id "${AGENTAPI_SESSION_ID}" \
+            --scope "$SCOPE" \
+            ${TEAM_OPTS} \
+            ${SUMMARIZE_KEY_FLAGS} \
+            && log "Summarization session started successfully" \
+            || log "Warning: failed to start summarization session (non-fatal)"
+    fi
+else
+    log "Draft summarization disabled (MEMORY_SUMMARIZE_DRAFTS=false)"
+fi
 `
 
 // buildMemorySyncSidecar creates a sidecar container that syncs conversation
@@ -1476,6 +1529,14 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 		scope = "team"
 	}
 
+	// Determine whether draft summarization is enabled.
+	// Controlled by the per-session field (set directly via API or propagated from
+	// team/user settings layers in buildSessionSettings). Defaults to false if not set.
+	summarizeDrafts := "false"
+	if req.MemorySummarizeDrafts != nil && *req.MemorySummarizeDrafts {
+		summarizeDrafts = "true"
+	}
+
 	envVars := []corev1.EnvVar{
 		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
@@ -1483,6 +1544,7 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 		{Name: "AGENTAPI_TEAM_ID", Value: req.TeamID},
 		{Name: "MEMORY_KEY_FLAGS", Value: memoryKeyFlags},
 		{Name: "AGENTAPI_KEY", Value: session.ResolvedAPIKey()},
+		{Name: "MEMORY_SUMMARIZE_DRAFTS", Value: summarizeDrafts},
 		// AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP
 		// are injected automatically by Kubernetes service discovery.
 	}
@@ -3059,6 +3121,12 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	materialized := m.resolveSettings(ctx, session, req)
 	for k, v := range materialized.EnvVars {
 		env[k] = v
+	}
+
+	// Propagate memory_summarize_drafts from the settings layer to the request,
+	// but only if the per-session API field was not explicitly set.
+	if req.MemorySummarizeDrafts == nil && materialized.MemorySummarizeDrafts != nil {
+		req.MemorySummarizeDrafts = materialized.MemorySummarizeDrafts
 	}
 
 	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
