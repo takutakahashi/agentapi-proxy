@@ -276,9 +276,6 @@ spec:
             - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT
               value: {{ .Values.kubernetesSession.otelCollector.resources.limits.memory | quote }}
             {{- end }}
-            # Draft memory summarization toggle
-            - name: AGENTAPI_K8S_SESSION_MEMORY_SUMMARIZE_DRAFTS
-              value: {{ .Values.kubernetesSession.memorySummarizeDrafts | default false | quote }}
             # Settings base secret (proxy-side merge of settings.json)
             - name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET
               value: {{ .Values.kubernetesSession.settingsBaseSecret | default "agentapi-settings-base" | quote }}

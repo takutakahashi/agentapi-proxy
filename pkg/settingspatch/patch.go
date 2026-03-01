@@ -62,6 +62,13 @@ type SettingsPatch struct {
 	// "" = use all teams in the default order.
 	// Non-empty = use only this team's settings (skip all other teams).
 	PreferredTeamID string `json:"preferred_team_id,omitempty"`
+
+	// MemorySummarizeDrafts controls whether draft memories are automatically
+	// summarized into main memory when the session ends.
+	// nil = inherit from lower layer (default: disabled).
+	// true = enable draft summarization.
+	// false = explicitly disable draft summarization.
+	MemorySummarizeDrafts *bool `json:"memory_summarize_drafts,omitempty"`
 }
 
 // BedrockPatch holds AWS Bedrock configuration.

@@ -23,6 +23,11 @@ type MaterializedSettings struct {
 
 	// ActivePlugins is the final list of enabled plugins.
 	ActivePlugins []string
+
+	// MemorySummarizeDrafts indicates whether draft memories should be
+	// automatically summarized into main memory when the session ends.
+	// nil = not configured by any settings layer (default: disabled).
+	MemorySummarizeDrafts *bool
 }
 
 // Materialize converts a resolved SettingsPatch into concrete session configuration.
@@ -97,6 +102,9 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 
 	// 5. Active plugins (union already computed by Resolve).
 	result.ActivePlugins = resolved.EnabledPlugins
+
+	// 5a. MemorySummarizeDrafts — pass through as-is (nil = not configured).
+	result.MemorySummarizeDrafts = resolved.MemorySummarizeDrafts
 
 	// 6. Claude SettingsJSON (marketplaces, plugins, hooks).
 	settingsMap := make(map[string]interface{})

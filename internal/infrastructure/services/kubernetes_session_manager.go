@@ -1530,14 +1530,10 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 	}
 
 	// Determine whether draft summarization is enabled.
-	// Per-session override (req.MemorySummarizeDrafts) takes precedence over the global config.
-	// If neither is set, defaults to false.
+	// Controlled by the per-session field (set directly via API or propagated from
+	// team/user settings layers in buildSessionSettings). Defaults to false if not set.
 	summarizeDrafts := "false"
-	if req.MemorySummarizeDrafts != nil {
-		if *req.MemorySummarizeDrafts {
-			summarizeDrafts = "true"
-		}
-	} else if m.k8sConfig.MemorySummarizeDrafts != nil && *m.k8sConfig.MemorySummarizeDrafts {
+	if req.MemorySummarizeDrafts != nil && *req.MemorySummarizeDrafts {
 		summarizeDrafts = "true"
 	}
 
@@ -3125,6 +3121,12 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	materialized := m.resolveSettings(ctx, session, req)
 	for k, v := range materialized.EnvVars {
 		env[k] = v
+	}
+
+	// Propagate memory_summarize_drafts from the settings layer to the request,
+	// but only if the per-session API field was not explicitly set.
+	if req.MemorySummarizeDrafts == nil && materialized.MemorySummarizeDrafts != nil {
+		req.MemorySummarizeDrafts = materialized.MemorySummarizeDrafts
 	}
 
 	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script

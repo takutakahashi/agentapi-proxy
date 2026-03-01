@@ -80,7 +80,7 @@ type RunServerRequest struct {
 	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
-	MemorySummarizeDrafts    *bool             // Per-session override for draft summarization; nil means use global config
+	MemorySummarizeDrafts    *bool             // Per-session draft summarization; nil means inherit from team/user settings layers
 }
 
 // Session represents a running agentapi session
