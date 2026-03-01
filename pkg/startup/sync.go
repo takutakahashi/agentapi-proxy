@@ -17,7 +17,6 @@ type SyncOptions struct {
 	SettingsFile              string // Path to the mounted settings.json from Settings Secret
 	OutputDir                 string // Home directory (generates ~/.claude.json and ~/.claude/)
 	CredentialsFile           string // Path to the mounted credentials.json from Credentials Secret (optional)
-	ClaudeMDFile              string // Path to CLAUDE.md file to copy (optional, default: /tmp/config/CLAUDE.md)
 	NotificationSubscriptions string // Path to notification subscriptions directory (optional)
 	NotificationsDir          string // Path to notifications output directory (optional)
 	RegisterMarketplaces      bool   // Register cloned marketplaces using claude CLI
@@ -85,14 +84,6 @@ func Sync(opts SyncOptions) error {
 		if err := syncCredentials(opts.CredentialsFile, opts.OutputDir); err != nil {
 			log.Printf("[SYNC] Warning: failed to sync credentials: %v", err)
 		}
-	}
-
-	claudeMDPath := opts.ClaudeMDFile
-	if claudeMDPath == "" {
-		claudeMDPath = "/tmp/config/CLAUDE.md"
-	}
-	if err := syncClaudeMD(claudeMDPath, opts.OutputDir); err != nil {
-		log.Printf("[SYNC] Warning: failed to sync CLAUDE.md: %v", err)
 	}
 
 	if opts.NotificationSubscriptions != "" && opts.NotificationsDir != "" {
@@ -467,47 +458,14 @@ func syncCredentials(credentialsFile, outputDir string) error {
 	return nil
 }
 
-// syncClaudeMD copies CLAUDE.md from the Docker image to ~/.claude/CLAUDE.md
-func syncClaudeMD(claudeMDPath, outputDir string) error {
-	if _, err := os.Stat(claudeMDPath); os.IsNotExist(err) {
-		log.Printf("[SYNC] CLAUDE.md not found at %s, skipping", claudeMDPath)
-		return nil
-	}
-
-	data, err := os.ReadFile(claudeMDPath)
-	if err != nil {
-		return fmt.Errorf("failed to read CLAUDE.md: %w", err)
-	}
-
-	claudeDir := filepath.Join(outputDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .claude directory: %w", err)
-	}
-
-	destPath := filepath.Join(claudeDir, "CLAUDE.md")
-	if err := os.WriteFile(destPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write CLAUDE.md: %w", err)
-	}
-
-	log.Printf("[SYNC] Copied CLAUDE.md to %s", destPath)
-	return nil
-}
-
-// SyncExtra copies credentials, CLAUDE.md, and notification subscriptions.
+// SyncExtra copies credentials and notification subscriptions.
 // Config files (.claude.json / settings.json) are handled by sessionsettings.Compile.
+// CLAUDE.md is not copied here because the same content is provided via /etc/claude-code/CLAUDE.md.
 func SyncExtra(opts SyncOptions) error {
 	if opts.CredentialsFile != "" {
 		if err := syncCredentials(opts.CredentialsFile, opts.OutputDir); err != nil {
 			log.Printf("[SYNC-EXTRA] Warning: failed to sync credentials: %v", err)
 		}
-	}
-
-	claudeMDPath := opts.ClaudeMDFile
-	if claudeMDPath == "" {
-		claudeMDPath = "/tmp/config/CLAUDE.md"
-	}
-	if err := syncClaudeMD(claudeMDPath, opts.OutputDir); err != nil {
-		log.Printf("[SYNC-EXTRA] Warning: failed to sync CLAUDE.md: %v", err)
 	}
 
 	if opts.NotificationSubscriptions != "" && opts.NotificationsDir != "" {

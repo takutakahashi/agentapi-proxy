@@ -647,7 +647,6 @@ var (
 	syncSettingsFile              string
 	syncOutputDir                 string
 	syncCredentialsFile           string
-	syncClaudeMDFile              string
 	syncNotificationSubscriptions string
 	syncNotificationsDir          string
 	syncRegisterMarketplaces      bool
@@ -694,8 +693,6 @@ func init() {
 		"Output directory (home directory, defaults to $HOME)")
 	syncCmd.Flags().StringVar(&syncCredentialsFile, "credentials-file", "",
 		"Path to the mounted credentials.json from Credentials Secret (optional)")
-	syncCmd.Flags().StringVar(&syncClaudeMDFile, "claude-md-file", "",
-		"Path to CLAUDE.md file to copy (optional, default: /tmp/config/CLAUDE.md)")
 	syncCmd.Flags().StringVar(&syncNotificationSubscriptions, "notification-subscriptions", "",
 		"Path to notification subscriptions directory (optional)")
 	syncCmd.Flags().StringVar(&syncNotificationsDir, "notifications-dir", "",
@@ -720,7 +717,6 @@ func runSync(cmd *cobra.Command, args []string) error {
 		SettingsFile:              syncSettingsFile,
 		OutputDir:                 outputDir,
 		CredentialsFile:           syncCredentialsFile,
-		ClaudeMDFile:              syncClaudeMDFile,
 		NotificationSubscriptions: syncNotificationSubscriptions,
 		NotificationsDir:          syncNotificationsDir,
 		RegisterMarketplaces:      syncRegisterMarketplaces,
@@ -845,7 +841,6 @@ var (
 	setupInputPath                 string
 	setupSettingsFile              string
 	setupCredentialsFile           string
-	setupClaudeMDFile              string
 	setupNotificationSubscriptions string
 	setupNotificationsDir          string
 	setupRegisterMarketplaces      bool
@@ -860,7 +855,7 @@ Reads /session-settings/settings.yaml and performs:
   1. write-pem  - writes GITHUB_APP_PEM to /github-app/app.pem
   2. clone-repo - clones the repository (if session.repository is set)
   3. compile    - generates .claude.json, settings.json, mcp config, env file, startup script
-  4. sync-extra - copies credentials, CLAUDE.md, notification subscriptions
+  4. sync-extra - copies credentials, notification subscriptions
 
 This replaces the old write-pem, clone-repo, merge-settings, sync-config, and setup-mcp
 init containers with a single unified step.
@@ -889,8 +884,6 @@ func init() {
 		"Path to user settings.json with marketplace/plugin config (optional)")
 	setupCmd.Flags().StringVar(&setupCredentialsFile, "credentials-file", "",
 		"Path to credentials.json from Credentials Secret (optional)")
-	setupCmd.Flags().StringVar(&setupClaudeMDFile, "claude-md-file", "",
-		"Path to CLAUDE.md to copy into ~/.claude/CLAUDE.md (optional)")
 	setupCmd.Flags().StringVar(&setupNotificationSubscriptions, "notification-subscriptions", "",
 		"Source directory for notification subscription files (optional)")
 	setupCmd.Flags().StringVar(&setupNotificationsDir, "notifications-dir", "",
@@ -908,7 +901,6 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		SettingsFile:              setupSettingsFile,
 		CompileOptions:            sessionsettings.DefaultCompileOptions(),
 		CredentialsFile:           setupCredentialsFile,
-		ClaudeMDFile:              setupClaudeMDFile,
 		NotificationSubscriptions: setupNotificationSubscriptions,
 		NotificationsDir:          setupNotificationsDir,
 		RegisterMarketplaces:      setupRegisterMarketplaces,

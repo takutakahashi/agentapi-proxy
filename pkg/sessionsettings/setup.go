@@ -24,9 +24,6 @@ type SetupOptions struct {
 	// CredentialsFile is the path to the credentials.json mounted from Secret (optional).
 	CredentialsFile string
 
-	// ClaudeMDFile is the path to CLAUDE.md to copy into ~/.claude/CLAUDE.md (optional).
-	ClaudeMDFile string
-
 	// NotificationSubscriptions is the source directory for notification subscription files (optional).
 	NotificationSubscriptions string
 
@@ -58,7 +55,7 @@ func DefaultSetupOptions() SetupOptions {
 //  1. write-pem  : writes GITHUB_APP_PEM env var to a file on disk
 //  2. clone-repo : clones the repository (if session.repository is set)
 //  3. compile    : generates all Claude config files from settings.yaml
-//  4. sync-extra : copies credentials, CLAUDE.md, notification subscriptions
+//  4. sync-extra : copies credentials, notification subscriptions
 func Setup(opts SetupOptions) error {
 	if opts.InputPath == "" {
 		opts.InputPath = DefaultSetupOptions().InputPath
@@ -200,7 +197,7 @@ func cloneRepo(settings *SessionSettings) error {
 	return nil
 }
 
-// syncExtra handles credentials, CLAUDE.md, notification subscriptions,
+// syncExtra handles credentials, notification subscriptions,
 // and marketplace/plugin registration.
 // ~/.claude.json and ~/.claude/settings.json are already written by the compile step.
 func syncExtra(settings *SessionSettings, opts SetupOptions) error {
@@ -219,7 +216,6 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 	syncOpts := startup.SyncOptions{
 		OutputDir:                 outputDir,
 		CredentialsFile:           opts.CredentialsFile,
-		ClaudeMDFile:              opts.ClaudeMDFile,
 		NotificationSubscriptions: opts.NotificationSubscriptions,
 		NotificationsDir:          opts.NotificationsDir,
 		RegisterMarketplaces:      opts.RegisterMarketplaces,
