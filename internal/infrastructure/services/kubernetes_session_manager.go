@@ -1471,29 +1471,34 @@ rm -f "$MESSAGES_CACHE"
 log "Memory sync complete."
 
 # --- Draft Summarization ---
-# After the final upsert, check whether a draft memory exists for this session.
-# If so, start a one-shot summarization session to condense it into the main memory.
-DRAFT_COUNT=$(agentapi-proxy client memory list \
-    --endpoint "$PROXY_ENDPOINT" \
-    --format json \
-    --tag "draft=true" \
-    --tag "session-id=${AGENTAPI_SESSION_ID}" \
-    --scope "$SCOPE" \
-    ${TEAM_OPTS} 2>/dev/null | jq -r '.total // 0' 2>/dev/null || echo 0)
-
-if [ "${DRAFT_COUNT:-0}" -gt 0 ]; then
-    log "Draft memory found (count=${DRAFT_COUNT}), starting summarization session..."
-    # Convert --tag k=v flags to --key k=v flags expected by summarize-drafts
-    SUMMARIZE_KEY_FLAGS=$(echo "${MEMORY_KEY_FLAGS}" | sed 's/--tag /--key /g')
-    # shellcheck disable=SC2086
-    agentapi-proxy client summarize-drafts \
+# After the final upsert, optionally start a one-shot summarization session to
+# condense the draft memory into the main memory.
+# Controlled by MEMORY_SUMMARIZE_DRAFTS (default: true). Set to "false" to disable.
+if [ "${MEMORY_SUMMARIZE_DRAFTS:-true}" = "true" ]; then
+    DRAFT_COUNT=$(agentapi-proxy client memory list \
         --endpoint "$PROXY_ENDPOINT" \
-        --source-session-id "${AGENTAPI_SESSION_ID}" \
+        --format json \
+        --tag "draft=true" \
+        --tag "session-id=${AGENTAPI_SESSION_ID}" \
         --scope "$SCOPE" \
-        ${TEAM_OPTS} \
-        ${SUMMARIZE_KEY_FLAGS} \
-        && log "Summarization session started successfully" \
-        || log "Warning: failed to start summarization session (non-fatal)"
+        ${TEAM_OPTS} 2>/dev/null | jq -r '.total // 0' 2>/dev/null || echo 0)
+
+    if [ "${DRAFT_COUNT:-0}" -gt 0 ]; then
+        log "Draft memory found (count=${DRAFT_COUNT}), starting summarization session..."
+        # Convert --tag k=v flags to --key k=v flags expected by summarize-drafts
+        SUMMARIZE_KEY_FLAGS=$(echo "${MEMORY_KEY_FLAGS}" | sed 's/--tag /--key /g')
+        # shellcheck disable=SC2086
+        agentapi-proxy client summarize-drafts \
+            --endpoint "$PROXY_ENDPOINT" \
+            --source-session-id "${AGENTAPI_SESSION_ID}" \
+            --scope "$SCOPE" \
+            ${TEAM_OPTS} \
+            ${SUMMARIZE_KEY_FLAGS} \
+            && log "Summarization session started successfully" \
+            || log "Warning: failed to start summarization session (non-fatal)"
+    fi
+else
+    log "Draft summarization disabled (MEMORY_SUMMARIZE_DRAFTS=false)"
 fi
 `
 
@@ -1524,6 +1529,12 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 		scope = "team"
 	}
 
+	// Determine whether draft summarization is enabled (default: true).
+	summarizeDrafts := "true"
+	if m.k8sConfig.MemorySummarizeDrafts != nil && !*m.k8sConfig.MemorySummarizeDrafts {
+		summarizeDrafts = "false"
+	}
+
 	envVars := []corev1.EnvVar{
 		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
@@ -1531,6 +1542,7 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 		{Name: "AGENTAPI_TEAM_ID", Value: req.TeamID},
 		{Name: "MEMORY_KEY_FLAGS", Value: memoryKeyFlags},
 		{Name: "AGENTAPI_KEY", Value: session.ResolvedAPIKey()},
+		{Name: "MEMORY_SUMMARIZE_DRAFTS", Value: summarizeDrafts},
 		// AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP
 		// are injected automatically by Kubernetes service discovery.
 	}

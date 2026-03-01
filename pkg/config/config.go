@@ -280,6 +280,12 @@ type KubernetesSessionConfig struct {
 	// SlackBotTokenSecretKey is the key within the Secret that holds the Slack bot token
 	// Defaults to "bot-token"
 	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
+
+	// MemorySummarizeDrafts controls whether draft memories are automatically summarized
+	// into the main memory when a session ends (via a one-shot summarization session).
+	// Defaults to true when nil. Set to false to disable the feature.
+	// Corresponds to the MEMORY_SUMMARIZE_DRAFTS environment variable in the memory-sync sidecar.
+	MemorySummarizeDrafts *bool `json:"memory_summarize_drafts,omitempty" mapstructure:"memory_summarize_drafts"`
 }
 
 // MemoryConfig represents memory backend configuration
