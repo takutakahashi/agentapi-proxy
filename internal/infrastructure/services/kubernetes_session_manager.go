@@ -1387,9 +1387,25 @@ save_cache() {
 # upsert_draft: upsert a single draft memory entry.
 # Tries a live fetch first; falls back to the cached snapshot so that
 # short-lived (oneshot) sessions are handled correctly.
+sanitize_json() {
+    # Remove ANSI escape sequences and other control characters that cause jq parse errors.
+    # Keeps tab (0x09), newline (0x0a), carriage return (0x0d) which are valid in JSON strings.
+    python3 -c "
+import sys, re
+data = sys.stdin.buffer.read()
+# Strip ANSI escape codes (ESC [ ... m and similar)
+data = re.sub(rb'\x1b\[[0-9;]*[a-zA-Z]', b'', data)
+data = re.sub(rb'\x1b[()][AB]', b'', data)
+# Remove remaining control characters (U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F)
+data = re.sub(rb'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', b'', data)
+sys.stdout.buffer.write(data)
+" 2>/dev/null
+}
+
 upsert_draft() {
-    MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
-    if [ -n "$MESSAGES" ]; then
+    RAW_MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
+    if [ -n "$RAW_MESSAGES" ]; then
+        MESSAGES=$(echo "$RAW_MESSAGES" | sanitize_json)
         save_cache "$MESSAGES"
     else
         log "agentapi unreachable, using cached messages"
@@ -1435,7 +1451,7 @@ DUMP_PID=$!
 # save_cache ensures only non-empty snapshots overwrite the cache.
 log "Monitoring agentapi status..."
 while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
-    _TMP=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
+    _TMP=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | sanitize_json)
     save_cache "$_TMP"
     unset _TMP
     sleep 3
