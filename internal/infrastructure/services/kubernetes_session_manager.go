@@ -1367,11 +1367,12 @@ while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
 done
 
 log "agentapi stopped. Fetching messages..."
-MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null || echo "")
-COUNT=$(echo "$MESSAGES" | jq -r '.messages | length' 2>/dev/null || echo "0")
+MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null || echo "{}")
+COUNT=$(echo "$MESSAGES" | jq -r '.messages | length' 2>/dev/null)
+COUNT=${COUNT:-0}
 log "Found ${COUNT} messages"
 
-if [ "$COUNT" -eq 0 ]; then
+if [ "${COUNT}" = "0" ] || [ -z "${COUNT}" ]; then
     log "No messages to sync, skipping"
     exec sleep infinity
 fi
