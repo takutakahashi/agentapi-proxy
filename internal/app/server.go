@@ -494,6 +494,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		initialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
 	}
 
+	// Resolve memory key: use explicit memory_key if set, otherwise fall back to tags
+	memoryKey := startReq.MemoryKey
+	if len(memoryKey) == 0 {
+		memoryKey = startReq.Tags
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:                   userID,
@@ -509,6 +515,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		SlackParams:              slackParams,
 		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
+		MemoryKey:                memoryKey,
 	}
 
 	// Delegate to session manager

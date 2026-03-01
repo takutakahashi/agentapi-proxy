@@ -3195,6 +3195,17 @@
           "team_id": {
             "type": "string",
             "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
+          },
+          "memory_key": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Custom tag map to identify memories for this session. If not specified or empty, the session tags are used as the memory key. If both are empty, memory integration is disabled.",
+            "example": {
+              "project": "myapp",
+              "env": "production"
+            }
           }
         }
       },

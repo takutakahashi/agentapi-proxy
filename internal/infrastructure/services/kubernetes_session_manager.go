@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -816,6 +817,12 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Added otelcol sidecar for session %s", session.id)
 	}
 
+	// Add memory-sync sidecar when a memory key is configured
+	if sidecar := m.buildMemorySyncSidecar(session); sidecar != nil {
+		containers = append(containers, *sidecar)
+		log.Printf("[K8S_SESSION] Added memory-sync sidecar for session %s", session.id)
+	}
+
 	// Convert config tolerations to corev1 tolerations
 	var tolerations []corev1.Toleration
 	for _, t := range m.k8sConfig.Tolerations {
@@ -1320,6 +1327,138 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:  int64Ptr(0),
 			RunAsGroup: int64Ptr(0),
+		},
+	}
+}
+
+// memorySyncScript is the shell script for the memory-sync sidecar.
+// It waits for agentapi to stop, then fetches the conversation messages and
+// logs what it would upsert (dry-run mode; actual upsert not yet implemented).
+const memorySyncScript = `#!/bin/sh
+AGENTAPI_URL="http://localhost:${AGENTAPI_PORT}"
+PROXY_ENDPOINT="http://${AGENTAPI_PROXY_SERVICE_HOST}:${AGENTAPI_PROXY_SERVICE_PORT_HTTP}"
+
+log() { echo "[$(date -Is)] [memory-sync] $*"; }
+
+# Wait for agentapi to start (up to 120 seconds)
+log "Waiting for agentapi to start..."
+RETRY=0
+while [ $RETRY -lt 120 ]; do
+    curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1 && break
+    RETRY=$((RETRY + 1))
+    sleep 1
+done
+
+if ! curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; then
+    log "agentapi did not start within timeout, exiting"
+    exec sleep infinity
+fi
+
+# Memory key must be configured
+if [ -z "${MEMORY_KEY_FLAGS}" ]; then
+    log "No memory key configured, skipping"
+    exec sleep infinity
+fi
+
+log "Monitoring agentapi status..."
+# Poll until agentapi stops responding
+while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
+    sleep 3
+done
+
+log "agentapi stopped. Fetching messages..."
+MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null || echo "{}")
+COUNT=$(echo "$MESSAGES" | jq -r '.messages | length' 2>/dev/null)
+COUNT=${COUNT:-0}
+log "Found ${COUNT} messages"
+
+if [ "${COUNT}" = "0" ] || [ -z "${COUNT}" ]; then
+    log "No messages to sync, skipping"
+    exec sleep infinity
+fi
+
+# Write conversation as Markdown
+CONTENT_FILE=$(mktemp /tmp/memory-content-XXXXXX.md)
+echo "## Conversation Transcript" >> "$CONTENT_FILE"
+echo "" >> "$CONTENT_FILE"
+echo "$MESSAGES" | jq -r '.messages[] | if .role == "user" then "**User:** " + .content else "**Assistant:** " + .content end + "\n"' \
+    >> "$CONTENT_FILE" 2>/dev/null
+
+SCOPE="${AGENTAPI_SCOPE:-user}"
+TEAM_OPTS=""
+if [ "$SCOPE" = "team" ] && [ -n "${AGENTAPI_TEAM_ID}" ]; then
+    TEAM_OPTS="--team-id ${AGENTAPI_TEAM_ID}"
+fi
+
+log "[DRY RUN] Would upsert memory with:"
+log "  flags:         ${MEMORY_KEY_FLAGS}"
+log "  title:         Session ${AGENTAPI_SESSION_ID}"
+log "  scope:         ${SCOPE}"
+log "  content lines: $(wc -l < "$CONTENT_FILE")"
+log "[DRY RUN] Skipping actual upsert (summary-based write not yet implemented)"
+
+rm -f "$CONTENT_FILE"
+exec sleep infinity
+`
+
+// buildMemorySyncSidecar creates a sidecar container that syncs conversation
+// history to the memory store when the session's agentapi process stops.
+// Returns nil if no memory key is configured for the session.
+func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSession) *corev1.Container {
+	req := session.Request()
+	if len(req.MemoryKey) == 0 {
+		return nil
+	}
+
+	// Build MEMORY_KEY_FLAGS in sorted key order for determinism
+	keys := make([]string, 0, len(req.MemoryKey))
+	for k := range req.MemoryKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var flags []string
+	for _, k := range keys {
+		flags = append(flags, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
+	}
+	memoryKeyFlags := strings.Join(flags, " ")
+
+	scope := "user"
+	if req.Scope == entities.ScopeTeam {
+		scope = "team"
+	}
+
+	envVars := []corev1.EnvVar{
+		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
+		{Name: "AGENTAPI_SCOPE", Value: scope},
+		{Name: "AGENTAPI_TEAM_ID", Value: req.TeamID},
+		{Name: "MEMORY_KEY_FLAGS", Value: memoryKeyFlags},
+		{Name: "AGENTAPI_KEY", Value: session.ResolvedAPIKey()},
+		// AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP
+		// are injected automatically by Kubernetes service discovery.
+	}
+
+	return &corev1.Container{
+		Name:            "memory-sync",
+		Image:           m.k8sConfig.Image,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"/bin/sh", "-c"},
+		Args:            []string{memorySyncScript},
+		Env:             envVars,
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  int64Ptr(999),
+			RunAsGroup: int64Ptr(999),
 		},
 	}
 }
@@ -2153,6 +2292,32 @@ if [ -f /home/agentapi/.session/env ]; then
     set +a
 fi
 
+# Fetch session memory from proxy and inject into CLAUDE.md
+if [ -n "$MEMORY_KEY_FLAGS" ]; then
+    echo "[STARTUP] Fetching session memory (keys: $MEMORY_KEY_FLAGS)"
+    PROXY_ENDPOINT="http://${AGENTAPI_PROXY_SERVICE_HOST}:${AGENTAPI_PROXY_SERVICE_PORT_HTTP}"
+    MEMORY_SCOPE="${AGENTAPI_SCOPE:-user}"
+    MEMORY_TEAM_OPTS=""
+    if [ "$MEMORY_SCOPE" = "team" ] && [ -n "$AGENTAPI_TEAM_ID" ]; then
+        MEMORY_TEAM_OPTS="--team-id $AGENTAPI_TEAM_ID"
+    fi
+    MEMORY_CONTENT=$(agentapi-proxy client memory list \
+        $MEMORY_KEY_FLAGS \
+        --scope "$MEMORY_SCOPE" \
+        $MEMORY_TEAM_OPTS \
+        --format markdown \
+        --endpoint "$PROXY_ENDPOINT" 2>/dev/null || echo "")
+    if [ -n "$MEMORY_CONTENT" ]; then
+        echo "" >> /home/agentapi/.claude/CLAUDE.md
+        echo "---" >> /home/agentapi/.claude/CLAUDE.md
+        echo "" >> /home/agentapi/.claude/CLAUDE.md
+        echo "$MEMORY_CONTENT" >> /home/agentapi/.claude/CLAUDE.md
+        echo "[STARTUP] Memory injected into CLAUDE.md"
+    else
+        echo "[STARTUP] No memory found for this session (non-fatal)"
+    fi
+fi
+
 # cd into repo if it was cloned
 if [ -d /home/agentapi/workdir/repo ]; then
     echo "[STARTUP] Changing to repo directory"
@@ -2692,6 +2857,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		AgentType: req.AgentType,
 		Oneshot:   req.Oneshot,
 		Teams:     req.Teams,
+		MemoryKey: req.MemoryKey,
 	}
 
 	// Build env vars (mirrors buildEnvVars logic from line 2695)
@@ -2800,7 +2966,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// Expand personal API key directly from repository for user-scoped sessions
-	if req.Scope == entities.ScopeUser && m.personalAPIKeyRepo != nil {
+	// Treat empty scope as user scope (default behavior)
+	if (req.Scope == entities.ScopeUser || req.Scope == "") && m.personalAPIKeyRepo != nil {
 		apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(req.UserID))
 		if err != nil {
 			// If no API key exists, create a new one automatically
@@ -2844,6 +3011,33 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	materialized := m.resolveSettings(ctx, session, req)
 	for k, v := range materialized.EnvVars {
 		env[k] = v
+	}
+
+	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
+	// and memory-sync sidecar. Flags are sorted for deterministic shell script expansion.
+	if len(req.MemoryKey) > 0 {
+		keys := make([]string, 0, len(req.MemoryKey))
+		for k := range req.MemoryKey {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		var flags []string
+		for _, k := range keys {
+			flags = append(flags, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
+		}
+		env["MEMORY_KEY_FLAGS"] = strings.Join(flags, " ")
+
+		memoryScope := "user"
+		if req.Scope == entities.ScopeTeam {
+			memoryScope = "team"
+		}
+		env["AGENTAPI_SCOPE"] = memoryScope
+	}
+
+	// Cache the resolved API key in the session for use by the memory-sync sidecar
+	if apiKey, ok := env["AGENTAPI_KEY"]; ok && apiKey != "" {
+		session.SetResolvedAPIKey(apiKey)
 	}
 
 	settings.Env = env
