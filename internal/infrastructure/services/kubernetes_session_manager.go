@@ -1374,13 +1374,23 @@ fi
 MESSAGES_CACHE=$(mktemp /tmp/messages-cache-XXXXXX.json)
 echo '{"messages":[]}' > "$MESSAGES_CACHE"
 
+# save_cache: write $1 (messages JSON) to MESSAGES_CACHE only when the
+# message array is non-empty, so a failed or empty fetch never clobbers a
+# previously captured snapshot.
+save_cache() {
+    _CNT=$(echo "$1" | jq -r '.messages | length' 2>/dev/null)
+    if [ "${_CNT:-0}" -gt "0" ]; then
+        echo "$1" > "$MESSAGES_CACHE"
+    fi
+}
+
 # upsert_draft: upsert a single draft memory entry.
 # Tries a live fetch first; falls back to the cached snapshot so that
 # short-lived (oneshot) sessions are handled correctly.
 upsert_draft() {
     MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
     if [ -n "$MESSAGES" ]; then
-        echo "$MESSAGES" > "$MESSAGES_CACHE"
+        save_cache "$MESSAGES"
     else
         log "agentapi unreachable, using cached messages"
         MESSAGES=$(cat "$MESSAGES_CACHE" 2>/dev/null || echo '{"messages":[]}')
@@ -1422,9 +1432,12 @@ DUMP_PID=$!
 
 # Poll until agentapi stops responding; refresh the messages cache on every
 # iteration so the final upsert below has a fresh snapshot even after agentapi exits.
+# save_cache ensures only non-empty snapshots overwrite the cache.
 log "Monitoring agentapi status..."
 while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
-    curl -sf "${AGENTAPI_URL}/messages" > "$MESSAGES_CACHE" 2>/dev/null || true
+    _TMP=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
+    save_cache "$_TMP"
+    unset _TMP
     sleep 3
 done
 
