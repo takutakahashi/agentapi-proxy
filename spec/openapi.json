@@ -4035,6 +4035,14 @@
           "preferred_team_id": {
             "type": "string",
             "description": "Team ID in 'org/team-slug' format whose settings to use exclusively. When set, only this team's settings (Bedrock, MCP servers, env vars, etc.) are applied in sessions. Empty string clears the setting and restores default behavior (all teams merged). If omitted on first save and the user belongs to exactly one team, it is auto-set to that team."
+          },
+          "memory_enabled": {
+            "type": "boolean",
+            "description": "Whether memory integration is enabled for sessions. When false, memory_key is ignored and memory integration is disabled even if a memory key is present. When omitted or null, the setting is inherited from lower-priority layers (default: enabled when memory_key is available)."
+          },
+          "memory_summarize_drafts": {
+            "type": "boolean",
+            "description": "Whether draft memories are automatically summarized into main memory when a session ends. When true, a one-shot summarization session starts after each session ends. When false, summarization is skipped. When omitted, the setting is inherited from lower-priority layers (default: disabled)."
           }
         }
       },
@@ -4179,6 +4187,14 @@
           "preferred_team_id": {
             "type": "string",
             "description": "Team ID in 'org/team-slug' format whose settings are used exclusively in sessions. Empty string means all teams are merged in the default order."
+          },
+          "memory_enabled": {
+            "type": "boolean",
+            "description": "Whether memory integration is enabled for sessions. Null means the setting is not configured (inherited from lower-priority layers)."
+          },
+          "memory_summarize_drafts": {
+            "type": "boolean",
+            "description": "Whether draft memories are automatically summarized into main memory when a session ends. Null means the setting is not configured (inherited from lower-priority layers)."
           },
           "created_at": {
             "type": "string",
