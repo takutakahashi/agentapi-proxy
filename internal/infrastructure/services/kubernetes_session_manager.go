@@ -1333,7 +1333,7 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 
 // memorySyncScript is the shell script for the memory-sync sidecar.
 // It waits for agentapi to stop, then fetches the conversation messages and
-// upserts them into the proxy memory store.
+// logs what it would upsert (dry-run mode; actual upsert not yet implemented).
 const memorySyncScript = `#!/bin/sh
 AGENTAPI_URL="http://localhost:${AGENTAPI_PORT}"
 PROXY_ENDPOINT="http://${AGENTAPI_PROXY_SERVICE_HOST}:${AGENTAPI_PROXY_SERVICE_PORT_HTTP}"
@@ -1389,16 +1389,12 @@ if [ "$SCOPE" = "team" ] && [ -n "${AGENTAPI_TEAM_ID}" ]; then
     TEAM_OPTS="--team-id ${AGENTAPI_TEAM_ID}"
 fi
 
-log "Upserting memory via agentapi-proxy client..."
-agentapi-proxy client memory upsert \
-    ${MEMORY_KEY_FLAGS} \
-    --title "Session ${AGENTAPI_SESSION_ID}" \
-    --content-file "$CONTENT_FILE" \
-    --scope "$SCOPE" \
-    $TEAM_OPTS \
-    --endpoint "$PROXY_ENDPOINT" \
-    && log "Memory upserted successfully" \
-    || log "ERROR: Failed to upsert memory"
+log "[DRY RUN] Would upsert memory with:"
+log "  flags:         ${MEMORY_KEY_FLAGS}"
+log "  title:         Session ${AGENTAPI_SESSION_ID}"
+log "  scope:         ${SCOPE}"
+log "  content lines: $(wc -l < "$CONTENT_FILE")"
+log "[DRY RUN] Skipping actual upsert (summary-based write not yet implemented)"
 
 rm -f "$CONTENT_FILE"
 exec sleep infinity
