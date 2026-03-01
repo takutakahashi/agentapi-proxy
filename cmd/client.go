@@ -1003,20 +1003,17 @@ func runSummarizeDrafts(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	memoryKey, err := parseKeyValueFlags(summarizeDraftsKeys)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid --key flag: %v\n", err)
-		os.Exit(1)
-	}
-
 	today := time.Now().Format("2006-01-02")
 	initialMessage := buildSummarizationMessage(summarizeDraftsSourceSessionID, today)
 
 	ctx := context.Background()
 	req := &client.StartRequest{
-		Scope:     summarizeDraftsScope,
-		TeamID:    summarizeDraftsTeamID,
-		MemoryKey: memoryKey,
+		Scope:  summarizeDraftsScope,
+		TeamID: summarizeDraftsTeamID,
+		// MemoryKey is intentionally not set for summarization sessions.
+		// The session uses MCP tools to access memories directly, and we don't
+		// want the summarization session to create its own draft memory which
+		// would trigger another summarization session (infinite loop).
 		Params: &client.StartParams{
 			Message: initialMessage,
 			Oneshot: true,
