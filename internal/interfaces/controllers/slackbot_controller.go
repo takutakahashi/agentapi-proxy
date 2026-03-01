@@ -39,6 +39,9 @@ type CreateSlackBotRequest struct {
 	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
 	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
 	MaxSessions         int                    `json:"max_sessions,omitempty"`
+	// NotifyOnSessionCreated controls whether the bot posts a Slack message with
+	// the session URL when a new session is created. Defaults to true.
+	NotifyOnSessionCreated *bool `json:"notify_on_session_created,omitempty"`
 }
 
 // UpdateSlackBotRequest is the request body for updating a SlackBot
@@ -55,6 +58,9 @@ type UpdateSlackBotRequest struct {
 	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
 	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
 	MaxSessions         int                    `json:"max_sessions,omitempty"`
+	// NotifyOnSessionCreated controls whether the bot posts a Slack message with
+	// the session URL when a new session is created. Defaults to true.
+	NotifyOnSessionCreated *bool `json:"notify_on_session_created,omitempty"`
 }
 
 // SlackBotSessionConfig is the session configuration for a SlackBot
@@ -74,21 +80,22 @@ type SlackBotSessionParams struct {
 
 // SlackBotResponse is the API response for a SlackBot
 type SlackBotResponse struct {
-	ID                  string                  `json:"id"`
-	Name                string                  `json:"name"`
-	UserID              string                  `json:"user_id"`
-	Scope               entities.ResourceScope  `json:"scope,omitempty"`
-	TeamID              string                  `json:"team_id,omitempty"`
-	Teams               []string                `json:"teams,omitempty"`
-	Status              entities.SlackBotStatus `json:"status"`
-	BotTokenSecretName  string                  `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey   string                  `json:"bot_token_secret_key,omitempty"`
-	AllowedEventTypes   []string                `json:"allowed_event_types,omitempty"`
-	AllowedChannelNames []string                `json:"allowed_channel_names,omitempty"`
-	SessionConfig       *SlackBotSessionConfig  `json:"session_config,omitempty"`
-	MaxSessions         int                     `json:"max_sessions"`
-	CreatedAt           time.Time               `json:"created_at"`
-	UpdatedAt           time.Time               `json:"updated_at"`
+	ID                     string                  `json:"id"`
+	Name                   string                  `json:"name"`
+	UserID                 string                  `json:"user_id"`
+	Scope                  entities.ResourceScope  `json:"scope,omitempty"`
+	TeamID                 string                  `json:"team_id,omitempty"`
+	Teams                  []string                `json:"teams,omitempty"`
+	Status                 entities.SlackBotStatus `json:"status"`
+	BotTokenSecretName     string                  `json:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey      string                  `json:"bot_token_secret_key,omitempty"`
+	AllowedEventTypes      []string                `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames    []string                `json:"allowed_channel_names,omitempty"`
+	SessionConfig          *SlackBotSessionConfig  `json:"session_config,omitempty"`
+	MaxSessions            int                     `json:"max_sessions"`
+	NotifyOnSessionCreated bool                    `json:"notify_on_session_created"`
+	CreatedAt              time.Time               `json:"created_at"`
+	UpdatedAt              time.Time               `json:"updated_at"`
 }
 
 // --- Handler methods ---
@@ -144,6 +151,9 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	}
 	if req.SessionConfig != nil {
 		bot.SetSessionConfig(toEntitySessionConfig(req.SessionConfig))
+	}
+	if req.NotifyOnSessionCreated != nil {
+		bot.SetNotifyOnSessionCreated(req.NotifyOnSessionCreated)
 	}
 
 	// Set team memberships so that sessions created by this bot receive team-level
@@ -266,6 +276,9 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 	if req.SessionConfig != nil {
 		bot.SetSessionConfig(toEntitySessionConfig(req.SessionConfig))
 	}
+	if req.NotifyOnSessionCreated != nil {
+		bot.SetNotifyOnSessionCreated(req.NotifyOnSessionCreated)
+	}
 
 	// Update team memberships.
 	// If an explicit list is supplied in the request, use it (allows API-key users
@@ -315,20 +328,21 @@ func (c *SlackBotController) DeleteSlackBot(ctx echo.Context) error {
 
 func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotResponse {
 	resp := &SlackBotResponse{
-		ID:                  bot.ID(),
-		Name:                bot.Name(),
-		UserID:              bot.UserID(),
-		Scope:               bot.Scope(),
-		TeamID:              bot.TeamID(),
-		Teams:               bot.Teams(),
-		Status:              bot.Status(),
-		BotTokenSecretName:  bot.BotTokenSecretName(),
-		BotTokenSecretKey:   bot.BotTokenSecretKey(),
-		AllowedEventTypes:   bot.AllowedEventTypes(),
-		AllowedChannelNames: bot.AllowedChannelNames(),
-		MaxSessions:         bot.MaxSessions(),
-		CreatedAt:           bot.CreatedAt(),
-		UpdatedAt:           bot.UpdatedAt(),
+		ID:                     bot.ID(),
+		Name:                   bot.Name(),
+		UserID:                 bot.UserID(),
+		Scope:                  bot.Scope(),
+		TeamID:                 bot.TeamID(),
+		Teams:                  bot.Teams(),
+		Status:                 bot.Status(),
+		BotTokenSecretName:     bot.BotTokenSecretName(),
+		BotTokenSecretKey:      bot.BotTokenSecretKey(),
+		AllowedEventTypes:      bot.AllowedEventTypes(),
+		AllowedChannelNames:    bot.AllowedChannelNames(),
+		MaxSessions:            bot.MaxSessions(),
+		NotifyOnSessionCreated: bot.NotifyOnSessionCreated(),
+		CreatedAt:              bot.CreatedAt(),
+		UpdatedAt:              bot.UpdatedAt(),
 	}
 	if bot.SessionConfig() != nil {
 		resp.SessionConfig = fromEntitySessionConfig(bot.SessionConfig())

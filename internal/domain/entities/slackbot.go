@@ -20,22 +20,23 @@ const (
 // Each SlackBot corresponds to a Slack App installation (one bot token).
 // In Socket Mode, events are received via WebSocket rather than HTTP webhook.
 type SlackBot struct {
-	id                  string
-	name                string
-	userID              string
-	scope               ResourceScope
-	teamID              string
-	teams               []string // GitHub team slugs (e.g., ["org/team-a"]) resolved at create/update time
-	status              SlackBotStatus
-	botTokenSecretName  string                // K8s Secret name for xoxb-... token; empty = use global default
-	botTokenSecretKey   string                // Key within the Secret; default: "bot-token"
-	appTokenSecretKey   string                // Key within botTokenSecretName Secret for xapp-... token; default: "app-token"
-	allowedEventTypes   []string              // Empty means all event types
-	allowedChannelNames []string              // Empty means all channels; partial match on resolved channel name
-	sessionConfig       *WebhookSessionConfig // Reuse existing type
-	maxSessions         int
-	createdAt           time.Time
-	updatedAt           time.Time
+	id                     string
+	name                   string
+	userID                 string
+	scope                  ResourceScope
+	teamID                 string
+	teams                  []string // GitHub team slugs (e.g., ["org/team-a"]) resolved at create/update time
+	status                 SlackBotStatus
+	botTokenSecretName     string                // K8s Secret name for xoxb-... token; empty = use global default
+	botTokenSecretKey      string                // Key within the Secret; default: "bot-token"
+	appTokenSecretKey      string                // Key within botTokenSecretName Secret for xapp-... token; default: "app-token"
+	allowedEventTypes      []string              // Empty means all event types
+	allowedChannelNames    []string              // Empty means all channels; partial match on resolved channel name
+	sessionConfig          *WebhookSessionConfig // Reuse existing type
+	maxSessions            int
+	notifyOnSessionCreated *bool // nil means true (default: notify)
+	createdAt              time.Time
+	updatedAt              time.Time
 }
 
 // NewSlackBot creates a new SlackBot entity with defaults
@@ -199,6 +200,28 @@ func (s *SlackBot) MaxSessions() int {
 func (s *SlackBot) SetMaxSessions(max int) {
 	s.maxSessions = max
 	s.updatedAt = time.Now()
+}
+
+// NotifyOnSessionCreated returns whether the SlackBot should post a notification
+// to Slack when a new session is created. Defaults to true if not explicitly set.
+func (s *SlackBot) NotifyOnSessionCreated() bool {
+	if s.notifyOnSessionCreated == nil {
+		return true
+	}
+	return *s.notifyOnSessionCreated
+}
+
+// SetNotifyOnSessionCreated sets whether the SlackBot should post a notification
+// to Slack when a new session is created.
+func (s *SlackBot) SetNotifyOnSessionCreated(v *bool) {
+	s.notifyOnSessionCreated = v
+	s.updatedAt = time.Now()
+}
+
+// RawNotifyOnSessionCreated returns the raw pointer for serialization.
+// nil means the field was never explicitly set (treated as true).
+func (s *SlackBot) RawNotifyOnSessionCreated() *bool {
+	return s.notifyOnSessionCreated
 }
 
 // CreatedAt returns the creation time
