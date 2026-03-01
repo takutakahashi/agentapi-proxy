@@ -157,6 +157,11 @@ func (r *KubernetesMemoryRepository) List(ctx context.Context, filter repositori
 			continue
 		}
 
+		// In-process filter: exclude tags (must NOT match all exclude tag conditions)
+		if len(filter.ExcludeTags) > 0 && memory.MatchesTags(filter.ExcludeTags) {
+			continue
+		}
+
 		// In-process filter: full-text search (title + content)
 		if !memory.MatchesText(filter.Query) {
 			continue

@@ -140,7 +140,7 @@ func (c *MemoryController) GetMemory(ctx echo.Context) error {
 }
 
 // ListMemories handles GET /memories
-// Query params: scope, team_id, tag.*, q
+// Query params: scope, team_id, tag.*, exclude_tag.*, q
 func (c *MemoryController) ListMemories(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
@@ -151,6 +151,7 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 	teamIDParam := ctx.QueryParam("team_id")
 	query := ctx.QueryParam("q")
 	tagFilters := c.parseTagFilters(ctx)
+	excludeTagFilters := c.parseExcludeTagFilters(ctx)
 
 	var memories []*entities.Memory
 
@@ -158,10 +159,11 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 	case string(entities.ScopeUser):
 		// User-scoped: always restrict to own entries
 		filter := portrepos.MemoryFilter{
-			Scope:   entities.ScopeUser,
-			OwnerID: string(user.ID()),
-			Tags:    tagFilters,
-			Query:   query,
+			Scope:       entities.ScopeUser,
+			OwnerID:     string(user.ID()),
+			Tags:        tagFilters,
+			ExcludeTags: excludeTagFilters,
+			Query:       query,
 		}
 		result, err := c.repo.List(ctx.Request().Context(), filter)
 		if err != nil {
@@ -178,10 +180,11 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusForbidden, "Access denied: not a member of the specified team")
 		}
 		filter := portrepos.MemoryFilter{
-			Scope:  entities.ScopeTeam,
-			TeamID: teamIDParam,
-			Tags:   tagFilters,
-			Query:  query,
+			Scope:       entities.ScopeTeam,
+			TeamID:      teamIDParam,
+			Tags:        tagFilters,
+			ExcludeTags: excludeTagFilters,
+			Query:       query,
 		}
 		result, err := c.repo.List(ctx.Request().Context(), filter)
 		if err != nil {
@@ -193,10 +196,11 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 		// No scope filter: return own user-scoped + all team-scoped entries for user's teams
 		// Two separate calls are needed (OR logic across different label keys is not expressible as a single K8s label selector)
 		userFilter := portrepos.MemoryFilter{
-			Scope:   entities.ScopeUser,
-			OwnerID: string(user.ID()),
-			Tags:    tagFilters,
-			Query:   query,
+			Scope:       entities.ScopeUser,
+			OwnerID:     string(user.ID()),
+			Tags:        tagFilters,
+			ExcludeTags: excludeTagFilters,
+			Query:       query,
 		}
 		userEntries, err := c.repo.List(ctx.Request().Context(), userFilter)
 		if err != nil {
@@ -207,10 +211,11 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 		var teamEntries []*entities.Memory
 		if len(teamIDs) > 0 {
 			teamFilter := portrepos.MemoryFilter{
-				Scope:   entities.ScopeTeam,
-				TeamIDs: teamIDs,
-				Tags:    tagFilters,
-				Query:   query,
+				Scope:       entities.ScopeTeam,
+				TeamIDs:     teamIDs,
+				Tags:        tagFilters,
+				ExcludeTags: excludeTagFilters,
+				Query:       query,
 			}
 			teamEntries, err = c.repo.List(ctx.Request().Context(), teamFilter)
 			if err != nil {
@@ -375,6 +380,22 @@ func (c *MemoryController) parseTagFilters(ctx echo.Context) map[string]string {
 	for key, values := range ctx.QueryParams() {
 		if strings.HasPrefix(key, "tag.") && len(values) > 0 {
 			tagKey := strings.TrimPrefix(key, "tag.")
+			if tagKey != "" {
+				tags[tagKey] = values[0]
+			}
+		}
+	}
+	return tags
+}
+
+// parseExcludeTagFilters extracts exclude_tag.* query parameters from the request.
+// For example: "?exclude_tag.draft=true" returns map[string]string{"draft": "true"}.
+// Memories matching ALL of these tags are excluded from the results.
+func (c *MemoryController) parseExcludeTagFilters(ctx echo.Context) map[string]string {
+	tags := make(map[string]string)
+	for key, values := range ctx.QueryParams() {
+		if strings.HasPrefix(key, "exclude_tag.") && len(values) > 0 {
+			tagKey := strings.TrimPrefix(key, "exclude_tag.")
 			if tagKey != "" {
 				tags[tagKey] = values[0]
 			}
