@@ -2969,7 +2969,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// Expand personal API key directly from repository for user-scoped sessions
-	if req.Scope == entities.ScopeUser && m.personalAPIKeyRepo != nil {
+	// Treat empty scope as user scope (default behavior)
+	if (req.Scope == entities.ScopeUser || req.Scope == "") && m.personalAPIKeyRepo != nil {
 		apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(req.UserID))
 		if err != nil {
 			// If no API key exists, create a new one automatically
