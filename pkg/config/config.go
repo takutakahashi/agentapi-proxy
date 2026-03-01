@@ -591,6 +591,9 @@ func bindEnvVars(v *viper.Viper) {
 	// Settings base secret configuration
 	_ = v.BindEnv("kubernetes_session.settings_base_secret", "AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET")
 
+	// Draft memory summarization configuration
+	_ = v.BindEnv("kubernetes_session.memory_summarize_drafts", "AGENTAPI_K8S_SESSION_MEMORY_SUMMARIZE_DRAFTS")
+
 	// OpenTelemetry Collector configuration
 	_ = v.BindEnv("kubernetes_session.otel_collector_enabled", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED")
 	_ = v.BindEnv("kubernetes_session.otel_collector_image", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IMAGE")

@@ -459,6 +459,12 @@ kubernetesSession:
       # Defaults to "signing-secret"
       key: "signing-secret"
 
+  # Draft Memory Summarization
+  # When enabled, a one-shot summarization session is automatically started after each session ends
+  # to consolidate draft memories (created by the memory-sync sidecar) into the main memory.
+  # Set to false to disable automatic draft summarization.
+  memorySummarizeDrafts: true
+
   # OpenTelemetry Collector Configuration
   # Enables Prometheus metrics collection from Claude Code in session pods
   otelCollector:

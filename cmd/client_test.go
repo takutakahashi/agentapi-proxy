@@ -94,9 +94,10 @@ func TestSummarizeDraftsWithMockServer(t *testing.T) {
 	assert.Equal(t, true, params["oneshot"])
 	assert.Contains(t, params["message"], "src-session-111")
 
-	memoryKey, ok := reqBody["memory_key"].(map[string]interface{})
-	assert.True(t, ok, "memory_key should be present")
-	assert.Equal(t, "myapp", memoryKey["project"])
+	// memory_key must NOT be set to prevent infinite summarization loops:
+	// if a summarization session had memory_key, it would get its own memory-sync sidecar,
+	// which would create a draft, triggering another summarization session recursively.
+	assert.Nil(t, reqBody["memory_key"], "memory_key must not be present in summarization session request")
 
 	// Reset flags
 	endpoint = ""
