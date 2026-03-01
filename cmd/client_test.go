@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,87 @@ func TestClientCmd(t *testing.T) {
 	// Test command structure
 	assert.Equal(t, "client", ClientCmd.Use)
 	assert.Equal(t, "AgentAPI Client CLI", ClientCmd.Short)
+}
+
+func TestSummarizeDraftsCmd(t *testing.T) {
+	assert.Equal(t, "summarize-drafts", summarizeDraftsCmd.Use)
+	assert.NotNil(t, summarizeDraftsCmd.Run)
+
+	// Verify flags are registered
+	assert.NotNil(t, summarizeDraftsCmd.Flags().Lookup("source-session-id"))
+	assert.NotNil(t, summarizeDraftsCmd.Flags().Lookup("scope"))
+	assert.NotNil(t, summarizeDraftsCmd.Flags().Lookup("team-id"))
+	assert.NotNil(t, summarizeDraftsCmd.Flags().Lookup("key"))
+}
+
+func TestBuildSummarizationMessage(t *testing.T) {
+	msg := buildSummarizationMessage("session-abc123", "2026-03-01")
+
+	// Must contain the source session ID
+	assert.Contains(t, msg, "session-abc123")
+	// Must contain the date
+	assert.Contains(t, msg, "2026-03-01")
+	// Must reference draft=true tag
+	assert.Contains(t, msg, "draft=true")
+	// Must mention delete_memory tool
+	assert.Contains(t, msg, "delete_memory")
+	// Must mention list_memories tool
+	assert.Contains(t, msg, "list_memories")
+}
+
+func TestSummarizeDraftsWithMockServer(t *testing.T) {
+	// Create a mock server that records the /start request
+	var receivedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/start" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var err error
+		receivedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		resp := client.StartResponse{SessionID: "summarization-session-xyz"}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	// Set up flags
+	endpoint = server.URL
+	summarizeDraftsSourceSessionID = "src-session-111"
+	summarizeDraftsScope = "user"
+	summarizeDraftsTeamID = ""
+	summarizeDraftsKeys = []string{"project=myapp"}
+
+	var buf bytes.Buffer
+	summarizeDraftsCmd.SetOut(&buf)
+
+	// Run the command (wraps runSummarizeDrafts but doesn't call os.Exit on success)
+	runSummarizeDrafts(summarizeDraftsCmd, []string{})
+
+	// Verify the request body contains the expected fields
+	var reqBody map[string]interface{}
+	err := json.Unmarshal(receivedBody, &reqBody)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "user", reqBody["scope"])
+
+	params, ok := reqBody["params"].(map[string]interface{})
+	assert.True(t, ok, "params should be present")
+	assert.Equal(t, true, params["oneshot"])
+	assert.Contains(t, params["message"], "src-session-111")
+
+	memoryKey, ok := reqBody["memory_key"].(map[string]interface{})
+	assert.True(t, ok, "memory_key should be present")
+	assert.Equal(t, "myapp", memoryKey["project"])
+
+	// Reset flags
+	endpoint = ""
+	summarizeDraftsSourceSessionID = ""
+	summarizeDraftsKeys = nil
 }
 
 func TestClientCmdInit(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/client"
@@ -46,6 +47,14 @@ var (
 	memoryTags        []string
 	memoryKeys        []string
 	memoryFormat      string
+)
+
+// summarize-drafts subcommand flags
+var (
+	summarizeDraftsSourceSessionID string
+	summarizeDraftsScope           string
+	summarizeDraftsTeamID          string
+	summarizeDraftsKeys            []string
 )
 
 // resolveClient creates a client using flags if provided, otherwise falling back
@@ -244,6 +253,30 @@ Examples:
 	Run: runMemoryUpsert,
 }
 
+var summarizeDraftsCmd = &cobra.Command{
+	Use:   "summarize-drafts",
+	Short: "Create a one-shot session to summarize draft memories",
+	Long: `Create a one-shot session that summarizes draft memories from a completed session.
+
+The session will check for draft memories tagged with session-id=<source-session-id>
+and draft=true, summarize their content, update the corresponding main memory with a
+date snapshot, and delete the draft memories.
+
+This command is typically called automatically by the memory-sync sidecar when a
+session with memory_key configured stops. It can also be invoked manually.
+
+Examples:
+  agentapi-proxy client summarize-drafts \
+    --source-session-id abc123 \
+    --scope user
+
+  agentapi-proxy client summarize-drafts \
+    --source-session-id abc123 \
+    --scope team --team-id myorg/myteam \
+    --key project=myapp --key env=prod`,
+	Run: runSummarizeDrafts,
+}
+
 var taskCmd = &cobra.Command{
 	Use:   "task",
 	Short: "Manage tasks",
@@ -390,11 +423,18 @@ func init() {
 	memoryCmd.AddCommand(memoryDeleteCmd)
 	memoryCmd.AddCommand(memoryUpsertCmd)
 
+	// summarize-drafts flags
+	summarizeDraftsCmd.Flags().StringVar(&summarizeDraftsSourceSessionID, "source-session-id", "", "Session ID whose draft memories should be summarized (required)")
+	summarizeDraftsCmd.Flags().StringVar(&summarizeDraftsScope, "scope", "user", `Memory scope: "user" or "team"`)
+	summarizeDraftsCmd.Flags().StringVar(&summarizeDraftsTeamID, "team-id", "", "Team ID (required when scope is 'team')")
+	summarizeDraftsCmd.Flags().StringArrayVar(&summarizeDraftsKeys, "key", nil, "Memory key tag in key=value format (can be specified multiple times)")
+
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
 	ClientCmd.AddCommand(eventsCmd)
 	ClientCmd.AddCommand(deleteSessionCmd)
+	ClientCmd.AddCommand(summarizeDraftsCmd)
 	ClientCmd.AddCommand(taskCmd)
 	ClientCmd.AddCommand(memoryCmd)
 }
@@ -929,6 +969,67 @@ func runMemoryUpsert(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	fmt.Println(string(out))
+}
+
+// buildSummarizationMessage returns the initial message for the draft summarization session.
+func buildSummarizationMessage(sourceSessionID, today string) string {
+	return fmt.Sprintf(
+		"前のセッション（セッション ID: %s）のドラフトメモリをサマライズし、メモリを更新してください。\n\n"+
+			"## 作業手順\n\n"+
+			"1. `list_memories` ツールで以下の条件のメモリを取得してください\n"+
+			"   - タグ: `session-id=%s` かつ `draft=true`\n"+
+			"2. ドラフトの会話ログから重要な情報・決定事項・知見を抽出してください\n"+
+			"3. 対応するメインメモリを探してください（同じ memory_key タグを持ち `draft` タグのないもの）\n"+
+			"   - 存在しない場合は新規作成してください\n"+
+			"4. メインメモリを次の方針で更新してください\n"+
+			"   - 本日（%s）の日付スナップショットセクションを追加し、抽出した重要情報を記録\n"+
+			"   - 重複・陳腐化した内容は削除\n"+
+			"   - 将来的に参照価値の高い決定事項・知見を優先して残す\n"+
+			"5. ドラフトメモリを `delete_memory` ツールで削除してください\n\n"+
+			"ドラフトメモリが見つからない場合はその旨を確認して終了してください。",
+		sourceSessionID, sourceSessionID, today,
+	)
+}
+
+func runSummarizeDrafts(cmd *cobra.Command, args []string) {
+	if summarizeDraftsSourceSessionID == "" {
+		fmt.Fprintf(os.Stderr, "Error: --source-session-id is required\n")
+		os.Exit(1)
+	}
+
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	memoryKey, err := parseKeyValueFlags(summarizeDraftsKeys)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid --key flag: %v\n", err)
+		os.Exit(1)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	initialMessage := buildSummarizationMessage(summarizeDraftsSourceSessionID, today)
+
+	ctx := context.Background()
+	req := &client.StartRequest{
+		Scope:     summarizeDraftsScope,
+		TeamID:    summarizeDraftsTeamID,
+		MemoryKey: memoryKey,
+		Params: &client.StartParams{
+			Message: initialMessage,
+			Oneshot: true,
+		},
+	}
+
+	resp, err := c.Start(ctx, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating summarization session: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Summarization session created: %s\n", resp.SessionID)
 }
 
 func runDeleteSession(cmd *cobra.Command, args []string) {

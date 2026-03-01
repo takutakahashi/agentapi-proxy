@@ -1447,6 +1447,32 @@ log "agentapi stopped. Performing final memory upsert..."
 upsert_draft
 rm -f "$MESSAGES_CACHE"
 log "Memory sync complete."
+
+# --- Draft Summarization ---
+# After the final upsert, check whether a draft memory exists for this session.
+# If so, start a one-shot summarization session to condense it into the main memory.
+DRAFT_COUNT=$(agentapi-proxy client memory list \
+    --endpoint "$PROXY_ENDPOINT" \
+    --format json \
+    --tag "draft=true" \
+    --tag "session-id=${AGENTAPI_SESSION_ID}" \
+    --scope "$SCOPE" \
+    ${TEAM_OPTS} 2>/dev/null | jq -r '.total // 0' 2>/dev/null || echo 0)
+
+if [ "${DRAFT_COUNT:-0}" -gt 0 ]; then
+    log "Draft memory found (count=${DRAFT_COUNT}), starting summarization session..."
+    # Convert --tag k=v flags to --key k=v flags expected by summarize-drafts
+    SUMMARIZE_KEY_FLAGS=$(echo "${MEMORY_KEY_FLAGS}" | sed 's/--tag /--key /g')
+    # shellcheck disable=SC2086
+    agentapi-proxy client summarize-drafts \
+        --endpoint "$PROXY_ENDPOINT" \
+        --source-session-id "${AGENTAPI_SESSION_ID}" \
+        --scope "$SCOPE" \
+        ${TEAM_OPTS} \
+        ${SUMMARIZE_KEY_FLAGS} \
+        && log "Summarization session started successfully" \
+        || log "Warning: failed to start summarization session (non-fatal)"
+fi
 `
 
 // buildMemorySyncSidecar creates a sidecar container that syncs conversation
