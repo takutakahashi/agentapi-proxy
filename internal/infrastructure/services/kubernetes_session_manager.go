@@ -1369,10 +1369,22 @@ if [ "$SCOPE" = "team" ] && [ -n "${AGENTAPI_TEAM_ID}" ]; then
     TEAM_OPTS="--team-id ${AGENTAPI_TEAM_ID}"
 fi
 
-# upsert_draft: fetch current messages and upsert a single draft memory entry.
-# Uses --key session-id + --key draft=true for idempotent create-or-update.
+# Cache file: refreshed every 3s in the monitoring loop so the final upsert
+# has a fresh snapshot even after agentapi has stopped responding to /messages.
+MESSAGES_CACHE=$(mktemp /tmp/messages-cache-XXXXXX.json)
+echo '{"messages":[]}' > "$MESSAGES_CACHE"
+
+# upsert_draft: upsert a single draft memory entry.
+# Tries a live fetch first; falls back to the cached snapshot so that
+# short-lived (oneshot) sessions are handled correctly.
 upsert_draft() {
-    MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null || echo "{}")
+    MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
+    if [ -n "$MESSAGES" ]; then
+        echo "$MESSAGES" > "$MESSAGES_CACHE"
+    else
+        log "agentapi unreachable, using cached messages"
+        MESSAGES=$(cat "$MESSAGES_CACHE" 2>/dev/null || echo '{"messages":[]}')
+    fi
     COUNT=$(echo "$MESSAGES" | jq -r '.messages | length' 2>/dev/null)
     COUNT=${COUNT:-0}
     if [ "${COUNT}" = "0" ]; then
@@ -1408,9 +1420,11 @@ while true; do
 done &
 DUMP_PID=$!
 
-# Poll until agentapi stops responding
+# Poll until agentapi stops responding; refresh the messages cache on every
+# iteration so the final upsert below has a fresh snapshot even after agentapi exits.
 log "Monitoring agentapi status..."
 while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
+    curl -sf "${AGENTAPI_URL}/messages" > "$MESSAGES_CACHE" 2>/dev/null || true
     sleep 3
 done
 
@@ -1418,6 +1432,7 @@ done
 kill "$DUMP_PID" 2>/dev/null
 log "agentapi stopped. Performing final memory upsert..."
 upsert_draft
+rm -f "$MESSAGES_CACHE"
 log "Memory sync complete."
 `
 
