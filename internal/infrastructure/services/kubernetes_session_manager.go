@@ -1529,10 +1529,10 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 		scope = "team"
 	}
 
-	// Determine whether draft summarization is enabled (default: true).
-	summarizeDrafts := "true"
-	if m.k8sConfig.MemorySummarizeDrafts != nil && !*m.k8sConfig.MemorySummarizeDrafts {
-		summarizeDrafts = "false"
+	// Determine whether draft summarization is enabled (default: false).
+	summarizeDrafts := "false"
+	if m.k8sConfig.MemorySummarizeDrafts != nil && *m.k8sConfig.MemorySummarizeDrafts {
+		summarizeDrafts = "true"
 	}
 
 	envVars := []corev1.EnvVar{

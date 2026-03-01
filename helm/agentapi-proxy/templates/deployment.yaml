@@ -278,7 +278,7 @@ spec:
             {{- end }}
             # Draft memory summarization toggle
             - name: AGENTAPI_K8S_SESSION_MEMORY_SUMMARIZE_DRAFTS
-              value: {{ .Values.kubernetesSession.memorySummarizeDrafts | default true | quote }}
+              value: {{ .Values.kubernetesSession.memorySummarizeDrafts | default false | quote }}
             # Settings base secret (proxy-side merge of settings.json)
             - name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET
               value: {{ .Values.kubernetesSession.settingsBaseSecret | default "agentapi-settings-base" | quote }}
