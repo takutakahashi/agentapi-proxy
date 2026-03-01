@@ -1374,44 +1374,44 @@ fi
 MESSAGES_CACHE=$(mktemp /tmp/messages-cache-XXXXXX.json)
 echo '{"messages":[]}' > "$MESSAGES_CACHE"
 
+# count_messages: count "role" occurrences without JSON parsing.
+# Avoids jq failures when message content contains unescaped control chars
+# (e.g. raw newlines, ANSI codes) from terminal rendering.
+count_messages() {
+    echo "$1" | grep -c '"role":' 2>/dev/null || echo 0
+}
+
 # save_cache: write $1 (messages JSON) to MESSAGES_CACHE only when the
 # message array is non-empty, so a failed or empty fetch never clobbers a
 # previously captured snapshot.
 save_cache() {
-    _CNT=$(echo "$1" | jq -r '.messages | length' 2>/dev/null)
+    _CNT=$(count_messages "$1")
     if [ "${_CNT:-0}" -gt "0" ]; then
         echo "$1" > "$MESSAGES_CACHE"
     fi
 }
 
+# sanitize_json: remove ANSI escape sequences and control characters that
+# cause strict JSON parsers (e.g. jq 1.7+) to reject the input.
+# Strips 0x00-0x08, 0x0B (VT), 0x0C (FF), 0x0E-0x1F (includes ESC=0x1B),
+# and 0x7F (DEL).  Uses only POSIX tr available in busybox and alpine.
+sanitize_json() {
+    LC_ALL=C tr -d '\000\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177'
+}
+
 # upsert_draft: upsert a single draft memory entry.
 # Tries a live fetch first; falls back to the cached snapshot so that
 # short-lived (oneshot) sessions are handled correctly.
-sanitize_json() {
-    # Remove ANSI escape sequences and other control characters that cause jq parse errors.
-    # Keeps tab (0x09), newline (0x0a), carriage return (0x0d) which are valid in JSON strings.
-    python3 -c "
-import sys, re
-data = sys.stdin.buffer.read()
-# Strip ANSI escape codes (ESC [ ... m and similar)
-data = re.sub(rb'\x1b\[[0-9;]*[a-zA-Z]', b'', data)
-data = re.sub(rb'\x1b[()][AB]', b'', data)
-# Remove remaining control characters (U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F)
-data = re.sub(rb'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', b'', data)
-sys.stdout.buffer.write(data)
-" 2>/dev/null
-}
-
 upsert_draft() {
     RAW_MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
     if [ -n "$RAW_MESSAGES" ]; then
-        MESSAGES=$(echo "$RAW_MESSAGES" | sanitize_json)
-        save_cache "$MESSAGES"
+        save_cache "$RAW_MESSAGES"
+        MESSAGES="$RAW_MESSAGES"
     else
         log "agentapi unreachable, using cached messages"
         MESSAGES=$(cat "$MESSAGES_CACHE" 2>/dev/null || echo '{"messages":[]}')
     fi
-    COUNT=$(echo "$MESSAGES" | jq -r '.messages | length' 2>/dev/null)
+    COUNT=$(count_messages "$MESSAGES")
     COUNT=${COUNT:-0}
     if [ "${COUNT}" = "0" ]; then
         log "No messages yet, skipping"
@@ -1421,8 +1421,14 @@ upsert_draft() {
     CONTENT_FILE=$(mktemp /tmp/memory-content-XXXXXX.md)
     echo "## Conversation Transcript" > "$CONTENT_FILE"
     echo "" >> "$CONTENT_FILE"
-    echo "$MESSAGES" | jq -r '.messages[] | if .role == "user" then "**User:** " + .content else "**Assistant:** " + .content end + "\n"' \
-        >> "$CONTENT_FILE" 2>/dev/null
+    # Try sanitize + jq for clean formatting; fall back to raw dump on parse error.
+    FORMATTED=$(echo "$MESSAGES" | sanitize_json | \
+        jq -r '.messages[] | if .role == "user" then "**User:** " + .content else "**Assistant:** " + .content end + "\n"' 2>/dev/null)
+    if [ -n "$FORMATTED" ]; then
+        printf '%s\n' "$FORMATTED" >> "$CONTENT_FILE"
+    else
+        echo "$MESSAGES" >> "$CONTENT_FILE"
+    fi
     # shellcheck disable=SC2086
     agentapi-proxy client memory upsert \
         --endpoint "$PROXY_ENDPOINT" \
@@ -1451,7 +1457,7 @@ DUMP_PID=$!
 # save_cache ensures only non-empty snapshots overwrite the cache.
 log "Monitoring agentapi status..."
 while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
-    _TMP=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | sanitize_json)
+    _TMP=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
     save_cache "$_TMP"
     unset _TMP
     sleep 3
