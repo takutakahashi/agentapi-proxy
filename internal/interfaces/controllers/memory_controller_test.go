@@ -400,7 +400,7 @@ func TestListMemories_TagFilter_Applied(t *testing.T) {
 	_ = repo.Create(context.Background(), m2)
 
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/memories?scope=user&tag.cat=a", nil)
+	req := httptest.NewRequest(http.MethodGet, "/memories?scope=user&include_tag.cat=a", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.Set("internal_user", user)

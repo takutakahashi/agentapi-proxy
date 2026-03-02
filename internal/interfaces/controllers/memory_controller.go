@@ -140,7 +140,7 @@ func (c *MemoryController) GetMemory(ctx echo.Context) error {
 }
 
 // ListMemories handles GET /memories
-// Query params: scope, team_id, tag.*, exclude_tag.*, q
+// Query params: scope, team_id, include_tag.*, exclude_tag.*, q
 func (c *MemoryController) ListMemories(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
@@ -150,7 +150,7 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 	scopeParam := ctx.QueryParam("scope")
 	teamIDParam := ctx.QueryParam("team_id")
 	query := ctx.QueryParam("q")
-	tagFilters := c.parseTagFilters(ctx)
+	includeTagFilters := c.parseIncludeTagFilters(ctx)
 	excludeTagFilters := c.parseExcludeTagFilters(ctx)
 
 	var memories []*entities.Memory
@@ -161,7 +161,7 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 		filter := portrepos.MemoryFilter{
 			Scope:       entities.ScopeUser,
 			OwnerID:     string(user.ID()),
-			Tags:        tagFilters,
+			Tags:        includeTagFilters,
 			ExcludeTags: excludeTagFilters,
 			Query:       query,
 		}
@@ -182,7 +182,7 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 		filter := portrepos.MemoryFilter{
 			Scope:       entities.ScopeTeam,
 			TeamID:      teamIDParam,
-			Tags:        tagFilters,
+			Tags:        includeTagFilters,
 			ExcludeTags: excludeTagFilters,
 			Query:       query,
 		}
@@ -198,7 +198,7 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 		userFilter := portrepos.MemoryFilter{
 			Scope:       entities.ScopeUser,
 			OwnerID:     string(user.ID()),
-			Tags:        tagFilters,
+			Tags:        includeTagFilters,
 			ExcludeTags: excludeTagFilters,
 			Query:       query,
 		}
@@ -213,7 +213,7 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 			teamFilter := portrepos.MemoryFilter{
 				Scope:       entities.ScopeTeam,
 				TeamIDs:     teamIDs,
-				Tags:        tagFilters,
+				Tags:        includeTagFilters,
 				ExcludeTags: excludeTagFilters,
 				Query:       query,
 			}
@@ -372,14 +372,15 @@ func (c *MemoryController) isMemberOfTeam(user *entities.User, teamID string) bo
 	return user.IsMemberOfTeam(teamID)
 }
 
-// parseTagFilters extracts tag.* query parameters from the request.
-// For example: "?tag.category=meeting&tag.project=alpha"
+// parseIncludeTagFilters extracts include_tag.* query parameters from the request.
+// For example: "?include_tag.category=meeting&include_tag.project=alpha"
 // returns map[string]string{"category": "meeting", "project": "alpha"}
-func (c *MemoryController) parseTagFilters(ctx echo.Context) map[string]string {
+// Memories matching ALL of these tags are included in the results (AND logic).
+func (c *MemoryController) parseIncludeTagFilters(ctx echo.Context) map[string]string {
 	tags := make(map[string]string)
 	for key, values := range ctx.QueryParams() {
-		if strings.HasPrefix(key, "tag.") && len(values) > 0 {
-			tagKey := strings.TrimPrefix(key, "tag.")
+		if strings.HasPrefix(key, "include_tag.") && len(values) > 0 {
+			tagKey := strings.TrimPrefix(key, "include_tag.")
 			if tagKey != "" {
 				tags[tagKey] = values[0]
 			}
