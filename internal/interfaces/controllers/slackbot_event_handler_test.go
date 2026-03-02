@@ -651,6 +651,70 @@ func TestProcessEvent_BotMessage_Subtype_Ignored(t *testing.T) {
 	assert.Equal(t, 0, sessionMgr.createdCount(), "bot_message subtype must be ignored to prevent recursion")
 }
 
+// TestProcessEvent_BotMessage_AllowBotMessages_BotID verifies that when allow_bot_messages=true,
+// messages with a non-empty bot_id are processed and a session is created.
+func TestProcessEvent_BotMessage_AllowBotMessages_BotID(t *testing.T) {
+	const botID = "allow-bot-messages-bot-uuid"
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Allow Bot Messages Bot", "user-1")
+	allowBotMessages := true
+	bot.SetAllowBotMessages(&allowBotMessages)
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
+
+	payload := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:    "app_mention",
+			BotID:   "B-some-bot-id", // bot-posted message
+			Text:    "<@U-bot> こんにちは",
+			Channel: "C-channel",
+			Ts:      "200.001",
+		},
+	}
+
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 1, sessionMgr.createdCount(), "bot message must be processed when allow_bot_messages=true")
+}
+
+// TestProcessEvent_BotMessage_AllowBotMessages_Subtype verifies that when allow_bot_messages=true,
+// messages with subtype="bot_message" are processed and a session is created.
+func TestProcessEvent_BotMessage_AllowBotMessages_Subtype(t *testing.T) {
+	const botID = "allow-bot-messages-subtype-uuid"
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Allow Bot Messages Subtype Bot", "user-1")
+	allowBotMessages := true
+	bot.SetAllowBotMessages(&allowBotMessages)
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
+
+	payload := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:    "message",
+			SubType: "bot_message",
+			Text:    "bot からのメッセージ",
+			Channel: "C-channel",
+			Ts:      "200.002",
+		},
+	}
+
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 1, sessionMgr.createdCount(), "bot_message subtype must be processed when allow_bot_messages=true")
+}
+
 // TestProcessEvent_ReuseSession_RoutesToExistingSession verifies that a follow-up message in the
 // same channel+thread is routed to the existing active session via SendMessage, not a new session.
 func TestProcessEvent_ReuseSession_RoutesToExistingSession(t *testing.T) {

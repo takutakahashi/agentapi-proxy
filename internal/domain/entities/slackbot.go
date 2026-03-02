@@ -35,6 +35,7 @@ type SlackBot struct {
 	sessionConfig          *WebhookSessionConfig // Reuse existing type
 	maxSessions            int
 	notifyOnSessionCreated *bool // nil means true (default: notify)
+	allowBotMessages       *bool // nil means false (default: ignore bot messages)
 	createdAt              time.Time
 	updatedAt              time.Time
 }
@@ -222,6 +223,27 @@ func (s *SlackBot) SetNotifyOnSessionCreated(v *bool) {
 // nil means the field was never explicitly set (treated as true).
 func (s *SlackBot) RawNotifyOnSessionCreated() *bool {
 	return s.notifyOnSessionCreated
+}
+
+// AllowBotMessages returns whether the SlackBot should process messages from bots.
+// Defaults to false (bot messages are ignored to prevent recursive session creation).
+func (s *SlackBot) AllowBotMessages() bool {
+	if s.allowBotMessages == nil {
+		return false
+	}
+	return *s.allowBotMessages
+}
+
+// SetAllowBotMessages sets whether the SlackBot should process messages from bots.
+func (s *SlackBot) SetAllowBotMessages(v *bool) {
+	s.allowBotMessages = v
+	s.updatedAt = time.Now()
+}
+
+// RawAllowBotMessages returns the raw pointer for serialization.
+// nil means the field was never explicitly set (treated as false).
+func (s *SlackBot) RawAllowBotMessages() *bool {
+	return s.allowBotMessages
 }
 
 // CreatedAt returns the creation time

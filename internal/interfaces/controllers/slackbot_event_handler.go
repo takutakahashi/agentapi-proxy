@@ -99,14 +99,6 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 
 	event := payload.Event
 
-	// Ignore messages posted by bots (including this bot itself) to prevent
-	// recursive session creation: bot posts "session created" → triggers another event
-	// → creates another session → infinite loop.
-	if event.BotID != "" || event.SubType == "bot_message" {
-		log.Printf("[SLACKBOT] Ignoring bot message: botID=%s, event.bot_id=%s, subtype=%s", botID, event.BotID, event.SubType)
-		return nil
-	}
-
 	// Resolve the bot entity (nil for "default" when no registered bot matches)
 	bot, err := h.resolveSlackBot(ctx, botID)
 	if err != nil {
@@ -134,6 +126,16 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		bot = resolvedBot
 		botID = resolvedBot.ID()
 		log.Printf("[SLACKBOT] Default endpoint: identified bot by channel filter: id=%s, channel=%s", botID, event.Channel)
+	}
+
+	// Filter bot messages unless the bot explicitly opts in via AllowBotMessages.
+	// By default, messages from bots are ignored to prevent recursive session creation:
+	// bot posts "session created" → triggers another event → creates another session → infinite loop.
+	// When allow_bot_messages is true on the bot config, this filter is skipped.
+	allowBotMessages := bot != nil && bot.AllowBotMessages()
+	if !allowBotMessages && (event.BotID != "" || event.SubType == "bot_message") {
+		log.Printf("[SLACKBOT] Ignoring bot message: botID=%s, event.bot_id=%s, subtype=%s", botID, event.BotID, event.SubType)
+		return nil
 	}
 
 	// Apply filters (if this is a registered bot, not default)
