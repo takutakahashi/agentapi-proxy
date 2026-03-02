@@ -2287,6 +2287,14 @@
             "schema": {"type": "string"}
           },
           {
+            "name": "include_tag.{key}",
+            "in": "query",
+            "description": "Include only memories whose tags contain ALL of the specified key=value pairs. For example, `include_tag.category=news` returns only memories tagged with `category=news`. Multiple include_tag parameters are AND-combined.",
+            "required": false,
+            "schema": {"type": "string"},
+            "example": "include_tag.category=news"
+          },
+          {
             "name": "exclude_tag.{key}",
             "in": "query",
             "description": "Exclude memories whose tags contain ALL of the specified key=value pairs. For example, `exclude_tag.draft=true` excludes memories tagged with `draft=true`. Multiple exclude_tag parameters are AND-combined.",
