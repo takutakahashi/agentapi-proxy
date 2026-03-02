@@ -73,8 +73,8 @@ COPY --from=ghcr.io/github/github-mcp-server:v0.26.3 /server/github-mcp-server /
 USER agentapi
 
 # Configure global gitignore for .claude directory and mise.toml
-RUN git config --global core.excludesfile ~/.gitignore_global && \
-    printf ".claude/\nmise.toml\n" > ~/.gitignore_global
+COPY config/gitignore_global /home/agentapi/.gitignore_global
+RUN git config --global core.excludesfile ~/.gitignore_global
 
 # Set Go environment variables to use /home/agentapi directory
 ENV GOPATH=/home/agentapi/go
