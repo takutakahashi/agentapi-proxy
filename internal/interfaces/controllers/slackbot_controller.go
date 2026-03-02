@@ -187,9 +187,17 @@ func (c *SlackBotController) ListSlackBots(ctx echo.Context) error {
 		teamIDs = authzCtx.TeamScope.Teams
 	}
 
+	// Read optional query parameters for filtering
+	scopeParam := ctx.QueryParam("scope")
+	teamIDParam := ctx.QueryParam("team_id")
+	statusParam := ctx.QueryParam("status")
+
 	filter := repositories.SlackBotFilter{
 		UserID:  userID,
 		TeamIDs: teamIDs,
+		Scope:   entities.ResourceScope(scopeParam),
+		TeamID:  teamIDParam,
+		Status:  entities.SlackBotStatus(statusParam),
 	}
 
 	bots, err := c.repo.List(ctx.Request().Context(), filter)

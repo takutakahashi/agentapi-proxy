@@ -72,6 +72,16 @@ func (r *mockSlackBotRepository) List(_ context.Context, filter portrepos.SlackB
 		if !accessible {
 			continue
 		}
+		// Apply additional explicit filters (mirrors KubernetesSlackBotRepository.List)
+		if filter.Status != "" && bot.Status() != filter.Status {
+			continue
+		}
+		if filter.Scope != "" && bot.Scope() != filter.Scope {
+			continue
+		}
+		if filter.TeamID != "" && bot.TeamID() != filter.TeamID {
+			continue
+		}
 		result = append(result, bot)
 	}
 	return result, nil
@@ -360,4 +370,127 @@ func TestListSlackBots_CreatorSeesOwnTeamBot(t *testing.T) {
 	var bots []SlackBotResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
 	assert.Len(t, bots, 1, "creator should see their own team-scoped bot")
+}
+
+// --- ListSlackBots query parameter filter tests ---
+
+// makeSlackBotEchoContextWithQuery creates an echo context with query parameters in the URL.
+func makeSlackBotEchoContextWithQuery(t *testing.T, path string, userID string, teamIDs []string) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, path, bytes.NewReader([]byte("{}")))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	if userID != "" {
+		user := entities.NewUser(entities.UserID(userID), entities.UserTypeAPIKey, userID)
+		c.Set("internal_user", user)
+
+		authzCtx := &auth.AuthorizationContext{
+			User: user,
+			PersonalScope: auth.PersonalScopeAuth{
+				UserID:    userID,
+				CanCreate: true,
+				CanRead:   true,
+				CanUpdate: true,
+				CanDelete: true,
+			},
+			TeamScope: auth.TeamScopeAuth{
+				Teams:           teamIDs,
+				TeamPermissions: make(map[string]auth.TeamPermissions),
+				IsAdmin:         false,
+			},
+		}
+		for _, tid := range teamIDs {
+			authzCtx.TeamScope.TeamPermissions[tid] = auth.TeamPermissions{
+				TeamID:    tid,
+				CanCreate: true,
+				CanRead:   true,
+				CanUpdate: true,
+				CanDelete: true,
+			}
+		}
+		c.Set("authz_context", authzCtx)
+	}
+	return c, rec
+}
+
+// TestListSlackBots_ScopeFilter verifies that the scope query parameter filters results correctly.
+func TestListSlackBots_ScopeFilter(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo)
+
+	// Add a user-scoped bot and a team-scoped bot owned by the same user
+	userBot := entities.NewSlackBot("bot-user-scope", "User Bot", "user-1")
+	userBot.SetScope(entities.ScopeUser)
+	repo.bots["bot-user-scope"] = userBot
+
+	teamBot := entities.NewSlackBot("bot-team-scope", "Team Bot", "user-1")
+	teamBot.SetScope(entities.ScopeTeam)
+	teamBot.SetTeamID("myorg/backend")
+	repo.bots["bot-team-scope"] = teamBot
+
+	// Filter by scope=user — should only return the user-scoped bot
+	c, rec := makeSlackBotEchoContextWithQuery(t, "/slackbots?scope=user", "user-1", []string{"myorg/backend"})
+	err := controller.ListSlackBots(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var bots []SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
+	assert.Len(t, bots, 1, "scope=user should return only user-scoped bots")
+	assert.Equal(t, "bot-user-scope", bots[0].ID)
+}
+
+// TestListSlackBots_TeamIDFilter verifies that the team_id query parameter filters results correctly.
+func TestListSlackBots_TeamIDFilter(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo)
+
+	// Add two team-scoped bots for different teams
+	backendBot := entities.NewSlackBot("bot-backend", "Backend Bot", "user-1")
+	backendBot.SetScope(entities.ScopeTeam)
+	backendBot.SetTeamID("myorg/backend")
+	repo.bots["bot-backend"] = backendBot
+
+	frontendBot := entities.NewSlackBot("bot-frontend", "Frontend Bot", "user-1")
+	frontendBot.SetScope(entities.ScopeTeam)
+	frontendBot.SetTeamID("myorg/frontend")
+	repo.bots["bot-frontend"] = frontendBot
+
+	// Filter by team_id=myorg/backend — should only return the backend bot
+	c, rec := makeSlackBotEchoContextWithQuery(t, "/slackbots?team_id=myorg%2Fbackend", "user-1", []string{"myorg/backend", "myorg/frontend"})
+	err := controller.ListSlackBots(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var bots []SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
+	assert.Len(t, bots, 1, "team_id filter should return only bots for that team")
+	assert.Equal(t, "bot-backend", bots[0].ID)
+}
+
+// TestListSlackBots_StatusFilter verifies that the status query parameter filters results correctly.
+func TestListSlackBots_StatusFilter(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo)
+
+	activeBot := entities.NewSlackBot("bot-active", "Active Bot", "user-1")
+	activeBot.SetStatus(entities.SlackBotStatusActive)
+	repo.bots["bot-active"] = activeBot
+
+	pausedBot := entities.NewSlackBot("bot-paused", "Paused Bot", "user-1")
+	pausedBot.SetStatus(entities.SlackBotStatusPaused)
+	repo.bots["bot-paused"] = pausedBot
+
+	// Filter by status=paused — should only return the paused bot
+	c, rec := makeSlackBotEchoContextWithQuery(t, "/slackbots?status=paused", "user-1", nil)
+	err := controller.ListSlackBots(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var bots []SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bots))
+	assert.Len(t, bots, 1, "status filter should return only paused bots")
+	assert.Equal(t, "bot-paused", bots[0].ID)
 }
