@@ -3130,6 +3130,12 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		req.MemorySummarizeDrafts = materialized.MemorySummarizeDrafts
 	}
 
+	// Propagate memory_enabled from the settings layer: when explicitly set to false,
+	// clear the memory key to disable memory integration regardless of the session request.
+	if materialized.MemoryEnabled != nil && !*materialized.MemoryEnabled {
+		req.MemoryKey = nil
+	}
+
 	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
 	// and memory-sync sidecar. Flags are sorted for deterministic shell script expansion.
 	if len(req.MemoryKey) > 0 {

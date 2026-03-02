@@ -69,6 +69,12 @@ type SettingsPatch struct {
 	// true = enable draft summarization.
 	// false = explicitly disable draft summarization.
 	MemorySummarizeDrafts *bool `json:"memory_summarize_drafts,omitempty"`
+
+	// MemoryEnabled controls whether memory integration is active for sessions.
+	// nil = inherit from lower layer (default: enabled when memory_key is available).
+	// true = explicitly enable memory integration.
+	// false = explicitly disable memory integration (memory_key is ignored even if set).
+	MemoryEnabled *bool `json:"memory_enabled,omitempty"`
 }
 
 // BedrockPatch holds AWS Bedrock configuration.

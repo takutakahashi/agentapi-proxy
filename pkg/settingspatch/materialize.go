@@ -28,6 +28,11 @@ type MaterializedSettings struct {
 	// automatically summarized into main memory when the session ends.
 	// nil = not configured by any settings layer (default: disabled).
 	MemorySummarizeDrafts *bool
+
+	// MemoryEnabled indicates whether memory integration is active.
+	// nil = not configured by any settings layer (default: enabled when memory_key is available).
+	// false = memory integration is explicitly disabled; memory_key is ignored.
+	MemoryEnabled *bool
 }
 
 // Materialize converts a resolved SettingsPatch into concrete session configuration.
@@ -105,6 +110,9 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 
 	// 5a. MemorySummarizeDrafts — pass through as-is (nil = not configured).
 	result.MemorySummarizeDrafts = resolved.MemorySummarizeDrafts
+
+	// 5b. MemoryEnabled — pass through as-is (nil = not configured).
+	result.MemoryEnabled = resolved.MemoryEnabled
 
 	// 6. Claude SettingsJSON (marketplaces, plugins, hooks).
 	settingsMap := make(map[string]interface{})
