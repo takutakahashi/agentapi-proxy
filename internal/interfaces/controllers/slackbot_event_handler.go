@@ -99,14 +99,6 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 
 	event := payload.Event
 
-	// Ignore messages posted by bots (including this bot itself) to prevent
-	// recursive session creation: bot posts "session created" → triggers another event
-	// → creates another session → infinite loop.
-	if event.BotID != "" || event.SubType == "bot_message" {
-		log.Printf("[SLACKBOT] Ignoring bot message: botID=%s, event.bot_id=%s, subtype=%s", botID, event.BotID, event.SubType)
-		return nil
-	}
-
 	// Resolve the bot entity (nil for "default" when no registered bot matches)
 	bot, err := h.resolveSlackBot(ctx, botID)
 	if err != nil {
@@ -136,12 +128,25 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		log.Printf("[SLACKBOT] Default endpoint: identified bot by channel filter: id=%s, channel=%s", botID, event.Channel)
 	}
 
-	// Apply filters (if this is a registered bot, not default)
+	// Hard guardrail: paused bots never respond to any event, regardless of allow_bot_messages
+	// or any other setting. This check must remain first among all bot-level filters.
+	if bot != nil && bot.Status() == entities.SlackBotStatusPaused {
+		log.Printf("[SLACKBOT] Bot is paused, ignoring all events: id=%s", botID)
+		return nil
+	}
+
+	// Filter bot messages unless the bot explicitly opts in via AllowBotMessages.
+	// By default, messages from bots are ignored to prevent recursive session creation:
+	// bot posts "session created" → triggers another event → creates another session → infinite loop.
+	// When allow_bot_messages is true on the bot config, this filter is skipped.
+	allowBotMessages := bot != nil && bot.AllowBotMessages()
+	if !allowBotMessages && (event.BotID != "" || event.SubType == "bot_message") {
+		log.Printf("[SLACKBOT] Ignoring bot message: botID=%s, event.bot_id=%s, subtype=%s", botID, event.BotID, event.SubType)
+		return nil
+	}
+
+	// Apply remaining filters (if this is a registered bot, not default)
 	if bot != nil {
-		if bot.Status() == entities.SlackBotStatusPaused {
-			log.Printf("[SLACKBOT] Bot is paused: id=%s", botID)
-			return nil
-		}
 		if !bot.IsEventTypeAllowed(event.Type) {
 			log.Printf("[SLACKBOT] Event type not allowed: id=%s, type=%s", botID, event.Type)
 			return nil

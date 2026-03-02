@@ -4631,6 +4631,11 @@
           "type": "boolean",
           "description": "Whether to post a Slack notification with the session URL when a new session is created. Defaults to true.",
           "default": true
+        },
+        "allow_bot_messages": {
+          "type": "boolean",
+          "description": "Whether to process messages posted by other bots. Defaults to false to prevent recursive session creation.",
+          "default": false
         }
       }
     },
@@ -4677,6 +4682,11 @@
           "type": "boolean",
           "description": "Whether to post a Slack notification with the session URL when a new session is created. Defaults to true.",
           "default": true
+        },
+        "allow_bot_messages": {
+          "type": "boolean",
+          "description": "Whether to process messages posted by other bots. Defaults to false to prevent recursive session creation.",
+          "default": false
         }
       }
     },
@@ -4746,6 +4756,10 @@
         "notify_on_session_created": {
           "type": "boolean",
           "description": "Whether the bot posts a Slack notification with the session URL when a new session is created. Defaults to true."
+        },
+        "allow_bot_messages": {
+          "type": "boolean",
+          "description": "Whether the bot processes messages posted by other bots. Defaults to false."
         },
         "created_at": {
           "type": "string",

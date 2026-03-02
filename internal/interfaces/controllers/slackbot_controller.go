@@ -42,6 +42,9 @@ type CreateSlackBotRequest struct {
 	// NotifyOnSessionCreated controls whether the bot posts a Slack message with
 	// the session URL when a new session is created. Defaults to true.
 	NotifyOnSessionCreated *bool `json:"notify_on_session_created,omitempty"`
+	// AllowBotMessages controls whether the bot processes messages posted by other bots.
+	// Defaults to false to prevent recursive session creation.
+	AllowBotMessages *bool `json:"allow_bot_messages,omitempty"`
 }
 
 // UpdateSlackBotRequest is the request body for updating a SlackBot
@@ -61,6 +64,9 @@ type UpdateSlackBotRequest struct {
 	// NotifyOnSessionCreated controls whether the bot posts a Slack message with
 	// the session URL when a new session is created. Defaults to true.
 	NotifyOnSessionCreated *bool `json:"notify_on_session_created,omitempty"`
+	// AllowBotMessages controls whether the bot processes messages posted by other bots.
+	// Defaults to false to prevent recursive session creation.
+	AllowBotMessages *bool `json:"allow_bot_messages,omitempty"`
 }
 
 // SlackBotSessionConfig is the session configuration for a SlackBot
@@ -94,6 +100,7 @@ type SlackBotResponse struct {
 	SessionConfig          *SlackBotSessionConfig  `json:"session_config,omitempty"`
 	MaxSessions            int                     `json:"max_sessions"`
 	NotifyOnSessionCreated bool                    `json:"notify_on_session_created"`
+	AllowBotMessages       bool                    `json:"allow_bot_messages"`
 	CreatedAt              time.Time               `json:"created_at"`
 	UpdatedAt              time.Time               `json:"updated_at"`
 }
@@ -154,6 +161,9 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	}
 	if req.NotifyOnSessionCreated != nil {
 		bot.SetNotifyOnSessionCreated(req.NotifyOnSessionCreated)
+	}
+	if req.AllowBotMessages != nil {
+		bot.SetAllowBotMessages(req.AllowBotMessages)
 	}
 
 	// Set team memberships so that sessions created by this bot receive team-level
@@ -287,6 +297,9 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 	if req.NotifyOnSessionCreated != nil {
 		bot.SetNotifyOnSessionCreated(req.NotifyOnSessionCreated)
 	}
+	if req.AllowBotMessages != nil {
+		bot.SetAllowBotMessages(req.AllowBotMessages)
+	}
 
 	// Update team memberships.
 	// If an explicit list is supplied in the request, use it (allows API-key users
@@ -349,6 +362,7 @@ func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotRespons
 		AllowedChannelNames:    bot.AllowedChannelNames(),
 		MaxSessions:            bot.MaxSessions(),
 		NotifyOnSessionCreated: bot.NotifyOnSessionCreated(),
+		AllowBotMessages:       bot.AllowBotMessages(),
 		CreatedAt:              bot.CreatedAt(),
 		UpdatedAt:              bot.UpdatedAt(),
 	}

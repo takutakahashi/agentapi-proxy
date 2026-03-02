@@ -53,6 +53,7 @@ type slackBotJSON struct {
 	SessionConfig          *webhookSessionConfigJSON `json:"session_config,omitempty"`
 	MaxSessions            int                       `json:"max_sessions,omitempty"`
 	NotifyOnSessionCreated *bool                     `json:"notify_on_session_created,omitempty"`
+	AllowBotMessages       *bool                     `json:"allow_bot_messages,omitempty"`
 	CreatedAt              time.Time                 `json:"created_at"`
 	UpdatedAt              time.Time                 `json:"updated_at"`
 }
@@ -363,6 +364,7 @@ func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities
 		slackBot.SetSessionConfig(r.sessionConfigJSONToSlackBotEntity(sbj.SessionConfig))
 	}
 	slackBot.SetNotifyOnSessionCreated(sbj.NotifyOnSessionCreated)
+	slackBot.SetAllowBotMessages(sbj.AllowBotMessages)
 	slackBot.SetCreatedAt(sbj.CreatedAt)
 	slackBot.SetUpdatedAt(sbj.UpdatedAt)
 	return slackBot
@@ -391,6 +393,12 @@ func (r *KubernetesSlackBotRepository) entityToJSON(sb *entities.SlackBot) *slac
 	// to avoid bloating stored data for the default (true) case.
 	if v := sb.RawNotifyOnSessionCreated(); v != nil {
 		sbj.NotifyOnSessionCreated = v
+	}
+
+	// Only store allow_bot_messages when explicitly set to true,
+	// to avoid bloating stored data for the default (false) case.
+	if v := sb.RawAllowBotMessages(); v != nil {
+		sbj.AllowBotMessages = v
 	}
 
 	if sc := sb.SessionConfig(); sc != nil {
