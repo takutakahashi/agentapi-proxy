@@ -209,5 +209,23 @@ func (s *KubernetesSession) ResolvedAPIKey() string {
 	return s.resolvedAPIKey
 }
 
+// MemoryKey returns the memory key configured for this session.
+// Returns nil if memory integration is not configured.
+func (s *KubernetesSession) MemoryKey() map[string]string {
+	if s.request == nil {
+		return nil
+	}
+	return s.request.MemoryKey
+}
+
+// MemorySummarizeDrafts returns the per-session draft summarization setting.
+// Returns nil if not explicitly configured (inherits from team/user settings).
+func (s *KubernetesSession) MemorySummarizeDrafts() *bool {
+	if s.request == nil {
+		return nil
+	}
+	return s.request.MemorySummarizeDrafts
+}
+
 // Ensure KubernetesSession implements entities.Session
 var _ entities.Session = (*KubernetesSession)(nil)

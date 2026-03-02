@@ -517,6 +517,14 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	return s.sessionManager.CreateSession(context.Background(), sessionID, req, nil)
 }
 
+// memoryConfigProvider is implemented by sessions that expose memory configuration.
+// It allows callers to check whether draft summarization is enabled without
+// modifying the core entities.Session interface.
+type memoryConfigProvider interface {
+	MemoryKey() map[string]string
+	MemorySummarizeDrafts() *bool
+}
+
 // DeleteSessionByID deletes a session by ID
 func (s *Server) DeleteSessionByID(sessionID string) error {
 	// Delete associated share link if exists (ignore errors as share may not exist)
@@ -538,6 +546,50 @@ func (s *Server) DeleteSessionByID(sessionID string) error {
 			}
 			if len(tasks) > 0 {
 				log.Printf("[SESSION] Deleted %d tasks associated with session %s", len(tasks), sessionID)
+			}
+		}
+	}
+
+	// Delete draft memories if memory is enabled but summarization is disabled.
+	// When MemorySummarizeDrafts is false (or nil, which defaults to false), draft
+	// memories are never promoted to main memories, so they must be cleaned up here
+	// to avoid orphaned drafts after the session is deleted.
+	if s.memoryRepo != nil {
+		if session := s.sessionManager.GetSession(sessionID); session != nil {
+			if mcp, ok := session.(memoryConfigProvider); ok {
+				memoryKey := mcp.MemoryKey()
+				summarizeDrafts := mcp.MemorySummarizeDrafts()
+				// Only clean up when the memory sidecar was active (MemoryKey set)
+				// and draft summarization is disabled (drafts won't be promoted).
+				if len(memoryKey) > 0 && (summarizeDrafts == nil || !*summarizeDrafts) {
+					ctx := context.Background()
+					filter := portrepos.MemoryFilter{
+						Tags: map[string]string{
+							"draft":      "true",
+							"session-id": sessionID,
+						},
+					}
+					if session.Scope() == entities.ScopeTeam {
+						filter.Scope = entities.ScopeTeam
+						filter.TeamID = session.TeamID()
+					} else {
+						filter.Scope = entities.ScopeUser
+						filter.OwnerID = session.UserID()
+					}
+					drafts, err := s.memoryRepo.List(ctx, filter)
+					if err != nil {
+						log.Printf("[SESSION] Warning: failed to list draft memories for session %s: %v", sessionID, err)
+					} else {
+						for _, draft := range drafts {
+							if err := s.memoryRepo.Delete(ctx, draft.ID()); err != nil {
+								log.Printf("[SESSION] Warning: failed to delete draft memory %s for session %s: %v", draft.ID(), sessionID, err)
+							}
+						}
+						if len(drafts) > 0 {
+							log.Printf("[SESSION] Deleted %d draft memories for session %s", len(drafts), sessionID)
+						}
+					}
+				}
 			}
 		}
 	}
