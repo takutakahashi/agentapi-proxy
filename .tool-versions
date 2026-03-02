@@ -1,4 +1,4 @@
-golang        latest
+golang        1.26.0
 golangci-lint latest
 helm          latest
 kubectl       latest
