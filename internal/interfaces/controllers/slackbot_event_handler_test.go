@@ -651,6 +651,55 @@ func TestProcessEvent_BotMessage_Subtype_Ignored(t *testing.T) {
 	assert.Equal(t, 0, sessionMgr.createdCount(), "bot_message subtype must be ignored to prevent recursion")
 }
 
+// TestProcessEvent_PausedBot_NeverResponds verifies that a paused bot never responds to any event,
+// even when allow_bot_messages=true. The paused state is a hard guardrail.
+func TestProcessEvent_PausedBot_NeverResponds(t *testing.T) {
+	const botID = "paused-allow-bot-messages-uuid"
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Paused Allow Bot", "user-1")
+	allowBotMessages := true
+	bot.SetAllowBotMessages(&allowBotMessages)
+	bot.SetStatus(entities.SlackBotStatusPaused)
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
+
+	// Test 1: bot message (allow_bot_messages=true, but paused → must NOT respond)
+	payload := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:    "app_mention",
+			BotID:   "B-some-bot-id",
+			Text:    "<@U-bot> hello",
+			Channel: "C-channel",
+			Ts:      "300.001",
+		},
+	}
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, sessionMgr.createdCount(), "paused bot must never respond, even when allow_bot_messages=true")
+
+	// Test 2: human message (paused → must NOT respond)
+	payload2 := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:    "app_mention",
+			Text:    "<@U-bot> hello from human",
+			User:    "U-human",
+			Channel: "C-channel",
+			Ts:      "300.002",
+		},
+	}
+	err = handler.ProcessEvent(context.Background(), botID, payload2)
+	require.NoError(t, err)
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, sessionMgr.createdCount(), "paused bot must never respond to human messages either")
+}
+
 // TestProcessEvent_BotMessage_AllowBotMessages_BotID verifies that when allow_bot_messages=true,
 // messages with a non-empty bot_id are processed and a session is created.
 func TestProcessEvent_BotMessage_AllowBotMessages_BotID(t *testing.T) {
