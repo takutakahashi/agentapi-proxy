@@ -20,6 +20,7 @@ type KubernetesSession struct {
 	namespace      string
 	startedAt      time.Time
 	updatedAt      time.Time
+	lastMessageAt  time.Time
 	status         string
 	cancelFunc     context.CancelFunc
 	mutex          sync.RWMutex
@@ -48,6 +49,7 @@ func NewKubernetesSession(
 		namespace:      namespace,
 		startedAt:      now,
 		updatedAt:      now,
+		lastMessageAt:  now,
 		status:         "creating",
 		cancelFunc:     cancelFunc,
 		webhookPayload: webhookPayload,
@@ -161,6 +163,20 @@ func (s *KubernetesSession) TouchUpdatedAt() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	s.updatedAt = time.Now()
+}
+
+// LastMessageAt returns when the last message was sent to the session.
+func (s *KubernetesSession) LastMessageAt() time.Time {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.lastMessageAt
+}
+
+// SetLastMessageAt sets the last message time (used for restored sessions and SendMessage).
+func (s *KubernetesSession) SetLastMessageAt(t time.Time) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.lastMessageAt = t
 }
 
 // ServiceDNS returns the Kubernetes Service DNS name for this session

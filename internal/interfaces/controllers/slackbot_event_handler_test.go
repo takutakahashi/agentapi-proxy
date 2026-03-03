@@ -114,9 +114,6 @@ func (m *mockSessionManager) GetMessages(_ context.Context, _ string) ([]portrep
 	return nil, nil
 }
 
-func (m *mockSessionManager) UpdateSlackLastMessageAt(_ string, _ time.Time) error {
-	return nil
-}
 
 // createdCount returns the number of sessions created so far (thread-safe).
 func (m *mockSessionManager) createdCount() int {
@@ -152,10 +149,11 @@ func (s *mockSession) Status() string {
 	}
 	return s.status
 }
-func (s *mockSession) StartedAt() time.Time { return time.Time{} }
-func (s *mockSession) UpdatedAt() time.Time { return time.Time{} }
-func (s *mockSession) Description() string  { return "" }
-func (s *mockSession) Cancel()              {}
+func (s *mockSession) StartedAt() time.Time     { return time.Time{} }
+func (s *mockSession) UpdatedAt() time.Time     { return time.Time{} }
+func (s *mockSession) LastMessageAt() time.Time { return time.Time{} }
+func (s *mockSession) Description() string      { return "" }
+func (s *mockSession) Cancel()                  {}
 
 // --- Helpers ---
 

@@ -109,6 +109,10 @@ type Session interface {
 	// UpdatedAt returns when the session was last updated
 	UpdatedAt() time.Time
 
+	// LastMessageAt returns when the last message was sent to the session.
+	// Set at session creation and updated on every SendMessage call.
+	LastMessageAt() time.Time
+
 	// Description returns the session description
 	// Returns tags["description"] if exists, otherwise returns InitialMessage
 	Description() string

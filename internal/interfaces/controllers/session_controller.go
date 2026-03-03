@@ -215,15 +215,16 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		}
 
 		sessionData := map[string]interface{}{
-			"session_id": session.ID(),
-			"user_id":    session.UserID(),
-			"scope":      session.Scope(),
-			"team_id":    session.TeamID(),
-			"status":     session.Status(),
-			"started_at": session.StartedAt(),
-			"updated_at": session.UpdatedAt(),
-			"addr":       session.Addr(),
-			"tags":       session.Tags(),
+			"session_id":      session.ID(),
+			"user_id":         session.UserID(),
+			"scope":           session.Scope(),
+			"team_id":         session.TeamID(),
+			"status":          session.Status(),
+			"started_at":      session.StartedAt(),
+			"updated_at":      session.UpdatedAt(),
+			"last_message_at": session.LastMessageAt(),
+			"addr":            session.Addr(),
+			"tags":            session.Tags(),
 			"metadata": map[string]interface{}{
 				"description": initialMessage,
 			},

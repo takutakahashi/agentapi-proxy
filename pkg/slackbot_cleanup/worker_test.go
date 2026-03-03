@@ -30,8 +30,7 @@ func (m *mockSessionManager) StopAgent(_ context.Context, _ string) error       
 func (m *mockSessionManager) GetMessages(_ context.Context, _ string) ([]portrepos.Message, error) {
 	return nil, nil
 }
-func (m *mockSessionManager) UpdateSlackLastMessageAt(_ string, _ time.Time) error { return nil }
-func (m *mockSessionManager) Shutdown(_ time.Duration) error                       { return nil }
+func (m *mockSessionManager) Shutdown(_ time.Duration) error { return nil }
 func (m *mockSessionManager) DeleteSession(id string) error {
 	if m.deleteErr != nil {
 		return m.deleteErr

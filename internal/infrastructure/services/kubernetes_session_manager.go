@@ -511,6 +511,15 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil && resp.StatusCode == 200 {
 			_ = resp.Body.Close()
+			// Update last-message-at in memory and on the Kubernetes Service annotation.
+			now := time.Now()
+			if ks, ok := session.(*KubernetesSession); ok {
+				ks.SetLastMessageAt(now)
+			}
+			svcName := fmt.Sprintf("agentapi-session-%s-svc", id)
+			if patchErr := m.patchLastMessageAt(context.Background(), svcName, now); patchErr != nil {
+				log.Printf("[K8S_SESSION] Failed to update last-message-at for session %s: %v", id, patchErr)
+			}
 			log.Printf("[K8S_SESSION] Successfully sent message to session %s", id)
 			return nil
 		}
@@ -1590,11 +1599,9 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 	if session.Request().AgentType != "" {
 		annotations["agentapi.proxy/agent-type"] = session.Request().AgentType
 	}
-	// For Slackbot sessions, record the initial message time as the last message time.
-	// This annotation is updated by UpdateSlackLastMessageAt when follow-up messages arrive.
-	if _, hasSlackbot := session.Request().Tags["slackbot_id"]; hasSlackbot {
-		annotations["agentapi.proxy/slack-last-message-at"] = session.startedAt.UTC().Format(time.RFC3339)
-	}
+	// Record the initial message time as the last message time for all sessions.
+	// This annotation is updated by SendMessage when follow-up messages arrive.
+	annotations["agentapi.proxy/last-message-at"] = session.startedAt.UTC().Format(time.RFC3339)
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1947,21 +1954,12 @@ func (m *KubernetesSessionManager) buildOtelcolEnvVars(session *KubernetesSessio
 }
 
 // sanitizeLabelKey sanitizes a string to be used as a Kubernetes label key
-// UpdateSlackLastMessageAt updates the agentapi.proxy/slack-last-message-at annotation
-// on the session's Kubernetes Service. This is internal metadata used by the Slackbot
-// cleanup worker to determine when the last message was sent to a session.
-// It is NOT exposed via session.Tags() and will not affect session reuse filtering.
-func (m *KubernetesSessionManager) UpdateSlackLastMessageAt(id string, t time.Time) error {
-	svcName := fmt.Sprintf("agentapi-session-%s-svc", id)
-	return m.patchSlackLastMessageAt(context.Background(), svcName, t)
-}
-
-// patchSlackLastMessageAt applies a MergePatch to update the slack-last-message-at annotation.
-func (m *KubernetesSessionManager) patchSlackLastMessageAt(ctx context.Context, svcName string, t time.Time) error {
+// patchLastMessageAt applies a MergePatch to update the last-message-at annotation.
+func (m *KubernetesSessionManager) patchLastMessageAt(ctx context.Context, svcName string, t time.Time) error {
 	patch := map[string]interface{}{
 		"metadata": map[string]interface{}{
 			"annotations": map[string]string{
-				"agentapi.proxy/slack-last-message-at": t.UTC().Format(time.RFC3339),
+				"agentapi.proxy/last-message-at": t.UTC().Format(time.RFC3339),
 			},
 		},
 	}
@@ -2295,6 +2293,17 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		}
 	}
 
+	// Parse last-message-at from annotations (fallback to slack-last-message-at for backward compat)
+	lastMessageAt := createdAt // Default to createdAt if not set
+	for _, key := range []string{"agentapi.proxy/last-message-at", "agentapi.proxy/slack-last-message-at"} {
+		if v, ok := svc.Annotations[key]; ok && v != "" {
+			if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+				lastMessageAt = parsed
+				break
+			}
+		}
+	}
+
 	// Extract service port
 	servicePort := m.k8sConfig.BasePort
 	if len(svc.Spec.Ports) > 0 {
@@ -2324,6 +2333,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetUpdatedAt(updatedAt)
+	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
 	session.SetDescription(initialMessage) // Cache initial message as description
 
@@ -2383,6 +2393,17 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 		}
 	}
 
+	// Parse last-message-at from annotations (fallback to slack-last-message-at for backward compat)
+	lastMessageAt := createdAt // Default to createdAt if not set
+	for _, key := range []string{"agentapi.proxy/last-message-at", "agentapi.proxy/slack-last-message-at"} {
+		if v, ok := svc.Annotations[key]; ok && v != "" {
+			if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+				lastMessageAt = parsed
+				break
+			}
+		}
+	}
+
 	// Extract service port
 	servicePort := m.k8sConfig.BasePort
 	if len(svc.Spec.Ports) > 0 {
@@ -2412,6 +2433,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetUpdatedAt(updatedAt)
+	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getStatusFromDeploymentObject(deployment))
 	session.SetDescription(initialMessage) // Cache initial message as description
 

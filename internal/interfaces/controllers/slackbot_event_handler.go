@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -256,7 +255,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// Follow-up messages in the same Slack thread are routed to the existing session
 	// rather than spawning a new one (mirrors the webhook reuse-session behaviour).
 	// NOTE: The slackbot reuse path is handled here (rather than via LaunchUseCase)
-	// because it requires the Slackbot-specific UpdateSlackLastMessageAt call.
+	// because it requires Slackbot-specific message construction (buildMessage).
 	reuseFilter := entities.SessionFilter{
 		Tags: map[string]string{
 			"slack_channel":   channel,
@@ -273,11 +272,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 				log.Printf("[SLACKBOT] Failed to route message to existing session %s: %v", existingSession.ID(), err)
 				return
 			}
-			// Update internal slack-last-message-at annotation (not a tag/label) so the
-			// Slackbot cleanup worker knows this session has received a follow-up message.
-			if err := h.sessionManager.UpdateSlackLastMessageAt(existingSession.ID(), time.Now()); err != nil {
-				log.Printf("[SLACKBOT] Failed to update slack-last-message-at for session %s: %v", existingSession.ID(), err)
-			}
+			// last-message-at is updated automatically inside SendMessage.
 			log.Printf("[SLACKBOT] Routed message to existing session %s for thread %s", existingSession.ID(), threadKey)
 		}()
 		return nil

@@ -3305,6 +3305,11 @@
             "format": "date-time",
             "description": "When the session was last updated (e.g., last message received)"
           },
+          "last_message_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the last message was sent to the session. Set at session creation and updated on every SendMessage call."
+          },
           "addr": {
             "type": "string",
             "description": "Address of the agentapi server (host:port)"
