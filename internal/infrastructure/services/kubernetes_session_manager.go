@@ -440,9 +440,8 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 
 	// Trigger draft memory summarization if the session had memory configured.
 	// Run asynchronously so that DELETE API responds immediately.
-	// The 30-second InitialMessageWaitSecond in StartSummarizeDraftsSession gives
-	// the memory-sync sidecar enough time to complete its final upsert during the
-	// pod's graceful shutdown before the summarize session reads draft memories.
+	// Draft memories were written periodically by the memory-sync sidecar;
+	// the summarize session reads whatever drafts are available in the store.
 	if session != nil {
 		req := session.Request()
 		if len(req.MemoryKey) > 0 && req.MemorySummarizeDrafts != nil && *req.MemorySummarizeDrafts {
@@ -1393,8 +1392,8 @@ if [ "$SCOPE" = "team" ] && [ -n "${AGENTAPI_TEAM_ID}" ]; then
     TEAM_OPTS="--team-id ${AGENTAPI_TEAM_ID}"
 fi
 
-# Cache file: refreshed every 3s in the monitoring loop so the final upsert
-# has a fresh snapshot even after agentapi has stopped responding to /messages.
+# Cache file: stores the most recent messages snapshot so that upsert_draft
+# can fall back to it if agentapi is temporarily unreachable.
 MESSAGES_CACHE=$(mktemp /tmp/messages-cache-XXXXXX.json)
 echo '{"messages":[]}' > "$MESSAGES_CACHE"
 
@@ -1468,31 +1467,14 @@ upsert_draft() {
     rm -f "$CONTENT_FILE"
 }
 
-# Start periodic dump in background
+# Run periodic dump in foreground. This loop keeps the sidecar alive and
+# regularly snapshots the conversation. It exits when the pod is terminated
+# (Kubernetes sends SIGTERM to all containers when the main container stops).
 log "Starting periodic memory dump (interval: ${DUMP_INTERVAL}s)..."
 while true; do
     sleep "$DUMP_INTERVAL"
     upsert_draft
-done &
-DUMP_PID=$!
-
-# Poll until agentapi stops responding; refresh the messages cache on every
-# iteration so the final upsert below has a fresh snapshot even after agentapi exits.
-# save_cache ensures only non-empty snapshots overwrite the cache.
-log "Monitoring agentapi status..."
-while curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; do
-    _TMP=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
-    save_cache "$_TMP"
-    unset _TMP
-    sleep 3
 done
-
-# agentapi stopped: kill periodic dumper, perform final upsert, and exit
-kill "$DUMP_PID" 2>/dev/null
-log "agentapi stopped. Performing final memory upsert..."
-upsert_draft
-rm -f "$MESSAGES_CACHE"
-log "Memory sync complete."
 `
 
 // buildMemorySyncSidecar creates a sidecar container that syncs conversation

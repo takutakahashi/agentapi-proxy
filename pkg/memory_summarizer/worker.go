@@ -17,9 +17,9 @@ import (
 const summarizeSourceSessionIDTag = "summarize-source-session-id"
 
 // defaultInitialMessageWaitSecond is the wait time (in seconds) before the summarize-drafts
-// session sends its initial message. This gives the memory-sync sidecar enough time to
-// complete its final upsert after the source session's pod is terminated.
-const defaultInitialMessageWaitSecond = 30
+// session sends its initial message. Set to 0 because draft memories are written
+// periodically by the sidecar; no final upsert needs to complete before summarization starts.
+const defaultInitialMessageWaitSecond = 0
 
 // WorkerConfig holds configuration for the memory draft summarizer worker.
 type WorkerConfig struct {
@@ -243,4 +243,3 @@ func buildSummarizationMessage(sourceSessionID, today string) string {
 		sourceSessionID, sourceSessionID, today,
 	)
 }
-
