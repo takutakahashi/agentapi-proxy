@@ -536,3 +536,22 @@ slackbotCleanupWorker:
     # Retry period (how often non-leaders try to acquire the lock)
     retryPeriod: "2s"
 
+# Memory Draft Summarizer Worker Configuration
+# Periodically scans for draft memories whose source session no longer exists
+# and starts a summarize-drafts session to consolidate them into main memory.
+memorySummarizerWorker:
+  # Enable memory draft summarizer worker
+  enabled: false
+
+  # How often to scan for orphaned draft memories
+  checkInterval: "5m"
+
+  # Leader election configuration (prevents duplicate runs in multi-replica deployments)
+  leaderElection:
+    # Lease duration (how long the leader holds the lock)
+    leaseDuration: "15s"
+    # Renew deadline (how often the leader refreshes the lock)
+    renewDeadline: "10s"
+    # Retry period (how often non-leaders try to acquire the lock)
+    retryPeriod: "2s"
+
