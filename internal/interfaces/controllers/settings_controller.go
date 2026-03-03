@@ -56,14 +56,16 @@ type MarketplaceRequest struct {
 
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
-	Bedrock              *BedrockSettingsRequest        `json:"bedrock"`
-	MCPServers           map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
-	Marketplaces         map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
-	ClaudeCodeOAuthToken *string                        `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             *string                        `json:"auth_mode,omitempty"`         // "oauth" or "bedrock"
-	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
-	EnvVars              map[string]string              `json:"env_vars,omitempty"`          // Custom environment variables
-	PreferredTeamID      *string                        `json:"preferred_team_id,omitempty"` // "org/team-slug" format; "" to clear
+	Bedrock               *BedrockSettingsRequest        `json:"bedrock"`
+	MCPServers            map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
+	Marketplaces          map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
+	ClaudeCodeOAuthToken  *string                        `json:"claude_code_oauth_token,omitempty"`
+	AuthMode              *string                        `json:"auth_mode,omitempty"`               // "oauth" or "bedrock"
+	EnabledPlugins        []string                       `json:"enabled_plugins,omitempty"`         // plugin@marketplace format
+	EnvVars               map[string]string              `json:"env_vars,omitempty"`                // Custom environment variables
+	PreferredTeamID       *string                        `json:"preferred_team_id,omitempty"`       // "org/team-slug" format; "" to clear
+	MemoryEnabled         *bool                          `json:"memory_enabled,omitempty"`          // nil = inherit, true/false = explicit
+	MemorySummarizeDrafts *bool                          `json:"memory_summarize_drafts,omitempty"` // nil = inherit, true/false = explicit
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -99,9 +101,11 @@ type SettingsResponse struct {
 	Marketplaces            map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
 	HasClaudeCodeOAuthToken bool                            `json:"has_claude_code_oauth_token"`
 	AuthMode                string                          `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
-	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`      // only keys, not values
-	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"` // "org/team-slug" format
+	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`         // plugin@marketplace format
+	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`            // only keys, not values
+	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"`       // "org/team-slug" format
+	MemoryEnabled           *bool                           `json:"memory_enabled,omitempty"`          // nil = inherit, true/false = explicit
+	MemorySummarizeDrafts   *bool                           `json:"memory_summarize_drafts,omitempty"` // nil = inherit, true/false = explicit
 	CreatedAt               string                          `json:"created_at"`
 	UpdatedAt               string                          `json:"updated_at"`
 }
@@ -263,6 +267,14 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Update Claude Code OAuth Token
 	if req.ClaudeCodeOAuthToken != nil {
 		settings.SetClaudeCodeOAuthToken(*req.ClaudeCodeOAuthToken)
+	}
+
+	// Update memory settings
+	if req.MemoryEnabled != nil {
+		settings.SetMemoryEnabled(req.MemoryEnabled)
+	}
+	if req.MemorySummarizeDrafts != nil {
+		settings.SetMemorySummarizeDrafts(req.MemorySummarizeDrafts)
 	}
 
 	// Update preferred team ID
@@ -510,6 +522,8 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	}
 
 	resp.PreferredTeamID = settings.PreferredTeamID()
+	resp.MemoryEnabled = settings.MemoryEnabled()
+	resp.MemorySummarizeDrafts = settings.MemorySummarizeDrafts()
 
 	return resp
 }

@@ -94,17 +94,19 @@ func (b *BedrockSettings) Validate() error {
 
 // Settings represents user or team settings
 type Settings struct {
-	name                 string
-	bedrock              *BedrockSettings
-	mcpServers           *MCPServersSettings
-	marketplaces         *MarketplacesSettings
-	claudeCodeOAuthToken string            // Claude Code OAuth token
-	authMode             AuthMode          // Authentication mode (oauth or bedrock)
-	enabledPlugins       []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
-	envVars              map[string]string // Custom environment variables
-	preferredTeamID      string            // "org/team-slug" format; if set, only this team's settings are used
-	createdAt            time.Time
-	updatedAt            time.Time
+	name                  string
+	bedrock               *BedrockSettings
+	mcpServers            *MCPServersSettings
+	marketplaces          *MarketplacesSettings
+	claudeCodeOAuthToken  string            // Claude Code OAuth token
+	authMode              AuthMode          // Authentication mode (oauth or bedrock)
+	enabledPlugins        []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
+	envVars               map[string]string // Custom environment variables
+	preferredTeamID       string            // "org/team-slug" format; if set, only this team's settings are used
+	memoryEnabled         *bool             // nil = inherit, true = enable memory integration, false = disable
+	memorySummarizeDrafts *bool             // nil = inherit, true = summarize drafts on session end
+	createdAt             time.Time
+	updatedAt             time.Time
 }
 
 // NewSettings creates a new Settings
@@ -256,6 +258,28 @@ func (s *Settings) PreferredTeamID() string {
 // SetPreferredTeamID sets the preferred team ID
 func (s *Settings) SetPreferredTeamID(id string) {
 	s.preferredTeamID = id
+	s.updatedAt = time.Now()
+}
+
+// MemoryEnabled returns whether memory integration is enabled (nil = inherit from settings layer)
+func (s *Settings) MemoryEnabled() *bool {
+	return s.memoryEnabled
+}
+
+// SetMemoryEnabled sets whether memory integration is enabled
+func (s *Settings) SetMemoryEnabled(enabled *bool) {
+	s.memoryEnabled = enabled
+	s.updatedAt = time.Now()
+}
+
+// MemorySummarizeDrafts returns whether draft memories are auto-summarized (nil = inherit)
+func (s *Settings) MemorySummarizeDrafts() *bool {
+	return s.memorySummarizeDrafts
+}
+
+// SetMemorySummarizeDrafts sets whether draft memories are auto-summarized
+func (s *Settings) SetMemorySummarizeDrafts(summarize *bool) {
+	s.memorySummarizeDrafts = summarize
 	s.updatedAt = time.Now()
 }
 

@@ -29,17 +29,19 @@ const (
 
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
-	Name                 string                      `json:"name"`
-	Bedrock              *bedrockJSON                `json:"bedrock,omitempty"`
-	MCPServers           map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
-	Marketplaces         map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
-	ClaudeCodeOAuthToken string                      `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             string                      `json:"auth_mode,omitempty"`
-	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
-	EnvVars              map[string]string           `json:"env_vars,omitempty"`          // Custom environment variables
-	PreferredTeamID      string                      `json:"preferred_team_id,omitempty"` // "org/team-slug" format
-	CreatedAt            time.Time                   `json:"created_at"`
-	UpdatedAt            time.Time                   `json:"updated_at"`
+	Name                  string                      `json:"name"`
+	Bedrock               *bedrockJSON                `json:"bedrock,omitempty"`
+	MCPServers            map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
+	Marketplaces          map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
+	ClaudeCodeOAuthToken  string                      `json:"claude_code_oauth_token,omitempty"`
+	AuthMode              string                      `json:"auth_mode,omitempty"`
+	EnabledPlugins        []string                    `json:"enabled_plugins,omitempty"`         // plugin@marketplace format
+	EnvVars               map[string]string           `json:"env_vars,omitempty"`                // Custom environment variables
+	PreferredTeamID       string                      `json:"preferred_team_id,omitempty"`       // "org/team-slug" format
+	MemoryEnabled         *bool                       `json:"memory_enabled,omitempty"`          // nil = inherit, true/false = explicit
+	MemorySummarizeDrafts *bool                       `json:"memory_summarize_drafts,omitempty"` // nil = inherit, true/false = explicit
+	CreatedAt             time.Time                   `json:"created_at"`
+	UpdatedAt             time.Time                   `json:"updated_at"`
 }
 
 // bedrockJSON is the JSON representation of Bedrock settings
@@ -256,6 +258,9 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		sj.PreferredTeamID = preferredTeamID
 	}
 
+	sj.MemoryEnabled = settings.MemoryEnabled()
+	sj.MemorySummarizeDrafts = settings.MemorySummarizeDrafts()
+
 	return json.Marshal(sj)
 }
 
@@ -343,6 +348,16 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if sj.PreferredTeamID != "" {
 		settings.SetPreferredTeamID(sj.PreferredTeamID)
 		// Reset updatedAt since SetPreferredTeamID updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.MemoryEnabled != nil {
+		settings.SetMemoryEnabled(sj.MemoryEnabled)
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.MemorySummarizeDrafts != nil {
+		settings.SetMemorySummarizeDrafts(sj.MemorySummarizeDrafts)
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
