@@ -24,11 +24,6 @@ type MaterializedSettings struct {
 	// ActivePlugins is the final list of enabled plugins.
 	ActivePlugins []string
 
-	// MemorySummarizeDrafts indicates whether draft memories should be
-	// automatically summarized into main memory when the session ends.
-	// nil = not configured by any settings layer (default: disabled).
-	MemorySummarizeDrafts *bool
-
 	// MemoryEnabled indicates whether memory integration is active.
 	// nil = not configured by any settings layer (default: enabled when memory_key is available).
 	// false = memory integration is explicitly disabled; memory_key is ignored.
@@ -107,9 +102,6 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 
 	// 5. Active plugins (union already computed by Resolve).
 	result.ActivePlugins = resolved.EnabledPlugins
-
-	// 5a. MemorySummarizeDrafts — pass through as-is (nil = not configured).
-	result.MemorySummarizeDrafts = resolved.MemorySummarizeDrafts
 
 	// 5b. MemoryEnabled — pass through as-is (nil = not configured).
 	result.MemoryEnabled = resolved.MemoryEnabled

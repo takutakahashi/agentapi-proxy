@@ -31,7 +31,6 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
-	memorysummarizer "github.com/takutakahashi/agentapi-proxy/pkg/memory_summarizer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
@@ -438,28 +437,6 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 		log.Printf("[K8S_SESSION] Warning: failed to delete session resources: %v", err)
 	}
 
-	// Trigger draft memory summarization if the session had memory configured.
-	// Run asynchronously so that DELETE API responds immediately.
-	// Draft memories were written periodically by the memory-sync sidecar;
-	// the summarize session reads whatever drafts are available in the store.
-	if session != nil {
-		req := session.Request()
-		if len(req.MemoryKey) > 0 && req.MemorySummarizeDrafts != nil && *req.MemorySummarizeDrafts {
-			go func() {
-				if err := memorysummarizer.StartSummarizeDraftsSession(
-					context.Background(),
-					m,
-					session.ID(),
-					req.Scope,
-					req.TeamID,
-					session.UserID(),
-				); err != nil {
-					log.Printf("[K8S_SESSION] Warning: failed to start summarize-drafts session for %s: %v", session.ID(), err)
-				}
-			}()
-		}
-	}
-
 	// Remove session from map
 	m.cleanupSession(id)
 
@@ -838,12 +815,6 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		otelcolContainer := m.buildOtelcolSidecar(session, req)
 		containers = append(containers, otelcolContainer)
 		log.Printf("[K8S_SESSION] Added otelcol sidecar for session %s", session.id)
-	}
-
-	// Add memory-sync sidecar when a memory key is configured
-	if sidecar := m.buildMemorySyncSidecar(session); sidecar != nil {
-		containers = append(containers, *sidecar)
-		log.Printf("[K8S_SESSION] Added memory-sync sidecar for session %s", session.id)
 	}
 
 	// Convert config tolerations to corev1 tolerations
@@ -1350,191 +1321,6 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:  int64Ptr(0),
 			RunAsGroup: int64Ptr(0),
-		},
-	}
-}
-
-// memorySyncScript is the shell script for the memory-sync sidecar.
-// It periodically dumps the conversation messages as a draft memory entry
-// (upsert by session-id + draft=true keys), and performs a final upsert when
-// agentapi stops. The dump interval defaults to 60 seconds and can be
-// overridden via the MEMORY_DUMP_INTERVAL environment variable.
-const memorySyncScript = `#!/bin/sh
-AGENTAPI_URL="http://localhost:${AGENTAPI_PORT}"
-PROXY_ENDPOINT="http://${AGENTAPI_PROXY_SERVICE_HOST}:${AGENTAPI_PROXY_SERVICE_PORT_HTTP}"
-DUMP_INTERVAL="${MEMORY_DUMP_INTERVAL:-60}"
-
-log() { echo "[$(date -Is)] [memory-sync] $*"; }
-
-# Wait for agentapi to start (up to 120 seconds)
-log "Waiting for agentapi to start..."
-RETRY=0
-while [ $RETRY -lt 120 ]; do
-    curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1 && break
-    RETRY=$((RETRY + 1))
-    sleep 1
-done
-
-if ! curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; then
-    log "agentapi did not start within timeout, exiting"
-    exec sleep infinity
-fi
-
-# Memory key must be configured
-if [ -z "${MEMORY_KEY_FLAGS}" ]; then
-    log "No memory key configured, skipping"
-    exec sleep infinity
-fi
-
-SCOPE="${AGENTAPI_SCOPE:-user}"
-TEAM_OPTS=""
-if [ "$SCOPE" = "team" ] && [ -n "${AGENTAPI_TEAM_ID}" ]; then
-    TEAM_OPTS="--team-id ${AGENTAPI_TEAM_ID}"
-fi
-
-# Cache file: stores the most recent messages snapshot so that upsert_draft
-# can fall back to it if agentapi is temporarily unreachable.
-MESSAGES_CACHE=$(mktemp /tmp/messages-cache-XXXXXX.json)
-echo '{"messages":[]}' > "$MESSAGES_CACHE"
-
-# count_messages: count "role" occurrences without JSON parsing.
-# Avoids jq failures when message content contains unescaped control chars
-# (e.g. raw newlines, ANSI codes) from terminal rendering.
-count_messages() {
-    echo "$1" | grep -c '"role":' 2>/dev/null || echo 0
-}
-
-# save_cache: write $1 (messages JSON) to MESSAGES_CACHE only when the
-# message array is non-empty, so a failed or empty fetch never clobbers a
-# previously captured snapshot.
-save_cache() {
-    _CNT=$(count_messages "$1")
-    if [ "${_CNT:-0}" -gt "0" ]; then
-        echo "$1" > "$MESSAGES_CACHE"
-    fi
-}
-
-# sanitize_json: remove ANSI escape sequences and control characters that
-# cause strict JSON parsers (e.g. jq 1.7+) to reject the input.
-# Strips 0x00-0x08, 0x0B (VT), 0x0C (FF), 0x0E-0x1F (includes ESC=0x1B),
-# and 0x7F (DEL).  Uses only POSIX tr available in busybox and alpine.
-sanitize_json() {
-    LC_ALL=C tr -d '\000\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177'
-}
-
-# upsert_draft: upsert a single draft memory entry.
-# Tries a live fetch first; falls back to the cached snapshot so that
-# short-lived (oneshot) sessions are handled correctly.
-upsert_draft() {
-    RAW_MESSAGES=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null)
-    if [ -n "$RAW_MESSAGES" ]; then
-        save_cache "$RAW_MESSAGES"
-        MESSAGES="$RAW_MESSAGES"
-    else
-        log "agentapi unreachable, using cached messages"
-        MESSAGES=$(cat "$MESSAGES_CACHE" 2>/dev/null || echo '{"messages":[]}')
-    fi
-    COUNT=$(count_messages "$MESSAGES")
-    COUNT=${COUNT:-0}
-    if [ "${COUNT}" = "0" ]; then
-        log "No messages yet, skipping"
-        return
-    fi
-    log "Upserting draft memory (${COUNT} messages)..."
-    CONTENT_FILE=$(mktemp /tmp/memory-content-XXXXXX.md)
-    echo "## Conversation Transcript" > "$CONTENT_FILE"
-    echo "" >> "$CONTENT_FILE"
-    # Try sanitize + jq for clean formatting; fall back to raw dump on parse error.
-    FORMATTED=$(echo "$MESSAGES" | sanitize_json | \
-        jq -r '.messages[] | if .role == "user" then "**User:** " + .content else "**Assistant:** " + .content end + "\n"' 2>/dev/null)
-    if [ -n "$FORMATTED" ]; then
-        printf '%s\n' "$FORMATTED" >> "$CONTENT_FILE"
-    else
-        echo "$MESSAGES" >> "$CONTENT_FILE"
-    fi
-    # shellcheck disable=SC2086
-    agentapi-proxy client memory upsert \
-        --endpoint "$PROXY_ENDPOINT" \
-        --key "session-id=${AGENTAPI_SESSION_ID}" \
-        --key "draft=true" \
-        ${MEMORY_KEY_FLAGS} \
-        --title "Draft: Session ${AGENTAPI_SESSION_ID}" \
-        --content-file "$CONTENT_FILE" \
-        --scope "$SCOPE" \
-        ${TEAM_OPTS} \
-        && log "Draft upserted successfully" \
-        || log "Failed to upsert draft memory"
-    rm -f "$CONTENT_FILE"
-}
-
-# Run periodic dump in foreground. This loop keeps the sidecar alive and
-# regularly snapshots the conversation. It exits when the pod is terminated
-# (Kubernetes sends SIGTERM to all containers when the main container stops).
-log "Starting periodic memory dump (interval: ${DUMP_INTERVAL}s)..."
-while true; do
-    sleep "$DUMP_INTERVAL"
-    upsert_draft
-done
-`
-
-// buildMemorySyncSidecar creates a sidecar container that syncs conversation
-// history to the memory store when the session's agentapi process stops.
-// Returns nil if no memory key is configured for the session.
-func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSession) *corev1.Container {
-	req := session.Request()
-	if len(req.MemoryKey) == 0 {
-		return nil
-	}
-
-	// Build MEMORY_KEY_FLAGS in sorted key order for determinism
-	keys := make([]string, 0, len(req.MemoryKey))
-	for k := range req.MemoryKey {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var flags []string
-	for _, k := range keys {
-		flags = append(flags, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
-	}
-	memoryKeyFlags := strings.Join(flags, " ")
-
-	scope := "user"
-	if req.Scope == entities.ScopeTeam {
-		scope = "team"
-	}
-
-	envVars := []corev1.EnvVar{
-		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
-		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
-		{Name: "AGENTAPI_SCOPE", Value: scope},
-		{Name: "AGENTAPI_TEAM_ID", Value: req.TeamID},
-		{Name: "MEMORY_KEY_FLAGS", Value: memoryKeyFlags},
-		{Name: "AGENTAPI_KEY", Value: session.ResolvedAPIKey()},
-		// AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP
-		// are injected automatically by Kubernetes service discovery.
-	}
-
-	return &corev1.Container{
-		Name:            "memory-sync",
-		Image:           m.k8sConfig.Image,
-		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"/bin/sh", "-c"},
-		Args:            []string{memorySyncScript},
-		Env:             envVars,
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("64Mi"),
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
 		},
 	}
 }
@@ -2381,7 +2167,6 @@ if [ -n "$MEMORY_KEY_FLAGS" ]; then
         $MEMORY_KEY_FLAGS \
         --scope "$MEMORY_SCOPE" \
         $MEMORY_TEAM_OPTS \
-        --exclude-tag draft=true \
         --format markdown \
         --endpoint "$PROXY_ENDPOINT" 2>/dev/null || echo "")
     if [ -n "$MEMORY_CONTENT" ]; then
@@ -3088,12 +2873,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	materialized := m.resolveSettings(ctx, session, req)
 	for k, v := range materialized.EnvVars {
 		env[k] = v
-	}
-
-	// Propagate memory_summarize_drafts from the settings layer to the request,
-	// but only if the per-session API field was not explicitly set.
-	if req.MemorySummarizeDrafts == nil && materialized.MemorySummarizeDrafts != nil {
-		req.MemorySummarizeDrafts = materialized.MemorySummarizeDrafts
 	}
 
 	// Propagate memory_enabled from the settings layer.

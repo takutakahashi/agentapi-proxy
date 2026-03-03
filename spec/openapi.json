@@ -2297,10 +2297,10 @@
           {
             "name": "exclude_tag.{key}",
             "in": "query",
-            "description": "Exclude memories whose tags contain ALL of the specified key=value pairs. For example, `exclude_tag.draft=true` excludes memories tagged with `draft=true`. Multiple exclude_tag parameters are AND-combined.",
+            "description": "Exclude memories whose tags contain ALL of the specified key=value pairs. For example, `exclude_tag.category=news` excludes memories tagged with `category=news`. Multiple exclude_tag parameters are AND-combined.",
             "required": false,
             "schema": {"type": "string"},
-            "example": "exclude_tag.draft=true"
+            "example": "exclude_tag.category=news"
           }
         ],
         "responses": {
@@ -3222,10 +3222,6 @@
               "project": "myapp",
               "env": "production"
             }
-          },
-          "memory_summarize_drafts": {
-            "type": "boolean",
-            "description": "Per-session override for automatic draft memory summarization. When true, a one-shot summarization session is started after this session ends to consolidate draft memories into the main memory. When false, summarization is skipped. When omitted, the global proxy configuration (kubernetesSession.memorySummarizeDrafts) is used."
           }
         }
       },
@@ -4047,10 +4043,6 @@
           "memory_enabled": {
             "type": "boolean",
             "description": "Whether memory integration is enabled for sessions. When false, memory_key is ignored and memory integration is disabled even if a memory key is present. When omitted or null, the setting is inherited from lower-priority layers (default: enabled when memory_key is available)."
-          },
-          "memory_summarize_drafts": {
-            "type": "boolean",
-            "description": "Whether draft memories are automatically summarized into main memory when a session ends. When true, a one-shot summarization session starts after each session ends. When false, summarization is skipped. When omitted, the setting is inherited from lower-priority layers (default: disabled)."
           }
         }
       },
@@ -4199,10 +4191,6 @@
           "memory_enabled": {
             "type": "boolean",
             "description": "Whether memory integration is enabled for sessions. Null means the setting is not configured (inherited from lower-priority layers)."
-          },
-          "memory_summarize_drafts": {
-            "type": "boolean",
-            "description": "Whether draft memories are automatically summarized into main memory when a session ends. Null means the setting is not configured (inherited from lower-priority layers)."
           },
           "created_at": {
             "type": "string",

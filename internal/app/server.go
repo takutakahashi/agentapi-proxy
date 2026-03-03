@@ -509,8 +509,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		SlackParams:              slackParams,
 		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
-		MemoryKey:                startReq.MemoryKey,
-		MemorySummarizeDrafts:    startReq.MemorySummarizeDrafts,
+		MemoryKey: startReq.MemoryKey,
 	}
 
 	// Delegate to session manager

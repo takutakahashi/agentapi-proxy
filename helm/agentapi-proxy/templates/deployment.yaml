@@ -327,25 +327,6 @@ spec:
             - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD
               value: {{ .Values.slackbotCleanupWorker.leaderElection.retryPeriod | quote }}
             {{- end }}
-            # Memory Draft Summarizer Worker configuration
-            - name: AGENTAPI_MEMORY_SUMMARIZER_WORKER_ENABLED
-              value: {{ ((.Values.memorySummarizerWorker).enabled) | default false | quote }}
-            {{- if (.Values.memorySummarizerWorker).checkInterval }}
-            - name: AGENTAPI_MEMORY_SUMMARIZER_WORKER_CHECK_INTERVAL
-              value: {{ .Values.memorySummarizerWorker.checkInterval | quote }}
-            {{- end }}
-            {{- if ((.Values.memorySummarizerWorker).leaderElection).leaseDuration }}
-            - name: AGENTAPI_MEMORY_SUMMARIZER_WORKER_LEASE_DURATION
-              value: {{ .Values.memorySummarizerWorker.leaderElection.leaseDuration | quote }}
-            {{- end }}
-            {{- if ((.Values.memorySummarizerWorker).leaderElection).renewDeadline }}
-            - name: AGENTAPI_MEMORY_SUMMARIZER_WORKER_RENEW_DEADLINE
-              value: {{ .Values.memorySummarizerWorker.leaderElection.renewDeadline | quote }}
-            {{- end }}
-            {{- if ((.Values.memorySummarizerWorker).leaderElection).retryPeriod }}
-            - name: AGENTAPI_MEMORY_SUMMARIZER_WORKER_RETRY_PERIOD
-              value: {{ .Values.memorySummarizerWorker.leaderElection.retryPeriod | quote }}
-            {{- end }}
             {{- if .Values.config.encryption.key }}
             - name: AGENTAPI_ENCRYPTION_KEY
               value: {{ .Values.config.encryption.key | quote }}

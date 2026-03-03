@@ -97,8 +97,7 @@ type StartRequest struct {
 	Params                *StartParams      `json:"params,omitempty"`
 	Scope                 string            `json:"scope,omitempty"`
 	TeamID                string            `json:"team_id,omitempty"`
-	MemoryKey             map[string]string `json:"memory_key,omitempty"`
-	MemorySummarizeDrafts *bool             `json:"memory_summarize_drafts,omitempty"`
+	MemoryKey map[string]string `json:"memory_key,omitempty"`
 }
 
 // StartResponse represents the response from starting a new agentapi server

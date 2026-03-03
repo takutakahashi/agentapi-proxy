@@ -178,22 +178,6 @@ type SlackbotCleanupWorkerConfig struct {
 	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
 }
 
-// MemorySummarizerWorkerConfig represents memory draft summarizer worker configuration.
-// The worker periodically lists all draft memories and starts summarize-drafts sessions
-// for those whose source session no longer exists.
-type MemorySummarizerWorkerConfig struct {
-	// Enabled enables the memory draft summarizer worker
-	Enabled bool `json:"enabled" mapstructure:"enabled"`
-	// CheckInterval is how often to scan for orphaned draft memories (e.g., "5m", "10m")
-	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
-	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership
-	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
-	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up
-	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
-	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions
-	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
-}
-
 // WebhookConfig represents webhook configuration
 type WebhookConfig struct {
 	// BaseURL is the base URL for webhook endpoints (e.g., "https://example.com")
@@ -331,8 +315,6 @@ type Config struct {
 	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
 	// SlackbotCleanupWorker is the configuration for the Slackbot session cleanup worker
 	SlackbotCleanupWorker SlackbotCleanupWorkerConfig `json:"slackbot_cleanup_worker" mapstructure:"slackbot_cleanup_worker"`
-	// MemorySummarizerWorker is the configuration for the memory draft summarizer worker
-	MemorySummarizerWorker MemorySummarizerWorkerConfig `json:"memory_summarizer_worker" mapstructure:"memory_summarizer_worker"`
 	// Webhook is the configuration for webhook functionality
 	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
 	// Memory is the configuration for memory storage backend

@@ -63,13 +63,6 @@ type SettingsPatch struct {
 	// Non-empty = use only this team's settings (skip all other teams).
 	PreferredTeamID string `json:"preferred_team_id,omitempty"`
 
-	// MemorySummarizeDrafts controls whether draft memories are automatically
-	// summarized into main memory when the session ends.
-	// nil = inherit from lower layer (default: disabled).
-	// true = enable draft summarization.
-	// false = explicitly disable draft summarization.
-	MemorySummarizeDrafts *bool `json:"memory_summarize_drafts,omitempty"`
-
 	// MemoryEnabled controls whether memory integration is active for sessions.
 	// nil = inherit from lower layer (default: enabled when memory_key is available).
 	// true = explicitly enable memory integration.
