@@ -31,6 +31,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	memorysummarizer "github.com/takutakahashi/agentapi-proxy/pkg/memory_summarizer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
@@ -435,6 +436,29 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 
 	if err := m.deleteSessionResources(ctx, session); err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to delete session resources: %v", err)
+	}
+
+	// Trigger draft memory summarization if the session had memory configured.
+	// Run asynchronously so that DELETE API responds immediately.
+	// The 30-second InitialMessageWaitSecond in StartSummarizeDraftsSession gives
+	// the memory-sync sidecar enough time to complete its final upsert during the
+	// pod's graceful shutdown before the summarize session reads draft memories.
+	if session != nil {
+		req := session.Request()
+		if len(req.MemoryKey) > 0 && req.MemorySummarizeDrafts != nil && *req.MemorySummarizeDrafts {
+			go func() {
+				if err := memorysummarizer.StartSummarizeDraftsSession(
+					context.Background(),
+					m,
+					session.ID(),
+					req.Scope,
+					req.TeamID,
+					session.UserID(),
+				); err != nil {
+					log.Printf("[K8S_SESSION] Warning: failed to start summarize-drafts session for %s: %v", session.ID(), err)
+				}
+			}()
+		}
 	}
 
 	// Remove session from map
@@ -1469,37 +1493,6 @@ log "agentapi stopped. Performing final memory upsert..."
 upsert_draft
 rm -f "$MESSAGES_CACHE"
 log "Memory sync complete."
-
-# --- Draft Summarization ---
-# After the final upsert, optionally start a one-shot summarization session to
-# condense the draft memory into the main memory.
-# Controlled by MEMORY_SUMMARIZE_DRAFTS (default: true). Set to "false" to disable.
-if [ "${MEMORY_SUMMARIZE_DRAFTS:-true}" = "true" ]; then
-    DRAFT_COUNT=$(agentapi-proxy client memory list \
-        --endpoint "$PROXY_ENDPOINT" \
-        --format json \
-        --tag "draft=true" \
-        --tag "session-id=${AGENTAPI_SESSION_ID}" \
-        --scope "$SCOPE" \
-        ${TEAM_OPTS} 2>/dev/null | jq -r '.total // 0' 2>/dev/null || echo 0)
-
-    if [ "${DRAFT_COUNT:-0}" -gt 0 ]; then
-        log "Draft memory found (count=${DRAFT_COUNT}), starting summarization session..."
-        # Convert --tag k=v flags to --key k=v flags expected by summarize-drafts
-        SUMMARIZE_KEY_FLAGS=$(echo "${MEMORY_KEY_FLAGS}" | sed 's/--tag /--key /g')
-        # shellcheck disable=SC2086
-        agentapi-proxy client summarize-drafts \
-            --endpoint "$PROXY_ENDPOINT" \
-            --source-session-id "${AGENTAPI_SESSION_ID}" \
-            --scope "$SCOPE" \
-            ${TEAM_OPTS} \
-            ${SUMMARIZE_KEY_FLAGS} \
-            && log "Summarization session started successfully" \
-            || log "Warning: failed to start summarization session (non-fatal)"
-    fi
-else
-    log "Draft summarization disabled (MEMORY_SUMMARIZE_DRAFTS=false)"
-fi
 `
 
 // buildMemorySyncSidecar creates a sidecar container that syncs conversation
@@ -1529,14 +1522,6 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 		scope = "team"
 	}
 
-	// Determine whether draft summarization is enabled.
-	// Controlled by the per-session field (set directly via API or propagated from
-	// team/user settings layers in buildSessionSettings). Defaults to false if not set.
-	summarizeDrafts := "false"
-	if req.MemorySummarizeDrafts != nil && *req.MemorySummarizeDrafts {
-		summarizeDrafts = "true"
-	}
-
 	envVars := []corev1.EnvVar{
 		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
@@ -1544,7 +1529,6 @@ func (m *KubernetesSessionManager) buildMemorySyncSidecar(session *KubernetesSes
 		{Name: "AGENTAPI_TEAM_ID", Value: req.TeamID},
 		{Name: "MEMORY_KEY_FLAGS", Value: memoryKeyFlags},
 		{Name: "AGENTAPI_KEY", Value: session.ResolvedAPIKey()},
-		{Name: "MEMORY_SUMMARIZE_DRAFTS", Value: summarizeDrafts},
 		// AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP
 		// are injected automatically by Kubernetes service discovery.
 	}

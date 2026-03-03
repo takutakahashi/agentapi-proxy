@@ -20,6 +20,7 @@ import (
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/slackbot"
+	memorysummarizer "github.com/takutakahashi/agentapi-proxy/pkg/memory_summarizer"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
 	"k8s.io/client-go/kubernetes"
@@ -87,6 +88,11 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Start Slackbot cleanup worker if enabled
 	if configData.SlackbotCleanupWorker.Enabled {
 		startSlackbotCleanupWorker(configData, proxyServer)
+	}
+
+	// Start memory draft summarizer worker if enabled
+	if configData.MemorySummarizerWorker.Enabled {
+		startMemorySummarizerWorker(configData, proxyServer)
 	}
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
@@ -377,6 +383,90 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 	}
 	log.Printf("[SLACKBOT_CLEANUP] Slackbot cleanup worker started in namespace: %s (TTL: %v)%s", namespace, sessionTTL, dryRunNote)
 	return leaderCleanupWorker
+}
+
+// startMemorySummarizerWorker initializes and starts the memory draft summarizer worker.
+// The worker periodically scans for orphaned draft memories (whose source session no
+// longer exists) and starts summarize-drafts sessions to condense them into main memories.
+func startMemorySummarizerWorker(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[MEMORY_SUMMARIZER] Initializing memory draft summarizer worker...")
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[MEMORY_SUMMARIZER] Kubernetes config not available, worker disabled: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[MEMORY_SUMMARIZER] Failed to create Kubernetes client, worker disabled: %v", err)
+		return
+	}
+
+	namespace := configData.KubernetesSession.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	checkInterval, err := time.ParseDuration(configData.MemorySummarizerWorker.CheckInterval)
+	if err != nil || checkInterval <= 0 {
+		log.Printf("[MEMORY_SUMMARIZER] Invalid check_interval, using default 5m: %v", err)
+		checkInterval = 5 * time.Minute
+	}
+
+	workerConfig := memorysummarizer.WorkerConfig{
+		CheckInterval: checkInterval,
+		Enabled:       true,
+	}
+
+	leaseDuration, err := time.ParseDuration(configData.MemorySummarizerWorker.LeaseDuration)
+	if err != nil || leaseDuration <= 0 {
+		log.Printf("[MEMORY_SUMMARIZER] Invalid lease_duration, using default 15s: %v", err)
+		leaseDuration = 15 * time.Second
+	}
+
+	renewDeadline, err := time.ParseDuration(configData.MemorySummarizerWorker.RenewDeadline)
+	if err != nil || renewDeadline <= 0 {
+		log.Printf("[MEMORY_SUMMARIZER] Invalid renew_deadline, using default 10s: %v", err)
+		renewDeadline = 10 * time.Second
+	}
+
+	retryPeriod, err := time.ParseDuration(configData.MemorySummarizerWorker.RetryPeriod)
+	if err != nil || retryPeriod <= 0 {
+		log.Printf("[MEMORY_SUMMARIZER] Invalid retry_period, using default 2s: %v", err)
+		retryPeriod = 2 * time.Second
+	}
+
+	electionConfig := schedule.LeaderElectionConfig{
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod:   retryPeriod,
+		Namespace:     namespace,
+		// LeaseName is overridden inside NewLeaderWorker to "agentapi-memory-summarizer-worker"
+	}
+
+	// Use a distinct lease name so this worker does not compete with other workers.
+	electionConfig.LeaseName = "agentapi-memory-summarizer-worker"
+
+	worker := memorysummarizer.NewWorker(
+		proxyServer.GetMemoryRepository(),
+		proxyServer.GetSessionManager(),
+		workerConfig,
+	)
+
+	elector := schedule.NewLeaderElector(client, electionConfig)
+	go elector.Run(context.Background(),
+		func(leaderCtx context.Context) {
+			if err := worker.Start(leaderCtx); err != nil {
+				log.Printf("[MEMORY_SUMMARIZER] Failed to start worker: %v", err)
+			}
+		},
+		func() {
+			worker.Stop()
+		},
+	)
+
+	log.Printf("[MEMORY_SUMMARIZER] Memory draft summarizer worker started in namespace: %s (interval: %v)", namespace, checkInterval)
 }
 
 // registerWebhookHandlers registers webhook REST API handlers
