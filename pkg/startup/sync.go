@@ -264,27 +264,51 @@ func readClaudeSettingsJSON(settingsPath string) (*claudeSettingsJSON, error) {
 	return &content, nil
 }
 
-// buildGitHubEnv builds environment variables for GitHub CLI/git commands,
-// setting GH_HOST for GitHub Enterprise Server when GITHUB_API points to a GHE instance.
-func buildGitHubEnv() []string {
+// getGHESHost returns the GitHub Enterprise Server hostname extracted from
+// the GITHUB_API environment variable. Returns an empty string when running
+// against github.com (i.e. GITHUB_API is unset or equals "https://api.github.com").
+func getGHESHost() string {
+	githubAPI := os.Getenv("GITHUB_API")
+	if githubAPI == "" || githubAPI == "https://api.github.com" {
+		return ""
+	}
+	host := strings.TrimPrefix(githubAPI, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimSuffix(host, "/api/v3")
+	return host
+}
+
+// buildGitHubEnvForHost builds environment variables for GitHub CLI/git commands.
+// GH_HOST is set to the GHES hostname only when targetHost matches the configured
+// GHES host. For github.com target hosts in a GHES environment, GH_HOST is left
+// unset so that gh CLI defaults to github.com.
+func buildGitHubEnvForHost(targetHost string) []string {
 	env := os.Environ()
-	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
-		githubHost := strings.TrimPrefix(githubAPI, "https://")
-		githubHost = strings.TrimPrefix(githubHost, "http://")
-		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
-		env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
-		log.Printf("[SYNC] GHE detected, setting GH_HOST=%s", githubHost)
+	ghesHost := getGHESHost()
+	if ghesHost != "" && targetHost == ghesHost {
+		env = append(env, fmt.Sprintf("GH_HOST=%s", ghesHost))
+		log.Printf("[SYNC] GHE detected, setting GH_HOST=%s", ghesHost)
 	}
 	return env
 }
 
-// cloneMarketplace clones a marketplace repository. For GitHub URLs (github.com
-// or GitHub Enterprise), it uses `gh repo clone` so that GITHUB_TOKEN /
-// GitHub App auth and GHE host routing work correctly.
-// For other URLs (e.g., local file paths used in tests), it falls back to
-// plain `git clone`. If the target already exists it pulls updates instead.
+// cloneMarketplace clones a marketplace repository.
+//
+// Routing strategy:
+//   - github.com URL in a GHES environment: uses cloneGitHubDotComMarketplace
+//     so that GH_HOST is NOT set to the enterprise server. Public repos are
+//     cloned without authentication; private repos require GITHUB_COM_TOKEN.
+//   - GitHub URL (github.com outside GHES, or a GHES-hosted URL): uses
+//     `gh repo clone` with GH_HOST set appropriately so that token auth and
+//     GHE host routing work correctly.
+//   - Other URLs (e.g., local file paths used in tests): falls back to plain
+//     `git clone`.
+//
+// If the target directory already contains a git repo it pulls updates instead.
 func cloneMarketplace(url, targetDir string) error {
-	env := buildGitHubEnv()
+	urlHost := github_pkg.ExtractRepositoryHostname(url)
+	ghesHost := getGHESHost()
+	env := buildGitHubEnvForHost(urlHost)
 
 	if _, err := os.Stat(filepath.Join(targetDir, ".git")); err == nil {
 		log.Printf("[SYNC] Marketplace already cloned at %s, pulling updates", targetDir)
@@ -299,7 +323,13 @@ func cloneMarketplace(url, targetDir string) error {
 
 	repoFullName := github_pkg.ParseRepositoryURL(url)
 	if repoFullName != "" {
-		// GitHub URL: use gh repo clone so token auth and GHE host work.
+		// github.com URL in a GHES environment: keep GH_HOST off the GHES server.
+		if urlHost == "github.com" && ghesHost != "" {
+			log.Printf("[SYNC] github.com marketplace detected in GHES environment, using direct clone for %s", repoFullName)
+			return cloneGitHubDotComMarketplace(repoFullName, targetDir)
+		}
+
+		// GHES URL or non-GHES environment: use gh repo clone with appropriate auth.
 		log.Printf("[SYNC] Setting up GitHub authentication for marketplace repo: %s", repoFullName)
 		if err := SetupGitHubAuth(repoFullName); err != nil {
 			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
@@ -323,6 +353,44 @@ func cloneMarketplace(url, targetDir string) error {
 	log.Printf("[SYNC] Cloning marketplace via git clone: %s", url)
 	cmd := exec.Command("git", "clone", "--depth", "1", url, targetDir)
 	cmd.Env = env
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// cloneGitHubDotComMarketplace clones a marketplace from github.com in a GHES
+// environment without setting GH_HOST to the enterprise server.
+//
+// For private repositories, set GITHUB_COM_TOKEN to a GitHub.com personal
+// access token or fine-grained token. Public repositories are cloned without
+// authentication using a plain HTTPS git clone.
+func cloneGitHubDotComMarketplace(repoFullName, targetDir string) error {
+	parentDir := filepath.Dir(targetDir)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return fmt.Errorf("failed to create parent directory: %w", err)
+	}
+
+	// Attempt authenticated clone when GITHUB_COM_TOKEN is set (private repos).
+	if token := os.Getenv("GITHUB_COM_TOKEN"); token != "" {
+		log.Printf("[SYNC] Cloning github.com marketplace %s via gh repo clone with GITHUB_COM_TOKEN", repoFullName)
+		ghEnv := append(os.Environ(), fmt.Sprintf("GITHUB_TOKEN=%s", token))
+		cmd := exec.Command("gh", "repo", "clone", repoFullName, targetDir)
+		cmd.Env = ghEnv
+		cmd.Dir = parentDir
+		if output, err := cmd.CombinedOutput(); err == nil {
+			return nil
+		} else {
+			log.Printf("[SYNC] gh repo clone with GITHUB_COM_TOKEN failed for %s: %v, output: %s; falling back to unauthenticated git clone", repoFullName, err, string(output))
+		}
+	}
+
+	// Fall back to unauthenticated git clone (works for public repos).
+	cloneURL := fmt.Sprintf("https://github.com/%s.git", repoFullName)
+	log.Printf("[SYNC] Cloning github.com marketplace %s via git clone (unauthenticated)", repoFullName)
+	cmd := exec.Command("git", "clone", "--depth", "1", cloneURL, targetDir)
+	cmd.Env = os.Environ()
+	cmd.Dir = parentDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 	}

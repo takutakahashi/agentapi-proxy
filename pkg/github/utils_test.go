@@ -5,6 +5,74 @@ import (
 	"testing"
 )
 
+func TestExtractRepositoryHostname(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected string
+	}{
+		{
+			name:     "HTTPS github.com",
+			url:      "https://github.com/owner/repo.git",
+			expected: "github.com",
+		},
+		{
+			name:     "HTTPS github.com without .git",
+			url:      "https://github.com/owner/repo",
+			expected: "github.com",
+		},
+		{
+			name:     "SSH github.com",
+			url:      "git@github.com:owner/repo.git",
+			expected: "github.com",
+		},
+		{
+			name:     "HTTPS GHES",
+			url:      "https://github.enterprise.com/owner/repo.git",
+			expected: "github.enterprise.com",
+		},
+		{
+			name:     "SSH GHES",
+			url:      "git@github.enterprise.com:owner/repo.git",
+			expected: "github.enterprise.com",
+		},
+		{
+			name:     "HTTP URL",
+			url:      "http://github.com/owner/repo.git",
+			expected: "github.com",
+		},
+		{
+			name:     "git:// URL",
+			url:      "git://github.com/owner/repo.git",
+			expected: "github.com",
+		},
+		{
+			name:     "HTTPS with token",
+			url:      "https://token@github.com/owner/repo.git",
+			expected: "github.com",
+		},
+		{
+			name:     "local path",
+			url:      "/tmp/local-repo",
+			expected: "",
+		},
+		{
+			name:     "empty string",
+			url:      "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ExtractRepositoryHostname(tt.url)
+			if result != tt.expected {
+				t.Errorf("ExtractRepositoryHostname(%q) = %q, expected %q", tt.url, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestParseRepositoryURL(t *testing.T) {
 	tests := []struct {
 		name     string
