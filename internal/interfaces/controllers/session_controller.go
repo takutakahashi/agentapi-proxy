@@ -398,13 +398,16 @@ func (c *SessionController) captureFirstMessage(ctx echo.Context, session entiti
 	}
 }
 
-// updateSessionTimestamp updates the session's updated_at timestamp
+// updateSessionTimestamp updates the session's updated_at and last_message_at timestamps.
+// Called on every POST /message request routed through the proxy.
 func (c *SessionController) updateSessionTimestamp(ctx echo.Context, session entities.Session) {
-	// Update in-memory timestamp
+	// Update in-memory timestamps
 	if ks, ok := session.(*services.KubernetesSession); ok {
+		now := time.Now()
 		ks.TouchUpdatedAt()
+		ks.SetLastMessageAt(now)
 
-		// Update Service annotation asynchronously to avoid blocking the request
+		// Update Service annotations asynchronously to avoid blocking the request
 		go func() {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -412,7 +415,11 @@ func (c *SessionController) updateSessionTimestamp(ctx echo.Context, session ent
 			if manager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
 				updatedAt := ks.UpdatedAt().Format(time.RFC3339)
 				if err := manager.UpdateServiceAnnotation(updateCtx, session.ID(), "agentapi.proxy/updated-at", updatedAt); err != nil {
-					log.Printf("[SESSION] Failed to update Service annotation for session %s: %v", session.ID(), err)
+					log.Printf("[SESSION] Failed to update updated-at annotation for session %s: %v", session.ID(), err)
+				}
+				lastMessageAt := now.UTC().Format(time.RFC3339)
+				if err := manager.UpdateServiceAnnotation(updateCtx, session.ID(), "agentapi.proxy/last-message-at", lastMessageAt); err != nil {
+					log.Printf("[SESSION] Failed to update last-message-at annotation for session %s: %v", session.ID(), err)
 				}
 			}
 		}()
