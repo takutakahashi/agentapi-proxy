@@ -7,6 +7,44 @@ import (
 	"strings"
 )
 
+// ExtractRepositoryHostname extracts the hostname from a Git repository URL.
+// Handles SSH (git@hostname:path), HTTPS, HTTP, and git:// formats.
+// Examples:
+//
+//	"https://github.com/owner/repo.git"         → "github.com"
+//	"git@github.enterprise.com:owner/repo.git"  → "github.enterprise.com"
+//	"http://github.com/owner/repo"              → "github.com"
+func ExtractRepositoryHostname(url string) string {
+	// SSH format: git@hostname:owner/repo.git
+	if strings.Contains(url, "@") && strings.Contains(url, ":") && !strings.Contains(url, "://") {
+		withoutUser := url[strings.Index(url, "@")+1:]
+		colonIdx := strings.Index(withoutUser, ":")
+		if colonIdx != -1 {
+			return withoutUser[:colonIdx]
+		}
+	}
+
+	// HTTPS / HTTP / git:// formats
+	for _, prefix := range []string{"https://", "http://", "git://"} {
+		if strings.HasPrefix(url, prefix) {
+			withoutProtocol := strings.TrimPrefix(url, prefix)
+			// Strip auth token if present: token@hostname/...
+			if atIdx := strings.Index(withoutProtocol, "@"); atIdx != -1 {
+				slashIdx := strings.Index(withoutProtocol, "/")
+				if slashIdx == -1 || atIdx < slashIdx {
+					withoutProtocol = withoutProtocol[atIdx+1:]
+				}
+			}
+			if slashIdx := strings.Index(withoutProtocol, "/"); slashIdx != -1 {
+				return withoutProtocol[:slashIdx]
+			}
+			return withoutProtocol
+		}
+	}
+
+	return ""
+}
+
 // ParseRepositoryURL extracts owner/repo from various Git URL formats
 func ParseRepositoryURL(url string) string {
 	// Handle SSH URLs: git@hostname:owner/repo.git

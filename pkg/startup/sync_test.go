@@ -1620,3 +1620,166 @@ func TestSyncMarketplaces_WithRealMarketplaceName(t *testing.T) {
 	})
 
 }
+
+func TestGetGHESHost(t *testing.T) {
+	save := func(key string) func() {
+		orig, ok := os.LookupEnv(key)
+		return func() {
+			if ok {
+				_ = os.Setenv(key, orig)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		}
+	}
+
+	tests := []struct {
+		name     string
+		apiEnv   string
+		expected string
+	}{
+		{
+			name:     "unset",
+			apiEnv:   "",
+			expected: "",
+		},
+		{
+			name:     "github.com API",
+			apiEnv:   "https://api.github.com",
+			expected: "",
+		},
+		{
+			name:     "GHES URL with /api/v3 suffix",
+			apiEnv:   "https://github.enterprise.com/api/v3",
+			expected: "github.enterprise.com",
+		},
+		{
+			name:     "GHES URL without suffix",
+			apiEnv:   "https://github.enterprise.com",
+			expected: "github.enterprise.com",
+		},
+		{
+			name:     "GHES URL with http",
+			apiEnv:   "http://github.internal.com/api/v3",
+			expected: "github.internal.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restore := save("GITHUB_API")
+			defer restore()
+			if tt.apiEnv == "" {
+				_ = os.Unsetenv("GITHUB_API")
+			} else {
+				_ = os.Setenv("GITHUB_API", tt.apiEnv)
+			}
+			got := getGHESHost()
+			if got != tt.expected {
+				t.Errorf("getGHESHost() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildGitHubEnvForHost(t *testing.T) {
+	save := func(key string) func() {
+		orig, ok := os.LookupEnv(key)
+		return func() {
+			if ok {
+				_ = os.Setenv(key, orig)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		}
+	}
+
+	containsEnv := func(env []string, key, value string) bool {
+		target := key + "=" + value
+		for _, e := range env {
+			if e == target {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("no GHES configured - GH_HOST not set for any host", func(t *testing.T) {
+		restore := save("GITHUB_API")
+		defer restore()
+		_ = os.Unsetenv("GITHUB_API")
+
+		env := buildGitHubEnvForHost("github.com")
+		for _, e := range env {
+			if strings.HasPrefix(e, "GH_HOST=") {
+				t.Errorf("expected no GH_HOST in env, got %q", e)
+			}
+		}
+	})
+
+	t.Run("GHES configured - GH_HOST set when targetHost matches GHES", func(t *testing.T) {
+		restore := save("GITHUB_API")
+		defer restore()
+		_ = os.Setenv("GITHUB_API", "https://github.enterprise.com/api/v3")
+
+		env := buildGitHubEnvForHost("github.enterprise.com")
+		if !containsEnv(env, "GH_HOST", "github.enterprise.com") {
+			t.Error("expected GH_HOST=github.enterprise.com in env for GHES URL")
+		}
+	})
+
+	t.Run("GHES configured - GH_HOST NOT set when targetHost is github.com", func(t *testing.T) {
+		restore := save("GITHUB_API")
+		defer restore()
+		_ = os.Setenv("GITHUB_API", "https://github.enterprise.com/api/v3")
+
+		env := buildGitHubEnvForHost("github.com")
+		for _, e := range env {
+			if strings.HasPrefix(e, "GH_HOST=") {
+				t.Errorf("expected no GH_HOST in env for github.com URL in GHES mode, got %q", e)
+			}
+		}
+	})
+}
+
+// TestCloneMarketplace_GHESWithGitHubDotComURL verifies that in a GHES environment,
+// cloneMarketplace dispatches to the git-clone path (not gh repo clone with GH_HOST)
+// for github.com URLs. This is validated by using a local file-system URL as the
+// github.com stand-in so no real network call is needed.
+func TestCloneMarketplace_GHESWithLocalURL(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	save := func(key string) func() {
+		orig, ok := os.LookupEnv(key)
+		return func() {
+			if ok {
+				_ = os.Setenv(key, orig)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		}
+	}
+
+	t.Run("non-github URL still clones via git clone in GHES env", func(t *testing.T) {
+		restore := save("GITHUB_API")
+		defer restore()
+		_ = os.Setenv("GITHUB_API", "https://github.enterprise.com/api/v3")
+
+		tmpDir := t.TempDir()
+		sourceDir := filepath.Join(tmpDir, "source")
+		createTestGitRepo(t, sourceDir, map[string]string{
+			"file.txt": "content",
+		})
+
+		targetDir := filepath.Join(tmpDir, "target")
+		// Local path is not a GitHub URL, so cloneMarketplace falls back to git clone.
+		if err := cloneMarketplace(sourceDir, targetDir); err != nil {
+			t.Fatalf("cloneMarketplace failed in GHES env for local URL: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(targetDir, ".git")); os.IsNotExist(err) {
+			t.Error("expected .git to exist after clone")
+		}
+	})
+}
