@@ -76,7 +76,7 @@ type RunServerRequest struct {
 	SlackParams              *SlackParams      // Slack integration parameters
 	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
-	MemoryKey map[string]string // Tag map to identify memories; nil means use Tags
+	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
 }
 
 // Session represents a running agentapi session
