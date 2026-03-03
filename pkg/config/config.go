@@ -636,6 +636,13 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("slackbot_cleanup_worker.retry_period", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD")
 
+	// Memory summarizer worker configuration
+	_ = v.BindEnv("memory_summarizer_worker.enabled", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_ENABLED")
+	_ = v.BindEnv("memory_summarizer_worker.check_interval", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("memory_summarizer_worker.lease_duration", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("memory_summarizer_worker.renew_deadline", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("memory_summarizer_worker.retry_period", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_RETRY_PERIOD")
+
 	// Webhook configuration
 	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
 	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
@@ -718,6 +725,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("slackbot_cleanup_worker.lease_duration", "15s")
 	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "10s")
 	v.SetDefault("slackbot_cleanup_worker.retry_period", "2s")
+
+	// Memory summarizer worker defaults
+	v.SetDefault("memory_summarizer_worker.enabled", false)
+	v.SetDefault("memory_summarizer_worker.check_interval", "5m")
+	v.SetDefault("memory_summarizer_worker.lease_duration", "15s")
+	v.SetDefault("memory_summarizer_worker.renew_deadline", "10s")
+	v.SetDefault("memory_summarizer_worker.retry_period", "2s")
 
 	// Webhook defaults
 	v.SetDefault("webhook.base_url", "")
