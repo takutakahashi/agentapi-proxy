@@ -826,3 +826,80 @@ func TestClient_DeleteTask(t *testing.T) {
 		})
 	}
 }
+
+func TestListMemoriesUnion(t *testing.T) {
+	// memories keyed by "tagKey=tagValue" for the mock server to return
+	memoryByTag := map[string]*MemoryEntry{
+		"project=myapp":  {ID: "m1", Title: "Project Note", Content: "myapp content"},
+		"category=notes": {ID: "m2", Title: "Category Note", Content: "notes content"},
+		"shared=true":    {ID: "m1", Title: "Project Note", Content: "myapp content"}, // duplicate of m1
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/memories" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		q := r.URL.Query()
+		var result *MemoryEntry
+		for key, vals := range q {
+			if strings.HasPrefix(key, "include_tag.") {
+				tagKey := strings.TrimPrefix(key, "include_tag.")
+				lookup := tagKey + "=" + vals[0]
+				if m, ok := memoryByTag[lookup]; ok {
+					result = m
+					break
+				}
+			}
+		}
+		var memories []*MemoryEntry
+		if result != nil {
+			memories = []*MemoryEntry{result}
+		}
+		resp := MemoryListResponse{Memories: memories}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("Failed to encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL)
+
+	t.Run("union deduplicates identical IDs", func(t *testing.T) {
+		tags := map[string]string{
+			"project":  "myapp",
+			"shared":   "true", // also maps to m1 in mock
+			"category": "notes",
+		}
+		resp, err := c.ListMemoriesUnion(context.Background(), "user", "", tags)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// m1 appears in two tag responses but should be deduplicated; m2 appears once → 2 unique
+		if len(resp.Memories) != 2 {
+			t.Errorf("expected 2 unique memories, got %d", len(resp.Memories))
+		}
+		ids := make(map[string]bool)
+		for _, m := range resp.Memories {
+			ids[m.ID] = true
+		}
+		if !ids["m1"] || !ids["m2"] {
+			t.Errorf("expected IDs m1 and m2, got %v", ids)
+		}
+	})
+
+	t.Run("single tag falls back to ListMemories", func(t *testing.T) {
+		tags := map[string]string{"category": "notes"}
+		resp, err := c.ListMemoriesUnion(context.Background(), "user", "", tags)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(resp.Memories) != 1 {
+			t.Errorf("expected 1 memory, got %d", len(resp.Memories))
+		}
+		if resp.Memories[0].ID != "m2" {
+			t.Errorf("expected memory ID m2, got %s", resp.Memories[0].ID)
+		}
+	})
+}

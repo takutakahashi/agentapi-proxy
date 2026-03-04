@@ -564,3 +564,39 @@ func TestRunDeleteSessionWithEnv(t *testing.T) {
 	// For now, we just verify the command structure exists
 	t.Skip("Skipping full integration test - would require mocking os.Exit and stdin")
 }
+
+func TestFormatMemoriesMarkdown(t *testing.T) {
+	tests := []struct {
+		name     string
+		memories []*client.MemoryEntry
+		want     string
+	}{
+		{
+			name:     "empty list",
+			memories: []*client.MemoryEntry{},
+			want:     "",
+		},
+		{
+			name: "single entry",
+			memories: []*client.MemoryEntry{
+				{Title: "My Note", Content: "Some content here."},
+			},
+			want: "## My Note\n\nSome content here.\n",
+		},
+		{
+			name: "multiple entries separated by horizontal rule",
+			memories: []*client.MemoryEntry{
+				{Title: "First", Content: "Content A"},
+				{Title: "Second", Content: "Content B"},
+			},
+			want: "## First\n\nContent A\n\n---\n\n## Second\n\nContent B\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatMemoriesMarkdown(tt.memories)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

@@ -2165,6 +2165,7 @@ if [ -n "$MEMORY_KEY_FLAGS" ]; then
         $MEMORY_KEY_FLAGS \
         --scope "$MEMORY_SCOPE" \
         $MEMORY_TEAM_OPTS \
+        --union \
         --format markdown \
         --endpoint "$PROXY_ENDPOINT" 2>/dev/null || echo "")
     if [ -n "$MEMORY_CONTENT" ]; then

@@ -92,12 +92,12 @@ type StartParams struct {
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
-	Environment           map[string]string `json:"environment,omitempty"`
-	Tags                  map[string]string `json:"tags,omitempty"`
-	Params                *StartParams      `json:"params,omitempty"`
-	Scope                 string            `json:"scope,omitempty"`
-	TeamID                string            `json:"team_id,omitempty"`
-	MemoryKey map[string]string `json:"memory_key,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Params      *StartParams      `json:"params,omitempty"`
+	Scope       string            `json:"scope,omitempty"`
+	TeamID      string            `json:"team_id,omitempty"`
+	MemoryKey   map[string]string `json:"memory_key,omitempty"`
 }
 
 // StartResponse represents the response from starting a new agentapi server
@@ -735,7 +735,7 @@ func (c *Client) ListMemories(ctx context.Context, scope, teamID string, tags ma
 		q.Set("team_id", teamID)
 	}
 	for k, v := range tags {
-		q.Set("tag."+k, v)
+		q.Set("include_tag."+k, v)
 	}
 	for k, v := range excludeTags {
 		q.Set("exclude_tag."+k, v)
@@ -770,6 +770,38 @@ func (c *Client) ListMemories(ctx context.Context, scope, teamID string, tags ma
 	}
 
 	return &listResp, nil
+}
+
+// ListMemoriesUnion returns the union of memories matching any of the given tags (OR logic).
+// For each tag key-value pair, a separate API call is made and results are deduplicated by ID.
+// If tags is empty or contains a single entry, behaves identically to ListMemories.
+func (c *Client) ListMemoriesUnion(ctx context.Context, scope, teamID string, tags map[string]string) (*MemoryListResponse, error) {
+	if len(tags) <= 1 {
+		return c.ListMemories(ctx, scope, teamID, tags, nil)
+	}
+
+	seen := make(map[string]*MemoryEntry)
+	var order []string
+
+	for k, v := range tags {
+		singleTag := map[string]string{k: v}
+		resp, err := c.ListMemories(ctx, scope, teamID, singleTag, nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range resp.Memories {
+			if _, exists := seen[m.ID]; !exists {
+				seen[m.ID] = m
+				order = append(order, m.ID)
+			}
+		}
+	}
+
+	memories := make([]*MemoryEntry, 0, len(order))
+	for _, id := range order {
+		memories = append(memories, seen[id])
+	}
+	return &MemoryListResponse{Memories: memories}, nil
 }
 
 // GetMemory retrieves a memory entry by ID

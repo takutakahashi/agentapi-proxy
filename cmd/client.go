@@ -48,6 +48,7 @@ var (
 	memoryExcludeTags []string
 	memoryKeys        []string
 	memoryFormat      string
+	memoryUnion       bool
 )
 
 // summarize-drafts subcommand flags
@@ -390,9 +391,10 @@ func init() {
 	// memory list flags
 	memoryListCmd.Flags().StringVar(&memoryScope, "scope", "user", `Memory scope: "user" or "team"`)
 	memoryListCmd.Flags().StringVar(&memoryTeamID, "team-id", "", "Team ID (required when scope is 'team')")
-	memoryListCmd.Flags().StringArrayVar(&memoryTags, "tag", nil, "Tag filter in key=value format (AND logic, can be specified multiple times)")
+	memoryListCmd.Flags().StringArrayVar(&memoryTags, "tag", nil, "Tag filter in key=value format (AND logic by default, can be specified multiple times)")
 	memoryListCmd.Flags().StringArrayVar(&memoryExcludeTags, "exclude-tag", nil, "Exclude memories matching these tags in key=value format (AND logic, can be specified multiple times)")
 	memoryListCmd.Flags().StringVar(&memoryFormat, "format", "json", `Output format: "json", "markdown", or "content"`)
+	memoryListCmd.Flags().BoolVar(&memoryUnion, "union", false, "Union mode: return memories matching ANY specified tag (OR logic, makes a separate API call per tag)")
 
 	// memory create flags
 	memoryCreateCmd.Flags().StringVar(&memoryTitle, "title", "", "Memory title (required)")
@@ -737,14 +739,17 @@ func readContentFlag(content, contentFile string) (string, error) {
 }
 
 // formatMemoriesMarkdown formats memory entries as Markdown suitable for CLAUDE.md injection.
+// Each entry is rendered as: title heading, body content, separated by horizontal rules.
 func formatMemoriesMarkdown(memories []*client.MemoryEntry) string {
 	if len(memories) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("# Session Memory\n")
-	for _, m := range memories {
-		sb.WriteString("\n## ")
+	for i, m := range memories {
+		if i > 0 {
+			sb.WriteString("\n---\n\n")
+		}
+		sb.WriteString("## ")
 		sb.WriteString(m.Title)
 		sb.WriteString("\n\n")
 		sb.WriteString(m.Content)
@@ -773,7 +778,12 @@ func runMemoryList(cmd *cobra.Command, args []string) {
 	}
 
 	ctx := context.Background()
-	listResp, err := c.ListMemories(ctx, memoryScope, memoryTeamID, tags, excludeTags)
+	var listResp *client.MemoryListResponse
+	if memoryUnion && len(tags) > 0 {
+		listResp, err = c.ListMemoriesUnion(ctx, memoryScope, memoryTeamID, tags)
+	} else {
+		listResp, err = c.ListMemories(ctx, memoryScope, memoryTeamID, tags, excludeTags)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing memories: %v\n", err)
 		os.Exit(1)
