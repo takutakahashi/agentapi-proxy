@@ -260,8 +260,13 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			s.mu.RUnlock()
 
 			if exists {
-				// Update existing user with latest GitHub info and teams
+				// Update existing user with latest GitHub info, teams, and role
 				existingUser.SetGitHubInfo(githubInfo, teams)
+				if userContext.Role != "" {
+					if err := existingUser.SetRoles([]entities.Role{entities.Role(userContext.Role)}); err != nil {
+						log.Printf("[AUTH] Warning: failed to update role %q from GitHub context for existing user %s: %v", userContext.Role, userContext.UserID, err)
+					}
+				}
 				return existingUser, nil
 			}
 
