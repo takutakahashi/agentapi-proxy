@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -282,6 +283,13 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			)
 			// Set teams
 			newUser.SetGitHubInfo(githubInfo, teams)
+
+			// Set role from GitHub context (e.g., "admin" for admin-mapped teams)
+			if userContext.Role != "" {
+				if err := newUser.SetRoles([]entities.Role{entities.Role(userContext.Role)}); err != nil {
+					log.Printf("[AUTH] Warning: failed to set role %q from GitHub context for user %s: %v", userContext.Role, userContext.UserID, err)
+				}
+			}
 
 			// Set permissions from GitHub context
 			for _, perm := range userContext.Permissions {
