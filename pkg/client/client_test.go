@@ -843,8 +843,8 @@ func TestListMemoriesUnion(t *testing.T) {
 		q := r.URL.Query()
 		var result *MemoryEntry
 		for key, vals := range q {
-			if strings.HasPrefix(key, "tag.") {
-				tagKey := strings.TrimPrefix(key, "tag.")
+			if strings.HasPrefix(key, "include_tag.") {
+				tagKey := strings.TrimPrefix(key, "include_tag.")
 				lookup := tagKey + "=" + vals[0]
 				if m, ok := memoryByTag[lookup]; ok {
 					result = m

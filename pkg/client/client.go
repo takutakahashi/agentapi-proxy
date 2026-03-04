@@ -735,7 +735,7 @@ func (c *Client) ListMemories(ctx context.Context, scope, teamID string, tags ma
 		q.Set("team_id", teamID)
 	}
 	for k, v := range tags {
-		q.Set("tag."+k, v)
+		q.Set("include_tag."+k, v)
 	}
 	for k, v := range excludeTags {
 		q.Set("exclude_tag."+k, v)
