@@ -43,6 +43,7 @@ type userTeamMappingEntry struct {
 type KubernetesUserTeamMappingRepository struct {
 	client    kubernetes.Interface
 	namespace string
+	ttl       time.Duration
 }
 
 // NewKubernetesUserTeamMappingRepository creates a new KubernetesUserTeamMappingRepository
@@ -50,6 +51,7 @@ func NewKubernetesUserTeamMappingRepository(client kubernetes.Interface, namespa
 	return &KubernetesUserTeamMappingRepository{
 		client:    client,
 		namespace: namespace,
+		ttl:       5 * time.Minute,
 	}
 }
 
@@ -72,6 +74,10 @@ func (r *KubernetesUserTeamMappingRepository) Get(ctx context.Context, username 
 	var entry userTeamMappingEntry
 	if err := json.Unmarshal([]byte(rawJSON), &entry); err != nil {
 		return nil, false, fmt.Errorf("failed to unmarshal team mapping for user %s: %w", username, err)
+	}
+
+	if r.ttl > 0 && time.Since(entry.UpdatedAt) > r.ttl {
+		return nil, false, nil
 	}
 
 	return entry.Teams, true, nil
