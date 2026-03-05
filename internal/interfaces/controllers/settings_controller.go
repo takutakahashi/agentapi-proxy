@@ -13,7 +13,7 @@ import (
 )
 
 // BaseSettingsName is the reserved name for global base settings (admin-only)
-const BaseSettingsName = "__base__"
+const BaseSettingsName = "base"
 
 // SettingsController handles settings-related HTTP requests
 type SettingsController struct {
@@ -334,7 +334,7 @@ func (c *SettingsController) DeleteSettings(ctx echo.Context) error {
 func (c *SettingsController) canAccess(user *entities.User, name string) bool {
 	log.Printf("[SETTINGS_ACCESS] Checking access for user=%s, userType=%s, requestedName=%s", user.ID(), user.UserType(), name)
 
-	// __base__ is admin-only (global base settings)
+	// "base" is admin-only (global base settings)
 	if name == BaseSettingsName {
 		if user.IsAdmin() {
 			log.Printf("[SETTINGS_ACCESS] GRANTED: user=%s is admin, accessing base settings", user.ID())
@@ -387,7 +387,7 @@ func (c *SettingsController) canAccess(user *entities.User, name string) bool {
 func (c *SettingsController) canModify(user *entities.User, name string) bool {
 	log.Printf("[SETTINGS_MODIFY] Checking modify permission for user=%s, userType=%s, requestedName=%s", user.ID(), user.UserType(), name)
 
-	// __base__ is admin-only (global base settings)
+	// "base" is admin-only (global base settings)
 	if name == BaseSettingsName {
 		if user.IsAdmin() {
 			log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s is admin, modifying base settings", user.ID())
