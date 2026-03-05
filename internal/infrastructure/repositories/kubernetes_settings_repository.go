@@ -140,7 +140,18 @@ func (r *KubernetesSettingsRepository) FindByName(ctx context.Context, name stri
 		return nil, fmt.Errorf("failed to get settings secret: %w", err)
 	}
 
-	return r.fromSecret(secret)
+	settings, err := r.fromSecret(secret)
+	if err != nil {
+		return nil, err
+	}
+
+	// Always ensure the name matches the requested name.
+	// The stored JSON may have an empty name (legacy entries), so we set it here.
+	if settings.Name() == "" {
+		settings.SetName(name)
+	}
+
+	return settings, nil
 }
 
 // Delete removes settings by name
