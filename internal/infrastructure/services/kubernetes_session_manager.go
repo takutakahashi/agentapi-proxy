@@ -2236,15 +2236,14 @@ else
         CLAUDE_ARGS_FULL="$CLAUDE_ARGS_FULL $CLAUDE_ARGS"
     fi
 
-    # Build command with resume fallback (claude -c || claude)
-    # This attempts to resume an existing session first, falling back to a new session if not available
+    # Build command
     if [ -n "$CLAUDE_ARGS_FULL" ]; then
-        CLAUDE_CMD="claude -c $CLAUDE_ARGS_FULL || claude $CLAUDE_ARGS_FULL"
+        CLAUDE_CMD="claude $CLAUDE_ARGS_FULL"
     else
-        CLAUDE_CMD="claude -c || claude"
+        CLAUDE_CMD="claude"
     fi
 
-    echo "[STARTUP] Starting agentapi with resume fallback: $CLAUDE_CMD"
+    echo "[STARTUP] Starting agentapi: $CLAUDE_CMD"
     exec agentapi server --allowed-hosts '*' --allowed-origins '*' --port $AGENTAPI_PORT -- sh -c "$CLAUDE_CMD"
 fi
 `
