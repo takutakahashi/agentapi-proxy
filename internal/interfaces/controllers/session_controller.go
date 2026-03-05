@@ -145,7 +145,6 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 
 	userID := authzCtx.PersonalScope.UserID
 	userTeamIDs := authzCtx.TeamScope.Teams
-	isAdmin := authzCtx.TeamScope.IsAdmin
 
 	tagFilters := make(map[string]string)
 	for paramName, paramValues := range ctx.QueryParams() {
@@ -164,8 +163,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		TeamIDs: userTeamIDs,
 	}
 
-	// For non-admin users, set UserID filter only if not filtering by team
-	if !isAdmin && scopeFilter != "team" && teamIDFilter == "" {
+	// For non-team scope, always filter by user ID - even admins should not see
+	// other users' personal sessions. Admin privileges apply to team-scoped resources only.
+	if scopeFilter != "team" && teamIDFilter == "" {
 		filter.UserID = userID
 	}
 
@@ -187,13 +187,8 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			}
 		}
 
-		// Admin can see all sessions within the filtered scope
-		if isAdmin {
-			matchingSessions = append(matchingSessions, session)
-			continue
-		}
-
 		// Check authorization using pre-resolved context
+		// Admin bypasses are handled within CanAccessResource for team-scoped resources only
 		if authzCtx.CanAccessResource(session.UserID(), string(sessionScope), session.TeamID()) {
 			matchingSessions = append(matchingSessions, session)
 		}

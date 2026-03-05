@@ -30,13 +30,13 @@ func (s *mockProxySession) Addr() string                  { return s.addr }
 func (s *mockProxySession) UserID() string                { return s.userID }
 func (s *mockProxySession) Tags() map[string]string       { return s.tags }
 func (s *mockProxySession) Status() string                { return s.status }
-func (s *mockProxySession) StartedAt() time.Time     { return s.startedAt }
-func (s *mockProxySession) UpdatedAt() time.Time     { return s.updatedAt }
-func (s *mockProxySession) LastMessageAt() time.Time { return s.startedAt }
-func (s *mockProxySession) Description() string      { return "" }
+func (s *mockProxySession) StartedAt() time.Time          { return s.startedAt }
+func (s *mockProxySession) UpdatedAt() time.Time          { return s.updatedAt }
+func (s *mockProxySession) LastMessageAt() time.Time      { return s.startedAt }
+func (s *mockProxySession) Description() string           { return "" }
 func (s *mockProxySession) Scope() entities.ResourceScope { return entities.ScopeUser }
-func (s *mockProxySession) TeamID() string           { return "" }
-func (s *mockProxySession) Cancel()                  {}
+func (s *mockProxySession) TeamID() string                { return "" }
+func (s *mockProxySession) Cancel()                       {}
 
 func newMockProxySessionManager() *mockProxySessionManager {
 	return &mockProxySessionManager{sessions: make(map[string]*mockProxySession)}

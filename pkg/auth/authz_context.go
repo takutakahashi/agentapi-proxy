@@ -105,17 +105,16 @@ func (a *AuthorizationContext) CanReadInTeam(teamID string) bool {
 
 // CanAccessResource checks if the user can access a resource based on scope
 func (a *AuthorizationContext) CanAccessResource(ownerUserID string, scope string, teamID string) bool {
-	// Admin can access everything
-	if a.TeamScope.IsAdmin {
-		return true
-	}
-
-	// Team-scoped resources
+	// Team-scoped resources - admin can access all teams
 	if scope == "team" && teamID != "" {
+		if a.TeamScope.IsAdmin {
+			return true
+		}
 		return a.CanAccessTeam(teamID)
 	}
 
-	// User-scoped resources - check if the user is the owner
+	// User-scoped resources - only the owner can access, regardless of admin status
+	// Admin privileges do not extend to other users' personal resources
 	return a.PersonalScope.UserID == ownerUserID
 }
 
