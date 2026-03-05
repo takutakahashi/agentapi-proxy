@@ -59,7 +59,7 @@ type UserCache struct {
 type GitHubAuthProvider struct {
 	config          *config.GitHubAuthConfig
 	client          *http.Client
-	userCache       *utils.TTLCache       // token hash → UserCache, TTL 1h
+	userCache       *utils.TTLCache       // token hash → UserCache, TTL 30s
 	teamCache       *utils.TTLCache       // username → []GitHubTeamMembership, TTL 30s
 	teamMappingRepo TeamMappingRepository // ConfigMap persistent cache (optional, may be nil)
 }
@@ -67,7 +67,7 @@ type GitHubAuthProvider struct {
 // NewGitHubAuthProvider creates a new GitHub authentication provider
 func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
 	// Use very short cache TTL in tests to reduce race conditions
-	cacheTTL := 1 * time.Hour
+	cacheTTL := 30 * time.Second
 	teamCacheTTL := 30 * time.Second
 	if isTestEnvironment() {
 		cacheTTL = 1 * time.Millisecond     // Very short TTL for tests
