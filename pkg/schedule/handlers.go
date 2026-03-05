@@ -231,7 +231,7 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 
 	var userID string
 	var userTeamIDs []string
-	if user != nil && !user.IsAdmin() {
+	if user != nil {
 		userID = string(user.ID())
 		// Extract user's team IDs for filtering team-scoped schedules
 		if githubInfo := user.GitHubInfo(); githubInfo != nil {
@@ -254,8 +254,9 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 		filter.Status = ScheduleStatus(status)
 	}
 
-	// For non-admin users, set UserID filter only if not filtering by team
-	if user != nil && !user.IsAdmin() && scopeFilter != "team" && teamIDFilter == "" {
+	// For non-team scope, always filter by user ID - even admins should not see
+	// other users' personal schedules. Admin privileges apply to team-scoped resources only.
+	if user != nil && scopeFilter != "team" && teamIDFilter == "" {
 		filter.UserID = userID
 	}
 
@@ -288,20 +289,15 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 			}
 		}
 
-		// Admin can see all schedules within the filtered scope
-		if user != nil && user.IsAdmin() {
-			responses = append(responses, h.toResponse(s))
-			continue
-		}
-
-		// Check authorization based on scope
+		// Admin can access all team-scoped schedules; user-scoped requires ownership.
+		// Admin privileges do not extend to other users' personal resources.
 		if scheduleScope == entities.ScopeTeam {
-			// Team-scoped: user must be a member of the team
-			if user != nil && user.IsMemberOfTeam(s.TeamID) {
+			// Team-scoped: admin or team member can see
+			if user != nil && (user.IsAdmin() || user.IsMemberOfTeam(s.TeamID)) {
 				responses = append(responses, h.toResponse(s))
 			}
 		} else {
-			// User-scoped: only owner can see
+			// User-scoped: only owner can see, regardless of admin status
 			if user != nil && s.UserID == string(user.ID()) {
 				responses = append(responses, h.toResponse(s))
 			}
