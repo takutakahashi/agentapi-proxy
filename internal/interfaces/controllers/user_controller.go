@@ -15,6 +15,7 @@ type UserController struct{}
 type UserInfoResponse struct {
 	Username string   `json:"username"`
 	Teams    []string `json:"teams"`
+	IsAdmin  bool     `json:"is_admin"`
 }
 
 // NewUserController creates a new UserController instance
@@ -35,7 +36,8 @@ func (c *UserController) GetUserInfo(ctx echo.Context) error {
 	}
 
 	response := UserInfoResponse{
-		Teams: []string{},
+		Teams:   []string{},
+		IsAdmin: user.IsAdmin(),
 	}
 
 	if githubInfo := user.GitHubInfo(); githubInfo != nil {
@@ -44,6 +46,9 @@ func (c *UserController) GetUserInfo(ctx echo.Context) error {
 			teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
 			response.Teams = append(response.Teams, teamSlug)
 		}
+	} else {
+		// Fallback for non-GitHub users (e.g., personal API key users)
+		response.Username = user.Username()
 	}
 
 	return ctx.JSON(http.StatusOK, response)

@@ -1,7 +1,6 @@
 package entities
 
 import (
-	"errors"
 	"time"
 )
 
@@ -120,6 +119,13 @@ func NewSettings(name string) *Settings {
 // Name returns the settings name (user or team name)
 func (s *Settings) Name() string {
 	return s.name
+}
+
+// SetName sets the settings name.
+// This is used to populate the name from the URL parameter or storage metadata
+// when it is missing from the stored JSON (e.g. for legacy entries).
+func (s *Settings) SetName(name string) {
+	s.name = name
 }
 
 // Bedrock returns the Bedrock settings
@@ -261,9 +267,8 @@ func (s *Settings) SetPreferredTeamID(id string) {
 
 // Validate validates the Settings
 func (s *Settings) Validate() error {
-	if s.name == "" {
-		return errors.New("name is required")
-	}
+	// Note: name is not validated here because it is always set from the URL parameter
+	// or derived from Kubernetes Secret metadata, not from the stored JSON.
 
 	if s.bedrock != nil {
 		if err := s.bedrock.Validate(); err != nil {

@@ -4280,6 +4280,10 @@
             "type": "string",
             "description": "User ID"
           },
+          "username": {
+            "type": "string",
+            "description": "Username (GitHub login or user ID)"
+          },
           "login": {
             "type": "string",
             "description": "GitHub login name"
@@ -4300,6 +4304,10 @@
             "type": "string",
             "description": "User role (admin, user, etc.)"
           },
+          "is_admin": {
+            "type": "boolean",
+            "description": "Whether the user has admin privileges (can access and modify base settings)"
+          },
           "permissions": {
             "type": "array",
             "items": {
@@ -4310,9 +4318,9 @@
           "teams": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/TeamInfo"
+              "type": "string"
             },
-            "description": "Teams the user belongs to"
+            "description": "Teams the user belongs to as 'org/team-slug' strings"
           }
         }
       },

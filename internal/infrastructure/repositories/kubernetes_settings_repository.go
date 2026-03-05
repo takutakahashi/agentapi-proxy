@@ -140,7 +140,18 @@ func (r *KubernetesSettingsRepository) FindByName(ctx context.Context, name stri
 		return nil, fmt.Errorf("failed to get settings secret: %w", err)
 	}
 
-	return r.fromSecret(secret)
+	settings, err := r.fromSecret(secret)
+	if err != nil {
+		return nil, err
+	}
+
+	// Always ensure the name matches the requested name.
+	// The stored JSON may have an empty name (legacy entries), so we set it here.
+	if settings.Name() == "" {
+		settings.SetName(name)
+	}
+
+	return settings, nil
 }
 
 // Delete removes settings by name
@@ -271,7 +282,13 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 		return nil, fmt.Errorf("failed to unmarshal settings: %w", err)
 	}
 
-	settings := entities.NewSettings(sj.Name)
+	// Use the name from JSON; fall back to the Secret label if it is empty
+	// (which can happen with settings stored before the name field was populated).
+	settingsName := sj.Name
+	if settingsName == "" {
+		settingsName = secret.Labels[LabelSettingsName]
+	}
+	settings := entities.NewSettings(settingsName)
 	settings.SetCreatedAt(sj.CreatedAt)
 	settings.SetUpdatedAt(sj.UpdatedAt)
 
