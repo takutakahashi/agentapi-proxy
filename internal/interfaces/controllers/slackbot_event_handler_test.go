@@ -2,6 +2,10 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,9 +42,10 @@ func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *en
 		return nil, m.createErr
 	}
 	sess := &mockSession{
-		id:    id,
-		tags:  req.Tags,
-		scope: req.Scope,
+		id:             id,
+		tags:           req.Tags,
+		scope:          req.Scope,
+		initialMessage: req.InitialMessage,
 	}
 	m.mu.Lock()
 	m.createdSessions = append(m.createdSessions, sess)
@@ -130,10 +135,11 @@ func (m *mockSessionManager) getCreatedSession(i int) *mockSession {
 
 // mockSession implements entities.Session
 type mockSession struct {
-	id     string
-	tags   map[string]string
-	scope  entities.ResourceScope
-	status string // defaults to "active" when empty
+	id             string
+	tags           map[string]string
+	scope          entities.ResourceScope
+	status         string // defaults to "active" when empty
+	initialMessage string // captured from RunServerRequest.InitialMessage
 }
 
 func (s *mockSession) ID() string                    { return s.id }
@@ -1103,4 +1109,205 @@ func TestProcessEvent_StopCommand_NoActiveSession(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, 0, sessionMgr.createdCount(), "no new session should be created for /stop with no active session")
 	assert.Equal(t, 0, sessionMgr.stoppedCount(), "StopAgent should not be called when there is no active session")
+}
+
+// ---- Tests for thread context feature ----
+
+// buildThreadRepliesHandler returns an httptest handler that serves a mock conversations.replies response.
+func buildThreadRepliesHandler(channel, threadTS string, messages []services.SlackMessage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/conversations.replies" {
+			http.Error(w, "unexpected path: "+r.URL.Path, http.StatusNotFound)
+			return
+		}
+		if r.URL.Query().Get("channel") != channel || r.URL.Query().Get("ts") != threadTS {
+			http.Error(w, "unexpected channel/ts", http.StatusBadRequest)
+			return
+		}
+		resp := struct {
+			OK       bool                    `json:"ok"`
+			Messages []services.SlackMessage `json:"messages"`
+		}{OK: true, Messages: messages}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, "encode error", http.StatusInternalServerError)
+		}
+	}
+}
+
+// TestProcessEvent_ThreadContext_AvailableInPayload verifies that when the triggering
+// message is already inside an existing Slack thread (thread_ts != ""), thread_messages
+// is fetched and made available as a template variable.
+func TestProcessEvent_ThreadContext_PrependedWhenNoTemplate(t *testing.T) {
+	const (
+		botID      = "thread-ctx-bot-uuid"
+		channelID  = "C-thread-ctx"
+		threadTS   = "1700000000.000001"
+		namespace  = "test-ns"
+		secretName = "bot-token-secret"
+	)
+
+	threadMessages := []services.SlackMessage{
+		{User: "U-alice", Text: "Hey team, can someone look at this?", Ts: threadTS},
+		{User: "U-bob", Text: "Sure, what's the issue?", Ts: "1700000001.000001"},
+	}
+
+	// Mux for the mock Slack API server: handle both conversations.replies and chat.postMessage
+	mux := http.NewServeMux()
+	mux.HandleFunc("/conversations.replies", buildThreadRepliesHandler(channelID, threadTS, threadMessages))
+	// Stub chat.postMessage to avoid noise
+	mux.HandleFunc("/chat.postMessage", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": true}); err != nil {
+			http.Error(w, "encode error", http.StatusInternalServerError)
+		}
+	})
+	// Stub conversations.info for channel name resolution (not needed here but prevent 404 noise)
+	mux.HandleFunc("/conversations.info", func(w http.ResponseWriter, _ *http.Request) {
+		resp := map[string]interface{}{"ok": true, "channel": map[string]string{"id": channelID, "name": "test-channel"}}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, "encode error", http.StatusInternalServerError)
+		}
+	})
+	mockServer := httptest.NewServer(mux)
+	defer mockServer.Close()
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			Data:       map[string][]byte{"bot-token": []byte("xoxb-test-token")},
+		},
+	)
+	resolver := services.NewSlackChannelResolver(fakeClient, namespace).WithSlackAPIBase(mockServer.URL)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Thread Ctx Bot", "user-1")
+	bot.SetBotTokenSecretName(secretName)
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false)
+
+	// Triggering message is a reply in an existing thread
+	triggerTs := "1700000002.000001"
+	payload := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:     "app_mention",
+			Text:     "@bot please help",
+			User:     "U-alice",
+			Channel:  channelID,
+			Ts:       triggerTs,
+			ThreadTs: threadTS,
+		},
+	}
+
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "session should be created")
+
+	// Verify the initial message passed to CreateSession contains the full thread history.
+	sessionMgr.mu.Lock()
+	createdSession := sessionMgr.createdSessions[0]
+	sessionMgr.mu.Unlock()
+
+	assert.Equal(t, channelID, createdSession.tags["slack_channel"])
+	assert.Equal(t, threadTS, createdSession.tags["slack_thread_ts"])
+
+	// Without a template, the initial message is just the triggering event text.
+	// thread_messages is available via payloadMap for templates that reference {{ .thread_messages }}.
+	assert.Equal(t, "@bot please help", createdSession.initialMessage,
+		"without a template, initial message should be the plain event text")
+}
+
+// TestProcessEvent_ThreadContext_NoResolver_DoesNotCrash verifies that when no channel
+// resolver is configured, a message in a thread still creates a session normally (no crash,
+// no thread context - just the plain message text).
+func TestProcessEvent_ThreadContext_NoResolver_DoesNotCrash(t *testing.T) {
+	const (
+		botID     = "thread-no-resolver-bot"
+		channelID = "C-no-resolver"
+		threadTS  = "1700100000.000001"
+	)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "No Resolver Bot", "user-1")
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	// No channel resolver → fetchAndFormatThreadContext returns "" immediately
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false)
+
+	payload := SlackPayload{
+		Type:   "event_callback",
+		TeamID: "T1",
+		Event: &SlackEvent{
+			Type:     "app_mention",
+			Text:     "@bot help me",
+			User:     "U-user",
+			Channel:  channelID,
+			Ts:       "1700100001.000001",
+			ThreadTs: threadTS,
+		},
+	}
+
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "session should still be created even when thread context cannot be fetched")
+}
+
+// TestFetchAndFormatThreadContext_FiltersMessagesAfterUntilTs verifies that messages with
+// ts > untilTS are excluded from the formatted context string.
+func TestFetchAndFormatThreadContext_FiltersMessagesAfterUntilTs(t *testing.T) {
+	const (
+		channelID  = "C-filter-ts"
+		threadTS   = "1700200000.000001"
+		namespace  = "test-ns"
+		secretName = "bot-secret"
+	)
+	untilTS := "1700200001.000001" // only include messages up to this ts
+
+	allMessages := []services.SlackMessage{
+		{User: "U-a", Text: "first", Ts: "1700200000.000001"},
+		{User: "U-b", Text: "second", Ts: "1700200001.000001"}, // = untilTS, should be included
+		{User: "U-a", Text: "third", Ts: "1700200002.000001"},  // > untilTS, should be excluded
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/conversations.replies", buildThreadRepliesHandler(channelID, threadTS, allMessages))
+	mockServer := httptest.NewServer(mux)
+	defer mockServer.Close()
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			Data:       map[string][]byte{"bot-token": []byte("xoxb-token")},
+		},
+	)
+	resolver := services.NewSlackChannelResolver(fakeClient, namespace).WithSlackAPIBase(mockServer.URL)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot("bot-id", "Bot", "user-1")
+	bot.SetBotTokenSecretName(secretName)
+	repo.bots["bot-id"] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false)
+
+	result := handler.fetchAndFormatThreadContext(context.Background(), bot, channelID, threadTS, untilTS)
+
+	assert.NotEmpty(t, result, "context should not be empty")
+	assert.True(t, strings.Contains(result, "first"), "result should contain first message")
+	assert.True(t, strings.Contains(result, "second"), "result should contain second message (ts == untilTS)")
+	assert.False(t, strings.Contains(result, "third"), "result should NOT contain third message (ts > untilTS)")
 }

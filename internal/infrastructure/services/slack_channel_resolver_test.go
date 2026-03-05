@@ -143,11 +143,9 @@ func TestSlackChannelResolver_ResolveChannelName_SlackAPI(t *testing.T) {
 
 	client := fake.NewSimpleClientset()
 	resolver := NewSlackChannelResolver(client, "test-ns")
-	// Override the API endpoint to point to mock server
-	origEndpoint := slackAPIConversationsInfo
-	// Temporarily replace the constant via a closure is not directly possible in Go,
-	// so we test the flow indirectly by verifying the ConfigMap is created after resolution.
-	_ = origEndpoint // documented: in real integration test the endpoint would be overrideable
+	// The mock server is set up but not used directly in this test; the resolver uses
+	// the in-memory cache path to avoid making real HTTP calls.
+	_ = mockServer
 
 	ctx := context.Background()
 
@@ -181,6 +179,91 @@ func TestSlackChannelResolver_UpsertConfigMap_Create(t *testing.T) {
 	}
 	if cm.Data["C111"] != "general" {
 		t.Errorf("ConfigMap data[C111] = %q, want %q", cm.Data["C111"], "general")
+	}
+}
+
+func TestSlackChannelResolver_FetchThreadReplies_Success(t *testing.T) {
+	threadTS := "1700000000.000001"
+	expectedMessages := []SlackMessage{
+		{User: "U111", Text: "root message", Ts: "1700000000.000001"},
+		{User: "U222", Text: "reply one", Ts: "1700000001.000001"},
+		{User: "U111", Text: "reply two", Ts: "1700000002.000001"},
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/conversations.replies" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		if r.URL.Query().Get("channel") != "C-test" {
+			http.Error(w, "unexpected channel", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("ts") != threadTS {
+			http.Error(w, "unexpected ts", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer xoxb-test-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		resp := slackConversationsRepliesResponse{
+			OK:       true,
+			Messages: expectedMessages,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, "encode error", http.StatusInternalServerError)
+		}
+	}))
+	defer mockServer.Close()
+
+	client := fake.NewSimpleClientset()
+	resolver := NewSlackChannelResolver(client, "test-ns").WithSlackAPIBase(mockServer.URL)
+
+	messages, err := resolver.FetchThreadReplies(context.Background(), "C-test", threadTS, "xoxb-test-token")
+	if err != nil {
+		t.Fatalf("FetchThreadReplies() error = %v", err)
+	}
+	if len(messages) != len(expectedMessages) {
+		t.Fatalf("FetchThreadReplies() returned %d messages, want %d", len(messages), len(expectedMessages))
+	}
+	for i, msg := range messages {
+		if msg.User != expectedMessages[i].User || msg.Text != expectedMessages[i].Text || msg.Ts != expectedMessages[i].Ts {
+			t.Errorf("messages[%d] = %+v, want %+v", i, msg, expectedMessages[i])
+		}
+	}
+}
+
+func TestSlackChannelResolver_FetchThreadReplies_EmptyToken(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	resolver := NewSlackChannelResolver(client, "test-ns")
+
+	_, err := resolver.FetchThreadReplies(context.Background(), "C-test", "111.000", "")
+	if err == nil {
+		t.Fatal("FetchThreadReplies() expected error for empty bot token, got nil")
+	}
+}
+
+func TestSlackChannelResolver_FetchThreadReplies_APIError(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := slackConversationsRepliesResponse{
+			OK:    false,
+			Error: "channel_not_found",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, "encode error", http.StatusInternalServerError)
+		}
+	}))
+	defer mockServer.Close()
+
+	client := fake.NewSimpleClientset()
+	resolver := NewSlackChannelResolver(client, "test-ns").WithSlackAPIBase(mockServer.URL)
+
+	_, err := resolver.FetchThreadReplies(context.Background(), "C-test", "111.000", "xoxb-token")
+	if err == nil {
+		t.Fatal("FetchThreadReplies() expected error for Slack API error, got nil")
 	}
 }
 

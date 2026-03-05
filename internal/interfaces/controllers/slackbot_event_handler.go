@@ -198,17 +198,27 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		return nil
 	}
 
+	// Fetch thread context if the triggering message is already inside an existing thread.
+	// This gives the new session the full conversation history from the root message onward.
+	// Best-effort: errors are logged and an empty string is used as fallback.
+	var threadMessages string
+	if event.ThreadTs != "" {
+		threadMessages = h.fetchAndFormatThreadContext(ctx, bot, channel, event.ThreadTs, event.Ts)
+	}
+
 	// Build payload map for template rendering
 	payloadMap := map[string]interface{}{
 		"event": map[string]interface{}{
-			"type":      event.Type,
-			"text":      event.Text,
-			"user":      event.User,
-			"channel":   event.Channel,
-			"ts":        event.Ts,
-			"thread_ts": event.ThreadTs,
+			"type":            event.Type,
+			"text":            event.Text,
+			"user":            event.User,
+			"channel":         event.Channel,
+			"ts":              event.Ts,
+			"thread_ts":       event.ThreadTs,
+			"thread_messages": threadMessages,
 		},
-		"team_id": payload.TeamID,
+		"team_id":         payload.TeamID,
+		"thread_messages": threadMessages,
 	}
 
 	// Build session tags
@@ -240,7 +250,9 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
-	// Build initial message
+	// Build initial message.
+	// Thread history is available as {{ .thread_messages }} in templates, e.g.:
+	//   initial_message_template: "{{ .thread_messages }}\n---\n{{ .event.text }}"
 	initialMessage := h.buildMessage(bot, payloadMap, event.Text, false)
 
 	// Determine agent type: default to "claude-agentapi"; bot session_config may override.
@@ -476,6 +488,51 @@ func (h *SlackBotEventHandler) postErrorToSlack(ctx context.Context, channel, th
 	if err := h.channelResolver.PostMessage(ctx, channel, threadTS, message, botToken); err != nil {
 		log.Printf("[SLACKBOT] Failed to post error message to Slack thread: channel=%s, err=%v", channel, err)
 	}
+}
+
+// fetchAndFormatThreadContext fetches all messages in the Slack thread rooted at threadTS
+// and formats them as a human-readable context string. Only messages with ts <= untilTS
+// are included (i.e. messages up to and including the triggering event).
+// Returns an empty string when no context is available (resolver not configured, token
+// error, API error, or no messages found). Errors are logged but never propagated.
+func (h *SlackBotEventHandler) fetchAndFormatThreadContext(ctx context.Context, bot *entities.SlackBot, channel, threadTS, untilTS string) string {
+	if h.channelResolver == nil {
+		return ""
+	}
+
+	botToken, err := h.getBotToken(ctx, bot)
+	if err != nil {
+		log.Printf("[SLACKBOT] fetchAndFormatThreadContext: failed to get bot token: %v", err)
+		return ""
+	}
+
+	messages, err := h.channelResolver.FetchThreadReplies(ctx, channel, threadTS, botToken)
+	if err != nil {
+		log.Printf("[SLACKBOT] fetchAndFormatThreadContext: failed to fetch thread replies: channel=%s, thread=%s, err=%v", channel, threadTS, err)
+		return ""
+	}
+
+	var lines []string
+	for _, msg := range messages {
+		// Skip messages that are newer than the triggering event
+		if untilTS != "" && msg.Ts > untilTS {
+			continue
+		}
+		sender := msg.User
+		if sender == "" && msg.BotID != "" {
+			sender = fmt.Sprintf("bot(%s)", msg.BotID)
+		}
+		if sender == "" {
+			sender = "unknown"
+		}
+		lines = append(lines, fmt.Sprintf("[%s]: %s", sender, msg.Text))
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // isStopCommand checks whether the Slack message text is a /stop command.
