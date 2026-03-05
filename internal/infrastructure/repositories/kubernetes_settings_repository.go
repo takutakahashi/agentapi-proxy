@@ -271,7 +271,13 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 		return nil, fmt.Errorf("failed to unmarshal settings: %w", err)
 	}
 
-	settings := entities.NewSettings(sj.Name)
+	// Use the name from JSON; fall back to the Secret label if it is empty
+	// (which can happen with settings stored before the name field was populated).
+	settingsName := sj.Name
+	if settingsName == "" {
+		settingsName = secret.Labels[LabelSettingsName]
+	}
+	settings := entities.NewSettings(settingsName)
 	settings.SetCreatedAt(sj.CreatedAt)
 	settings.SetUpdatedAt(sj.UpdatedAt)
 

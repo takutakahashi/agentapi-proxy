@@ -1,7 +1,6 @@
 package entities
 
 import (
-	"errors"
 	"time"
 )
 
@@ -261,9 +260,8 @@ func (s *Settings) SetPreferredTeamID(id string) {
 
 // Validate validates the Settings
 func (s *Settings) Validate() error {
-	if s.name == "" {
-		return errors.New("name is required")
-	}
+	// Note: name is not validated here because it is always set from the URL parameter
+	// or derived from Kubernetes Secret metadata, not from the stored JSON.
 
 	if s.bedrock != nil {
 		if err := s.bedrock.Validate(); err != nil {

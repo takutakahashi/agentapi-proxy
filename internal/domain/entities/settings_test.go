@@ -225,12 +225,12 @@ func TestSettings_Validate(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name: "invalid settings with empty name",
+			name: "settings with empty name (no longer invalid - name comes from URL param or Secret label)",
 			settings: func() *Settings {
 				s := &Settings{}
 				return s
 			}(),
-			expectErr: true,
+			expectErr: false,
 		},
 	}
 
