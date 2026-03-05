@@ -23,7 +23,6 @@ type MaterializedSettings struct {
 
 	// ActivePlugins is the final list of enabled plugins.
 	ActivePlugins []string
-
 }
 
 // Materialize converts a resolved SettingsPatch into concrete session configuration.
