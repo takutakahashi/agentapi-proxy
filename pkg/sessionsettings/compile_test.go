@@ -363,6 +363,105 @@ func TestCompile_MCPServersInClaudeJSON(t *testing.T) {
 	assert.Equal(t, true, claudeJSON["bypassPermissionsModeAccepted"])
 }
 
+func TestCompile_AutoUpdatesChannelStable(t *testing.T) {
+	t.Run("default settings has autoUpdatesChannel stable", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-autoupdates-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		// Minimal settings with no settingsJSON configured
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:     "test-autoupdate",
+				UserID: "user-autoupdate",
+				Scope:  "user",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		// Read and verify settings.json
+		settingsPath := filepath.Join(outputDir, ".claude/settings.json")
+		data, err := os.ReadFile(settingsPath)
+		require.NoError(t, err)
+
+		var settingsJSON map[string]interface{}
+		err = json.Unmarshal(data, &settingsJSON)
+		require.NoError(t, err)
+
+		assert.Equal(t, "stable", settingsJSON["autoUpdatesChannel"])
+	})
+
+	t.Run("custom settingsJSON also has autoUpdatesChannel stable", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-autoupdates-custom-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		// Settings with custom settingsJSON
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:     "test-autoupdate-custom",
+				UserID: "user-autoupdate-custom",
+				Scope:  "user",
+			},
+			Claude: ClaudeConfig{
+				SettingsJSON: map[string]interface{}{
+					"settings": map[string]interface{}{
+						"mcp.enabled": true,
+					},
+					"customKey": "customValue",
+				},
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		// Read and verify settings.json
+		settingsPath := filepath.Join(outputDir, ".claude/settings.json")
+		data, err := os.ReadFile(settingsPath)
+		require.NoError(t, err)
+
+		var settingsJSON map[string]interface{}
+		err = json.Unmarshal(data, &settingsJSON)
+		require.NoError(t, err)
+
+		// autoUpdatesChannel should always be "stable"
+		assert.Equal(t, "stable", settingsJSON["autoUpdatesChannel"])
+		// Custom key should be preserved
+		assert.Equal(t, "customValue", settingsJSON["customKey"])
+	})
+}
+
 func TestCompile_MissingInput(t *testing.T) {
 	opts := CompileOptions{
 		InputPath:   "/nonexistent/settings.yaml",

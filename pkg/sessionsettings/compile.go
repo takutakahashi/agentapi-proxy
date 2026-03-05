@@ -148,6 +148,10 @@ func generateSettingsJSON(outputDir string, settingsJSON map[string]interface{})
 		}
 	}
 
+	// Always set autoUpdatesChannel to "stable" to prevent automatic updates
+	// to non-stable channels in session containers.
+	settingsJSON["autoUpdatesChannel"] = "stable"
+
 	data, err := json.MarshalIndent(settingsJSON, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal settings.json: %w", err)
