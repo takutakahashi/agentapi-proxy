@@ -201,24 +201,24 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// Fetch thread context if the triggering message is already inside an existing thread.
 	// This gives the new session the full conversation history from the root message onward.
 	// Best-effort: errors are logged and an empty string is used as fallback.
-	var threadContext string
+	var threadMessages string
 	if event.ThreadTs != "" {
-		threadContext = h.fetchAndFormatThreadContext(ctx, bot, channel, event.ThreadTs, event.Ts)
+		threadMessages = h.fetchAndFormatThreadContext(ctx, bot, channel, event.ThreadTs, event.Ts)
 	}
 
 	// Build payload map for template rendering
 	payloadMap := map[string]interface{}{
 		"event": map[string]interface{}{
-			"type":           event.Type,
-			"text":           event.Text,
-			"user":           event.User,
-			"channel":        event.Channel,
-			"ts":             event.Ts,
-			"thread_ts":      event.ThreadTs,
-			"thread_context": threadContext,
+			"type":            event.Type,
+			"text":            event.Text,
+			"user":            event.User,
+			"channel":         event.Channel,
+			"ts":              event.Ts,
+			"thread_ts":       event.ThreadTs,
+			"thread_messages": threadMessages,
 		},
-		"team_id":        payload.TeamID,
-		"thread_context": threadContext,
+		"team_id":         payload.TeamID,
+		"thread_messages": threadMessages,
 	}
 
 	// Build session tags
@@ -250,17 +250,10 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
-	// Build initial message (templates can reference {{ .thread_context }} for thread history)
+	// Build initial message.
+	// Thread history is available as {{ .thread_messages }} in templates, e.g.:
+	//   initial_message_template: "{{ .thread_messages }}\n---\n{{ .event.text }}"
 	initialMessage := h.buildMessage(bot, payloadMap, event.Text, false)
-
-	// When no explicit initial_message_template is configured, automatically prepend the
-	// thread context so the agent has the full conversation history from the start.
-	if threadContext != "" {
-		hasTemplate := bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().InitialMessageTemplate() != ""
-		if !hasTemplate {
-			initialMessage = "以下はこのスレッドのこれまでのメッセージです:\n\n" + threadContext + "\n\n---\n\n" + initialMessage
-		}
-	}
 
 	// Determine agent type: default to "claude-agentapi"; bot session_config may override.
 	agentType := "claude-agentapi"

@@ -1135,9 +1135,9 @@ func buildThreadRepliesHandler(channel, threadTS string, messages []services.Sla
 	}
 }
 
-// TestProcessEvent_ThreadContext_PrependedWhenNoTemplate verifies that when the triggering
-// message is already inside an existing Slack thread (thread_ts != ""), the initial message
-// sent to a new session is prefixed with the full thread history.
+// TestProcessEvent_ThreadContext_AvailableInPayload verifies that when the triggering
+// message is already inside an existing Slack thread (thread_ts != ""), thread_messages
+// is fetched and made available as a template variable.
 func TestProcessEvent_ThreadContext_PrependedWhenNoTemplate(t *testing.T) {
 	const (
 		botID      = "thread-ctx-bot-uuid"
@@ -1220,15 +1220,10 @@ func TestProcessEvent_ThreadContext_PrependedWhenNoTemplate(t *testing.T) {
 	assert.Equal(t, channelID, createdSession.tags["slack_channel"])
 	assert.Equal(t, threadTS, createdSession.tags["slack_thread_ts"])
 
-	// The initial message should be prefixed with the thread context.
-	assert.True(t, strings.Contains(createdSession.initialMessage, "Hey team, can someone look at this?"),
-		"initial message should contain the root thread message")
-	assert.True(t, strings.Contains(createdSession.initialMessage, "Sure, what's the issue?"),
-		"initial message should contain intermediate thread replies")
-	assert.True(t, strings.Contains(createdSession.initialMessage, "@bot please help"),
-		"initial message should contain the triggering message")
-	assert.True(t, strings.HasPrefix(createdSession.initialMessage, "以下はこのスレッドのこれまでのメッセージです"),
-		"initial message should start with the thread context header")
+	// Without a template, the initial message is just the triggering event text.
+	// thread_messages is available via payloadMap for templates that reference {{ .thread_messages }}.
+	assert.Equal(t, "@bot please help", createdSession.initialMessage,
+		"without a template, initial message should be the plain event text")
 }
 
 // TestProcessEvent_ThreadContext_NoResolver_DoesNotCrash verifies that when no channel
