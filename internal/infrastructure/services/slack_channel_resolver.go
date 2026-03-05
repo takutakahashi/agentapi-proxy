@@ -23,17 +23,16 @@ const (
 	slackChannelCacheLabel = "agentapi.proxy/type"
 	// slackChannelCacheLabelValue is the label value for the cache ConfigMap
 	slackChannelCacheLabelValue = "slack-channel-cache"
-	// slackAPIConversationsInfo is the Slack API endpoint for channel info
-	slackAPIConversationsInfo = "https://slack.com/api/conversations.info"
-	// slackAPIChatPostMessage is the Slack API endpoint for posting messages
-	slackAPIChatPostMessage = "https://slack.com/api/chat.postMessage"
+	// slackDefaultAPIBase is the default Slack API base URL
+	slackDefaultAPIBase = "https://slack.com/api"
 )
 
 // SlackChannelResolver resolves Slack channel IDs to names using the Slack API,
 // with a two-level cache: in-memory (sync.Map) and a Kubernetes ConfigMap for persistence.
 type SlackChannelResolver struct {
-	kubeClient kubernetes.Interface
-	namespace  string
+	kubeClient   kubernetes.Interface
+	namespace    string
+	slackAPIBase string // base URL for the Slack API, e.g. "https://slack.com/api"
 	// in-memory cache: channel ID → channel name (cleared on pod restart)
 	cache sync.Map
 }
@@ -41,9 +40,17 @@ type SlackChannelResolver struct {
 // NewSlackChannelResolver creates a new SlackChannelResolver
 func NewSlackChannelResolver(kubeClient kubernetes.Interface, namespace string) *SlackChannelResolver {
 	return &SlackChannelResolver{
-		kubeClient: kubeClient,
-		namespace:  namespace,
+		kubeClient:   kubeClient,
+		namespace:    namespace,
+		slackAPIBase: slackDefaultAPIBase,
 	}
+}
+
+// WithSlackAPIBase overrides the Slack API base URL. Intended for testing only;
+// production callers should use the default (https://slack.com/api).
+func (r *SlackChannelResolver) WithSlackAPIBase(base string) *SlackChannelResolver {
+	r.slackAPIBase = base
+	return r
 }
 
 // ResolveChannelName resolves a Slack channel ID to its name.
@@ -173,7 +180,7 @@ func (r *SlackChannelResolver) fetchFromSlack(ctx context.Context, channelID, bo
 		return "", fmt.Errorf("bot token is empty; cannot call Slack API")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, slackAPIConversationsInfo, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.slackAPIBase+"/conversations.info", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -219,6 +226,74 @@ func (r *SlackChannelResolver) fetchFromSlack(ctx context.Context, channelID, bo
 	return result.Channel.Name, nil
 }
 
+// SlackMessage represents a single Slack message returned by conversations.replies.
+type SlackMessage struct {
+	User    string `json:"user"`
+	BotID   string `json:"bot_id,omitempty"`
+	Text    string `json:"text"`
+	Ts      string `json:"ts"`
+	SubType string `json:"subtype,omitempty"`
+}
+
+// slackConversationsRepliesResponse represents the Slack API response for conversations.replies.
+type slackConversationsRepliesResponse struct {
+	OK       bool           `json:"ok"`
+	Error    string         `json:"error,omitempty"`
+	Messages []SlackMessage `json:"messages"`
+}
+
+// FetchThreadReplies fetches all messages in a Slack thread using the conversations.replies API.
+// channel is the Slack channel ID and threadTS is the root message timestamp.
+// Returns messages sorted by timestamp (oldest first), including the root message.
+// Requires a bot token with channels:history or groups:history scope.
+func (r *SlackChannelResolver) FetchThreadReplies(ctx context.Context, channel, threadTS, botToken string) ([]SlackMessage, error) {
+	if botToken == "" {
+		return nil, fmt.Errorf("bot token is empty; cannot call Slack API")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.slackAPIBase+"/conversations.replies", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	q := req.URL.Query()
+	q.Set("channel", channel)
+	q.Set("ts", threadTS)
+	req.URL.RawQuery = q.Encode()
+	req.Header.Set("Authorization", "Bearer "+botToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("slack API request failed: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("[CHANNEL_RESOLVER] Failed to close FetchThreadReplies response body: %v", closeErr)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Slack API response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("slack API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result slackConversationsRepliesResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse Slack API response: %w", err)
+	}
+
+	if !result.OK {
+		return nil, fmt.Errorf("slack API error: %s", result.Error)
+	}
+
+	log.Printf("[CHANNEL_RESOLVER] Fetched %d messages from thread %s in channel %s", len(result.Messages), threadTS, channel)
+	return result.Messages, nil
+}
+
 // postMessageRequest is the request body for chat.postMessage
 type postMessageRequest struct {
 	Channel  string `json:"channel"`
@@ -251,7 +326,7 @@ func (r *SlackChannelResolver) PostMessage(ctx context.Context, channel, threadT
 		return fmt.Errorf("failed to marshal message payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, slackAPIChatPostMessage, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.slackAPIBase+"/chat.postMessage", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
