@@ -342,7 +342,7 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 
 	var userID string
 	var userTeamIDs []string
-	if user != nil && !user.IsAdmin() {
+	if user != nil {
 		userID = string(user.ID())
 		if githubInfo := user.GitHubInfo(); githubInfo != nil {
 			for _, team := range githubInfo.Teams() {
@@ -365,7 +365,9 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 	if status := ctx.QueryParam("status"); status != "" {
 		filter.Status = entities.WebhookStatus(status)
 	}
-	if user != nil && !user.IsAdmin() && scopeFilter != "team" && teamIDFilter == "" {
+	// For non-team scope, always filter by user ID - even admins should not see
+	// other users' personal webhooks. Admin privileges apply to team-scoped resources only.
+	if user != nil && scopeFilter != "team" && teamIDFilter == "" {
 		filter.UserID = userID
 	}
 
@@ -389,13 +391,10 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 			}
 		}
 
-		if user != nil && user.IsAdmin() {
-			responses = append(responses, c.toResponse(ctx, w))
-			continue
-		}
-
+		// Admin can access all team-scoped webhooks; user-scoped requires ownership.
+		// This check mirrors CanAccessResource: admin bypasses only for team scope.
 		if webhookScope == entities.ScopeTeam {
-			if user != nil && user.IsMemberOfTeam(w.TeamID()) {
+			if user != nil && (user.IsAdmin() || user.IsMemberOfTeam(w.TeamID())) {
 				responses = append(responses, c.toResponse(ctx, w))
 			}
 		} else {

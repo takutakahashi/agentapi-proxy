@@ -114,7 +114,6 @@ func (m *mockSessionManager) GetMessages(_ context.Context, _ string) ([]portrep
 	return nil, nil
 }
 
-
 // createdCount returns the number of sessions created so far (thread-safe).
 func (m *mockSessionManager) createdCount() int {
 	m.mu.Lock()

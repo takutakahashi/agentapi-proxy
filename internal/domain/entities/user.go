@@ -457,20 +457,19 @@ func (u *User) IsMemberOfTeam(teamID string) bool {
 }
 
 // CanAccessResource checks if the user can access a resource based on its scope
-// For user-scoped resources, only the owner or admin can access
-// For team-scoped resources, any team member or admin can access
+// For team-scoped resources, admin or any team member can access
+// For user-scoped resources, only the owner can access (admin privileges do not apply)
 func (u *User) CanAccessResource(ownerUserID UserID, scope string, teamID string) bool {
-	// Admin can access all resources
-	if u.IsAdmin() {
-		return true
-	}
-
-	// Team-scoped: check team membership
+	// Team-scoped: admin or team member can access
 	if scope == "team" && teamID != "" {
+		if u.IsAdmin() {
+			return true
+		}
 		return u.IsMemberOfTeam(teamID)
 	}
 
-	// Default (user-scoped): only owner can access
+	// User-scoped: only the owner can access, regardless of admin status
+	// Admin privileges do not extend to other users' personal resources
 	return u.id == ownerUserID
 }
 
