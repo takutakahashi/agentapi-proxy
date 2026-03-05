@@ -2900,14 +2900,14 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	// Propagate memory_enabled from the settings layer.
 	// - Explicitly false: clear memory key to disable integration regardless of the session request.
-	// - Explicitly true: if no explicit memory_key was provided, fall back to session tags so that
-	//   memory integration activates automatically (opt-in via settings).
-	// - nil (not configured): use only the explicitly provided memory_key; tags are NOT used as a
-	//   fallback, so memory integration remains disabled unless the caller sets memory_key.
+	// - Explicitly true or nil (not configured): when no explicit memory_key was provided, fall back
+	//   to session tags so that memory integration activates automatically.
+	//   This matches the documented behaviour of StartRequest.MemoryKey:
+	//   "If nil or empty, the session Tags are used as the memory key."
 	if materialized.MemoryEnabled != nil && !*materialized.MemoryEnabled {
 		req.MemoryKey = nil
-	} else if materialized.MemoryEnabled != nil && *materialized.MemoryEnabled && len(req.MemoryKey) == 0 {
-		// memory_enabled=true in settings but no explicit memory_key: use session tags.
+	} else if len(req.MemoryKey) == 0 {
+		// No explicit memory_key: fall back to session tags (unless memory_enabled=false above).
 		req.MemoryKey = req.Tags
 	}
 

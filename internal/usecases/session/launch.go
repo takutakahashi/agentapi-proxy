@@ -34,6 +34,10 @@ type LaunchRequest struct {
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
 
+	// MemoryKey is an optional tag map used to identify memories for this session.
+	// When empty, session Tags are used as the memory key (see entities.StartRequest.MemoryKey).
+	MemoryKey map[string]string
+
 	// Session reuse: when ReuseSession is true and ReuseMatchTags is non-empty,
 	// an existing active session matching those tags is sent ReuseMessage instead
 	// of creating a new session.
@@ -133,6 +137,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		Oneshot:                  req.Oneshot,
 		RepoInfo:                 req.RepoInfo,
 		InitialMessageWaitSecond: req.InitialMessageWaitSecond,
+		MemoryKey:                req.MemoryKey,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)
