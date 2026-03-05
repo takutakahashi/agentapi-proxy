@@ -63,11 +63,6 @@ type SettingsPatch struct {
 	// Non-empty = use only this team's settings (skip all other teams).
 	PreferredTeamID string `json:"preferred_team_id,omitempty"`
 
-	// MemoryEnabled controls whether memory integration is active for sessions.
-	// nil = inherit from lower layer (default: enabled when memory_key is available).
-	// true = explicitly enable memory integration.
-	// false = explicitly disable memory integration (memory_key is ignored even if set).
-	MemoryEnabled *bool `json:"memory_enabled,omitempty"`
 }
 
 // BedrockPatch holds AWS Bedrock configuration.

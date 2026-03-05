@@ -38,11 +38,6 @@ func Apply(base, higher SettingsPatch) SettingsPatch {
 		result.PreferredTeamID = higher.PreferredTeamID
 	}
 
-	// MemoryEnabled: higher wins if non-nil
-	if higher.MemoryEnabled != nil {
-		result.MemoryEnabled = higher.MemoryEnabled
-	}
-
 	return result
 }
 

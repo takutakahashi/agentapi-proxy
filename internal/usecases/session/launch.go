@@ -35,7 +35,8 @@ type LaunchRequest struct {
 	WebhookPayload []byte
 
 	// MemoryKey is an optional tag map used to identify memories for this session.
-	// When empty, session Tags are used as the memory key (see entities.StartRequest.MemoryKey).
+	// When non-empty, memories matching these tags are injected into CLAUDE.md at startup.
+	// When empty, memory integration is disabled.
 	MemoryKey map[string]string
 
 	// Session reuse: when ReuseSession is true and ReuseMatchTags is non-empty,

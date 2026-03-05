@@ -51,8 +51,7 @@ type StartRequest struct {
 	TeamID string `json:"team_id,omitempty"`
 	// MemoryKey is a custom tag map to identify memories for this session.
 	// If non-empty, memories matching these tags are fetched and injected into CLAUDE.md at startup.
-	// If empty, memory integration is disabled unless memory_enabled=true is set in settings
-	// (in which case the session Tags are used as the memory key automatically).
+	// If empty, memory integration is disabled.
 	MemoryKey map[string]string `json:"memory_key,omitempty"`
 }
 
