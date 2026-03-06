@@ -1090,18 +1090,22 @@ if [ "$USER_MSG_COUNT" -gt 0 ]; then
     exec sleep infinity
 fi
 
-# Wait for agent status to be "stable"
-echo "[INITIAL-MSG] Waiting for agent status to be stable..."
+# Wait for agent status to be "stable" AND at least one non-empty message to exist.
+# agentapi always initializes with an empty agent message {content:"", role:"agent"} as a
+# placeholder (NewPTY in pty_conversation.go). Sending before content appears risks firing
+# before the agent has fully initialized.
+echo "[INITIAL-MSG] Waiting for agent to be stable with non-empty message..."
 STABLE_COUNT=0
 while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
     STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-    if [ "$STATUS" = "stable" ]; then
-        echo "[INITIAL-MSG] Agent is stable, ready to send message"
+    NON_EMPTY_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.content != "")] | length' 2>/dev/null || echo "0")
+    if [ "$STATUS" = "stable" ] && [ "$NON_EMPTY_MSG_COUNT" -gt 0 ]; then
+        echo "[INITIAL-MSG] Agent is stable with non-empty message (count: ${NON_EMPTY_MSG_COUNT}), ready to send"
         break
     fi
     STABLE_COUNT=$((STABLE_COUNT + 1))
     if [ $STABLE_COUNT -eq $MAX_STABLE_RETRIES ]; then
-        echo "[INITIAL-MSG] ERROR: Agent not stable after ${MAX_STABLE_RETRIES} retries (status: ${STATUS})"
+        echo "[INITIAL-MSG] ERROR: Agent not ready after ${MAX_STABLE_RETRIES} retries (status: ${STATUS}, non_empty_msgs: ${NON_EMPTY_MSG_COUNT})"
         exec sleep infinity
     fi
     sleep 1
