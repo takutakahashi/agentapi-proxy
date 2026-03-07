@@ -252,6 +252,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		AgentType:      agentType,
 		SlackParams:    slackParams,
 		Oneshot:        oneshot,
+		MemoryKey:      schedule.SessionConfig.MemoryKey,
 		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
 	}
 }

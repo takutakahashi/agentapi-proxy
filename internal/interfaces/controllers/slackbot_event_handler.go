@@ -347,6 +347,18 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			return
 		}
 
+		// Build memory key by rendering Go templates from session_config.memory_key values.
+		// This allows values like {{ .event.channel }} to be resolved at runtime.
+		var memoryKey map[string]string
+		if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().MemoryKey() != nil {
+			renderedMemoryKey, renderErr := RenderTemplateMap(bot.SessionConfig().MemoryKey(), payloadMap)
+			if renderErr != nil {
+				log.Printf("[SLACKBOT] Failed to render memory_key: %v", renderErr)
+			} else {
+				memoryKey = renderedMemoryKey
+			}
+		}
+
 		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
 			UserID:         userID,
 			Scope:          scope,
@@ -356,6 +368,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			Tags:           tags,
 			InitialMessage: initialMessage,
 			AgentType:      agentType,
+			MemoryKey:      memoryKey,
 			SlackParams: &entities.SlackParams{
 				Channel:  channel,
 				ThreadTS: threadKey,
