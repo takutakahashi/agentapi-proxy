@@ -610,18 +610,21 @@ func (s *Server) createMemoryIntegrationSession(req *entities.RunServerRequest, 
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var flagParts []string
+	var tagFlagParts []string // for --tag k=v (used in memory list)
+	var keyFlagParts []string // for --key k=v (used in memory upsert)
 	for _, k := range keys {
-		flagParts = append(flagParts, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
+		tagFlagParts = append(tagFlagParts, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
+		keyFlagParts = append(keyFlagParts, fmt.Sprintf("--key %s=%s", k, req.MemoryKey[k]))
 	}
-	memKeyFlags := strings.Join(flagParts, " ")
+	memTagFlags := strings.Join(tagFlagParts, " ")
+	memKeyFlags := strings.Join(keyFlagParts, " ")
 
 	scope := "user"
 	if req.Scope == entities.ScopeTeam {
 		scope = "team"
 	}
 
-	prompt := buildIntegrationPrompt(memKeyFlags, scope, draftMemoryID)
+	prompt := buildIntegrationPrompt(memTagFlags, memKeyFlags, scope, draftMemoryID)
 
 	// 削除されたセッションの環境変数（AGENTAPI_KEY 等）を引き継ぐ
 	env := make(map[string]string, len(req.Environment))
@@ -663,26 +666,31 @@ func formatMessagesForDump(messages []portrepos.Message) string {
 }
 
 // buildIntegrationPrompt generates the initial message for the memory integration session.
-func buildIntegrationPrompt(memKeyFlags, scope, draftMemoryID string) string {
+// memTagFlags: space-joined "--tag k=v" flags for memory list
+// memKeyFlags: space-joined "--key k=v" flags for memory upsert
+func buildIntegrationPrompt(memTagFlags, memKeyFlags, scope, draftMemoryID string) string {
 	return fmt.Sprintf(`あなたはメモリ統合エージェントです。以下のタスクを順番に実行してください。
 
 ## タスク
 
 1. ドラフトメモリ（ID: %s）の内容を取得する:
-   agentapi-proxy client memory get --id %s
+   agentapi-proxy client memory get %s
 
 2. 既存の永続メモリ一覧を取得する:
    agentapi-proxy client memory list %s --scope %s --exclude-tag draft=true
    （CLAUDE.md にすでに注入済みのメモリも参照してください）
 
-3. ドラフトの内容を分析・要約し、既存メモリとの重複を避けながら統合する
+3. ドラフトの内容を分析・要約し、既存メモリとの重複を避けながら統合する。
+   統合した内容を /tmp/integrated_memory.md に保存する。
 
-4. 既存メモリを更新（または新規メモリを作成）して、統合された内容を保存する
+4. 統合した内容でメモリを作成または更新する:
+   agentapi-proxy client memory upsert %s --scope %s --title "統合メモリ" --content-file /tmp/integrated_memory.md
+   （既存メモリがある場合は更新、ない場合は新規作成）
 
-5. 作業完了後、ドラフトメモリ（ID: %s）を削除する:
-   agentapi-proxy client memory delete --id %s
+5. 作業完了後、必ずドラフトメモリ（ID: %s）を削除する:
+   agentapi-proxy client memory delete %s
 
-重要: すべての作業が完了したら、その旨を報告してください。`, draftMemoryID, draftMemoryID, memKeyFlags, scope, draftMemoryID, draftMemoryID)
+重要: ステップ5のドラフトメモリ削除は必ず実行してください。すべての作業が完了したら、その旨を報告してください。`, draftMemoryID, draftMemoryID, memTagFlags, scope, memKeyFlags, scope, draftMemoryID, draftMemoryID)
 }
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate
