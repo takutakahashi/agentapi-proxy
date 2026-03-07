@@ -127,6 +127,57 @@ func TestBuildInitialMessageSenderSidecar(t *testing.T) {
 		} else if portEnv.Value != "9000" {
 			t.Errorf("Expected AGENTAPI_PORT=9000, got %s", portEnv.Value)
 		}
+
+		// Verify AGENT_TYPE env var is empty when AgentType is not set
+		var agentTypeEnv *corev1.EnvVar
+		for i := range sidecar.Env {
+			if sidecar.Env[i].Name == "AGENT_TYPE" {
+				agentTypeEnv = &sidecar.Env[i]
+				break
+			}
+		}
+		if agentTypeEnv == nil {
+			t.Error("Expected AGENT_TYPE environment variable to be present")
+		} else if agentTypeEnv.Value != "" {
+			t.Errorf("Expected AGENT_TYPE to be empty when AgentType is not set, got %s", agentTypeEnv.Value)
+		}
+	})
+
+	t.Run("AGENT_TYPE env var is set when AgentType is specified", func(t *testing.T) {
+		session := NewKubernetesSession(
+			"test-session",
+			&entities.RunServerRequest{
+				UserID:         "test-user",
+				InitialMessage: "Hello, this is the initial message",
+				AgentType:      "claude-agentapi",
+			},
+			"test-deploy",
+			"test-service",
+			"test-pvc",
+			"test-ns",
+			9000,
+			nil,
+			nil,
+		)
+
+		sidecar := manager.buildInitialMessageSenderSidecar(session)
+		if sidecar == nil {
+			t.Fatal("Expected sidecar when initial message is provided with AgentType set")
+		}
+
+		// Verify AGENT_TYPE env var has the agent type value
+		var agentTypeEnv *corev1.EnvVar
+		for i := range sidecar.Env {
+			if sidecar.Env[i].Name == "AGENT_TYPE" {
+				agentTypeEnv = &sidecar.Env[i]
+				break
+			}
+		}
+		if agentTypeEnv == nil {
+			t.Error("Expected AGENT_TYPE environment variable to be present")
+		} else if agentTypeEnv.Value != "claude-agentapi" {
+			t.Errorf("Expected AGENT_TYPE=claude-agentapi, got %s", agentTypeEnv.Value)
+		}
 	})
 }
 

@@ -1090,50 +1090,70 @@ if [ "$USER_MSG_COUNT" -gt 0 ]; then
     exec sleep infinity
 fi
 
-# Wait for Claude to start.
-# Phase 1 (first 10 s): detect "running → stable" status transition AND a non-empty message.
-#   agentapi always initializes with an empty agent message {content:"", role:"agent"} as a
-#   placeholder (NewPTY in pty_conversation.go). The transition from "running" to "stable"
-#   indicates Claude has actually produced output and settled, which is more reliable than
-#   checking "stable" alone.
-# Phase 2 (fallback): if the transition is not observed within 10 s (e.g. Claude starts too
-#   fast for the sidecar to catch "running"), fall back to the simpler "stable + non-empty
-#   message" check.
-echo "[INITIAL-MSG] Waiting for Claude to start (phase 1: running→stable transition, 10s timeout)..."
-SAW_RUNNING=0
-CLAUDE_READY=0
-TRANSITION_TIMEOUT=10
-TRANSITION_COUNT=0
-while [ $TRANSITION_COUNT -lt $TRANSITION_TIMEOUT ]; do
-    STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-    if [ "$STATUS" = "running" ]; then
-        SAW_RUNNING=1
-    fi
-    if [ "$SAW_RUNNING" -eq 1 ] && [ "$STATUS" = "stable" ]; then
-        NON_EMPTY_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.content != "")] | length' 2>/dev/null || echo "0")
-        if [ "$NON_EMPTY_MSG_COUNT" -gt 0 ]; then
-            echo "[INITIAL-MSG] Claude started: running→stable transition detected with non-empty message (count: ${NON_EMPTY_MSG_COUNT})"
-            CLAUDE_READY=1
-            break
+if [ -z "$AGENT_TYPE" ]; then
+    # Default agentapi mode: use the two-phase startup detection.
+    # Phase 1 (first 10 s): detect "running → stable" status transition AND a non-empty message.
+    #   agentapi always initializes with an empty agent message {content:"", role:"agent"} as a
+    #   placeholder (NewPTY in pty_conversation.go). The transition from "running" to "stable"
+    #   indicates Claude has actually produced output and settled, which is more reliable than
+    #   checking "stable" alone.
+    # Phase 2 (fallback): if the transition is not observed within 10 s (e.g. Claude starts too
+    #   fast for the sidecar to catch "running"), fall back to the simpler "stable + non-empty
+    #   message" check.
+    echo "[INITIAL-MSG] Waiting for Claude to start (phase 1: running→stable transition, 10s timeout)..."
+    SAW_RUNNING=0
+    CLAUDE_READY=0
+    TRANSITION_TIMEOUT=10
+    TRANSITION_COUNT=0
+    while [ $TRANSITION_COUNT -lt $TRANSITION_TIMEOUT ]; do
+        STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
+        if [ "$STATUS" = "running" ]; then
+            SAW_RUNNING=1
         fi
-    fi
-    TRANSITION_COUNT=$((TRANSITION_COUNT + 1))
-    sleep 1
-done
+        if [ "$SAW_RUNNING" -eq 1 ] && [ "$STATUS" = "stable" ]; then
+            NON_EMPTY_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.content != "")] | length' 2>/dev/null || echo "0")
+            if [ "$NON_EMPTY_MSG_COUNT" -gt 0 ]; then
+                echo "[INITIAL-MSG] Claude started: running→stable transition detected with non-empty message (count: ${NON_EMPTY_MSG_COUNT})"
+                CLAUDE_READY=1
+                break
+            fi
+        fi
+        TRANSITION_COUNT=$((TRANSITION_COUNT + 1))
+        sleep 1
+    done
 
-if [ "$CLAUDE_READY" -eq 0 ]; then
-    echo "[INITIAL-MSG] Phase 1 timed out (saw_running=${SAW_RUNNING}), falling back to non-empty message check..."
+    if [ "$CLAUDE_READY" -eq 0 ]; then
+        echo "[INITIAL-MSG] Phase 1 timed out (saw_running=${SAW_RUNNING}), falling back to non-empty message check..."
+        STABLE_COUNT=0
+        while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
+            STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
+            NON_EMPTY_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.content != "")] | length' 2>/dev/null || echo "0")
+            if [ "$STATUS" = "stable" ] && [ "$NON_EMPTY_MSG_COUNT" -gt 0 ]; then
+                echo "[INITIAL-MSG] Agent is stable with non-empty message (count: ${NON_EMPTY_MSG_COUNT}), ready to send"
+                break
+            fi
+            STABLE_COUNT=$((STABLE_COUNT + 1))
+            if [ $STABLE_COUNT -eq $MAX_STABLE_RETRIES ]; then
+                echo "[INITIAL-MSG] ERROR: Agent not ready after ${MAX_STABLE_RETRIES} retries (status: ${STATUS}, non_empty_msgs: ${NON_EMPTY_MSG_COUNT})"
+                exec sleep infinity
+            fi
+            sleep 1
+        done
+    fi
+else
+    # AgentType is specified (e.g. claude-agentapi, codex-agentapi).
+    # These agents have a different startup sequence; use simple stable-wait.
+    echo "[INITIAL-MSG] AgentType=${AGENT_TYPE}: waiting for agent to be stable..."
     STABLE_COUNT=0
     while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
         STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-        NON_EMPTY_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.content != "")] | length' 2>/dev/null || echo "0")
-        if [ "$STATUS" = "stable" ] && [ "$NON_EMPTY_MSG_COUNT" -gt 0 ]; then
-            echo "[INITIAL-MSG] Agent is stable with non-empty message (count: ${NON_EMPTY_MSG_COUNT}), ready to send"
+        if [ "$STATUS" = "stable" ]; then
+            echo "[INITIAL-MSG] Agent is stable, ready to send message"
             break
         fi
         STABLE_COUNT=$((STABLE_COUNT + 1))
         if [ $STABLE_COUNT -eq $MAX_STABLE_RETRIES ]; then
-            echo "[INITIAL-MSG] ERROR: Agent not ready after ${MAX_STABLE_RETRIES} retries (status: ${STATUS}, non_empty_msgs: ${NON_EMPTY_MSG_COUNT})"
+            echo "[INITIAL-MSG] ERROR: Agent not stable after ${MAX_STABLE_RETRIES} retries (status: ${STATUS})"
             exec sleep infinity
         fi
         sleep 1
@@ -1257,6 +1277,7 @@ func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *Kub
 		Env: []corev1.EnvVar{
 			{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 			{Name: "INITIAL_MESSAGE_WAIT_SECOND", Value: initialMessageWaitSecond(session.Request())},
+			{Name: "AGENT_TYPE", Value: session.Request().AgentType},
 		},
 		Command: []string{"/bin/sh", "-c"},
 		Args:    []string{initialMessageSenderScript},
