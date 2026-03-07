@@ -508,6 +508,7 @@ type WebhookSessionConfig struct {
 	params                 *SessionParams
 	reuseSession           bool
 	mountPayload           bool
+	memoryKey              map[string]string
 }
 
 // NewWebhookSessionConfig creates a new session config
@@ -563,6 +564,12 @@ func (c *WebhookSessionConfig) MountPayload() bool { return c.mountPayload }
 
 // SetMountPayload sets whether to mount the webhook payload
 func (c *WebhookSessionConfig) SetMountPayload(mount bool) { c.mountPayload = mount }
+
+// MemoryKey returns the memory key map for memory integration
+func (c *WebhookSessionConfig) MemoryKey() map[string]string { return c.memoryKey }
+
+// SetMemoryKey sets the memory key map for memory integration
+func (c *WebhookSessionConfig) SetMemoryKey(key map[string]string) { c.memoryKey = key }
 
 // WebhookDeliveryRecord represents a single webhook delivery
 type WebhookDeliveryRecord struct {

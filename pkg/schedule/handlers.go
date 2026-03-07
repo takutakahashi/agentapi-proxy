@@ -528,6 +528,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		AgentType:      agentType,
 		SlackParams:    slackParams,
 		Oneshot:        oneshot,
+		MemoryKey:      schedule.SessionConfig.MemoryKey,
 		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
 	})
 	if err != nil {

@@ -78,6 +78,9 @@ type SessionConfig struct {
 	Tags map[string]string `json:"tags,omitempty"`
 	// Params contains session parameters like initial message
 	Params *entities.SessionParams `json:"params,omitempty"`
+	// MemoryKey is an optional tag map used to identify memories for this session.
+	// When non-empty, memories matching these tags are injected into CLAUDE.md at startup.
+	MemoryKey map[string]string `json:"memory_key,omitempty"`
 }
 
 // ExecutionRecord represents a single execution attempt
