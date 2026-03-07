@@ -73,6 +73,15 @@ func LoadSettings(path string) (*SessionSettings, error) {
 	return &settings, nil
 }
 
+// LoadSettingsFromBytes parses a SessionSettings from YAML bytes.
+func LoadSettingsFromBytes(data []byte) (*SessionSettings, error) {
+	var settings SessionSettings
+	if err := yaml.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("failed to parse settings YAML: %w", err)
+	}
+	return &settings, nil
+}
+
 // MarshalYAML marshals SessionSettings to YAML bytes.
 func MarshalYAML(settings *SessionSettings) ([]byte, error) {
 	return yaml.Marshal(settings)
