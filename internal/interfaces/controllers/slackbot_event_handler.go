@@ -52,11 +52,12 @@ func NewSlackBotEventHandler(
 	channelResolver *services.SlackChannelResolver,
 	baseURL string,
 	dryRun bool,
+	memoryRepo repositories.MemoryRepository,
 ) *SlackBotEventHandler {
 	return &SlackBotEventHandler{
 		repo:                      repo,
 		sessionManager:            sessionManager,
-		launcher:                  sessionuc.NewLaunchUseCase(sessionManager),
+		launcher:                  sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
 		channelResolver:           channelResolver,
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,

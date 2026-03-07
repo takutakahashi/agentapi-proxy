@@ -3,7 +3,11 @@ package session
 import (
 	"context"
 	"fmt"
+	"log"
+	"sort"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
@@ -80,13 +84,23 @@ func ResolveTeams(scope entities.ResourceScope, teamID string, userTeams []strin
 //   - session-reuse check
 //   - session-limit enforcement
 //   - RunServerRequest construction (Teams is always set via the caller's ResolveTeams call)
+//   - auto-creation of missing memories when MemoryKey is set (requires memoryRepo)
 type LaunchUseCase struct {
 	sessionManager repositories.SessionManager
+	memoryRepo     repositories.MemoryRepository // optional; if set, auto-creates missing memories
 }
 
 // NewLaunchUseCase creates a new LaunchUseCase.
 func NewLaunchUseCase(sessionManager repositories.SessionManager) *LaunchUseCase {
 	return &LaunchUseCase{sessionManager: sessionManager}
+}
+
+// WithMemoryRepository configures the memory repository used to auto-create memory entries
+// when a session is launched with a MemoryKey that has no matching memory.
+// Calling this is optional; if not called, memory auto-creation is disabled.
+func (uc *LaunchUseCase) WithMemoryRepository(repo repositories.MemoryRepository) *LaunchUseCase {
+	uc.memoryRepo = repo
+	return uc
 }
 
 // Launch creates or reuses a session according to the LaunchRequest.
@@ -122,6 +136,14 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		}
 	}
 
+	// 2.5. Auto-create memory entry if MemoryKey is set and no matching memory exists.
+	if uc.memoryRepo != nil && len(req.MemoryKey) > 0 {
+		if err := uc.ensureMemoryExists(ctx, req); err != nil {
+			// Non-fatal: log and continue so session creation is not blocked.
+			log.Printf("[LAUNCH] Warning: failed to auto-create memory: %v", err)
+		}
+	}
+
 	// 3. Build RunServerRequest and create the session.
 	// Teams is provided by the caller via ResolveTeams() so it is always set correctly.
 	runReq := &entities.RunServerRequest{
@@ -146,4 +168,52 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		return LaunchResult{}, err
 	}
 	return LaunchResult{SessionID: session.ID(), SessionReused: false}, nil
+}
+
+// ensureMemoryExists checks whether a memory with all tags in req.MemoryKey already exists
+// for the session owner. If none is found, it creates a new empty memory entry with those tags.
+func (uc *LaunchUseCase) ensureMemoryExists(ctx context.Context, req LaunchRequest) error {
+	scope := req.Scope
+	if scope == "" {
+		scope = entities.ScopeUser
+	}
+
+	filter := repositories.MemoryFilter{
+		Scope:   scope,
+		OwnerID: req.UserID,
+		Tags:    req.MemoryKey,
+	}
+	if scope == entities.ScopeTeam {
+		filter.TeamID = req.TeamID
+	}
+
+	existing, err := uc.memoryRepo.List(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("failed to list memories: %w", err)
+	}
+	if len(existing) > 0 {
+		// At least one memory already has all the required tags — nothing to do.
+		return nil
+	}
+
+	// Build a human-readable title from the memory key tags.
+	keys := make([]string, 0, len(req.MemoryKey))
+	for k := range req.MemoryKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, req.MemoryKey[k]))
+	}
+	title := "Auto-created: " + strings.Join(parts, ", ")
+
+	memoryID := uuid.New().String()
+	mem := entities.NewMemoryWithTags(memoryID, title, "", scope, req.UserID, req.TeamID, req.MemoryKey)
+	if err := uc.memoryRepo.Create(ctx, mem); err != nil {
+		return fmt.Errorf("failed to create memory: %w", err)
+	}
+	log.Printf("[LAUNCH] Auto-created memory %s (title=%q) with tags %v for user %s", memoryID, title, req.MemoryKey, req.UserID)
+	return nil
 }

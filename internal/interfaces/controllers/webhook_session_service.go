@@ -25,11 +25,11 @@ type WebhookSessionService struct {
 }
 
 // NewWebhookSessionService creates a new WebhookSessionService.
-func NewWebhookSessionService(repo repositories.WebhookRepository, sessionManager repositories.SessionManager) *WebhookSessionService {
+func NewWebhookSessionService(repo repositories.WebhookRepository, sessionManager repositories.SessionManager, memoryRepo repositories.MemoryRepository) *WebhookSessionService {
 	return &WebhookSessionService{
 		repo:           repo,
 		sessionManager: sessionManager,
-		launcher:       sessionuc.NewLaunchUseCase(sessionManager),
+		launcher:       sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
 	}
 }
 

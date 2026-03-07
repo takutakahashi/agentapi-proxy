@@ -24,21 +24,21 @@ type Handlers struct {
 }
 
 // NewHandlers creates a new Handlers instance
-func NewHandlers(manager Manager, sessionManager portrepos.SessionManager) *Handlers {
+func NewHandlers(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository) *Handlers {
 	return &Handlers{
 		manager:         manager,
 		sessionManager:  sessionManager,
-		launcher:        sessionuc.NewLaunchUseCase(sessionManager),
+		launcher:        sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
 		defaultTimezone: "Asia/Tokyo",
 	}
 }
 
 // NewHandlersWithTimezone creates a new Handlers instance with a custom default timezone
-func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionManager, defaultTimezone string) *Handlers {
+func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, defaultTimezone string) *Handlers {
 	return &Handlers{
 		manager:         manager,
 		sessionManager:  sessionManager,
-		launcher:        sessionuc.NewLaunchUseCase(sessionManager),
+		launcher:        sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
 		defaultTimezone: defaultTimezone,
 	}
 }
