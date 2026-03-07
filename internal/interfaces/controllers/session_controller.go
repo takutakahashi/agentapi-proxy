@@ -194,6 +194,12 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		}
 	}
 
+	// Exclude hidden sessions by default (unless caller explicitly requests them via tag.hidden=true)
+	_, hiddenExplicitlyRequested := tagFilters["hidden"]
+	if !hiddenExplicitlyRequested {
+		matchingSessions = filterHiddenSessions(matchingSessions)
+	}
+
 	// Sort by start time (newest first)
 	sort.Slice(matchingSessions, func(i, j int) bool {
 		return matchingSessions[i].StartedAt().After(matchingSessions[j].StartedAt())
@@ -419,6 +425,17 @@ func (c *SessionController) updateSessionTimestamp(ctx echo.Context, session ent
 			}
 		}()
 	}
+}
+
+// filterHiddenSessions removes sessions tagged with hidden=true from the list.
+func filterHiddenSessions(sessions []entities.Session) []entities.Session {
+	result := make([]entities.Session, 0, len(sessions))
+	for _, s := range sessions {
+		if s.Tags()["hidden"] != "true" {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 // setCORSHeaders sets CORS headers for all session management endpoints

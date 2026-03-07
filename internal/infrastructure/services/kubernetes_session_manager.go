@@ -1446,6 +1446,26 @@ func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Conte
 	return ""
 }
 
+// getSessionMetaFromSecret reads the settings secret and returns the SessionMeta
+// (including MemoryKey, Teams, AgentType, Oneshot etc.) for session restore.
+func (m *KubernetesSessionManager) getSessionMetaFromSecret(ctx context.Context, serviceName string) *sessionsettings.SessionMeta {
+	settingsSecretName := strings.TrimSuffix(serviceName, "-svc") + "-settings"
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, settingsSecretName, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	yamlData, ok := secret.Data["settings.yaml"]
+	if !ok {
+		return nil
+	}
+	settings, err := sessionsettings.LoadSettingsFromBytes(yamlData)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to parse settings.yaml from secret %s: %v", settingsSecretName, err)
+		return nil
+	}
+	return &settings.Session
+}
+
 // createOneshotSettingsSecret creates a Secret containing settings.json with Stop hook
 // This is used when oneshot is enabled to automatically delete the session after stopping
 func (m *KubernetesSessionManager) createOneshotSettingsSecret(
@@ -2328,8 +2348,18 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Labels contain only the hash for querying purposes
 	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
-	// Restore initial message from Secret
-	initialMessage := m.getInitialMessageFromSecret(context.Background(), svc.Name)
+	// Restore initial message and session meta (MemoryKey, Teams etc.) from Secret
+	restoreCtx := context.Background()
+	initialMessage := m.getInitialMessageFromSecret(restoreCtx, svc.Name)
+	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
+
+	// Extract MemoryKey and Teams from session meta if available
+	var memoryKey map[string]string
+	var teams []string
+	if sessionMeta != nil {
+		memoryKey = sessionMeta.MemoryKey
+		teams = sessionMeta.Teams
+	}
 
 	// Parse created-at from annotations
 	createdAt := time.Now()
@@ -2375,6 +2405,8 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 			Scope:          scope,
 			TeamID:         teamID,
 			InitialMessage: initialMessage,
+			MemoryKey:      memoryKey,
+			Teams:          teams,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -2428,8 +2460,18 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	// Labels contain only the hash for querying purposes
 	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
-	// Restore initial message from Secret
-	initialMessage := m.getInitialMessageFromSecret(context.Background(), svc.Name)
+	// Restore initial message and session meta (MemoryKey, Teams etc.) from Secret
+	restoreCtx := context.Background()
+	initialMessage := m.getInitialMessageFromSecret(restoreCtx, svc.Name)
+	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
+
+	// Extract MemoryKey and Teams from session meta if available
+	var memoryKey map[string]string
+	var teams []string
+	if sessionMeta != nil {
+		memoryKey = sessionMeta.MemoryKey
+		teams = sessionMeta.Teams
+	}
 
 	// Parse created-at from annotations
 	createdAt := time.Now()
@@ -2475,6 +2517,8 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 			Scope:          scope,
 			TeamID:         teamID,
 			InitialMessage: initialMessage,
+			MemoryKey:      memoryKey,
+			Teams:          teams,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
