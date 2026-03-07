@@ -104,7 +104,7 @@ func TestWorker_StartStop(t *testing.T) {
 		Enabled:       true,
 	}
 
-	worker := NewWorker(manager, sessionManager, config)
+	worker := NewWorker(manager, sessionManager, nil, config)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -152,7 +152,7 @@ func TestWorker_ProcessSchedules(t *testing.T) {
 		Enabled:       true,
 	}
 
-	worker := NewWorker(manager, sessionManager, config)
+	worker := NewWorker(manager, sessionManager, nil, config)
 
 	// Process schedules
 	worker.processSchedules(ctx)
@@ -220,7 +220,7 @@ func TestWorker_SkipActiveSession(t *testing.T) {
 		Enabled:       true,
 	}
 
-	worker := NewWorker(manager, sessionManager, config)
+	worker := NewWorker(manager, sessionManager, nil, config)
 
 	// Process schedules
 	worker.processSchedules(ctx)
@@ -270,7 +270,7 @@ func TestWorker_OneTimeScheduleCompleted(t *testing.T) {
 		Enabled:       true,
 	}
 
-	worker := NewWorker(manager, sessionManager, config)
+	worker := NewWorker(manager, sessionManager, nil, config)
 
 	// Process schedules
 	worker.processSchedules(ctx)
@@ -312,7 +312,7 @@ func TestWorker_RecurringScheduleNextExecution(t *testing.T) {
 		Enabled:       true,
 	}
 
-	worker := NewWorker(manager, sessionManager, config)
+	worker := NewWorker(manager, sessionManager, nil, config)
 
 	// Process schedules
 	worker.processSchedules(ctx)
@@ -377,7 +377,7 @@ func TestWorker_DeletePreviousInactiveSession(t *testing.T) {
 		Enabled:       true,
 	}
 
-	worker := NewWorker(manager, sessionManager, config)
+	worker := NewWorker(manager, sessionManager, nil, config)
 
 	// Process schedules
 	worker.processSchedules(ctx)

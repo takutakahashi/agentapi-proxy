@@ -119,8 +119,9 @@ func NewLeaderWorker(
 	client kubernetes.Interface,
 	workerConfig WorkerConfig,
 	electionConfig LeaderElectionConfig,
+	memoryRepo portrepos.MemoryRepository,
 ) *LeaderWorker {
-	worker := NewWorker(manager, sessionManager, workerConfig)
+	worker := NewWorker(manager, sessionManager, memoryRepo, workerConfig)
 	elector := NewLeaderElector(client, electionConfig)
 
 	return &LeaderWorker{

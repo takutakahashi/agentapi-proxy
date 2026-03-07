@@ -45,11 +45,11 @@ type Worker struct {
 }
 
 // NewWorker creates a new schedule worker
-func NewWorker(manager Manager, sessionManager portrepos.SessionManager, config WorkerConfig) *Worker {
+func NewWorker(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, config WorkerConfig) *Worker {
 	return &Worker{
 		manager:        manager,
 		sessionManager: sessionManager,
-		launcher:       sessionuc.NewLaunchUseCase(sessionManager),
+		launcher:       sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
 		config:         config,
 		logger:         log.Default(),
 		stopCh:         make(chan struct{}),
