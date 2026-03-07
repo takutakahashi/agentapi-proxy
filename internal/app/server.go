@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
@@ -541,7 +543,146 @@ func (s *Server) DeleteSessionByID(sessionID string) error {
 		}
 	}
 
+	// Memory dump hook: dump conversation and create integration session (best-effort)
+	if s.memoryRepo != nil {
+		session := s.sessionManager.GetSession(sessionID)
+		if session != nil {
+			if ks, ok := session.(*services.KubernetesSession); ok {
+				req := ks.Request()
+				if len(req.MemoryKey) > 0 {
+					s.dumpSessionToMemory(sessionID, ks, req)
+				}
+			}
+		}
+	}
+
 	return s.sessionManager.DeleteSession(sessionID)
+}
+
+// dumpSessionToMemory fetches messages from the session, stores them as a draft memory,
+// and creates an integration session to summarize and merge the draft into permanent memory.
+// All errors are logged and non-fatal — session deletion continues regardless.
+func (s *Server) dumpSessionToMemory(sessionID string, session *services.KubernetesSession, req *entities.RunServerRequest) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 1. メッセージ取得
+	messages, err := s.sessionManager.GetMessages(ctx, sessionID)
+	if err != nil {
+		log.Printf("[MEMORY_DUMP] Failed to get messages for session %s: %v", sessionID, err)
+		return
+	}
+	if len(messages) == 0 {
+		log.Printf("[MEMORY_DUMP] No messages to dump for session %s, skipping", sessionID)
+		return
+	}
+
+	// 2. メッセージをフォーマット
+	content := formatMessagesForDump(messages)
+
+	// 3. ドラフトメモリのタグ = MemoryKey + draft=true
+	tags := make(map[string]string, len(req.MemoryKey)+1)
+	for k, v := range req.MemoryKey {
+		tags[k] = v
+	}
+	tags["draft"] = "true"
+
+	// 4. ドラフトメモリ保存
+	memID := uuid.New().String()
+	title := fmt.Sprintf("Draft: Session %s (%s)", sessionID[:8], time.Now().Format("2006-01-02 15:04"))
+	memory := entities.NewMemoryWithTags(memID, title, content, req.Scope, req.UserID, req.TeamID, tags)
+	if err := s.memoryRepo.Create(context.Background(), memory); err != nil {
+		log.Printf("[MEMORY_DUMP] Failed to save draft memory for session %s: %v", sessionID, err)
+		return
+	}
+	log.Printf("[MEMORY_DUMP] Saved draft memory %s for session %s", memID, sessionID)
+
+	// 5. 統合セッション作成
+	s.createMemoryIntegrationSession(req, memID)
+}
+
+// createMemoryIntegrationSession creates a hidden oneshot session whose task is to
+// summarize the given draft memory and merge it into the permanent memories.
+func (s *Server) createMemoryIntegrationSession(req *entities.RunServerRequest, draftMemoryID string) {
+	// MemoryKey フラグ生成（決定的な順序）
+	keys := make([]string, 0, len(req.MemoryKey))
+	for k := range req.MemoryKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var flagParts []string
+	for _, k := range keys {
+		flagParts = append(flagParts, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
+	}
+	memKeyFlags := strings.Join(flagParts, " ")
+
+	scope := "user"
+	if req.Scope == entities.ScopeTeam {
+		scope = "team"
+	}
+
+	prompt := buildIntegrationPrompt(memKeyFlags, scope, draftMemoryID)
+
+	// 削除されたセッションの環境変数（AGENTAPI_KEY 等）を引き継ぐ
+	env := make(map[string]string, len(req.Environment))
+	for k, v := range req.Environment {
+		env[k] = v
+	}
+
+	integrationReq := &entities.RunServerRequest{
+		UserID:         req.UserID,
+		Teams:          req.Teams,
+		Scope:          req.Scope,
+		TeamID:         req.TeamID,
+		Tags:           map[string]string{"hidden": "true"},
+		MemoryKey:      req.MemoryKey,
+		InitialMessage: prompt,
+		Oneshot:        true,
+		Environment:    env,
+	}
+
+	newSessionID := uuid.New().String()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := s.sessionManager.CreateSession(ctx, newSessionID, integrationReq, nil); err != nil {
+		log.Printf("[MEMORY_DUMP] Failed to create integration session: %v", err)
+		return
+	}
+	log.Printf("[MEMORY_DUMP] Created integration session %s for memory consolidation (draft: %s)", newSessionID, draftMemoryID)
+}
+
+// formatMessagesForDump formats a slice of messages as a markdown conversation log.
+func formatMessagesForDump(messages []portrepos.Message) string {
+	var sb strings.Builder
+	for _, msg := range messages {
+		fmt.Fprintf(&sb, "## [%s] %s\n\n%s\n\n---\n\n",
+			msg.Timestamp.Format("2006-01-02 15:04:05"), msg.Role, msg.Content)
+	}
+	return sb.String()
+}
+
+// buildIntegrationPrompt generates the initial message for the memory integration session.
+func buildIntegrationPrompt(memKeyFlags, scope, draftMemoryID string) string {
+	return fmt.Sprintf(`あなたはメモリ統合エージェントです。以下のタスクを順番に実行してください。
+
+## タスク
+
+1. ドラフトメモリ（ID: %s）の内容を取得する:
+   agentapi-proxy client memory get --id %s
+
+2. 既存の永続メモリ一覧を取得する:
+   agentapi-proxy client memory list %s --scope %s --exclude-tag draft=true
+   （CLAUDE.md にすでに注入済みのメモリも参照してください）
+
+3. ドラフトの内容を分析・要約し、既存メモリとの重複を避けながら統合する
+
+4. 既存メモリを更新（または新規メモリを作成）して、統合された内容を保存する
+
+5. 作業完了後、ドラフトメモリ（ID: %s）を削除する:
+   agentapi-proxy client memory delete --id %s
+
+重要: すべての作業が完了したら、その旨を報告してください。`, draftMemoryID, draftMemoryID, memKeyFlags, scope, draftMemoryID, draftMemoryID)
 }
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate
