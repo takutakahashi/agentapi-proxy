@@ -638,7 +638,7 @@ func (s *Server) createMemoryIntegrationSession(req *entities.RunServerRequest, 
 		Scope:          req.Scope,
 		TeamID:         req.TeamID,
 		Tags:           map[string]string{"hidden": "true"},
-		MemoryKey:      req.MemoryKey,
+		MemoryKey:      nil, // MemoryKey を渡さない: 統合セッション削除時に再ダンプが走るのを防ぐ
 		InitialMessage: prompt,
 		Oneshot:        true,
 		Environment:    env,
