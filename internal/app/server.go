@@ -363,9 +363,15 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		}
 	}
 
-	// Register memory dump handler on KubernetesSessionManager.
-	// This ensures dumpSessionToMemory is called for every session deletion path
-	// (HTTP DELETE, Slackbot cleanup, etc.) without requiring callers to know about it.
+	// Register memory dump + integration session handler on KubernetesSessionManager.
+	// This ensures both draft memory saving and integration session creation are triggered
+	// for every session deletion path (HTTP DELETE, Slackbot cleanup, etc.) without
+	// requiring callers to know about the memory subsystem.
+	//
+	// The handler performs two explicit steps:
+	//   1. dumpSessionToMemory  – fetches messages and saves a draft memory entry.
+	//   2. createMemoryIntegrationSession – starts a hidden oneshot session that
+	//      summarises the draft and merges it into permanent memory.
 	if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok && memoryRepo != nil {
 		k8sManager.AddSessionDeletedHandler(func(ctx context.Context, sess entities.Session) {
 			ks, ok := sess.(*services.KubernetesSession)
@@ -376,9 +382,16 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			if len(req.MemoryKey) == 0 {
 				return
 			}
-			s.dumpSessionToMemory(sess.ID(), ks, req)
+			// Step 1: dump session messages to draft memory.
+			draftMemoryID := s.dumpSessionToMemory(sess.ID(), ks, req)
+			if draftMemoryID == "" {
+				// Nothing to consolidate (no messages or save failed).
+				return
+			}
+			// Step 2: create integration session to consolidate the draft into permanent memory.
+			s.createMemoryIntegrationSession(req, draftMemoryID)
 		})
-		log.Printf("[SERVER] Memory dump handler registered for session deletion")
+		log.Printf("[SERVER] Memory dump and integration session handler registered for session deletion")
 	}
 
 	s.setupRoutes()
@@ -564,10 +577,10 @@ func (s *Server) DeleteSessionByID(sessionID string) error {
 	return s.sessionManager.DeleteSession(sessionID)
 }
 
-// dumpSessionToMemory fetches messages from the session, stores them as a draft memory,
-// and creates an integration session to summarize and merge the draft into permanent memory.
+// dumpSessionToMemory fetches messages from the session and stores them as a draft memory.
+// It returns the draft memory ID on success, or an empty string if the dump was skipped or failed.
 // All errors are logged and non-fatal — session deletion continues regardless.
-func (s *Server) dumpSessionToMemory(sessionID string, session *services.KubernetesSession, req *entities.RunServerRequest) {
+func (s *Server) dumpSessionToMemory(sessionID string, session *services.KubernetesSession, req *entities.RunServerRequest) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -575,11 +588,11 @@ func (s *Server) dumpSessionToMemory(sessionID string, session *services.Kuberne
 	messages, err := s.sessionManager.GetMessages(ctx, sessionID)
 	if err != nil {
 		log.Printf("[MEMORY_DUMP] Failed to get messages for session %s: %v", sessionID, err)
-		return
+		return ""
 	}
 	if len(messages) == 0 {
 		log.Printf("[MEMORY_DUMP] No messages to dump for session %s, skipping", sessionID)
-		return
+		return ""
 	}
 
 	// 2. メッセージをフォーマット
@@ -598,12 +611,11 @@ func (s *Server) dumpSessionToMemory(sessionID string, session *services.Kuberne
 	memory := entities.NewMemoryWithTags(memID, title, content, req.Scope, req.UserID, req.TeamID, tags)
 	if err := s.memoryRepo.Create(context.Background(), memory); err != nil {
 		log.Printf("[MEMORY_DUMP] Failed to save draft memory for session %s: %v", sessionID, err)
-		return
+		return ""
 	}
 	log.Printf("[MEMORY_DUMP] Saved draft memory %s for session %s", memID, sessionID)
 
-	// 5. 統合セッション作成
-	s.createMemoryIntegrationSession(req, memID)
+	return memID
 }
 
 // createMemoryIntegrationSession creates a hidden oneshot session whose task is to
