@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -19,6 +20,13 @@ const (
 	// slackBotDefaultID is the special ID for the server-configured default SlackBot
 	slackBotDefaultID = "default"
 )
+
+// slackMentionRe matches Slack user/bot mention tokens of the form <@UXXXXXXXX>.
+var slackMentionRe = regexp.MustCompile(`<@[A-Z0-9]+>`)
+
+// repoRe matches a GitHub-style "org/repo" identifier (letters, digits, hyphens, underscores, dots).
+// It uses word-boundary-like anchors to avoid matching partial URLs (e.g. "https://github.com/org/repo").
+var repoRe = regexp.MustCompile(`(?:^|[\s,])([A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+)(?:$|[\s,])`)
 
 // SlackBotEventHandler handles incoming Slack events (via Socket Mode) and manages sessions
 type SlackBotEventHandler struct {
@@ -230,6 +238,15 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		"slack_thread_ts": threadKey,
 	}
 
+	// Auto-detect "org/repo" identifier from the message text.
+	// Slack mentions (<@UXXXXXXXX>) are stripped before matching.
+	// The result is used directly to populate RepoInfo in the LaunchRequest;
+	// the tag is set only as informational metadata.
+	detectedRepo := parseRepository(event.Text)
+	if detectedRepo != "" {
+		tags["repository"] = detectedRepo
+	}
+
 	// Apply session config tags if present
 	if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Tags() != nil {
 		renderedTags, err := RenderTemplateMap(bot.SessionConfig().Tags(), payloadMap)
@@ -344,7 +361,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			log.Printf("[SLACKBOT] [DRY-RUN] Would create session: id=%s, channel=%s, thread=%s, agentType=%s, scope=%s",
 				sessionID, channel, threadKey, agentType, scope)
 			if bot.NotifyOnSessionCreated() {
-				h.postSessionURLToSlack(bgCtx, channel, threadKey, sessionID, bot)
+				h.postSessionURLToSlack(bgCtx, channel, threadKey, sessionID, tags["repository"], bot)
 			}
 			return
 		}
@@ -361,6 +378,17 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			}
 		}
 
+		// Build RepoInfo directly from the detected repository identifier.
+		// This drives AGENTAPI_CLONE_DIR and AGENTAPI_REPO_FULLNAME in the session;
+		// the tag is separate metadata and must not be used as a trigger for behavior.
+		var repoInfo *entities.RepositoryInfo
+		if detectedRepo != "" {
+			repoInfo = &entities.RepositoryInfo{
+				FullName: detectedRepo,
+				CloneDir: "/home/agentapi/workdir/repo",
+			}
+		}
+
 		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
 			UserID:         userID,
 			Scope:          scope,
@@ -371,6 +399,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			InitialMessage: initialMessage,
 			AgentType:      agentType,
 			MemoryKey:      memoryKey,
+			RepoInfo:       repoInfo,
 			SlackParams: &entities.SlackParams{
 				Channel:  channel,
 				ThreadTS: threadKey,
@@ -384,7 +413,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 		log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
 		if bot.NotifyOnSessionCreated() {
-			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, bot)
+			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, tags["repository"], bot)
 		}
 	}()
 
@@ -644,7 +673,8 @@ func (h *SlackBotEventHandler) postStopConfirmationToSlack(ctx context.Context, 
 // postSessionURLToSlack posts the session URL back to the Slack thread.
 // This is a best-effort operation; errors are logged but never propagated.
 // In dry-run mode the post is only logged and not sent to Slack.
-func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channel, threadTS, sessionID string, bot *entities.SlackBot) {
+// When repository is non-empty, it is included in the notification message.
+func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channel, threadTS, sessionID, repository string, bot *entities.SlackBot) {
 	// Determine the base URL: prefer NOTIFICATION_BASE_URL env, then h.baseURL
 	sessionBaseURL := os.Getenv("NOTIFICATION_BASE_URL")
 	if sessionBaseURL == "" {
@@ -656,7 +686,12 @@ func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channe
 	}
 
 	sessionURL := fmt.Sprintf("%s/sessions/%s", strings.TrimRight(sessionBaseURL, "/"), sessionID)
-	message := fmt.Sprintf("セッションを作成しました :robot_face:\n%s", sessionURL)
+	var message string
+	if repository != "" {
+		message = fmt.Sprintf("セッションを作成しました :robot_face: (repository: `%s`)\n%s", repository, sessionURL)
+	} else {
+		message = fmt.Sprintf("セッションを作成しました :robot_face:\n%s", sessionURL)
+	}
 
 	if h.dryRun {
 		log.Printf("[SLACKBOT] [DRY-RUN] Would post to Slack: channel=%s, thread=%s, message=%q", channel, threadTS, message)
@@ -679,4 +714,18 @@ func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channe
 	}
 
 	log.Printf("[SLACKBOT] Posted session URL to Slack thread: sessionID=%s, channel=%s, thread=%s", sessionID, channel, threadTS)
+}
+
+// parseRepository searches the entire message text for the first "org/repo" identifier.
+// Slack mention tokens (<@UXXXXXXXX>) are removed before searching.
+// When multiple matches exist, the first one is returned.
+// Returns an empty string if no match is found.
+func parseRepository(text string) string {
+	cleaned := slackMentionRe.ReplaceAllString(text, "")
+	// Pad with spaces so the word-boundary pattern matches at start/end of string.
+	m := repoRe.FindStringSubmatch(" " + cleaned + " ")
+	if len(m) >= 2 {
+		return m[1]
+	}
+	return ""
 }
