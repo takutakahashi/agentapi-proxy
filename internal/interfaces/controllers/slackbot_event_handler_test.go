@@ -46,6 +46,7 @@ func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *en
 		tags:           req.Tags,
 		scope:          req.Scope,
 		initialMessage: req.InitialMessage,
+		repoInfo:       req.RepoInfo,
 	}
 	m.mu.Lock()
 	m.createdSessions = append(m.createdSessions, sess)
@@ -140,6 +141,7 @@ type mockSession struct {
 	scope          entities.ResourceScope
 	status         string // defaults to "active" when empty
 	initialMessage string // captured from RunServerRequest.InitialMessage
+	repoInfo       *entities.RepositoryInfo
 }
 
 func (s *mockSession) ID() string                    { return s.id }
@@ -1444,6 +1446,9 @@ func TestProcessEvent_RepositoryTag_MultiLine(t *testing.T) {
 	sess := sessionMgr.getCreatedSession(0)
 	assert.Equal(t, "myorg/myrepo", sess.tags["repository"],
 		"repository tag should be automatically set from the first line")
+	require.NotNil(t, sess.repoInfo, "RepoInfo should be set in LaunchRequest")
+	assert.Equal(t, "myorg/myrepo", sess.repoInfo.FullName)
+	assert.Equal(t, "/home/agentapi/workdir/repo", sess.repoInfo.CloneDir)
 }
 
 // TestProcessEvent_RepositoryTag_SingleLine verifies that a single-line "org/repo" message
@@ -1532,6 +1537,7 @@ func TestProcessEvent_RepositoryTag_NotSet(t *testing.T) {
 	sess := sessionMgr.getCreatedSession(0)
 	_, hasRepo := sess.tags["repository"]
 	assert.False(t, hasRepo, "repository tag should NOT be set when first line is not org/repo format")
+	assert.Nil(t, sess.repoInfo, "RepoInfo should be nil when no repository is detected")
 }
 
 // TestParseRepository unit-tests the parseRepository helper directly.

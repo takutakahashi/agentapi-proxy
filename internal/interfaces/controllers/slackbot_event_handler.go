@@ -375,6 +375,16 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			}
 		}
 
+		// Build RepoInfo from the detected repository tag so that
+		// AGENTAPI_CLONE_DIR and AGENTAPI_REPO_FULLNAME are set in the session.
+		var repoInfo *entities.RepositoryInfo
+		if repo := tags["repository"]; repo != "" {
+			repoInfo = &entities.RepositoryInfo{
+				FullName: repo,
+				CloneDir: "/home/agentapi/workdir/repo",
+			}
+		}
+
 		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
 			UserID:         userID,
 			Scope:          scope,
@@ -385,6 +395,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			InitialMessage: initialMessage,
 			AgentType:      agentType,
 			MemoryKey:      memoryKey,
+			RepoInfo:       repoInfo,
 			SlackParams: &entities.SlackParams{
 				Channel:  channel,
 				ThreadTS: threadKey,
