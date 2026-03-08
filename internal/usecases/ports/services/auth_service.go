@@ -66,7 +66,6 @@ const (
 	CredentialTypePassword CredentialType = "password"
 	CredentialTypeToken    CredentialType = "token"
 	CredentialTypeAPIKey   CredentialType = "api_key"
-	CredentialTypeOAuth    CredentialType = "oauth"
 )
 
 // APIKey represents an API key
