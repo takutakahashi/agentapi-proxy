@@ -238,10 +238,13 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		"slack_thread_ts": threadKey,
 	}
 
-	// Auto-detect "org/repo" from the first line of the message.
+	// Auto-detect "org/repo" identifier from the message text.
 	// Slack mentions (<@UXXXXXXXX>) are stripped before matching.
-	if repo := parseRepository(event.Text); repo != "" {
-		tags["repository"] = repo
+	// The result is used directly to populate RepoInfo in the LaunchRequest;
+	// the tag is set only as informational metadata.
+	detectedRepo := parseRepository(event.Text)
+	if detectedRepo != "" {
+		tags["repository"] = detectedRepo
 	}
 
 	// Apply session config tags if present
@@ -375,12 +378,13 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			}
 		}
 
-		// Build RepoInfo from the detected repository tag so that
-		// AGENTAPI_CLONE_DIR and AGENTAPI_REPO_FULLNAME are set in the session.
+		// Build RepoInfo directly from the detected repository identifier.
+		// This drives AGENTAPI_CLONE_DIR and AGENTAPI_REPO_FULLNAME in the session;
+		// the tag is separate metadata and must not be used as a trigger for behavior.
 		var repoInfo *entities.RepositoryInfo
-		if repo := tags["repository"]; repo != "" {
+		if detectedRepo != "" {
 			repoInfo = &entities.RepositoryInfo{
-				FullName: repo,
+				FullName: detectedRepo,
 				CloneDir: "/home/agentapi/workdir/repo",
 			}
 		}
