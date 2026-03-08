@@ -1312,6 +1312,110 @@ func TestFetchAndFormatThreadContext_FiltersMessagesAfterUntilTs(t *testing.T) {
 	assert.False(t, strings.Contains(result, "third"), "result should NOT contain third message (ts > untilTS)")
 }
 
+// TestPostSessionURLToSlack_RepositoryInMessage verifies that when a repository is detected,
+// the Slack notification message includes the repository name.
+func TestPostSessionURLToSlack_RepositoryInMessage(t *testing.T) {
+	const (
+		botID      = "notify-repo-bot"
+		channelID  = "C-notify"
+		threadTS   = "1700300000.000001"
+		sessionID  = "session-abc"
+		namespace  = "test-ns"
+		secretName = "bot-token-secret"
+	)
+
+	// Capture the posted Slack message (JSON body with "text" field).
+	var capturedMessage string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			capturedMessage = body.Text
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	})
+	mockServer := httptest.NewServer(mux)
+	defer mockServer.Close()
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			Data:       map[string][]byte{"bot-token": []byte("xoxb-test-token")},
+		},
+	)
+	resolver := services.NewSlackChannelResolver(fakeClient, namespace).WithSlackAPIBase(mockServer.URL)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Notify Bot", "user-1")
+	bot.SetBotTokenSecretName(secretName)
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	baseURL := "https://example.com"
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, baseURL, false, nil)
+
+	handler.postSessionURLToSlack(context.Background(), channelID, threadTS, sessionID, "myorg/myrepo", bot)
+
+	assert.Contains(t, capturedMessage, "myorg/myrepo",
+		"notification message should include the repository name")
+	assert.Contains(t, capturedMessage, sessionID,
+		"notification message should include the session ID")
+}
+
+// TestPostSessionURLToSlack_NoRepositoryDefaultMessage verifies that when no repository is set,
+// the notification message uses the default format without repository info.
+func TestPostSessionURLToSlack_NoRepositoryDefaultMessage(t *testing.T) {
+	const (
+		botID      = "notify-no-repo-bot"
+		channelID  = "C-notify-noRepo"
+		threadTS   = "1700300001.000001"
+		sessionID  = "session-xyz"
+		namespace  = "test-ns"
+		secretName = "bot-token-secret2"
+	)
+
+	var capturedMessage string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			capturedMessage = body.Text
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	})
+	mockServer := httptest.NewServer(mux)
+	defer mockServer.Close()
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			Data:       map[string][]byte{"bot-token": []byte("xoxb-test-token")},
+		},
+	)
+	resolver := services.NewSlackChannelResolver(fakeClient, namespace).WithSlackAPIBase(mockServer.URL)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "No Repo Notify Bot", "user-1")
+	bot.SetBotTokenSecretName(secretName)
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "https://example.com", false, nil)
+
+	handler.postSessionURLToSlack(context.Background(), channelID, threadTS, sessionID, "", bot)
+
+	assert.NotContains(t, capturedMessage, "repository",
+		"notification message should NOT include 'repository' when none is detected")
+	assert.Contains(t, capturedMessage, sessionID,
+		"notification message should still include the session ID")
+}
+
 // TestProcessEvent_RepositoryTag_MultiLine verifies that when the first line of a Slack message
 // is in "org/repo" format, the "repository" session tag is automatically set.
 func TestProcessEvent_RepositoryTag_MultiLine(t *testing.T) {

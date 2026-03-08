@@ -357,7 +357,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			log.Printf("[SLACKBOT] [DRY-RUN] Would create session: id=%s, channel=%s, thread=%s, agentType=%s, scope=%s",
 				sessionID, channel, threadKey, agentType, scope)
 			if bot.NotifyOnSessionCreated() {
-				h.postSessionURLToSlack(bgCtx, channel, threadKey, sessionID, bot)
+				h.postSessionURLToSlack(bgCtx, channel, threadKey, sessionID, tags["repository"], bot)
 			}
 			return
 		}
@@ -397,7 +397,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 		log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
 		if bot.NotifyOnSessionCreated() {
-			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, bot)
+			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, tags["repository"], bot)
 		}
 	}()
 
@@ -657,7 +657,8 @@ func (h *SlackBotEventHandler) postStopConfirmationToSlack(ctx context.Context, 
 // postSessionURLToSlack posts the session URL back to the Slack thread.
 // This is a best-effort operation; errors are logged but never propagated.
 // In dry-run mode the post is only logged and not sent to Slack.
-func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channel, threadTS, sessionID string, bot *entities.SlackBot) {
+// When repository is non-empty, it is included in the notification message.
+func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channel, threadTS, sessionID, repository string, bot *entities.SlackBot) {
 	// Determine the base URL: prefer NOTIFICATION_BASE_URL env, then h.baseURL
 	sessionBaseURL := os.Getenv("NOTIFICATION_BASE_URL")
 	if sessionBaseURL == "" {
@@ -669,7 +670,12 @@ func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channe
 	}
 
 	sessionURL := fmt.Sprintf("%s/sessions/%s", strings.TrimRight(sessionBaseURL, "/"), sessionID)
-	message := fmt.Sprintf("セッションを作成しました :robot_face:\n%s", sessionURL)
+	var message string
+	if repository != "" {
+		message = fmt.Sprintf("セッションを作成しました :robot_face: (repository: `%s`)\n%s", repository, sessionURL)
+	} else {
+		message = fmt.Sprintf("セッションを作成しました :robot_face:\n%s", sessionURL)
+	}
 
 	if h.dryRun {
 		log.Printf("[SLACKBOT] [DRY-RUN] Would post to Slack: channel=%s, thread=%s, message=%q", channel, threadTS, message)
