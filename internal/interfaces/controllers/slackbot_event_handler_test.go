@@ -1312,28 +1312,22 @@ func TestFetchAndFormatThreadContext_FiltersMessagesAfterUntilTs(t *testing.T) {
 	assert.False(t, strings.Contains(result, "third"), "result should NOT contain third message (ts > untilTS)")
 }
 
-// TestProcessEvent_FirstLine_RepositoryTag verifies that when the first line of a Slack message
-// is in "org/repo" format, it can be captured in the "repository" session tag via the
-// {{.event.first_line}} template variable.
-func TestProcessEvent_FirstLine_RepositoryTag(t *testing.T) {
+// TestProcessEvent_RepositoryTag_MultiLine verifies that when the first line of a Slack message
+// is in "org/repo" format, the "repository" session tag is automatically set.
+func TestProcessEvent_RepositoryTag_MultiLine(t *testing.T) {
 	const (
-		botID     = "first-line-bot"
+		botID     = "repo-tag-bot"
 		channelID = "C-repo"
 	)
 
 	repo := newMockSlackBotRepository()
 	bot := entities.NewSlackBot(botID, "Repo Bot", "user-1")
-	sc := entities.NewWebhookSessionConfig()
-	sc.SetTags(map[string]string{
-		"repository": "{{.event.first_line}}",
-	})
-	bot.SetSessionConfig(sc)
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
 	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
 
-	// Message where the first line is "org/repo" and the rest is the actual task description.
+	// First line is "org/repo", rest is the task description.
 	payload := buildEventPayload(channelID, "myorg/myrepo\nPlease fix the bug in the authentication module.")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
 	require.NoError(t, err)
@@ -1345,24 +1339,19 @@ func TestProcessEvent_FirstLine_RepositoryTag(t *testing.T) {
 
 	sess := sessionMgr.getCreatedSession(0)
 	assert.Equal(t, "myorg/myrepo", sess.tags["repository"],
-		"repository tag should be set to the first line of the message")
+		"repository tag should be automatically set from the first line")
 }
 
-// TestProcessEvent_FirstLine_SingleLine verifies that when the message has no newline,
-// first_line equals the full message text.
-func TestProcessEvent_FirstLine_SingleLine(t *testing.T) {
+// TestProcessEvent_RepositoryTag_SingleLine verifies that a single-line "org/repo" message
+// also sets the repository tag correctly.
+func TestProcessEvent_RepositoryTag_SingleLine(t *testing.T) {
 	const (
-		botID     = "first-line-single-bot"
+		botID     = "repo-tag-single-bot"
 		channelID = "C-single"
 	)
 
 	repo := newMockSlackBotRepository()
 	bot := entities.NewSlackBot(botID, "Single Line Bot", "user-1")
-	sc := entities.NewWebhookSessionConfig()
-	sc.SetTags(map[string]string{
-		"repository": "{{.event.first_line}}",
-	})
-	bot.SetSessionConfig(sc)
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
@@ -1379,5 +1368,88 @@ func TestProcessEvent_FirstLine_SingleLine(t *testing.T) {
 
 	sess := sessionMgr.getCreatedSession(0)
 	assert.Equal(t, "myorg/myrepo", sess.tags["repository"],
-		"when there is no newline, first_line should equal the full message text")
+		"single-line org/repo message should set repository tag")
+}
+
+// TestProcessEvent_RepositoryTag_WithMention verifies that bot mentions are stripped
+// before the "org/repo" check, so "@bot myorg/myrepo" still sets the repository tag.
+func TestProcessEvent_RepositoryTag_WithMention(t *testing.T) {
+	const (
+		botID     = "repo-tag-mention-bot"
+		channelID = "C-mention"
+	)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Mention Bot", "user-1")
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+
+	// Slack app_mention events include the mention token in the text.
+	payload := buildEventPayload(channelID, "<@UBOTID> myorg/myrepo\nPlease fix the login bug.")
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "session should be created")
+
+	sess := sessionMgr.getCreatedSession(0)
+	assert.Equal(t, "myorg/myrepo", sess.tags["repository"],
+		"mention should be stripped and org/repo should be set as repository tag")
+}
+
+// TestProcessEvent_RepositoryTag_NotSet verifies that when the first line is not in
+// "org/repo" format, the repository tag is NOT set.
+func TestProcessEvent_RepositoryTag_NotSet(t *testing.T) {
+	const (
+		botID     = "repo-tag-none-bot"
+		channelID = "C-noRepo"
+	)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "No Repo Bot", "user-1")
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+
+	payload := buildEventPayload(channelID, "こんにちは！バグを直してほしいんですが")
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "session should be created")
+
+	sess := sessionMgr.getCreatedSession(0)
+	_, hasRepo := sess.tags["repository"]
+	assert.False(t, hasRepo, "repository tag should NOT be set when first line is not org/repo format")
+}
+
+// TestParseRepository unit-tests the parseRepository helper directly.
+func TestParseRepository(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"org/repo only", "myorg/myrepo", "myorg/myrepo"},
+		{"org/repo with body", "myorg/myrepo\nPlease fix the bug.", "myorg/myrepo"},
+		{"mention then org/repo", "<@UBOTID> myorg/myrepo\nFix it.", "myorg/myrepo"},
+		{"mention only", "<@UBOTID> myorg/myrepo", "myorg/myrepo"},
+		{"plain text", "こんにちは！", ""},
+		{"plain english text", "Please help me", ""},
+		{"only mention", "<@UBOTID>", ""},
+		{"mention with plain text", "<@UBOTID> hello world", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseRepository(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

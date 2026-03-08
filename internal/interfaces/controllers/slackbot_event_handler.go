@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -19,6 +20,12 @@ const (
 	// slackBotDefaultID is the special ID for the server-configured default SlackBot
 	slackBotDefaultID = "default"
 )
+
+// slackMentionRe matches Slack user/bot mention tokens of the form <@UXXXXXXXX>.
+var slackMentionRe = regexp.MustCompile(`<@[A-Z0-9]+>`)
+
+// repoRe matches a GitHub-style "org/repo" identifier (letters, digits, hyphens, underscores, dots).
+var repoRe = regexp.MustCompile(`^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$`)
 
 // SlackBotEventHandler handles incoming Slack events (via Socket Mode) and manages sessions
 type SlackBotEventHandler struct {
@@ -208,18 +215,10 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	}
 
 	// Build payload map for template rendering
-	// first_line is the first line of event.Text (before the first newline).
-	// This is useful for extracting repository identifiers in "org/repo" format.
-	firstLine := event.Text
-	if idx := strings.Index(firstLine, "\n"); idx >= 0 {
-		firstLine = firstLine[:idx]
-	}
-	firstLine = strings.TrimSpace(firstLine)
 	payloadMap := map[string]interface{}{
 		"event": map[string]interface{}{
 			"type":            event.Type,
 			"text":            event.Text,
-			"first_line":      firstLine,
 			"user":            event.User,
 			"channel":         event.Channel,
 			"ts":              event.Ts,
@@ -236,6 +235,12 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		"slackbot_id":     botID,
 		"slack_channel":   channel,
 		"slack_thread_ts": threadKey,
+	}
+
+	// Auto-detect "org/repo" from the first line of the message.
+	// Slack mentions (<@UXXXXXXXX>) are stripped before matching.
+	if repo := parseRepository(event.Text); repo != "" {
+		tags["repository"] = repo
 	}
 
 	// Apply session config tags if present
@@ -687,4 +692,20 @@ func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channe
 	}
 
 	log.Printf("[SLACKBOT] Posted session URL to Slack thread: sessionID=%s, channel=%s, thread=%s", sessionID, channel, threadTS)
+}
+
+// parseRepository extracts a "org/repo" identifier from the first line of text.
+// Slack mention tokens (<@UXXXXXXXX>) are removed before matching.
+// Returns an empty string if the first line does not match the expected pattern.
+func parseRepository(text string) string {
+	firstLine := text
+	if idx := strings.Index(firstLine, "\n"); idx >= 0 {
+		firstLine = firstLine[:idx]
+	}
+	firstLine = slackMentionRe.ReplaceAllString(firstLine, "")
+	firstLine = strings.TrimSpace(firstLine)
+	if repoRe.MatchString(firstLine) {
+		return firstLine
+	}
+	return ""
 }
