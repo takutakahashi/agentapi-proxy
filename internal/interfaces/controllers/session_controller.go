@@ -105,6 +105,12 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	teams := authzCtx.TeamScope.Teams
 	log.Printf("[SESSION_DEBUG] Using authz context for user %s, teams count: %d", userID, len(teams))
 
+	// Normalize scope: default to "user" if not specified.
+	// This prevents downstream failures (e.g. memory dump) that require a valid scope.
+	if startReq.Scope == "" {
+		startReq.Scope = entities.ScopeUser
+	}
+
 	// Validate team scope authorization
 	if startReq.Scope == entities.ScopeTeam {
 		if startReq.TeamID == "" {
