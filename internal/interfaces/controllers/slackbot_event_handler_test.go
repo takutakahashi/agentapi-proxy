@@ -1541,14 +1541,23 @@ func TestParseRepository(t *testing.T) {
 		input string
 		want  string
 	}{
+		// Basic patterns
 		{"org/repo only", "myorg/myrepo", "myorg/myrepo"},
-		{"org/repo with body", "myorg/myrepo\nPlease fix the bug.", "myorg/myrepo"},
+		{"org/repo on first line", "myorg/myrepo\nPlease fix the bug.", "myorg/myrepo"},
+		{"org/repo on second line", "Please fix this:\nmyorg/myrepo", "myorg/myrepo"},
+		{"org/repo in middle of text", "Please fix myorg/myrepo thanks", "myorg/myrepo"},
+		// Mention stripping
 		{"mention then org/repo", "<@UBOTID> myorg/myrepo\nFix it.", "myorg/myrepo"},
-		{"mention only", "<@UBOTID> myorg/myrepo", "myorg/myrepo"},
+		{"mention only with org/repo", "<@UBOTID> myorg/myrepo", "myorg/myrepo"},
+		// Multiple matches: first wins
+		{"multiple org/repo", "aaa/bbb and ccc/ddd", "aaa/bbb"},
+		// No match
 		{"plain text", "こんにちは！", ""},
 		{"plain english text", "Please help me", ""},
 		{"only mention", "<@UBOTID>", ""},
 		{"mention with plain text", "<@UBOTID> hello world", ""},
+		// URL should NOT match (preceded by /)
+		{"github URL not matched", "see https://github.com/org/repo for details", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

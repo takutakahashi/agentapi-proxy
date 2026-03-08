@@ -25,7 +25,8 @@ const (
 var slackMentionRe = regexp.MustCompile(`<@[A-Z0-9]+>`)
 
 // repoRe matches a GitHub-style "org/repo" identifier (letters, digits, hyphens, underscores, dots).
-var repoRe = regexp.MustCompile(`^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$`)
+// It uses word-boundary-like anchors to avoid matching partial URLs (e.g. "https://github.com/org/repo").
+var repoRe = regexp.MustCompile(`(?:^|[\s,])([A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+)(?:$|[\s,])`)
 
 // SlackBotEventHandler handles incoming Slack events (via Socket Mode) and manages sessions
 type SlackBotEventHandler struct {
@@ -700,18 +701,16 @@ func (h *SlackBotEventHandler) postSessionURLToSlack(ctx context.Context, channe
 	log.Printf("[SLACKBOT] Posted session URL to Slack thread: sessionID=%s, channel=%s, thread=%s", sessionID, channel, threadTS)
 }
 
-// parseRepository extracts a "org/repo" identifier from the first line of text.
-// Slack mention tokens (<@UXXXXXXXX>) are removed before matching.
-// Returns an empty string if the first line does not match the expected pattern.
+// parseRepository searches the entire message text for the first "org/repo" identifier.
+// Slack mention tokens (<@UXXXXXXXX>) are removed before searching.
+// When multiple matches exist, the first one is returned.
+// Returns an empty string if no match is found.
 func parseRepository(text string) string {
-	firstLine := text
-	if idx := strings.Index(firstLine, "\n"); idx >= 0 {
-		firstLine = firstLine[:idx]
-	}
-	firstLine = slackMentionRe.ReplaceAllString(firstLine, "")
-	firstLine = strings.TrimSpace(firstLine)
-	if repoRe.MatchString(firstLine) {
-		return firstLine
+	cleaned := slackMentionRe.ReplaceAllString(text, "")
+	// Pad with spaces so the word-boundary pattern matches at start/end of string.
+	m := repoRe.FindStringSubmatch(" " + cleaned + " ")
+	if len(m) >= 2 {
+		return m[1]
 	}
 	return ""
 }
