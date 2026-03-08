@@ -1311,3 +1311,73 @@ func TestFetchAndFormatThreadContext_FiltersMessagesAfterUntilTs(t *testing.T) {
 	assert.True(t, strings.Contains(result, "second"), "result should contain second message (ts == untilTS)")
 	assert.False(t, strings.Contains(result, "third"), "result should NOT contain third message (ts > untilTS)")
 }
+
+// TestProcessEvent_FirstLine_RepositoryTag verifies that when the first line of a Slack message
+// is in "org/repo" format, it can be captured in the "repository" session tag via the
+// {{.event.first_line}} template variable.
+func TestProcessEvent_FirstLine_RepositoryTag(t *testing.T) {
+	const (
+		botID     = "first-line-bot"
+		channelID = "C-repo"
+	)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Repo Bot", "user-1")
+	sc := entities.NewWebhookSessionConfig()
+	sc.SetTags(map[string]string{
+		"repository": "{{.event.first_line}}",
+	})
+	bot.SetSessionConfig(sc)
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+
+	// Message where the first line is "org/repo" and the rest is the actual task description.
+	payload := buildEventPayload(channelID, "myorg/myrepo\nPlease fix the bug in the authentication module.")
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "session should be created")
+
+	sess := sessionMgr.getCreatedSession(0)
+	assert.Equal(t, "myorg/myrepo", sess.tags["repository"],
+		"repository tag should be set to the first line of the message")
+}
+
+// TestProcessEvent_FirstLine_SingleLine verifies that when the message has no newline,
+// first_line equals the full message text.
+func TestProcessEvent_FirstLine_SingleLine(t *testing.T) {
+	const (
+		botID     = "first-line-single-bot"
+		channelID = "C-single"
+	)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Single Line Bot", "user-1")
+	sc := entities.NewWebhookSessionConfig()
+	sc.SetTags(map[string]string{
+		"repository": "{{.event.first_line}}",
+	})
+	bot.SetSessionConfig(sc)
+	repo.bots[botID] = bot
+
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+
+	payload := buildEventPayload(channelID, "myorg/myrepo")
+	err := handler.ProcessEvent(context.Background(), botID, payload)
+	require.NoError(t, err)
+
+	ok := waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	})
+	require.True(t, ok, "session should be created")
+
+	sess := sessionMgr.getCreatedSession(0)
+	assert.Equal(t, "myorg/myrepo", sess.tags["repository"],
+		"when there is no newline, first_line should equal the full message text")
+}

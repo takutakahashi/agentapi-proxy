@@ -208,10 +208,18 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	}
 
 	// Build payload map for template rendering
+	// first_line is the first line of event.Text (before the first newline).
+	// This is useful for extracting repository identifiers in "org/repo" format.
+	firstLine := event.Text
+	if idx := strings.Index(firstLine, "\n"); idx >= 0 {
+		firstLine = firstLine[:idx]
+	}
+	firstLine = strings.TrimSpace(firstLine)
 	payloadMap := map[string]interface{}{
 		"event": map[string]interface{}{
 			"type":            event.Type,
 			"text":            event.Text,
+			"first_line":      firstLine,
 			"user":            event.User,
 			"channel":         event.Channel,
 			"ts":              event.Ts,
