@@ -220,6 +220,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		},
 		"team_id":         payload.TeamID,
 		"thread_messages": threadMessages,
+		"bot_id":          botID,
 	}
 
 	// Build session tags

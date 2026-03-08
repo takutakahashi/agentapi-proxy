@@ -1,9 +1,12 @@
 package schedule
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/google/uuid"
@@ -238,6 +241,23 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
+	// Render memory_key values as Go templates with schedule context.
+	// This allows values like {{ .schedule_id }} to be resolved at runtime.
+	memoryKey := schedule.SessionConfig.MemoryKey
+	if len(memoryKey) > 0 {
+		schedulePayload := map[string]interface{}{
+			"schedule_id":   schedule.ID,
+			"schedule_name": schedule.Name,
+			"timezone":      schedule.Timezone,
+		}
+		rendered, err := renderScheduleTemplateMap(memoryKey, schedulePayload)
+		if err != nil {
+			log.Printf("[SCHEDULE_WORKER] Failed to render memory_key templates for schedule %s: %v", schedule.ID, err)
+		} else {
+			memoryKey = rendered
+		}
+	}
+
 	return sessionuc.LaunchRequest{
 		UserID: schedule.UserID,
 		Scope:  scheduleScope,
@@ -252,7 +272,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		AgentType:      agentType,
 		SlackParams:    slackParams,
 		Oneshot:        oneshot,
-		MemoryKey:      schedule.SessionConfig.MemoryKey,
+		MemoryKey:      memoryKey,
 		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
 	}
 }
@@ -302,4 +322,22 @@ func (w *Worker) updateNextExecution(ctx context.Context, schedule *Schedule) {
 				schedule.ID, nextAt)
 		}
 	}
+}
+
+// renderScheduleTemplateMap renders all template values in a map using schedule context data.
+// This allows memory_key values to use Go template expressions such as {{ .schedule_id }}.
+func renderScheduleTemplateMap(templates map[string]string, payload map[string]interface{}) (map[string]string, error) {
+	result := make(map[string]string, len(templates))
+	for key, tmplStr := range templates {
+		tmpl, err := template.New("schedule_memory_key").Parse(tmplStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse template for key '%s': %w", key, err)
+		}
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, payload); err != nil {
+			return nil, fmt.Errorf("failed to execute template for key '%s': %w", key, err)
+		}
+		result[key] = buf.String()
+	}
+	return result, nil
 }
