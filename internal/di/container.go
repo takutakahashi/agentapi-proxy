@@ -2,7 +2,6 @@ package di
 
 import (
 	"context"
-	"fmt"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
@@ -23,7 +22,6 @@ type Container struct {
 	// Services
 	AuthService         services_ports.AuthService
 	NotificationService services_ports.NotificationService
-	ProxyService        services_ports.ProxyService
 	GitHubAuthService   services_ports.GitHubAuthService
 
 	// Use Cases
@@ -80,9 +78,6 @@ func (c *Container) initRepositories() {
 func (c *Container) initServices() {
 	c.AuthService = services.NewSimpleAuthService()
 	c.NotificationService = services.NewSimpleNotificationService()
-
-	// Initialize proxy service (simple implementation)
-	c.ProxyService = &SimpleProxyService{}
 
 	// Initialize GitHub auth service (simple implementation)
 	c.GitHubAuthService = &SimpleGitHubAuthService{}
@@ -184,27 +179,6 @@ func (c *Container) seedData() {
 
 	// Save test user to repository
 	_ = c.UserRepo.Save(context.TODO(), testUser)
-}
-
-// SimpleProxyService is a simple implementation of ProxyService
-type SimpleProxyService struct{}
-
-func (s *SimpleProxyService) RouteRequest(ctx context.Context, sessionID entities.SessionID, request *services_ports.HTTPRequest) (*services_ports.HTTPResponse, error) {
-	// Simple implementation - return a basic response
-	return &services_ports.HTTPResponse{
-		StatusCode: 200,
-		Headers:    map[string]string{"Content-Type": "text/plain"},
-		Body:       []byte("Hello from session " + string(sessionID)),
-	}, nil
-}
-
-func (s *SimpleProxyService) IsSessionReachable(ctx context.Context, sessionID entities.SessionID) (bool, error) {
-	// Simple implementation - assume session is reachable
-	return true, nil
-}
-
-func (s *SimpleProxyService) GetSessionURL(ctx context.Context, sessionID entities.SessionID) (string, error) {
-	return fmt.Sprintf("http://session-%s:9000", sessionID), nil
 }
 
 // SimpleGitHubAuthService is a simple implementation of GitHubAuthService
