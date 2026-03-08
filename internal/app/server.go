@@ -363,6 +363,24 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		}
 	}
 
+	// Register memory dump handler on KubernetesSessionManager.
+	// This ensures dumpSessionToMemory is called for every session deletion path
+	// (HTTP DELETE, Slackbot cleanup, etc.) without requiring callers to know about it.
+	if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok && memoryRepo != nil {
+		k8sManager.AddSessionDeletedHandler(func(ctx context.Context, sess entities.Session) {
+			ks, ok := sess.(*services.KubernetesSession)
+			if !ok {
+				return
+			}
+			req := ks.Request()
+			if len(req.MemoryKey) == 0 {
+				return
+			}
+			s.dumpSessionToMemory(sess.ID(), ks, req)
+		})
+		log.Printf("[SERVER] Memory dump handler registered for session deletion")
+	}
+
 	s.setupRoutes()
 
 	return s
@@ -539,19 +557,6 @@ func (s *Server) DeleteSessionByID(sessionID string) error {
 			}
 			if len(tasks) > 0 {
 				log.Printf("[SESSION] Deleted %d tasks associated with session %s", len(tasks), sessionID)
-			}
-		}
-	}
-
-	// Memory dump hook: dump conversation and create integration session (best-effort)
-	if s.memoryRepo != nil {
-		session := s.sessionManager.GetSession(sessionID)
-		if session != nil {
-			if ks, ok := session.(*services.KubernetesSession); ok {
-				req := ks.Request()
-				if len(req.MemoryKey) > 0 {
-					s.dumpSessionToMemory(sessionID, ks, req)
-				}
 			}
 		}
 	}

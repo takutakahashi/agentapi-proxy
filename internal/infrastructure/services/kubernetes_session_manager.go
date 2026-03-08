@@ -42,6 +42,13 @@ type ServiceAccountEnsurer interface {
 	EnsureServiceAccount(ctx context.Context, teamID string) error
 }
 
+// SessionDeletedHandler is a callback invoked just before a session's Kubernetes resources
+// are removed. At this point the session's Service endpoint is still reachable, so handlers
+// can safely call GetMessages or other in-session APIs.
+// Handlers are called synchronously and their errors are intentionally ignored so that
+// session deletion always proceeds regardless of handler failures.
+type SessionDeletedHandler func(ctx context.Context, session entities.Session)
+
 type KubernetesSessionManager struct {
 	config                *config.Config
 	k8sConfig             *config.KubernetesSessionConfig
@@ -55,6 +62,10 @@ type KubernetesSessionManager struct {
 	teamConfigRepo        portrepos.TeamConfigRepository
 	personalAPIKeyRepo    portrepos.PersonalAPIKeyRepository
 	serviceAccountEnsurer ServiceAccountEnsurer
+	// onSessionDeletedHandlers holds callbacks registered via AddSessionDeletedHandler.
+	// Protected by handlersMutex.
+	onSessionDeletedHandlers []SessionDeletedHandler
+	handlersMutex            sync.RWMutex
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -423,6 +434,21 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 	}
 
 	log.Printf("[K8S_SESSION] Deleting session %s", id)
+
+	// Invoke registered handlers BEFORE cancelling the context or removing Kubernetes resources.
+	// At this point the session's Service endpoint is still reachable (e.g. for GetMessages).
+	m.handlersMutex.RLock()
+	handlers := make([]SessionDeletedHandler, len(m.onSessionDeletedHandlers))
+	copy(handlers, m.onSessionDeletedHandlers)
+	m.handlersMutex.RUnlock()
+
+	if len(handlers) > 0 {
+		handlerCtx, handlerCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer handlerCancel()
+		for _, h := range handlers {
+			h(handlerCtx, session)
+		}
+	}
 
 	// Cancel context to trigger cleanup
 	if session != nil {
@@ -2118,6 +2144,15 @@ func (m *KubernetesSessionManager) SetTeamConfigRepository(repo portrepos.TeamCo
 // SetServiceAccountEnsurer sets the service account ensurer for team-scoped session creation
 func (m *KubernetesSessionManager) SetServiceAccountEnsurer(ensurer ServiceAccountEnsurer) {
 	m.serviceAccountEnsurer = ensurer
+}
+
+// AddSessionDeletedHandler registers a handler that is invoked when a session is deleted,
+// before its Kubernetes resources are removed. Multiple handlers can be registered and
+// they are called in registration order.
+func (m *KubernetesSessionManager) AddSessionDeletedHandler(handler SessionDeletedHandler) {
+	m.handlersMutex.Lock()
+	defer m.handlersMutex.Unlock()
+	m.onSessionDeletedHandlers = append(m.onSessionDeletedHandlers, handler)
 }
 
 // SetPersonalAPIKeyRepository sets the personal API key repository
