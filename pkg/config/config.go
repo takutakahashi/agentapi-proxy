@@ -637,6 +637,15 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("slackbot_cleanup_worker.retry_period", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD")
 
+	// Stock inventory worker configuration
+	_ = v.BindEnv("stock_inventory_worker.enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED")
+	_ = v.BindEnv("stock_inventory_worker.check_interval", "AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("stock_inventory_worker.target_count", "AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT")
+	_ = v.BindEnv("stock_inventory_worker.namespace", "AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE")
+	_ = v.BindEnv("stock_inventory_worker.lease_duration", "AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("stock_inventory_worker.renew_deadline", "AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("stock_inventory_worker.retry_period", "AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD")
+
 	// Memory summarizer worker configuration
 	_ = v.BindEnv("memory_summarizer_worker.enabled", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_ENABLED")
 	_ = v.BindEnv("memory_summarizer_worker.check_interval", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_CHECK_INTERVAL")
@@ -726,6 +735,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("slackbot_cleanup_worker.lease_duration", "15s")
 	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "10s")
 	v.SetDefault("slackbot_cleanup_worker.retry_period", "2s")
+
+	// Stock inventory worker defaults
+	v.SetDefault("stock_inventory_worker.enabled", false)
+	v.SetDefault("stock_inventory_worker.check_interval", "30s")
+	v.SetDefault("stock_inventory_worker.target_count", 2)
+	v.SetDefault("stock_inventory_worker.namespace", "")
+	v.SetDefault("stock_inventory_worker.lease_duration", "15s")
+	v.SetDefault("stock_inventory_worker.renew_deadline", "10s")
+	v.SetDefault("stock_inventory_worker.retry_period", "2s")
 
 	// Memory summarizer worker defaults
 	v.SetDefault("memory_summarizer_worker.enabled", false)
