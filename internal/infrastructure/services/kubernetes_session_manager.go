@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -272,6 +273,74 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	return session, nil
 }
 
+// CreateStockSession creates a pre-warmed stock session (Deployment + Service)
+// without calling /provision. The pod starts the agent-provisioner and waits
+// for adoption via adoptStockSession, which sends the actual /provision call.
+func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context) error {
+	id := uuid.New().String()
+	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
+
+	_, cancel := context.WithCancel(context.Background())
+
+	// Stock sessions have no owner; the minimal request holds defaults only.
+	minimalReq := &entities.RunServerRequest{}
+
+	session := NewKubernetesSession(id, minimalReq, deploymentName, serviceName, pvcName,
+		m.namespace, m.k8sConfig.BasePort, cancel, nil)
+	session.SetIsStock(true)
+
+	// Create PVC if enabled (required for Deployment volume mounts).
+	if m.isPVCEnabled() {
+		if err := m.createPVC(ctx, session); err != nil {
+			cancel()
+			return fmt.Errorf("failed to create stock PVC: %w", err)
+		}
+	}
+
+	if err := m.createDeployment(ctx, session, minimalReq); err != nil {
+		if m.isPVCEnabled() {
+			if delErr := m.deletePVC(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup PVC after stock deployment creation failure: %v", delErr)
+			}
+		}
+		cancel()
+		return fmt.Errorf("failed to create stock deployment: %w", err)
+	}
+	if err := m.createService(ctx, session); err != nil {
+		if delErr := m.deleteDeployment(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup deployment after stock service creation failure: %v", delErr)
+		}
+		if m.isPVCEnabled() {
+			if delErr := m.deletePVC(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup PVC after stock service creation failure: %v", delErr)
+			}
+		}
+		cancel()
+		return fmt.Errorf("failed to create stock service: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Stock session %s created successfully", id)
+	return nil
+}
+
+// CountStockSessions returns the number of available (not being deleted) stock sessions.
+func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context) (int, error) {
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list stock services: %w", err)
+	}
+	count := 0
+	for i := range svcs.Items {
+		if svcs.Items[i].DeletionTimestamp == nil {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
 // first available one (not being deleted and having a session-id label).
 // Returns (nil, nil) when no stock is available.
@@ -428,18 +497,14 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		log.Printf("[K8S_SESSION] Warning: failed to update stock service labels for session %s: %v", stockID, err)
 	}
 
-	// Update Deployment labels (and pod template labels) to reflect the new owner.
+	// Update Deployment metadata labels only (NOT spec.template.labels) to reflect the new owner.
+	// Updating spec.template.labels would trigger a Kubernetes rolling update, restarting the pod
+	// and making the agent-provisioner unavailable during the critical /provision window.
 	currentDep, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to get stock deployment for label update: %v", err)
 	} else {
 		currentDep.Labels = newLabels
-		if currentDep.Spec.Template.Labels == nil {
-			currentDep.Spec.Template.Labels = make(map[string]string)
-		}
-		for k, v := range newLabels {
-			currentDep.Spec.Template.Labels[k] = v
-		}
 		if _, err := m.client.AppsV1().Deployments(m.namespace).Update(ctx, currentDep, metav1.UpdateOptions{}); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to update stock deployment labels for session %s: %v", stockID, err)
 		}
@@ -470,9 +535,37 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	}()
 
 	session.SetStatus("starting")
-	log.Printf("[K8S_SESSION] Stock session %s: Pod already ready, sending /provision immediately", session.id)
 
 	provisionerURL := fmt.Sprintf("http://%s:%d", session.ServiceDNS(), provisionerPort)
+
+	// Wait for the pod to be ready before sending /provision.
+	// Although stock sessions are pre-warmed, the pod may not yet be ready if
+	// the session was adopted immediately after creation (e.g. inventory was
+	// just replenished). Reuse the same ready-wait loop used by watchSession.
+	timeout := time.After(time.Duration(m.k8sConfig.PodStartTimeout) * time.Second)
+	readyTicker := time.NewTicker(2 * time.Second)
+	podReady := false
+	for !podReady {
+		select {
+		case <-ctx.Done():
+			readyTicker.Stop()
+			log.Printf("[K8S_SESSION] Stock session %s context cancelled while waiting for pod", session.id)
+			return
+		case <-timeout:
+			readyTicker.Stop()
+			log.Printf("[K8S_SESSION] Stock session %s startup timeout", session.id)
+			session.SetStatus("timeout")
+			return
+		case <-readyTicker.C:
+			dep, err := m.client.AppsV1().Deployments(m.namespace).Get(
+				context.Background(), session.DeploymentName(), metav1.GetOptions{})
+			if err == nil && dep.Status.ReadyReplicas > 0 {
+				podReady = true
+			}
+		}
+	}
+	readyTicker.Stop()
+	log.Printf("[K8S_SESSION] Stock session %s: Pod is ready, sending /provision", session.id)
 
 	// POST /provision with retry (postProvision already handles transient errors).
 	if err := m.postProvision(ctx, provisionerURL, session.ProvisionPayload()); err != nil {
@@ -2053,6 +2146,10 @@ func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[s
 	for k, v := range session.Request().Tags {
 		labelKey := fmt.Sprintf("agentapi.proxy/tag-%s", sanitizeLabelKey(k))
 		labels[labelKey] = sanitizeLabelValue(v)
+	}
+
+	if session.isStock {
+		labels["agentapi.proxy/stock"] = "true"
 	}
 
 	return labels

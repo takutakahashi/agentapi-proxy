@@ -178,6 +178,23 @@ type SlackbotCleanupWorkerConfig struct {
 	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
 }
 
+// StockInventoryWorkerConfig represents stock inventory worker configuration.
+// The worker ensures a target number of pre-warmed stock sessions are always available.
+type StockInventoryWorkerConfig struct {
+	// Enabled controls whether the worker runs. Default: false (opt-in).
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// CheckInterval is how often to check and replenish stock sessions. Default: "30s".
+	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
+	// TargetCount is the desired number of stock sessions to maintain. Default: 2.
+	TargetCount int `json:"target_count" mapstructure:"target_count"`
+	// Namespace overrides the Kubernetes namespace (falls back to KubernetesSession.Namespace).
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// Leader election timings.
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
 // WebhookConfig represents webhook configuration
 type WebhookConfig struct {
 	// BaseURL is the base URL for webhook endpoints (e.g., "https://example.com")
@@ -315,6 +332,8 @@ type Config struct {
 	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
 	// SlackbotCleanupWorker is the configuration for the Slackbot session cleanup worker
 	SlackbotCleanupWorker SlackbotCleanupWorkerConfig `json:"slackbot_cleanup_worker" mapstructure:"slackbot_cleanup_worker"`
+	// StockInventoryWorker is the configuration for the stock session inventory worker.
+	StockInventoryWorker StockInventoryWorkerConfig `json:"stock_inventory_worker" mapstructure:"stock_inventory_worker"`
 	// Webhook is the configuration for webhook functionality
 	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
 	// Memory is the configuration for memory storage backend
@@ -618,6 +637,15 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("slackbot_cleanup_worker.retry_period", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD")
 
+	// Stock inventory worker configuration
+	_ = v.BindEnv("stock_inventory_worker.enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED")
+	_ = v.BindEnv("stock_inventory_worker.check_interval", "AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL")
+	_ = v.BindEnv("stock_inventory_worker.target_count", "AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT")
+	_ = v.BindEnv("stock_inventory_worker.namespace", "AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE")
+	_ = v.BindEnv("stock_inventory_worker.lease_duration", "AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION")
+	_ = v.BindEnv("stock_inventory_worker.renew_deadline", "AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE")
+	_ = v.BindEnv("stock_inventory_worker.retry_period", "AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD")
+
 	// Memory summarizer worker configuration
 	_ = v.BindEnv("memory_summarizer_worker.enabled", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_ENABLED")
 	_ = v.BindEnv("memory_summarizer_worker.check_interval", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_CHECK_INTERVAL")
@@ -707,6 +735,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("slackbot_cleanup_worker.lease_duration", "15s")
 	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "10s")
 	v.SetDefault("slackbot_cleanup_worker.retry_period", "2s")
+
+	// Stock inventory worker defaults
+	v.SetDefault("stock_inventory_worker.enabled", false)
+	v.SetDefault("stock_inventory_worker.check_interval", "30s")
+	v.SetDefault("stock_inventory_worker.target_count", 2)
+	v.SetDefault("stock_inventory_worker.namespace", "")
+	v.SetDefault("stock_inventory_worker.lease_duration", "15s")
+	v.SetDefault("stock_inventory_worker.renew_deadline", "10s")
+	v.SetDefault("stock_inventory_worker.retry_period", "2s")
 
 	// Memory summarizer worker defaults
 	v.SetDefault("memory_summarizer_worker.enabled", false)
@@ -870,6 +907,14 @@ func DefaultConfig() *Config {
 				HeaderName: "X-API-Key",
 				APIKeys:    []APIKey{},
 			},
+		},
+		StockInventoryWorker: StockInventoryWorkerConfig{
+			Enabled:       false,
+			CheckInterval: "30s",
+			TargetCount:   2,
+			LeaseDuration: "15s",
+			RenewDeadline: "10s",
+			RetryPeriod:   "2s",
 		},
 	}
 }

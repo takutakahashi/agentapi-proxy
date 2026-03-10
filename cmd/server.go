@@ -21,6 +21,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/slackbot"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
+	stock_inventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -87,6 +88,11 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Start Slackbot cleanup worker if enabled
 	if configData.SlackbotCleanupWorker.Enabled {
 		startSlackbotCleanupWorker(configData, proxyServer)
+	}
+
+	// Start stock inventory worker if enabled
+	if configData.StockInventoryWorker.Enabled {
+		startStockInventoryWorker(configData, proxyServer)
 	}
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
@@ -378,6 +384,85 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 	}
 	log.Printf("[SLACKBOT_CLEANUP] Slackbot cleanup worker started in namespace: %s (TTL: %v)%s", namespace, sessionTTL, dryRunNote)
 	return leaderCleanupWorker
+}
+
+// startStockInventoryWorker starts the stock session inventory worker with leader election.
+// It ensures a configurable number of pre-warmed stock sessions are always available.
+func startStockInventoryWorker(configData *config.Config, proxyServer *app.Server) *stock_inventory.LeaderWorker {
+	log.Printf("[STOCK_INVENTORY] Initializing stock inventory worker...")
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[STOCK_INVENTORY] Kubernetes config not available, stock inventory worker disabled: %v", err)
+		return nil
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[STOCK_INVENTORY] Failed to create Kubernetes client, stock inventory worker disabled: %v", err)
+		return nil
+	}
+
+	namespace := configData.StockInventoryWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// KubernetesSessionManager implements StockRepository.
+	stockRepo, ok := proxyServer.GetSessionManager().(stock_inventory.StockRepository)
+	if !ok {
+		log.Printf("[STOCK_INVENTORY] Session manager does not implement StockRepository, stock inventory worker disabled")
+		return nil
+	}
+
+	checkInterval, err := time.ParseDuration(configData.StockInventoryWorker.CheckInterval)
+	if err != nil {
+		log.Printf("[STOCK_INVENTORY] Invalid check_interval, using default 30s: %v", err)
+		checkInterval = 30 * time.Second
+	}
+
+	targetCount := configData.StockInventoryWorker.TargetCount
+	if targetCount <= 0 {
+		targetCount = 2
+	}
+
+	workerConfig := stock_inventory.WorkerConfig{
+		CheckInterval: checkInterval,
+		TargetCount:   targetCount,
+		Enabled:       true,
+	}
+
+	leaseDuration, err := time.ParseDuration(configData.StockInventoryWorker.LeaseDuration)
+	if err != nil {
+		leaseDuration = 15 * time.Second
+	}
+	renewDeadline, err := time.ParseDuration(configData.StockInventoryWorker.RenewDeadline)
+	if err != nil {
+		renewDeadline = 10 * time.Second
+	}
+	retryPeriod, err := time.ParseDuration(configData.StockInventoryWorker.RetryPeriod)
+	if err != nil {
+		retryPeriod = 2 * time.Second
+	}
+
+	electionConfig := schedule.LeaderElectionConfig{
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod:   retryPeriod,
+		LeaseName:     "agentapi-stock-inventory-worker",
+		Namespace:     namespace,
+	}
+
+	leaderWorker := stock_inventory.NewLeaderWorker(stockRepo, client, workerConfig, electionConfig)
+
+	go leaderWorker.Run(context.Background())
+
+	log.Printf("[STOCK_INVENTORY] Stock inventory worker started in namespace: %s (target: %d)",
+		namespace, targetCount)
+	return leaderWorker
 }
 
 // registerWebhookHandlers registers webhook REST API handlers

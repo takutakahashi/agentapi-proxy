@@ -30,6 +30,7 @@ type KubernetesSession struct {
 	resolvedAPIKey    string                           // API key resolved during session creation, used by memory-sync sidecar
 	provisionPayload  []byte                           // JSON body for POST /provision to agent-provisioner
 	provisionSettings *sessionsettings.SessionSettings // Settings used for provisioning (stored after successful provisioning)
+	isStock           bool                             // Whether this is a pre-warmed stock session
 }
 
 // NewKubernetesSession creates a new KubernetesSession
@@ -250,6 +251,12 @@ func (s *KubernetesSession) SetProvisionSettings(settings *sessionsettings.Sessi
 func (s *KubernetesSession) ProvisionSettings() *sessionsettings.SessionSettings {
 	return s.provisionSettings
 }
+
+// IsStock returns whether this is a pre-warmed stock session.
+func (s *KubernetesSession) IsStock() bool { return s.isStock }
+
+// SetIsStock sets the stock flag for this session.
+func (s *KubernetesSession) SetIsStock(v bool) { s.isStock = v }
 
 // Ensure KubernetesSession implements entities.Session
 var _ entities.Session = (*KubernetesSession)(nil)

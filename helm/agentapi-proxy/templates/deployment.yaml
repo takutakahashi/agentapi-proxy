@@ -327,6 +327,29 @@ spec:
             - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD
               value: {{ .Values.slackbotCleanupWorker.leaderElection.retryPeriod | quote }}
             {{- end }}
+            # Stock Inventory Worker configuration
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED
+              value: {{ ((.Values.stockInventoryWorker).enabled) | default false | quote }}
+            {{- if (.Values.stockInventoryWorker).checkInterval }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL
+              value: {{ .Values.stockInventoryWorker.checkInterval | quote }}
+            {{- end }}
+            {{- if (.Values.stockInventoryWorker).targetCount }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT
+              value: {{ .Values.stockInventoryWorker.targetCount | quote }}
+            {{- end }}
+            {{- if ((.Values.stockInventoryWorker).leaderElection).leaseDuration }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION
+              value: {{ .Values.stockInventoryWorker.leaderElection.leaseDuration | quote }}
+            {{- end }}
+            {{- if ((.Values.stockInventoryWorker).leaderElection).renewDeadline }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE
+              value: {{ .Values.stockInventoryWorker.leaderElection.renewDeadline | quote }}
+            {{- end }}
+            {{- if ((.Values.stockInventoryWorker).leaderElection).retryPeriod }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD
+              value: {{ .Values.stockInventoryWorker.leaderElection.retryPeriod | quote }}
+            {{- end }}
             {{- if .Values.config.encryption.key }}
             - name: AGENTAPI_ENCRYPTION_KEY
               value: {{ .Values.config.encryption.key | quote }}
