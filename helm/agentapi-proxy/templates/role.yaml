@@ -25,7 +25,8 @@ rules:
     verbs: ["get", "list", "create", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    # update/patch: required for adoptStockSession (removing agentapi.proxy/stock label)
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   {{- end }}
   - apiGroups: [""]
     resources: ["secrets"]
