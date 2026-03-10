@@ -406,6 +406,10 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	if req.AgentType != "" {
 		annotations["agentapi.proxy/agent-type"] = req.AgentType
 	}
+	// Store initial message in annotation so all proxy replicas can read it immediately.
+	if req.InitialMessage != "" {
+		annotations["agentapi.proxy/initial-message"] = req.InitialMessage
+	}
 
 	currentSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, stockSvc.Name, metav1.GetOptions{})
 	if err != nil {
@@ -1700,6 +1704,11 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 	if session.Request().AgentType != "" {
 		annotations["agentapi.proxy/agent-type"] = session.Request().AgentType
 	}
+	// Store initial message in annotation so all proxy replicas can read it immediately,
+	// without waiting for the settings Secret (which is created asynchronously).
+	if session.Request().InitialMessage != "" {
+		annotations["agentapi.proxy/initial-message"] = session.Request().InitialMessage
+	}
 	// Record the initial message time as the last message time for all sessions.
 	// This annotation is updated by SendMessage when follow-up messages arrive.
 	annotations["agentapi.proxy/last-message-at"] = session.startedAt.UTC().Format(time.RFC3339)
@@ -2379,9 +2388,14 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Labels contain only the hash for querying purposes
 	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
-	// Restore initial message and session meta (MemoryKey, Teams etc.) from Secret
+	// Restore initial message: prefer Service annotation (written at creation, immediately
+	// available across all proxy replicas) and fall back to the settings Secret (written
+	// asynchronously after provisioning completes).
 	restoreCtx := context.Background()
-	initialMessage := m.getInitialMessageFromSecret(restoreCtx, svc.Name)
+	initialMessage := svc.Annotations["agentapi.proxy/initial-message"]
+	if initialMessage == "" {
+		initialMessage = m.getInitialMessageFromSecret(restoreCtx, svc.Name)
+	}
 	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
 
 	// Extract MemoryKey and Teams from session meta if available
@@ -2491,9 +2505,14 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	// Labels contain only the hash for querying purposes
 	teamID := svc.Annotations["agentapi.proxy/team-id"]
 
-	// Restore initial message and session meta (MemoryKey, Teams etc.) from Secret
+	// Restore initial message: prefer Service annotation (written at creation, immediately
+	// available across all proxy replicas) and fall back to the settings Secret (written
+	// asynchronously after provisioning completes).
 	restoreCtx := context.Background()
-	initialMessage := m.getInitialMessageFromSecret(restoreCtx, svc.Name)
+	initialMessage := svc.Annotations["agentapi.proxy/initial-message"]
+	if initialMessage == "" {
+		initialMessage = m.getInitialMessageFromSecret(restoreCtx, svc.Name)
+	}
 	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
 
 	// Extract MemoryKey and Teams from session meta if available
