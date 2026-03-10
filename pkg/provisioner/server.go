@@ -163,16 +163,9 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist settings to the well-known Secret path so that a Pod restart can
-	// auto-provision without waiting for another /provision call.
-	if s.settingsFile != "" {
-		if data, err := sessionsettings.MarshalYAML(&settings); err == nil {
-			_ = os.MkdirAll("/session-settings", 0o755)
-			if werr := os.WriteFile(s.settingsFile, data, 0o600); werr != nil {
-				log.Printf("[PROVISIONER] Warning: could not write settings to %s: %v", s.settingsFile, werr)
-			}
-		}
-	}
+	// Note: We no longer write to s.settingsFile here. The Proxy server creates
+	// the settings Secret after provisioning succeeds, so the mounted volume
+	// (optional:true) will contain the data on Pod restart automatically.
 
 	s.setStatus(StatusProvisioning, "")
 	// Use the server-level context (not r.Context()) so that provisioning
