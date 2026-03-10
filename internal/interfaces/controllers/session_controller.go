@@ -213,13 +213,12 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 
 	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
 	for _, session := range matchingSessions {
-		// Get initial message from Secret if available
-		var initialMessage string
-		if ksManager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
-			if ks, ok := session.(*services.KubernetesSession); ok {
-				initialMessage = ksManager.GetInitialMessage(context.Background(), ks)
-			}
-		}
+		// Use session.Description() which returns the in-memory cached initial message.
+		// This avoids reading from Kubernetes Secret (which is created asynchronously
+		// after provisioning completes and would return empty for newly created sessions).
+		// After a proxy restart, Description() is populated from the Secret during session
+		// restoration in restoreSessionFromService.
+		initialMessage := session.Description()
 
 		sessionData := map[string]interface{}{
 			"session_id":      session.ID(),
