@@ -35,6 +35,11 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
 
+// provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
+// The proxy server calls POST http://<sessionDNS>:provisionerPort/provision to trigger
+// the session startup sequence after the Pod becomes ready.
+const provisionerPort = 9001
+
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 // ServiceAccountEnsurer ensures a service account exists for a team.
 // Implementations must be safe to call concurrently.
@@ -198,11 +203,16 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
-	// Create unified session settings Secret (single source of truth for the session pod)
-	if err := m.createSessionSettingsSecret(ctx, session, req, webhookPayload); err != nil {
-		m.cleanupSession(id)
-		return nil, fmt.Errorf("failed to create session settings secret: %w", err)
+	// Build session settings once (used both for the Secret and the /provision payload).
+	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
+
+	// Serialise to JSON and cache in session for the watchSession /provision call.
+	if provisionJSON, err := json.Marshal(sessionSettings); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to marshal session settings to JSON: %v", err)
+	} else {
+		session.SetProvisionPayload(provisionJSON)
 	}
+	session.SetProvisionSettings(sessionSettings)
 
 	// Create Deployment
 	if err := m.createDeployment(ctx, session, req); err != nil {
@@ -766,7 +776,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		}
 	}
 
-	// Build container spec
+	// Build container spec.
+	// The container runs agent-provisioner, which starts the HTTP server on
+	// provisionerPort and waits for POST /provision from the proxy server.
 	container := corev1.Container{
 		Name:            "agentapi",
 		Image:           m.k8sConfig.Image,
@@ -774,8 +786,15 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		WorkingDir:      workingDir,
 		Ports: []corev1.ContainerPort{
 			{
+				// agentapi port – available only after provisioning completes.
 				Name:          "http",
 				ContainerPort: int32(m.k8sConfig.BasePort),
+				Protocol:      corev1.ProtocolTCP,
+			},
+			{
+				// agent-provisioner port – available immediately on Pod start.
+				Name:          "provisioner",
+				ContainerPort: provisionerPort,
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
@@ -792,29 +811,32 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			},
 		},
 		VolumeMounts: m.buildMainContainerVolumeMounts(session),
-		Command:      []string{"sh", "-c"},
-		Args: []string{
-			m.buildClaudeStartCommand(),
-		},
+		// Run agent-provisioner instead of the inline shell setup+agentapi script.
+		Command: []string{"agentapi-proxy"},
+		Args:    []string{"agent-provisioner"},
+		// Probes target /healthz on the provisioner port (always-200) so that
+		// the pod becomes Ready as soon as agent-provisioner is listening.
+		// The proxy's watchSession goroutine handles waiting for the actual
+		// provisioning completion (GET /status → "ready").
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/status",
-					Port: intstr.FromInt(m.k8sConfig.BasePort),
-				},
-			},
-			InitialDelaySeconds: 30,
-			PeriodSeconds:       10,
-		},
-		ReadinessProbe: &corev1.Probe{
-			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/status",
-					Port: intstr.FromInt(m.k8sConfig.BasePort),
+					Path: "/healthz",
+					Port: intstr.FromInt(provisionerPort),
 				},
 			},
 			InitialDelaySeconds: 5,
 			PeriodSeconds:       5,
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/healthz",
+					Port: intstr.FromInt(provisionerPort),
+				},
+			},
+			InitialDelaySeconds: 2,
+			PeriodSeconds:       2,
 		},
 	}
 
@@ -831,12 +853,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		log.Printf("[K8S_SESSION] Added credentials-sync sidecar for session %s", session.id)
 	}
 
-	// Add initial message sender sidecar
-	// This sidecar sends the initial message to the agentapi server after it becomes ready
-	if sidecar := m.buildInitialMessageSenderSidecar(session); sidecar != nil {
-		containers = append(containers, *sidecar)
-		log.Printf("[K8S_SESSION] Added initial-message-sender sidecar for session %s", session.id)
-	}
+	// Note: Initial message is now sent by agent-provisioner internally after agentapi
+	// becomes ready. The initial-message-sender sidecar has been removed.
 
 	// Add Slack integration sidecar
 	// This sidecar runs claude-posts to watch the JSONL history file and post messages to Slack
@@ -1062,266 +1080,9 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *Kubernet
 	}
 }
 
-// initialMessageSenderScript is the shell script for the initial message sender sidecar
-// It waits for agentapi to be ready and sends the initial message from the mounted Secret
-const initialMessageSenderScript = `
-#!/bin/sh
-set -e
-
-AGENTAPI_URL="http://localhost:${AGENTAPI_PORT}"
-MESSAGE_FILE="/session-settings/initial-message"
-SENT_FLAG="/initial-message-state/sent"
-MAX_READY_RETRIES=120
-MAX_STABLE_RETRIES=60
-WAIT_SECOND="${INITIAL_MESSAGE_WAIT_SECOND:-2}"
-
-echo "[INITIAL-MSG] Starting initial message sender sidecar"
-
-# Check if already sent (container restart case)
-if [ -f "$SENT_FLAG" ]; then
-    echo "[INITIAL-MSG] Initial message already sent (flag file exists), skipping"
-    exec sleep infinity
-fi
-
-# Check if message file exists
-if [ ! -f "$MESSAGE_FILE" ]; then
-    echo "[INITIAL-MSG] No initial message file found, nothing to send"
-    touch "$SENT_FLAG"
-    exec sleep infinity
-fi
-
-echo "[INITIAL-MSG] Waiting for agentapi to be ready..."
-
-# Wait for agentapi server to respond
-RETRY_COUNT=0
-while [ $RETRY_COUNT -lt $MAX_READY_RETRIES ]; do
-    if curl -sf "${AGENTAPI_URL}/status" > /dev/null 2>&1; then
-        echo "[INITIAL-MSG] agentapi is responding"
-        break
-    fi
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    if [ $RETRY_COUNT -eq $MAX_READY_RETRIES ]; then
-        echo "[INITIAL-MSG] ERROR: agentapi not ready after ${MAX_READY_RETRIES} retries"
-        exec sleep infinity
-    fi
-    sleep 0.5
-done
-
-# Check if user messages already exist (Pod recreated case)
-# Only skip if there are messages from the user (role: "user"), not just agent welcome messages
-USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
-if [ "$USER_MSG_COUNT" -gt 0 ]; then
-    echo "[INITIAL-MSG] User messages already exist (count: ${USER_MSG_COUNT}), skipping initial message"
-    touch "$SENT_FLAG"
-    exec sleep infinity
-fi
-
-if [ -z "$AGENT_TYPE" ]; then
-    # Default agentapi mode: use the two-phase startup detection.
-    # Phase 1 (first 10 s): detect "running → stable" status transition AND a non-empty message.
-    #   agentapi always initializes with an empty agent message {content:"", role:"agent"} as a
-    #   placeholder (NewPTY in pty_conversation.go). The transition from "running" to "stable"
-    #   indicates Claude has actually produced output and settled, which is more reliable than
-    #   checking "stable" alone.
-    # Phase 2 (fallback): if the transition is not observed within 10 s (e.g. Claude starts too
-    #   fast for the sidecar to catch "running"), fall back to the simpler "stable + non-empty
-    #   message" check.
-    echo "[INITIAL-MSG] Waiting for Claude to start (phase 1: running→stable transition, 10s timeout)..."
-    SAW_RUNNING=0
-    CLAUDE_READY=0
-    TRANSITION_TIMEOUT=10
-    TRANSITION_COUNT=0
-    while [ $TRANSITION_COUNT -lt $TRANSITION_TIMEOUT ]; do
-        STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-        if [ "$STATUS" = "running" ]; then
-            SAW_RUNNING=1
-        fi
-        if [ "$SAW_RUNNING" -eq 1 ] && [ "$STATUS" = "stable" ]; then
-            NON_EMPTY_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.content != "")] | length' 2>/dev/null || echo "0")
-            if [ "$NON_EMPTY_MSG_COUNT" -gt 0 ]; then
-                echo "[INITIAL-MSG] Claude started: running→stable transition detected with non-empty message (count: ${NON_EMPTY_MSG_COUNT})"
-                CLAUDE_READY=1
-                break
-            fi
-        fi
-        TRANSITION_COUNT=$((TRANSITION_COUNT + 1))
-        sleep 1
-    done
-
-    if [ "$CLAUDE_READY" -eq 0 ]; then
-        echo "[INITIAL-MSG] Phase 1 timed out (saw_running=${SAW_RUNNING}), falling back to non-empty message check..."
-        STABLE_COUNT=0
-        while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
-            STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-            NON_EMPTY_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.content != "")] | length' 2>/dev/null || echo "0")
-            if [ "$STATUS" = "stable" ] && [ "$NON_EMPTY_MSG_COUNT" -gt 0 ]; then
-                echo "[INITIAL-MSG] Agent is stable with non-empty message (count: ${NON_EMPTY_MSG_COUNT}), ready to send"
-                break
-            fi
-            STABLE_COUNT=$((STABLE_COUNT + 1))
-            if [ $STABLE_COUNT -eq $MAX_STABLE_RETRIES ]; then
-                echo "[INITIAL-MSG] ERROR: Agent not ready after ${MAX_STABLE_RETRIES} retries (status: ${STATUS}, non_empty_msgs: ${NON_EMPTY_MSG_COUNT})"
-                exec sleep infinity
-            fi
-            sleep 1
-        done
-    fi
-else
-    # AgentType is specified (e.g. claude-agentapi, codex-agentapi).
-    # These agents have a different startup sequence; use simple stable-wait.
-    echo "[INITIAL-MSG] AgentType=${AGENT_TYPE}: waiting for agent to be stable..."
-    STABLE_COUNT=0
-    while [ $STABLE_COUNT -lt $MAX_STABLE_RETRIES ]; do
-        STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-        if [ "$STATUS" = "stable" ]; then
-            echo "[INITIAL-MSG] Agent is stable, ready to send message"
-            break
-        fi
-        STABLE_COUNT=$((STABLE_COUNT + 1))
-        if [ $STABLE_COUNT -eq $MAX_STABLE_RETRIES ]; then
-            echo "[INITIAL-MSG] ERROR: Agent not stable after ${MAX_STABLE_RETRIES} retries (status: ${STATUS})"
-            exec sleep infinity
-        fi
-        sleep 1
-    done
-fi
-
-# Wait for the configured number of seconds before sending the initial message
-echo "[INITIAL-MSG] Waiting ${WAIT_SECOND} second(s) before sending initial message..."
-sleep "$WAIT_SECOND"
-
-# Double-check user message count before sending (race condition prevention)
-USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
-if [ "$USER_MSG_COUNT" -gt 0 ]; then
-    echo "[INITIAL-MSG] User messages appeared during wait (count: ${USER_MSG_COUNT}), skipping"
-    touch "$SENT_FLAG"
-    exec sleep infinity
-fi
-
-# Read and send message
-echo "[INITIAL-MSG] Sending initial message..."
-MESSAGE_CONTENT=$(cat "$MESSAGE_FILE")
-
-# Build JSON payload with proper escaping using jq
-PAYLOAD=$(printf '%s' "$MESSAGE_CONTENT" | jq -Rs '{content: ., type: "user"}')
-
-MAX_SEND_RETRIES=5
-SEND_RETRY_INTERVAL=3
-SEND_SUCCESS=false
-
-SEND_COUNT=0
-while [ $SEND_COUNT -lt $MAX_SEND_RETRIES ]; do
-    SEND_COUNT=$((SEND_COUNT + 1))
-    echo "[INITIAL-MSG] Send attempt ${SEND_COUNT}/${MAX_SEND_RETRIES}"
-
-    RESPONSE=$(curl -sf -w "\n%{http_code}" -X POST "${AGENTAPI_URL}/message" \
-        -H "Content-Type: application/json" \
-        -d "$PAYLOAD" 2>&1) || true
-
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | sed '$d')
-
-    if [ "$HTTP_CODE" = "200" ]; then
-        echo "[INITIAL-MSG] Initial message sent successfully (HTTP 200)"
-        SEND_SUCCESS=true
-        break
-    fi
-
-    echo "[INITIAL-MSG] Send failed (HTTP ${HTTP_CODE}), response: ${BODY}"
-
-    if [ $SEND_COUNT -lt $MAX_SEND_RETRIES ]; then
-        echo "[INITIAL-MSG] Retrying in ${SEND_RETRY_INTERVAL} seconds..."
-        sleep $SEND_RETRY_INTERVAL
-
-        # Re-check agent status before retry
-        STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-        if [ "$STATUS" != "stable" ]; then
-            echo "[INITIAL-MSG] Agent status is '${STATUS}', waiting for stable..."
-            WAIT_COUNT=0
-            while [ $WAIT_COUNT -lt 30 ] && [ "$STATUS" != "stable" ]; do
-                sleep 1
-                STATUS=$(curl -sf "${AGENTAPI_URL}/status" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "")
-                WAIT_COUNT=$((WAIT_COUNT + 1))
-            done
-            if [ "$STATUS" != "stable" ]; then
-                echo "[INITIAL-MSG] Agent not stable after waiting (status: ${STATUS})"
-            fi
-        fi
-    fi
-done
-
-if [ "$SEND_SUCCESS" = "true" ]; then
-    touch "$SENT_FLAG"
-    # Verify the message was actually stored
-    sleep 1
-    USER_MSG_COUNT=$(curl -sf "${AGENTAPI_URL}/messages" 2>/dev/null | jq '[.messages[] | select(.role == "user")] | length' 2>/dev/null || echo "0")
-    if [ "$USER_MSG_COUNT" -gt 0 ]; then
-        echo "[INITIAL-MSG] Verified: user message exists (count: ${USER_MSG_COUNT})"
-    else
-        echo "[INITIAL-MSG] WARNING: Message sent but verification shows no user messages"
-    fi
-else
-    echo "[INITIAL-MSG] ERROR: Failed to send initial message after ${MAX_SEND_RETRIES} attempts"
-fi
-
-# Keep container running (prevents restart loop)
-exec sleep infinity
-`
-
-// buildInitialMessageSenderSidecar builds the sidecar container for sending initial messages
-func (m *KubernetesSessionManager) buildInitialMessageSenderSidecar(session *KubernetesSession) *corev1.Container {
-	// Only create sidecar if there's an initial message
-	if session.Request().InitialMessage == "" {
-		return nil
-	}
-
-	return &corev1.Container{
-		Name:            "initial-message-sender",
-		Image:           m.k8sConfig.Image,
-		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("64Mi"),
-			},
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "session-settings",
-				MountPath: "/session-settings",
-				ReadOnly:  true,
-			},
-			{
-				Name:      "initial-message-state",
-				MountPath: "/initial-message-state",
-			},
-		},
-		Env: []corev1.EnvVar{
-			{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
-			{Name: "INITIAL_MESSAGE_WAIT_SECOND", Value: initialMessageWaitSecond(session.Request())},
-			{Name: "AGENT_TYPE", Value: session.Request().AgentType},
-		},
-		Command: []string{"/bin/sh", "-c"},
-		Args:    []string{initialMessageSenderScript},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
-		},
-	}
-}
-
-// initialMessageWaitSecond returns the wait duration string for the initial message sender.
-// Defaults to "2" if not specified.
-func initialMessageWaitSecond(req *entities.RunServerRequest) string {
-	if req != nil && req.InitialMessageWaitSecond != nil {
-		return fmt.Sprintf("%d", *req.InitialMessageWaitSecond)
-	}
-	return "2"
-}
+// NOTE: The initialMessageSenderScript and buildInitialMessageSenderSidecar have been
+// removed. Initial message sending is now handled inside agent-provisioner
+// (pkg/provisioner/provision.go) after agentapi starts.
 
 // defaultSlackIntegrationImage is the default container image for the claude-posts sidecar
 const defaultSlackIntegrationImage = "ghcr.io/takutakahashi/claude-posts:0.3.0"
@@ -1458,7 +1219,7 @@ func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Contex
 }
 
 // getInitialMessageFromSecret retrieves the initial message from the session-settings Secret.
-// The initial message is stored as "initial-message" key alongside "settings.yaml".
+// The initial message is stored as the "initial_message" field inside "settings.yaml".
 // serviceName follows the pattern "agentapi-session-{id}-svc"; the settings secret is "agentapi-session-{id}-settings".
 func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Context, serviceName string) string {
 	settingsSecretName := strings.TrimSuffix(serviceName, "-svc") + "-settings"
@@ -1466,10 +1227,15 @@ func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Conte
 	if err != nil {
 		return ""
 	}
-	if message, ok := secret.Data["initial-message"]; ok {
-		return string(message)
+	yamlData, ok := secret.Data["settings.yaml"]
+	if !ok {
+		return ""
 	}
-	return ""
+	settings, err := sessionsettings.LoadSettingsFromBytes(yamlData)
+	if err != nil {
+		return ""
+	}
+	return settings.InitialMessage
 }
 
 // getSessionMetaFromSecret reads the settings secret and returns the SessionMeta
@@ -1625,30 +1391,23 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		},
 	})
 
-	// session-settings Secret – the single source of truth consumed by the setup init container
+	// session-settings Secret – optional volume for Pod restart auto-provisioning.
+	// Created after successful provisioning; not present on first startup.
 	sessionSettingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
+	optionalTrue := true
 	volumes = append(volumes, corev1.Volume{
 		Name: "session-settings",
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
 				SecretName: sessionSettingsSecretName,
+				Optional:   &optionalTrue,
 			},
 		},
 	})
 
-	// Add initial message state volume if initial message is provided
-	// (initial message content is now stored in session-settings Secret as "initial-message" key)
-	if session.Request() != nil && session.Request().InitialMessage != "" {
-		volumes = append(volumes,
-			// EmptyDir for tracking sent state (prevents double-send on container restart)
-			corev1.Volume{
-				Name: "initial-message-state",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
-				},
-			},
-		)
-	}
+	// Note: The "initial-message-state" EmptyDir volume is no longer needed because
+	// the initial-message-sender sidecar has been removed. Initial message sending
+	// is now handled internally by agent-provisioner.
 
 	// Add webhook payload volume if webhook payload is provided
 	if len(session.WebhookPayload()) > 0 {
@@ -1760,18 +1519,133 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 
 			// Check deployment status
 			if deployment.Status.ReadyReplicas > 0 {
+				session.SetStatus("starting")
+				log.Printf("[K8S_SESSION] Session %s Pod is ready, sending /provision to agent-provisioner", session.id)
+
+				provisionerURL := fmt.Sprintf("http://%s:%d", session.ServiceDNS(), provisionerPort)
+
+				// POST /provision to agent-provisioner (with retry).
+				if err := m.postProvision(ctx, provisionerURL, session.ProvisionPayload()); err != nil {
+					log.Printf("[K8S_SESSION] Failed to POST /provision for session %s: %v – will retry", session.id, err)
+					// Retry on next ticker tick.
+					continue
+				}
+
+				// Wait for provisioner to complete (agentapi running + initial message sent).
+				log.Printf("[K8S_SESSION] Waiting for agent-provisioner to become ready for session %s", session.id)
+				if err := m.waitForProvisioner(ctx, provisionerURL); err != nil {
+					log.Printf("[K8S_SESSION] Provisioner error for session %s: %v", session.id, err)
+					session.SetStatus("error")
+					return
+				}
+
+				// Create settings Secret for Pod restart recovery (after successful provisioning).
+				if ps := session.ProvisionSettings(); ps != nil {
+					if err := m.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), ps); err != nil {
+						log.Printf("[K8S_SESSION] Warning: failed to create settings secret for session %s: %v", session.id, err)
+						// Non-fatal: session works without it, but Pod restart will require re-provisioning
+					}
+				}
+
 				session.SetStatus("active")
 				log.Printf("[K8S_SESSION] Session %s is now active", session.id)
 
-				// Note: Initial message is now sent by the initial-message-sender sidecar
-				// within the Pod, not by the proxy
-
-				// Continue watching for changes
+				// Continue watching for changes.
 				m.watchDeploymentStatus(ctx, session)
 				return
 			}
 
 			session.SetStatus("starting")
+		}
+	}
+}
+
+// postProvision POSTs the provision payload to the agent-provisioner's /provision endpoint.
+// It retries up to 10 times with 2-second intervals to handle the race between
+// the Service routing and the provisioner being ready to accept connections.
+func (m *KubernetesSessionManager) postProvision(ctx context.Context, provisionerURL string, payload []byte) error {
+	client := &http.Client{Timeout: 10 * time.Second}
+	url := provisionerURL + "/provision"
+
+	const maxRetries = 10
+	for i := 0; i < maxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled")
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return fmt.Errorf("failed to build /provision request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			switch resp.StatusCode {
+			case http.StatusAccepted, http.StatusOK:
+				// 202 = provisioning started, 200 = already ready (idempotent)
+				return nil
+			case http.StatusConflict:
+				// 409 = provisioning already in progress – treat as success
+				return nil
+			}
+			log.Printf("[K8S_SESSION] POST /provision returned HTTP %d, retrying (%d/%d)", resp.StatusCode, i+1, maxRetries)
+		} else {
+			log.Printf("[K8S_SESSION] POST /provision error: %v, retrying (%d/%d)", err, i+1, maxRetries)
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled")
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return fmt.Errorf("failed to POST /provision after %d retries", maxRetries)
+}
+
+// waitForProvisioner polls the agent-provisioner's /status endpoint until the
+// provisioning state is "ready" or "error", or until ctx is cancelled.
+func (m *KubernetesSessionManager) waitForProvisioner(ctx context.Context, provisionerURL string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	statusURL := provisionerURL + "/status"
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for provisioner")
+
+		case <-ticker.C:
+			resp, err := client.Get(statusURL)
+			if err != nil {
+				log.Printf("[K8S_SESSION] GET /status error: %v", err)
+				continue
+			}
+
+			var statusResp struct {
+				Status  string `json:"status"`
+				Message string `json:"message"`
+			}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&statusResp); decodeErr != nil {
+				_ = resp.Body.Close()
+				log.Printf("[K8S_SESSION] Failed to decode /status response: %v", decodeErr)
+				continue
+			}
+			_ = resp.Body.Close()
+
+			switch statusResp.Status {
+			case "ready":
+				return nil
+			case "error":
+				return fmt.Errorf("provisioner reported error: %s", statusResp.Message)
+			default:
+				log.Printf("[K8S_SESSION] Provisioner status: %s", statusResp.Status)
+			}
 		}
 	}
 }
@@ -2199,12 +2073,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			Name:      "dot-claude",
 			MountPath: "/home/agentapi/.claude",
 		},
-		// session-settings Secret – read by setup on startup
-		{
-			Name:      "session-settings",
-			MountPath: "/session-settings",
-			ReadOnly:  true,
-		},
 		// credentials-config – read by setup on startup
 		{
 			Name:      "claude-credentials",
@@ -2218,6 +2086,13 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			ReadOnly:  true,
 		},
 	}
+
+	// session-settings Secret – optional mount for Pod restart auto-provisioning.
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      "session-settings",
+		MountPath: "/session-settings",
+		ReadOnly:  true,
+	})
 
 	// Add webhook payload volume mount if webhook payload is provided
 	if len(session.WebhookPayload()) > 0 {
@@ -2236,127 +2111,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 	})
 
 	return volumeMounts
-}
-
-// buildClaudeStartCommand builds the agent start command based on agent type
-// For agent_type == "claude-agentapi": runs claude-agentapi with CLAUDE_ARGS as CLI options
-// For default/agentapi: uses resume fallback pattern "claude -c [args] || claude [args]"
-func (m *KubernetesSessionManager) buildClaudeStartCommand() string {
-	baseCmd := `
-# Run session setup (write-pem, clone-repo, compile settings, sync extra)
-echo "[STARTUP] Running session setup"
-agentapi-proxy helpers setup \
-  --input /session-settings/settings.yaml \
-  --credentials-file /credentials-config/credentials.json \
-  --notification-subscriptions /notification-subscriptions-source \
-  --notifications-dir /home/agentapi/notifications \
-  --register-marketplaces
-echo "[STARTUP] Session setup complete"
-
-# Source session env file generated by setup
-if [ -f /home/agentapi/.session/env ]; then
-    echo "[STARTUP] Sourcing session env file"
-    set -a
-    . /home/agentapi/.session/env
-    set +a
-fi
-
-# Fetch session memory from proxy and inject into CLAUDE.md
-if [ -n "$MEMORY_KEY_FLAGS" ]; then
-    echo "[STARTUP] Fetching session memory (keys: $MEMORY_KEY_FLAGS)"
-    PROXY_ENDPOINT="http://${AGENTAPI_PROXY_SERVICE_HOST}:${AGENTAPI_PROXY_SERVICE_PORT_HTTP}"
-    MEMORY_SCOPE="${AGENTAPI_SCOPE:-user}"
-    MEMORY_TEAM_OPTS=""
-    if [ "$MEMORY_SCOPE" = "team" ] && [ -n "$AGENTAPI_TEAM_ID" ]; then
-        MEMORY_TEAM_OPTS="--team-id $AGENTAPI_TEAM_ID"
-    fi
-    MEMORY_CONTENT=$(agentapi-proxy client memory list \
-        $MEMORY_KEY_FLAGS \
-        --scope "$MEMORY_SCOPE" \
-        $MEMORY_TEAM_OPTS \
-        --union \
-        --format markdown \
-        --endpoint "$PROXY_ENDPOINT" 2>/dev/null || echo "")
-    if [ -n "$MEMORY_CONTENT" ]; then
-        echo "" >> /home/agentapi/.claude/CLAUDE.md
-        echo "---" >> /home/agentapi/.claude/CLAUDE.md
-        echo "" >> /home/agentapi/.claude/CLAUDE.md
-        echo "$MEMORY_CONTENT" >> /home/agentapi/.claude/CLAUDE.md
-        echo "[STARTUP] Memory injected into CLAUDE.md"
-    else
-        echo "[STARTUP] No memory found for this session (non-fatal)"
-    fi
-fi
-
-# cd into repo if it was cloned
-if [ -d /home/agentapi/workdir/repo ]; then
-    echo "[STARTUP] Changing to repo directory"
-    cd /home/agentapi/workdir/repo
-fi
-
-# Determine which agent to start based on AGENTAPI_AGENT_TYPE
-if [ "$AGENTAPI_AGENT_TYPE" = "claude-agentapi" ]; then
-    # Update claude-agentapi to the latest version
-    echo "[STARTUP] Updating claude-agentapi to the latest version"
-    if bun install -g @takutakahashi/claude-agentapi; then
-        echo "[STARTUP] claude-agentapi update successful"
-    else
-        echo "[STARTUP] Warning: Failed to update claude-agentapi, continuing with existing version"
-    fi
-
-    # Start claude-agentapi
-    echo "[STARTUP] Starting claude-agentapi on $HOST:$PORT"
-
-    # Build claude-agentapi options
-    CLAUDE_AGENTAPI_OPTS=""
-
-    # Add --output-file for history logging
-    CLAUDE_AGENTAPI_OPTS="--output-file /opt/claude-agentapi/history.jsonl"
-    echo "[STARTUP] Using history output file: /opt/claude-agentapi/history.jsonl"
-
-    # MCP servers are configured in ~/.claude.json (mcpServers key) and read natively by Claude Code
-
-    # Append CLAUDE_ARGS if set (as CLI options)
-    if [ -n "$CLAUDE_ARGS" ]; then
-        CLAUDE_AGENTAPI_OPTS="$CLAUDE_AGENTAPI_OPTS $CLAUDE_ARGS"
-        echo "[STARTUP] Using CLAUDE_ARGS: $CLAUDE_ARGS"
-    fi
-
-    echo "[STARTUP] Executing: claude-agentapi $CLAUDE_AGENTAPI_OPTS"
-    exec claude-agentapi $CLAUDE_AGENTAPI_OPTS
-
-elif [ "$AGENTAPI_AGENT_TYPE" = "codex-agentapi" ]; then
-    # Start codex-agentapi via bunx (uses bun runtime, no node required)
-    # Configured via environment variables: HOST, PORT, OPENAI_API_KEY, etc.
-    echo "[STARTUP] Starting codex-agentapi on $HOST:$PORT"
-    echo "[STARTUP] Executing: bunx @takutakahashi/codex-agentapi"
-    exec bunx @takutakahashi/codex-agentapi
-
-else
-    # Start agentapi with Claude (original behavior)
-    echo "[STARTUP] Starting agentapi"
-
-    CLAUDE_ARGS_FULL=""
-
-    # MCP servers are configured in ~/.claude.json (mcpServers key) and read natively by Claude Code
-
-    # Add CLAUDE_ARGS if set
-    if [ -n "$CLAUDE_ARGS" ]; then
-        CLAUDE_ARGS_FULL="$CLAUDE_ARGS_FULL $CLAUDE_ARGS"
-    fi
-
-    # Build command
-    if [ -n "$CLAUDE_ARGS_FULL" ]; then
-        CLAUDE_CMD="claude $CLAUDE_ARGS_FULL"
-    else
-        CLAUDE_CMD="claude"
-    fi
-
-    echo "[STARTUP] Starting agentapi: $CLAUDE_CMD"
-    exec agentapi server --allowed-hosts '*' --allowed-origins '*' --port $AGENTAPI_PORT -- sh -c "$CLAUDE_CMD"
-fi
-`
-	return baseCmd
 }
 
 // restoreSessionFromService restores a session from Kubernetes Service
@@ -2715,6 +2469,13 @@ func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession)
 			Name:       "http",
 			Port:       int32(session.ServicePort()),
 			TargetPort: intstr.FromInt(m.k8sConfig.BasePort),
+			Protocol:   corev1.ProtocolTCP,
+		},
+		{
+			// Expose agent-provisioner so the proxy server can call POST /provision.
+			Name:       "provisioner",
+			Port:       provisionerPort,
+			TargetPort: intstr.FromInt(provisionerPort),
 			Protocol:   corev1.ProtocolTCP,
 		},
 	}
@@ -3113,16 +2874,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	return settings
 }
 
-// createSessionSettingsSecret creates the unified session settings Secret.
-// This Secret consolidates all session configuration into a single YAML file.
-func (m *KubernetesSessionManager) createSessionSettingsSecret(
+// createSessionSettingsSecretFromSettings creates the unified session settings Secret
+// from a pre-built SessionSettings struct.
+// This Secret is used by agent-provisioner for auto-provisioning on Pod restart.
+func (m *KubernetesSessionManager) createSessionSettingsSecretFromSettings(
 	ctx context.Context,
 	session *KubernetesSession,
 	req *entities.RunServerRequest,
-	webhookPayload []byte,
+	settings *sessionsettings.SessionSettings,
 ) error {
-	settings := m.buildSessionSettings(ctx, session, req, webhookPayload)
-
 	yamlData, err := sessionsettings.MarshalYAML(settings)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session settings to YAML: %w", err)
@@ -3144,12 +2904,6 @@ func (m *KubernetesSessionManager) createSessionSettingsSecret(
 		Data: map[string][]byte{
 			"settings.yaml": yamlData,
 		},
-	}
-
-	// Embed initial message as a separate flat file so the sidecar can read it directly
-	// without YAML parsing (maintains the same interface as the old initial-message Secret)
-	if req.InitialMessage != "" {
-		secret.Data["initial-message"] = []byte(req.InitialMessage)
 	}
 
 	_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
