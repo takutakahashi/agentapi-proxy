@@ -133,8 +133,23 @@ func NewKubernetesSessionManagerWithClient(
 	return manager, nil
 }
 
-// CreateSession creates a new session with a Kubernetes Deployment
+// CreateSession creates a new session with a Kubernetes Deployment.
+// It first attempts to use a pre-warmed stock session (labeled agentapi.proxy/stock=true).
+// If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	// Attempt to adopt a stock session before creating a new one.
+	if stockSvc, err := m.findStockSession(ctx); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
+	} else if stockSvc != nil {
+		claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
+		if claimErr != nil {
+			log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
+		} else {
+			log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
+			return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
+		}
+	}
+
 	// Create session context
 	sessionCtx, cancel := context.WithCancel(context.Background())
 
@@ -255,6 +270,233 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 
 	log.Printf("[K8S_SESSION] Session %s created successfully", id)
 	return session, nil
+}
+
+// findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
+// first available one (not being deleted and having a session-id label).
+// Returns (nil, nil) when no stock is available.
+func (m *KubernetesSessionManager) findStockSession(ctx context.Context) (*corev1.Service, error) {
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list stock services: %w", err)
+	}
+	for i := range svcs.Items {
+		svc := &svcs.Items[i]
+		if svc.DeletionTimestamp != nil {
+			continue
+		}
+		if svc.Labels["agentapi.proxy/session-id"] == "" {
+			continue
+		}
+		return svc, nil
+	}
+	return nil, nil
+}
+
+// claimStockService atomically claims a stock Service by removing the
+// agentapi.proxy/stock label via an Update (which uses Kubernetes' resourceVersion-based
+// optimistic locking). If another replica claims the same stock concurrently, the Update
+// returns a Conflict error and the caller should fall back to creating a new session.
+func (m *KubernetesSessionManager) claimStockService(ctx context.Context, svc *corev1.Service) (*corev1.Service, error) {
+	if svc.Labels["agentapi.proxy/stock"] != "true" {
+		return nil, fmt.Errorf("service %s is not a stock service", svc.Name)
+	}
+	// Remove the stock label so no other proxy replica picks it up.
+	delete(svc.Labels, "agentapi.proxy/stock")
+	// Update uses the ResourceVersion already set on svc for optimistic locking.
+	updated, err := m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim stock service %s: %w", svc.Name, err)
+	}
+	return updated, nil
+}
+
+// adoptStockSession takes a claimed stock Service and turns it into a regular session.
+// It updates Service/Deployment labels and annotations, builds the provision payload,
+// and starts watchStockSession in the background.
+func (m *KubernetesSessionManager) adoptStockSession(
+	ctx context.Context,
+	req *entities.RunServerRequest,
+	webhookPayload []byte,
+	stockSvc *corev1.Service,
+) (entities.Session, error) {
+	stockID := stockSvc.Labels["agentapi.proxy/session-id"]
+	deploymentName := fmt.Sprintf("agentapi-session-%s", stockID)
+	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", stockID)
+
+	sessionCtx, cancel := context.WithCancel(context.Background())
+
+	// Build KubernetesSession reusing the stock's resource names.
+	session := NewKubernetesSession(
+		stockID,
+		req,
+		deploymentName,
+		stockSvc.Name, // service name stays the same
+		pvcName,
+		m.namespace,
+		m.k8sConfig.BasePort,
+		cancel,
+		webhookPayload,
+	)
+
+	// Cache initial message as description.
+	if req.InitialMessage != "" {
+		session.SetDescription(req.InitialMessage)
+	}
+
+	// Register session in memory.
+	m.mutex.Lock()
+	m.sessions[stockID] = session
+	m.mutex.Unlock()
+
+	log.Printf("[K8S_SESSION] Adopting stock session %s in namespace %s", stockID, m.namespace)
+
+	// Check whether the stock already has a PVC; if not, we leave it as EmptyDir.
+	_, pvcErr := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	switch {
+	case pvcErr == nil:
+		log.Printf("[K8S_SESSION] Stock session %s has existing PVC %s, reusing it", stockID, pvcName)
+	case errors.IsNotFound(pvcErr):
+		log.Printf("[K8S_SESSION] Stock session %s has no PVC, using EmptyDir", stockID)
+	default:
+		log.Printf("[K8S_SESSION] Warning: failed to check PVC for stock session %s: %v", stockID, pvcErr)
+	}
+
+	// Create webhook payload Secret if provided.
+	if len(webhookPayload) > 0 {
+		if err := m.createWebhookPayloadSecret(ctx, session, webhookPayload); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create webhook payload secret for stock session %s: %v", stockID, err)
+		}
+	}
+
+	// Ensure service account for team-scoped sessions (best-effort).
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.serviceAccountEnsurer != nil {
+		if err := m.serviceAccountEnsurer.EnsureServiceAccount(ctx, req.TeamID); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to ensure service account for team %s: %v", req.TeamID, err)
+		}
+	}
+
+	// Create oneshot settings Secret if needed.
+	if req.Oneshot {
+		if err := m.createOneshotSettingsSecret(ctx, session); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create oneshot settings secret for stock session %s: %v", stockID, err)
+		}
+	}
+
+	// Build session settings and cache provision payload.
+	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
+	if provisionJSON, err := json.Marshal(sessionSettings); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to marshal session settings to JSON: %v", err)
+	} else {
+		session.SetProvisionPayload(provisionJSON)
+	}
+	session.SetProvisionSettings(sessionSettings)
+
+	// Update Service labels and annotations to reflect the new owner.
+	now := time.Now()
+	newLabels := m.buildLabels(session)
+	annotations := map[string]string{
+		"agentapi.proxy/created-at":      now.Format(time.RFC3339),
+		"agentapi.proxy/updated-at":      now.Format(time.RFC3339),
+		"agentapi.proxy/team-id":         req.TeamID,
+		"agentapi.proxy/last-message-at": now.UTC().Format(time.RFC3339),
+	}
+	if req.AgentType != "" {
+		annotations["agentapi.proxy/agent-type"] = req.AgentType
+	}
+
+	currentSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, stockSvc.Name, metav1.GetOptions{})
+	if err != nil {
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to get stock service for label update: %w", err)
+	}
+	currentSvc.Labels = newLabels
+	if currentSvc.Annotations == nil {
+		currentSvc.Annotations = make(map[string]string)
+	}
+	for k, v := range annotations {
+		currentSvc.Annotations[k] = v
+	}
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, currentSvc, metav1.UpdateOptions{}); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to update stock service labels for session %s: %v", stockID, err)
+	}
+
+	// Update Deployment labels (and pod template labels) to reflect the new owner.
+	currentDep, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to get stock deployment for label update: %v", err)
+	} else {
+		currentDep.Labels = newLabels
+		if currentDep.Spec.Template.Labels == nil {
+			currentDep.Spec.Template.Labels = make(map[string]string)
+		}
+		for k, v := range newLabels {
+			currentDep.Spec.Template.Labels[k] = v
+		}
+		if _, err := m.client.AppsV1().Deployments(m.namespace).Update(ctx, currentDep, metav1.UpdateOptions{}); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to update stock deployment labels for session %s: %v", stockID, err)
+		}
+	}
+
+	// Start background watch — Pod is already running so /provision is sent immediately.
+	go m.watchStockSession(sessionCtx, session)
+
+	// Log session start.
+	repository := ""
+	if req.RepoInfo != nil {
+		repository = req.RepoInfo.FullName
+	}
+	if err := m.logger.LogSessionStart(stockID, repository); err != nil {
+		log.Printf("[K8S_SESSION] Failed to log session start for stock session %s: %v", stockID, err)
+	}
+
+	log.Printf("[K8S_SESSION] Stock session %s adopted successfully", stockID)
+	return session, nil
+}
+
+// watchStockSession monitors a stock-adopted session.
+// Unlike watchSession, it skips the ReadyReplicas wait (Pod is already running)
+// and immediately sends /provision to the agent-provisioner.
+func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, session *KubernetesSession) {
+	defer func() {
+		log.Printf("[K8S_SESSION] Stock session %s watch ended", session.id)
+	}()
+
+	session.SetStatus("starting")
+	log.Printf("[K8S_SESSION] Stock session %s: Pod already ready, sending /provision immediately", session.id)
+
+	provisionerURL := fmt.Sprintf("http://%s:%d", session.ServiceDNS(), provisionerPort)
+
+	// POST /provision with retry (postProvision already handles transient errors).
+	if err := m.postProvision(ctx, provisionerURL, session.ProvisionPayload()); err != nil {
+		log.Printf("[K8S_SESSION] Failed to POST /provision for stock session %s: %v", session.id, err)
+		session.SetStatus("error")
+		return
+	}
+
+	// Wait for provisioner to finish setup and start agentapi.
+	log.Printf("[K8S_SESSION] Waiting for agent-provisioner to become ready for stock session %s", session.id)
+	if err := m.waitForProvisioner(ctx, provisionerURL); err != nil {
+		log.Printf("[K8S_SESSION] Provisioner error for stock session %s: %v", session.id, err)
+		session.SetStatus("error")
+		return
+	}
+
+	// Persist settings Secret for automatic re-provisioning on Pod restart.
+	if ps := session.ProvisionSettings(); ps != nil {
+		if err := m.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), ps); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to create settings secret for stock session %s: %v", session.id, err)
+		}
+	}
+
+	session.SetStatus("active")
+	log.Printf("[K8S_SESSION] Stock session %s is now active", session.id)
+
+	// Continue watching deployment status for the lifetime of the session.
+	m.watchDeploymentStatus(ctx, session)
 }
 
 // GetSession returns a session by ID
