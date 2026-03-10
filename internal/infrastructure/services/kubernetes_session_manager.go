@@ -535,9 +535,37 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	}()
 
 	session.SetStatus("starting")
-	log.Printf("[K8S_SESSION] Stock session %s: Pod already ready, sending /provision immediately", session.id)
 
 	provisionerURL := fmt.Sprintf("http://%s:%d", session.ServiceDNS(), provisionerPort)
+
+	// Wait for the pod to be ready before sending /provision.
+	// Although stock sessions are pre-warmed, the pod may not yet be ready if
+	// the session was adopted immediately after creation (e.g. inventory was
+	// just replenished). Reuse the same ready-wait loop used by watchSession.
+	timeout := time.After(time.Duration(m.k8sConfig.PodStartTimeout) * time.Second)
+	readyTicker := time.NewTicker(2 * time.Second)
+	podReady := false
+	for !podReady {
+		select {
+		case <-ctx.Done():
+			readyTicker.Stop()
+			log.Printf("[K8S_SESSION] Stock session %s context cancelled while waiting for pod", session.id)
+			return
+		case <-timeout:
+			readyTicker.Stop()
+			log.Printf("[K8S_SESSION] Stock session %s startup timeout", session.id)
+			session.SetStatus("timeout")
+			return
+		case <-readyTicker.C:
+			dep, err := m.client.AppsV1().Deployments(m.namespace).Get(
+				context.Background(), session.DeploymentName(), metav1.GetOptions{})
+			if err == nil && dep.Status.ReadyReplicas > 0 {
+				podReady = true
+			}
+		}
+	}
+	readyTicker.Stop()
+	log.Printf("[K8S_SESSION] Stock session %s: Pod is ready, sending /provision", session.id)
 
 	// POST /provision with retry (postProvision already handles transient errors).
 	if err := m.postProvision(ctx, provisionerURL, session.ProvisionPayload()); err != nil {
