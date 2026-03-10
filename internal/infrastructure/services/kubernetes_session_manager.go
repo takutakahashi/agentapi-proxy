@@ -1396,16 +1396,10 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		},
 	})
 
-	// session-settings Secret – the single source of truth consumed by the setup init container
-	sessionSettingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
-	volumes = append(volumes, corev1.Volume{
-		Name: "session-settings",
-		VolumeSource: corev1.VolumeSource{
-			Secret: &corev1.SecretVolumeSource{
-				SecretName: sessionSettingsSecretName,
-			},
-		},
-	})
+	// Note: session-settings Secret volume is intentionally NOT mounted here.
+	// Settings are delivered via POST /provision from the Proxy server.
+	// (The Secret is still created for Pod-restart auto-provisioning via the
+	//  provisioner's --settings-file flag, but it is no longer volume-mounted.)
 
 	// Note: The "initial-message-state" EmptyDir volume is no longer needed because
 	// the initial-message-sender sidecar has been removed. Initial message sending
@@ -2066,12 +2060,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		{
 			Name:      "dot-claude",
 			MountPath: "/home/agentapi/.claude",
-		},
-		// session-settings Secret – read by setup on startup
-		{
-			Name:      "session-settings",
-			MountPath: "/session-settings",
-			ReadOnly:  true,
 		},
 		// credentials-config – read by setup on startup
 		{
