@@ -212,12 +212,7 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	} else {
 		session.SetProvisionPayload(provisionJSON)
 	}
-
-	// Create unified session settings Secret (single source of truth for Pod restarts).
-	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
-		m.cleanupSession(id)
-		return nil, fmt.Errorf("failed to create session settings secret: %w", err)
-	}
+	session.SetProvisionSettings(sessionSettings)
 
 	// Create Deployment
 	if err := m.createDeployment(ctx, session, req); err != nil {
@@ -1396,10 +1391,19 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		},
 	})
 
-	// Note: session-settings Secret volume is intentionally NOT mounted here.
-	// Settings are delivered via POST /provision from the Proxy server.
-	// (The Secret is still created for Pod-restart auto-provisioning via the
-	//  provisioner's --settings-file flag, but it is no longer volume-mounted.)
+	// session-settings Secret – optional volume for Pod restart auto-provisioning.
+	// Created after successful provisioning; not present on first startup.
+	sessionSettingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", session.id)
+	optionalTrue := true
+	volumes = append(volumes, corev1.Volume{
+		Name: "session-settings",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: sessionSettingsSecretName,
+				Optional:   &optionalTrue,
+			},
+		},
+	})
 
 	// Note: The "initial-message-state" EmptyDir volume is no longer needed because
 	// the initial-message-sender sidecar has been removed. Initial message sending
@@ -1533,6 +1537,14 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 					log.Printf("[K8S_SESSION] Provisioner error for session %s: %v", session.id, err)
 					session.SetStatus("error")
 					return
+				}
+
+				// Create settings Secret for Pod restart recovery (after successful provisioning).
+				if ps := session.ProvisionSettings(); ps != nil {
+					if err := m.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), ps); err != nil {
+						log.Printf("[K8S_SESSION] Warning: failed to create settings secret for session %s: %v", session.id, err)
+						// Non-fatal: session works without it, but Pod restart will require re-provisioning
+					}
 				}
 
 				session.SetStatus("active")
@@ -2074,6 +2086,13 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			ReadOnly:  true,
 		},
 	}
+
+	// session-settings Secret – optional mount for Pod restart auto-provisioning.
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      "session-settings",
+		MountPath: "/session-settings",
+		ReadOnly:  true,
+	})
 
 	// Add webhook payload volume mount if webhook payload is provided
 	if len(session.WebhookPayload()) > 0 {

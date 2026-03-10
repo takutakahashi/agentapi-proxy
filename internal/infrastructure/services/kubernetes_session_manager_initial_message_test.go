@@ -217,27 +217,22 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		t.Fatal("Expected session to be created")
 	}
 
-	// Verify initial message is stored inside settings.yaml (not as a flat key).
+	// Note: the settings Secret is NOT created immediately in CreateSession().
+	// It is created asynchronously in watchSession() after successful provisioning.
+	// Verify the settings Secret does NOT exist at this point (before provisioning).
 	settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
-	secret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, settingsSecretName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("Failed to get settings secret: %v", err)
+	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, settingsSecretName, metav1.GetOptions{})
+	if err == nil {
+		t.Error("Settings secret should NOT exist before provisioning completes")
 	}
 
-	if _, ok := secret.Data["initial-message"]; ok {
-		t.Error("initial-message flat key should NOT be in the Secret (moved into settings.yaml)")
+	// Verify that the session stores the provision settings for later use.
+	ks := session.(*KubernetesSession)
+	if ks.ProvisionSettings() == nil {
+		t.Error("Expected ProvisionSettings to be set on session after CreateSession")
 	}
-
-	yamlData, ok := secret.Data["settings.yaml"]
-	if !ok {
-		t.Fatal("Expected settings.yaml key in secret data")
-	}
-	parsed, err := sessionsettings.LoadSettingsFromBytes(yamlData)
-	if err != nil {
-		t.Fatalf("Failed to parse settings.yaml: %v", err)
-	}
-	if parsed.InitialMessage != initialMessage {
-		t.Errorf("Expected InitialMessage %q in settings.yaml, got %q", initialMessage, parsed.InitialMessage)
+	if ks.ProvisionSettings().InitialMessage != initialMessage {
+		t.Errorf("Expected InitialMessage %q in ProvisionSettings, got %q", initialMessage, ks.ProvisionSettings().InitialMessage)
 	}
 
 	// Verify deployment uses agent-provisioner (NOT initial-message-sender sidecar).
