@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -270,6 +271,55 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 
 	log.Printf("[K8S_SESSION] Session %s created successfully", id)
 	return session, nil
+}
+
+// CreateStockSession creates a pre-warmed stock session (Deployment + Service)
+// without calling /provision. The pod starts the agent-provisioner and waits
+// for adoption via adoptStockSession, which sends the actual /provision call.
+func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context) error {
+	id := uuid.New().String()
+	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+
+	_, cancel := context.WithCancel(context.Background())
+
+	// Stock sessions have no owner; the minimal request holds defaults only.
+	minimalReq := &entities.RunServerRequest{}
+
+	session := NewKubernetesSession(id, minimalReq, deploymentName, serviceName, "",
+		m.namespace, m.k8sConfig.BasePort, cancel, nil)
+	session.SetIsStock(true)
+
+	if err := m.createDeployment(ctx, session, minimalReq); err != nil {
+		cancel()
+		return fmt.Errorf("failed to create stock deployment: %w", err)
+	}
+	if err := m.createService(ctx, session); err != nil {
+		if delErr := m.deleteDeployment(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup deployment after stock service creation failure: %v", delErr)
+		}
+		cancel()
+		return fmt.Errorf("failed to create stock service: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Stock session %s created successfully", id)
+	return nil
+}
+
+// CountStockSessions returns the number of available (not being deleted) stock sessions.
+func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context) (int, error) {
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list stock services: %w", err)
+	}
+	count := 0
+	for i := range svcs.Items {
+		if svcs.Items[i].DeletionTimestamp == nil {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
@@ -2053,6 +2103,10 @@ func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[s
 	for k, v := range session.Request().Tags {
 		labelKey := fmt.Sprintf("agentapi.proxy/tag-%s", sanitizeLabelKey(k))
 		labels[labelKey] = sanitizeLabelValue(v)
+	}
+
+	if session.isStock {
+		labels["agentapi.proxy/stock"] = "true"
 	}
 
 	return labels

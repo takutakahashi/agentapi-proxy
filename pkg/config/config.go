@@ -178,6 +178,23 @@ type SlackbotCleanupWorkerConfig struct {
 	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
 }
 
+// StockInventoryWorkerConfig represents stock inventory worker configuration.
+// The worker ensures a target number of pre-warmed stock sessions are always available.
+type StockInventoryWorkerConfig struct {
+	// Enabled controls whether the worker runs. Default: false (opt-in).
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// CheckInterval is how often to check and replenish stock sessions. Default: "30s".
+	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
+	// TargetCount is the desired number of stock sessions to maintain. Default: 2.
+	TargetCount int `json:"target_count" mapstructure:"target_count"`
+	// Namespace overrides the Kubernetes namespace (falls back to KubernetesSession.Namespace).
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// Leader election timings.
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
 // WebhookConfig represents webhook configuration
 type WebhookConfig struct {
 	// BaseURL is the base URL for webhook endpoints (e.g., "https://example.com")
@@ -315,6 +332,8 @@ type Config struct {
 	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
 	// SlackbotCleanupWorker is the configuration for the Slackbot session cleanup worker
 	SlackbotCleanupWorker SlackbotCleanupWorkerConfig `json:"slackbot_cleanup_worker" mapstructure:"slackbot_cleanup_worker"`
+	// StockInventoryWorker is the configuration for the stock session inventory worker.
+	StockInventoryWorker StockInventoryWorkerConfig `json:"stock_inventory_worker" mapstructure:"stock_inventory_worker"`
 	// Webhook is the configuration for webhook functionality
 	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
 	// Memory is the configuration for memory storage backend
@@ -870,6 +889,14 @@ func DefaultConfig() *Config {
 				HeaderName: "X-API-Key",
 				APIKeys:    []APIKey{},
 			},
+		},
+		StockInventoryWorker: StockInventoryWorkerConfig{
+			Enabled:       false,
+			CheckInterval: "30s",
+			TargetCount:   2,
+			LeaseDuration: "15s",
+			RenewDeadline: "10s",
+			RetryPeriod:   "2s",
 		},
 	}
 }
