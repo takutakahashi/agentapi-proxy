@@ -10,52 +10,52 @@ import (
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
-	Session        SessionMeta       `yaml:"session"`
-	Env            map[string]string `yaml:"env,omitempty"`
-	Claude         ClaudeConfig      `yaml:"claude,omitempty"`
-	Repository     *RepositoryConfig `yaml:"repository,omitempty"`
-	InitialMessage string            `yaml:"initial_message,omitempty"`
-	WebhookPayload string            `yaml:"webhook_payload,omitempty"`
-	Startup        StartupConfig     `yaml:"startup,omitempty"`
-	Github         *GithubConfig     `yaml:"github,omitempty"`
+	Session        SessionMeta       `yaml:"session"                   json:"session"`
+	Env            map[string]string `yaml:"env,omitempty"             json:"env,omitempty"`
+	Claude         ClaudeConfig      `yaml:"claude,omitempty"          json:"claude,omitempty"`
+	Repository     *RepositoryConfig `yaml:"repository,omitempty"      json:"repository,omitempty"`
+	InitialMessage string            `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
+	WebhookPayload string            `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
+	Startup        StartupConfig     `yaml:"startup,omitempty"         json:"startup,omitempty"`
+	Github         *GithubConfig     `yaml:"github,omitempty"          json:"github,omitempty"`
 }
 
 // SessionMeta contains session identification metadata.
 type SessionMeta struct {
-	ID        string            `yaml:"id"`
-	UserID    string            `yaml:"user_id"`
-	Scope     string            `yaml:"scope"`
-	TeamID    string            `yaml:"team_id,omitempty"`
-	AgentType string            `yaml:"agent_type,omitempty"`
-	Oneshot   bool              `yaml:"oneshot,omitempty"`
-	Teams     []string          `yaml:"teams,omitempty"`
-	MemoryKey map[string]string `yaml:"memory_key,omitempty"`
+	ID        string            `yaml:"id"                  json:"id"`
+	UserID    string            `yaml:"user_id"             json:"user_id"`
+	Scope     string            `yaml:"scope"               json:"scope"`
+	TeamID    string            `yaml:"team_id,omitempty"   json:"team_id,omitempty"`
+	AgentType string            `yaml:"agent_type,omitempty" json:"agent_type,omitempty"`
+	Oneshot   bool              `yaml:"oneshot,omitempty"   json:"oneshot,omitempty"`
+	Teams     []string          `yaml:"teams,omitempty"     json:"teams,omitempty"`
+	MemoryKey map[string]string `yaml:"memory_key,omitempty" json:"memory_key,omitempty"`
 }
 
 // ClaudeConfig holds Claude-related configuration data.
 type ClaudeConfig struct {
-	ClaudeJSON   map[string]interface{} `yaml:"claude_json,omitempty"`
-	SettingsJSON map[string]interface{} `yaml:"settings_json,omitempty"`
-	MCPServers   map[string]interface{} `yaml:"mcp_servers,omitempty"`
+	ClaudeJSON   map[string]interface{} `yaml:"claude_json,omitempty"   json:"claude_json,omitempty"`
+	SettingsJSON map[string]interface{} `yaml:"settings_json,omitempty" json:"settings_json,omitempty"`
+	MCPServers   map[string]interface{} `yaml:"mcp_servers,omitempty"   json:"mcp_servers,omitempty"`
 }
 
 // RepositoryConfig holds repository information.
 type RepositoryConfig struct {
-	FullName string `yaml:"fullname"`
-	CloneDir string `yaml:"clone_dir"`
+	FullName string `yaml:"fullname"   json:"fullname"`
+	CloneDir string `yaml:"clone_dir"  json:"clone_dir"`
 }
 
 // StartupConfig holds the startup command configuration.
 type StartupConfig struct {
-	Command []string `yaml:"command,omitempty"`
-	Args    []string `yaml:"args,omitempty"`
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
+	Args    []string `yaml:"args,omitempty"    json:"args,omitempty"`
 }
 
 // GithubConfig holds GitHub authentication configuration reference info.
 type GithubConfig struct {
-	Token            string `yaml:"token,omitempty"`
-	SecretName       string `yaml:"secret_name,omitempty"`
-	ConfigSecretName string `yaml:"config_secret_name,omitempty"`
+	Token            string `yaml:"token,omitempty"              json:"token,omitempty"`
+	SecretName       string `yaml:"secret_name,omitempty"        json:"secret_name,omitempty"`
+	ConfigSecretName string `yaml:"config_secret_name,omitempty" json:"config_secret_name,omitempty"`
 }
 
 // LoadSettings reads and parses a SessionSettings from a YAML file.

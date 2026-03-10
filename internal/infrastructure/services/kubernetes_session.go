@@ -11,22 +11,23 @@ import (
 
 // KubernetesSession represents a session running in a Kubernetes Deployment
 type KubernetesSession struct {
-	id             string
-	request        *entities.RunServerRequest
-	deploymentName string
-	serviceName    string
-	pvcName        string
-	servicePort    int
-	namespace      string
-	startedAt      time.Time
-	updatedAt      time.Time
-	lastMessageAt  time.Time
-	status         string
-	cancelFunc     context.CancelFunc
-	mutex          sync.RWMutex
-	description    string // Preserved description from Secret (not truncated by label limits)
-	webhookPayload []byte // Webhook payload JSON
-	resolvedAPIKey string // API key resolved during session creation, used by memory-sync sidecar
+	id               string
+	request          *entities.RunServerRequest
+	deploymentName   string
+	serviceName      string
+	pvcName          string
+	servicePort      int
+	namespace        string
+	startedAt        time.Time
+	updatedAt        time.Time
+	lastMessageAt    time.Time
+	status           string
+	cancelFunc       context.CancelFunc
+	mutex            sync.RWMutex
+	description      string // Preserved description from Secret (not truncated by label limits)
+	webhookPayload   []byte // Webhook payload JSON
+	resolvedAPIKey   string // API key resolved during session creation, used by memory-sync sidecar
+	provisionPayload []byte // JSON body for POST /provision to agent-provisioner
 }
 
 // NewKubernetesSession creates a new KubernetesSession
@@ -223,6 +224,17 @@ func (s *KubernetesSession) SetResolvedAPIKey(key string) {
 // ResolvedAPIKey returns the API key resolved during session creation.
 func (s *KubernetesSession) ResolvedAPIKey() string {
 	return s.resolvedAPIKey
+}
+
+// SetProvisionPayload stores the JSON payload to be sent to the agent-provisioner
+// via POST /provision after the Pod becomes ready.
+func (s *KubernetesSession) SetProvisionPayload(data []byte) {
+	s.provisionPayload = data
+}
+
+// ProvisionPayload returns the JSON payload for POST /provision.
+func (s *KubernetesSession) ProvisionPayload() []byte {
+	return s.provisionPayload
 }
 
 // Ensure KubernetesSession implements entities.Session

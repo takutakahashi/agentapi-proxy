@@ -12,178 +12,17 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func boolPtrForTest(b bool) *bool {
 	return &b
 }
 
-func TestBuildInitialMessageSenderSidecar(t *testing.T) {
-	cfg := &config.Config{
-		KubernetesSession: config.KubernetesSessionConfig{
-			Image:    "test-image:latest",
-			BasePort: 9000,
-		},
-	}
-	lgr := logger.NewLogger()
-	k8sClient := fake.NewSimpleClientset()
-	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, lgr, k8sClient)
-	if err != nil {
-		t.Fatalf("Failed to create manager: %v", err)
-	}
-
-	t.Run("returns nil when no initial message", func(t *testing.T) {
-		session := NewKubernetesSession(
-			"test-session",
-			&entities.RunServerRequest{
-				UserID:         "test-user",
-				InitialMessage: "",
-			},
-			"test-deploy",
-			"test-service",
-			"test-pvc",
-			"test-ns",
-			9000,
-			nil,
-			nil, // No webhook payload for test
-		)
-
-		sidecar := manager.buildInitialMessageSenderSidecar(session)
-		if sidecar != nil {
-			t.Error("Expected nil sidecar when no initial message")
-		}
-	})
-
-	t.Run("returns sidecar when initial message is provided", func(t *testing.T) {
-		session := NewKubernetesSession(
-			"test-session",
-			&entities.RunServerRequest{
-				UserID:         "test-user",
-				InitialMessage: "Hello, this is the initial message",
-			},
-			"test-deploy",
-			"test-service",
-			"test-pvc",
-			"test-ns",
-			9000,
-			nil,
-			nil, // No webhook payload for test
-		)
-
-		sidecar := manager.buildInitialMessageSenderSidecar(session)
-		if sidecar == nil {
-			t.Fatal("Expected sidecar when initial message is provided")
-		}
-
-		if sidecar.Name != "initial-message-sender" {
-			t.Errorf("Expected container name 'initial-message-sender', got %s", sidecar.Name)
-		}
-
-		if sidecar.Image != "test-image:latest" {
-			t.Errorf("Expected image 'test-image:latest', got %s", sidecar.Image)
-		}
-
-		// Verify volume mounts: session-settings (read-only) and initial-message-state
-		if len(sidecar.VolumeMounts) != 2 {
-			t.Errorf("Expected 2 volume mounts, got %d", len(sidecar.VolumeMounts))
-		}
-
-		// Verify session-settings volume mount (initial message is stored here)
-		var hasSessionSettings, hasInitialMessageState bool
-		for _, vm := range sidecar.VolumeMounts {
-			if vm.Name == "session-settings" {
-				hasSessionSettings = true
-				if vm.MountPath != "/session-settings" {
-					t.Errorf("Expected session-settings mount at /session-settings, got %s", vm.MountPath)
-				}
-				if !vm.ReadOnly {
-					t.Error("Expected session-settings volume mount to be read-only")
-				}
-			}
-			if vm.Name == "initial-message-state" {
-				hasInitialMessageState = true
-				if vm.MountPath != "/initial-message-state" {
-					t.Errorf("Expected initial-message-state mount at /initial-message-state, got %s", vm.MountPath)
-				}
-			}
-		}
-		if !hasSessionSettings {
-			t.Error("Expected session-settings volume mount")
-		}
-		if !hasInitialMessageState {
-			t.Error("Expected initial-message-state volume mount")
-		}
-
-		// Verify environment variables
-		var portEnv *corev1.EnvVar
-		for _, env := range sidecar.Env {
-			if env.Name == "AGENTAPI_PORT" {
-				portEnv = &env
-				break
-			}
-		}
-		if portEnv == nil {
-			t.Error("Expected AGENTAPI_PORT environment variable")
-		} else if portEnv.Value != "9000" {
-			t.Errorf("Expected AGENTAPI_PORT=9000, got %s", portEnv.Value)
-		}
-
-		// Verify AGENT_TYPE env var is empty when AgentType is not set
-		var agentTypeEnv *corev1.EnvVar
-		for i := range sidecar.Env {
-			if sidecar.Env[i].Name == "AGENT_TYPE" {
-				agentTypeEnv = &sidecar.Env[i]
-				break
-			}
-		}
-		if agentTypeEnv == nil {
-			t.Error("Expected AGENT_TYPE environment variable to be present")
-		} else if agentTypeEnv.Value != "" {
-			t.Errorf("Expected AGENT_TYPE to be empty when AgentType is not set, got %s", agentTypeEnv.Value)
-		}
-	})
-
-	t.Run("AGENT_TYPE env var is set when AgentType is specified", func(t *testing.T) {
-		session := NewKubernetesSession(
-			"test-session",
-			&entities.RunServerRequest{
-				UserID:         "test-user",
-				InitialMessage: "Hello, this is the initial message",
-				AgentType:      "claude-agentapi",
-			},
-			"test-deploy",
-			"test-service",
-			"test-pvc",
-			"test-ns",
-			9000,
-			nil,
-			nil,
-		)
-
-		sidecar := manager.buildInitialMessageSenderSidecar(session)
-		if sidecar == nil {
-			t.Fatal("Expected sidecar when initial message is provided with AgentType set")
-		}
-
-		// Verify AGENT_TYPE env var has the agent type value
-		var agentTypeEnv *corev1.EnvVar
-		for i := range sidecar.Env {
-			if sidecar.Env[i].Name == "AGENT_TYPE" {
-				agentTypeEnv = &sidecar.Env[i]
-				break
-			}
-		}
-		if agentTypeEnv == nil {
-			t.Error("Expected AGENT_TYPE environment variable to be present")
-		} else if agentTypeEnv.Value != "claude-agentapi" {
-			t.Errorf("Expected AGENT_TYPE=claude-agentapi, got %s", agentTypeEnv.Value)
-		}
-	})
-}
-
-// TestInitialMessageInSettingsSecret verifies that the initial message is stored
-// in the session-settings Secret under the "initial-message" key.
-func TestInitialMessageInSettingsSecret(t *testing.T) {
+// TestInitialMessageStoredInSettingsYAML verifies that the initial message is embedded
+// inside settings.yaml (not as a separate "initial-message" key) when the settings
+// Secret is created.
+func TestInitialMessageStoredInSettingsYAML(t *testing.T) {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
 	}
@@ -218,7 +57,7 @@ func TestInitialMessageInSettingsSecret(t *testing.T) {
 		"test-ns",
 		9000,
 		nil,
-		nil, // No webhook payload for test
+		nil,
 	)
 
 	message := "This is a test initial message"
@@ -227,31 +66,41 @@ func TestInitialMessageInSettingsSecret(t *testing.T) {
 		InitialMessage: message,
 	}
 
-	err = manager.createSessionSettingsSecret(context.Background(), session, req, nil)
+	// Build settings and create the Secret using the new function.
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	err = manager.createSessionSettingsSecretFromSettings(context.Background(), session, req, settings)
 	if err != nil {
 		t.Fatalf("Failed to create session settings secret: %v", err)
 	}
 
-	// Verify the settings secret was created and contains initial-message key
-	// Secret name: agentapi-session-{session.id}-settings = agentapi-session-test-session-settings
 	settingsSecretName := "agentapi-session-test-session-settings"
 	secret, err := k8sClient.CoreV1().Secrets("test-ns").Get(context.Background(), settingsSecretName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get settings secret: %v", err)
 	}
 
-	// Verify initial-message key in secret data
-	if string(secret.Data["initial-message"]) != message {
-		t.Errorf("Expected initial-message '%s', got '%s'", message, string(secret.Data["initial-message"]))
+	// The initial message must be inside settings.yaml, not as a flat key.
+	if _, ok := secret.Data["initial-message"]; ok {
+		t.Error("initial-message flat key should NOT be present in the Secret (moved into settings.yaml)")
 	}
 
-	// Verify settings.yaml key also exists
-	if _, ok := secret.Data["settings.yaml"]; !ok {
-		t.Error("Expected settings.yaml key in secret data")
+	yamlData, ok := secret.Data["settings.yaml"]
+	if !ok {
+		t.Fatal("Expected settings.yaml key in secret data")
+	}
+
+	parsed, err := sessionsettings.LoadSettingsFromBytes(yamlData)
+	if err != nil {
+		t.Fatalf("Failed to parse settings.yaml: %v", err)
+	}
+	if parsed.InitialMessage != message {
+		t.Errorf("Expected InitialMessage %q inside settings.yaml, got %q", message, parsed.InitialMessage)
 	}
 }
 
-func TestBuildVolumesWithInitialMessage(t *testing.T) {
+// TestBuildVolumesNoInitialMessageState verifies that the initial-message-state
+// EmptyDir volume is no longer created (the sidecar has been replaced by agent-provisioner).
+func TestBuildVolumesNoInitialMessageState(t *testing.T) {
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{},
 	}
@@ -262,7 +111,7 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
 
-	t.Run("includes initial-message-state volume when message is provided", func(t *testing.T) {
+	t.Run("does not include initial-message-state volume even when message is provided", func(t *testing.T) {
 		session := NewKubernetesSession(
 			"test-session",
 			&entities.RunServerRequest{
@@ -275,28 +124,18 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 			"test-ns",
 			9000,
 			nil,
-			nil, // No webhook payload for test
+			nil,
 		)
 
 		volumes := manager.buildVolumes(session)
 
-		// Look for initial-message-state volume (EmptyDir for tracking send state)
-		// The initial message content is now in session-settings Secret, not a separate volume
-		var hasInitialMessageState bool
 		for _, vol := range volumes {
 			if vol.Name == "initial-message" {
-				t.Error("initial-message volume should NOT be present (content is in session-settings Secret)")
+				t.Error("initial-message volume should NOT be present")
 			}
 			if vol.Name == "initial-message-state" {
-				hasInitialMessageState = true
-				if vol.EmptyDir == nil {
-					t.Error("initial-message-state volume should be an EmptyDir")
-				}
+				t.Error("initial-message-state volume should NOT be present (sidecar removed, handled by agent-provisioner)")
 			}
-		}
-
-		if !hasInitialMessageState {
-			t.Error("Expected initial-message-state volume to be present")
 		}
 	})
 
@@ -313,12 +152,11 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 			"test-ns",
 			9000,
 			nil,
-			nil, // No webhook payload for test
+			nil,
 		)
 
 		volumes := manager.buildVolumes(session)
 
-		// Look for initial-message volume
 		for _, vol := range volumes {
 			if vol.Name == "initial-message" {
 				t.Error("initial-message volume should not be present when message is empty")
@@ -330,6 +168,9 @@ func TestBuildVolumesWithInitialMessage(t *testing.T) {
 	})
 }
 
+// TestCreateSessionWithInitialMessage verifies that a session created with an initial
+// message uses agent-provisioner (no initial-message-sender sidecar), and that the
+// initial message is embedded inside settings.yaml.
 func TestCreateSessionWithInitialMessage(t *testing.T) {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -376,26 +217,30 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		t.Fatal("Expected session to be created")
 	}
 
-	// Verify initial message is stored in the settings Secret under "initial-message" key
-	// Settings secret name: agentapi-session-{id}-settings
+	// Verify initial message is stored inside settings.yaml (not as a flat key).
 	settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
 	secret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, settingsSecretName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get settings secret: %v", err)
 	}
 
-	if string(secret.Data["initial-message"]) != initialMessage {
-		t.Errorf("Expected initial-message '%s', got '%s'", initialMessage, string(secret.Data["initial-message"]))
+	if _, ok := secret.Data["initial-message"]; ok {
+		t.Error("initial-message flat key should NOT be in the Secret (moved into settings.yaml)")
 	}
 
-	// Verify the old per-session initial-message Secret does NOT exist
-	oldSecretName := fmt.Sprintf("agentapi-session-%s-svc-initial-message", sessionID)
-	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, oldSecretName, metav1.GetOptions{})
-	if err == nil {
-		t.Errorf("Old per-session initial-message Secret %s should not exist", oldSecretName)
+	yamlData, ok := secret.Data["settings.yaml"]
+	if !ok {
+		t.Fatal("Expected settings.yaml key in secret data")
+	}
+	parsed, err := sessionsettings.LoadSettingsFromBytes(yamlData)
+	if err != nil {
+		t.Fatalf("Failed to parse settings.yaml: %v", err)
+	}
+	if parsed.InitialMessage != initialMessage {
+		t.Errorf("Expected InitialMessage %q in settings.yaml, got %q", initialMessage, parsed.InitialMessage)
 	}
 
-	// Verify deployment has initial-message-sender sidecar
+	// Verify deployment uses agent-provisioner (NOT initial-message-sender sidecar).
 	deploymentName := "agentapi-session-" + sessionID
 	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
@@ -403,30 +248,36 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	}
 
 	podSpec := deployment.Spec.Template.Spec
-	var hasSidecar bool
 	for _, container := range podSpec.Containers {
 		if container.Name == "initial-message-sender" {
-			hasSidecar = true
-			break
+			t.Error("initial-message-sender sidecar should NOT be present (replaced by agent-provisioner)")
 		}
 	}
 
-	if !hasSidecar {
-		t.Error("Expected initial-message-sender sidecar in deployment")
+	// Verify the main container uses agent-provisioner command.
+	mainContainer := podSpec.Containers[0]
+	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "agentapi-proxy" {
+		t.Errorf("Expected main container command [agentapi-proxy], got %v", mainContainer.Command)
+	}
+	if len(mainContainer.Args) == 0 || mainContainer.Args[0] != "agent-provisioner" {
+		t.Errorf("Expected main container args [agent-provisioner], got %v", mainContainer.Args)
 	}
 
-	// Verify initial-message-state volume is present (but NOT a separate initial-message Secret volume)
-	var hasInitialMessageStateVol bool
+	// Verify provisioner port (9001) is exposed.
+	var hasProvisionerPort bool
+	for _, port := range mainContainer.Ports {
+		if port.Name == "provisioner" && port.ContainerPort == provisionerPort {
+			hasProvisionerPort = true
+		}
+	}
+	if !hasProvisionerPort {
+		t.Errorf("Expected provisioner port %d in container ports", provisionerPort)
+	}
+
+	// Verify no initial-message-state volume is present.
 	for _, vol := range podSpec.Volumes {
-		if vol.Name == "initial-message" {
-			t.Error("initial-message Secret volume should not be present (content is in session-settings)")
-		}
 		if vol.Name == "initial-message-state" {
-			hasInitialMessageStateVol = true
+			t.Error("initial-message-state volume should NOT be present (sidecar removed)")
 		}
-	}
-
-	if !hasInitialMessageStateVol {
-		t.Error("Expected initial-message-state volume in deployment")
 	}
 }
