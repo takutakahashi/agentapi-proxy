@@ -52,9 +52,14 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 2: run setup ─────────────────────────────────────────────────────
+	// Override CompileOptions.InputPath to use the temp file written above,
+	// not the default /session-settings/settings.yaml (which is no longer mounted).
+	compileOpts := sessionsettings.DefaultCompileOptions()
+	compileOpts.InputPath = provisionTempSettings
+
 	opts := sessionsettings.SetupOptions{
 		InputPath:                 provisionTempSettings,
-		CompileOptions:            sessionsettings.DefaultCompileOptions(),
+		CompileOptions:            compileOpts,
 		CredentialsFile:           "/credentials-config/credentials.json",
 		NotificationSubscriptions: "/notification-subscriptions-source",
 		NotificationsDir:          "/home/agentapi/notifications",
