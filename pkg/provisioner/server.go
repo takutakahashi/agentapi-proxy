@@ -41,9 +41,10 @@ type Server struct {
 	port         int
 	settingsFile string // path to optional auto-provision settings file
 
-	mu      sync.RWMutex
-	status  Status
-	message string
+	mu        sync.RWMutex
+	status    Status
+	message   string
+	serverCtx context.Context // long-lived context for provisioning goroutines
 }
 
 // New creates a new Server.
@@ -66,6 +67,10 @@ func New(port int, settingsFile string) *Server {
 // started automatically in the background before the HTTP server begins
 // accepting requests.
 func (s *Server) Start(ctx context.Context) error {
+	// Store the server-level context so that provisioning goroutines survive
+	// beyond the HTTP request that triggered them.
+	s.serverCtx = ctx
+
 	// Auto-provision from Secret volume if available (Pod restart case).
 	if s.settingsFile != "" {
 		if _, err := os.Stat(s.settingsFile); err == nil {
@@ -170,7 +175,9 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.setStatus(StatusProvisioning, "")
-	go s.runProvision(r.Context(), &settings)
+	// Use the server-level context (not r.Context()) so that provisioning
+	// survives after the HTTP response is written and the connection closes.
+	go s.runProvision(s.serverCtx, &settings)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
