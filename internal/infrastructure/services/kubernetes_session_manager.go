@@ -497,18 +497,14 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		log.Printf("[K8S_SESSION] Warning: failed to update stock service labels for session %s: %v", stockID, err)
 	}
 
-	// Update Deployment labels (and pod template labels) to reflect the new owner.
+	// Update Deployment metadata labels only (NOT spec.template.labels) to reflect the new owner.
+	// Updating spec.template.labels would trigger a Kubernetes rolling update, restarting the pod
+	// and making the agent-provisioner unavailable during the critical /provision window.
 	currentDep, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to get stock deployment for label update: %v", err)
 	} else {
 		currentDep.Labels = newLabels
-		if currentDep.Spec.Template.Labels == nil {
-			currentDep.Spec.Template.Labels = make(map[string]string)
-		}
-		for k, v := range newLabels {
-			currentDep.Spec.Template.Labels[k] = v
-		}
 		if _, err := m.client.AppsV1().Deployments(m.namespace).Update(ctx, currentDep, metav1.UpdateOptions{}); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to update stock deployment labels for session %s: %v", stockID, err)
 		}
