@@ -280,23 +280,42 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context) error
 	id := uuid.New().String()
 	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
+	pvcName := fmt.Sprintf("agentapi-session-%s-pvc", id)
 
 	_, cancel := context.WithCancel(context.Background())
 
 	// Stock sessions have no owner; the minimal request holds defaults only.
 	minimalReq := &entities.RunServerRequest{}
 
-	session := NewKubernetesSession(id, minimalReq, deploymentName, serviceName, "",
+	session := NewKubernetesSession(id, minimalReq, deploymentName, serviceName, pvcName,
 		m.namespace, m.k8sConfig.BasePort, cancel, nil)
 	session.SetIsStock(true)
 
+	// Create PVC if enabled (required for Deployment volume mounts).
+	if m.isPVCEnabled() {
+		if err := m.createPVC(ctx, session); err != nil {
+			cancel()
+			return fmt.Errorf("failed to create stock PVC: %w", err)
+		}
+	}
+
 	if err := m.createDeployment(ctx, session, minimalReq); err != nil {
+		if m.isPVCEnabled() {
+			if delErr := m.deletePVC(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup PVC after stock deployment creation failure: %v", delErr)
+			}
+		}
 		cancel()
 		return fmt.Errorf("failed to create stock deployment: %w", err)
 	}
 	if err := m.createService(ctx, session); err != nil {
 		if delErr := m.deleteDeployment(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup deployment after stock service creation failure: %v", delErr)
+		}
+		if m.isPVCEnabled() {
+			if delErr := m.deletePVC(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup PVC after stock service creation failure: %v", delErr)
+			}
 		}
 		cancel()
 		return fmt.Errorf("failed to create stock service: %w", err)
