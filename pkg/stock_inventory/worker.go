@@ -14,6 +14,10 @@ import (
 type StockRepository interface {
 	CreateStockSession(ctx context.Context) error
 	CountStockSessions(ctx context.Context) (int, error)
+	// PurgeStockSessions deletes all pre-warmed stock sessions. Called on
+	// worker startup so that stale sessions (e.g. built from an old image)
+	// are replaced with fresh ones.
+	PurgeStockSessions(ctx context.Context) error
 }
 
 // WorkerConfig contains configuration for the stock inventory worker.
@@ -95,6 +99,13 @@ func (w *Worker) run(ctx context.Context) {
 
 	ticker := time.NewTicker(w.config.CheckInterval)
 	defer ticker.Stop()
+
+	// On startup, purge all existing stock sessions so that stale pods
+	// (built from an old image) are replaced with fresh ones.
+	log.Printf("[STOCK_INVENTORY] Purging existing stock sessions on startup")
+	if err := w.repo.PurgeStockSessions(ctx); err != nil {
+		log.Printf("[STOCK_INVENTORY] Warning: failed to purge stock sessions: %v", err)
+	}
 
 	// Run immediately on start.
 	w.replenishStock(ctx)

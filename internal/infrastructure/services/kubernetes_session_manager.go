@@ -341,6 +341,57 @@ func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context) (int,
 	return count, nil
 }
 
+// PurgeStockSessions deletes all existing pre-warmed stock sessions (Service,
+// Deployment, PVC). Called by the stock inventory worker on startup to ensure
+// that stale pods built from an old image are replaced with fresh ones.
+func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error {
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock services for purge: %w", err)
+	}
+
+	deletePolicy := metav1.DeletePropagationForeground
+	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &deletePolicy}
+
+	var purgeErrs []string
+	for i := range svcs.Items {
+		svc := &svcs.Items[i]
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		log.Printf("[STOCK_INVENTORY] Purging stock session %s", sessionID)
+
+		// Delete Service
+		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", svc.Name, err))
+		}
+
+		if sessionID == "" {
+			continue
+		}
+
+		// Delete Deployment
+		depName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		if err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, depName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("deployment %s: %v", depName, err))
+		}
+
+		// Delete PVC if enabled
+		if m.isPVCEnabled() {
+			pvcName := fmt.Sprintf("agentapi-session-%s-pvc", sessionID)
+			if err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, pvcName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+				purgeErrs = append(purgeErrs, fmt.Sprintf("pvc %s: %v", pvcName, err))
+			}
+		}
+	}
+
+	if len(purgeErrs) > 0 {
+		return fmt.Errorf("purge errors: %s", strings.Join(purgeErrs, "; "))
+	}
+	log.Printf("[STOCK_INVENTORY] Purged %d stock session(s)", len(svcs.Items))
+	return nil
+}
+
 // findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
 // first available one (not being deleted and having a session-id label).
 // Returns (nil, nil) when no stock is available.
