@@ -341,8 +341,60 @@ func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context) (int,
 	return count, nil
 }
 
+// PurgeStockSessions deletes all existing pre-warmed stock sessions (Service,
+// Deployment, PVC). Called by the stock inventory worker on startup to ensure
+// that stale pods built from an old image are replaced with fresh ones.
+func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error {
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock services for purge: %w", err)
+	}
+
+	deletePolicy := metav1.DeletePropagationForeground
+	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &deletePolicy}
+
+	var purgeErrs []string
+	for i := range svcs.Items {
+		svc := &svcs.Items[i]
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		log.Printf("[STOCK_INVENTORY] Purging stock session %s", sessionID)
+
+		// Delete Service
+		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", svc.Name, err))
+		}
+
+		if sessionID == "" {
+			continue
+		}
+
+		// Delete Deployment
+		depName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		if err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, depName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("deployment %s: %v", depName, err))
+		}
+
+		// Delete PVC if enabled
+		if m.isPVCEnabled() {
+			pvcName := fmt.Sprintf("agentapi-session-%s-pvc", sessionID)
+			if err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, pvcName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+				purgeErrs = append(purgeErrs, fmt.Sprintf("pvc %s: %v", pvcName, err))
+			}
+		}
+	}
+
+	if len(purgeErrs) > 0 {
+		return fmt.Errorf("purge errors: %s", strings.Join(purgeErrs, "; "))
+	}
+	log.Printf("[STOCK_INVENTORY] Purged %d stock session(s)", len(svcs.Items))
+	return nil
+}
+
 // findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
-// first available one (not being deleted and having a session-id label).
+// oldest available one (by CreationTimestamp, ascending). Oldest sessions have been
+// warmed up the longest and are the most ready to serve.
 // Returns (nil, nil) when no stock is available.
 func (m *KubernetesSessionManager) findStockSession(ctx context.Context) (*corev1.Service, error) {
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
@@ -351,6 +403,12 @@ func (m *KubernetesSessionManager) findStockSession(ctx context.Context) (*corev
 	if err != nil {
 		return nil, fmt.Errorf("failed to list stock services: %w", err)
 	}
+
+	// Sort by creation time ascending so the oldest (longest-warmed) session is preferred.
+	sort.Slice(svcs.Items, func(i, j int) bool {
+		return svcs.Items[i].CreationTimestamp.Before(&svcs.Items[j].CreationTimestamp)
+	})
+
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
 		if svc.DeletionTimestamp != nil {
@@ -3226,6 +3284,39 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi", "server"},
 			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+		}
+	}
+
+	// Slack integration: embed SlackParams so the provisioner can launch
+	// claude-posts as a subprocess. This enables stock sessions (which have no
+	// slack-integration sidecar) to forward agent output to Slack.
+	if req.SlackParams != nil && req.SlackParams.Channel != "" && m.k8sConfig.SlackBotTokenSecretName != "" {
+		botTokenSecretKey := m.k8sConfig.SlackBotTokenSecretKey
+		if botTokenSecretKey == "" {
+			botTokenSecretKey = defaultSlackBotTokenSecretKey
+		}
+		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
+			ctx,
+			m.k8sConfig.SlackBotTokenSecretName,
+			metav1.GetOptions{},
+		)
+		if err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to read Slack bot token secret %s for session %s: %v",
+				m.k8sConfig.SlackBotTokenSecretName, session.id, err)
+		} else {
+			botToken := string(secret.Data[botTokenSecretKey])
+			if botToken != "" {
+				settings.SlackParams = &sessionsettings.SlackParams{
+					Channel:  req.SlackParams.Channel,
+					ThreadTS: req.SlackParams.ThreadTS,
+					BotToken: botToken,
+				}
+				log.Printf("[K8S_SESSION] SlackParams embedded in session settings for session %s (channel: %s)",
+					session.id, req.SlackParams.Channel)
+			} else {
+				log.Printf("[K8S_SESSION] Warning: Slack bot token secret %s key %s is empty for session %s",
+					m.k8sConfig.SlackBotTokenSecretName, botTokenSecretKey, session.id)
+			}
 		}
 	}
 

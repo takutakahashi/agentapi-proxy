@@ -133,6 +133,11 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// ── Step 9: mark ready and supervise ─────────────────────────────────────
 	s.setStatus(StatusReady, "")
 
+	// ── Step 10: launch claude-posts subprocess if SlackParams provided ───────
+	if settings.SlackParams != nil && settings.SlackParams.Channel != "" {
+		go s.runClaudePosts(ctx, settings.SlackParams)
+	}
+
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
 		if err := cmd.Wait(); err != nil {
@@ -141,6 +146,49 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+// runClaudePosts starts the claude-posts binary as a subprocess, forwarding
+// agent output (history.jsonl) to Slack. It waits for the history file to
+// appear before launching, mirroring the sidecar's shell loop.
+// The subprocess is tied to ctx: when ctx is cancelled the goroutine exits.
+func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.SlackParams) {
+	const historyFile = "/opt/claude-agentapi/history.jsonl"
+	const claudePostsBin = "/usr/local/bin/claude-posts"
+
+	log.Printf("[CLAUDE_POSTS] Waiting for history file %s", historyFile)
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[CLAUDE_POSTS] Context cancelled while waiting for history file")
+			return
+		case <-time.After(time.Second):
+		}
+		if _, err := os.Stat(historyFile); err == nil {
+			break
+		}
+	}
+	log.Printf("[CLAUDE_POSTS] History file found, starting claude-posts")
+
+	cmd := exec.CommandContext(ctx, claudePostsBin, "--file", historyFile)
+	cmd.Env = append(os.Environ(),
+		"SLACK_BOT_TOKEN="+params.BotToken,
+		"SLACK_CHANNEL_ID="+params.Channel,
+		"SLACK_THREAD_TS="+params.ThreadTS,
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		// ctx cancellation causes an expected error; don't log it as fatal.
+		if ctx.Err() != nil {
+			log.Printf("[CLAUDE_POSTS] Exited due to context cancellation")
+		} else {
+			log.Printf("[CLAUDE_POSTS] Exited with error: %v", err)
+		}
+	} else {
+		log.Printf("[CLAUDE_POSTS] Exited normally")
+	}
 }
 
 // buildAgentCommand returns the executable and arguments for the agent
