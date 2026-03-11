@@ -69,6 +69,18 @@ COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 # Copy github-mcp-server binary from official image
 COPY --from=ghcr.io/github/github-mcp-server:v0.26.3 /server/github-mcp-server /usr/local/bin/
 
+# Download claude-posts binary for Slack integration subprocess
+ARG CLAUDE_POSTS_VERSION=v0.4.0
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) CLAUDE_POSTS_ARCH="linux-amd64" ;; \
+      arm64) CLAUDE_POSTS_ARCH="linux-arm64" ;; \
+      *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/takutakahashi/claude-posts/releases/download/${CLAUDE_POSTS_VERSION}/claude-posts-${CLAUDE_POSTS_ARCH}" \
+      -o /usr/local/bin/claude-posts && \
+    chmod +x /usr/local/bin/claude-posts
+
 # Switch to non-root user
 USER agentapi
 

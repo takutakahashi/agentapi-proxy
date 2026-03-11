@@ -18,6 +18,16 @@ type SessionSettings struct {
 	WebhookPayload string            `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
 	Startup        StartupConfig     `yaml:"startup,omitempty"         json:"startup,omitempty"`
 	Github         *GithubConfig     `yaml:"github,omitempty"          json:"github,omitempty"`
+	SlackParams    *SlackParams      `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
+}
+
+// SlackParams holds Slack integration parameters for the provisioner subprocess.
+// When set, the provisioner will launch claude-posts as a subprocess to forward
+// agent output to the specified Slack channel/thread.
+type SlackParams struct {
+	Channel  string `yaml:"channel"            json:"channel"`
+	ThreadTS string `yaml:"thread_ts,omitempty" json:"thread_ts,omitempty"`
+	BotToken string `yaml:"bot_token"          json:"bot_token"`
 }
 
 // SessionMeta contains session identification metadata.

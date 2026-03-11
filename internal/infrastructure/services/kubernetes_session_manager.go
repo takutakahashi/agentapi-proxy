@@ -3229,6 +3229,39 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
+	// Slack integration: embed SlackParams so the provisioner can launch
+	// claude-posts as a subprocess. This enables stock sessions (which have no
+	// slack-integration sidecar) to forward agent output to Slack.
+	if req.SlackParams != nil && req.SlackParams.Channel != "" && m.k8sConfig.SlackBotTokenSecretName != "" {
+		botTokenSecretKey := m.k8sConfig.SlackBotTokenSecretKey
+		if botTokenSecretKey == "" {
+			botTokenSecretKey = defaultSlackBotTokenSecretKey
+		}
+		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
+			ctx,
+			m.k8sConfig.SlackBotTokenSecretName,
+			metav1.GetOptions{},
+		)
+		if err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to read Slack bot token secret %s for session %s: %v",
+				m.k8sConfig.SlackBotTokenSecretName, session.id, err)
+		} else {
+			botToken := string(secret.Data[botTokenSecretKey])
+			if botToken != "" {
+				settings.SlackParams = &sessionsettings.SlackParams{
+					Channel:  req.SlackParams.Channel,
+					ThreadTS: req.SlackParams.ThreadTS,
+					BotToken: botToken,
+				}
+				log.Printf("[K8S_SESSION] SlackParams embedded in session settings for session %s (channel: %s)",
+					session.id, req.SlackParams.Channel)
+			} else {
+				log.Printf("[K8S_SESSION] Warning: Slack bot token secret %s key %s is empty for session %s",
+					m.k8sConfig.SlackBotTokenSecretName, botTokenSecretKey, session.id)
+			}
+		}
+	}
+
 	return settings
 }
 
