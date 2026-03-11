@@ -729,6 +729,13 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 	for i := range services.Items {
 		svc := &services.Items[i]
 
+		// Skip Services that are being deleted to avoid "ghost sessions"
+		// that appear in list results but are already deleted
+		// (GetSession also has this check for consistency)
+		if svc.DeletionTimestamp != nil {
+			continue
+		}
+
 		// Extract session info from Service labels
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
 		if sessionID == "" {
@@ -804,6 +811,11 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 // getOrRestoreSessionWithDeployment gets a session from memory or restores it from Service
 // using a pre-fetched deployment to avoid additional API calls
 func (m *KubernetesSessionManager) getOrRestoreSessionWithDeployment(svc *corev1.Service, deployment *appsv1.Deployment) *KubernetesSession {
+	// Don't restore if Service is being deleted (same guard as GetSession)
+	if svc.DeletionTimestamp != nil {
+		return nil
+	}
+
 	sessionID := svc.Labels["agentapi.proxy/session-id"]
 
 	// Check if session exists in memory
