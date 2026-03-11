@@ -344,9 +344,13 @@ func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context) (int,
 // PurgeStockSessions deletes all existing pre-warmed stock sessions (Service,
 // Deployment, PVC). Called by the stock inventory worker on startup to ensure
 // that stale pods built from an old image are replaced with fresh ones.
+// This also purges sessions stuck in the "claiming" state (stock=claiming) that
+// were abandoned mid-adoption due to a crash or restart.
 func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error {
+	// Use a set-based selector to match both stock=true (unclaimed) and
+	// stock=claiming (abandoned mid-adoption) services.
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+		LabelSelector: "agentapi.proxy/stock in (true, claiming),app.kubernetes.io/managed-by=agentapi-proxy",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list stock services for purge: %w", err)
@@ -422,16 +426,23 @@ func (m *KubernetesSessionManager) findStockSession(ctx context.Context) (*corev
 	return nil, nil
 }
 
-// claimStockService atomically claims a stock Service by removing the
-// agentapi.proxy/stock label via an Update (which uses Kubernetes' resourceVersion-based
-// optimistic locking). If another replica claims the same stock concurrently, the Update
-// returns a Conflict error and the caller should fall back to creating a new session.
+// claimStockService atomically claims a stock Service by transitioning the
+// agentapi.proxy/stock label from "true" → "claiming" via an Update (which uses
+// Kubernetes' resourceVersion-based optimistic locking).
+// Using "claiming" instead of deleting the label ensures that ListSessions
+// (which excludes any Service with the agentapi.proxy/stock key) never restores
+// this Service with an empty user-id during the adoption window, preventing 403
+// errors and ghost-session appearances on other proxy replicas.
+// If another replica claims the same stock concurrently, the Update returns a
+// Conflict error and the caller should fall back to creating a new session.
 func (m *KubernetesSessionManager) claimStockService(ctx context.Context, svc *corev1.Service) (*corev1.Service, error) {
 	if svc.Labels["agentapi.proxy/stock"] != "true" {
 		return nil, fmt.Errorf("service %s is not a stock service", svc.Name)
 	}
-	// Remove the stock label so no other proxy replica picks it up.
-	delete(svc.Labels, "agentapi.proxy/stock")
+	// Transition to "claiming" so findStockSession (which filters stock=true) no
+	// longer picks it up, while ListSessions (which requires !agentapi.proxy/stock)
+	// also skips it until adoptStockSession removes the label entirely.
+	svc.Labels["agentapi.proxy/stock"] = "claiming"
 	// Update uses the ResourceVersion already set on svc for optimistic locking.
 	updated, err := m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
 	if err != nil {
@@ -662,7 +673,12 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 	session, exists := m.sessions[id]
 	m.mutex.RUnlock()
 
-	if exists {
+	// Try to restore from Kubernetes Service to check for stale user-id even when
+	// the session is in memory.  A session cached while it was a stock pod will have
+	// an empty user-id; once the Service is updated with the real owner after
+	// adoption, we repair the in-memory entry here so authorization passes without
+	// requiring a proxy restart.
+	if exists && session.UserID() != "" {
 		return session
 	}
 
@@ -674,12 +690,30 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 		if !errors.IsNotFound(err) {
 			log.Printf("[K8S_SESSION] Failed to get service %s: %v", serviceName, err)
 		}
+		// If we can't reach K8s but have the session in memory, still return it
+		if exists {
+			return session
+		}
 		return nil
 	}
 
 	// Don't restore if Service is being deleted
 	if svc.DeletionTimestamp != nil {
+		if exists {
+			return session
+		}
 		return nil
+	}
+
+	// If session is already in memory but had a stale empty user-id, repair it
+	// from the Service labels instead of doing a full re-restore (which would
+	// start duplicate goroutines).
+	if exists && session.UserID() == "" {
+		if svcUserID := svc.Labels["agentapi.proxy/user-id"]; svcUserID != "" {
+			log.Printf("[K8S_SESSION] GetSession: repairing stale user-id for session %s (was empty, now %s)", id, svcUserID)
+			session.SetUserID(svcUserID)
+		}
+		return session
 	}
 
 	// Restore session from Service
@@ -824,6 +858,17 @@ func (m *KubernetesSessionManager) getOrRestoreSessionWithDeployment(svc *corev1
 	m.mutex.RUnlock()
 
 	if exists {
+		// If the in-memory session was cached when this Service was still a stock
+		// session (user-id was empty at restore time), and the Service now has a
+		// real owner, repair the user-id in-place so authorization checks pass.
+		// This avoids the need for a proxy restart to recover from the race where
+		// another replica restored the session before stock adoption completed.
+		if session.UserID() == "" {
+			if svcUserID := svc.Labels["agentapi.proxy/user-id"]; svcUserID != "" {
+				log.Printf("[K8S_SESSION] Repairing stale user-id for session %s (was empty, now %s)", sessionID, svcUserID)
+				session.SetUserID(svcUserID)
+			}
+		}
 		return session
 	}
 
@@ -2165,8 +2210,13 @@ func (m *KubernetesSessionManager) cleanupSession(id string) {
 // buildLabelSelector builds a Kubernetes label selector string from entities.SessionFilter
 // This allows filtering at the API level for better performance
 func (m *KubernetesSessionManager) buildLabelSelector(filter entities.SessionFilter) string {
-	// Base selector for agentapi sessions
-	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"
+	// Base selector for agentapi sessions.
+	// "!agentapi.proxy/stock" excludes Services that are still in stock state
+	// (stock=true: unclaimed, stock=claiming: being adopted).  This prevents
+	// other proxy replicas from restoring a stock/claiming Service with an empty
+	// user-id during the adoption window, which would cause 403 errors and
+	// sessions appearing/disappearing across replicas.
+	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,!agentapi.proxy/stock"
 
 	// Add UserID filter
 	if filter.UserID != "" {

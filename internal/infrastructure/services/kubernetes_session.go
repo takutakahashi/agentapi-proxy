@@ -73,7 +73,24 @@ func (s *KubernetesSession) Addr() string {
 
 // UserID returns the user ID that owns this session
 func (s *KubernetesSession) UserID() string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 	return s.request.UserID
+}
+
+// SetUserID updates the user ID of the session.
+// This is used to repair sessions that were restored from a stock Kubernetes
+// Service (which has no user-id label) before the stock session was adopted.
+// Once the Service labels are updated with the real owner, any replica that
+// cached the session with an empty user-id can call SetUserID to fix the
+// stale in-memory state without recreating the session.
+func (s *KubernetesSession) SetUserID(userID string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.request == nil {
+		s.request = &entities.RunServerRequest{}
+	}
+	s.request.UserID = userID
 }
 
 // Scope returns the resource scope ("user" or "team")
