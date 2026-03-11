@@ -393,7 +393,8 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 }
 
 // findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
-// first available one (not being deleted and having a session-id label).
+// oldest available one (by CreationTimestamp, ascending). Oldest sessions have been
+// warmed up the longest and are the most ready to serve.
 // Returns (nil, nil) when no stock is available.
 func (m *KubernetesSessionManager) findStockSession(ctx context.Context) (*corev1.Service, error) {
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
@@ -402,6 +403,12 @@ func (m *KubernetesSessionManager) findStockSession(ctx context.Context) (*corev
 	if err != nil {
 		return nil, fmt.Errorf("failed to list stock services: %w", err)
 	}
+
+	// Sort by creation time ascending so the oldest (longest-warmed) session is preferred.
+	sort.Slice(svcs.Items, func(i, j int) bool {
+		return svcs.Items[i].CreationTimestamp.Before(&svcs.Items[j].CreationTimestamp)
+	})
+
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
 		if svc.DeletionTimestamp != nil {
