@@ -44,7 +44,13 @@ type SlackSocketManager struct {
 	leaderElectionConfig schedule.LeaderElectionConfig
 
 	mu      sync.Mutex
-	running map[string]context.CancelFunc // botKey → cancel
+	running map[string]runningEntry // botKey → entry
+}
+
+// runningEntry holds the cancel function and updatedAt snapshot for a running worker
+type runningEntry struct {
+	cancel    context.CancelFunc
+	updatedAt time.Time // snapshot of bot.UpdatedAt() when worker started
 }
 
 // SlackSocketManagerConfig holds configuration for SlackSocketManager
@@ -88,7 +94,7 @@ func NewSlackSocketManager(
 		defaultBotTokenSecretKey:  cfg.DefaultBotTokenSecretKey,
 		reconcileInterval:         cfg.ReconcileInterval,
 		leaderElectionConfig:      cfg.LeaderElectionConfig,
-		running:                   make(map[string]context.CancelFunc),
+		running:                   make(map[string]runningEntry),
 	}
 }
 
@@ -141,13 +147,37 @@ func (m *SlackSocketManager) reconcile(ctx context.Context) {
 		}
 	}
 
+	// Restart workers whose updatedAt has changed (token updated)
+	for _, bot := range bots {
+		if bot.BotTokenSecretName() == "" {
+			continue
+		}
+		key := bot.ID()
+		m.mu.Lock()
+		entry, running := m.running[key]
+		m.mu.Unlock()
+		if running && !entry.updatedAt.Equal(bot.UpdatedAt()) {
+			log.Printf("[SOCKET_MANAGER] Bot %s updated (updatedAt changed), restarting worker", key)
+			m.stopWorker(key)
+			// required に入っているので次のループで startLeaderElection される
+		}
+	}
+
 	// Start new workers for new keys
 	for key := range required {
 		m.mu.Lock()
 		_, alreadyRunning := m.running[key]
 		m.mu.Unlock()
 		if !alreadyRunning {
-			m.startLeaderElection(ctx, key, bots)
+			// Find updatedAt for this key (zero value for default bot)
+			var updatedAt time.Time
+			for _, bot := range bots {
+				if bot.ID() == key {
+					updatedAt = bot.UpdatedAt()
+					break
+				}
+			}
+			m.startLeaderElection(ctx, key, updatedAt)
 		}
 	}
 
@@ -168,8 +198,8 @@ func (m *SlackSocketManager) reconcile(ctx context.Context) {
 
 // startLeaderElection starts a leader election for the given bot key.
 // The leader runs a SlackSocketWorker goroutine.
-func (m *SlackSocketManager) startLeaderElection(ctx context.Context, botKey string, bots interface { /* not used */
-}) {
+// updatedAt should be bot.UpdatedAt() for custom bots, or zero value for the default bot.
+func (m *SlackSocketManager) startLeaderElection(ctx context.Context, botKey string, updatedAt time.Time) {
 	leaseName := slackSocketLeasePrefix + sanitizeLeaseName(botKey)
 	electionConfig := m.leaderElectionConfig
 	electionConfig.LeaseName = leaseName
@@ -177,7 +207,7 @@ func (m *SlackSocketManager) startLeaderElection(ctx context.Context, botKey str
 
 	childCtx, cancel := context.WithCancel(ctx)
 	m.mu.Lock()
-	m.running[botKey] = cancel
+	m.running[botKey] = runningEntry{cancel: cancel, updatedAt: updatedAt}
 	m.mu.Unlock()
 
 	log.Printf("[SOCKET_MANAGER] Starting leader election for botKey=%s (lease=%s)", botKey, leaseName)
@@ -250,7 +280,7 @@ func (m *SlackSocketManager) newWorker(botKey string) *SlackSocketWorker {
 // stopWorker cancels a running leader election / worker for the given bot key
 func (m *SlackSocketManager) stopWorker(key string) {
 	m.mu.Lock()
-	cancel, ok := m.running[key]
+	entry, ok := m.running[key]
 	if ok {
 		delete(m.running, key)
 	}
@@ -258,7 +288,7 @@ func (m *SlackSocketManager) stopWorker(key string) {
 
 	if ok {
 		log.Printf("[SOCKET_MANAGER] Stopping worker for botKey=%s", key)
-		cancel()
+		entry.cancel()
 	}
 }
 
