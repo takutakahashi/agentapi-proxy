@@ -38,6 +38,10 @@ type SlackBot struct {
 	allowBotMessages       *bool // nil means false (default: ignore bot messages)
 	createdAt              time.Time
 	updatedAt              time.Time
+
+	// Transient write-only fields - stored directly in K8s Secret, never serialized
+	botToken string // xoxb-... token value (write-only)
+	appToken string // xapp-... token value (write-only)
 }
 
 // NewSlackBot creates a new SlackBot entity with defaults
@@ -284,6 +288,24 @@ func (s *SlackBot) IsChannelNameAllowed(channelName string) bool {
 		}
 	}
 	return false
+}
+
+// BotToken returns the transient bot token value (write-only, never returned in API)
+func (s *SlackBot) BotToken() string { return s.botToken }
+
+// SetBotToken sets the transient bot token value
+func (s *SlackBot) SetBotToken(token string) {
+	s.botToken = token
+	s.updatedAt = time.Now()
+}
+
+// AppToken returns the transient app token value (write-only, never returned in API)
+func (s *SlackBot) AppToken() string { return s.appToken }
+
+// SetAppToken sets the transient app token value
+func (s *SlackBot) SetAppToken(token string) {
+	s.appToken = token
+	s.updatedAt = time.Now()
 }
 
 // Validate validates the SlackBot configuration

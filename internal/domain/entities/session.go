@@ -20,6 +20,12 @@ type SlackParams struct {
 	Channel string `json:"channel,omitempty"`
 	// ThreadTS is the thread timestamp for threaded messages (e.g., "1234567890.123456")
 	ThreadTS string `json:"thread_ts,omitempty"`
+	// BotTokenSecretName is the K8s Secret name holding the custom bot token (xoxb-...).
+	// When set, overrides the server-default SlackBotTokenSecretName for this session.
+	BotTokenSecretName string `json:"bot_token_secret_name,omitempty"`
+	// BotTokenSecretKey is the key within BotTokenSecretName holding the bot token.
+	// Defaults to "bot-token" when empty.
+	BotTokenSecretKey string `json:"bot_token_secret_key,omitempty"`
 }
 
 // SessionParams represents session parameters for agentapi server

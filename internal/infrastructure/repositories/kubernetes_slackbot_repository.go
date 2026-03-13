@@ -273,13 +273,31 @@ func (r *KubernetesSlackBotRepository) loadAllSlackBots(ctx context.Context) ([]
 
 // saveSlackBot saves a slackbot to its own Kubernetes Secret
 func (r *KubernetesSlackBotRepository) saveSlackBot(ctx context.Context, slackBot *entities.SlackBot) error {
+	secretName := slackBotSecretName(slackBot.ID())
+
+	// If tokens are provided, auto-set botTokenSecretName to this bot's own secret
+	if slackBot.BotToken() != "" || slackBot.AppToken() != "" {
+		slackBot.SetBotTokenSecretName(secretName)
+	}
+
 	sbj := r.entityToJSON(slackBot)
 	data, err := json.Marshal(sbj)
 	if err != nil {
 		return fmt.Errorf("failed to marshal slackbot: %w", err)
 	}
 
-	secretName := slackBotSecretName(slackBot.ID())
+	// Build secret data: always include slackbot.json
+	// Add token keys only when provided (non-empty)
+	secretData := map[string][]byte{
+		SecretKeySlackBot: data,
+	}
+	if slackBot.BotToken() != "" {
+		secretData["bot-token"] = []byte(slackBot.BotToken())
+	}
+	if slackBot.AppToken() != "" {
+		secretData["app-token"] = []byte(slackBot.AppToken())
+	}
+
 	labels := map[string]string{
 		LabelSlackBot:       "true",
 		LabelSlackBotID:     slackBot.ID(),
@@ -302,9 +320,7 @@ func (r *KubernetesSlackBotRepository) saveSlackBot(ctx context.Context, slackBo
 			Annotations: annotations,
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			SecretKeySlackBot: data,
-		},
+		Data: secretData,
 	}
 
 	// Try to create first
@@ -316,8 +332,16 @@ func (r *KubernetesSlackBotRepository) saveSlackBot(ctx context.Context, slackBo
 				return fmt.Errorf("failed to get existing secret: %w", getErr)
 			}
 
+			// Update JSON
 			existing.Data[SecretKeySlackBot] = data
-			// Ensure labels and annotations are set
+			// Only overwrite token keys if new values are provided
+			// (preserve existing tokens when not being updated)
+			if slackBot.BotToken() != "" {
+				existing.Data["bot-token"] = []byte(slackBot.BotToken())
+			}
+			if slackBot.AppToken() != "" {
+				existing.Data["app-token"] = []byte(slackBot.AppToken())
+			}
 			existing.Labels = labels
 			existing.Annotations = annotations
 

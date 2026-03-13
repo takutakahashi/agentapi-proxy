@@ -4629,6 +4629,16 @@
           "type": "boolean",
           "description": "Whether to process messages posted by other bots. Defaults to false to prevent recursive session creation.",
           "default": false
+        },
+        "bot_token": {
+          "type": "string",
+          "description": "Slack bot token (xoxb-...). Write-only: stored securely in the bot's Kubernetes Secret, never returned in API responses.",
+          "example": "xoxb-..."
+        },
+        "app_token": {
+          "type": "string",
+          "description": "Slack app-level token for Socket Mode (xapp-...). Write-only: stored securely in the bot's Kubernetes Secret, never returned in API responses.",
+          "example": "xapp-..."
         }
       }
     },
@@ -4680,6 +4690,16 @@
           "type": "boolean",
           "description": "Whether to process messages posted by other bots. Defaults to false to prevent recursive session creation.",
           "default": false
+        },
+        "bot_token": {
+          "type": "string",
+          "description": "Slack bot token (xoxb-...). Write-only: stored securely in the bot's Kubernetes Secret, never returned in API responses.",
+          "example": "xoxb-..."
+        },
+        "app_token": {
+          "type": "string",
+          "description": "Slack app-level token for Socket Mode (xapp-...). Write-only: stored securely in the bot's Kubernetes Secret, never returned in API responses.",
+          "example": "xapp-..."
         }
       }
     },

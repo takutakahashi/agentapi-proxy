@@ -1557,8 +1557,15 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 		return nil
 	}
 
+	// Determine which bot token secret to use:
+	// prefer the per-bot secret from SlackParams, fall back to the server default.
+	botTokenSecretName := m.k8sConfig.SlackBotTokenSecretName
+	if req.SlackParams.BotTokenSecretName != "" {
+		botTokenSecretName = req.SlackParams.BotTokenSecretName
+	}
+
 	// Require a Slack bot token Secret to be configured
-	if m.k8sConfig.SlackBotTokenSecretName == "" {
+	if botTokenSecretName == "" {
 		log.Printf("[K8S_SESSION] Slack bot token secret not configured; skipping slack-integration sidecar for session %s", session.id)
 		return nil
 	}
@@ -1570,7 +1577,10 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 	}
 
 	// Determine the Secret key for the bot token
-	botTokenSecretKey := m.k8sConfig.SlackBotTokenSecretKey
+	botTokenSecretKey := req.SlackParams.BotTokenSecretKey
+	if botTokenSecretKey == "" {
+		botTokenSecretKey = m.k8sConfig.SlackBotTokenSecretKey
+	}
 	if botTokenSecretKey == "" {
 		botTokenSecretKey = defaultSlackBotTokenSecretKey
 	}
@@ -1582,7 +1592,7 @@ func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession)
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.SlackBotTokenSecretName,
+						Name: botTokenSecretName,
 					},
 					Key: botTokenSecretKey,
 				},
@@ -3352,32 +3362,42 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Slack integration: embed SlackParams so the provisioner can launch
 	// claude-posts as a subprocess. This enables stock sessions (which have no
 	// slack-integration sidecar) to forward agent output to Slack.
-	if req.SlackParams != nil && req.SlackParams.Channel != "" && m.k8sConfig.SlackBotTokenSecretName != "" {
-		botTokenSecretKey := m.k8sConfig.SlackBotTokenSecretKey
-		if botTokenSecretKey == "" {
-			botTokenSecretKey = defaultSlackBotTokenSecretKey
+	// Use per-bot token secret if provided, fall back to server default.
+	if req.SlackParams != nil && req.SlackParams.Channel != "" {
+		slackSecretName := req.SlackParams.BotTokenSecretName
+		if slackSecretName == "" {
+			slackSecretName = m.k8sConfig.SlackBotTokenSecretName
 		}
-		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
-			ctx,
-			m.k8sConfig.SlackBotTokenSecretName,
-			metav1.GetOptions{},
-		)
-		if err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to read Slack bot token secret %s for session %s: %v",
-				m.k8sConfig.SlackBotTokenSecretName, session.id, err)
-		} else {
-			botToken := string(secret.Data[botTokenSecretKey])
-			if botToken != "" {
-				settings.SlackParams = &sessionsettings.SlackParams{
-					Channel:  req.SlackParams.Channel,
-					ThreadTS: req.SlackParams.ThreadTS,
-					BotToken: botToken,
-				}
-				log.Printf("[K8S_SESSION] SlackParams embedded in session settings for session %s (channel: %s)",
-					session.id, req.SlackParams.Channel)
+		if slackSecretName != "" {
+			botTokenSecretKey := req.SlackParams.BotTokenSecretKey
+			if botTokenSecretKey == "" {
+				botTokenSecretKey = m.k8sConfig.SlackBotTokenSecretKey
+			}
+			if botTokenSecretKey == "" {
+				botTokenSecretKey = defaultSlackBotTokenSecretKey
+			}
+			secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
+				ctx,
+				slackSecretName,
+				metav1.GetOptions{},
+			)
+			if err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to read Slack bot token secret %s for session %s: %v",
+					slackSecretName, session.id, err)
 			} else {
-				log.Printf("[K8S_SESSION] Warning: Slack bot token secret %s key %s is empty for session %s",
-					m.k8sConfig.SlackBotTokenSecretName, botTokenSecretKey, session.id)
+				botToken := string(secret.Data[botTokenSecretKey])
+				if botToken != "" {
+					settings.SlackParams = &sessionsettings.SlackParams{
+						Channel:  req.SlackParams.Channel,
+						ThreadTS: req.SlackParams.ThreadTS,
+						BotToken: botToken,
+					}
+					log.Printf("[K8S_SESSION] SlackParams embedded in session settings for session %s (channel: %s, secret: %s)",
+						session.id, req.SlackParams.Channel, slackSecretName)
+				} else {
+					log.Printf("[K8S_SESSION] Warning: Slack bot token secret %s key %s is empty for session %s",
+						slackSecretName, botTokenSecretKey, session.id)
+				}
 			}
 		}
 	}

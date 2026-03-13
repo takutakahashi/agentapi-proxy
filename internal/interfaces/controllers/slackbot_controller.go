@@ -45,6 +45,10 @@ type CreateSlackBotRequest struct {
 	// AllowBotMessages controls whether the bot processes messages posted by other bots.
 	// Defaults to false to prevent recursive session creation.
 	AllowBotMessages *bool `json:"allow_bot_messages,omitempty"`
+	// BotToken is the Slack bot token (xoxb-...). Write-only: stored in K8s Secret, never returned.
+	BotToken string `json:"bot_token,omitempty"`
+	// AppToken is the Slack app-level token (xapp-...). Write-only: stored in K8s Secret, never returned.
+	AppToken string `json:"app_token,omitempty"`
 }
 
 // UpdateSlackBotRequest is the request body for updating a SlackBot
@@ -67,6 +71,10 @@ type UpdateSlackBotRequest struct {
 	// AllowBotMessages controls whether the bot processes messages posted by other bots.
 	// Defaults to false to prevent recursive session creation.
 	AllowBotMessages *bool `json:"allow_bot_messages,omitempty"`
+	// BotToken is the Slack bot token (xoxb-...). Write-only: stored in K8s Secret, never returned.
+	BotToken string `json:"bot_token,omitempty"`
+	// AppToken is the Slack app-level token (xapp-...). Write-only: stored in K8s Secret, never returned.
+	AppToken string `json:"app_token,omitempty"`
 }
 
 // SlackBotSessionConfig is the session configuration for a SlackBot
@@ -175,6 +183,13 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 		bot.SetTeams(req.Teams)
 	} else if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {
 		bot.SetTeams(authzCtx.TeamScope.Teams)
+	}
+
+	if req.BotToken != "" {
+		bot.SetBotToken(req.BotToken)
+	}
+	if req.AppToken != "" {
+		bot.SetAppToken(req.AppToken)
 	}
 
 	if err := bot.Validate(); err != nil {
@@ -310,6 +325,13 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 		bot.SetTeams(req.Teams)
 	} else if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {
 		bot.SetTeams(authzCtx.TeamScope.Teams)
+	}
+
+	if req.BotToken != "" {
+		bot.SetBotToken(req.BotToken)
+	}
+	if req.AppToken != "" {
+		bot.SetAppToken(req.AppToken)
 	}
 
 	if err := c.repo.Update(ctx.Request().Context(), bot); err != nil {
