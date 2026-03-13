@@ -400,10 +400,17 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			AgentType:      agentType,
 			MemoryKey:      memoryKey,
 			RepoInfo:       repoInfo,
-			SlackParams: &entities.SlackParams{
-				Channel:  channel,
-				ThreadTS: threadKey,
-			},
+			SlackParams: func() *entities.SlackParams {
+				sp := &entities.SlackParams{
+					Channel:  channel,
+					ThreadTS: threadKey,
+				}
+				if bot != nil && bot.BotTokenSecretName() != "" {
+					sp.BotTokenSecretName = bot.BotTokenSecretName()
+					sp.BotTokenSecretKey = bot.BotTokenSecretKey()
+				}
+				return sp
+			}(),
 			// MaxSessions=0: limit was already checked synchronously above so we
 			// skip the redundant check inside LaunchUseCase.
 		})
