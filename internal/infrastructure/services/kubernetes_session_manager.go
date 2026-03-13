@@ -1310,12 +1310,10 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Note: Initial message is now sent by agent-provisioner internally after agentapi
 	// becomes ready. The initial-message-sender sidecar has been removed.
 
-	// Add Slack integration sidecar
-	// This sidecar runs claude-posts to watch the JSONL history file and post messages to Slack
-	if sidecar := m.buildSlackSidecar(session); sidecar != nil {
-		containers = append(containers, *sidecar)
-		log.Printf("[K8S_SESSION] Added slack-integration sidecar for session %s", session.id)
-	}
+	// Note: The slack-integration sidecar (claude-posts) has been removed.
+	// claude-posts is now launched as a subprocess inside the agentapi container
+	// by agent-provisioner (pkg/provisioner/provision.go) after agentapi starts.
+	// This avoids running claude-posts twice when stock sessions are used.
 
 	// Add OpenTelemetry Collector sidecar
 	if m.k8sConfig.OtelCollectorEnabled {
@@ -1538,106 +1536,13 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *Kubernet
 // removed. Initial message sending is now handled inside agent-provisioner
 // (pkg/provisioner/provision.go) after agentapi starts.
 
-// defaultSlackIntegrationImage is the default container image for the claude-posts sidecar
-const defaultSlackIntegrationImage = "ghcr.io/takutakahashi/claude-posts:0.3.0"
+// NOTE: buildSlackSidecar (claude-posts sidecar) has been removed.
+// claude-posts is launched as a subprocess inside the agentapi container by
+// agent-provisioner (pkg/provisioner/provision.go). Running it as a sidecar
+// caused duplicate execution alongside the in-process launch.
 
 // defaultSlackBotTokenSecretKey is the default key within the Secret that holds the Slack bot token
 const defaultSlackBotTokenSecretKey = "bot-token"
-
-// buildSlackSidecar builds the sidecar container for Slack integration using claude-posts.
-// claude-posts watches the JSONL history file written by claude-agentapi and posts
-// assistant messages and tool executions to a Slack channel/thread.
-//
-// Required: req.SlackParams.Channel must be non-empty and SlackBotTokenSecretName must be configured.
-// Optional: req.SlackParams.ThreadTS - if empty, messages are posted as top-level channel messages.
-func (m *KubernetesSessionManager) buildSlackSidecar(session *KubernetesSession) *corev1.Container {
-	// Only create sidecar if Slack parameters are provided
-	req := session.Request()
-	if req.SlackParams == nil || req.SlackParams.Channel == "" {
-		return nil
-	}
-
-	// Determine which bot token secret to use:
-	// prefer the per-bot secret from SlackParams, fall back to the server default.
-	botTokenSecretName := m.k8sConfig.SlackBotTokenSecretName
-	if req.SlackParams.BotTokenSecretName != "" {
-		botTokenSecretName = req.SlackParams.BotTokenSecretName
-	}
-
-	// Require a Slack bot token Secret to be configured
-	if botTokenSecretName == "" {
-		log.Printf("[K8S_SESSION] Slack bot token secret not configured; skipping slack-integration sidecar for session %s", session.id)
-		return nil
-	}
-
-	// Determine claude-posts image
-	sidecarImage := m.k8sConfig.SlackIntegrationImage
-	if sidecarImage == "" {
-		sidecarImage = defaultSlackIntegrationImage
-	}
-
-	// Determine the Secret key for the bot token
-	botTokenSecretKey := req.SlackParams.BotTokenSecretKey
-	if botTokenSecretKey == "" {
-		botTokenSecretKey = m.k8sConfig.SlackBotTokenSecretKey
-	}
-	if botTokenSecretKey == "" {
-		botTokenSecretKey = defaultSlackBotTokenSecretKey
-	}
-
-	envVars := []corev1.EnvVar{
-		// SLACK_BOT_TOKEN is read from a cluster Secret
-		{
-			Name: "SLACK_BOT_TOKEN",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: botTokenSecretName,
-					},
-					Key: botTokenSecretKey,
-				},
-			},
-		},
-		// claude-posts expects SLACK_CHANNEL_ID (not SLACK_CHANNEL)
-		{Name: "SLACK_CHANNEL_ID", Value: req.SlackParams.Channel},
-		{Name: "SLACK_THREAD_TS", Value: req.SlackParams.ThreadTS},
-	}
-
-	return &corev1.Container{
-		Name:            "slack-integration",
-		Image:           sidecarImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		// Run claude-posts watching the JSONL history file produced by claude-agentapi.
-		// The file is created at /opt/claude-agentapi/history.jsonl when agent_type=claude-agentapi.
-		// We wait for the file to exist before starting to avoid missing early messages.
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{
-			`until [ -f /opt/claude-agentapi/history.jsonl ]; do sleep 1; done; ` +
-				`/root/claude-posts --file /opt/claude-agentapi/history.jsonl`,
-		},
-		Env: envVars,
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "claude-agentapi-history",
-				MountPath: "/opt/claude-agentapi",
-			},
-		},
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("64Mi"),
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(0),
-			RunAsGroup: int64Ptr(0),
-		},
-	}
-}
 
 // createWebhookPayloadSecret creates a Secret containing the webhook payload JSON
 func (m *KubernetesSessionManager) createWebhookPayloadSecret(

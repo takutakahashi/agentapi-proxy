@@ -430,14 +430,10 @@ kubernetesSession:
   #       }
   settingsBaseSecret: "agentapi-settings-base"
 
-  # Slack Integration (claude-posts sidecar)
-  # Watches the JSONL history file produced by claude-agentapi and posts messages to Slack.
+  # Slack Integration
+  # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar).
   # Requires agent_type=claude-agentapi to produce the history file.
   slackIntegration:
-    # Container image for the claude-posts Slack integration sidecar
-    # Defaults to ghcr.io/takutakahashi/claude-posts:0.3.0
-    image: ""
-
     # Kubernetes Secret containing the Slack credentials (bot token + signing secret).
     # The bot token and signing secret are a pair belonging to the same Slack App,
     # so both are stored in the same Secret.
@@ -447,7 +443,7 @@ kubernetesSession:
     #     --from-literal=bot-token=xoxb-... \
     #     --from-literal=signing-secret=xxxxxxxxxxxx
     botToken:
-      # Secret name (required to enable the sidecar)
+      # Secret name (required to enable Slack integration)
       secretName: ""
       # Key within the Secret that contains the bot token
       # Defaults to "bot-token"

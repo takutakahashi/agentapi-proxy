@@ -236,7 +236,8 @@ spec:
             - name: AGENTAPI_K8S_SESSION_CONFIG_FILE
               value: "/etc/k8s-session-config/k8s-session-config.yaml"
             {{- end }}
-            # Slack Integration (claude-posts sidecar) configuration
+            # Slack Integration configuration
+            # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar)
             {{- $slackIntegration := (.Values.kubernetesSession).slackIntegration }}
             {{- $slackBotToken := ($slackIntegration).botToken }}
             {{- if and $slackBotToken $slackBotToken.secretName }}
@@ -250,10 +251,6 @@ spec:
                   name: {{ $slackBotToken.secretName | quote }}
                   key: {{ (($slackIntegration).signingSecret).key | default "signing-secret" | quote }}
                   optional: true
-            {{- if ($slackIntegration).image }}
-            - name: AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE
-              value: {{ $slackIntegration.image | quote }}
-            {{- end }}
             {{- end }}
             # OpenTelemetry Collector configuration
             {{- if .Values.kubernetesSession.otelCollector.enabled }}
