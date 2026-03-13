@@ -287,12 +287,9 @@ type KubernetesSessionConfig struct {
 	// OtelCollectorMemoryLimit is the memory limit for otelcol sidecar
 	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
 
-	// Slack Integration configuration (claude-posts sidecar)
-	// SlackIntegrationImage is the container image for the claude-posts Slack integration sidecar
-	// Defaults to ghcr.io/takutakahashi/claude-posts:0.3.0
-	SlackIntegrationImage string `json:"slack_integration_image" mapstructure:"slack_integration_image"`
+	// Slack Integration configuration
 	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token
-	// The token is exposed as SLACK_BOT_TOKEN env var in the sidecar
+	// Used by agent-provisioner to pass the token to the claude-posts subprocess
 	SlackBotTokenSecretName string `json:"slack_bot_token_secret_name" mapstructure:"slack_bot_token_secret_name"`
 	// SlackBotTokenSecretKey is the key within the Secret that holds the Slack bot token
 	// Defaults to "bot-token"
