@@ -59,6 +59,16 @@ var (
 	summarizeDraftsKeys            []string
 )
 
+// send-notification subcommand flags
+var (
+	clientNotifyTitle     string
+	clientNotifyBody      string
+	clientNotifyURL       string
+	clientNotifyIcon      string
+	clientNotifySessionID string
+	clientNotifyUserID    string
+)
+
 // resolveClient creates a client using flags if provided, otherwise falling back
 // to environment variables (AGENTAPI_PROXY_SERVICE_HOST, AGENTAPI_PROXY_SERVICE_PORT_HTTP,
 // AGENTAPI_SESSION_ID, AGENTAPI_KEY).
@@ -279,6 +289,29 @@ Examples:
 	Run: runSummarizeDrafts,
 }
 
+var sendNotificationClientCmd = &cobra.Command{
+	Use:   "send-notification",
+	Short: "Send a push notification via API",
+	Long: `Send a push notification to subscribers via the agentapi-proxy API.
+
+Either --notify-session-id or --notify-user-id must be specified to identify the target.
+
+Examples:
+  # Send to all users subscribed to a session
+  agentapi-proxy client send-notification \
+    --title "作業が完了しました" \
+    --body "作業内容を確認してください" \
+    --notify-session-id "$AGENTAPI_SESSION_ID" \
+    --url "https://example.com/sessions/abc123"
+
+  # Send to a specific user
+  agentapi-proxy client send-notification \
+    --title "Notification" \
+    --body "Something happened" \
+    --notify-user-id "user123"`,
+	RunE: runClientSendNotification,
+}
+
 var taskCmd = &cobra.Command{
 	Use:   "task",
 	Short: "Manage tasks",
@@ -433,12 +466,21 @@ func init() {
 	summarizeDraftsCmd.Flags().StringVar(&summarizeDraftsTeamID, "team-id", "", "Team ID (required when scope is 'team')")
 	summarizeDraftsCmd.Flags().StringArrayVar(&summarizeDraftsKeys, "key", nil, "Memory key tag in key=value format (can be specified multiple times)")
 
+	// send-notification flags
+	sendNotificationClientCmd.Flags().StringVar(&clientNotifyTitle, "title", "", "Notification title (required)")
+	sendNotificationClientCmd.Flags().StringVar(&clientNotifyBody, "body", "", "Notification body (required)")
+	sendNotificationClientCmd.Flags().StringVar(&clientNotifyURL, "url", "", "URL to open when notification is clicked (optional)")
+	sendNotificationClientCmd.Flags().StringVar(&clientNotifyIcon, "icon", "", "Icon URL for the notification (optional)")
+	sendNotificationClientCmd.Flags().StringVar(&clientNotifySessionID, "notify-session-id", "", "Session ID whose subscribers will receive the notification")
+	sendNotificationClientCmd.Flags().StringVar(&clientNotifyUserID, "notify-user-id", "", "User ID to send the notification to")
+
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
 	ClientCmd.AddCommand(eventsCmd)
 	ClientCmd.AddCommand(deleteSessionCmd)
 	ClientCmd.AddCommand(summarizeDraftsCmd)
+	ClientCmd.AddCommand(sendNotificationClientCmd)
 	ClientCmd.AddCommand(taskCmd)
 	ClientCmd.AddCommand(memoryCmd)
 }
@@ -1082,4 +1124,43 @@ func runDeleteSession(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Session deleted successfully: %s\n", resp.Message)
 	fmt.Printf("Session ID: %s\n", resp.SessionID)
+}
+
+func runClientSendNotification(cmd *cobra.Command, args []string) error {
+	if clientNotifyTitle == "" {
+		return fmt.Errorf("--title is required")
+	}
+	if clientNotifyBody == "" {
+		return fmt.Errorf("--body is required")
+	}
+	if clientNotifySessionID == "" && clientNotifyUserID == "" {
+		return fmt.Errorf("either --notify-session-id or --notify-user-id is required")
+	}
+
+	c, err := resolveMemoryClient()
+	if err != nil {
+		return fmt.Errorf("failed to resolve client: %w", err)
+	}
+
+	req := &client.SendNotificationRequest{
+		Title:     clientNotifyTitle,
+		Body:      clientNotifyBody,
+		URL:       clientNotifyURL,
+		Icon:      clientNotifyIcon,
+		SessionID: clientNotifySessionID,
+		UserID:    clientNotifyUserID,
+	}
+
+	resp, err := c.SendNotification(context.Background(), req)
+	if err != nil {
+		return fmt.Errorf("failed to send notification: %w", err)
+	}
+
+	if resp.Success {
+		fmt.Println("Notification sent successfully")
+	} else {
+		fmt.Fprintf(os.Stderr, "Notification send failed: %s\n", resp.Message)
+		os.Exit(1)
+	}
+	return nil
 }

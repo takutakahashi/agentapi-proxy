@@ -338,6 +338,45 @@ func getSessionIDFromData(data map[string]interface{}) string {
 	return ""
 }
 
+// SendNotification sends a notification based on a SendNotificationRequest.
+// It routes to SendNotificationToSession or SendNotificationToUser depending on which field is set.
+func (s *Service) SendNotification(req SendNotificationRequest) (*SendNotificationResponse, error) {
+	if s.webpush == nil {
+		return nil, fmt.Errorf("web push service not configured")
+	}
+
+	if req.Title == "" {
+		return nil, fmt.Errorf("title is required")
+	}
+	if req.Body == "" {
+		return nil, fmt.Errorf("body is required")
+	}
+	if req.SessionID == "" && req.UserID == "" {
+		return nil, fmt.Errorf("either session_id or user_id is required")
+	}
+
+	data := make(map[string]interface{})
+	if req.URL != "" {
+		data["url"] = req.URL
+	}
+	if req.Icon != "" {
+		data["icon"] = req.Icon
+	}
+
+	var err error
+	if req.SessionID != "" {
+		err = s.SendNotificationToSession(req.SessionID, req.Title, req.Body, "manual", data)
+	} else {
+		err = s.SendNotificationToUser(req.UserID, req.Title, req.Body, "manual", data)
+	}
+
+	if err != nil {
+		return &SendNotificationResponse{Success: false, Message: err.Error()}, err
+	}
+
+	return &SendNotificationResponse{Success: true}, nil
+}
+
 // GetBaseDir returns the base directory for user data
 func GetBaseDir() string {
 	homeDir := os.Getenv("HOME")

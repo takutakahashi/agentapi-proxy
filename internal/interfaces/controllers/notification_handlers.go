@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -124,6 +125,36 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]bool{
 		"success": true,
 	})
+}
+
+// SendNotification handles POST /notifications/send
+func (h *NotificationHandlers) SendNotification(c echo.Context) error {
+	user := auth.GetUserFromContext(c)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
+
+	var req notification.SendNotificationRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Title == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Title is required")
+	}
+	if req.Body == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Body is required")
+	}
+	if req.SessionID == "" && req.UserID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Either session_id or user_id is required")
+	}
+
+	resp, err := h.service.SendNotification(req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to send notification: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 // GetHistory handles GET /notifications/history

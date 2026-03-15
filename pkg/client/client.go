@@ -1013,6 +1013,65 @@ func (c *Client) UpsertMemory(ctx context.Context, scope, teamID, title, content
 	return c.CreateMemory(ctx, createReq)
 }
 
+// SendNotificationRequest represents the request for sending a push notification via API
+type SendNotificationRequest struct {
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	URL       string `json:"url,omitempty"`
+	Icon      string `json:"icon,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+}
+
+// SendNotificationResponse represents the response for sending a push notification via API
+type SendNotificationResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+// SendNotification sends a push notification via the API.
+// Either SessionID or UserID must be specified.
+func (c *Client) SendNotification(ctx context.Context, req *SendNotificationRequest) (*SendNotificationResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/notifications/send", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var sendResp SendNotificationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&sendResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &sendResp, nil
+}
+
 // StreamEvents subscribes to Server-Sent Events (SSE) from an agentapi session
 func (c *Client) StreamEvents(ctx context.Context, sessionID string) (<-chan string, <-chan error) {
 	eventChan := make(chan string, 100)
