@@ -20,7 +20,7 @@ import (
 const (
 	provisionTempSettings = "/tmp/provision-settings.yaml"
 	sessionEnvFile        = "/home/agentapi/.session/env"
-	claudeMDPath          = "/home/agentapi/.claude/CLAUDE.md"
+	memoriesDir           = "/memories"
 	workdirRepoPath       = "/home/agentapi/workdir/repo"
 )
 
@@ -31,7 +31,7 @@ const (
 //  1. Write received settings to a temp YAML file
 //  2. Run sessionsettings.Setup() (write-pem, clone-repo, compile, sync-extra)
 //  3. Load the generated session env file
-//  4. Fetch memory from the proxy and inject into CLAUDE.md
+//  4. Fetch memory from the proxy and save to /memories/session-memory.md
 //  5. cd into the cloned repo if present
 //  6. Start agentapi (or claude-agentapi / codex-agentapi) as a subprocess
 //  7. Wait for agentapi to become ready
@@ -450,8 +450,9 @@ func countNonEmptyMessages(client *http.Client, agentapiURL string) int {
 	return count
 }
 
-// fetchAndInjectMemory fetches session memory from the proxy and appends it to
-// CLAUDE.md, replicating the bash memory injection in buildClaudeStartCommand.
+// fetchAndInjectMemory fetches session memory from the proxy and saves it to
+// the /memories directory as a markdown file, so that the agent can access it
+// via Claude Code's native memory feature.
 func (s *Server) fetchAndInjectMemory() {
 	memoryKeyFlags := os.Getenv("MEMORY_KEY_FLAGS")
 	if memoryKeyFlags == "" {
@@ -495,15 +496,18 @@ func (s *Server) fetchAndInjectMemory() {
 		return
 	}
 
-	f, err := os.OpenFile(claudeMDPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		log.Printf("[PROVISIONER] Warning: failed to open CLAUDE.md for memory injection: %v", err)
+	// Ensure the /memories directory exists.
+	if err := os.MkdirAll(memoriesDir, 0o755); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to create %s: %v", memoriesDir, err)
 		return
 	}
-	defer func() { _ = f.Close() }()
 
-	_, _ = fmt.Fprintf(f, "\n---\n\n%s\n", bytes.TrimSpace(out))
-	log.Printf("[PROVISIONER] Memory injected into CLAUDE.md")
+	memoryFilePath := memoriesDir + "/session-memory.md"
+	if err := os.WriteFile(memoryFilePath, append(bytes.TrimSpace(out), '\n'), 0o644); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write memory to %s: %v", memoryFilePath, err)
+		return
+	}
+	log.Printf("[PROVISIONER] Memory saved to %s", memoryFilePath)
 }
 
 // loadEnvFile reads a KEY=VALUE env file and returns the entries as a map.
