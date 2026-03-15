@@ -272,6 +272,8 @@ spec:
               value: {{ .Values.kubernetesSession.otelCollector.resources.requests.memory | quote }}
             - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT
               value: {{ .Values.kubernetesSession.otelCollector.resources.limits.memory | quote }}
+            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IN_PROCESS
+              value: {{ .Values.kubernetesSession.otelCollector.inProcess | default false | quote }}
             {{- end }}
             # Settings base secret (proxy-side merge of settings.json)
             - name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET

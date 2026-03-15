@@ -10,15 +10,34 @@ import (
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
-	Session        SessionMeta       `yaml:"session"                   json:"session"`
-	Env            map[string]string `yaml:"env,omitempty"             json:"env,omitempty"`
-	Claude         ClaudeConfig      `yaml:"claude,omitempty"          json:"claude,omitempty"`
-	Repository     *RepositoryConfig `yaml:"repository,omitempty"      json:"repository,omitempty"`
-	InitialMessage string            `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
-	WebhookPayload string            `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
-	Startup        StartupConfig     `yaml:"startup,omitempty"         json:"startup,omitempty"`
-	Github         *GithubConfig     `yaml:"github,omitempty"          json:"github,omitempty"`
-	SlackParams    *SlackParams      `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
+	Session        SessionMeta          `yaml:"session"                   json:"session"`
+	Env            map[string]string    `yaml:"env,omitempty"             json:"env,omitempty"`
+	Claude         ClaudeConfig         `yaml:"claude,omitempty"          json:"claude,omitempty"`
+	Repository     *RepositoryConfig    `yaml:"repository,omitempty"      json:"repository,omitempty"`
+	InitialMessage string               `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
+	WebhookPayload string               `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
+	Startup        StartupConfig        `yaml:"startup,omitempty"         json:"startup,omitempty"`
+	Github         *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
+	SlackParams    *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
+	OtelCollector  *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
+}
+
+// OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.
+// When set, the provisioner will launch otelcol as a subprocess after user context
+// is established, ensuring metrics labels (user_id, session_id, etc.) are correct
+// even when using the stock inventory feature.
+type OtelCollectorConfig struct {
+	Enabled        bool   `yaml:"enabled"          json:"enabled"`
+	ScrapeInterval string `yaml:"scrape_interval"  json:"scrape_interval"`
+	ClaudeCodePort int    `yaml:"claude_code_port" json:"claude_code_port"`
+	ExporterPort   int    `yaml:"exporter_port"    json:"exporter_port"`
+	// Label values resolved at session creation time (not startup time)
+	SessionID  string `yaml:"session_id"  json:"session_id"`
+	UserID     string `yaml:"user_id"     json:"user_id"`
+	TeamID     string `yaml:"team_id"     json:"team_id"`
+	ScheduleID string `yaml:"schedule_id" json:"schedule_id"`
+	WebhookID  string `yaml:"webhook_id"  json:"webhook_id"`
+	AgentType  string `yaml:"agent_type"  json:"agent_type"`
 }
 
 // SlackParams holds Slack integration parameters for the provisioner subprocess.

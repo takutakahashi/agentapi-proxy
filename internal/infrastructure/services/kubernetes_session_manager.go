@@ -1315,8 +1315,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// by agent-provisioner (pkg/provisioner/provision.go) after agentapi starts.
 	// This avoids running claude-posts twice when stock sessions are used.
 
-	// Add OpenTelemetry Collector sidecar
-	if m.k8sConfig.OtelCollectorEnabled {
+	// Add OpenTelemetry Collector sidecar (only in sidecar mode; in-process mode uses a subprocess)
+	if m.k8sConfig.OtelCollectorEnabled && !m.k8sConfig.OtelCollectorInProcess {
 		otelcolContainer := m.buildOtelcolSidecar(session, req)
 		containers = append(containers, otelcolContainer)
 		log.Printf("[K8S_SESSION] Added otelcol sidecar for session %s", session.id)
@@ -1792,8 +1792,8 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		})
 	}
 
-	// Add OpenTelemetry Collector ConfigMap volume
-	if m.k8sConfig.OtelCollectorEnabled {
+	// Add OpenTelemetry Collector ConfigMap volume (only in sidecar mode)
+	if m.k8sConfig.OtelCollectorEnabled && !m.k8sConfig.OtelCollectorInProcess {
 		volumes = append(volumes, corev1.Volume{
 			Name: "otelcol-config",
 			VolumeSource: corev1.VolumeSource{
@@ -3305,6 +3305,58 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				}
 			}
 		}
+	}
+
+	// OtelCollector in-process config: embed when otelcol should run as a subprocess
+	// inside the agentapi container (instead of as a Kubernetes sidecar).
+	// This is required when using the stock inventory feature because Pods are
+	// pre-created before user context is known.
+	if m.k8sConfig.OtelCollectorEnabled && m.k8sConfig.OtelCollectorInProcess {
+		scrapeInterval := "15s"
+		if m.k8sConfig.OtelCollectorScrapeInterval != "" {
+			scrapeInterval = m.k8sConfig.OtelCollectorScrapeInterval
+		}
+		claudeCodePort := 9464
+		if m.k8sConfig.OtelCollectorClaudeCodePort > 0 {
+			claudeCodePort = m.k8sConfig.OtelCollectorClaudeCodePort
+		}
+		exporterPort := 9090
+		if m.k8sConfig.OtelCollectorExporterPort > 0 {
+			exporterPort = m.k8sConfig.OtelCollectorExporterPort
+		}
+
+		scheduleID := "-"
+		webhookID := "-"
+		if req.Tags != nil {
+			if v := req.Tags["schedule_id"]; v != "" {
+				scheduleID = v
+			}
+			if v := req.Tags["webhook_id"]; v != "" {
+				webhookID = v
+			}
+		}
+		agentType := req.AgentType
+		if agentType == "" {
+			agentType = "-"
+		}
+		teamID := "-"
+		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+			teamID = req.TeamID
+		}
+
+		settings.OtelCollector = &sessionsettings.OtelCollectorConfig{
+			Enabled:        true,
+			ScrapeInterval: scrapeInterval,
+			ClaudeCodePort: claudeCodePort,
+			ExporterPort:   exporterPort,
+			SessionID:      session.id,
+			UserID:         req.UserID,
+			TeamID:         teamID,
+			ScheduleID:     scheduleID,
+			WebhookID:      webhookID,
+			AgentType:      agentType,
+		}
+		log.Printf("[K8S_SESSION] OtelCollector in-process config embedded for session %s", session.id)
 	}
 
 	return settings

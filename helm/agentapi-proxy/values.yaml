@@ -461,7 +461,15 @@ kubernetesSession:
     # Enable OpenTelemetry Collector sidecar
     enabled: true
 
-    # Container image for otelcol sidecar
+    # In-process mode: run otelcol as a subprocess inside the agentapi container
+    # instead of as a Kubernetes sidecar. Use this when the stock inventory
+    # feature is enabled, because stock Pods are pre-created before a user is
+    # assigned and the sidecar would start with unknown label values.
+    # When true, the otelcol binary in the agentapi image is used and no sidecar
+    # container or ConfigMap volume is added to session Deployments.
+    inProcess: false
+
+    # Container image for otelcol sidecar (used only when inProcess: false)
     image: "otel/opentelemetry-collector-contrib:0.143.1"
 
     # Scrape interval for Claude Code metrics
@@ -473,7 +481,7 @@ kubernetesSession:
     # Exporter port (where otelcol exposes labeled metrics)
     exporterPort: 9090
 
-    # Resource requests and limits for otelcol sidecar
+    # Resource requests and limits for otelcol sidecar (used only when inProcess: false)
     resources:
       requests:
         cpu: "100m"

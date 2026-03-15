@@ -286,6 +286,11 @@ type KubernetesSessionConfig struct {
 	OtelCollectorMemoryRequest string `json:"otel_collector_memory_request" mapstructure:"otel_collector_memory_request"`
 	// OtelCollectorMemoryLimit is the memory limit for otelcol sidecar
 	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
+	// OtelCollectorInProcess runs otelcol as a subprocess inside the agentapi container
+	// instead of as a Kubernetes sidecar. Use this when the stock inventory feature is
+	// enabled, since stock Pods are pre-created before a user is assigned and sidecar
+	// env vars (SESSION_ID, USER_ID, etc.) would be unknown at startup time.
+	OtelCollectorInProcess bool `json:"otel_collector_in_process" mapstructure:"otel_collector_in_process"`
 
 	// Slack Integration configuration
 	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token

@@ -81,6 +81,23 @@ RUN ARCH=$(dpkg --print-architecture) && \
       -o /usr/local/bin/claude-posts && \
     chmod +x /usr/local/bin/claude-posts
 
+# Download otelcol-contrib binary for in-process OpenTelemetry Collector support.
+# Used when OtelCollectorInProcess=true (e.g. when stock inventory is enabled) so
+# that otelcol starts after user context is known instead of at Pod creation time.
+ARG OTELCOL_VERSION=0.143.1
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) OTELCOL_ARCH="linux_amd64" ;; \
+      arm64) OTELCOL_ARCH="linux_arm64" ;; \
+      *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_VERSION}/otelcol-contrib_${OTELCOL_VERSION}_${OTELCOL_ARCH}.tar.gz" \
+      -o /tmp/otelcol.tar.gz && \
+    tar -xzf /tmp/otelcol.tar.gz -C /tmp otelcol-contrib && \
+    mv /tmp/otelcol-contrib /usr/local/bin/otelcol && \
+    chmod +x /usr/local/bin/otelcol && \
+    rm /tmp/otelcol.tar.gz
+
 # Switch to non-root user
 USER agentapi
 
