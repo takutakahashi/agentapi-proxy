@@ -286,11 +286,6 @@ type KubernetesSessionConfig struct {
 	OtelCollectorMemoryRequest string `json:"otel_collector_memory_request" mapstructure:"otel_collector_memory_request"`
 	// OtelCollectorMemoryLimit is the memory limit for otelcol sidecar
 	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
-	// OtelCollectorInProcess runs otelcol as a subprocess inside the agentapi container
-	// instead of as a Kubernetes sidecar. Use this when the stock inventory feature is
-	// enabled, since stock Pods are pre-created before a user is assigned and sidecar
-	// env vars (SESSION_ID, USER_ID, etc.) would be unknown at startup time.
-	OtelCollectorInProcess bool `json:"otel_collector_in_process" mapstructure:"otel_collector_in_process"`
 
 	// Slack Integration configuration
 	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token
@@ -616,7 +611,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_LIMIT")
 	_ = v.BindEnv("kubernetes_session.otel_collector_memory_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_REQUEST")
 	_ = v.BindEnv("kubernetes_session.otel_collector_memory_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT")
-	_ = v.BindEnv("kubernetes_session.otel_collector_in_process", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IN_PROCESS")
 
 	// Slack Integration configuration
 	_ = v.BindEnv("kubernetes_session.slack_integration_image", "AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE")

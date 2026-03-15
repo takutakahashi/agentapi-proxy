@@ -1315,12 +1315,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// by agent-provisioner (pkg/provisioner/provision.go) after agentapi starts.
 	// This avoids running claude-posts twice when stock sessions are used.
 
-	// Add OpenTelemetry Collector sidecar (only in sidecar mode; in-process mode uses a subprocess)
-	if m.k8sConfig.OtelCollectorEnabled && !m.k8sConfig.OtelCollectorInProcess {
-		otelcolContainer := m.buildOtelcolSidecar(session, req)
-		containers = append(containers, otelcolContainer)
-		log.Printf("[K8S_SESSION] Added otelcol sidecar for session %s", session.id)
-	}
+	// otelcol runs as a subprocess inside the agentapi container (in-process mode).
+	// No sidecar is added here; the provisioner starts otelcol after user context
+	// is established so that metrics labels are correct even with stock sessions.
 
 	// Convert config tolerations to corev1 tolerations
 	var tolerations []corev1.Toleration
@@ -1792,19 +1789,8 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		})
 	}
 
-	// Add OpenTelemetry Collector ConfigMap volume (only in sidecar mode)
-	if m.k8sConfig.OtelCollectorEnabled && !m.k8sConfig.OtelCollectorInProcess {
-		volumes = append(volumes, corev1.Volume{
-			Name: "otelcol-config",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: "otelcol-config",
-					},
-				},
-			},
-		})
-	}
+	// No otelcol ConfigMap volume needed: otelcol runs as an in-process subprocess
+	// and generates its config file at /tmp/otelcol-config.yaml at provisioning time.
 
 	// Add EmptyDir for claude-agentapi history output
 	volumes = append(volumes, corev1.Volume{
@@ -2264,48 +2250,6 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 
 	// Note: Bedrock settings are now loaded via envFrom from agent-env-{name} Secret
 	// which is synced by CredentialsSecretSyncer when settings are updated via API
-
-	return envVars
-}
-
-// buildOtelcolEnvVars creates environment variables for the otelcol sidecar
-func (m *KubernetesSessionManager) buildOtelcolEnvVars(session *KubernetesSession, req *entities.RunServerRequest) []corev1.EnvVar {
-	envVars := []corev1.EnvVar{
-		{Name: "SESSION_ID", Value: session.id},
-		{Name: "USER_ID", Value: req.UserID},
-	}
-
-	// Team ID - use "-" as placeholder for empty values
-	teamID := "-"
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-		teamID = req.TeamID
-	}
-	envVars = append(envVars, corev1.EnvVar{Name: "TEAM_ID", Value: teamID})
-
-	// Schedule ID (from tags) - use "-" as placeholder for empty values
-	scheduleID := "-"
-	if req.Tags != nil {
-		if val, ok := req.Tags["schedule_id"]; ok && val != "" {
-			scheduleID = val
-		}
-	}
-	envVars = append(envVars, corev1.EnvVar{Name: "SCHEDULE_ID", Value: scheduleID})
-
-	// Webhook ID (from tags) - use "-" as placeholder for empty values
-	webhookID := "-"
-	if req.Tags != nil {
-		if val, ok := req.Tags["webhook_id"]; ok && val != "" {
-			webhookID = val
-		}
-	}
-	envVars = append(envVars, corev1.EnvVar{Name: "WEBHOOK_ID", Value: webhookID})
-
-	// Agent Type - use "-" as placeholder for empty values
-	agentType := "-"
-	if req.AgentType != "" {
-		agentType = req.AgentType
-	}
-	envVars = append(envVars, corev1.EnvVar{Name: "AGENT_TYPE", Value: agentType})
 
 	return envVars
 }
@@ -2890,71 +2834,6 @@ func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession)
 	return ports
 }
 
-// buildOtelcolSidecar builds the OpenTelemetry Collector sidecar container
-func (m *KubernetesSessionManager) buildOtelcolSidecar(session *KubernetesSession, req *entities.RunServerRequest) corev1.Container {
-	image := m.k8sConfig.OtelCollectorImage
-	if image == "" {
-		image = "otel/opentelemetry-collector-contrib:0.143.1"
-	}
-
-	// Parse resource limits
-	cpuRequest := "100m"
-	if m.k8sConfig.OtelCollectorCPURequest != "" {
-		cpuRequest = m.k8sConfig.OtelCollectorCPURequest
-	}
-	cpuLimit := "200m"
-	if m.k8sConfig.OtelCollectorCPULimit != "" {
-		cpuLimit = m.k8sConfig.OtelCollectorCPULimit
-	}
-	memoryRequest := "128Mi"
-	if m.k8sConfig.OtelCollectorMemoryRequest != "" {
-		memoryRequest = m.k8sConfig.OtelCollectorMemoryRequest
-	}
-	memoryLimit := "256Mi"
-	if m.k8sConfig.OtelCollectorMemoryLimit != "" {
-		memoryLimit = m.k8sConfig.OtelCollectorMemoryLimit
-	}
-
-	exporterPort := 9090
-	if m.k8sConfig.OtelCollectorExporterPort > 0 {
-		exporterPort = m.k8sConfig.OtelCollectorExporterPort
-	}
-
-	return corev1.Container{
-		Name:            "otelcol",
-		Image:           image,
-		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Args: []string{
-			"--config=/etc/otelcol/otel-collector-config.yaml",
-		},
-		Env: m.buildOtelcolEnvVars(session, req),
-		Ports: []corev1.ContainerPort{
-			{
-				Name:          "prometheus",
-				ContainerPort: int32(exporterPort),
-				Protocol:      corev1.ProtocolTCP,
-			},
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "otelcol-config",
-				MountPath: "/etc/otelcol",
-				ReadOnly:  true,
-			},
-		},
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(cpuRequest),
-				corev1.ResourceMemory: resource.MustParse(memoryRequest),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse(cpuLimit),
-				corev1.ResourceMemory: resource.MustParse(memoryLimit),
-			},
-		},
-	}
-}
-
 // UpdateServiceAnnotation updates a specific annotation on a session's Service
 func (m *KubernetesSessionManager) UpdateServiceAnnotation(ctx context.Context, sessionID, key, value string) error {
 	session := m.GetSession(sessionID)
@@ -3307,11 +3186,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	// OtelCollector in-process config: embed when otelcol should run as a subprocess
-	// inside the agentapi container (instead of as a Kubernetes sidecar).
-	// This is required when using the stock inventory feature because Pods are
-	// pre-created before user context is known.
-	if m.k8sConfig.OtelCollectorEnabled && m.k8sConfig.OtelCollectorInProcess {
+	// OtelCollector in-process config: otelcol always runs as a subprocess inside
+	// the agentapi container, started by the provisioner after user context is known.
+	// This ensures metrics labels are correct even with the stock inventory feature.
+	if m.k8sConfig.OtelCollectorEnabled {
 		scrapeInterval := "15s"
 		if m.k8sConfig.OtelCollectorScrapeInterval != "" {
 			scrapeInterval = m.k8sConfig.OtelCollectorScrapeInterval
