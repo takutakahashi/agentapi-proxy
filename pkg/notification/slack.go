@@ -25,6 +25,16 @@ func NewSlackService() (*SlackService, error) {
 
 // SendDM sends a DM to the specified Slack user ID
 func (s *SlackService) SendDM(slackUserID, title, body, url string) error {
+	// Open a DM channel with the user first.
+	// This is required because PostMessage with a user ID may return channel_not_found
+	// if the bot has not previously interacted with the user.
+	channel, _, _, err := s.client.OpenConversation(&slack.OpenConversationParameters{
+		Users: []string{slackUserID},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to open DM channel with user %s: %w", slackUserID, err)
+	}
+
 	// Build blocks
 	blocks := []slack.Block{
 		slack.NewSectionBlock(
@@ -45,8 +55,8 @@ func (s *SlackService) SendDM(slackUserID, title, body, url string) error {
 		))
 	}
 
-	_, _, err := s.client.PostMessage(
-		slackUserID,
+	_, _, err = s.client.PostMessage(
+		channel.ID,
 		slack.MsgOptionBlocks(blocks...),
 		slack.MsgOptionText(title+"\n"+body, false),
 	)
