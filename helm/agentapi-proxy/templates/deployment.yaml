@@ -251,6 +251,12 @@ spec:
                   name: {{ $slackBotToken.secretName | quote }}
                   key: {{ (($slackIntegration).signingSecret).key | default "signing-secret" | quote }}
                   optional: true
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $slackBotToken.secretName | quote }}
+                  key: {{ $slackBotToken.key | default "bot-token" | quote }}
+                  optional: true
             {{- end }}
             # OpenTelemetry Collector configuration
             {{- if .Values.kubernetesSession.otelCollector.enabled }}
