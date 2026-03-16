@@ -189,7 +189,7 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 		// Auto-construct session URL from NOTIFICATION_BASE_URL if not provided.
 		if req.URL == "" {
 			if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
-				req.URL = baseURL + "/agentapi?session=" + session.ID()
+				req.URL = baseURL + "/sessions/" + session.ID()
 			}
 		}
 
