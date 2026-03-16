@@ -110,7 +110,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		echo:   e,
 		server: server,
 		handlers: &HandlerRegistry{
-			notificationHandlers:     controllers.NewNotificationHandlers(server.notificationSvc),
+			notificationHandlers:     controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
 			healthController:         controllers.NewHealthController(),
 			sessionController:        sessionController,
 			settingsController:       settingsController,
@@ -237,6 +237,7 @@ func (r *Router) registerConditionalRoutes() error {
 		// Internal routes
 		r.echo.POST("/notifications/webhook", r.handlers.notificationHandlers.Webhook)
 		r.echo.GET("/notifications/history", r.handlers.notificationHandlers.GetHistory, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/notifications/send", r.handlers.notificationHandlers.SendNotification, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		log.Printf("[ROUTES] Notification endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Notification service not available, skipping notification routes")

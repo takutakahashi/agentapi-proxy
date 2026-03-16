@@ -78,3 +78,19 @@ type HistoryResponse struct {
 type DeleteSubscriptionRequest struct {
 	Endpoint string `json:"endpoint" validate:"required"`
 }
+
+// SendNotificationRequest represents the request body for sending a notification via API
+type SendNotificationRequest struct {
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	URL       string `json:"url,omitempty"`
+	Icon      string `json:"icon,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+}
+
+// SendNotificationResponse represents the response for sending a notification via API
+type SendNotificationResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}

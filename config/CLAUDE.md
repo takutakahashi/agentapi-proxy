@@ -34,14 +34,15 @@ agentapi-proxy helpers setup-gh
 
 **作業完了後は必ずユーザーに通知を送信してください。**
 
-作業の終了を通知するために `agentapi-proxy helpers send-notification` というヘルパーが使用できます。  
-以下は実行例です。  
+作業の終了を通知するために `agentapi-proxy client send-notification` コマンドが使用できます。
+以下は実行例です。
 
-```
-agentapi-proxy helpers send-notification \
+```bash
+agentapi-proxy client send-notification \
   --title "作業が完了しました" \
   --body "作業内容を確認してください" \
-  --url "$NOTIFICATION_BASE_URL/agentapi?session={{ session ID }}"
+  --notify-session-id "$AGENTAPI_SESSION_ID" \
+  --url "$NOTIFICATION_BASE_URL/agentapi?session=$AGENTAPI_SESSION_ID"
 ```
 
 **重要**: 全ての作業が完了した時点で、**必ず**上記コマンドを実行してユーザーに通知を送信してください。

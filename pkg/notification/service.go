@@ -12,9 +12,10 @@ import (
 
 // Service provides notification functionality
 type Service struct {
-	storage      Storage
-	webpush      *WebPushService
-	secretSyncer SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets
+	storage            Storage
+	webpush            *WebPushService
+	secretSyncer       SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets
+	subscriptionReader SubscriptionReader       // Optional, for reading subscriptions from K8s Secrets
 }
 
 // NewService creates a new notification service
@@ -34,6 +35,29 @@ func NewService(baseDir string) (*Service, error) {
 // This is optional and only used when Kubernetes mode is enabled
 func (s *Service) SetSecretSyncer(syncer SubscriptionSecretSyncer) {
 	s.secretSyncer = syncer
+}
+
+// SetSubscriptionReader sets the subscription reader for reading subscriptions from K8s Secrets.
+// When set, SendNotificationToUser and SendNotificationToSession will read subscriptions from
+// the external storage (e.g., Kubernetes Secrets) instead of the local file-based storage.
+func (s *Service) SetSubscriptionReader(reader SubscriptionReader) {
+	s.subscriptionReader = reader
+}
+
+// getSubscriptionsForUser returns subscriptions for a user, preferring the external reader if set.
+func (s *Service) getSubscriptionsForUser(userID string) ([]Subscription, error) {
+	if s.subscriptionReader != nil {
+		return s.subscriptionReader.GetSubscriptions(userID)
+	}
+	return s.storage.GetSubscriptions(userID)
+}
+
+// getAllSubscriptions returns all subscriptions, preferring the external reader if set.
+func (s *Service) getAllSubscriptions() ([]Subscription, error) {
+	if s.subscriptionReader != nil {
+		return s.subscriptionReader.GetAllSubscriptions()
+	}
+	return s.storage.GetAllSubscriptions()
 }
 
 // GetStorage returns the storage instance (used by secret syncer)
@@ -110,7 +134,7 @@ func (s *Service) SendNotificationToUser(userID string, title, body, notificatio
 		return fmt.Errorf("web push service not configured")
 	}
 
-	subscriptions, err := s.storage.GetSubscriptions(userID)
+	subscriptions, err := s.getSubscriptionsForUser(userID)
 	if err != nil {
 		return fmt.Errorf("failed to get subscriptions: %w", err)
 	}
@@ -174,7 +198,7 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 	}
 	data["session_id"] = sessionID
 
-	subscriptions, err := s.storage.GetAllSubscriptions()
+	subscriptions, err := s.getAllSubscriptions()
 	if err != nil {
 		return fmt.Errorf("failed to get subscriptions: %w", err)
 	}
@@ -291,6 +315,12 @@ func (s *Service) GetNotificationHistory(userID string, limit, offset int, filte
 
 // shouldSendNotification checks if a notification should be sent to a subscription
 func (s *Service) shouldSendNotification(sub Subscription, notificationType string, data map[string]interface{}) bool {
+	// "manual" notifications (explicitly triggered via API/CLI) are always delivered
+	// regardless of the subscription's notification type filter.
+	if notificationType == "manual" {
+		return true
+	}
+
 	// Check if subscription wants this notification type
 	if len(sub.NotificationTypes) > 0 {
 		found := false
@@ -336,6 +366,45 @@ func getSessionIDFromData(data map[string]interface{}) string {
 	}
 
 	return ""
+}
+
+// SendNotification sends a notification based on a SendNotificationRequest.
+// It routes to SendNotificationToSession or SendNotificationToUser depending on which field is set.
+func (s *Service) SendNotification(req SendNotificationRequest) (*SendNotificationResponse, error) {
+	if s.webpush == nil {
+		return nil, fmt.Errorf("web push service not configured")
+	}
+
+	if req.Title == "" {
+		return nil, fmt.Errorf("title is required")
+	}
+	if req.Body == "" {
+		return nil, fmt.Errorf("body is required")
+	}
+	if req.SessionID == "" && req.UserID == "" {
+		return nil, fmt.Errorf("either session_id or user_id is required")
+	}
+
+	data := make(map[string]interface{})
+	if req.URL != "" {
+		data["url"] = req.URL
+	}
+	if req.Icon != "" {
+		data["icon"] = req.Icon
+	}
+
+	var err error
+	if req.SessionID != "" {
+		err = s.SendNotificationToSession(req.SessionID, req.Title, req.Body, "manual", data)
+	} else {
+		err = s.SendNotificationToUser(req.UserID, req.Title, req.Body, "manual", data)
+	}
+
+	if err != nil {
+		return &SendNotificationResponse{Success: false, Message: err.Error()}, err
+	}
+
+	return &SendNotificationResponse{Success: true}, nil
 }
 
 // GetBaseDir returns the base directory for user data

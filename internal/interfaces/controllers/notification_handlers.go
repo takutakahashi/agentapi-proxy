@@ -1,10 +1,13 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 )
@@ -12,13 +15,15 @@ import (
 // NotificationHandlers handles notification-related HTTP requests
 // This is a simpler handler that uses the notification.Service directly
 type NotificationHandlers struct {
-	service *notification.Service
+	service        *notification.Service
+	sessionManager portrepos.SessionManager
 }
 
 // NewNotificationHandlers creates new notification handlers
-func NewNotificationHandlers(service *notification.Service) *NotificationHandlers {
+func NewNotificationHandlers(service *notification.Service, sessionManager portrepos.SessionManager) *NotificationHandlers {
 	return &NotificationHandlers{
-		service: service,
+		service:        service,
+		sessionManager: sessionManager,
 	}
 }
 
@@ -124,6 +129,70 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]bool{
 		"success": true,
 	})
+}
+
+// SendNotification handles POST /notifications/send
+//
+// Routing logic:
+//   - session_id provided: look up the session via SessionManager.
+//     - team-scoped session → no notification is sent (return success).
+//     - user-scoped session → resolve to the session owner's user_id and send.
+//   - user_id provided: send directly to that user.
+func (h *NotificationHandlers) SendNotification(c echo.Context) error {
+	user := auth.GetUserFromContext(c)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
+
+	var req notification.SendNotificationRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Title == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Title is required")
+	}
+	if req.Body == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Body is required")
+	}
+	if req.SessionID == "" && req.UserID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Either session_id or user_id is required")
+	}
+
+	// When session_id is provided, resolve the target user from the session.
+	if req.SessionID != "" {
+		if h.sessionManager == nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Session manager not available")
+		}
+
+		session := h.sessionManager.GetSession(req.SessionID)
+		if session == nil {
+			// Session not found – nothing to notify.
+			return c.JSON(http.StatusOK, &notification.SendNotificationResponse{
+				Success: true,
+				Message: fmt.Sprintf("session %s not found, no notifications sent", req.SessionID),
+			})
+		}
+
+		// Team-scoped sessions do not trigger push notifications.
+		if session.Scope() == entities.ScopeTeam {
+			return c.JSON(http.StatusOK, &notification.SendNotificationResponse{
+				Success: true,
+				Message: "team-scoped sessions do not trigger push notifications",
+			})
+		}
+
+		// User-scoped session: resolve to the owner's user_id.
+		req.UserID = session.UserID()
+		req.SessionID = ""
+	}
+
+	resp, err := h.service.SendNotification(req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to send notification: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 // GetHistory handles GET /notifications/history

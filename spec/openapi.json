@@ -2229,6 +2229,51 @@
         }
       }
     },
+    "/notifications/send": {
+      "post": {
+        "summary": "Send a push notification",
+        "description": "Sends a push notification to subscribers of a session or to a specific user. Either session_id or user_id must be provided.",
+        "operationId": "sendNotification",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {"ApiKeyAuth": []},
+          {"BearerAuth": []}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendNotificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Notification sent successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendNotificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (missing required fields)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Failed to send notification"
+          }
+        }
+      }
+    },
     "/memories": {
       "post": {
         "summary": "Create a memory entry",
@@ -4368,6 +4413,49 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "SendNotificationRequest": {
+        "type": "object",
+        "required": ["title", "body"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Notification title (required)"
+          },
+          "body": {
+            "type": "string",
+            "description": "Notification body text (required)"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL to open when the notification is clicked (optional)"
+          },
+          "icon": {
+            "type": "string",
+            "description": "Icon URL for the notification (optional)"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Session ID whose subscribers will receive the notification. Either session_id or user_id is required."
+          },
+          "user_id": {
+            "type": "string",
+            "description": "User ID to send the notification to. Either session_id or user_id is required."
+          }
+        }
+      },
+      "SendNotificationResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the notification was sent successfully"
+          },
+          "message": {
+            "type": "string",
+            "description": "Optional message describing the result or error"
           }
         }
       },

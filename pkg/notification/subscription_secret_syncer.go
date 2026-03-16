@@ -7,3 +7,13 @@ type SubscriptionSecretSyncer interface {
 	// It reads the current subscriptions from the storage and syncs them to the external storage
 	Sync(userID string) error
 }
+
+// SubscriptionReader reads subscription data from an external storage (e.g., Kubernetes Secret)
+// This interface is used when subscriptions are stored externally (e.g., in Kubernetes Secrets)
+// rather than in the local file-based storage.
+type SubscriptionReader interface {
+	// GetSubscriptions returns all active subscriptions for a user
+	GetSubscriptions(userID string) ([]Subscription, error)
+	// GetAllSubscriptions returns all active subscriptions across all users
+	GetAllSubscriptions() ([]Subscription, error)
+}
