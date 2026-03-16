@@ -215,6 +215,13 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 			}
 		}
 
+		// Add session description (initial message) so the recipient knows which task triggered this.
+		if req.InitialMessage == "" {
+			if desc := session.Description(); desc != "" {
+				req.InitialMessage = desc
+			}
+		}
+
 		req.SessionID = ""
 	}
 

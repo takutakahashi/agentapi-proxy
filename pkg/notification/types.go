@@ -87,12 +87,13 @@ type DeleteSubscriptionRequest struct {
 
 // SendNotificationRequest represents the request body for sending a notification via API
 type SendNotificationRequest struct {
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	URL       string `json:"url,omitempty"`
-	Icon      string `json:"icon,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	UserID    string `json:"user_id,omitempty"`
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	URL            string `json:"url,omitempty"`
+	Icon           string `json:"icon,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	UserID         string `json:"user_id,omitempty"`
+	InitialMessage string `json:"initial_message,omitempty"`
 }
 
 // SendNotificationResponse represents the response for sending a notification via API

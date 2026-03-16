@@ -594,6 +594,9 @@ func (s *Service) SendNotification(req SendNotificationRequest) (*SendNotificati
 	if req.Icon != "" {
 		data["icon"] = req.Icon
 	}
+	if req.InitialMessage != "" {
+		data["initial_message"] = req.InitialMessage
+	}
 
 	var err error
 	if req.SessionID != "" {
