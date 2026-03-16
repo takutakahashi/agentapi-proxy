@@ -87,7 +87,14 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		}
 	}
 
-	// ── Step 6: build and start the agent subprocess ──────────────────────────
+	// ── Step 6: start otelcol subprocess if in-process mode ──────────────────
+	// Must be started before agentapi so metrics scraping begins as soon as
+	// Claude Code starts emitting metrics on its prometheus port.
+	if settings.OtelCollector != nil && settings.OtelCollector.Enabled {
+		go s.runOtelcol(ctx, settings.OtelCollector)
+	}
+
+	// ── Step 7: build and start the agent subprocess ──────────────────────────
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
@@ -102,7 +109,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	log.Printf("[PROVISIONER] Agent process started (pid %d)", cmd.Process.Pid)
 
-	// ── Step 7: wait for agentapi to be ready ─────────────────────────────────
+	// ── Step 8: wait for agentapi to be ready ─────────────────────────────────
 	agentapiPort := os.Getenv("AGENTAPI_PORT")
 	if agentapiPort == "" {
 		agentapiPort = "8080"
@@ -117,7 +124,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	log.Printf("[PROVISIONER] agentapi is ready")
 
-	// ── Step 8: send initial message ─────────────────────────────────────────
+	// ── Step 9: send initial message ─────────────────────────────────────────
 	if settings.InitialMessage != "" {
 		log.Printf("[PROVISIONER] Sending initial message")
 		agentType := settings.Session.AgentType
@@ -130,10 +137,10 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		sendInitialMessage(ctx, agentapiURL, settings.InitialMessage, agentType, waitSec)
 	}
 
-	// ── Step 9: mark ready and supervise ─────────────────────────────────────
+	// ── Step 10: mark ready and supervise ────────────────────────────────────
 	s.setStatus(StatusReady, "")
 
-	// ── Step 10: launch claude-posts subprocess if SlackParams provided ───────
+	// ── Step 11: launch claude-posts subprocess if SlackParams provided ───────
 	if settings.SlackParams != nil && settings.SlackParams.Channel != "" {
 		go s.runClaudePosts(ctx, settings.SlackParams)
 	}
@@ -188,6 +195,107 @@ func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.Sla
 		}
 	} else {
 		log.Printf("[CLAUDE_POSTS] Exited normally")
+	}
+}
+
+// runOtelcol starts the OpenTelemetry Collector binary as a subprocess.
+// It is used when otelcol runs in in-process mode (OtelCollectorInProcess=true)
+// instead of as a Kubernetes sidecar. This allows otelcol to be started
+// after user context is established, so metrics labels (user_id, session_id,
+// etc.) are correctly set even when using the stock inventory feature.
+// The subprocess is tied to ctx: when ctx is cancelled the goroutine exits.
+func (s *Server) runOtelcol(ctx context.Context, cfg *sessionsettings.OtelCollectorConfig) {
+	const otelcolBin = "/usr/local/bin/otelcol"
+	const configPath = "/tmp/otelcol-config.yaml"
+
+	scrapeInterval := cfg.ScrapeInterval
+	if scrapeInterval == "" {
+		scrapeInterval = "15s"
+	}
+	claudeCodePort := cfg.ClaudeCodePort
+	if claudeCodePort == 0 {
+		claudeCodePort = 9464
+	}
+	exporterPort := cfg.ExporterPort
+	if exporterPort == 0 {
+		exporterPort = 9090
+	}
+
+	// Generate otelcol config with label values already substituted.
+	// Using Go fmt.Sprintf rather than otelcol ${env:VAR} expansion so that
+	// the correct values are used regardless of the container's own env vars
+	// (which may be unset in stock sessions at startup time).
+	otelConfig := fmt.Sprintf(`receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'claude-code'
+          scrape_interval: %s
+          static_configs:
+            - targets: ['localhost:%d']
+
+processors:
+  resource:
+    attributes:
+      - key: user_id
+        action: delete
+      - key: session_id
+        action: delete
+  transform:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          # Rename claude-code's native labels
+          - set(attributes["claude_user_id"], attributes["user_id"]) where attributes["user_id"] != nil
+          - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
+          - delete_key(attributes, "user_id")
+          - delete_key(attributes, "session_id")
+          # Remove user_email label to prevent it from being scraped by Prometheus
+          - delete_key(attributes, "user_email")
+          # Add agentapi labels
+          - set(attributes["agentapi_session_id"], "%s")
+          - set(attributes["agentapi_user_id"], "%s")
+          - set(attributes["agentapi_team_id"], "%s")
+          - set(attributes["agentapi_schedule_id"], "%s")
+          - set(attributes["agentapi_webhook_id"], "%s")
+          - set(attributes["agentapi_agent_type"], "%s")
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:%d"
+    resource_to_telemetry_conversion:
+      enabled: false
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [resource, transform]
+      exporters: [prometheus]`,
+		scrapeInterval, claudeCodePort,
+		cfg.SessionID, cfg.UserID, cfg.TeamID,
+		cfg.ScheduleID, cfg.WebhookID, cfg.AgentType,
+		exporterPort)
+
+	if err := os.WriteFile(configPath, []byte(otelConfig), 0o600); err != nil {
+		log.Printf("[OTELCOL] Failed to write config to %s: %v", configPath, err)
+		return
+	}
+	log.Printf("[OTELCOL] Config written to %s, starting otelcol subprocess", configPath)
+
+	cmd := exec.CommandContext(ctx, otelcolBin, "--config="+configPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			log.Printf("[OTELCOL] Exited due to context cancellation")
+		} else {
+			log.Printf("[OTELCOL] Exited with error: %v", err)
+		}
+	} else {
+		log.Printf("[OTELCOL] Exited normally")
 	}
 }
 
