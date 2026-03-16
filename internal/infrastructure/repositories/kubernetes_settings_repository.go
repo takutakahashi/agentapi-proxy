@@ -38,6 +38,7 @@ type settingsJSON struct {
 	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
 	EnvVars              map[string]string           `json:"env_vars,omitempty"`          // Custom environment variables
 	PreferredTeamID      string                      `json:"preferred_team_id,omitempty"` // "org/team-slug" format
+	SlackUserID          string                      `json:"slack_user_id,omitempty"`     // Slack DM notification user ID
 	CreatedAt            time.Time                   `json:"created_at"`
 	UpdatedAt            time.Time                   `json:"updated_at"`
 }
@@ -267,6 +268,10 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		sj.PreferredTeamID = preferredTeamID
 	}
 
+	if slackUserID := settings.SlackUserID(); slackUserID != "" {
+		sj.SlackUserID = slackUserID
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -360,6 +365,12 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if sj.PreferredTeamID != "" {
 		settings.SetPreferredTeamID(sj.PreferredTeamID)
 		// Reset updatedAt since SetPreferredTeamID updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.SlackUserID != "" {
+		settings.SetSlackUserID(sj.SlackUserID)
+		// Reset updatedAt since SetSlackUserID updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 

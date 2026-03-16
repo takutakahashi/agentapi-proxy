@@ -14,6 +14,7 @@ import (
 type Service struct {
 	storage            Storage
 	webpush            *WebPushService
+	slack              *SlackService            // Optional, for Slack DM notifications
 	secretSyncer       SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets
 	subscriptionReader SubscriptionReader       // Optional, for reading subscriptions from K8s Secrets
 }
@@ -25,9 +26,13 @@ func NewService(baseDir string) (*Service, error) {
 	// WebPush service is optional - notifications can be stored without sending
 	webpush, _ := NewWebPushService()
 
+	// Slack service is optional - only available when SLACK_BOT_TOKEN is set
+	slackSvc, _ := NewSlackService()
+
 	return &Service{
 		storage: storage,
 		webpush: webpush,
+		slack:   slackSvc,
 	}, nil
 }
 
@@ -105,6 +110,82 @@ func (s *Service) Subscribe(user *entities.User, endpoint string, keys map[strin
 	return &sub, nil
 }
 
+// SubscribeSlack creates or updates a Slack DM subscription for a user
+func (s *Service) SubscribeSlack(user *entities.User, slackUserID string) (*Subscription, error) {
+	if slackUserID == "" {
+		return nil, fmt.Errorf("slack user ID is required")
+	}
+
+	// Get username from GitHub user info if available, otherwise use UserID
+	username := string(user.ID())
+	if user.UserType() == entities.UserTypeGitHub && user.GitHubInfo() != nil {
+		username = user.GitHubInfo().Login()
+	}
+
+	// Delete existing Slack subscriptions first to avoid duplicates
+	userID := string(user.ID())
+	existingSubs, err := s.storage.GetSubscriptions(userID)
+	if err == nil {
+		for _, sub := range existingSubs {
+			if sub.Type == SubscriptionTypeSlack {
+				_ = s.storage.DeleteSubscription(userID, sub.Endpoint)
+			}
+		}
+	}
+
+	now := time.Now()
+	sub := Subscription{
+		UserID:            userID,
+		UserType:          string(user.UserType()),
+		Username:          username,
+		Type:              SubscriptionTypeSlack,
+		Endpoint:          slackUserID,
+		Keys:              map[string]string{},
+		SessionIDs:        []string{},
+		NotificationTypes: []string{"message", "status_change", "session_update", "error"},
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		LastUsed:          now,
+		Active:            true,
+	}
+
+	err = s.storage.AddSubscription(userID, sub)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add Slack subscription: %w", err)
+	}
+
+	// Sync to K8s Secret if syncer is configured
+	if s.secretSyncer != nil {
+		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
+			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+		}
+	}
+
+	return &sub, nil
+}
+
+// DeleteSlackSubscription removes the Slack subscription for a user
+func (s *Service) DeleteSlackSubscription(userID string) error {
+	existingSubs, err := s.storage.GetSubscriptions(userID)
+	if err != nil {
+		return err
+	}
+	for _, sub := range existingSubs {
+		if sub.Type == SubscriptionTypeSlack {
+			if err := s.storage.DeleteSubscription(userID, sub.Endpoint); err != nil {
+				return err
+			}
+		}
+	}
+
+	if s.secretSyncer != nil {
+		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
+			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+		}
+	}
+	return nil
+}
+
 // GetSubscriptions returns all active subscriptions for a user
 func (s *Service) GetSubscriptions(userID string) ([]Subscription, error) {
 	return s.storage.GetSubscriptions(userID)
@@ -130,10 +211,6 @@ func (s *Service) DeleteSubscription(userID string, endpoint string) error {
 
 // SendNotificationToUser sends a notification to all subscriptions of a user
 func (s *Service) SendNotificationToUser(userID string, title, body, notificationType string, data map[string]interface{}) error {
-	if s.webpush == nil {
-		return fmt.Errorf("web push service not configured")
-	}
-
 	subscriptions, err := s.getSubscriptionsForUser(userID)
 	if err != nil {
 		return fmt.Errorf("failed to get subscriptions: %w", err)
@@ -148,8 +225,32 @@ func (s *Service) SendNotificationToUser(userID string, title, body, notificatio
 			continue
 		}
 
-		// Send notification
-		err := s.webpush.SendNotification(sub, title, body, data)
+		var sendErr error
+		subType := sub.Type
+		if subType == "" {
+			subType = SubscriptionTypeWebPush // backward compat
+		}
+
+		switch subType {
+		case SubscriptionTypeWebPush:
+			if s.webpush == nil {
+				sendErr = fmt.Errorf("web push service not configured")
+			} else {
+				sendErr = s.webpush.SendNotification(sub, title, body, data)
+			}
+		case SubscriptionTypeSlack:
+			if s.slack == nil {
+				sendErr = fmt.Errorf("slack service not configured")
+			} else {
+				url := ""
+				if u, ok := data["url"].(string); ok {
+					url = u
+				}
+				sendErr = s.slack.SendDM(sub.Endpoint, title, body, url)
+			}
+		default:
+			sendErr = fmt.Errorf("unsupported subscription type: %s", subType)
+		}
 
 		// Record history
 		history := NotificationHistory{
@@ -161,13 +262,13 @@ func (s *Service) SendNotificationToUser(userID string, title, body, notificatio
 			SessionID:      getSessionIDFromData(data),
 			Data:           data,
 			SentAt:         time.Now(),
-			Delivered:      err == nil,
+			Delivered:      sendErr == nil,
 		}
 
-		if err != nil {
-			errMsg := err.Error()
+		if sendErr != nil {
+			errMsg := sendErr.Error()
 			history.ErrorMessage = &errMsg
-			lastError = err
+			lastError = sendErr
 		} else {
 			successCount++
 		}
@@ -188,10 +289,6 @@ func (s *Service) SendNotificationToUser(userID string, title, body, notificatio
 
 // SendNotificationToSession sends a notification to all users subscribed to a session
 func (s *Service) SendNotificationToSession(sessionID string, title, body, notificationType string, data map[string]interface{}) error {
-	if s.webpush == nil {
-		return fmt.Errorf("web push service not configured")
-	}
-
 	// Add session ID to data
 	if data == nil {
 		data = make(map[string]interface{})
@@ -217,8 +314,32 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 			continue
 		}
 
-		// Send notification
-		err := s.webpush.SendNotification(sub, title, body, data)
+		var sendErr error
+		subType := sub.Type
+		if subType == "" {
+			subType = SubscriptionTypeWebPush // backward compat
+		}
+
+		switch subType {
+		case SubscriptionTypeWebPush:
+			if s.webpush == nil {
+				sendErr = fmt.Errorf("web push service not configured")
+			} else {
+				sendErr = s.webpush.SendNotification(sub, title, body, data)
+			}
+		case SubscriptionTypeSlack:
+			if s.slack == nil {
+				sendErr = fmt.Errorf("slack service not configured")
+			} else {
+				url := ""
+				if u, ok := data["url"].(string); ok {
+					url = u
+				}
+				sendErr = s.slack.SendDM(sub.Endpoint, title, body, url)
+			}
+		default:
+			sendErr = fmt.Errorf("unsupported subscription type: %s", subType)
+		}
 
 		// Record history
 		history := NotificationHistory{
@@ -230,13 +351,13 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 			SessionID:      sessionID,
 			Data:           data,
 			SentAt:         time.Now(),
-			Delivered:      err == nil,
+			Delivered:      sendErr == nil,
 		}
 
-		if err != nil {
-			errMsg := err.Error()
+		if sendErr != nil {
+			errMsg := sendErr.Error()
 			history.ErrorMessage = &errMsg
-			lastError = err
+			lastError = sendErr
 		} else {
 			successCount++
 		}
@@ -371,10 +492,6 @@ func getSessionIDFromData(data map[string]interface{}) string {
 // SendNotification sends a notification based on a SendNotificationRequest.
 // It routes to SendNotificationToSession or SendNotificationToUser depending on which field is set.
 func (s *Service) SendNotification(req SendNotificationRequest) (*SendNotificationResponse, error) {
-	if s.webpush == nil {
-		return nil, fmt.Errorf("web push service not configured")
-	}
-
 	if req.Title == "" {
 		return nil, fmt.Errorf("title is required")
 	}

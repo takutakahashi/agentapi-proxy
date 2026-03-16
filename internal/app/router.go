@@ -45,7 +45,7 @@ type CustomHandler interface {
 // NewRouter creates a new Router instance
 func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create settings controller
-	settingsController := controllers.NewSettingsController(server.settingsRepo)
+	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc)
 
 	// Create session controller with proper dependencies
 	// server implements SessionManagerProvider interface via GetSessionManager()

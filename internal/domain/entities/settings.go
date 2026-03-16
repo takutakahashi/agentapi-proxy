@@ -102,6 +102,7 @@ type Settings struct {
 	enabledPlugins       []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
 	envVars              map[string]string // Custom environment variables
 	preferredTeamID      string            // "org/team-slug" format; if set, only this team's settings are used
+	slackUserID          string            // Slack DM notification user ID
 	createdAt            time.Time
 	updatedAt            time.Time
 }
@@ -262,6 +263,17 @@ func (s *Settings) PreferredTeamID() string {
 // SetPreferredTeamID sets the preferred team ID
 func (s *Settings) SetPreferredTeamID(id string) {
 	s.preferredTeamID = id
+	s.updatedAt = time.Now()
+}
+
+// SlackUserID returns the Slack user ID for DM notifications
+func (s *Settings) SlackUserID() string {
+	return s.slackUserID
+}
+
+// SetSlackUserID sets the Slack user ID for DM notifications
+func (s *Settings) SetSlackUserID(id string) {
+	s.slackUserID = id
 	s.updatedAt = time.Now()
 }
 

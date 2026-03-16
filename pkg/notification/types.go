@@ -4,6 +4,11 @@ import (
 	"time"
 )
 
+const (
+	SubscriptionTypeWebPush = "webpush"
+	SubscriptionTypeSlack   = "slack"
+)
+
 // SubscribeRequest represents the request body for subscribing to push notifications
 type SubscribeRequest struct {
 	Endpoint string            `json:"endpoint" validate:"required"`
@@ -22,6 +27,7 @@ type Subscription struct {
 	UserID            string            `json:"user_id"`
 	UserType          string            `json:"user_type"`
 	Username          string            `json:"username"`
+	Type              string            `json:"type"` // "webpush" (default), "slack"
 	Endpoint          string            `json:"endpoint"`
 	Keys              map[string]string `json:"keys"`
 	SessionIDs        []string          `json:"session_ids"`

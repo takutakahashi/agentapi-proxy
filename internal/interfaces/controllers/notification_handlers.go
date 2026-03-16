@@ -135,8 +135,8 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 //
 // Routing logic:
 //   - session_id provided: look up the session via SessionManager.
-//     - team-scoped session → no notification is sent (return success).
-//     - user-scoped session → resolve to the session owner's user_id and send.
+//   - team-scoped session → no notification is sent (return success).
+//   - user-scoped session → resolve to the session owner's user_id and send.
 //   - user_id provided: send directly to that user.
 func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 	user := auth.GetUserFromContext(c)

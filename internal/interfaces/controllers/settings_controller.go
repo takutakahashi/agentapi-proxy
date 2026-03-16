@@ -10,6 +10,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 )
 
 // BaseSettingsName is the reserved name for global base settings (admin-only)
@@ -17,13 +18,15 @@ const BaseSettingsName = "base"
 
 // SettingsController handles settings-related HTTP requests
 type SettingsController struct {
-	repo repositories.SettingsRepository
+	repo            repositories.SettingsRepository
+	notificationSvc *notification.Service // Optional
 }
 
 // NewSettingsController creates new settings controller
-func NewSettingsController(repo repositories.SettingsRepository) *SettingsController {
+func NewSettingsController(repo repositories.SettingsRepository, notificationSvc *notification.Service) *SettingsController {
 	return &SettingsController{
-		repo: repo,
+		repo:            repo,
+		notificationSvc: notificationSvc,
 	}
 }
 
@@ -67,6 +70,7 @@ type UpdateSettingsRequest struct {
 	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
 	EnvVars              map[string]string              `json:"env_vars,omitempty"`          // Custom environment variables
 	PreferredTeamID      *string                        `json:"preferred_team_id,omitempty"` // "org/team-slug" format; "" to clear
+	SlackUserID          *string                        `json:"slack_user_id,omitempty"`     // Slack DM notification user ID
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -105,6 +109,7 @@ type SettingsResponse struct {
 	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
 	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`      // only keys, not values
 	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"` // "org/team-slug" format
+	SlackUserID             string                          `json:"slack_user_id,omitempty"`     // Slack DM notification user ID
 	CreatedAt               string                          `json:"created_at"`
 	UpdatedAt               string                          `json:"updated_at"`
 }
@@ -279,6 +284,25 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			if len(teams) == 1 {
 				teamID := teams[0].Organization + "/" + teams[0].TeamSlug
 				settings.SetPreferredTeamID(teamID)
+			}
+		}
+	}
+
+	// Update Slack User ID
+	if req.SlackUserID != nil {
+		settings.SetSlackUserID(*req.SlackUserID)
+
+		// Sync Slack subscription if notification service is available
+		if c.notificationSvc != nil {
+			if *req.SlackUserID == "" {
+				// Remove Slack subscription
+				_ = c.notificationSvc.DeleteSlackSubscription(string(user.ID()))
+			} else {
+				// Create/update Slack subscription
+				_, err := c.notificationSvc.SubscribeSlack(user, *req.SlackUserID)
+				if err != nil {
+					log.Printf("[SETTINGS] Failed to create Slack subscription: %v", err)
+				}
 			}
 		}
 	}
@@ -533,6 +557,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	}
 
 	resp.PreferredTeamID = settings.PreferredTeamID()
+	resp.SlackUserID = settings.SlackUserID()
 
 	return resp
 }
