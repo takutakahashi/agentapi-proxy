@@ -2248,6 +2248,11 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		}
 	}
 
+	// Add notification base URL so session pods can construct correct notification URLs
+	if value := os.Getenv("NOTIFICATION_BASE_URL"); value != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "NOTIFICATION_BASE_URL", Value: value})
+	}
+
 	// Note: Bedrock settings are now loaded via envFrom from agent-env-{name} Secret
 	// which is synced by CredentialsSecretSyncer when settings are updated via API
 
