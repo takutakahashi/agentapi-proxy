@@ -48,25 +48,28 @@ func (s *SlackService) SendDM(slackUserID, title, body, url, initialMessage stri
 		),
 	}
 
-	if url != "" {
-		// Use the initial message as button label so the user can tell which
-		// task/conversation triggered this notification.
-		// Fall back to "開く" if no initial message is provided.
-		buttonLabel := "開く"
-		if initialMessage != "" {
-			truncated := initialMessage
-			runes := []rune(truncated)
-			if len(runes) > 40 {
-				truncated = string(runes[:40]) + "..."
-			}
-			buttonLabel = truncated
+	// If we have an initial message, show it as a Context Block (small gray text)
+	// below a divider so the user can tell which task triggered this notification.
+	if initialMessage != "" {
+		truncated := initialMessage
+		runes := []rune(truncated)
+		if len(runes) > 100 {
+			truncated = string(runes[:100]) + "..."
 		}
+		blocks = append(blocks, slack.NewDividerBlock())
+		blocks = append(blocks, slack.NewContextBlock(
+			"",
+			slack.NewTextBlockObject("mrkdwn", "💬 "+truncated, false, false),
+		))
+	}
+
+	if url != "" {
 		blocks = append(blocks, slack.NewActionBlock(
 			"",
 			slack.NewButtonBlockElement(
 				"open_url",
 				url,
-				slack.NewTextBlockObject("plain_text", buttonLabel, false, false),
+				slack.NewTextBlockObject("plain_text", "開く", false, false),
 			).WithURL(url),
 		))
 	}
