@@ -39,21 +39,6 @@ func (s *SlackService) SendDM(slackUserID, title, body, url, initialMessage stri
 	// Build content text
 	contentText := fmt.Sprintf("*%s*\n%s", title, body)
 
-	// If we have an initial message, append it as a quoted link so the user
-	// can tell which task/conversation triggered this notification.
-	if initialMessage != "" {
-		truncated := initialMessage
-		runes := []rune(truncated)
-		if len(runes) > 100 {
-			truncated = string(runes[:100]) + "..."
-		}
-		if url != "" {
-			contentText += fmt.Sprintf("\n\n> <%s|%s>", url, truncated)
-		} else {
-			contentText += fmt.Sprintf("\n\n> %s", truncated)
-		}
-	}
-
 	// Build blocks
 	blocks := []slack.Block{
 		slack.NewSectionBlock(
@@ -64,12 +49,24 @@ func (s *SlackService) SendDM(slackUserID, title, body, url, initialMessage stri
 	}
 
 	if url != "" {
+		// Use the initial message as button label so the user can tell which
+		// task/conversation triggered this notification.
+		// Fall back to "開く" if no initial message is provided.
+		buttonLabel := "開く"
+		if initialMessage != "" {
+			truncated := initialMessage
+			runes := []rune(truncated)
+			if len(runes) > 40 {
+				truncated = string(runes[:40]) + "..."
+			}
+			buttonLabel = truncated
+		}
 		blocks = append(blocks, slack.NewActionBlock(
 			"",
 			slack.NewButtonBlockElement(
 				"open_url",
 				url,
-				slack.NewTextBlockObject("plain_text", "開く", false, false),
+				slack.NewTextBlockObject("plain_text", buttonLabel, false, false),
 			).WithURL(url),
 		))
 	}
