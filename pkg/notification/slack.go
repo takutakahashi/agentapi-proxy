@@ -24,7 +24,8 @@ func NewSlackService() (*SlackService, error) {
 }
 
 // SendDM sends a DM to the specified Slack user ID
-func (s *SlackService) SendDM(slackUserID, title, body, url string) error {
+// initialMessage is an optional initial message to display as a linked quote
+func (s *SlackService) SendDM(slackUserID, title, body, url, initialMessage string) error {
 	// Open a DM channel with the user first.
 	// This is required because PostMessage with a user ID may return channel_not_found
 	// if the bot has not previously interacted with the user.
@@ -35,13 +36,31 @@ func (s *SlackService) SendDM(slackUserID, title, body, url string) error {
 		return fmt.Errorf("failed to open DM channel with user %s: %w", slackUserID, err)
 	}
 
+	// Build content text
+	contentText := fmt.Sprintf("*%s*\n%s", title, body)
+
 	// Build blocks
 	blocks := []slack.Block{
 		slack.NewSectionBlock(
-			slack.NewTextBlockObject("mrkdwn", fmt.Sprintf("*%s*\n%s", title, body), false, false),
+			slack.NewTextBlockObject("mrkdwn", contentText, false, false),
 			nil,
 			nil,
 		),
+	}
+
+	// If we have an initial message, show it as a Context Block (small gray text)
+	// below a divider so the user can tell which task triggered this notification.
+	if initialMessage != "" {
+		truncated := initialMessage
+		runes := []rune(truncated)
+		if len(runes) > 100 {
+			truncated = string(runes[:100]) + "..."
+		}
+		blocks = append(blocks, slack.NewDividerBlock())
+		blocks = append(blocks, slack.NewContextBlock(
+			"",
+			slack.NewTextBlockObject("mrkdwn", "💬 "+truncated, false, false),
+		))
 	}
 
 	if url != "" {

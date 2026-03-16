@@ -312,7 +312,11 @@ func (s *Service) SendNotificationToUser(userID string, title, body, notificatio
 				if u, ok := data["url"].(string); ok {
 					url = u
 				}
-				sendErr = s.slack.SendDM(sub.Endpoint, title, body, url)
+				initialMessage := ""
+				if im, ok := data["initial_message"].(string); ok {
+					initialMessage = im
+				}
+				sendErr = s.slack.SendDM(sub.Endpoint, title, body, url, initialMessage)
 			}
 		default:
 			sendErr = fmt.Errorf("unsupported subscription type: %s", subType)
@@ -405,7 +409,11 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 				if u, ok := data["url"].(string); ok {
 					url = u
 				}
-				sendErr = s.slack.SendDM(sub.Endpoint, title, body, url)
+				initialMessage := ""
+				if im, ok := data["initial_message"].(string); ok {
+					initialMessage = im
+				}
+				sendErr = s.slack.SendDM(sub.Endpoint, title, body, url, initialMessage)
 			}
 		default:
 			sendErr = fmt.Errorf("unsupported subscription type: %s", subType)
@@ -454,7 +462,14 @@ func (s *Service) ProcessWebhook(webhook WebhookRequest) error {
 	if data == nil {
 		data = make(map[string]interface{})
 	}
-	data["url"] = fmt.Sprintf("/sessions/%s", webhook.SessionID)
+	// Set URL only if not already provided (e.g., enriched by the webhook handler)
+	if _, exists := data["url"]; !exists {
+		if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
+			data["url"] = baseURL + "/sessions/" + webhook.SessionID
+		} else {
+			data["url"] = fmt.Sprintf("/sessions/%s", webhook.SessionID)
+		}
+	}
 
 	switch webhook.EventType {
 	case "message_received":
@@ -578,6 +593,9 @@ func (s *Service) SendNotification(req SendNotificationRequest) (*SendNotificati
 	}
 	if req.Icon != "" {
 		data["icon"] = req.Icon
+	}
+	if req.InitialMessage != "" {
+		data["initial_message"] = req.InitialMessage
 	}
 
 	var err error
