@@ -315,6 +315,12 @@ func (s *Service) GetNotificationHistory(userID string, limit, offset int, filte
 
 // shouldSendNotification checks if a notification should be sent to a subscription
 func (s *Service) shouldSendNotification(sub Subscription, notificationType string, data map[string]interface{}) bool {
+	// "manual" notifications (explicitly triggered via API/CLI) are always delivered
+	// regardless of the subscription's notification type filter.
+	if notificationType == "manual" {
+		return true
+	}
+
 	// Check if subscription wants this notification type
 	if len(sub.NotificationTypes) > 0 {
 		found := false
