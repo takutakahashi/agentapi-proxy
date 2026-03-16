@@ -66,11 +66,12 @@ type UpdateSettingsRequest struct {
 	MCPServers           map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
 	Marketplaces         map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
 	ClaudeCodeOAuthToken *string                        `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             *string                        `json:"auth_mode,omitempty"`         // "oauth" or "bedrock"
-	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
-	EnvVars              map[string]string              `json:"env_vars,omitempty"`          // Custom environment variables
-	PreferredTeamID      *string                        `json:"preferred_team_id,omitempty"` // "org/team-slug" format; "" to clear
-	SlackUserID          *string                        `json:"slack_user_id,omitempty"`     // Slack DM notification user ID
+	AuthMode             *string                        `json:"auth_mode,omitempty"`             // "oauth" or "bedrock"
+	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"`       // plugin@marketplace format
+	EnvVars              map[string]string              `json:"env_vars,omitempty"`              // Custom environment variables
+	PreferredTeamID      *string                        `json:"preferred_team_id,omitempty"`     // "org/team-slug" format; "" to clear
+	SlackUserID          *string                        `json:"slack_user_id,omitempty"`         // Slack DM notification user ID
+	NotificationChannels *[]string                      `json:"notification_channels,omitempty"` // Active notification channels (e.g. ["web", "slack"])
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -106,10 +107,11 @@ type SettingsResponse struct {
 	Marketplaces            map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
 	HasClaudeCodeOAuthToken bool                            `json:"has_claude_code_oauth_token"`
 	AuthMode                string                          `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
-	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`      // only keys, not values
-	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"` // "org/team-slug" format
-	SlackUserID             string                          `json:"slack_user_id,omitempty"`     // Slack DM notification user ID
+	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`       // plugin@marketplace format
+	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`          // only keys, not values
+	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"`     // "org/team-slug" format
+	SlackUserID             string                          `json:"slack_user_id,omitempty"`         // Slack DM notification user ID
+	NotificationChannels    []string                        `json:"notification_channels,omitempty"` // Active notification channels
 	CreatedAt               string                          `json:"created_at"`
 	UpdatedAt               string                          `json:"updated_at"`
 }
@@ -291,18 +293,28 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Update Slack User ID
 	if req.SlackUserID != nil {
 		settings.SetSlackUserID(*req.SlackUserID)
+	}
 
-		// Sync Slack subscription if notification service is available
-		if c.notificationSvc != nil {
-			if *req.SlackUserID == "" {
-				// Remove Slack subscription
-				_ = c.notificationSvc.DeleteSlackSubscription(string(user.ID()))
-			} else {
-				// Create/update Slack subscription
-				_, err := c.notificationSvc.SubscribeSlack(user, *req.SlackUserID)
-				if err != nil {
-					log.Printf("[SETTINGS] Failed to create Slack subscription: %v", err)
-				}
+	// Update notification channels
+	if req.NotificationChannels != nil {
+		settings.SetNotificationChannels(*req.NotificationChannels)
+	}
+
+	// Sync Slack subscription based on final settings state
+	if c.notificationSvc != nil && (req.SlackUserID != nil || req.NotificationChannels != nil) {
+		userID := string(user.ID())
+		finalChannels := settings.NotificationChannels()
+		// Backward compat: if no channels configured, treat as all channels enabled
+		slackEnabled := len(finalChannels) == 0 || containsString(finalChannels, "slack")
+		finalSlackUserID := settings.SlackUserID()
+
+		if slackEnabled && finalSlackUserID != "" {
+			if _, err := c.notificationSvc.SubscribeSlack(user, finalSlackUserID); err != nil {
+				log.Printf("[SETTINGS] Failed to create Slack subscription: %v", err)
+			}
+		} else {
+			if deleteErr := c.notificationSvc.DeleteSlackSubscription(userID); deleteErr != nil {
+				log.Printf("[SETTINGS] Failed to delete Slack subscription: %v", deleteErr)
 			}
 		}
 	}
@@ -558,6 +570,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 
 	resp.PreferredTeamID = settings.PreferredTeamID()
 	resp.SlackUserID = settings.SlackUserID()
+	resp.NotificationChannels = settings.NotificationChannels()
 
 	return resp
 }

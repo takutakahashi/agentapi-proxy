@@ -35,10 +35,11 @@ type settingsJSON struct {
 	Marketplaces         map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
 	ClaudeCodeOAuthToken string                      `json:"claude_code_oauth_token,omitempty"`
 	AuthMode             string                      `json:"auth_mode,omitempty"`
-	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
-	EnvVars              map[string]string           `json:"env_vars,omitempty"`          // Custom environment variables
-	PreferredTeamID      string                      `json:"preferred_team_id,omitempty"` // "org/team-slug" format
-	SlackUserID          string                      `json:"slack_user_id,omitempty"`     // Slack DM notification user ID
+	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"`       // plugin@marketplace format
+	EnvVars              map[string]string           `json:"env_vars,omitempty"`              // Custom environment variables
+	PreferredTeamID      string                      `json:"preferred_team_id,omitempty"`     // "org/team-slug" format
+	SlackUserID          string                      `json:"slack_user_id,omitempty"`         // Slack DM notification user ID
+	NotificationChannels []string                    `json:"notification_channels,omitempty"` // Active notification channels
 	CreatedAt            time.Time                   `json:"created_at"`
 	UpdatedAt            time.Time                   `json:"updated_at"`
 }
@@ -272,6 +273,10 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		sj.SlackUserID = slackUserID
 	}
 
+	if channels := settings.NotificationChannels(); len(channels) > 0 {
+		sj.NotificationChannels = channels
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -371,6 +376,12 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if sj.SlackUserID != "" {
 		settings.SetSlackUserID(sj.SlackUserID)
 		// Reset updatedAt since SetSlackUserID updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if len(sj.NotificationChannels) > 0 {
+		settings.SetNotificationChannels(sj.NotificationChannels)
+		// Reset updatedAt since SetNotificationChannels updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
