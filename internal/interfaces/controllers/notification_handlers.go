@@ -119,6 +119,28 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "SessionID and EventType are required")
 	}
 
+	// Enrich webhook data with session information before async processing
+	if h.sessionManager != nil {
+		session := h.sessionManager.GetSession(webhook.SessionID)
+		if session != nil {
+			if webhook.Data == nil {
+				webhook.Data = make(map[string]interface{})
+			}
+			// Add initial message (description) so Slack notifications show what task triggered this
+			if desc := session.Description(); desc != "" {
+				if _, exists := webhook.Data["initial_message"]; !exists {
+					webhook.Data["initial_message"] = desc
+				}
+			}
+			// Build full URL using NOTIFICATION_BASE_URL if not already set
+			if _, exists := webhook.Data["url"]; !exists {
+				if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
+					webhook.Data["url"] = baseURL + "/sessions/" + session.ID()
+				}
+			}
+		}
+	}
+
 	// Process webhook asynchronously to avoid blocking
 	go func() {
 		if err := h.service.ProcessWebhook(webhook); err != nil {
