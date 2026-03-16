@@ -10,6 +10,9 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
+// NotificationCooldown is the minimum interval between notifications sent to the same user.
+const NotificationCooldown = 3 * time.Minute
+
 // Service provides notification functionality
 type Service struct {
 	storage            Storage
@@ -17,6 +20,7 @@ type Service struct {
 	slack              *SlackService            // Optional, for Slack DM notifications
 	secretSyncer       SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets
 	subscriptionReader SubscriptionReader       // Optional, for reading subscriptions from K8s Secrets
+	rateLimitStore     RateLimitStore           // Optional, for per-user notification rate limiting
 }
 
 // NewService creates a new notification service
@@ -30,10 +34,16 @@ func NewService(baseDir string) (*Service, error) {
 	slackSvc, _ := NewSlackService()
 
 	return &Service{
-		storage: storage,
-		webpush: webpush,
-		slack:   slackSvc,
+		storage:        storage,
+		webpush:        webpush,
+		slack:          slackSvc,
+		rateLimitStore: NewInMemoryRateLimitStore(NotificationCooldown),
 	}, nil
+}
+
+// SetRateLimitStore replaces the rate limit store (e.g. with a ConfigMap-backed one in k8s mode).
+func (s *Service) SetRateLimitStore(store RateLimitStore) {
+	s.rateLimitStore = store
 }
 
 // SetSecretSyncer sets the secret syncer for syncing subscriptions to K8s Secrets
@@ -245,6 +255,12 @@ func (s *Service) SetSubscriptionTypeActive(userID, subType string, active bool)
 
 // SendNotificationToUser sends a notification to all subscriptions of a user
 func (s *Service) SendNotificationToUser(userID string, title, body, notificationType string, data map[string]interface{}) error {
+	// Rate limiting: skip if a notification was sent recently (cooldown window)
+	if s.rateLimitStore != nil && s.rateLimitStore.IsRateLimited(userID) {
+		log.Printf("[NOTIFICATION_SERVICE] Rate limited: skipping notification for user %s", userID)
+		return nil
+	}
+
 	subscriptions, err := s.getSubscriptionsForUser(userID)
 	if err != nil {
 		return fmt.Errorf("failed to get subscriptions: %w", err)
@@ -318,6 +334,12 @@ func (s *Service) SendNotificationToUser(userID string, title, body, notificatio
 		}
 	}
 
+	if successCount > 0 && s.rateLimitStore != nil {
+		if err := s.rateLimitStore.RecordSent(userID); err != nil {
+			log.Printf("[NOTIFICATION_SERVICE] Failed to record rate limit for user %s: %v", userID, err)
+		}
+	}
+
 	if successCount == 0 && lastError != nil {
 		return fmt.Errorf("failed to send any notifications: %w", lastError)
 	}
@@ -341,6 +363,9 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 	var lastError error
 	successCount := 0
 
+	// Track which users have been successfully notified in this call to record rate limits at the end.
+	sentUsers := make(map[string]struct{})
+
 	for _, sub := range subscriptions {
 		// Skip inactive subscriptions (channel disabled by user)
 		if !sub.Active {
@@ -350,9 +375,13 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 		if !s.isSubscribedToSession(sub, sessionID) {
 			continue
 		}
-
 		// Check if subscription wants this notification type
 		if !s.shouldSendNotification(sub, notificationType, data) {
+			continue
+		}
+		// Rate limiting: skip if a notification was sent recently for this user
+		if s.rateLimitStore != nil && s.rateLimitStore.IsRateLimited(sub.UserID) {
+			log.Printf("[NOTIFICATION_SERVICE] Rate limited: skipping notification for user %s", sub.UserID)
 			continue
 		}
 
@@ -402,12 +431,22 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 			lastError = sendErr
 		} else {
 			successCount++
+			sentUsers[sub.UserID] = struct{}{}
 		}
 
 		// Save to history
 		if histErr := s.storage.AddNotificationHistory(sub.UserID, history); histErr != nil {
 			// Log but don't fail the notification send
 			fmt.Printf("Failed to save notification history: %v\n", histErr)
+		}
+	}
+
+	// Record rate limit timestamps for all users who received a notification.
+	if s.rateLimitStore != nil {
+		for userID := range sentUsers {
+			if err := s.rateLimitStore.RecordSent(userID); err != nil {
+				log.Printf("[NOTIFICATION_SERVICE] Failed to record rate limit for user %s: %v", userID, err)
+			}
 		}
 	}
 

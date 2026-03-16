@@ -321,6 +321,15 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// This is required in session pods where local storage is empty.
 			notificationSvc.SetSubscriptionReader(syncer)
 			log.Printf("Subscription secret syncer configured for Kubernetes mode (read+write)")
+
+			// Use a ConfigMap-backed rate limit store so all pod replicas share the same cooldown.
+			rateLimitStore := notification.NewConfigMapRateLimitStore(
+				k8sManager.GetClient(),
+				k8sManager.GetNamespace(),
+				notification.NotificationCooldown,
+			)
+			notificationSvc.SetRateLimitStore(rateLimitStore)
+			log.Printf("ConfigMap rate limit store configured (cooldown: %s)", notification.NotificationCooldown)
 		}
 	}
 
