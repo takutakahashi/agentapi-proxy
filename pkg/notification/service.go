@@ -15,8 +15,9 @@ type Service struct {
 	storage            Storage
 	webpush            *WebPushService
 	slack              *SlackService            // Optional, for Slack DM notifications
-	secretSyncer       SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets
+	secretSyncer       SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets (legacy)
 	subscriptionReader SubscriptionReader       // Optional, for reading subscriptions from K8s Secrets
+	subscriptionWriter SubscriptionWriter       // Optional, for writing subscriptions directly to K8s Secrets
 }
 
 // NewService creates a new notification service
@@ -49,24 +50,45 @@ func (s *Service) SetSubscriptionReader(reader SubscriptionReader) {
 	s.subscriptionReader = reader
 }
 
-// ensureLocalStoragePopulated loads subscriptions from the external reader (K8s Secret) into local
-// file storage when local storage is empty. This prevents a freshly-started pod from overwriting
-// K8s Secret data with an empty list when the first write operation triggers a Sync.
-func (s *Service) ensureLocalStoragePopulated(userID string) {
-	if s.subscriptionReader == nil {
-		return
+// SetSubscriptionWriter sets the subscription writer for direct K8s Secret writes.
+// When set, all subscription mutations bypass local file storage entirely.
+func (s *Service) SetSubscriptionWriter(writer SubscriptionWriter) {
+	s.subscriptionWriter = writer
+}
+
+// readCurrentSubscriptions returns the authoritative subscription list for a user.
+// In k8s mode (subscriptionWriter set) it reads from K8s Secret; otherwise from local storage.
+func (s *Service) readCurrentSubscriptions(userID string) ([]Subscription, error) {
+	if s.subscriptionWriter != nil && s.subscriptionReader != nil {
+		return s.subscriptionReader.GetSubscriptions(userID)
 	}
-	localSubs, err := s.storage.GetSubscriptions(userID)
-	if err != nil || len(localSubs) > 0 {
-		return // local already has data
+	return s.storage.GetSubscriptions(userID)
+}
+
+// persistSubscriptions writes the updated subscription list.
+// In k8s mode (subscriptionWriter set) it writes directly to K8s Secret; otherwise it replaces
+// each entry in local storage and calls Sync.
+func (s *Service) persistSubscriptions(userID string, subs []Subscription) error {
+	if s.subscriptionWriter != nil {
+		return s.subscriptionWriter.UpdateSubscriptions(userID, subs)
 	}
-	externalSubs, err := s.subscriptionReader.GetSubscriptions(userID)
-	if err != nil || len(externalSubs) == 0 {
-		return
+	// Local-storage path: rebuild from scratch then sync.
+	// Clear existing entries for this user by deleting each known endpoint.
+	existing, _ := s.storage.GetSubscriptions(userID)
+	for _, sub := range existing {
+		_ = s.storage.DeleteSubscription(userID, sub.Endpoint)
 	}
-	for _, sub := range externalSubs {
-		_ = s.storage.AddSubscription(userID, sub)
+	for _, sub := range subs {
+		if err := s.storage.AddSubscription(userID, sub); err != nil {
+			return err
+		}
 	}
+	if s.secretSyncer != nil {
+		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
+			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+		}
+	}
+	return nil
 }
 
 // getSubscriptionsForUser returns subscriptions for a user, preferring the external reader if set.
@@ -92,8 +114,6 @@ func (s *Service) GetStorage() Storage {
 
 // Subscribe creates a new push notification subscription
 func (s *Service) Subscribe(user *entities.User, endpoint string, keys map[string]string, deviceInfo *DeviceInfo) (*Subscription, error) {
-	// Pre-populate local storage from K8s to avoid overwriting existing subscriptions on pod restart.
-	s.ensureLocalStoragePopulated(string(user.ID()))
 	// Get username from GitHub user info if available, otherwise use UserID
 	username := string(user.ID())
 	if user.UserType() == entities.UserTypeGitHub && user.GitHubInfo() != nil {
@@ -101,13 +121,13 @@ func (s *Service) Subscribe(user *entities.User, endpoint string, keys map[strin
 	}
 
 	now := time.Now()
-	sub := Subscription{
+	newSub := Subscription{
 		UserID:            string(user.ID()),
 		UserType:          string(user.UserType()),
 		Username:          username,
 		Endpoint:          endpoint,
 		Keys:              keys,
-		SessionIDs:        []string{}, // Empty means all sessions
+		SessionIDs:        []string{},
 		NotificationTypes: []string{"message", "status_change", "session_update", "error"},
 		DeviceInfo:        deviceInfo,
 		CreatedAt:         now,
@@ -116,20 +136,29 @@ func (s *Service) Subscribe(user *entities.User, endpoint string, keys map[strin
 		Active:            true,
 	}
 
-	err := s.storage.AddSubscription(string(user.ID()), sub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to add subscription: %w", err)
-	}
+	userID := string(user.ID())
+	current, _ := s.readCurrentSubscriptions(userID)
 
-	// Sync to K8s Secret if syncer is configured
-	if s.secretSyncer != nil {
-		if syncErr := s.secretSyncer.Sync(string(user.ID())); syncErr != nil {
-			// Log warning but don't fail the subscription
-			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+	// Replace existing sub with same endpoint, or append.
+	updated := make([]Subscription, 0, len(current)+1)
+	replaced := false
+	for _, sub := range current {
+		if sub.Endpoint == endpoint {
+			updated = append(updated, newSub)
+			replaced = true
+		} else {
+			updated = append(updated, sub)
 		}
 	}
+	if !replaced {
+		updated = append(updated, newSub)
+	}
 
-	return &sub, nil
+	if err := s.persistSubscriptions(userID, updated); err != nil {
+		return nil, fmt.Errorf("failed to save subscription: %w", err)
+	}
+
+	return &newSub, nil
 }
 
 // SubscribeSlack creates or updates a Slack DM subscription for a user
@@ -137,28 +166,17 @@ func (s *Service) SubscribeSlack(user *entities.User, slackUserID string) (*Subs
 	if slackUserID == "" {
 		return nil, fmt.Errorf("slack user ID is required")
 	}
-	// Pre-populate local storage from K8s to avoid overwriting existing subscriptions on pod restart.
-	s.ensureLocalStoragePopulated(string(user.ID()))
 
-	// Get username from GitHub user info if available, otherwise use UserID
 	username := string(user.ID())
 	if user.UserType() == entities.UserTypeGitHub && user.GitHubInfo() != nil {
 		username = user.GitHubInfo().Login()
 	}
 
-	// Delete existing Slack subscriptions first to avoid duplicates
 	userID := string(user.ID())
-	existingSubs, err := s.storage.GetSubscriptions(userID)
-	if err == nil {
-		for _, sub := range existingSubs {
-			if sub.Type == SubscriptionTypeSlack {
-				_ = s.storage.DeleteSubscription(userID, sub.Endpoint)
-			}
-		}
-	}
+	current, _ := s.readCurrentSubscriptions(userID)
 
 	now := time.Now()
-	sub := Subscription{
+	newSub := Subscription{
 		UserID:            userID,
 		UserType:          string(user.UserType()),
 		Username:          username,
@@ -173,42 +191,35 @@ func (s *Service) SubscribeSlack(user *entities.User, slackUserID string) (*Subs
 		Active:            true,
 	}
 
-	err = s.storage.AddSubscription(userID, sub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to add Slack subscription: %w", err)
-	}
-
-	// Sync to K8s Secret if syncer is configured
-	if s.secretSyncer != nil {
-		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
-			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+	// Remove existing Slack subs and add the new one.
+	updated := make([]Subscription, 0, len(current)+1)
+	for _, sub := range current {
+		if sub.Type != SubscriptionTypeSlack {
+			updated = append(updated, sub)
 		}
 	}
+	updated = append(updated, newSub)
 
-	return &sub, nil
+	if err := s.persistSubscriptions(userID, updated); err != nil {
+		return nil, fmt.Errorf("failed to save Slack subscription: %w", err)
+	}
+
+	return &newSub, nil
 }
 
 // DeleteSlackSubscription removes the Slack subscription for a user
 func (s *Service) DeleteSlackSubscription(userID string) error {
-	s.ensureLocalStoragePopulated(userID)
-	existingSubs, err := s.storage.GetSubscriptions(userID)
+	current, err := s.readCurrentSubscriptions(userID)
 	if err != nil {
 		return err
 	}
-	for _, sub := range existingSubs {
-		if sub.Type == SubscriptionTypeSlack {
-			if err := s.storage.DeleteSubscription(userID, sub.Endpoint); err != nil {
-				return err
-			}
+	updated := make([]Subscription, 0, len(current))
+	for _, sub := range current {
+		if sub.Type != SubscriptionTypeSlack {
+			updated = append(updated, sub)
 		}
 	}
-
-	if s.secretSyncer != nil {
-		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
-			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
-		}
-	}
-	return nil
+	return s.persistSubscriptions(userID, updated)
 }
 
 // GetSubscriptions returns all active subscriptions for a user
@@ -218,56 +229,46 @@ func (s *Service) GetSubscriptions(userID string) ([]Subscription, error) {
 
 // DeleteSubscription removes a subscription by endpoint
 func (s *Service) DeleteSubscription(userID string, endpoint string) error {
-	s.ensureLocalStoragePopulated(userID)
-	err := s.storage.DeleteSubscription(userID, endpoint)
+	current, err := s.readCurrentSubscriptions(userID)
 	if err != nil {
 		return err
 	}
-
-	// Sync to K8s Secret if syncer is configured
-	if s.secretSyncer != nil {
-		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
-			// Log warning but don't fail the deletion
-			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+	updated := make([]Subscription, 0, len(current))
+	found := false
+	for _, sub := range current {
+		if sub.Endpoint == endpoint {
+			found = true
+		} else {
+			updated = append(updated, sub)
 		}
 	}
-
-	return nil
+	if !found {
+		return fmt.Errorf("subscription not found: %s", endpoint)
+	}
+	return s.persistSubscriptions(userID, updated)
 }
 
 // SetSubscriptionTypeActive sets the Active field for all subscriptions of a given type for a user.
 // This is used to enable/disable a notification channel without deleting the subscription data.
 func (s *Service) SetSubscriptionTypeActive(userID, subType string, active bool) error {
-	s.ensureLocalStoragePopulated(userID)
-	subs, err := s.storage.GetSubscriptions(userID)
+	current, err := s.readCurrentSubscriptions(userID)
 	if err != nil {
 		return err
 	}
 
-	changed := false
-	for _, sub := range subs {
+	updated := make([]Subscription, 0, len(current))
+	for _, sub := range current {
 		t := sub.Type
 		if t == "" {
 			t = SubscriptionTypeWebPush // backward compat
 		}
 		if t == subType {
-			if err := s.storage.DeleteSubscription(userID, sub.Endpoint); err != nil {
-				return fmt.Errorf("failed to delete subscription for update: %w", err)
-			}
 			sub.Active = active
-			if err := s.storage.AddSubscription(userID, sub); err != nil {
-				return fmt.Errorf("failed to re-add subscription after update: %w", err)
-			}
-			changed = true
 		}
+		updated = append(updated, sub)
 	}
 
-	if changed && s.secretSyncer != nil {
-		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
-			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
-		}
-	}
-	return nil
+	return s.persistSubscriptions(userID, updated)
 }
 
 // SendNotificationToUser sends a notification to all subscriptions of a user

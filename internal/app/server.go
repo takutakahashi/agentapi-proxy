@@ -320,6 +320,10 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// read subscriptions from Kubernetes Secrets rather than local file storage.
 			// This is required in session pods where local storage is empty.
 			notificationSvc.SetSubscriptionReader(syncer)
+			// Use the syncer as the subscription writer so that all subscription mutations
+			// go directly to the Kubernetes Secret, bypassing local file storage entirely.
+			// This prevents subscription loss after pod restarts.
+			notificationSvc.SetSubscriptionWriter(syncer)
 			log.Printf("Subscription secret syncer configured for Kubernetes mode (read+write)")
 		}
 	}
