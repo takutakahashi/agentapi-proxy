@@ -69,7 +69,7 @@ func (s *SlackService) SendDM(slackUserID, title, body, url, initialMessage stri
 			slack.NewButtonBlockElement(
 				"open_url",
 				url,
-				slack.NewTextBlockObject("plain_text", "開く", false, false),
+				slack.NewTextBlockObject("plain_text", "セッションを開く", false, false),
 			).WithURL(url),
 		))
 	}
