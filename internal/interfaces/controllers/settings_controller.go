@@ -293,28 +293,36 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Update Slack User ID
 	if req.SlackUserID != nil {
 		settings.SetSlackUserID(*req.SlackUserID)
+
+		if c.notificationSvc != nil {
+			channels := settings.NotificationChannels()
+			slackEnabled := len(channels) == 0 || containsString(channels, "slack")
+			if *req.SlackUserID == "" {
+				_ = c.notificationSvc.DeleteSlackSubscription(string(user.ID()))
+			} else if slackEnabled {
+				if _, err := c.notificationSvc.SubscribeSlack(user, *req.SlackUserID); err != nil {
+					log.Printf("[SETTINGS] Failed to create Slack subscription: %v", err)
+				}
+			}
+		}
 	}
 
-	// Update notification channels
+	// Update notification channels — toggle Active on existing subscriptions instead of deleting them
 	if req.NotificationChannels != nil {
 		settings.SetNotificationChannels(*req.NotificationChannels)
-	}
 
-	// Sync Slack subscription based on final settings state
-	if c.notificationSvc != nil && (req.SlackUserID != nil || req.NotificationChannels != nil) {
-		userID := string(user.ID())
-		finalChannels := settings.NotificationChannels()
-		// Backward compat: if no channels configured, treat as all channels enabled
-		slackEnabled := len(finalChannels) == 0 || containsString(finalChannels, "slack")
-		finalSlackUserID := settings.SlackUserID()
+		if c.notificationSvc != nil {
+			userID := string(user.ID())
+			channels := *req.NotificationChannels
+			// len == 0 means all channels enabled (backward compat)
+			slackEnabled := len(channels) == 0 || containsString(channels, "slack")
+			webEnabled := len(channels) == 0 || containsString(channels, "web")
 
-		if slackEnabled && finalSlackUserID != "" {
-			if _, err := c.notificationSvc.SubscribeSlack(user, finalSlackUserID); err != nil {
-				log.Printf("[SETTINGS] Failed to create Slack subscription: %v", err)
+			if err := c.notificationSvc.SetSubscriptionTypeActive(userID, notification.SubscriptionTypeSlack, slackEnabled); err != nil {
+				log.Printf("[SETTINGS] Failed to update Slack subscription active state: %v", err)
 			}
-		} else {
-			if deleteErr := c.notificationSvc.DeleteSlackSubscription(userID); deleteErr != nil {
-				log.Printf("[SETTINGS] Failed to delete Slack subscription: %v", deleteErr)
+			if err := c.notificationSvc.SetSubscriptionTypeActive(userID, notification.SubscriptionTypeWebPush, webEnabled); err != nil {
+				log.Printf("[SETTINGS] Failed to update WebPush subscription active state: %v", err)
 			}
 		}
 	}

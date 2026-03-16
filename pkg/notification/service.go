@@ -209,6 +209,40 @@ func (s *Service) DeleteSubscription(userID string, endpoint string) error {
 	return nil
 }
 
+// SetSubscriptionTypeActive sets the Active field for all subscriptions of a given type for a user.
+// This is used to enable/disable a notification channel without deleting the subscription data.
+func (s *Service) SetSubscriptionTypeActive(userID, subType string, active bool) error {
+	subs, err := s.storage.GetSubscriptions(userID)
+	if err != nil {
+		return err
+	}
+
+	changed := false
+	for _, sub := range subs {
+		t := sub.Type
+		if t == "" {
+			t = SubscriptionTypeWebPush // backward compat
+		}
+		if t == subType {
+			if err := s.storage.DeleteSubscription(userID, sub.Endpoint); err != nil {
+				return fmt.Errorf("failed to delete subscription for update: %w", err)
+			}
+			sub.Active = active
+			if err := s.storage.AddSubscription(userID, sub); err != nil {
+				return fmt.Errorf("failed to re-add subscription after update: %w", err)
+			}
+			changed = true
+		}
+	}
+
+	if changed && s.secretSyncer != nil {
+		if syncErr := s.secretSyncer.Sync(userID); syncErr != nil {
+			log.Printf("[NOTIFICATION_SERVICE] Warning: failed to sync subscription secret: %v", syncErr)
+		}
+	}
+	return nil
+}
+
 // SendNotificationToUser sends a notification to all subscriptions of a user
 func (s *Service) SendNotificationToUser(userID string, title, body, notificationType string, data map[string]interface{}) error {
 	subscriptions, err := s.getSubscriptionsForUser(userID)
@@ -220,6 +254,10 @@ func (s *Service) SendNotificationToUser(userID string, title, body, notificatio
 	successCount := 0
 
 	for _, sub := range subscriptions {
+		// Skip inactive subscriptions (channel disabled by user)
+		if !sub.Active {
+			continue
+		}
 		// Check if subscription wants this notification type
 		if !s.shouldSendNotification(sub, notificationType, data) {
 			continue
@@ -304,6 +342,10 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 	successCount := 0
 
 	for _, sub := range subscriptions {
+		// Skip inactive subscriptions (channel disabled by user)
+		if !sub.Active {
+			continue
+		}
 		// Check if user is subscribed to this session
 		if !s.isSubscribedToSession(sub, sessionID) {
 			continue
