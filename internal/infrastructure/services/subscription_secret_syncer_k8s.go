@@ -106,3 +106,76 @@ func (s *KubernetesSubscriptionSecretSyncer) Sync(userID string) error {
 func (s *KubernetesSubscriptionSecretSyncer) GetSecretName(userID string) string {
 	return fmt.Sprintf("%s-%s", s.secretPrefix, sanitizeLabelValue(userID))
 }
+
+// GetSubscriptions reads all active subscriptions for a user from the Kubernetes Secret.
+// This implements notification.SubscriptionReader.
+func (s *KubernetesSubscriptionSecretSyncer) GetSubscriptions(userID string) ([]notification.Subscription, error) {
+	ctx := context.Background()
+	secretName := s.GetSecretName(userID)
+
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return []notification.Subscription{}, nil
+		}
+		return nil, fmt.Errorf("failed to get subscription secret %s: %w", secretName, err)
+	}
+
+	data, ok := secret.Data["subscriptions.json"]
+	if !ok {
+		return []notification.Subscription{}, nil
+	}
+
+	var subs []notification.Subscription
+	if err := json.Unmarshal(data, &subs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal subscriptions from secret %s: %w", secretName, err)
+	}
+
+	// Return only active subscriptions
+	var active []notification.Subscription
+	for _, sub := range subs {
+		if sub.Active {
+			active = append(active, sub)
+		}
+	}
+
+	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d active subscriptions for user %s from secret %s", len(active), userID, secretName)
+	return active, nil
+}
+
+// GetAllSubscriptions reads all active subscriptions from all Kubernetes Secrets
+// that have the notification-subscription label.
+// This implements notification.SubscriptionReader.
+func (s *KubernetesSubscriptionSecretSyncer) GetAllSubscriptions() ([]notification.Subscription, error) {
+	ctx := context.Background()
+
+	secretList, err := s.clientset.CoreV1().Secrets(s.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/component=notification-subscription",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list subscription secrets: %w", err)
+	}
+
+	var allSubs []notification.Subscription
+	for _, secret := range secretList.Items {
+		data, ok := secret.Data["subscriptions.json"]
+		if !ok {
+			continue
+		}
+
+		var subs []notification.Subscription
+		if err := json.Unmarshal(data, &subs); err != nil {
+			log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Warning: failed to unmarshal subscriptions from secret %s: %v", secret.Name, err)
+			continue
+		}
+
+		for _, sub := range subs {
+			if sub.Active {
+				allSubs = append(allSubs, sub)
+			}
+		}
+	}
+
+	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d total active subscriptions from %d secrets", len(allSubs), len(secretList.Items))
+	return allSubs, nil
+}

@@ -316,7 +316,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 				"", // Use default prefix
 			)
 			notificationSvc.SetSecretSyncer(syncer)
-			log.Printf("Subscription secret syncer configured for Kubernetes mode")
+			// Also use the syncer as the subscription reader so that push notifications
+			// read subscriptions from Kubernetes Secrets rather than local file storage.
+			// This is required in session pods where local storage is empty.
+			notificationSvc.SetSubscriptionReader(syncer)
+			log.Printf("Subscription secret syncer configured for Kubernetes mode (read+write)")
 		}
 	}
 

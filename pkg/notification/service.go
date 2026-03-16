@@ -12,9 +12,10 @@ import (
 
 // Service provides notification functionality
 type Service struct {
-	storage      Storage
-	webpush      *WebPushService
-	secretSyncer SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets
+	storage            Storage
+	webpush            *WebPushService
+	secretSyncer       SubscriptionSecretSyncer // Optional, for syncing subscriptions to K8s Secrets
+	subscriptionReader SubscriptionReader       // Optional, for reading subscriptions from K8s Secrets
 }
 
 // NewService creates a new notification service
@@ -34,6 +35,29 @@ func NewService(baseDir string) (*Service, error) {
 // This is optional and only used when Kubernetes mode is enabled
 func (s *Service) SetSecretSyncer(syncer SubscriptionSecretSyncer) {
 	s.secretSyncer = syncer
+}
+
+// SetSubscriptionReader sets the subscription reader for reading subscriptions from K8s Secrets.
+// When set, SendNotificationToUser and SendNotificationToSession will read subscriptions from
+// the external storage (e.g., Kubernetes Secrets) instead of the local file-based storage.
+func (s *Service) SetSubscriptionReader(reader SubscriptionReader) {
+	s.subscriptionReader = reader
+}
+
+// getSubscriptionsForUser returns subscriptions for a user, preferring the external reader if set.
+func (s *Service) getSubscriptionsForUser(userID string) ([]Subscription, error) {
+	if s.subscriptionReader != nil {
+		return s.subscriptionReader.GetSubscriptions(userID)
+	}
+	return s.storage.GetSubscriptions(userID)
+}
+
+// getAllSubscriptions returns all subscriptions, preferring the external reader if set.
+func (s *Service) getAllSubscriptions() ([]Subscription, error) {
+	if s.subscriptionReader != nil {
+		return s.subscriptionReader.GetAllSubscriptions()
+	}
+	return s.storage.GetAllSubscriptions()
 }
 
 // GetStorage returns the storage instance (used by secret syncer)
@@ -110,7 +134,7 @@ func (s *Service) SendNotificationToUser(userID string, title, body, notificatio
 		return fmt.Errorf("web push service not configured")
 	}
 
-	subscriptions, err := s.storage.GetSubscriptions(userID)
+	subscriptions, err := s.getSubscriptionsForUser(userID)
 	if err != nil {
 		return fmt.Errorf("failed to get subscriptions: %w", err)
 	}
@@ -174,7 +198,7 @@ func (s *Service) SendNotificationToSession(sessionID string, title, body, notif
 	}
 	data["session_id"] = sessionID
 
-	subscriptions, err := s.storage.GetAllSubscriptions()
+	subscriptions, err := s.getAllSubscriptions()
 	if err != nil {
 		return fmt.Errorf("failed to get subscriptions: %w", err)
 	}
