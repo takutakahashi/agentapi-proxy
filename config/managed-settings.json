@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"⚠️ 作業完了時の必須チェック（該当する場合は必ず実行）:\\n1. PR を作成する\\n2. agentapi-proxy client task create または task update でユーザータスクを作成・更新する\\n3. agentapi-proxy helpers send-notification で通知を送る\"}}'"
+            "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"⚠️ 作業完了時の必須チェック（該当する場合は必ず実行）:\\n1. PR を作成する\\n2. agentapi-proxy client task create または task update でユーザータスクを作成・更新する\\n3. agentapi-proxy client send-notification で通知を送る\"}}'"
           }
         ]
       }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 完了\" --body=\"セッションが正常に完了しました。お疲れ様でした！\""
+            "command": "agentapi-proxy client send-notification --title=\"Claude Code 完了\" --body=\"セッションが正常に完了しました。お疲れ様でした！\" --notify-session-id \"$AGENTAPI_SESSION_ID\""
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "agentapi-proxy helpers send-notification --title=\"Claude Code 通知\" --body=\"応答が必要です。確認をお願いします。\""
+            "command": "agentapi-proxy client send-notification --title=\"Claude Code 通知\" --body=\"応答が必要です。確認をお願いします。\" --notify-session-id \"$AGENTAPI_SESSION_ID\""
           }
         ]
       }

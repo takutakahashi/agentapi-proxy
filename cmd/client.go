@@ -1126,6 +1126,30 @@ func runDeleteSession(cmd *cobra.Command, args []string) {
 	fmt.Printf("Session ID: %s\n", resp.SessionID)
 }
 
+// notifyRateLimitFile is the file used to track the last notification send time.
+const notifyRateLimitFile = "/tmp/notify"
+
+// notifyRateLimitCooldown is the minimum interval between client-side notifications.
+const notifyRateLimitCooldown = 3 * time.Minute
+
+// checkNotifyRateLimit returns true if a notification was sent within the cooldown window.
+func checkNotifyRateLimit() bool {
+	data, err := os.ReadFile(notifyRateLimitFile)
+	if err != nil {
+		return false // file missing → not rate-limited
+	}
+	last, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
+	if err != nil {
+		return false // unparseable → ignore
+	}
+	return time.Since(last) < notifyRateLimitCooldown
+}
+
+// recordNotifySent writes the current time to the rate-limit file.
+func recordNotifySent() {
+	_ = os.WriteFile(notifyRateLimitFile, []byte(time.Now().Format(time.RFC3339)), 0o644)
+}
+
 func runClientSendNotification(cmd *cobra.Command, args []string) error {
 	if clientNotifyTitle == "" {
 		return fmt.Errorf("--title is required")
@@ -1135,6 +1159,12 @@ func runClientSendNotification(cmd *cobra.Command, args []string) error {
 	}
 	if clientNotifySessionID == "" && clientNotifyUserID == "" {
 		return fmt.Errorf("either --notify-session-id or --notify-user-id is required")
+	}
+
+	// Client-side rate limiting: skip if a notification was sent recently.
+	if checkNotifyRateLimit() {
+		fmt.Println("Notification skipped (rate limited)")
+		return nil
 	}
 
 	c, err := resolveMemoryClient()
@@ -1157,6 +1187,7 @@ func runClientSendNotification(cmd *cobra.Command, args []string) error {
 	}
 
 	if resp.Success {
+		recordNotifySent()
 		fmt.Println("Notification sent successfully")
 	} else {
 		fmt.Fprintf(os.Stderr, "Notification send failed: %s\n", resp.Message)

@@ -10,6 +10,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 )
 
 // BaseSettingsName is the reserved name for global base settings (admin-only)
@@ -17,13 +18,15 @@ const BaseSettingsName = "base"
 
 // SettingsController handles settings-related HTTP requests
 type SettingsController struct {
-	repo repositories.SettingsRepository
+	repo            repositories.SettingsRepository
+	notificationSvc *notification.Service // Optional
 }
 
 // NewSettingsController creates new settings controller
-func NewSettingsController(repo repositories.SettingsRepository) *SettingsController {
+func NewSettingsController(repo repositories.SettingsRepository, notificationSvc *notification.Service) *SettingsController {
 	return &SettingsController{
-		repo: repo,
+		repo:            repo,
+		notificationSvc: notificationSvc,
 	}
 }
 
@@ -63,10 +66,12 @@ type UpdateSettingsRequest struct {
 	MCPServers           map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
 	Marketplaces         map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
 	ClaudeCodeOAuthToken *string                        `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             *string                        `json:"auth_mode,omitempty"`         // "oauth" or "bedrock"
-	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
-	EnvVars              map[string]string              `json:"env_vars,omitempty"`          // Custom environment variables
-	PreferredTeamID      *string                        `json:"preferred_team_id,omitempty"` // "org/team-slug" format; "" to clear
+	AuthMode             *string                        `json:"auth_mode,omitempty"`             // "oauth" or "bedrock"
+	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"`       // plugin@marketplace format
+	EnvVars              map[string]string              `json:"env_vars,omitempty"`              // Custom environment variables
+	PreferredTeamID      *string                        `json:"preferred_team_id,omitempty"`     // "org/team-slug" format; "" to clear
+	SlackUserID          *string                        `json:"slack_user_id,omitempty"`         // Slack DM notification user ID
+	NotificationChannels *[]string                      `json:"notification_channels,omitempty"` // Active notification channels (e.g. ["web", "slack"])
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -102,9 +107,11 @@ type SettingsResponse struct {
 	Marketplaces            map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
 	HasClaudeCodeOAuthToken bool                            `json:"has_claude_code_oauth_token"`
 	AuthMode                string                          `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
-	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`      // only keys, not values
-	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"` // "org/team-slug" format
+	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`       // plugin@marketplace format
+	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`          // only keys, not values
+	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"`     // "org/team-slug" format
+	SlackUserID             string                          `json:"slack_user_id,omitempty"`         // Slack DM notification user ID
+	NotificationChannels    []string                        `json:"notification_channels,omitempty"` // Active notification channels
 	CreatedAt               string                          `json:"created_at"`
 	UpdatedAt               string                          `json:"updated_at"`
 }
@@ -279,6 +286,43 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			if len(teams) == 1 {
 				teamID := teams[0].Organization + "/" + teams[0].TeamSlug
 				settings.SetPreferredTeamID(teamID)
+			}
+		}
+	}
+
+	// Update Slack User ID
+	if req.SlackUserID != nil {
+		settings.SetSlackUserID(*req.SlackUserID)
+
+		if c.notificationSvc != nil {
+			channels := settings.NotificationChannels()
+			slackEnabled := len(channels) == 0 || containsString(channels, "slack")
+			if *req.SlackUserID == "" {
+				_ = c.notificationSvc.DeleteSlackSubscription(string(user.ID()))
+			} else if slackEnabled {
+				if _, err := c.notificationSvc.SubscribeSlack(user, *req.SlackUserID); err != nil {
+					log.Printf("[SETTINGS] Failed to create Slack subscription: %v", err)
+				}
+			}
+		}
+	}
+
+	// Update notification channels — toggle Active on existing subscriptions instead of deleting them
+	if req.NotificationChannels != nil {
+		settings.SetNotificationChannels(*req.NotificationChannels)
+
+		if c.notificationSvc != nil {
+			userID := string(user.ID())
+			channels := *req.NotificationChannels
+			// len == 0 means all channels enabled (backward compat)
+			slackEnabled := len(channels) == 0 || containsString(channels, "slack")
+			webEnabled := len(channels) == 0 || containsString(channels, "web")
+
+			if err := c.notificationSvc.SetSubscriptionTypeActive(userID, notification.SubscriptionTypeSlack, slackEnabled); err != nil {
+				log.Printf("[SETTINGS] Failed to update Slack subscription active state: %v", err)
+			}
+			if err := c.notificationSvc.SetSubscriptionTypeActive(userID, notification.SubscriptionTypeWebPush, webEnabled); err != nil {
+				log.Printf("[SETTINGS] Failed to update WebPush subscription active state: %v", err)
 			}
 		}
 	}
@@ -533,6 +577,8 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	}
 
 	resp.PreferredTeamID = settings.PreferredTeamID()
+	resp.SlackUserID = settings.SlackUserID()
+	resp.NotificationChannels = settings.NotificationChannels()
 
 	return resp
 }

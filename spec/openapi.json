@@ -4089,6 +4089,10 @@
           "preferred_team_id": {
             "type": "string",
             "description": "Team ID in 'org/team-slug' format whose settings to use exclusively. When set, only this team's settings (Bedrock, MCP servers, env vars, etc.) are applied in sessions. Empty string clears the setting and restores default behavior (all teams merged). If omitted on first save and the user belongs to exactly one team, it is auto-set to that team."
+          },
+          "slack_user_id": {
+            "type": "string",
+            "description": "Slack user ID for DM notifications. Set to empty string to remove."
           }
         }
       },
@@ -4233,6 +4237,10 @@
           "preferred_team_id": {
             "type": "string",
             "description": "Team ID in 'org/team-slug' format whose settings are used exclusively in sessions. Empty string means all teams are merged in the default order."
+          },
+          "slack_user_id": {
+            "type": "string",
+            "description": "Slack user ID for DM notifications."
           },
           "created_at": {
             "type": "string",

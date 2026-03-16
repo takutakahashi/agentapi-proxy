@@ -12,8 +12,16 @@ type SubscriptionSecretSyncer interface {
 // This interface is used when subscriptions are stored externally (e.g., in Kubernetes Secrets)
 // rather than in the local file-based storage.
 type SubscriptionReader interface {
-	// GetSubscriptions returns all active subscriptions for a user
+	// GetSubscriptions returns all subscriptions for a user (including inactive)
 	GetSubscriptions(userID string) ([]Subscription, error)
-	// GetAllSubscriptions returns all active subscriptions across all users
+	// GetAllSubscriptions returns all subscriptions across all users (including inactive)
 	GetAllSubscriptions() ([]Subscription, error)
+}
+
+// SubscriptionWriter writes subscription data directly to an external storage (e.g., Kubernetes Secret).
+// When set on the Service, all subscription mutations bypass local file storage entirely and use
+// read-modify-write operations against the external storage.
+type SubscriptionWriter interface {
+	// UpdateSubscriptions replaces all subscriptions for a user with the provided list.
+	UpdateSubscriptions(userID string, subs []Subscription) error
 }

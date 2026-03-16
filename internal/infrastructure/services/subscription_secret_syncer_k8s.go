@@ -102,6 +102,57 @@ func (s *KubernetesSubscriptionSecretSyncer) Sync(userID string) error {
 	return nil
 }
 
+// UpdateSubscriptions writes subs directly to the Kubernetes Secret, bypassing local file storage.
+// This implements notification.SubscriptionWriter.
+func (s *KubernetesSubscriptionSecretSyncer) UpdateSubscriptions(userID string, subs []notification.Subscription) error {
+	ctx := context.Background()
+
+	data, err := json.Marshal(subs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal subscriptions: %w", err)
+	}
+
+	secretName := s.GetSecretName(userID)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: s.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "agentapi-proxy",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"app.kubernetes.io/component":  "notification-subscription",
+				"agentapi.proxy/user-id":       sanitizeLabelValue(userID),
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"subscriptions.json": data,
+		},
+	}
+
+	existing, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			_, createErr := s.clientset.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{})
+			if createErr != nil {
+				return fmt.Errorf("failed to create subscription secret: %w", createErr)
+			}
+			log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Created subscription secret %s for user %s", secretName, userID)
+			return nil
+		}
+		return fmt.Errorf("failed to get subscription secret: %w", err)
+	}
+
+	existing.Data = secret.Data
+	existing.Labels = secret.Labels
+	if _, updateErr := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, existing, metav1.UpdateOptions{}); updateErr != nil {
+		return fmt.Errorf("failed to update subscription secret: %w", updateErr)
+	}
+	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Updated subscription secret %s for user %s (%d subs)", secretName, userID, len(subs))
+	return nil
+}
+
 // GetSecretName returns the secret name for a given user ID
 func (s *KubernetesSubscriptionSecretSyncer) GetSecretName(userID string) string {
 	return fmt.Sprintf("%s-%s", s.secretPrefix, sanitizeLabelValue(userID))
@@ -131,16 +182,8 @@ func (s *KubernetesSubscriptionSecretSyncer) GetSubscriptions(userID string) ([]
 		return nil, fmt.Errorf("failed to unmarshal subscriptions from secret %s: %w", secretName, err)
 	}
 
-	// Return only active subscriptions
-	var active []notification.Subscription
-	for _, sub := range subs {
-		if sub.Active {
-			active = append(active, sub)
-		}
-	}
-
-	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d active subscriptions for user %s from secret %s", len(active), userID, secretName)
-	return active, nil
+	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d subscriptions for user %s from secret %s", len(subs), userID, secretName)
+	return subs, nil
 }
 
 // GetAllSubscriptions reads all active subscriptions from all Kubernetes Secrets
@@ -169,13 +212,9 @@ func (s *KubernetesSubscriptionSecretSyncer) GetAllSubscriptions() ([]notificati
 			continue
 		}
 
-		for _, sub := range subs {
-			if sub.Active {
-				allSubs = append(allSubs, sub)
-			}
-		}
+		allSubs = append(allSubs, subs...)
 	}
 
-	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d total active subscriptions from %d secrets", len(allSubs), len(secretList.Items))
+	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d total subscriptions from %d secrets", len(allSubs), len(secretList.Items))
 	return allSubs, nil
 }

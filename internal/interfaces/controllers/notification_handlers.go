@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
@@ -135,8 +136,8 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 //
 // Routing logic:
 //   - session_id provided: look up the session via SessionManager.
-//     - team-scoped session → no notification is sent (return success).
-//     - user-scoped session → resolve to the session owner's user_id and send.
+//   - team-scoped session → no notification is sent (return success).
+//   - user-scoped session → resolve to the session owner's user_id and send.
 //   - user_id provided: send directly to that user.
 func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 	user := auth.GetUserFromContext(c)
@@ -184,6 +185,14 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 
 		// User-scoped session: resolve to the owner's user_id.
 		req.UserID = session.UserID()
+
+		// Auto-construct session URL from NOTIFICATION_BASE_URL if not provided.
+		if req.URL == "" {
+			if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
+				req.URL = baseURL + "/sessions/" + session.ID()
+			}
+		}
+
 		req.SessionID = ""
 	}
 

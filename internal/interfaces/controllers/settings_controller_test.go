@@ -219,7 +219,7 @@ func TestUpdateSettings_PreserveExistingCredentials(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			h := NewSettingsController(repo)
+			h := NewSettingsController(repo, nil)
 
 			body, err := json.Marshal(tt.requestBody)
 			require.NoError(t, err)
