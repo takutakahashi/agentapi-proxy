@@ -65,12 +65,10 @@
        --link "https://github.com/owner/repo/pull/123|PR #123"
      ```
 5. **`agentapi-proxy client send-notification` で通知を送る**
-   - PR を作成した場合は `--url` に PR の URL を指定する
    - 例：
      ```bash
      agentapi-proxy client send-notification \
        --title "作業が完了しました" \
        --body "作業内容を確認してください" \
-       --notify-session-id "$AGENTAPI_SESSION_ID" \
-       --url "https://github.com/owner/repo/pull/123"
+       --notify-session-id "$AGENTAPI_SESSION_ID"
      ```

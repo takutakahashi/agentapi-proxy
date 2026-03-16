@@ -63,8 +63,6 @@ var (
 var (
 	clientNotifyTitle     string
 	clientNotifyBody      string
-	clientNotifyURL       string
-	clientNotifyIcon      string
 	clientNotifySessionID string
 	clientNotifyUserID    string
 )
@@ -301,8 +299,7 @@ Examples:
   agentapi-proxy client send-notification \
     --title "作業が完了しました" \
     --body "作業内容を確認してください" \
-    --notify-session-id "$AGENTAPI_SESSION_ID" \
-    --url "https://example.com/sessions/abc123"
+    --notify-session-id "$AGENTAPI_SESSION_ID"
 
   # Send to a specific user
   agentapi-proxy client send-notification \
@@ -469,8 +466,6 @@ func init() {
 	// send-notification flags
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyTitle, "title", "", "Notification title (required)")
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyBody, "body", "", "Notification body (required)")
-	sendNotificationClientCmd.Flags().StringVar(&clientNotifyURL, "url", "", "URL to open when notification is clicked (optional)")
-	sendNotificationClientCmd.Flags().StringVar(&clientNotifyIcon, "icon", "", "Icon URL for the notification (optional)")
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifySessionID, "notify-session-id", "", "Session ID whose subscribers will receive the notification")
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyUserID, "notify-user-id", "", "User ID to send the notification to")
 
@@ -1175,8 +1170,6 @@ func runClientSendNotification(cmd *cobra.Command, args []string) error {
 	req := &client.SendNotificationRequest{
 		Title:     clientNotifyTitle,
 		Body:      clientNotifyBody,
-		URL:       clientNotifyURL,
-		Icon:      clientNotifyIcon,
 		SessionID: clientNotifySessionID,
 		UserID:    clientNotifyUserID,
 	}

@@ -1017,8 +1017,6 @@ func (c *Client) UpsertMemory(ctx context.Context, scope, teamID, title, content
 type SendNotificationRequest struct {
 	Title     string `json:"title"`
 	Body      string `json:"body"`
-	URL       string `json:"url,omitempty"`
-	Icon      string `json:"icon,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	UserID    string `json:"user_id,omitempty"`
 }
