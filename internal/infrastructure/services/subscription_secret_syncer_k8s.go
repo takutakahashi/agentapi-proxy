@@ -131,16 +131,8 @@ func (s *KubernetesSubscriptionSecretSyncer) GetSubscriptions(userID string) ([]
 		return nil, fmt.Errorf("failed to unmarshal subscriptions from secret %s: %w", secretName, err)
 	}
 
-	// Return only active subscriptions
-	var active []notification.Subscription
-	for _, sub := range subs {
-		if sub.Active {
-			active = append(active, sub)
-		}
-	}
-
-	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d active subscriptions for user %s from secret %s", len(active), userID, secretName)
-	return active, nil
+	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d subscriptions for user %s from secret %s", len(subs), userID, secretName)
+	return subs, nil
 }
 
 // GetAllSubscriptions reads all active subscriptions from all Kubernetes Secrets
@@ -169,13 +161,9 @@ func (s *KubernetesSubscriptionSecretSyncer) GetAllSubscriptions() ([]notificati
 			continue
 		}
 
-		for _, sub := range subs {
-			if sub.Active {
-				allSubs = append(allSubs, sub)
-			}
-		}
+		allSubs = append(allSubs, subs...)
 	}
 
-	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d total active subscriptions from %d secrets", len(allSubs), len(secretList.Items))
+	log.Printf("[SUBSCRIPTION_SECRET_SYNCER] Read %d total subscriptions from %d secrets", len(allSubs), len(secretList.Items))
 	return allSubs, nil
 }

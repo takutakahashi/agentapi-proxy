@@ -49,6 +49,26 @@ func (s *Service) SetSubscriptionReader(reader SubscriptionReader) {
 	s.subscriptionReader = reader
 }
 
+// ensureLocalStoragePopulated loads subscriptions from the external reader (K8s Secret) into local
+// file storage when local storage is empty. This prevents a freshly-started pod from overwriting
+// K8s Secret data with an empty list when the first write operation triggers a Sync.
+func (s *Service) ensureLocalStoragePopulated(userID string) {
+	if s.subscriptionReader == nil {
+		return
+	}
+	localSubs, err := s.storage.GetSubscriptions(userID)
+	if err != nil || len(localSubs) > 0 {
+		return // local already has data
+	}
+	externalSubs, err := s.subscriptionReader.GetSubscriptions(userID)
+	if err != nil || len(externalSubs) == 0 {
+		return
+	}
+	for _, sub := range externalSubs {
+		_ = s.storage.AddSubscription(userID, sub)
+	}
+}
+
 // getSubscriptionsForUser returns subscriptions for a user, preferring the external reader if set.
 func (s *Service) getSubscriptionsForUser(userID string) ([]Subscription, error) {
 	if s.subscriptionReader != nil {
@@ -72,6 +92,8 @@ func (s *Service) GetStorage() Storage {
 
 // Subscribe creates a new push notification subscription
 func (s *Service) Subscribe(user *entities.User, endpoint string, keys map[string]string, deviceInfo *DeviceInfo) (*Subscription, error) {
+	// Pre-populate local storage from K8s to avoid overwriting existing subscriptions on pod restart.
+	s.ensureLocalStoragePopulated(string(user.ID()))
 	// Get username from GitHub user info if available, otherwise use UserID
 	username := string(user.ID())
 	if user.UserType() == entities.UserTypeGitHub && user.GitHubInfo() != nil {
@@ -115,6 +137,8 @@ func (s *Service) SubscribeSlack(user *entities.User, slackUserID string) (*Subs
 	if slackUserID == "" {
 		return nil, fmt.Errorf("slack user ID is required")
 	}
+	// Pre-populate local storage from K8s to avoid overwriting existing subscriptions on pod restart.
+	s.ensureLocalStoragePopulated(string(user.ID()))
 
 	// Get username from GitHub user info if available, otherwise use UserID
 	username := string(user.ID())
@@ -166,6 +190,7 @@ func (s *Service) SubscribeSlack(user *entities.User, slackUserID string) (*Subs
 
 // DeleteSlackSubscription removes the Slack subscription for a user
 func (s *Service) DeleteSlackSubscription(userID string) error {
+	s.ensureLocalStoragePopulated(userID)
 	existingSubs, err := s.storage.GetSubscriptions(userID)
 	if err != nil {
 		return err
@@ -193,6 +218,7 @@ func (s *Service) GetSubscriptions(userID string) ([]Subscription, error) {
 
 // DeleteSubscription removes a subscription by endpoint
 func (s *Service) DeleteSubscription(userID string, endpoint string) error {
+	s.ensureLocalStoragePopulated(userID)
 	err := s.storage.DeleteSubscription(userID, endpoint)
 	if err != nil {
 		return err
@@ -212,6 +238,7 @@ func (s *Service) DeleteSubscription(userID string, endpoint string) error {
 // SetSubscriptionTypeActive sets the Active field for all subscriptions of a given type for a user.
 // This is used to enable/disable a notification channel without deleting the subscription data.
 func (s *Service) SetSubscriptionTypeActive(userID, subType string, active bool) error {
+	s.ensureLocalStoragePopulated(userID)
 	subs, err := s.storage.GetSubscriptions(userID)
 	if err != nil {
 		return err
