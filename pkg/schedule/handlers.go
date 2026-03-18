@@ -400,6 +400,19 @@ func (h *Handlers) UpdateSchedule(c echo.Context) error {
 		if azCtx := auth.GetAuthorizationContext(c); azCtx != nil {
 			schedule.UserTeams = azCtx.TeamScope.Teams
 		}
+		// Refresh github_token from the live request context if the stored token is empty.
+		// This handles schedules created via API-key auth that have no github_token stored.
+		if schedule.SessionConfig.Params == nil {
+			schedule.SessionConfig.Params = &entities.SessionParams{}
+		}
+		if schedule.SessionConfig.Params.GithubToken == "" {
+			if cfg := auth.GetConfigFromContext(c); cfg != nil && cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
+				tokenHeader := c.Request().Header.Get(cfg.Auth.GitHub.TokenHeader)
+				if token := auth.ExtractTokenFromHeader(tokenHeader); token != "" {
+					schedule.SessionConfig.Params.GithubToken = token
+				}
+			}
+		}
 	}
 
 	// Recalculate next execution if schedule changed
@@ -514,6 +527,19 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		agentType = schedule.SessionConfig.Params.AgentType
 		slackParams = schedule.SessionConfig.Params.Slack
 		oneshot = schedule.SessionConfig.Params.Oneshot
+	}
+
+	// For user-scoped schedules: if the stored github_token is empty, try to extract it
+	// from the live request context (same as CreateSchedule does at creation time).
+	// This handles the case where the schedule was created via API-key auth (no OAuth token
+	// stored) or where the stored token has expired.
+	if scheduleScope != entities.ScopeTeam && githubToken == "" {
+		if cfg := auth.GetConfigFromContext(c); cfg != nil && cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
+			tokenHeader := c.Request().Header.Get(cfg.Auth.GitHub.TokenHeader)
+			if token := auth.ExtractTokenFromHeader(tokenHeader); token != "" {
+				githubToken = token
+			}
+		}
 	}
 
 	result, err := h.launcher.Launch(c.Request().Context(), sessionID, sessionuc.LaunchRequest{
