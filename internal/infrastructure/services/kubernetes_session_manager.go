@@ -41,6 +41,10 @@ import (
 // the session startup sequence after the Pod becomes ready.
 const provisionerPort = 9001
 
+// ProvisionerPort is the exported version of provisionerPort for use by other packages
+// (e.g. the session controller error handler that checks provisioner /status).
+const ProvisionerPort = provisionerPort
+
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 // ServiceAccountEnsurer ensures a service account exists for a team.
 // Implementations must be safe to call concurrently.
