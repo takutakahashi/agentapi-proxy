@@ -59,8 +59,10 @@ type UpdateSlackBotRequest struct {
 	// will be merged into sessions created by this bot. When omitted, the server
 	// refreshes from the authenticated user's current team memberships.
 	Teams               []string               `json:"teams,omitempty"`
-	BotTokenSecretName  string                 `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey   string                 `json:"bot_token_secret_key,omitempty"`
+	// BotTokenSecretName is a pointer to allow clearing the value by passing an empty string "".
+	// nil means "not provided / do not change"; "" means "clear (revert to global default)".
+	BotTokenSecretName  *string                `json:"bot_token_secret_name"`
+	BotTokenSecretKey   *string                `json:"bot_token_secret_key"`
 	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
 	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
 	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
@@ -292,11 +294,11 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 	if req.Status != "" {
 		bot.SetStatus(req.Status)
 	}
-	if req.BotTokenSecretName != "" {
-		bot.SetBotTokenSecretName(req.BotTokenSecretName)
+	if req.BotTokenSecretName != nil {
+		bot.SetBotTokenSecretName(*req.BotTokenSecretName)
 	}
-	if req.BotTokenSecretKey != "" {
-		bot.SetBotTokenSecretKey(req.BotTokenSecretKey)
+	if req.BotTokenSecretKey != nil {
+		bot.SetBotTokenSecretKey(*req.BotTokenSecretKey)
 	}
 	if req.AllowedEventTypes != nil {
 		bot.SetAllowedEventTypes(req.AllowedEventTypes)

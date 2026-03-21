@@ -342,6 +342,12 @@ func (r *KubernetesSlackBotRepository) saveSlackBot(ctx context.Context, slackBo
 			if slackBot.AppToken() != "" {
 				existing.Data["app-token"] = []byte(slackBot.AppToken())
 			}
+			// If BotTokenSecretName was cleared (empty), remove the stored tokens
+			// so the bot falls back to the global default token.
+			if slackBot.BotTokenSecretName() == "" {
+				delete(existing.Data, "bot-token")
+				delete(existing.Data, "app-token")
+			}
 			existing.Labels = labels
 			existing.Annotations = annotations
 
