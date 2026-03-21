@@ -494,3 +494,68 @@ func TestListSlackBots_StatusFilter(t *testing.T) {
 	assert.Len(t, bots, 1, "status filter should return only paused bots")
 	assert.Equal(t, "bot-paused", bots[0].ID)
 }
+
+// --- UpdateSlackBot tests ---
+
+func TestUpdateSlackBot_ClearBotTokenSecretName(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo)
+
+	// Create a bot with a custom bot_token_secret_name
+	bot := entities.NewSlackBot("bot-1", "Test Bot", "user-1")
+	bot.SetBotTokenSecretName("my-custom-secret")
+	bot.SetBotTokenSecretKey("my-token-key")
+	repo.bots["bot-1"] = bot
+
+	// Update: clear bot_token_secret_name by passing empty string ""
+	emptyStr := ""
+	c, rec := makeSlackBotEchoContext(t, http.MethodPut, "/slackbots/bot-1", UpdateSlackBotRequest{
+		BotTokenSecretName: &emptyStr,
+		BotTokenSecretKey:  &emptyStr,
+	}, "user-1")
+	c.SetParamNames("id")
+	c.SetParamValues("bot-1")
+
+	err := controller.UpdateSlackBot(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	// BotTokenSecretName should be cleared (empty means use global default)
+	assert.Empty(t, resp.BotTokenSecretName, "bot_token_secret_name should be cleared")
+	// BotTokenSecretKey returns "bot-token" as default even when cleared;
+	// the important thing is BotTokenSecretName is empty so the global default is used.
+
+	// Verify stored entity is cleared too
+	stored, err := repo.Get(context.Background(), "bot-1")
+	require.NoError(t, err)
+	assert.Empty(t, stored.BotTokenSecretName(), "stored bot_token_secret_name should be empty")
+}
+
+func TestUpdateSlackBot_NilBotTokenSecretNameDoesNotClear(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo)
+
+	// Create a bot with a custom bot_token_secret_name
+	bot := entities.NewSlackBot("bot-2", "Test Bot", "user-1")
+	bot.SetBotTokenSecretName("my-custom-secret")
+	repo.bots["bot-2"] = bot
+
+	// Update: do not include bot_token_secret_name at all (nil = not provided)
+	c, rec := makeSlackBotEchoContext(t, http.MethodPut, "/slackbots/bot-2", UpdateSlackBotRequest{
+		Name: "Updated Name",
+	}, "user-1")
+	c.SetParamNames("id")
+	c.SetParamValues("bot-2")
+
+	err := controller.UpdateSlackBot(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	// BotTokenSecretName should be preserved (not cleared)
+	assert.Equal(t, "my-custom-secret", resp.BotTokenSecretName, "bot_token_secret_name should be preserved when not provided")
+	assert.Equal(t, "Updated Name", resp.Name)
+}
