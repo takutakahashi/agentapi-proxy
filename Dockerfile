@@ -132,11 +132,13 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
-# Install bun (real bun, used to install global packages before wrapper scripts override it)
-RUN curl -fsSL https://bun.sh/install | bash
-
-# install claude-agentapi using real bun (before wrapper scripts override bun/npm)
-RUN /home/agentapi/.bun/bin/bun add -g @takutakahashi/claude-agentapi
+# install claude-agentapi: create a local project, install package, then link binary
+RUN mkdir -p /home/agentapi/.local/lib/claude-agentapi && \
+    echo '{}' > /home/agentapi/.local/lib/claude-agentapi/package.json && \
+    cd /home/agentapi/.local/lib/claude-agentapi && \
+    BUN_BE_BUN=1 /opt/claude/bin/claude add @takutakahashi/claude-agentapi && \
+    mkdir -p /home/agentapi/.local/bin && \
+    ln -sf /home/agentapi/.local/lib/claude-agentapi/node_modules/.bin/claude-agentapi /home/agentapi/.local/bin/claude-agentapi
 
 # Create npm, npx, bun, and bunx wrapper scripts that use claude x with BUN_BE_BUN=1
 RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
