@@ -374,6 +374,30 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Printf("Proxy error for session %s: %v", sessionID, err)
+
+		// When the request is for the agent's /status endpoint and agentapi is
+		// unreachable, check the provisioner's own /status to distinguish a
+		// permanent failure (provisioner error → HTTP 500) from a transient
+		// startup delay (provisioner still pending/provisioning → HTTP 502).
+		if strings.HasSuffix(r.URL.Path, "/status") {
+			if ks, ok := session.(*services.KubernetesSession); ok {
+				provisionerURL := fmt.Sprintf("http://%s:%d/status", ks.ServiceDNS(), services.ProvisionerPort)
+				provClient := &http.Client{Timeout: 2 * time.Second}
+				provResp, provErr := provClient.Get(provisionerURL)
+				if provErr == nil {
+					defer func() { _ = provResp.Body.Close() }()
+					if provResp.StatusCode == http.StatusInternalServerError {
+						// Provisioner has permanently failed; relay its JSON error body.
+						body, _ := io.ReadAll(provResp.Body)
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusInternalServerError)
+						_, _ = w.Write(body)
+						return
+					}
+				}
+			}
+		}
+
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
 
