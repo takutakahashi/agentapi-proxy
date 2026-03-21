@@ -133,10 +133,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
 # install claude-agentapi: create a local project, install package, then link binary
+# ANTHROPIC_API_KEY=skip is needed to bypass claude's auth check in BUN_BE_BUN mode
 RUN mkdir -p /home/agentapi/.local/lib/claude-agentapi && \
     echo '{}' > /home/agentapi/.local/lib/claude-agentapi/package.json && \
     cd /home/agentapi/.local/lib/claude-agentapi && \
-    BUN_BE_BUN=1 /opt/claude/bin/claude add @takutakahashi/claude-agentapi && \
+    ANTHROPIC_API_KEY=skip BUN_BE_BUN=1 /opt/claude/bin/claude add @takutakahashi/claude-agentapi && \
     mkdir -p /home/agentapi/.local/bin && \
     ln -sf /home/agentapi/.local/lib/claude-agentapi/node_modules/.bin/claude-agentapi /home/agentapi/.local/bin/claude-agentapi
 
