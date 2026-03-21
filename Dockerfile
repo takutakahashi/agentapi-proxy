@@ -20,6 +20,11 @@ COPY . .
 # Build the application with optimizations
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
 
+# Install @takutakahashi/claude-agentapi and its dependencies using Node.js
+FROM node:20-slim AS claude-agentapi-installer
+WORKDIR /tmp/install
+RUN npm install @takutakahashi/claude-agentapi
+
 # Build agentapi from source stage
 FROM golang:1.25-alpine AS agentapi-builder
 
@@ -132,14 +137,14 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
-# install claude-agentapi: create a local project, install package, then link binary
-# ANTHROPIC_API_KEY=skip is needed to bypass claude's auth check in BUN_BE_BUN mode
-RUN mkdir -p /home/agentapi/.local/lib/claude-agentapi && \
-    echo '{}' > /home/agentapi/.local/lib/claude-agentapi/package.json && \
-    cd /home/agentapi/.local/lib/claude-agentapi && \
-    ANTHROPIC_API_KEY=skip BUN_BE_BUN=1 /opt/claude/bin/claude add @takutakahashi/claude-agentapi && \
-    mkdir -p /home/agentapi/.local/bin && \
-    ln -sf /home/agentapi/.local/lib/claude-agentapi/node_modules/.bin/claude-agentapi /home/agentapi/.local/bin/claude-agentapi
+# Copy claude-agentapi and its dependencies from the installer stage
+# cli.js shebang is #!/usr/bin/env bun — resolved at runtime via the bun wrapper
+COPY --chown=agentapi:agentapi --from=claude-agentapi-installer \
+    /tmp/install/node_modules /home/agentapi/.local/lib/claude-agentapi-modules
+RUN mkdir -p /home/agentapi/.local/bin && \
+    chmod +x /home/agentapi/.local/lib/claude-agentapi-modules/@takutakahashi/claude-agentapi/bin/cli.js && \
+    ln -sf /home/agentapi/.local/lib/claude-agentapi-modules/@takutakahashi/claude-agentapi/bin/cli.js \
+           /home/agentapi/.local/bin/claude-agentapi
 
 # Create npm, npx, bun, and bunx wrapper scripts that use claude x with BUN_BE_BUN=1
 RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
