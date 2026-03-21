@@ -117,12 +117,17 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStatus returns the current provisioning state as JSON.
+// When the provisioner is in an error state, it returns HTTP 500 so that
+// clients can distinguish a permanent failure from a transient startup delay.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	resp := StatusResponse{Status: s.status, Message: s.message}
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
+	if resp.Status == StatusError {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		log.Printf("[PROVISIONER] Failed to encode status response: %v", err)
 	}
