@@ -129,7 +129,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            AGENTAPI_VERSION=v0.6.0
+            AGENTAPI_VERSION=v0.12.1
       
       - name: Print image information
         run: |

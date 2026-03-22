@@ -60,4 +60,4 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            AGENTAPI_VERSION=v0.2.1
+            AGENTAPI_VERSION=v0.12.1
