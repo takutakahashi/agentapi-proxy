@@ -149,7 +149,7 @@ func mergeClaudeConfig(homeDir string) error {
 		if entry == nil {
 			entry = make(map[string]interface{})
 		}
-		entry["hasTrustedProject"] = true
+		entry["hasTrustDialogAccepted"] = true
 		existingProjects[p] = entry
 	}
 	targetJSON["projects"] = existingProjects

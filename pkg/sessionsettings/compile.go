@@ -120,7 +120,7 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcp
 		if entry == nil {
 			entry = make(map[string]interface{})
 		}
-		entry["hasTrustedProject"] = true
+		entry["hasTrustDialogAccepted"] = true
 		existingProjects[p] = entry
 	}
 	existing["projects"] = existingProjects
