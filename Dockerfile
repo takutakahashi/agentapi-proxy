@@ -98,6 +98,21 @@ RUN ARCH=$(dpkg --print-architecture) && \
     chmod +x /usr/local/bin/otelcol && \
     rm /tmp/otelcol.tar.gz
 
+# Download claude-agent-acp binary for ACP-based Claude communication (bypasses PTY TUI)
+ARG CLAUDE_ACP_VERSION=v0.22.2
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) CLAUDE_ACP_ARCH="linux-x64" ;; \
+      arm64) CLAUDE_ACP_ARCH="linux-arm64" ;; \
+      *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/zed-industries/claude-agent-acp/releases/download/${CLAUDE_ACP_VERSION}/claude-agent-acp-${CLAUDE_ACP_ARCH}.tar.gz" \
+      -o /tmp/claude-agent-acp.tar.gz && \
+    tar -xzf /tmp/claude-agent-acp.tar.gz -C /tmp && \
+    mv /tmp/claude-agent-acp /usr/local/bin/claude-agent-acp && \
+    chmod +x /usr/local/bin/claude-agent-acp && \
+    rm /tmp/claude-agent-acp.tar.gz
+
 # Switch to non-root user
 USER agentapi
 

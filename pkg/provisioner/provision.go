@@ -99,10 +99,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
 	cmd := exec.CommandContext(ctx, agentCmd, agentArgs...)
-	// CLAUDE_CODE_BRIEF=1 enables "brief mode" in the Claude Agent SDK, which
-	// sets isBriefOnly=true and suppresses the verbose right-column tool-call
-	// detail panel that otherwise garbles agentapi's flat PTY screen capture.
-	cmd.Env = append(mergeEnv(os.Environ(), envMap), "CLAUDE_CODE_BRIEF=1")
+	cmd.Env = mergeEnv(os.Environ(), envMap)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -324,22 +321,17 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		return "bunx", []string{"@takutakahashi/codex-agentapi"}
 
 	default:
-		// Default: agentapi server wrapping claude directly (no sh -c wrapper).
-		// Direct invocation aligns with the agentapi README recommendation:
-		//   agentapi server -- claude
-		// and avoids an extra shell layer in the PTY process tree.
+		// Default: agentapi server using ACP (Agent Client Protocol) transport.
+		// --experimental-acp bypasses PTY entirely and uses stdin/stdout structured
+		// protocol with claude-agent-acp, eliminating TUI display corruption.
 		agentArgs := []string{
 			"server",
-			"--type=claude",
-			"--term-width=40",
+			"--experimental-acp",
 			"--allowed-hosts", "*",
 			"--allowed-origins", "*",
 			"--port", agentapiPort,
 			"--",
-			"claude",
-		}
-		if claudeArgs := os.Getenv("CLAUDE_ARGS"); claudeArgs != "" {
-			agentArgs = append(agentArgs, strings.Fields(claudeArgs)...)
+			"claude-agent-acp",
 		}
 		return "agentapi", agentArgs
 	}

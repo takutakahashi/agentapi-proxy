@@ -3148,7 +3148,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	} else {
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi", "server"},
-			Args:    []string{"--type=claude", "--term-width=40", "--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort)},
+			Args:    []string{"--experimental-acp", "--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		}
 	}
 
