@@ -99,7 +99,14 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
 	cmd := exec.CommandContext(ctx, agentCmd, agentArgs...)
-	cmd.Env = mergeEnv(os.Environ(), envMap)
+	baseEnv := mergeEnv(os.Environ(), envMap)
+	// For the default (PTY) agent type, set CI=true so that React Ink
+	// uses its non-interactive renderer and does NOT draw the 2-column TUI
+	// layout that causes display corruption on agentapi's VT100 screen capture.
+	if settings.Session.AgentType == "" {
+		baseEnv = append(baseEnv, "CI=true")
+	}
+	cmd.Env = baseEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -321,17 +328,17 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		return "bunx", []string{"@takutakahashi/codex-agentapi"}
 
 	default:
-		// Default: agentapi server using ACP (Agent Client Protocol) transport.
-		// --experimental-acp bypasses PTY entirely and uses stdin/stdout structured
-		// protocol with claude-agent-acp, eliminating TUI display corruption.
+		// Default: agentapi server with PTY transport.
+		// CI=true is set in the environment (see below) so React Ink
+		// renders plain text output instead of the 2-column TUI layout,
+		// preventing display corruption caused by CJK character width issues.
 		agentArgs := []string{
 			"server",
-			"--experimental-acp",
 			"--allowed-hosts", "*",
 			"--allowed-origins", "*",
 			"--port", agentapiPort,
 			"--",
-			"claude-agent-acp",
+			"claude",
 		}
 		return "agentapi", agentArgs
 	}

@@ -540,10 +540,10 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 			Command: []string{"claude-agentapi"},
 		}
 	}
-	log.Printf("[GENERATE-SETTING]   startup.command: [agentapi server --experimental-acp --allowed-hosts * --allowed-origins *]")
+	log.Printf("[GENERATE-SETTING]   startup.command: [agentapi server --allowed-hosts * --allowed-origins *]")
 	return sessionsettings.StartupConfig{
 		Command: []string{"agentapi", "server"},
-		Args:    []string{"--experimental-acp", "--allowed-hosts", "*", "--allowed-origins", "*"},
+		Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*"},
 	}
 }
 
