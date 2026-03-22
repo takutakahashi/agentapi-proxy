@@ -328,6 +328,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		agentArgs := []string{
 			"server",
 			"--type=claude",
+			"--term-width=40",
 			"--allowed-hosts", "*",
 			"--allowed-origins", "*",
 			"--port", agentapiPort,
