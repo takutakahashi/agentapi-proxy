@@ -102,7 +102,10 @@ func mergeClaudeConfig(homeDir string) error {
 
 	targetPath := filepath.Join(homeDir, ".claude.json")
 
-	// Define the configuration to merge as a map
+	// Define the top-level configuration to merge as a map.
+	// projects[path]["hasTrustedProject"] is the per-directory trust setting
+	// used by Claude Code (stored in ~/.claude.json, documented at
+	// https://code.claude.com/docs/en/settings).
 	configToMerge := map[string]interface{}{
 		"hasCompletedOnboarding":        true,
 		"bypassPermissionsModeAccepted": true,
@@ -124,10 +127,32 @@ func mergeClaudeConfig(homeDir string) error {
 		}
 	}
 
-	// Merge configuration map into target
+	// Merge top-level keys
 	for key, value := range configToMerge {
 		targetJSON[key] = value
 	}
+
+	// Deep-merge projects trust entries so we don't wipe existing per-project
+	// settings (e.g. allowed tools) that Claude Code may have stored.
+	// We trust the home directory and workdir so that any repository cloned
+	// under those paths is considered trusted without prompting the user.
+	trustedPaths := []string{
+		homeDir,
+		filepath.Join(homeDir, "workdir"),
+	}
+	existingProjects, _ := targetJSON["projects"].(map[string]interface{})
+	if existingProjects == nil {
+		existingProjects = make(map[string]interface{})
+	}
+	for _, p := range trustedPaths {
+		entry, _ := existingProjects[p].(map[string]interface{})
+		if entry == nil {
+			entry = make(map[string]interface{})
+		}
+		entry["hasTrustedProject"] = true
+		existingProjects[p] = entry
+	}
+	targetJSON["projects"] = existingProjects
 
 	// Write merged JSON back
 	mergedData, err := json.MarshalIndent(targetJSON, "", "  ")
