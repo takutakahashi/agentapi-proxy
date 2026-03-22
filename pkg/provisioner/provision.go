@@ -99,7 +99,10 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
 	cmd := exec.CommandContext(ctx, agentCmd, agentArgs...)
-	cmd.Env = mergeEnv(os.Environ(), envMap)
+	// CLAUDE_CODE_BRIEF=1 enables "brief mode" in the Claude Agent SDK, which
+	// sets isBriefOnly=true and suppresses the verbose right-column tool-call
+	// detail panel that otherwise garbles agentapi's flat PTY screen capture.
+	cmd.Env = append(mergeEnv(os.Environ(), envMap), "CLAUDE_CODE_BRIEF=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
