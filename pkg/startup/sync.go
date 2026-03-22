@@ -1,6 +1,7 @@
 package startup
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
@@ -443,8 +445,12 @@ const officialMarketplace = "anthropics/claude-plugins-official"
 const claudeBinPath = "/usr/local/bin/claude"
 
 // runClaudeCLI executes a claude CLI command with HOME set to outputDir.
+// A 30-second timeout is applied so that the call never hangs indefinitely
+// when the claude binary does not support the requested sub-command.
 func runClaudeCLI(outputDir string, args ...string) error {
-	cmd := exec.Command(claudeBinPath, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, claudeBinPath, args...)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("claude %s failed: %w, output: %s", args[0], err, string(output))
