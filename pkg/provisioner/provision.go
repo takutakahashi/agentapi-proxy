@@ -328,6 +328,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		}
 		return "agentapi", []string{
 			"server",
+			"--type=claude",
 			"--allowed-hosts", "*",
 			"--allowed-origins", "*",
 			"--port", agentapiPort,
