@@ -440,7 +440,7 @@ func resolvePluginName(plugin string, nameMapping map[string]string) string {
 const officialMarketplace = "anthropics/claude-plugins-official"
 
 // claudeBinPath is the path to the claude CLI binary
-const claudeBinPath = "/opt/claude/bin/claude"
+const claudeBinPath = "/usr/local/bin/claude"
 
 // runClaudeCLI executes a claude CLI command with HOME set to outputDir.
 func runClaudeCLI(outputDir string, args ...string) error {
