@@ -102,6 +102,29 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcp
 	existing["hasCompletedOnboarding"] = true
 	existing["bypassPermissionsModeAccepted"] = true
 
+	// Pre-trust common working directories so Claude Code does not prompt for
+	// directory trust. Claude Code stores per-path trust in
+	// projects[path]["hasTrustedProject"] in ~/.claude.json.
+	// We deep-merge so that any existing project settings are preserved.
+	trustedPaths := []string{
+		outputDir,                                   // /home/agentapi
+		filepath.Join(outputDir, "workdir"),         // /home/agentapi/workdir
+		filepath.Join(outputDir, "workdir", "repo"), // /home/agentapi/workdir/repo
+	}
+	existingProjects, _ := existing["projects"].(map[string]interface{})
+	if existingProjects == nil {
+		existingProjects = make(map[string]interface{})
+	}
+	for _, p := range trustedPaths {
+		entry, _ := existingProjects[p].(map[string]interface{})
+		if entry == nil {
+			entry = make(map[string]interface{})
+		}
+		entry["hasTrustedProject"] = true
+		existingProjects[p] = entry
+	}
+	existing["projects"] = existingProjects
+
 	// Write MCP servers directly into claude.json so Claude Code reads them natively
 	if len(mcpServers) > 0 {
 		existing["mcpServers"] = mcpServers
