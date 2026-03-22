@@ -152,6 +152,14 @@ func generateSettingsJSON(outputDir string, settingsJSON map[string]interface{})
 	// to non-stable channels in session containers.
 	settingsJSON["autoUpdatesChannel"] = "stable"
 
+	// bypassPermissions skips all permission/trust prompts, which is appropriate
+	// for isolated container sessions. This is the closest equivalent to
+	// "trust all directories" per the Claude Code settings documentation:
+	// https://code.claude.com/docs/en/settings
+	// The --dangerously-skip-permissions CLI flag also sets this mode at runtime,
+	// but setting it here ensures the trust dialog is suppressed from startup.
+	settingsJSON["defaultMode"] = "bypassPermissions"
+
 	data, err := json.MarshalIndent(settingsJSON, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal settings.json: %w", err)
