@@ -321,20 +321,23 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		return "bunx", []string{"@takutakahashi/codex-agentapi"}
 
 	default:
-		// Default: agentapi server wrapping claude
-		claudeCmd := "claude"
-		if claudeArgs := os.Getenv("CLAUDE_ARGS"); claudeArgs != "" {
-			claudeCmd = claudeCmd + " " + claudeArgs
-		}
-		return "agentapi", []string{
+		// Default: agentapi server wrapping claude directly (no sh -c wrapper).
+		// Direct invocation aligns with the agentapi README recommendation:
+		//   agentapi server -- claude
+		// and avoids an extra shell layer in the PTY process tree.
+		agentArgs := []string{
 			"server",
 			"--type=claude",
 			"--allowed-hosts", "*",
 			"--allowed-origins", "*",
 			"--port", agentapiPort,
 			"--",
-			"sh", "-c", claudeCmd,
+			"claude",
 		}
+		if claudeArgs := os.Getenv("CLAUDE_ARGS"); claudeArgs != "" {
+			agentArgs = append(agentArgs, strings.Fields(claudeArgs)...)
+		}
+		return "agentapi", agentArgs
 	}
 }
 
