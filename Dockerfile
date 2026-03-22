@@ -127,7 +127,7 @@ RUN curl -fsSL https://bun.sh/install | bash && \
 RUN /home/agentapi/.bun/bin/bun install -g @takutakahashi/claude-agentapi
 
 # Create claude wrapper that uses bun to run claude-agentapi's cli.mjs
-RUN printf '#!/bin/bash\nexec /home/agentapi/.bun/bin/bun /home/agentapi/.bun/install/global/node_modules/@takutakahashi/claude-agentapi/bin/cli.js "$@"\n' | sudo tee /usr/local/bin/claude > /dev/null && \
+RUN printf '#!/bin/bash\nexec /home/agentapi/.bun/bin/bun /home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/cli.js "$@"\n' | sudo tee /usr/local/bin/claude > /dev/null && \
     sudo chmod +x /usr/local/bin/claude
 
 # Set combined PATH environment variable
