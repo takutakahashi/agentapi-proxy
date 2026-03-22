@@ -114,39 +114,24 @@ ENV GOCACHE=/home/agentapi/.cache/go-build
 RUN curl https://mise.run | sh && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
 
-# Install claude code and move to /opt/claude for persistence across volume mounts
-# The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
-# We copy with -L to follow the symlink and get the actual binary, then clean up
-# Then create a symlink at ~/.local/bin/claude -> /opt/claude/bin/claude for volume mount compatibility
-RUN curl -fsSL https://claude.ai/install.sh | bash -s 2.1.12 && \
-    sudo mkdir -p /opt/claude/bin && \
-    sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
-    sudo chown agentapi:agentapi /opt/claude/bin/claude && \
-    sudo chmod +x /opt/claude/bin/claude && \
-    rm -rf /home/agentapi/.local/share/claude/versions /home/agentapi/.local/bin/claude 2>/dev/null || true && \
-    mkdir -p /home/agentapi/.local/bin && \
-    ln -sf /opt/claude/bin/claude /home/agentapi/.local/bin/claude
-
 # Install uv for Python package management (enables uvx) and clean cache
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
-# Create npm, npx, bun, and bunx wrapper scripts that use claude x with BUN_BE_BUN=1
-RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
-    sudo chmod +x /usr/local/bin/npm && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
-    sudo chmod +x /usr/local/bin/npx && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
-    sudo chmod +x /usr/local/bin/bun && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
-    sudo chmod +x /usr/local/bin/bunx
+# Install pure bun
+RUN curl -fsSL https://bun.sh/install | bash && \
+    echo 'export PATH="/home/agentapi/.bun/bin:$PATH"' >> /home/agentapi/.bashrc
 
-# Set combined PATH environment variable (including /opt/claude/bin for claude CLI)
-ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
+# Install claude-agentapi (Claude Agent SDK) with real bun
+RUN /home/agentapi/.bun/bin/bun install -g @takutakahashi/claude-agentapi
 
-# install claude-agentapi
-RUN bun install -g @takutakahashi/claude-agentapi
+# Create claude wrapper that uses bun to run claude-agentapi's cli.mjs
+RUN printf '#!/bin/bash\nexec /home/agentapi/.bun/bin/bun /home/agentapi/.bun/install/global/node_modules/@takutakahashi/claude-agentapi/cli.mjs "$@"\n' | sudo tee /usr/local/bin/claude > /dev/null && \
+    sudo chmod +x /usr/local/bin/claude
+
+# Set combined PATH environment variable
+ENV PATH="/home/agentapi/.bun/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # Configuration
-CLAUDE_BIN="/opt/claude/bin/claude"
+CLAUDE_BIN="/usr/local/bin/claude"
 LOG_DIR="${HOME}/.claude/command_history"
 LOG_FILE="${LOG_DIR}/history.jsonl"
 MAX_LOG_SIZE=$((10 * 1024 * 1024))  # 10MB
