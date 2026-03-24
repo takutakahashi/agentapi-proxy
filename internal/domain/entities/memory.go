@@ -135,6 +135,13 @@ func (m *Memory) SetTags(tags map[string]string) {
 	m.updatedAt = time.Now()
 }
 
+// SetID overwrites the memory ID. Used by external repository adapters that
+// receive a server-assigned ID after persisting (e.g. memory-server generates
+// its own UUID which must replace the caller-supplied placeholder).
+func (m *Memory) SetID(id string) {
+	m.id = id
+}
+
 // SetCreatedAt sets the createdAt field (for deserialization only)
 func (m *Memory) SetCreatedAt(t time.Time) {
 	m.createdAt = t

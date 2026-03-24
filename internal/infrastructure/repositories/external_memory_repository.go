@@ -265,9 +265,15 @@ func msToEntity(m *msMemory) *entities.Memory {
 
 // ---- MemoryRepository interface implementation ------------------------------
 
+// msAddResult is the response body from POST /api/v1/memories.
+type msAddResult struct {
+	MemoryID string `json:"memory_id"`
+}
+
 // Create persists a new memory entry in memory-server.
-// The memory-server generates its own memory ID; the caller's pre-set ID is passed
-// as a custom "memory_id" hint so that round-trip lookups by ID work correctly.
+// memory-server generates its own UUID; after creation the entity's ID is
+// overwritten with the server-assigned ID so that subsequent GetByID/Update/Delete
+// calls use the correct ID.
 func (r *ExternalMemoryRepository) Create(ctx context.Context, memory *entities.Memory) error {
 	if err := memory.Validate(); err != nil {
 		return fmt.Errorf("invalid memory: %w", err)
@@ -280,10 +286,9 @@ func (r *ExternalMemoryRepository) Create(ctx context.Context, memory *entities.
 	}
 
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"memory_id": memory.ID(), // optional hint; memory-server uses it when supported
-		"content":   encodeContent(memory.Title(), memory.Content()),
-		"tags":      encodeTags(memory.Tags()),
-		"scope":     scopeToMS(memory.Scope()),
+		"content": encodeContent(memory.Title(), memory.Content()),
+		"tags":    encodeTags(memory.Tags()),
+		"scope":   scopeToMS(memory.Scope()),
 	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -302,6 +307,15 @@ func (r *ExternalMemoryRepository) Create(ctx context.Context, memory *entities.
 
 	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("create memory: HTTP %d", resp.StatusCode)
+	}
+
+	// Overwrite the caller-supplied placeholder ID with the server-assigned UUID.
+	var result msAddResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode create response: %w", err)
+	}
+	if result.MemoryID != "" {
+		memory.SetID(result.MemoryID)
 	}
 
 	return nil
