@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -27,21 +28,27 @@ const tagSep = "="
 
 // ExternalMemoryRepository implements MemoryRepository by delegating to an external
 // takutakahashi/memory-server instance. Users are created on-demand using the configured
-// AdminToken. User tokens are cached in-process.
+// AdminToken. The user's agentapi-proxy personal API key is registered as their
+// memory-server token so that the same key works for both services.
+// User tokens are cached in-process.
 type ExternalMemoryRepository struct {
-	cfg        *config.MemoryExternalConfig
-	httpClient *http.Client
-	userTokens sync.Map // userID (string) -> token (string)
+	cfg            *config.MemoryExternalConfig
+	httpClient     *http.Client
+	userTokens     sync.Map // userID (string) -> token (string)
+	personalAPIKey portrepos.PersonalAPIKeyRepository
 }
 
 // Ensure interface compliance at compile time.
 var _ portrepos.MemoryRepository = (*ExternalMemoryRepository)(nil)
 
 // NewExternalMemoryRepository creates a new ExternalMemoryRepository.
-func NewExternalMemoryRepository(cfg *config.MemoryExternalConfig) *ExternalMemoryRepository {
+// personalAPIKey is used to look up each user's agentapi-proxy API key, which is
+// registered as their token in memory-server (same key, two services).
+func NewExternalMemoryRepository(cfg *config.MemoryExternalConfig, personalAPIKey portrepos.PersonalAPIKeyRepository) *ExternalMemoryRepository {
 	return &ExternalMemoryRepository{
-		cfg:        cfg,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		cfg:            cfg,
+		httpClient:     &http.Client{Timeout: 30 * time.Second},
+		personalAPIKey: personalAPIKey,
 	}
 }
 
@@ -84,19 +91,28 @@ func resolveUserID(scope entities.ResourceScope, ownerID, teamID string) string 
 	return ownerID
 }
 
+// errUserNotFound is returned by getUser when the user does not exist (HTTP 404).
+var errUserNotFound = fmt.Errorf("user not found")
+
 // ensureUser gets or creates a user in memory-server and caches their token.
+// It only calls createUser when the user provably does not exist (HTTP 404).
+// Any other error from getUser is propagated without attempting creation, to
+// avoid accidentally overwriting an existing user's token on transient failures.
 func (r *ExternalMemoryRepository) ensureUser(ctx context.Context, userID string) (string, error) {
 	if token, ok := r.userTokens.Load(userID); ok {
 		return token.(string), nil
 	}
 
-	// Try to fetch existing user first (idempotent).
 	user, err := r.getUser(ctx, userID)
 	if err != nil {
-		// User not found (or error) — create.
+		if !errors.Is(err, errUserNotFound) {
+			// Transient error (network, 5xx, …) — do NOT overwrite existing token.
+			return "", fmt.Errorf("ensure user %q: get failed: %w", userID, err)
+		}
+		// User does not exist yet — safe to create.
 		user, err = r.createUser(ctx, userID)
 		if err != nil {
-			return "", fmt.Errorf("ensure user %q in memory-server: %w", userID, err)
+			return "", fmt.Errorf("ensure user %q: create failed: %w", userID, err)
 		}
 	}
 
@@ -118,6 +134,9 @@ func (r *ExternalMemoryRepository) getUser(ctx context.Context, userID string) (
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errUserNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get user: HTTP %d", resp.StatusCode)
 	}
@@ -126,11 +145,29 @@ func (r *ExternalMemoryRepository) getUser(ctx context.Context, userID string) (
 	return &u, json.NewDecoder(resp.Body).Decode(&u)
 }
 
+// lookupAPIKey returns the user's personal API key string, or "" if not found.
+func (r *ExternalMemoryRepository) lookupAPIKey(ctx context.Context, userID string) string {
+	if r.personalAPIKey == nil {
+		return ""
+	}
+	key, err := r.personalAPIKey.FindByUserID(ctx, entities.UserID(userID))
+	if err != nil || key == nil {
+		return ""
+	}
+	return key.APIKey()
+}
+
 func (r *ExternalMemoryRepository) createUser(ctx context.Context, userID string) (*msUser, error) {
-	body, _ := json.Marshal(map[string]string{
+	payload := map[string]string{
 		"user_id":     userID,
 		"description": "agentapi-proxy managed user",
-	})
+	}
+	// Register the user's agentapi-proxy personal API key as their memory-server token.
+	// Falls back to auto-generated token when no personal API key exists.
+	if apiKey := r.lookupAPIKey(ctx, userID); apiKey != "" {
+		payload["token"] = apiKey
+	}
+	body, _ := json.Marshal(payload)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		r.cfg.URL+"/api/v1/users", bytes.NewReader(body))

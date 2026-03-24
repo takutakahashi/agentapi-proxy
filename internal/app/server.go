@@ -222,7 +222,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		if cfg.Memory.External == nil || cfg.Memory.External.URL == "" {
 			log.Fatalf("[SERVER] Memory backend is 'external' but no external configuration provided (set AGENTAPI_MEMORY_EXTERNAL_URL)")
 		}
-		memoryRepo = repositories.NewExternalMemoryRepository(cfg.Memory.External)
+		memoryRepo = repositories.NewExternalMemoryRepository(cfg.Memory.External, personalAPIKeyRepo)
 		log.Printf("[SERVER] Memory repository initialized (backend: external, url: %s)", cfg.Memory.External.URL)
 	default:
 		memoryRepo = repositories.NewKubernetesMemoryRepository(
