@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -761,6 +762,53 @@ func runTaskDelete(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("Task %s deleted successfully\n", taskID)
+}
+
+// readJSONInput reads JSON from a file path, or from stdin if path is "-" or empty.
+// Returns the raw bytes to be used as an HTTP request body.
+func readJSONInput(file string) ([]byte, error) {
+	if file == "-" || file == "" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read from stdin: %w", err)
+		}
+		return data, nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %q: %w", file, err)
+	}
+	return data, nil
+}
+
+// prettyJSONOutput pretty-prints raw JSON bytes. Falls back to the original bytes if parsing fails.
+func prettyJSONOutput(data []byte) string {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	var v interface{}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return string(data)
+	}
+	if err := enc.Encode(v); err != nil {
+		return string(data)
+	}
+	return strings.TrimRight(buf.String(), "\n")
+}
+
+// resolveBaseClient creates a client using flags or environment variables.
+// Unlike resolveClient, no session-id is required.
+func resolveBaseClient() (*client.Client, error) {
+	resolvedEndpoint := endpoint
+	if resolvedEndpoint == "" {
+		envEndpoint, err := client.EndpointFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("--endpoint not specified and %w", err)
+		}
+		resolvedEndpoint = envEndpoint
+	}
+	apiKey := os.Getenv("AGENTAPI_KEY")
+	return client.NewClient(resolvedEndpoint, client.WithAPIKeyAuth(apiKey)), nil
 }
 
 // readContentFlag reads the memory content from --content or --content-file flags.
