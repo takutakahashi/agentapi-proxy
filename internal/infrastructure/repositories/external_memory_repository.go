@@ -266,8 +266,10 @@ func msToEntity(m *msMemory) *entities.Memory {
 // ---- MemoryRepository interface implementation ------------------------------
 
 // msAddResult is the response body from POST /api/v1/memories.
+// memory-server's AddResult struct has no json tag on MemoryID so it marshals
+// as "MemoryID" (Go default capitalization), not "memory_id".
 type msAddResult struct {
-	MemoryID string `json:"memory_id"`
+	MemoryID string `json:"MemoryID"`
 }
 
 // Create persists a new memory entry in memory-server.
