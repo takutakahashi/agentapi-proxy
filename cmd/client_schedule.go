@@ -20,13 +20,37 @@ var (
 var scheduleCmd = &cobra.Command{
 	Use:   "schedule",
 	Short: "Manage schedules",
-	Long:  "Create, list, get, update, and delete schedules",
+	Long: `Create, list, get, update, and delete schedules.
+
+Connection:
+  Endpoint is resolved from --endpoint flag or environment variables:
+    AGENTAPI_PROXY_SERVICE_HOST=<host>
+    AGENTAPI_PROXY_SERVICE_PORT_HTTP=<port>
+  Authentication (optional): AGENTAPI_KEY=<api-key>
+
+Typical workflow:
+  # 1. List existing schedules
+  agentapi-proxy client schedule list
+
+  # 2. Inspect a specific schedule
+  agentapi-proxy client schedule get <id> > schedule.json
+
+  # 3. Edit schedule.json, then apply only the changed fields
+  echo '{"status":"paused"}' | agentapi-proxy client schedule apply <id>
+
+  # 4. Delete when no longer needed
+  agentapi-proxy client schedule delete <id>`,
 }
 
 var scheduleListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List schedules",
-	Long: `List schedules and output as JSON.
+	Long: `List schedules and output as JSON array.
+
+Filters (all optional):
+  --status  "active", "paused", or "completed"
+  --scope   "user" or "team"
+  --team-id team identifier (required when --scope=team)
 
 Examples:
   agentapi-proxy client schedule list
@@ -44,7 +68,9 @@ The output can be redirected to a file, edited, and applied back with 'apply'.
 
 Examples:
   agentapi-proxy client schedule get abc123
-  agentapi-proxy client schedule get abc123 > schedule.json`,
+  agentapi-proxy client schedule get abc123 > schedule.json
+  # Then edit schedule.json and run:
+  agentapi-proxy client schedule apply abc123 --file schedule.json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runScheduleGet,
 }
@@ -54,17 +80,33 @@ var scheduleCreateCmd = &cobra.Command{
 	Short: "Create a schedule from JSON",
 	Long: `Create a new schedule from a JSON body.
 
-Reads JSON from a file (--file) or from stdin if --file is omitted or set to "-".
+Reads JSON from a file (--file) or from stdin when --file is omitted or set to "-".
+The server assigns a unique ID and returns the created resource as JSON.
+
+Example JSON for a one-time schedule:
+  {
+    "name": "daily-report",
+    "scheduled_at": "2026-03-25T09:00:00Z",
+    "prompt": "Generate the daily report"
+  }
+
+Example JSON for a recurring schedule (cron):
+  {
+    "name": "weekday-standup",
+    "cron_expr": "0 9 * * 1-5",
+    "prompt": "Post standup summary"
+  }
 
 Examples:
-  # One-time schedule
-  echo '{"name":"daily-report","scheduled_at":"2026-03-25T09:00:00Z"}' | agentapi-proxy client schedule create
+  # From a file
+  agentapi-proxy client schedule create --file schedule.json
 
-  # Recurring schedule (cron)
+  # From stdin
   cat schedule.json | agentapi-proxy client schedule create
 
-  # From file
-  agentapi-proxy client schedule create --file schedule.json`,
+  # Inline one-time schedule
+  echo '{"name":"daily-report","scheduled_at":"2026-03-25T09:00:00Z"}' \
+    | agentapi-proxy client schedule create`,
 	Run: runScheduleCreate,
 }
 
@@ -73,8 +115,9 @@ var scheduleApplyCmd = &cobra.Command{
 	Short: "Apply (patch) a schedule from JSON",
 	Long: `Partially update a schedule by sending a JSON patch.
 
-Only the fields present in the JSON body are updated. Reads JSON from a file
-(--file) or from stdin if --file is omitted or set to "-".
+Only the fields present in the JSON body are updated (merge-patch semantics).
+Omitted fields are left unchanged on the server.
+Reads JSON from a file (--file) or from stdin when --file is omitted or set to "-".
 
 Typical workflow:
   1. agentapi-proxy client schedule get <id> > schedule.json
@@ -82,14 +125,14 @@ Typical workflow:
   3. agentapi-proxy client schedule apply <id> --file schedule.json
 
 Examples:
-  # Pause a schedule
+  # Pause a schedule (only status is changed)
   echo '{"status":"paused"}' | agentapi-proxy client schedule apply abc123
 
-  # Update cron expression
+  # Update cron expression only
   echo '{"cron_expr":"0 10 * * 1-5"}' | agentapi-proxy client schedule apply abc123
 
-  # Apply from file
-  agentapi-proxy client schedule apply abc123 --file patch.json`,
+  # Apply a full JSON file (unchanged fields are preserved on the server)
+  agentapi-proxy client schedule apply abc123 --file schedule.json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runScheduleApply,
 }
@@ -97,7 +140,10 @@ Examples:
 var scheduleDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a schedule by ID",
-	Long: `Delete a schedule by ID.
+	Long: `Delete a schedule by ID. This action is irreversible.
+
+To find the ID, run:
+  agentapi-proxy client schedule list
 
 Examples:
   agentapi-proxy client schedule delete abc123`,
@@ -127,7 +173,7 @@ func init() {
 func runScheduleList(cmd *cobra.Command, args []string) {
 	c, err := resolveBaseClient()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n%s\n", err, endpointHint)
 		os.Exit(1)
 	}
 
@@ -141,6 +187,7 @@ func runScheduleList(cmd *cobra.Command, args []string) {
 	result, err := c.ListSchedules(ctx, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing schedules: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Hint: verify the endpoint is reachable and credentials are correct.\n")
 		os.Exit(1)
 	}
 
@@ -150,7 +197,7 @@ func runScheduleList(cmd *cobra.Command, args []string) {
 func runScheduleGet(cmd *cobra.Command, args []string) {
 	c, err := resolveBaseClient()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n%s\n", err, endpointHint)
 		os.Exit(1)
 	}
 
@@ -158,7 +205,8 @@ func runScheduleGet(cmd *cobra.Command, args []string) {
 
 	result, err := c.GetSchedule(ctx, args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting schedule: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error getting schedule %q: %v\n", args[0], err)
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID is correct with: agentapi-proxy client schedule list\n")
 		os.Exit(1)
 	}
 
@@ -169,12 +217,14 @@ func runScheduleCreate(cmd *cobra.Command, args []string) {
 	data, err := readJSONInput(scheduleFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Hint: provide JSON via stdin or use --file path/to/schedule.json\n")
+		fmt.Fprintf(os.Stderr, "Example: echo '{\"name\":\"my-schedule\",\"cron_expr\":\"0 9 * * 1-5\"}' | agentapi-proxy client schedule create\n")
 		os.Exit(1)
 	}
 
 	c, err := resolveBaseClient()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n%s\n", err, endpointHint)
 		os.Exit(1)
 	}
 
@@ -183,6 +233,7 @@ func runScheduleCreate(cmd *cobra.Command, args []string) {
 	result, err := c.CreateSchedule(ctx, data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating schedule: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Hint: check the JSON body for required fields (e.g. name, cron_expr or scheduled_at).\n")
 		os.Exit(1)
 	}
 
@@ -193,12 +244,14 @@ func runScheduleApply(cmd *cobra.Command, args []string) {
 	data, err := readJSONInput(scheduleFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Hint: provide the patch as JSON via stdin or use --file path/to/patch.json\n")
+		fmt.Fprintf(os.Stderr, "Example: echo '{\"status\":\"paused\"}' | agentapi-proxy client schedule apply %s\n", args[0])
 		os.Exit(1)
 	}
 
 	c, err := resolveBaseClient()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n%s\n", err, endpointHint)
 		os.Exit(1)
 	}
 
@@ -206,7 +259,8 @@ func runScheduleApply(cmd *cobra.Command, args []string) {
 
 	result, err := c.ApplySchedule(ctx, args[0], data)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error applying schedule: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error applying schedule %q: %v\n", args[0], err)
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client schedule list\n")
 		os.Exit(1)
 	}
 
@@ -216,14 +270,15 @@ func runScheduleApply(cmd *cobra.Command, args []string) {
 func runScheduleDelete(cmd *cobra.Command, args []string) {
 	c, err := resolveBaseClient()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n%s\n", err, endpointHint)
 		os.Exit(1)
 	}
 
 	ctx := context.Background()
 
 	if err := c.DeleteSchedule(ctx, args[0]); err != nil {
-		fmt.Fprintf(os.Stderr, "Error deleting schedule: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error deleting schedule %q: %v\n", args[0], err)
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client schedule list\n")
 		os.Exit(1)
 	}
 

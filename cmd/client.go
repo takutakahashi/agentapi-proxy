@@ -796,6 +796,16 @@ func prettyJSONOutput(data []byte) string {
 	return strings.TrimRight(buf.String(), "\n")
 }
 
+// endpointHint is appended to error messages when the endpoint cannot be resolved,
+// to help users understand how to configure the connection.
+const endpointHint = `
+Hint: configure the endpoint using one of the following methods:
+  1. Flag:    --endpoint http://<host>:<port>
+  2. Env vars: AGENTAPI_PROXY_SERVICE_HOST=<host> AGENTAPI_PROXY_SERVICE_PORT_HTTP=<port>
+
+Optional authentication:
+  AGENTAPI_KEY=<api-key>`
+
 // resolveBaseClient creates a client using flags or environment variables.
 // Unlike resolveClient, no session-id is required.
 func resolveBaseClient() (*client.Client, error) {
