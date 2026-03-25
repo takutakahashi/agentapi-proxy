@@ -64,8 +64,7 @@ type msUser struct {
 type msMemory struct {
 	MemoryID       string    `json:"memory_id"`
 	UserID         string    `json:"user_id"`
-	OrgID          string    `json:"org_id,omitempty"`
-	Scope          string    `json:"scope"` // "private" | "public" | "org"
+	Scope          string    `json:"scope"` // "private" | "public"
 	Content        string    `json:"content"`
 	Tags           []string  `json:"tags"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -82,10 +81,13 @@ type msListResult struct {
 
 // ---- user management --------------------------------------------------------
 
-// resolveUserID returns the appropriate memory-server user ID for authentication.
-// Team-scoped memories are now stored under the real owner's user account with
-// scope="org" and org_id=teamID, so we always return the ownerID.
-func resolveUserID(_ entities.ResourceScope, ownerID, _ string) string {
+// resolveUserID returns the appropriate memory-server user ID for a given agentapi-proxy user.
+// For team-scoped operations the convention "team:<teamID>" is used so that team memories
+// are owned by a dedicated team user rather than an individual.
+func resolveUserID(scope entities.ResourceScope, ownerID, teamID string) string {
+	if scope == entities.ScopeTeam && teamID != "" {
+		return "team:" + teamID
+	}
 	return ownerID
 }
 
@@ -233,11 +235,10 @@ func decodeTags(tags []string) map[string]string {
 }
 
 // scopeToMS converts agentapi-proxy ResourceScope to memory-server scope string.
-// Team-scoped memories use the "org" scope backed by org_id; user-scoped use "private".
-func scopeToMS(s entities.ResourceScope) string {
-	if s == entities.ScopeTeam {
-		return "org"
-	}
+// Team-scoped memories are stored as "private" under a dedicated team user.
+func scopeToMS(_ entities.ResourceScope) string {
+	// Both user and team scopes are stored as "private" in memory-server.
+	// Access control is handled by using separate user accounts per owner/team.
 	return "private"
 }
 
@@ -246,21 +247,14 @@ func msToEntity(m *msMemory) *entities.Memory {
 	title, content := decodeContent(m.Content)
 	tags := decodeTags(m.Tags)
 
-	// Determine scope, ownerID, teamID from the memory-server response.
+	// Infer scope and IDs from UserID convention ("team:<teamID>" or plain user ID).
 	scope := entities.ScopeUser
 	ownerID := m.UserID
 	teamID := ""
-
-	if m.OrgID != "" {
-		// New org-based team memories: org_id carries the team identity.
-		scope = entities.ScopeTeam
-		teamID = m.OrgID
-		// ownerID stays as the real user who created it.
-	} else if strings.HasPrefix(m.UserID, "team:") {
-		// Legacy: memories created before the org concept used "team:<teamID>" as user_id.
+	if strings.HasPrefix(m.UserID, "team:") {
 		scope = entities.ScopeTeam
 		teamID = strings.TrimPrefix(m.UserID, "team:")
-		ownerID = teamID // best effort; real owner unknown for legacy entries
+		ownerID = teamID // best effort; real owner is unknown at this level
 	}
 
 	mem := entities.NewMemoryWithTags(m.MemoryID, title, content, scope, ownerID, teamID, tags)
@@ -293,16 +287,12 @@ func (r *ExternalMemoryRepository) Create(ctx context.Context, memory *entities.
 		return err
 	}
 
-	createPayload := map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]interface{}{
 		"user_id": msUserID,
 		"content": encodeContent(memory.Title(), memory.Content()),
 		"tags":    encodeTags(memory.Tags()),
 		"scope":   scopeToMS(memory.Scope()),
-	}
-	if memory.TeamID() != "" {
-		createPayload["org_id"] = memory.TeamID()
-	}
-	reqBody, _ := json.Marshal(createPayload)
+	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		r.cfg.URL+"/api/v1/memories", bytes.NewReader(reqBody))
@@ -369,15 +359,38 @@ func (r *ExternalMemoryRepository) GetByID(ctx context.Context, id string) (*ent
 // Full-text query uses memory-server's semantic search endpoint; otherwise the
 // list endpoint is used with client-side tag/scope filtering.
 func (r *ExternalMemoryRepository) List(ctx context.Context, filter portrepos.MemoryFilter) ([]*entities.Memory, error) {
+	// Collect all relevant user IDs to query.
+	userIDs := r.filterUserIDs(filter)
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+
 	var results []*entities.Memory
 	seen := make(map[string]struct{})
 
-	addMemories := func(memories []*msMemory) {
+	for _, uid := range userIDs {
+		token, err := r.ensureUser(ctx, uid)
+		if err != nil {
+			// Skip users that cannot be provisioned.
+			continue
+		}
+
+		var memories []*msMemory
+		if filter.Query != "" {
+			memories, err = r.searchMemories(ctx, token, uid, filter.Query)
+		} else {
+			memories, err = r.listAllMemories(ctx, token, uid)
+		}
+		if err != nil {
+			return nil, err
+		}
+
 		for _, m := range memories {
 			if _, dup := seen[m.MemoryID]; dup {
 				continue
 			}
 			seen[m.MemoryID] = struct{}{}
+
 			entity := msToEntity(m)
 			if !entity.MatchesTags(filter.Tags) {
 				continue
@@ -389,101 +402,32 @@ func (r *ExternalMemoryRepository) List(ctx context.Context, filter portrepos.Me
 		}
 	}
 
-	// User-scope memories: query by user_id.
-	if (filter.Scope == "" || filter.Scope == entities.ScopeUser) && filter.OwnerID != "" {
-		token, err := r.ensureUser(ctx, filter.OwnerID)
-		if err == nil {
-			var memories []*msMemory
-			if filter.Query != "" {
-				memories, err = r.searchMemories(ctx, token, filter.OwnerID, "", filter.Query)
-			} else {
-				memories, err = r.listAllMemories(ctx, token, filter.OwnerID)
-			}
-			if err != nil {
-				return nil, err
-			}
-			addMemories(memories)
-		}
-	}
-
-	// Team-scope memories: query by org_id via the new org endpoint.
-	if filter.Scope == "" || filter.Scope == entities.ScopeTeam {
-		teamIDs := r.collectTeamIDs(filter)
-		for _, tid := range teamIDs {
-			var memories []*msMemory
-			var err error
-			if filter.Query != "" {
-				// For search, use the owner's token with org_id.
-				token, tErr := r.ensureUser(ctx, filter.OwnerID)
-				if tErr == nil {
-					memories, err = r.searchMemories(ctx, token, filter.OwnerID, tid, filter.Query)
-				}
-			} else {
-				memories, err = r.listByOrgID(ctx, tid)
-			}
-			if err != nil {
-				return nil, err
-			}
-			addMemories(memories)
-		}
-	}
-
 	return results, nil
 }
 
-// collectTeamIDs returns the team IDs from the filter.
-func (r *ExternalMemoryRepository) collectTeamIDs(filter portrepos.MemoryFilter) []string {
-	if len(filter.TeamIDs) > 0 {
-		return filter.TeamIDs
-	}
-	if filter.TeamID != "" {
-		return []string{filter.TeamID}
-	}
-	return nil
-}
+// filterUserIDs returns the list of memory-server user IDs to query for the given filter.
+func (r *ExternalMemoryRepository) filterUserIDs(filter portrepos.MemoryFilter) []string {
+	var ids []string
 
-// listByOrgID fetches all memories for an org by paginating with ?org_id=.
-// Uses the admin token since org queries are not user-specific.
-func (r *ExternalMemoryRepository) listByOrgID(ctx context.Context, orgID string) ([]*msMemory, error) {
-	var all []*msMemory
-	var nextToken *string
-
-	for {
-		u := r.cfg.URL + "/api/v1/memories?org_id=" + url.QueryEscape(orgID) + "&limit=100"
-		if nextToken != nil {
-			u += "&next_token=" + url.QueryEscape(*nextToken)
+	// User-scope memories.
+	if filter.Scope == "" || filter.Scope == entities.ScopeUser {
+		if filter.OwnerID != "" {
+			ids = append(ids, filter.OwnerID)
 		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+r.cfg.AdminToken)
-
-		resp, err := r.httpClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close() //nolint:errcheck
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("list org memories: HTTP %d", resp.StatusCode)
-		}
-
-		var result msListResult
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return nil, err
-		}
-
-		all = append(all, result.Memories...)
-
-		if result.NextToken == nil {
-			break
-		}
-		nextToken = result.NextToken
 	}
 
-	return all, nil
+	// Team-scope memories use the "team:<teamID>" virtual user convention.
+	if filter.Scope == "" || filter.Scope == entities.ScopeTeam {
+		if len(filter.TeamIDs) > 0 {
+			for _, tid := range filter.TeamIDs {
+				ids = append(ids, "team:"+tid)
+			}
+		} else if filter.TeamID != "" {
+			ids = append(ids, "team:"+filter.TeamID)
+		}
+	}
+
+	return ids
 }
 
 // listAllMemories fetches all memories for a user by paginating through the list endpoint.
@@ -530,17 +474,12 @@ func (r *ExternalMemoryRepository) listAllMemories(ctx context.Context, token, u
 }
 
 // searchMemories performs semantic search in memory-server.
-// orgID is optional; when non-empty it is included so that org-scoped vectors are searched.
-func (r *ExternalMemoryRepository) searchMemories(ctx context.Context, token, userID, orgID, query string) ([]*msMemory, error) {
-	searchPayload := map[string]interface{}{
+func (r *ExternalMemoryRepository) searchMemories(ctx context.Context, token, userID, query string) ([]*msMemory, error) {
+	reqBody, _ := json.Marshal(map[string]interface{}{
 		"user_id": userID,
 		"query":   query,
 		"limit":   50,
-	}
-	if orgID != "" {
-		searchPayload["org_id"] = orgID
-	}
-	reqBody, _ := json.Marshal(searchPayload)
+	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		r.cfg.URL+"/api/v1/memories/search", bytes.NewReader(reqBody))
@@ -585,13 +524,11 @@ func (r *ExternalMemoryRepository) Update(ctx context.Context, memory *entities.
 		return err
 	}
 
-	updatePayload := map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]interface{}{
 		"content": encodeContent(memory.Title(), memory.Content()),
 		"tags":    encodeTags(memory.Tags()),
 		"scope":   scopeToMS(memory.Scope()),
-		"org_id":  memory.TeamID(), // empty string for user-scope; teamID for team-scope
-	}
-	reqBody, _ := json.Marshal(updatePayload)
+	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
 		r.cfg.URL+"/api/v1/memories/"+url.PathEscape(memory.ID()),
