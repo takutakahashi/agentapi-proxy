@@ -58,7 +58,7 @@ type UpdateSlackBotRequest struct {
 	// Teams is an explicit list of team IDs (e.g. ["org/team-slug"]) whose settings
 	// will be merged into sessions created by this bot. When omitted, the server
 	// refreshes from the authenticated user's current team memberships.
-	Teams               []string               `json:"teams,omitempty"`
+	Teams []string `json:"teams,omitempty"`
 	// BotTokenSecretName is a pointer to allow clearing the value by passing an empty string "".
 	// nil means "not provided / do not change"; "" means "clear (revert to global default)".
 	BotTokenSecretName  *string                `json:"bot_token_secret_name"`

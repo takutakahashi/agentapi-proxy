@@ -205,16 +205,26 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	log.Printf("[SERVER] Personal API key repository initialized")
 
 	// Initialize memory repository based on backend configuration.
-	// Default is "kubernetes" (ConfigMap-backed). Set memory.backend = "s3" to use S3.
+	// Supported backends: "kubernetes" (default), "s3", "external".
 	var memoryRepo portrepos.MemoryRepository
-	if cfg.Memory.Backend == "s3" && cfg.Memory.S3 != nil {
+	switch cfg.Memory.Backend {
+	case "s3":
+		if cfg.Memory.S3 == nil {
+			log.Fatalf("[SERVER] Memory backend is 's3' but no S3 configuration provided")
+		}
 		s3MemRepo, s3Err := repositories.NewS3MemoryRepository(context.Background(), cfg.Memory.S3)
 		if s3Err != nil {
 			log.Fatalf("[SERVER] Failed to initialize S3 memory repository: %v", s3Err)
 		}
 		memoryRepo = s3MemRepo
 		log.Printf("[SERVER] Memory repository initialized (backend: s3, bucket: %s)", cfg.Memory.S3.Bucket)
-	} else {
+	case "external":
+		if cfg.Memory.External == nil || cfg.Memory.External.URL == "" {
+			log.Fatalf("[SERVER] Memory backend is 'external' but no external configuration provided (set AGENTAPI_MEMORY_EXTERNAL_URL)")
+		}
+		memoryRepo = repositories.NewExternalMemoryRepository(cfg.Memory.External, personalAPIKeyRepo, teamConfigRepo)
+		log.Printf("[SERVER] Memory repository initialized (backend: external, url: %s)", cfg.Memory.External.URL)
+	default:
 		memoryRepo = repositories.NewKubernetesMemoryRepository(
 			k8sSessionManager.GetClient(),
 			k8sSessionManager.GetNamespace(),

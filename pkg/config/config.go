@@ -298,9 +298,20 @@ type KubernetesSessionConfig struct {
 
 // MemoryConfig represents memory backend configuration
 type MemoryConfig struct {
-	// Backend is the storage backend type: "kubernetes" (default) or "s3"
-	Backend string          `json:"backend" mapstructure:"backend"`
-	S3      *MemoryS3Config `json:"s3,omitempty" mapstructure:"s3"`
+	// Backend is the storage backend type: "kubernetes" (default), "s3", or "external"
+	Backend  string                `json:"backend" mapstructure:"backend"`
+	S3       *MemoryS3Config       `json:"s3,omitempty" mapstructure:"s3"`
+	External *MemoryExternalConfig `json:"external,omitempty" mapstructure:"external"`
+}
+
+// MemoryExternalConfig represents configuration for the external memory-server backend.
+// The external backend delegates all memory storage to a takutakahashi/memory-server instance.
+type MemoryExternalConfig struct {
+	// URL is the base URL of the memory-server (e.g., "http://memory-server:8080")
+	URL string `json:"url" mapstructure:"url"`
+	// AdminToken is used as ADMIN_TOKEN to create users in memory-server on demand.
+	// Typically populated from the AGENTAPI_MEMORY_EXTERNAL_ADMIN_TOKEN environment variable.
+	AdminToken string `json:"admin_token" mapstructure:"admin_token"`
 }
 
 // MemoryS3Config represents S3 backend configuration for memory storage
@@ -666,6 +677,10 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("memory.s3.region", "AGENTAPI_MEMORY_S3_REGION")
 	_ = v.BindEnv("memory.s3.prefix", "AGENTAPI_MEMORY_S3_PREFIX")
 	_ = v.BindEnv("memory.s3.endpoint", "AGENTAPI_MEMORY_S3_ENDPOINT")
+
+	// External memory-server backend configuration
+	_ = v.BindEnv("memory.external.url", "AGENTAPI_MEMORY_EXTERNAL_URL")
+	_ = v.BindEnv("memory.external.admin_token", "AGENTAPI_MEMORY_EXTERNAL_ADMIN_TOKEN")
 }
 
 // setDefaults sets default values for viper configuration
@@ -758,6 +773,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("memory.s3.prefix", "agentapi-memory/")
 	v.SetDefault("memory.s3.region", "")
 	v.SetDefault("memory.s3.endpoint", "")
+	v.SetDefault("memory.external.url", "")
+	v.SetDefault("memory.external.admin_token", "")
 
 	// Slack defaults
 	v.SetDefault("slack.dry_run", false)
