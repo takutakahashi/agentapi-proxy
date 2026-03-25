@@ -152,7 +152,7 @@ RUN bun install -g @takutakahashi/claude-agentapi
 # Placed outside the home directory so it persists across volume mounts.
 RUN sudo mkdir -p /opt/claude-marketplace && \
     sudo chown agentapi:agentapi /opt/claude-marketplace
-COPY --chown=agentapi:agentapi marketplace/takutakahashi-plugins /opt/claude-marketplace/takutakahashi-plugins
+COPY --chown=agentapi:agentapi marketplace/ccplant-skills /opt/claude-marketplace/takutakahashi-plugins
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
