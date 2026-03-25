@@ -554,7 +554,10 @@ func (r *ExternalMemoryRepository) Update(ctx context.Context, memory *entities.
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"content": encodeContent(memory.Title(), memory.Content()),
 		"tags":    encodeTags(memory.Tags()),
-		"scope":   scopeToMS(memory.Scope()),
+		// scope is intentionally omitted: data separation is handled by using
+		// separate memory-server user accounts (user vs "team:<teamID>").
+		// Sending scope would trigger a DynamoDB UpdateExpression error because
+		// "scope" is a reserved keyword in DynamoDB.
 	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
