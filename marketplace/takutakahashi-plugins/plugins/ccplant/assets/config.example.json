@@ -1,0 +1,33 @@
+{
+  "auth": {
+    "enabled": true,
+    "static": {
+      "enabled": true,
+      "header_name": "X-API-Key",
+      "api_keys": [
+        {
+          "key": "ap_admin_key_123456789abcdef",
+          "user_id": "admin",
+          "role": "admin",
+          "permissions": ["*"],
+          "created_at": "2024-01-01T00:00:00Z",
+          "expires_at": "2025-01-01T00:00:00Z"
+        },
+        {
+          "key": "ap_user_alice_987654321fedcba",
+          "user_id": "alice",
+          "role": "user",
+          "permissions": [
+            "session:create",
+            "session:list",
+            "session:delete",
+            "session:access",
+            "session:read"
+          ],
+          "created_at": "2024-01-01T00:00:00Z",
+          "expires_at": "2025-01-01T00:00:00Z"
+        }
+      ]
+    }
+  }
+}

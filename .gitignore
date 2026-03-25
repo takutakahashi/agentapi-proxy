@@ -41,6 +41,7 @@ logs/
 !api_keys.example.json
 !docs/*.json
 !spec/*.json
+!marketplace/**/*.json
 !.claude/settings.json
 !go.mod
 !go.sum

@@ -1,0 +1,25 @@
+{
+  "name": "takutakahashi-plugins",
+  "owner": {
+    "name": "takutakahashi",
+    "email": "takutakahashi@gmail.com"
+  },
+  "metadata": {
+    "description": "Custom Claude Code plugins and skills for agentapi and related tools",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "ccplant",
+      "source": "./plugins/ccplant",
+      "description": "Comprehensive toolkit for agentapi-proxy: API client for session management and webhook automation. Includes API authentication, session lifecycle management, and webhook configuration for GitHub and custom services.",
+      "version": "2.0.0",
+      "author": {
+        "name": "takutakahashi"
+      },
+      "license": "MIT",
+      "keywords": ["agentapi", "api", "authentication", "session-management", "webhooks", "automation"],
+      "category": "developer-tools"
+    }
+  ]
+}

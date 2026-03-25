@@ -1,0 +1,10 @@
+{
+  "name": "ccplant",
+  "description": "Comprehensive toolkit for agentapi-proxy: API client and webhook automation",
+  "version": "2.0.0",
+  "author": {
+    "name": "takutakahashi"
+  },
+  "license": "MIT",
+  "skills": "./skills"
+}
