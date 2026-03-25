@@ -30,12 +30,14 @@ const tagSep = "="
 // takutakahashi/memory-server instance. Users are created on-demand using the configured
 // AdminToken. The user's agentapi-proxy personal API key is registered as their
 // memory-server token so that the same key works for both services.
+// For team virtual users ("team:<teamID>"), the team's service account API key is used.
 // User tokens are cached in-process.
 type ExternalMemoryRepository struct {
 	cfg            *config.MemoryExternalConfig
 	httpClient     *http.Client
 	userTokens     sync.Map // userID (string) -> token (string)
 	personalAPIKey portrepos.PersonalAPIKeyRepository
+	teamConfig     portrepos.TeamConfigRepository
 }
 
 // Ensure interface compliance at compile time.
@@ -44,11 +46,13 @@ var _ portrepos.MemoryRepository = (*ExternalMemoryRepository)(nil)
 // NewExternalMemoryRepository creates a new ExternalMemoryRepository.
 // personalAPIKey is used to look up each user's agentapi-proxy API key, which is
 // registered as their token in memory-server (same key, two services).
-func NewExternalMemoryRepository(cfg *config.MemoryExternalConfig, personalAPIKey portrepos.PersonalAPIKeyRepository) *ExternalMemoryRepository {
+// teamConfig is used to look up each team's service account API key for team virtual users.
+func NewExternalMemoryRepository(cfg *config.MemoryExternalConfig, personalAPIKey portrepos.PersonalAPIKeyRepository, teamConfig portrepos.TeamConfigRepository) *ExternalMemoryRepository {
 	return &ExternalMemoryRepository{
 		cfg:            cfg,
 		httpClient:     &http.Client{Timeout: 30 * time.Second},
 		personalAPIKey: personalAPIKey,
+		teamConfig:     teamConfig,
 	}
 }
 
@@ -157,14 +161,37 @@ func (r *ExternalMemoryRepository) lookupAPIKey(ctx context.Context, userID stri
 	return key.APIKey()
 }
 
+// lookupTeamAPIKey returns the team's service account API key string, or "" if not found.
+// teamID is the raw team ID (without the "team:" prefix).
+func (r *ExternalMemoryRepository) lookupTeamAPIKey(ctx context.Context, teamID string) string {
+	if r.teamConfig == nil {
+		return ""
+	}
+	tc, err := r.teamConfig.FindByTeamID(ctx, teamID)
+	if err != nil || tc == nil {
+		return ""
+	}
+	sa := tc.ServiceAccount()
+	if sa == nil {
+		return ""
+	}
+	return sa.APIKey()
+}
+
 func (r *ExternalMemoryRepository) createUser(ctx context.Context, userID string) (*msUser, error) {
 	payload := map[string]string{
 		"user_id":     userID,
 		"description": "agentapi-proxy managed user",
 	}
-	// Register the user's agentapi-proxy personal API key as their memory-server token.
-	// Falls back to auto-generated token when no personal API key exists.
-	if apiKey := r.lookupAPIKey(ctx, userID); apiKey != "" {
+	// For team virtual users ("team:<teamID>"), use the team's service account API key.
+	// For regular users, use their personal API key.
+	// Falls back to auto-generated token when no key is found.
+	if strings.HasPrefix(userID, "team:") {
+		teamID := strings.TrimPrefix(userID, "team:")
+		if apiKey := r.lookupTeamAPIKey(ctx, teamID); apiKey != "" {
+			payload["token"] = apiKey
+		}
+	} else if apiKey := r.lookupAPIKey(ctx, userID); apiKey != "" {
 		payload["token"] = apiKey
 	}
 	body, _ := json.Marshal(payload)
