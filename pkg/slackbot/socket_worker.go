@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -60,11 +61,44 @@ func NewSlackSocketWorker(
 	}
 }
 
+const (
+	// reconnectBaseDelay is the initial wait before reconnecting after a failure
+	reconnectBaseDelay = 5 * time.Second
+	// reconnectMaxDelay is the maximum wait between reconnect attempts
+	reconnectMaxDelay = 5 * time.Minute
+)
+
 // Run connects to Slack via Socket Mode and processes events until ctx is cancelled.
-// The Slack SDK handles reconnection automatically.
+// If the connection drops unexpectedly, it retries with exponential backoff.
 func (w *SlackSocketWorker) Run(ctx context.Context) {
 	log.Printf("[SOCKET_WORKER] Starting for botID=%s", w.botID)
 
+	delay := reconnectBaseDelay
+	for ctx.Err() == nil {
+		w.runOnce(ctx)
+		if ctx.Err() != nil {
+			// Context was cancelled; stop without retrying.
+			break
+		}
+		log.Printf("[SOCKET_WORKER] Connection lost for botID=%s, reconnecting in %s", w.botID, delay)
+		select {
+		case <-ctx.Done():
+			// Stop if context is cancelled while waiting.
+		case <-time.After(delay):
+			// Exponential backoff: double the delay up to reconnectMaxDelay.
+			delay *= 2
+			if delay > reconnectMaxDelay {
+				delay = reconnectMaxDelay
+			}
+		}
+	}
+
+	log.Printf("[SOCKET_WORKER] Stopped for botID=%s", w.botID)
+}
+
+// runOnce performs a single Socket Mode connection attempt.
+// It returns when the connection is lost or ctx is cancelled.
+func (w *SlackSocketWorker) runOnce(ctx context.Context) {
 	// Load App-level token (xapp-...)
 	appToken, err := w.channelResolver.GetBotToken(ctx, w.appTokenSecretName, w.appTokenSecretKey)
 	if err != nil {
@@ -102,8 +136,6 @@ func (w *SlackSocketWorker) Run(ctx context.Context) {
 	if err := client.RunContext(ctx); err != nil && ctx.Err() == nil {
 		log.Printf("[SOCKET_WORKER] Socket Mode client exited for botID=%s: %v", w.botID, err)
 	}
-
-	log.Printf("[SOCKET_WORKER] Stopped for botID=%s", w.botID)
 }
 
 // handleEvents dispatches Socket Mode events to the event handler
