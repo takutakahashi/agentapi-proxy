@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "plugins": {
+    "ccplant@ccplant-skills": [
+      {
+        "scope": "user",
+        "installPath": "/opt/claude-marketplace/ccplant-skills/plugins/ccplant",
+        "version": "2.0.0",
+        "installedAt": "2026-01-01T00:00:00.000Z",
+        "lastUpdated": "2026-01-01T00:00:00.000Z",
+        "gitCommitSha": "prebaked"
+      }
+    ]
+  }
+}

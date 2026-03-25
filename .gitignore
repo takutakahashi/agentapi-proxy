@@ -42,6 +42,7 @@ logs/
 !docs/*.json
 !spec/*.json
 !marketplace/**/*.json
+!config/claude-config/**/*.json
 !.claude/settings.json
 !go.mod
 !go.sum

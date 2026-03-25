@@ -148,11 +148,19 @@ ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/h
 # install claude-agentapi
 RUN bun install -g @takutakahashi/claude-agentapi
 
-# Copy takutakahashi-plugins marketplace from the repository into the image.
+# Copy ccplant-skills marketplace from the repository into the image.
 # Placed outside the home directory so it persists across volume mounts.
 RUN sudo mkdir -p /opt/claude-marketplace && \
     sudo chown agentapi:agentapi /opt/claude-marketplace
-COPY --chown=agentapi:agentapi marketplace/ccplant-skills /opt/claude-marketplace/takutakahashi-plugins
+COPY --chown=agentapi:agentapi marketplace/ccplant-skills /opt/claude-marketplace/ccplant-skills
+
+# Set up Claude Code config dir at /opt/claude-config so it lives outside the
+# home directory and is not affected by volume mounts on /home/agentapi.
+# CLAUDE_CONFIG_DIR replaces ~/.claude for all Claude Code config.
+ENV CLAUDE_CONFIG_DIR=/opt/claude-config
+RUN sudo mkdir -p /opt/claude-config && \
+    sudo chown agentapi:agentapi /opt/claude-config
+COPY --chown=agentapi:agentapi config/claude-config /opt/claude-config
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
