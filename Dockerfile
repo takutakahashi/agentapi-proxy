@@ -148,6 +148,13 @@ ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/h
 # install claude-agentapi
 RUN bun install -g @takutakahashi/claude-agentapi
 
+# Clone takutakahashi/marketplace to /opt/claude-marketplace for pre-baked skills.
+# Placed outside the home directory so it persists across volume mounts.
+ARG MARKETPLACE_REPO=https://github.com/takutakahashi/marketplace.git
+RUN sudo mkdir -p /opt/claude-marketplace && \
+    sudo chown agentapi:agentapi /opt/claude-marketplace && \
+    git clone --depth 1 "${MARKETPLACE_REPO}" /opt/claude-marketplace/takutakahashi-plugins
+
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
 

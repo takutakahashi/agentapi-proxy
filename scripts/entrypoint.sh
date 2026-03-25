@@ -15,6 +15,57 @@ if [ ! -f /home/agentapi/.claude/CLAUDE.md ] || [ /tmp/config/CLAUDE.md -nt /hom
 fi
 
 
+# Set up ccplant plugin from pre-baked marketplace in /opt/claude-marketplace.
+# This runs every startup so that the plugin is always configured even when
+# ~/.claude is a fresh volume mount.
+MARKETPLACE_DIR="/opt/claude-marketplace/takutakahashi-plugins"
+PLUGIN_DIR="${MARKETPLACE_DIR}/plugins/ccplant"
+if [ -d "${MARKETPLACE_DIR}" ]; then
+    echo "Setting up ccplant plugin from pre-baked marketplace..."
+
+    mkdir -p /home/agentapi/.claude/plugins
+
+    # --- known_marketplaces.json ---
+    KNOWN_MARKETPLACES="/home/agentapi/.claude/plugins/known_marketplaces.json"
+    if [ ! -f "${KNOWN_MARKETPLACES}" ]; then
+        echo '{}' > "${KNOWN_MARKETPLACES}"
+    fi
+    if ! jq -e '.["takutakahashi-plugins"]' "${KNOWN_MARKETPLACES}" > /dev/null 2>&1; then
+        tmp=$(mktemp)
+        jq --arg path "${MARKETPLACE_DIR}" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            '. + {"takutakahashi-plugins": {"source": {"source": "directory", "path": $path}, "installLocation": $path, "lastUpdated": $ts}}' \
+            "${KNOWN_MARKETPLACES}" > "${tmp}" && mv "${tmp}" "${KNOWN_MARKETPLACES}"
+        echo "Registered takutakahashi-plugins marketplace"
+    fi
+
+    # --- installed_plugins.json ---
+    INSTALLED_PLUGINS="/home/agentapi/.claude/plugins/installed_plugins.json"
+    if [ ! -f "${INSTALLED_PLUGINS}" ]; then
+        echo '{"version": 2, "plugins": {}}' > "${INSTALLED_PLUGINS}"
+    fi
+    if ! jq -e '.plugins["ccplant@takutakahashi-plugins"]' "${INSTALLED_PLUGINS}" > /dev/null 2>&1; then
+        tmp=$(mktemp)
+        jq --arg path "${PLUGIN_DIR}" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            '.plugins["ccplant@takutakahashi-plugins"] = [{"scope": "user", "installPath": $path, "version": "2.0.0", "installedAt": $ts, "lastUpdated": $ts, "gitCommitSha": "prebaked"}]' \
+            "${INSTALLED_PLUGINS}" > "${tmp}" && mv "${tmp}" "${INSTALLED_PLUGINS}"
+        echo "Registered ccplant plugin"
+    fi
+
+    # --- settings.json: enable plugin ---
+    SETTINGS="/home/agentapi/.claude/settings.json"
+    if [ ! -f "${SETTINGS}" ]; then
+        echo '{}' > "${SETTINGS}"
+    fi
+    if ! jq -e '.enabledPlugins["ccplant@takutakahashi-plugins"] // false' "${SETTINGS}" | grep -q true; then
+        tmp=$(mktemp)
+        jq '.enabledPlugins = (.enabledPlugins // {}) | .enabledPlugins["ccplant@takutakahashi-plugins"] = true' \
+            "${SETTINGS}" > "${tmp}" && mv "${tmp}" "${SETTINGS}"
+        echo "Enabled ccplant@takutakahashi-plugins in settings"
+    fi
+
+    echo "ccplant plugin setup complete"
+fi
+
 # Fix permissions for persistent volume directories only if needed
 if [ -d "$HOME/.agentapi-proxy" ]; then
     # Check if the directory ownership needs to be changed
