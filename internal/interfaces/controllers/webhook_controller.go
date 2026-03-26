@@ -261,6 +261,7 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 
 	// Get user from context
 	user := auth.GetUserFromContext(ctx)
+	authzCtx := auth.GetAuthorizationContext(ctx)
 	var userID string
 	if user != nil {
 		userID = string(user.ID())
@@ -276,7 +277,7 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 		if user == nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required for team-scoped webhooks")
 		}
-		if !user.IsMemberOfTeam(req.TeamID) {
+		if !authzCtx.CanAccessTeam(req.TeamID) {
 			log.Printf("User %s is not a member of team %s", userID, req.TeamID)
 			return echo.NewHTTPError(http.StatusForbidden, "You are not a member of this team")
 		}
@@ -337,6 +338,7 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
 	user := auth.GetUserFromContext(ctx)
+	authzCtx := auth.GetAuthorizationContext(ctx)
 	scopeFilter := ctx.QueryParam("scope")
 	teamIDFilter := ctx.QueryParam("team_id")
 
@@ -344,12 +346,8 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 	var userTeamIDs []string
 	if user != nil {
 		userID = string(user.ID())
-		if githubInfo := user.GitHubInfo(); githubInfo != nil {
-			for _, team := range githubInfo.Teams() {
-				teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
-				userTeamIDs = append(userTeamIDs, teamSlug)
-			}
-		}
+		// Use pre-resolved team IDs from authzCtx (handles service accounts and GitHub users)
+		userTeamIDs = authzCtx.TeamScope.Teams
 	}
 
 	// Build filter
@@ -392,15 +390,9 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 		}
 
 		// Admin can access all team-scoped webhooks; user-scoped requires ownership.
-		// This check mirrors CanAccessResource: admin bypasses only for team scope.
-		if webhookScope == entities.ScopeTeam {
-			if user != nil && (user.IsAdmin() || user.IsMemberOfTeam(w.TeamID())) {
-				responses = append(responses, c.toResponse(ctx, w))
-			}
-		} else {
-			if user != nil && w.UserID() == string(user.ID()) {
-				responses = append(responses, c.toResponse(ctx, w))
-			}
+		// Use authzCtx.CanAccessResource which correctly handles service accounts.
+		if authzCtx.CanAccessResource(w.UserID(), string(webhookScope), w.TeamID()) {
+			responses = append(responses, c.toResponse(ctx, w))
 		}
 	}
 
