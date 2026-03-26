@@ -779,12 +779,14 @@ func (c *WebhookController) getWebhookURL(ctx echo.Context, w *entities.Webhook)
 }
 
 func (c *WebhookController) userCanAccessWebhook(ctx echo.Context, webhook *entities.Webhook) bool {
-	user := auth.GetUserFromContext(ctx)
-	if user == nil {
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if authzCtx.User == nil {
 		return false
 	}
-	return user.CanAccessResource(
-		entities.UserID(webhook.UserID()),
+	// Use authzCtx.CanAccessResource which correctly handles service accounts,
+	// GitHub users, and API key users uniformly.
+	return authzCtx.CanAccessResource(
+		webhook.UserID(),
 		string(webhook.Scope()),
 		webhook.TeamID(),
 	)
