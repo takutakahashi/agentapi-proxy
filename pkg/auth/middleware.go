@@ -336,7 +336,14 @@ func isOAuthEndpoint(path string) bool {
 // These endpoints use HMAC signature verification instead of standard authentication
 func isWebhookReceiverEndpoint(path string) bool {
 	// Webhook receiver endpoints (not management endpoints)
-	return strings.HasPrefix(path, "/hooks/")
+	if strings.HasPrefix(path, "/hooks/") {
+		return true
+	}
+	// Session manager forwarding endpoint — uses HMAC-SHA256 signature verification
+	if strings.HasPrefix(path, "/api/v1/sessions") {
+		return true
+	}
+	return false
 }
 
 // extractAPIKeyFromAuthHeader extracts API key from Authorization header
