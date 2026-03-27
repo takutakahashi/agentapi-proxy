@@ -112,6 +112,34 @@ func resolveMemoryClient() (*client.Client, error) {
 	return client.NewClient(resolvedEndpoint, client.WithAPIKeyAuth(apiKey)), nil
 }
 
+// resolveScopeAndTeamID resolves the effective scope and teamID for resource operations.
+// If the user explicitly set --scope via the command flag, those values are used as-is.
+// If the scope was not explicitly set and the authenticated user is a service account,
+// this function automatically uses scope="team" and team_id from the service account.
+func resolveScopeAndTeamID(c *client.Client, cmd *cobra.Command, currentScope, currentTeamID string) (scope, teamID string) {
+	scope = currentScope
+	teamID = currentTeamID
+
+	// If the user explicitly provided --scope, respect it
+	if cmd.Flags().Changed("scope") {
+		return scope, teamID
+	}
+
+	// Auto-detect: call /user/info to check if this is a service account
+	ctx := context.Background()
+	info, err := c.GetUserInfo(ctx)
+	if err != nil {
+		// If we can't fetch user info, fall back to the default
+		return scope, teamID
+	}
+
+	if info.UserType == "service_account" && info.TeamID != "" {
+		return "team", info.TeamID
+	}
+
+	return scope, teamID
+}
+
 // parseKeyValueFlags parses a slice of "key=value" strings into a map.
 func parseKeyValueFlags(flags []string) (map[string]string, error) {
 	result := make(map[string]string, len(flags))
@@ -129,6 +157,20 @@ var ClientCmd = &cobra.Command{
 	Use:   "client",
 	Short: "AgentAPI Client CLI",
 	Long:  "Command line client for interacting with AgentAPI endpoints",
+}
+
+var userInfoCmd = &cobra.Command{
+	Use:   "user-info",
+	Short: "Show current authenticated user info",
+	Long: `Show information about the currently authenticated user.
+
+Displays user ID, username, user type (github, service_account, api_key, etc.),
+team memberships, admin status, and permissions.
+
+Examples:
+  agentapi-proxy client user-info
+  agentapi-proxy client user-info --endpoint http://localhost:8080`,
+	Run: runUserInfo,
 }
 
 var sendCmd = &cobra.Command{
@@ -470,6 +512,7 @@ func init() {
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifySessionID, "notify-session-id", "", "Session ID whose subscribers will receive the notification")
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyUserID, "notify-user-id", "", "User ID to send the notification to")
 
+	ClientCmd.AddCommand(userInfoCmd)
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
@@ -479,6 +522,28 @@ func init() {
 	ClientCmd.AddCommand(sendNotificationClientCmd)
 	ClientCmd.AddCommand(taskCmd)
 	ClientCmd.AddCommand(memoryCmd)
+}
+
+func runUserInfo(cmd *cobra.Command, args []string) {
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	info, err := c.GetUserInfo(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting user info: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
 }
 
 func runSend(cmd *cobra.Command, args []string) {
@@ -616,6 +681,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Auto-resolve scope/team-id for service accounts when --scope is not explicitly set
+	taskScope, taskTeamID = resolveScopeAndTeamID(c, cmd, taskScope, taskTeamID)
+
 	ctx := context.Background()
 
 	links := make([]client.TaskLink, 0, len(taskLinks))
@@ -660,6 +728,9 @@ func runTaskList(cmd *cobra.Command, args []string) {
 	}
 
 	ctx := context.Background()
+
+	// Auto-resolve scope/team-id for service accounts when --scope is not explicitly set
+	taskFilterScope, taskFilterTeamID = resolveScopeAndTeamID(c, cmd, taskFilterScope, taskFilterTeamID)
 
 	opts := &client.ListTasksOptions{
 		Scope:    taskFilterScope,
@@ -860,6 +931,9 @@ func runMemoryList(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Auto-resolve scope/team-id for service accounts when --scope is not explicitly set
+	memoryScope, memoryTeamID = resolveScopeAndTeamID(c, cmd, memoryScope, memoryTeamID)
+
 	tags, err := parseKeyValueFlags(memoryTags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid --tag flag: %v\n", err)
@@ -946,6 +1020,9 @@ func runMemoryCreate(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Auto-resolve scope/team-id for service accounts when --scope is not explicitly set
+	memoryScope, memoryTeamID = resolveScopeAndTeamID(c, cmd, memoryScope, memoryTeamID)
 
 	ctx := context.Background()
 	req := &client.CreateMemoryRequest{
@@ -1069,6 +1146,9 @@ func runMemoryUpsert(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// Auto-resolve scope/team-id for service accounts when --scope is not explicitly set
+	memoryScope, memoryTeamID = resolveScopeAndTeamID(c, cmd, memoryScope, memoryTeamID)
+
 	ctx := context.Background()
 	entry, err := c.UpsertMemory(ctx, memoryScope, memoryTeamID, memoryTitle, content, keyTags)
 	if err != nil {
@@ -1115,6 +1195,9 @@ func runSummarizeDrafts(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Auto-resolve scope/team-id for service accounts when --scope is not explicitly set
+	summarizeDraftsScope, summarizeDraftsTeamID = resolveScopeAndTeamID(c, cmd, summarizeDraftsScope, summarizeDraftsTeamID)
 
 	today := time.Now().Format("2006-01-02")
 	initialMessage := buildSummarizationMessage(summarizeDraftsSourceSessionID, today)
