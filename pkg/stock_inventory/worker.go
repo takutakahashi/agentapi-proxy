@@ -18,6 +18,11 @@ type StockRepository interface {
 	// worker startup so that stale sessions (e.g. built from an old image)
 	// are replaced with fresh ones.
 	PurgeStockSessions(ctx context.Context) error
+	// PurgeStaleStockSessions deletes stock sessions whose image annotation
+	// does not match the current configured image. Called on each periodic
+	// check so that sessions built from an outdated image are replaced
+	// without requiring a full proxy restart.
+	PurgeStaleStockSessions(ctx context.Context) error
 }
 
 // WorkerConfig contains configuration for the stock inventory worker.
@@ -125,7 +130,14 @@ func (w *Worker) run(ctx context.Context) {
 }
 
 // replenishStock checks the current stock count and creates sessions to reach TargetCount.
+// It first purges any stale sessions whose image does not match the current configured
+// image, so that outdated pre-warmed pods are replaced even without a proxy restart.
 func (w *Worker) replenishStock(ctx context.Context) {
+	// Purge sessions built from an outdated image before counting.
+	if err := w.repo.PurgeStaleStockSessions(ctx); err != nil {
+		log.Printf("[STOCK_INVENTORY] Warning: failed to purge stale stock sessions: %v", err)
+	}
+
 	count, err := w.repo.CountStockSessions(ctx)
 	if err != nil {
 		log.Printf("[STOCK_INVENTORY] Failed to count stock sessions: %v", err)

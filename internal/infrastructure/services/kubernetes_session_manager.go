@@ -400,6 +400,71 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	return nil
 }
 
+// PurgeStaleStockSessions deletes stock sessions whose agentapi.proxy/stock-image
+// annotation does not match the current configured image (m.k8sConfig.Image).
+// This is called on each periodic check so that pre-warmed sessions built from an
+// outdated image are replaced without requiring a full proxy restart.
+func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) error {
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock services for stale check: %w", err)
+	}
+
+	currentImage := m.k8sConfig.Image
+	deletePolicy := metav1.DeletePropagationForeground
+	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &deletePolicy}
+
+	var purgeErrs []string
+	stalePurged := 0
+	for i := range svcs.Items {
+		svc := &svcs.Items[i]
+		if svc.DeletionTimestamp != nil {
+			continue
+		}
+		stockImage := svc.Annotations["agentapi.proxy/stock-image"]
+		// If the annotation is missing or mismatches the current image, purge.
+		if stockImage == currentImage {
+			continue
+		}
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		log.Printf("[STOCK_INVENTORY] Purging stale stock session %s (image: %q, current: %q)",
+			sessionID, stockImage, currentImage)
+
+		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", svc.Name, err))
+			continue
+		}
+
+		if sessionID == "" {
+			stalePurged++
+			continue
+		}
+
+		depName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		if err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, depName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("deployment %s: %v", depName, err))
+		}
+
+		if m.isPVCEnabled() {
+			pvcName := fmt.Sprintf("agentapi-session-%s-pvc", sessionID)
+			if err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, pvcName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+				purgeErrs = append(purgeErrs, fmt.Sprintf("pvc %s: %v", pvcName, err))
+			}
+		}
+		stalePurged++
+	}
+
+	if len(purgeErrs) > 0 {
+		return fmt.Errorf("stale purge errors: %s", strings.Join(purgeErrs, "; "))
+	}
+	if stalePurged > 0 {
+		log.Printf("[STOCK_INVENTORY] Purged %d stale stock session(s) (outdated image)", stalePurged)
+	}
+	return nil
+}
+
 // findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
 // oldest available one (by CreationTimestamp, ascending). Oldest sessions have been
 // warmed up the longest and are the most ready to serve.
@@ -1825,6 +1890,11 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 	// Record the initial message time as the last message time for all sessions.
 	// This annotation is updated by SendMessage when follow-up messages arrive.
 	annotations["agentapi.proxy/last-message-at"] = session.startedAt.UTC().Format(time.RFC3339)
+	// For stock sessions, record the image used so that stale sessions built from
+	// an outdated image can be detected and replaced during periodic checks.
+	if session.isStock {
+		annotations["agentapi.proxy/stock-image"] = m.k8sConfig.Image
+	}
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
