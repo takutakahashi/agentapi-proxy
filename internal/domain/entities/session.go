@@ -2,6 +2,8 @@ package entities
 
 import (
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 // ResourceScope defines the scope of a resource (session, schedule, etc.)
@@ -83,6 +85,10 @@ type RunServerRequest struct {
 	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
+	// ProvisionSettings, when non-nil, is used directly as the provision payload
+	// instead of building it from the other request fields.
+	// Used by the session manager forwarding path (small-cluster mode).
+	ProvisionSettings *sessionsettings.SessionSettings
 }
 
 // Session represents a running agentapi session
