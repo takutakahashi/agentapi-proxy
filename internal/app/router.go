@@ -51,10 +51,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// server implements SessionManagerProvider interface via GetSessionManager()
 	// Note: ServiceAccount creation for team-scoped sessions is now handled in
 	// KubernetesSessionManager.CreateSession() via the injected ServiceAccountEnsurer.
-	sessionControllerOpts := []controllers.SessionControllerOption{}
-	if server.sessionRouteRepo != nil {
-		sessionControllerOpts = append(sessionControllerOpts, controllers.WithSessionRouteRepository(server.sessionRouteRepo))
-	}
 	sessionController := controllers.NewSessionController(
 		server, // Server implements SessionManagerProvider interface
 		server, // Server implements SessionCreator interface
