@@ -97,6 +97,9 @@ type ExternalSessionManagerEntry struct {
 	Name       string `json:"name"`
 	URL        string `json:"url"`
 	HMACSecret string `json:"hmac_secret,omitempty"`
+	// Default indicates this manager is used automatically when no manager_id is specified at session creation.
+	// At most one entry should have Default=true.
+	Default bool `json:"default,omitempty"`
 }
 
 // Settings represents user or team settings

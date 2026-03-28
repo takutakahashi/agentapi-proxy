@@ -84,6 +84,7 @@ type ExternalSessionManagerRequest struct {
 	Name       string `json:"name"`                  // Human-readable name
 	URL        string `json:"url"`                   // Proxy B URL
 	HMACSecret string `json:"hmac_secret,omitempty"` // Auto-generated if empty; omit to keep existing
+	Default    bool   `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -135,6 +136,7 @@ type ExternalSessionManagerResponse struct {
 	Name       string `json:"name"`
 	URL        string `json:"url"`
 	HMACSecret string `json:"hmac_secret,omitempty"`
+	Default    bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
 }
 
 // GetSettings handles GET /settings/:name
@@ -357,6 +359,17 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			existing[e.ID] = e
 		}
 
+		// Validate: at most one entry may have Default=true
+		defaultCount := 0
+		for _, m := range *req.ExternalSessionManagers {
+			if m.Default {
+				defaultCount++
+			}
+		}
+		if defaultCount > 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, "at most one external session manager may be marked as default")
+		}
+
 		updated := make([]entities.ExternalSessionManagerEntry, 0, len(*req.ExternalSessionManagers))
 		for _, m := range *req.ExternalSessionManagers {
 			if m.ID == "" {
@@ -382,6 +395,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				Name:       m.Name,
 				URL:        m.URL,
 				HMACSecret: m.HMACSecret,
+				Default:    m.Default,
 			})
 		}
 		settings.SetExternalSessionManagers(updated)
@@ -649,6 +663,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 				Name:       m.Name,
 				URL:        m.URL,
 				HMACSecret: m.HMACSecret,
+				Default:    m.Default,
 			})
 		}
 	}
