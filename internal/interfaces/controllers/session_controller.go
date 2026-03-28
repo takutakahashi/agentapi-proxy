@@ -266,7 +266,10 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	}
 
 	// Fetch sessions from remote ESMs and merge
-	if c.settingsRepo != nil {
+	// Remote sessions (fetched from ESMs) are excluded by default unless caller explicitly
+	// requests them via tag.remote=true
+	_, remoteExplicitlyRequested := tagFilters["remote"]
+	if c.settingsRepo != nil && remoteExplicitlyRequested {
 		userID := authzCtx.PersonalScope.UserID
 		teams := authzCtx.TeamScope.Teams
 		remoteSessions := c.fetchRemoteSessions(ctx.Request().Context(), userID, teams, filter)
@@ -769,7 +772,9 @@ func (c *SessionController) fetchSessionsFromESM(ctx context.Context, proxyURL, 
 			"updated_at":      s.CreatedAt,
 			"last_message_at": s.CreatedAt,
 			"addr":            "",
-			"tags":            map[string]string{},
+			"tags": map[string]string{
+				"remote": "true", // mark as a remote (ESM) session
+			},
 			"metadata": map[string]interface{}{
 				"description": "",
 			},

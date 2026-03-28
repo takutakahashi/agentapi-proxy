@@ -495,6 +495,16 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
 
+	// If no ManagerID is specified, check for a default external session manager
+	if defaultESM, err := s.findDefaultESM(context.Background(), userID, teams); err == nil && defaultESM != nil {
+		log.Printf("[SESSION] Using default external session manager %s (%s) for session %s", defaultESM.Name, defaultESM.ID, sessionID)
+		if startReq.Params == nil {
+			startReq.Params = &entities.SessionParams{}
+		}
+		startReq.Params.ManagerID = defaultESM.ID
+		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
+	}
+
 	// Get auth team env file from user context if available
 	var authTeamEnvFile string
 	// Note: This would need to be passed from the handler if required
@@ -592,21 +602,56 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		return nil, fmt.Errorf("external session manager not found: %s", managerID)
 	}
 
-	// Build a minimal SessionSettings for Proxy B
-	settings := &sessionsettings.SessionSettings{
-		Session: sessionsettings.SessionMeta{
-			UserID:    userID,
-			Scope:     string(startReq.Scope),
-			TeamID:    startReq.TeamID,
-			AgentType: startReq.Params.AgentType,
-			Oneshot:   startReq.Params.Oneshot,
-			Teams:     teams,
-			MemoryKey: startReq.MemoryKey,
-		},
-		Env: startReq.Environment,
+	// Build the RunServerRequest used for settings resolution
+	var initialMessage string
+	var agentType string
+	var oneshot bool
+	if startReq.Params != nil {
+		initialMessage = startReq.Params.Message
+		agentType = startReq.Params.AgentType
+		oneshot = startReq.Params.Oneshot
 	}
-	if startReq.Params != nil && startReq.Params.Message != "" {
-		settings.InitialMessage = startReq.Params.Message
+	runReq := &entities.RunServerRequest{
+		UserID:         userID,
+		Teams:          teams,
+		Scope:          startReq.Scope,
+		TeamID:         startReq.TeamID,
+		AgentType:      agentType,
+		Oneshot:        oneshot,
+		Environment:    startReq.Environment,
+		Tags:           startReq.Tags,
+		MemoryKey:      startReq.MemoryKey,
+		InitialMessage: initialMessage,
+		RepoInfo:       s.extractRepositoryInfo(sessionID, startReq.Tags),
+	}
+
+	// Try to build fully-resolved settings (env vars, Bedrock, MCP servers, OAuth token, etc.)
+	// by delegating to the session manager which has access to the settings resolution logic.
+	var settings *sessionsettings.SessionSettings
+	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
+		if builtSettings, buildErr := builder.BuildRemoteProvisionSettings(ctx, sessionID, runReq); buildErr == nil {
+			settings = builtSettings
+			log.Printf("[REMOTE_SESSION] Built full provision settings for session %s (env vars: %d)", sessionID, len(settings.Env))
+		} else {
+			log.Printf("[REMOTE_SESSION] Warning: failed to build full provision settings for session %s: %v — falling back to minimal", sessionID, buildErr)
+		}
+	}
+
+	if settings == nil {
+		// Fallback: minimal settings without secrets resolution
+		settings = &sessionsettings.SessionSettings{
+			Session: sessionsettings.SessionMeta{
+				UserID:    userID,
+				Scope:     string(startReq.Scope),
+				TeamID:    startReq.TeamID,
+				AgentType: agentType,
+				Oneshot:   oneshot,
+				Teams:     teams,
+				MemoryKey: startReq.MemoryKey,
+			},
+			Env:            startReq.Environment,
+			InitialMessage: initialMessage,
+		}
 	}
 
 	// Marshal to JSON
@@ -678,6 +723,41 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 }
 
 // findESMByID searches the user's settings and team settings for an ESM entry with the given ID.
+// findDefaultESM searches user and team settings for an ESM entry with Default=true.
+// User settings take precedence over team settings.
+func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []string) (*entities.ExternalSessionManagerEntry, error) {
+	if s.settingsRepo == nil {
+		return nil, nil
+	}
+
+	// Search user settings first
+	userSettings, err := s.settingsRepo.FindByName(ctx, userID)
+	if err == nil && userSettings != nil {
+		for _, esm := range userSettings.ExternalSessionManagers() {
+			if esm.Default {
+				entry := esm
+				return &entry, nil
+			}
+		}
+	}
+
+	// Search team settings
+	for _, teamID := range teams {
+		teamSettings, err := s.settingsRepo.FindByName(ctx, teamID)
+		if err != nil {
+			continue
+		}
+		for _, esm := range teamSettings.ExternalSessionManagers() {
+			if esm.Default {
+				entry := esm
+				return &entry, nil
+			}
+		}
+	}
+
+	return nil, nil
+}
+
 func (s *Server) findESMByID(ctx context.Context, userID string, teams []string, managerID string) (*entities.ExternalSessionManagerEntry, error) {
 	if s.settingsRepo == nil {
 		return nil, nil

@@ -3425,3 +3425,21 @@ func (m *KubernetesSessionManager) resolvePreferredTeamID(ctx context.Context, r
 	log.Printf("[K8S_SESSION] Warning: preferred_team_id %q is not in user's team list, falling back to all teams", userPatch.PreferredTeamID)
 	return ""
 }
+
+// BuildRemoteProvisionSettings implements portrepos.RemoteProvisionSettingsBuilder.
+// It builds a fully-resolved SessionSettings for forwarding to an external session manager (Proxy B).
+// All settings layers (base → team → user) are resolved so that Proxy B can create the session
+// without needing to re-resolve secrets from its own cluster.
+func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
+	ctx context.Context,
+	sessionID string,
+	req *entities.RunServerRequest,
+) (*sessionsettings.SessionSettings, error) {
+	// Create a temporary session with the provided ID to satisfy buildSessionSettings
+	tempSession := &KubernetesSession{
+		id:          sessionID,
+		serviceName: fmt.Sprintf("agentapi-session-%s-svc", sessionID),
+	}
+	settings := m.buildSessionSettings(ctx, tempSession, req, nil)
+	return settings, nil
+}

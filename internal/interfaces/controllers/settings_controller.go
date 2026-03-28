@@ -84,6 +84,7 @@ type ExternalSessionManagerRequest struct {
 	Name       string `json:"name"`                  // Human-readable name
 	URL        string `json:"url"`                   // Proxy B URL
 	HMACSecret string `json:"hmac_secret,omitempty"` // Auto-generated if empty; omit to keep existing
+	Default    bool   `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -135,6 +136,71 @@ type ExternalSessionManagerResponse struct {
 	Name       string `json:"name"`
 	URL        string `json:"url"`
 	HMACSecret string `json:"hmac_secret,omitempty"`
+	Default    bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
+}
+
+// AvailableManagerEntry represents a single available ESM entry returned by GET /settings/managers
+type AvailableManagerEntry struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	Default    bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
+	Source     string `json:"source"`            // "user" or "team"
+	SourceName string `json:"source_name"`       // user ID or team ID
+}
+
+// AvailableManagersResponse is the response body for GET /settings/managers
+type AvailableManagersResponse struct {
+	Managers []AvailableManagerEntry `json:"managers"`
+}
+
+// GetAvailableManagers handles GET /settings/managers
+// Returns all external session managers available to the authenticated user:
+// managers from their own settings plus managers from every team they belong to.
+// HMAC secrets are NOT included in this response.
+func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
+
+	managers := make([]AvailableManagerEntry, 0)
+	userID := string(user.ID())
+
+	// Collect from user's own settings
+	if userSettings, err := c.repo.FindByName(ctx.Request().Context(), userID); err == nil {
+		for _, m := range userSettings.ExternalSessionManagers() {
+			managers = append(managers, AvailableManagerEntry{
+				ID:         m.ID,
+				Name:       m.Name,
+				URL:        m.URL,
+				Default:    m.Default,
+				Source:     "user",
+				SourceName: userID,
+			})
+		}
+	}
+
+	// Collect from each team the user belongs to
+	if user.GitHubInfo() != nil {
+		for _, team := range user.GitHubInfo().Teams() {
+			teamID := team.Organization + "/" + team.TeamSlug
+			if teamSettings, err := c.repo.FindByName(ctx.Request().Context(), teamID); err == nil {
+				for _, m := range teamSettings.ExternalSessionManagers() {
+					managers = append(managers, AvailableManagerEntry{
+						ID:         m.ID,
+						Name:       m.Name,
+						URL:        m.URL,
+						Default:    m.Default,
+						Source:     "team",
+						SourceName: teamID,
+					})
+				}
+			}
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, &AvailableManagersResponse{Managers: managers})
 }
 
 // GetSettings handles GET /settings/:name
@@ -357,6 +423,17 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			existing[e.ID] = e
 		}
 
+		// Validate: at most one entry may have Default=true
+		defaultCount := 0
+		for _, m := range *req.ExternalSessionManagers {
+			if m.Default {
+				defaultCount++
+			}
+		}
+		if defaultCount > 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, "at most one external session manager may be marked as default")
+		}
+
 		updated := make([]entities.ExternalSessionManagerEntry, 0, len(*req.ExternalSessionManagers))
 		for _, m := range *req.ExternalSessionManagers {
 			if m.ID == "" {
@@ -382,6 +459,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				Name:       m.Name,
 				URL:        m.URL,
 				HMACSecret: m.HMACSecret,
+				Default:    m.Default,
 			})
 		}
 		settings.SetExternalSessionManagers(updated)
@@ -649,6 +727,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 				Name:       m.Name,
 				URL:        m.URL,
 				HMACSecret: m.HMACSecret,
+				Default:    m.Default,
 			})
 		}
 	}
