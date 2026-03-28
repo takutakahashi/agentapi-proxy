@@ -131,10 +131,11 @@ type SettingsResponse struct {
 
 // ExternalSessionManagerResponse represents a single external session manager in responses
 type ExternalSessionManagerResponse struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	HMACSecret string `json:"hmac_secret,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	URL            string `json:"url"`
+	HMACSecretHint string `json:"hmac_secret_hint,omitempty"` // masked: ****xxxx (GET responses)
+	HMACSecret     string `json:"hmac_secret,omitempty"`      // full secret (PUT response only, when newly created/updated)
 }
 
 // GetSettings handles GET /settings/:name
@@ -401,7 +402,22 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 
-	return ctx.JSON(http.StatusOK, c.toResponse(settings))
+	// Return full secrets for ESMs that were in the request (newly created or updated)
+	// so the caller can store them. Use toResponse as base and override ESM secrets.
+	resp := c.toResponse(settings)
+	if req.ExternalSessionManagers != nil {
+		// Build index of full secrets from the saved settings
+		secretByID := make(map[string]string)
+		for _, m := range settings.ExternalSessionManagers() {
+			secretByID[m.ID] = m.HMACSecret
+		}
+		for i, m := range resp.ExternalSessionManagers {
+			resp.ExternalSessionManagers[i].HMACSecret = secretByID[m.ID]
+			resp.ExternalSessionManagers[i].HMACSecretHint = ""
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, resp)
 }
 
 // DeleteSettings handles DELETE /settings/:name
@@ -640,15 +656,21 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
 
-	// External session managers: return full secret
+	// External session managers: mask secrets in response
 	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {
 		resp.ExternalSessionManagers = make([]ExternalSessionManagerResponse, 0, len(managers))
 		for _, m := range managers {
+			hint := ""
+			if len(m.HMACSecret) > 4 {
+				hint = "****" + m.HMACSecret[len(m.HMACSecret)-4:]
+			} else if m.HMACSecret != "" {
+				hint = "****"
+			}
 			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
-				ID:         m.ID,
-				Name:       m.Name,
-				URL:        m.URL,
-				HMACSecret: m.HMACSecret,
+				ID:             m.ID,
+				Name:           m.Name,
+				URL:            m.URL,
+				HMACSecretHint: hint,
 			})
 		}
 	}
