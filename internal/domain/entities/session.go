@@ -45,6 +45,9 @@ type SessionParams struct {
 	// InitialMessageWaitSecond is the number of seconds to wait before sending the initial message.
 	// Defaults to 2 seconds if not specified.
 	InitialMessageWaitSecond *int `json:"initial_message_wait_second,omitempty"`
+	// ManagerID is the ID of an external session manager (Proxy B) to forward the session to.
+	// When set, session creation is delegated to that external session manager.
+	ManagerID string `json:"manager_id,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server

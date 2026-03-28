@@ -40,17 +40,33 @@ type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
 	sessionCreator         SessionCreator
 	validateTeamUC         *sessionuc.ValidateTeamAccessUseCase
+	sessionRouteRepo       repositories.SessionRouteRepository
 }
 
 // NewSessionController creates a new SessionController instance
 func NewSessionController(
 	sessionManagerProvider SessionManagerProvider,
 	sessionCreator SessionCreator,
+	opts ...SessionControllerOption,
 ) *SessionController {
-	return &SessionController{
+	c := &SessionController{
 		sessionManagerProvider: sessionManagerProvider,
 		sessionCreator:         sessionCreator,
 		validateTeamUC:         sessionuc.NewValidateTeamAccessUseCase(),
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// SessionControllerOption is a functional option for SessionController
+type SessionControllerOption func(*SessionController)
+
+// WithSessionRouteRepository sets the session route repository on the controller
+func WithSessionRouteRepository(repo repositories.SessionRouteRepository) SessionControllerOption {
+	return func(c *SessionController) {
+		c.sessionRouteRepo = repo
 	}
 }
 
@@ -212,7 +228,11 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	})
 
 	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
+	// Track session IDs already present to avoid duplicates from route-based sessions
+	localSessionIDs := make(map[string]struct{}, len(matchingSessions))
 	for _, session := range matchingSessions {
+		localSessionIDs[session.ID()] = struct{}{}
+
 		// Use session.Description() which returns the in-memory cached initial message.
 		// This avoids reading from Kubernetes Secret (which is created asynchronously
 		// after provisioning completes and would return empty for newly created sessions).
@@ -236,6 +256,61 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			},
 		}
 		filteredSessions = append(filteredSessions, sessionData)
+	}
+
+	// Include ESM-created sessions from session routes
+	if c.sessionRouteRepo != nil {
+		routes, err := c.sessionRouteRepo.List(ctx.Request().Context(), userID)
+		if err != nil {
+			log.Printf("[SEARCH] Failed to list session routes: %v", err)
+		} else {
+			for _, route := range routes {
+				// Skip sessions already present in the local session manager
+				if _, exists := localSessionIDs[route.SessionID]; exists {
+					continue
+				}
+				// Apply scope filter
+				if scopeFilter == string(entities.ScopeTeam) && route.Scope != string(entities.ScopeTeam) {
+					continue
+				}
+				if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
+					continue
+				}
+				if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+					continue
+				}
+				tags := route.Tags
+				if tags == nil {
+					tags = map[string]string{}
+				}
+				// Apply tag filters
+				match := true
+				for k, v := range tagFilters {
+					if tags[k] != v {
+						match = false
+						break
+					}
+				}
+				if !match {
+					continue
+				}
+				filteredSessions = append(filteredSessions, map[string]interface{}{
+					"session_id":      route.SessionID,
+					"user_id":         route.UserID,
+					"scope":           route.Scope,
+					"team_id":         route.TeamID,
+					"status":          "running",
+					"started_at":      route.StartedAt,
+					"updated_at":      route.StartedAt,
+					"last_message_at": route.StartedAt,
+					"addr":            "",
+					"tags":            tags,
+					"metadata": map[string]interface{}{
+						"description": "",
+					},
+				})
+			}
+		}
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
