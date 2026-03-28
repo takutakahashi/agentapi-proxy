@@ -1,11 +1,14 @@
 package controllers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -62,16 +65,25 @@ type MarketplaceRequest struct {
 
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
-	Bedrock              *BedrockSettingsRequest        `json:"bedrock"`
-	MCPServers           map[string]*MCPServerRequest   `json:"mcp_servers,omitempty"`
-	Marketplaces         map[string]*MarketplaceRequest `json:"marketplaces,omitempty"`
-	ClaudeCodeOAuthToken *string                        `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             *string                        `json:"auth_mode,omitempty"`             // "oauth" or "bedrock"
-	EnabledPlugins       []string                       `json:"enabled_plugins,omitempty"`       // plugin@marketplace format
-	EnvVars              map[string]string              `json:"env_vars,omitempty"`              // Custom environment variables
-	PreferredTeamID      *string                        `json:"preferred_team_id,omitempty"`     // "org/team-slug" format; "" to clear
-	SlackUserID          *string                        `json:"slack_user_id,omitempty"`         // Slack DM notification user ID
-	NotificationChannels *[]string                      `json:"notification_channels,omitempty"` // Active notification channels (e.g. ["web", "slack"])
+	Bedrock                 *BedrockSettingsRequest          `json:"bedrock"`
+	MCPServers              map[string]*MCPServerRequest     `json:"mcp_servers,omitempty"`
+	Marketplaces            map[string]*MarketplaceRequest   `json:"marketplaces,omitempty"`
+	ClaudeCodeOAuthToken    *string                          `json:"claude_code_oauth_token,omitempty"`
+	AuthMode                *string                          `json:"auth_mode,omitempty"`                 // "oauth" or "bedrock"
+	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`           // plugin@marketplace format
+	EnvVars                 map[string]string                `json:"env_vars,omitempty"`                  // Custom environment variables
+	PreferredTeamID         *string                          `json:"preferred_team_id,omitempty"`         // "org/team-slug" format; "" to clear
+	SlackUserID             *string                          `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
+	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`     // Active notification channels (e.g. ["web", "slack"])
+	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"` // External session managers (Proxy B registrations)
+}
+
+// ExternalSessionManagerRequest represents a single external session manager registration
+type ExternalSessionManagerRequest struct {
+	ID         string `json:"id,omitempty"`          // Auto-generated if empty
+	Name       string `json:"name"`                  // Human-readable name
+	URL        string `json:"url"`                   // Proxy B URL
+	HMACSecret string `json:"hmac_secret,omitempty"` // Auto-generated if empty; omit to keep existing
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -101,19 +113,29 @@ type MarketplaceResponse struct {
 
 // SettingsResponse is the response body for settings
 type SettingsResponse struct {
-	Name                    string                          `json:"name"`
-	Bedrock                 *BedrockSettingsResponse        `json:"bedrock,omitempty"`
-	MCPServers              map[string]*MCPServerResponse   `json:"mcp_servers,omitempty"`
-	Marketplaces            map[string]*MarketplaceResponse `json:"marketplaces,omitempty"`
-	HasClaudeCodeOAuthToken bool                            `json:"has_claude_code_oauth_token"`
-	AuthMode                string                          `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                        `json:"enabled_plugins,omitempty"`       // plugin@marketplace format
-	EnvVarKeys              []string                        `json:"env_var_keys,omitempty"`          // only keys, not values
-	PreferredTeamID         string                          `json:"preferred_team_id,omitempty"`     // "org/team-slug" format
-	SlackUserID             string                          `json:"slack_user_id,omitempty"`         // Slack DM notification user ID
-	NotificationChannels    []string                        `json:"notification_channels,omitempty"` // Active notification channels
-	CreatedAt               string                          `json:"created_at"`
-	UpdatedAt               string                          `json:"updated_at"`
+	Name                    string                           `json:"name"`
+	Bedrock                 *BedrockSettingsResponse         `json:"bedrock,omitempty"`
+	MCPServers              map[string]*MCPServerResponse    `json:"mcp_servers,omitempty"`
+	Marketplaces            map[string]*MarketplaceResponse  `json:"marketplaces,omitempty"`
+	HasClaudeCodeOAuthToken bool                             `json:"has_claude_code_oauth_token"`
+	AuthMode                string                           `json:"auth_mode,omitempty"`
+	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`           // plugin@marketplace format
+	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`              // only keys, not values
+	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"`         // "org/team-slug" format
+	SlackUserID             string                           `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
+	NotificationChannels    []string                         `json:"notification_channels,omitempty"`     // Active notification channels
+	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"` // Registered external session managers
+	CreatedAt               string                           `json:"created_at"`
+	UpdatedAt               string                           `json:"updated_at"`
+}
+
+// ExternalSessionManagerResponse represents a single external session manager in responses
+type ExternalSessionManagerResponse struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	URL            string `json:"url"`
+	HMACSecretHint string `json:"hmac_secret_hint,omitempty"` // masked: ****xxxx (GET responses)
+	HMACSecret     string `json:"hmac_secret,omitempty"`      // full secret (PUT response only, when newly created/updated)
 }
 
 // GetSettings handles GET /settings/:name
@@ -327,6 +349,45 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		}
 	}
 
+	// Update external session managers
+	// For each entry: auto-generate ID if empty, auto-generate HMAC secret if empty.
+	// Existing secrets are preserved when the entry already exists (matched by ID).
+	if req.ExternalSessionManagers != nil {
+		existing := make(map[string]entities.ExternalSessionManagerEntry)
+		for _, e := range settings.ExternalSessionManagers() {
+			existing[e.ID] = e
+		}
+
+		updated := make([]entities.ExternalSessionManagerEntry, 0, len(*req.ExternalSessionManagers))
+		for _, m := range *req.ExternalSessionManagers {
+			if m.ID == "" {
+				m.ID = uuid.New().String()
+			}
+			// Preserve existing secret if not provided
+			if m.HMACSecret == "" {
+				if prev, ok := existing[m.ID]; ok {
+					m.HMACSecret = prev.HMACSecret
+				}
+			}
+			// Auto-generate secret if still empty
+			if m.HMACSecret == "" {
+				secret, err := generateSettingsESMSecret(32)
+				if err != nil {
+					log.Printf("[SETTINGS] Failed to generate HMAC secret for ESM %s: %v", m.Name, err)
+					return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate HMAC secret")
+				}
+				m.HMACSecret = secret
+			}
+			updated = append(updated, entities.ExternalSessionManagerEntry{
+				ID:         m.ID,
+				Name:       m.Name,
+				URL:        m.URL,
+				HMACSecret: m.HMACSecret,
+			})
+		}
+		settings.SetExternalSessionManagers(updated)
+	}
+
 	// Determine and set auth_mode
 	authMode := c.determineAuthMode(settings, req.AuthMode)
 	settings.SetAuthMode(authMode)
@@ -341,7 +402,22 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 
-	return ctx.JSON(http.StatusOK, c.toResponse(settings))
+	// Return full secrets for ESMs that were in the request (newly created or updated)
+	// so the caller can store them. Use toResponse as base and override ESM secrets.
+	resp := c.toResponse(settings)
+	if req.ExternalSessionManagers != nil {
+		// Build index of full secrets from the saved settings
+		secretByID := make(map[string]string)
+		for _, m := range settings.ExternalSessionManagers() {
+			secretByID[m.ID] = m.HMACSecret
+		}
+		for i, m := range resp.ExternalSessionManagers {
+			resp.ExternalSessionManagers[i].HMACSecret = secretByID[m.ID]
+			resp.ExternalSessionManagers[i].HMACSecretHint = ""
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, resp)
 }
 
 // DeleteSettings handles DELETE /settings/:name
@@ -580,6 +656,25 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
 
+	// External session managers: mask secrets in response
+	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {
+		resp.ExternalSessionManagers = make([]ExternalSessionManagerResponse, 0, len(managers))
+		for _, m := range managers {
+			hint := ""
+			if len(m.HMACSecret) > 4 {
+				hint = "****" + m.HMACSecret[len(m.HMACSecret)-4:]
+			} else if m.HMACSecret != "" {
+				hint = "****"
+			}
+			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
+				ID:             m.ID,
+				Name:           m.Name,
+				URL:            m.URL,
+				HMACSecretHint: hint,
+			})
+		}
+	}
+
 	return resp
 }
 
@@ -617,4 +712,13 @@ func (c *SettingsController) mergeSecrets(existing, new map[string]string) map[s
 		// Empty string is ignored - existing values are preserved
 	}
 	return result
+}
+
+// generateSettingsESMSecret generates a random hex HMAC secret of the given byte length
+func generateSettingsESMSecret(length int) (string, error) {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

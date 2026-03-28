@@ -91,21 +91,30 @@ func (b *BedrockSettings) Validate() error {
 	return nil
 }
 
+// ExternalSessionManagerEntry represents a registered external session manager (Proxy B)
+type ExternalSessionManagerEntry struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	HMACSecret string `json:"hmac_secret,omitempty"`
+}
+
 // Settings represents user or team settings
 type Settings struct {
-	name                 string
-	bedrock              *BedrockSettings
-	mcpServers           *MCPServersSettings
-	marketplaces         *MarketplacesSettings
-	claudeCodeOAuthToken string            // Claude Code OAuth token
-	authMode             AuthMode          // Authentication mode (oauth or bedrock)
-	enabledPlugins       []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
-	envVars              map[string]string // Custom environment variables
-	preferredTeamID      string            // "org/team-slug" format; if set, only this team's settings are used
-	slackUserID          string            // Slack DM notification user ID
-	notificationChannels []string          // Active notification channels (e.g. "web", "slack")
-	createdAt            time.Time
-	updatedAt            time.Time
+	name                    string
+	bedrock                 *BedrockSettings
+	mcpServers              *MCPServersSettings
+	marketplaces            *MarketplacesSettings
+	claudeCodeOAuthToken    string            // Claude Code OAuth token
+	authMode                AuthMode          // Authentication mode (oauth or bedrock)
+	enabledPlugins          []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
+	envVars                 map[string]string // Custom environment variables
+	preferredTeamID         string            // "org/team-slug" format; if set, only this team's settings are used
+	slackUserID             string            // Slack DM notification user ID
+	notificationChannels    []string          // Active notification channels (e.g. "web", "slack")
+	externalSessionManagers []ExternalSessionManagerEntry
+	createdAt               time.Time
+	updatedAt               time.Time
 }
 
 // NewSettings creates a new Settings
@@ -286,6 +295,17 @@ func (s *Settings) NotificationChannels() []string {
 // SetNotificationChannels sets the list of active notification channels
 func (s *Settings) SetNotificationChannels(channels []string) {
 	s.notificationChannels = channels
+	s.updatedAt = time.Now()
+}
+
+// ExternalSessionManagers returns the list of registered external session managers
+func (s *Settings) ExternalSessionManagers() []ExternalSessionManagerEntry {
+	return s.externalSessionManagers
+}
+
+// SetExternalSessionManagers sets the list of external session managers
+func (s *Settings) SetExternalSessionManagers(managers []ExternalSessionManagerEntry) {
+	s.externalSessionManagers = managers
 	s.updatedAt = time.Now()
 }
 
