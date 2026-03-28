@@ -505,7 +505,6 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
 
-
 	// Get auth team env file from user context if available
 	var authTeamEnvFile string
 	// Note: This would need to be passed from the handler if required
@@ -716,6 +715,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 			TeamID:          startReq.TeamID,
 			Tags:            tags,
 			StartedAt:       startedAt,
+			InitialMessage:  initialMessage,
 		}
 		if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
 			log.Printf("[REMOTE_SESSION] Warning: failed to save session route: %v", saveErr)

@@ -310,14 +310,14 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 					"user_id":         route.UserID,
 					"scope":           route.Scope,
 					"team_id":         route.TeamID,
-					"status":          "running",
+					"status":          "active",
 					"started_at":      route.StartedAt,
 					"updated_at":      route.StartedAt,
 					"last_message_at": route.StartedAt,
 					"addr":            "",
 					"tags":            tags,
 					"metadata": map[string]interface{}{
-						"description": "",
+						"description": route.InitialMessage,
 					},
 				})
 			}

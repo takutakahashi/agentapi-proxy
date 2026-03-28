@@ -30,6 +30,7 @@ type routeJSON struct {
 	TeamID          string            `json:"team_id,omitempty"`
 	Tags            map[string]string `json:"tags,omitempty"`
 	StartedAt       time.Time         `json:"started_at,omitempty"`
+	InitialMessage  string            `json:"initial_message,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -63,6 +64,7 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		TeamID:          route.TeamID,
 		Tags:            route.Tags,
 		StartedAt:       route.StartedAt,
+		InitialMessage:  route.InitialMessage,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal route: %w", err)
@@ -126,6 +128,7 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 		TeamID:          rj.TeamID,
 		Tags:            rj.Tags,
 		StartedAt:       rj.StartedAt,
+		InitialMessage:  rj.InitialMessage,
 	}, nil
 }
 
@@ -162,6 +165,7 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 			TeamID:          rj.TeamID,
 			Tags:            rj.Tags,
 			StartedAt:       rj.StartedAt,
+			InitialMessage:  rj.InitialMessage,
 		})
 	}
 	return routes, nil

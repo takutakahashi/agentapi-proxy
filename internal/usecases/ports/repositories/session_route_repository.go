@@ -16,11 +16,12 @@ type SessionRoute struct {
 	ProxyURL        string // Base URL of Proxy B (e.g. "http://proxy-b:8080")
 	HMACSecret      string // HMAC secret for authenticating requests to Proxy B
 	// Metadata for session listing
-	UserID    string
-	Scope     string
-	TeamID    string
-	Tags      map[string]string
-	StartedAt time.Time
+	UserID         string
+	Scope          string
+	TeamID         string
+	Tags           map[string]string
+	StartedAt      time.Time
+	InitialMessage string // The initial message/prompt for the session (shown as description)
 }
 
 // RemoteProvisionSettingsBuilder is an optional interface that SessionManager implementations
