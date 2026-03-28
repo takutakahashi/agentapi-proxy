@@ -184,6 +184,8 @@ func (h *Handlers) CreateSession(c echo.Context) error {
 // Optional query parameters:
 //   - user_id  : filter by user ID
 //   - scope    : "user" or "team"
+//   - team_id  : filter by team ID (e.g., "org/team-slug")
+//   - status   : filter by session status (e.g., "running", "stopped")
 func (h *Handlers) ListSessions(c echo.Context) error {
 	filter := entities.SessionFilter{}
 
@@ -193,15 +195,22 @@ func (h *Handlers) ListSessions(c echo.Context) error {
 	if scope := c.QueryParam("scope"); scope != "" {
 		filter.Scope = entities.ResourceScope(scope)
 	}
+	if teamID := c.QueryParam("team_id"); teamID != "" {
+		filter.TeamID = teamID
+	}
+	if status := c.QueryParam("status"); status != "" {
+		filter.Status = status
+	}
 
 	sessions := h.sessionManager.ListSessions(filter)
 
 	infos := make([]SessionInfo, 0, len(sessions))
 	for _, s := range sessions {
 		infos = append(infos, SessionInfo{
-			ID:     s.ID(),
-			UserID: s.UserID(),
-			Status: strings.ToLower(string(s.Status())),
+			ID:        s.ID(),
+			UserID:    s.UserID(),
+			Status:    strings.ToLower(string(s.Status())),
+			CreatedAt: s.StartedAt(),
 		})
 	}
 
@@ -221,9 +230,10 @@ func (h *Handlers) GetSession(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, SessionInfo{
-		ID:     session.ID(),
-		UserID: session.UserID(),
-		Status: strings.ToLower(string(session.Status())),
+		ID:        session.ID(),
+		UserID:    session.UserID(),
+		Status:    strings.ToLower(string(session.Status())),
+		CreatedAt: session.StartedAt(),
 	})
 }
 
