@@ -2,6 +2,8 @@ package entities
 
 import (
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 // ResourceScope defines the scope of a resource (session, schedule, etc.)
@@ -43,6 +45,10 @@ type SessionParams struct {
 	// InitialMessageWaitSecond is the number of seconds to wait before sending the initial message.
 	// Defaults to 2 seconds if not specified.
 	InitialMessageWaitSecond *int `json:"initial_message_wait_second,omitempty"`
+	// ManagerID is the ID of an external session manager (Proxy B) to forward the session to.
+	// When set, Proxy A will proxy this session creation to the specified Proxy B instance.
+	// The ID must match an ExternalSessionManagerEntry registered in the user's or team's settings.
+	ManagerID string `json:"manager_id,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -83,6 +89,10 @@ type RunServerRequest struct {
 	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
+	// ProvisionSettings, when non-nil, is used directly as the provision payload
+	// instead of building it from the other request fields.
+	// Used by the session manager forwarding path (small-cluster mode).
+	ProvisionSettings *sessionsettings.SessionSettings
 }
 
 // Session represents a running agentapi session

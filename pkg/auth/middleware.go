@@ -1,6 +1,11 @@
 package auth
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -57,6 +62,34 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			// Skip auth for public static files
 			if strings.HasPrefix(path, "/public") {
 				return next(c)
+			}
+
+			// Skip auth for HMAC-signed requests from a trusted Proxy A
+			// This enables small-cluster mode where Proxy A proxies session requests to Proxy B
+			if cfg.SessionManager.HMACSecret != "" {
+				if skipAuthForHMACRequest(c, cfg.SessionManager.HMACSecret) {
+					// Use the forwarded user identity if provided (set by Proxy A when proxying requests)
+					// This allows Proxy B to enforce resource ownership with the original requester's identity
+					forwardedUserID := c.Request().Header.Get("X-Forwarded-User")
+					if forwardedUserID == "" {
+						forwardedUserID = "proxy-a"
+					}
+					// Set a synthetic trusted-proxy user context with the original user's identity
+					proxyUser := entities.NewServiceAccountUser(
+						entities.UserID(forwardedUserID),
+						"",
+						[]entities.Permission{
+							entities.PermissionSessionCreate,
+							entities.PermissionSessionRead,
+							entities.PermissionSessionUpdate,
+							entities.PermissionSessionDelete,
+						},
+					)
+					c.Set("internal_user", proxyUser)
+					authzCtx := buildAuthorizationContext(proxyUser)
+					c.Set("authz_context", authzCtx)
+					return next(c)
+				}
 			}
 
 			var user *entities.User
@@ -336,7 +369,14 @@ func isOAuthEndpoint(path string) bool {
 // These endpoints use HMAC signature verification instead of standard authentication
 func isWebhookReceiverEndpoint(path string) bool {
 	// Webhook receiver endpoints (not management endpoints)
-	return strings.HasPrefix(path, "/hooks/")
+	if strings.HasPrefix(path, "/hooks/") {
+		return true
+	}
+	// Session manager forwarding endpoint — uses HMAC-SHA256 signature verification
+	if strings.HasPrefix(path, "/api/v1/sessions") {
+		return true
+	}
+	return false
 }
 
 // extractAPIKeyFromAuthHeader extracts API key from Authorization header
@@ -352,6 +392,32 @@ func extractAPIKeyFromAuthHeader(header string) string {
 
 	// Handle raw token
 	return header
+}
+
+// skipAuthForHMACRequest checks if the request carries a valid HMAC-SHA256 signature.
+// Used to allow trusted Proxy A requests to bypass standard authentication on Proxy B.
+func skipAuthForHMACRequest(c echo.Context, hmacSecret string) bool {
+	sig := c.Request().Header.Get("X-Hub-Signature-256")
+	if sig == "" {
+		return false
+	}
+
+	// For non-GET/DELETE requests we read the body; for GET/DELETE use empty body
+	var body []byte
+	if c.Request().ContentLength > 0 || (c.Request().Method != http.MethodGet && c.Request().Method != http.MethodDelete) {
+		var err error
+		body, err = io.ReadAll(c.Request().Body)
+		if err != nil {
+			return false
+		}
+		c.Request().Body = io.NopCloser(bytes.NewReader(body))
+	}
+
+	mac := hmac.New(sha256.New, []byte(hmacSecret))
+	mac.Write(body)
+	expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(sig), []byte(expected))
 }
 
 // tryInternalAWSAuth attempts AWS authentication using Basic Auth

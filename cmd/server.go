@@ -19,6 +19,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionmanager"
 	"github.com/takutakahashi/agentapi-proxy/pkg/slackbot"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	stock_inventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
@@ -112,6 +113,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register MCP handler
 	registerMCPHandler(proxyServer, port)
+
+	// Register session manager handler (small-cluster / forwarding mode)
+	registerSessionManagerHandlers(configData, proxyServer)
 
 	// Start server in a goroutine
 	go func() {
@@ -699,6 +703,26 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 	go manager.Run(context.Background())
 
 	log.Printf("[SOCKET_MANAGER] Slack Socket Mode manager started in namespace: %s", namespace)
+}
+
+// registerSessionManagerHandlers registers the session manager forwarding endpoint.
+// This enables "small-cluster mode": Proxy B accepts pre-built SessionSettings from
+// an upstream Proxy A and creates sessions without any local secrets.
+func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.Server) {
+	if !configData.SessionManager.Enabled {
+		log.Printf("[SESSION_MANAGER] Session manager endpoint is disabled")
+		return
+	}
+
+	sessionManager := proxyServer.GetSessionManager()
+	if sessionManager == nil {
+		log.Printf("[SESSION_MANAGER] Warning: session manager is not available, skipping handler registration")
+		return
+	}
+
+	handlers := sessionmanager.NewHandlers(sessionManager, configData.SessionManager.HMACSecret)
+	proxyServer.AddCustomHandler(handlers)
+	log.Printf("[SESSION_MANAGER] Session manager handler registered")
 }
 
 // registerMCPHandler registers MCP HTTP handler

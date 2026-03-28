@@ -29,19 +29,20 @@ const (
 
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
-	Name                 string                      `json:"name"`
-	Bedrock              *bedrockJSON                `json:"bedrock,omitempty"`
-	MCPServers           map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
-	Marketplaces         map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
-	ClaudeCodeOAuthToken string                      `json:"claude_code_oauth_token,omitempty"`
-	AuthMode             string                      `json:"auth_mode,omitempty"`
-	EnabledPlugins       []string                    `json:"enabled_plugins,omitempty"`       // plugin@marketplace format
-	EnvVars              map[string]string           `json:"env_vars,omitempty"`              // Custom environment variables
-	PreferredTeamID      string                      `json:"preferred_team_id,omitempty"`     // "org/team-slug" format
-	SlackUserID          string                      `json:"slack_user_id,omitempty"`         // Slack DM notification user ID
-	NotificationChannels []string                    `json:"notification_channels,omitempty"` // Active notification channels
-	CreatedAt            time.Time                   `json:"created_at"`
-	UpdatedAt            time.Time                   `json:"updated_at"`
+	Name                    string                                 `json:"name"`
+	Bedrock                 *bedrockJSON                           `json:"bedrock,omitempty"`
+	MCPServers              map[string]*mcpServerJSON              `json:"mcp_servers,omitempty"`
+	Marketplaces            map[string]*marketplaceJSON            `json:"marketplaces,omitempty"`
+	ClaudeCodeOAuthToken    string                                 `json:"claude_code_oauth_token,omitempty"`
+	AuthMode                string                                 `json:"auth_mode,omitempty"`
+	EnabledPlugins          []string                               `json:"enabled_plugins,omitempty"`           // plugin@marketplace format
+	EnvVars                 map[string]string                      `json:"env_vars,omitempty"`                  // Custom environment variables
+	PreferredTeamID         string                                 `json:"preferred_team_id,omitempty"`         // "org/team-slug" format
+	SlackUserID             string                                 `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
+	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
+	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
+	CreatedAt               time.Time                              `json:"created_at"`
+	UpdatedAt               time.Time                              `json:"updated_at"`
 }
 
 // bedrockJSON is the JSON representation of Bedrock settings
@@ -277,6 +278,10 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		sj.NotificationChannels = channels
 	}
 
+	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {
+		sj.ExternalSessionManagers = managers
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -382,6 +387,11 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 	if len(sj.NotificationChannels) > 0 {
 		settings.SetNotificationChannels(sj.NotificationChannels)
 		// Reset updatedAt since SetNotificationChannels updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if len(sj.ExternalSessionManagers) > 0 {
+		settings.SetExternalSessionManagers(sj.ExternalSessionManagers)
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 

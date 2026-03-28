@@ -54,6 +54,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	sessionController := controllers.NewSessionController(
 		server, // Server implements SessionManagerProvider interface
 		server, // Server implements SessionCreator interface
+		controllers.WithSessionRouteRepository(server.GetSessionRouteRepository()),
+		controllers.WithSettingsRepository(server.settingsRepo),
 	)
 
 	// Create share controller if share repository is available

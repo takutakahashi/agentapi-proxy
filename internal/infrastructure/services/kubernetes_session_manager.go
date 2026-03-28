@@ -224,7 +224,14 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	}
 
 	// Build session settings once (used both for the Secret and the /provision payload).
-	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
+	// When req.ProvisionSettings is provided (small-cluster / forwarding mode), use it
+	// directly instead of resolving secrets from this cluster.
+	var sessionSettings *sessionsettings.SessionSettings
+	if req.ProvisionSettings != nil {
+		sessionSettings = req.ProvisionSettings
+	} else {
+		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
+	}
 
 	// Serialise to JSON and cache in session for the watchSession /provision call.
 	if provisionJSON, err := json.Marshal(sessionSettings); err != nil {

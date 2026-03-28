@@ -326,6 +326,19 @@ type MemoryS3Config struct {
 	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
 }
 
+// SessionManagerConfig holds configuration for the session manager forwarding endpoint.
+// When enabled, Proxy B (small-cluster mode) accepts pre-built SessionSettings from a
+// trusted upstream proxy (Proxy A) and creates sessions without requiring local secrets.
+type SessionManagerConfig struct {
+	// Enabled enables the /api/v1/sessions forwarding endpoint.
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// HMACSecret is the shared HMAC-SHA256 secret used to verify request signatures.
+	// Every inbound request must carry X-Hub-Signature-256: sha256=<hex> computed
+	// over the raw request body with this secret.
+	// Can also be set via SESSION_MANAGER_HMAC_SECRET environment variable.
+	HMACSecret string `json:"hmac_secret" mapstructure:"hmac_secret"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
 	// Auth represents authentication configuration
@@ -348,6 +361,8 @@ type Config struct {
 	Memory MemoryConfig `json:"memory" mapstructure:"memory"`
 	// Slack is the configuration for Slack bot inbound webhook functionality
 	Slack SlackConfig `json:"slack" mapstructure:"slack"`
+	// SessionManager is the configuration for the session manager forwarding endpoint.
+	SessionManager SessionManagerConfig `json:"session_manager" mapstructure:"session_manager"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -670,6 +685,10 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slack.app_token_secret_name", "AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME")
 	_ = v.BindEnv("slack.app_token_secret_key", "AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY")
 	_ = v.BindEnv("slack.dry_run", "AGENTAPI_SLACK_DRY_RUN")
+
+	// Session manager configuration
+	_ = v.BindEnv("session_manager.enabled", "SESSION_MANAGER_ENABLED")
+	_ = v.BindEnv("session_manager.hmac_secret", "SESSION_MANAGER_HMAC_SECRET")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")

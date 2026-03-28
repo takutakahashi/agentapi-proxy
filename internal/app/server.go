@@ -1,7 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -28,27 +33,29 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 // Server represents the HTTP server
 type Server struct {
-	config          *config.Config
-	echo            *echo.Echo
-	verbose         bool
-	logger          *logger.Logger
-	oauthProvider   *auth.GitHubOAuthProvider
-	oauthSessions   sync.Map // sessionID -> OAuthSession
-	notificationSvc *notification.Service
-	container       *di.Container                  // Internal DI container
-	sessionManager  portrepos.SessionManager       // Session lifecycle manager
-	settingsRepo    portrepos.SettingsRepository   // Settings repository
-	shareRepo       portrepos.ShareRepository      // Share repository for session sharing
-	teamConfigRepo  portrepos.TeamConfigRepository // Team configuration repository
-	memoryRepo      portrepos.MemoryRepository     // Memory repository
-	taskRepo        portrepos.TaskRepository       // Task repository
-	taskGroupRepo   portrepos.TaskGroupRepository  // Task group repository
-	router          *Router                        // Router for custom handler registration
+	config           *config.Config
+	echo             *echo.Echo
+	verbose          bool
+	logger           *logger.Logger
+	oauthProvider    *auth.GitHubOAuthProvider
+	oauthSessions    sync.Map // sessionID -> OAuthSession
+	notificationSvc  *notification.Service
+	container        *di.Container                    // Internal DI container
+	sessionManager   portrepos.SessionManager         // Session lifecycle manager
+	settingsRepo     portrepos.SettingsRepository     // Settings repository
+	shareRepo        portrepos.ShareRepository        // Share repository for session sharing
+	teamConfigRepo   portrepos.TeamConfigRepository   // Team configuration repository
+	memoryRepo       portrepos.MemoryRepository       // Memory repository
+	taskRepo         portrepos.TaskRepository         // Task repository
+	taskGroupRepo    portrepos.TaskGroupRepository    // Task group repository
+	sessionRouteRepo portrepos.SessionRouteRepository // Session route repository for proxy B routing
+	router           *Router                          // Router for custom handler registration
 }
 
 // NewServer creates a new server instance
@@ -246,19 +253,27 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	)
 	log.Printf("[SERVER] Task group repository initialized")
 
+	// Initialize session route repository (Kubernetes Secret-backed)
+	sessionRouteRepo := repositories.NewKubernetesSessionRouteRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] Session route repository initialized")
+
 	s := &Server{
-		config:         cfg,
-		echo:           e,
-		verbose:        verbose,
-		logger:         lgr,
-		container:      container,
-		sessionManager: sessionManager,
-		settingsRepo:   settingsRepo,
-		shareRepo:      shareRepo,
-		teamConfigRepo: teamConfigRepo,
-		memoryRepo:     memoryRepo,
-		taskRepo:       taskRepo,
-		taskGroupRepo:  taskGroupRepo,
+		config:           cfg,
+		echo:             e,
+		verbose:          verbose,
+		logger:           lgr,
+		container:        container,
+		sessionManager:   sessionManager,
+		settingsRepo:     settingsRepo,
+		shareRepo:        shareRepo,
+		teamConfigRepo:   teamConfigRepo,
+		memoryRepo:       memoryRepo,
+		taskRepo:         taskRepo,
+		taskGroupRepo:    taskGroupRepo,
+		sessionRouteRepo: sessionRouteRepo,
 	}
 
 	// Add logging middleware if verbose
@@ -468,8 +483,18 @@ func (s *Server) GetContainer() *di.Container {
 	return s.container
 }
 
+// GetSessionRouteRepository returns the session route repository
+func (s *Server) GetSessionRouteRepository() portrepos.SessionRouteRepository {
+	return s.sessionRouteRepo
+}
+
 // CreateSession creates a new agent session
 func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+	// If ManagerID is set, forward session creation to an external session manager (Proxy B)
+	if startReq.Params != nil && startReq.Params.ManagerID != "" {
+		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
+	}
+
 	// Get auth team env file from user context if available
 	var authTeamEnvFile string
 	// Note: This would need to be passed from the handler if required
@@ -552,6 +577,136 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 
 	// Delegate to session manager
 	return s.sessionManager.CreateSession(context.Background(), sessionID, req, nil)
+}
+
+// createRemoteSession forwards session creation to an external session manager (Proxy B).
+func (s *Server) createRemoteSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
+	managerID := startReq.Params.ManagerID
+
+	// Find the ESM entry by ID from the user's settings or team settings
+	esm, err := s.findESMByID(ctx, userID, teams, managerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find external session manager %s: %w", managerID, err)
+	}
+	if esm == nil {
+		return nil, fmt.Errorf("external session manager not found: %s", managerID)
+	}
+
+	// Build a minimal SessionSettings for Proxy B
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{
+			UserID:    userID,
+			Scope:     string(startReq.Scope),
+			TeamID:    startReq.TeamID,
+			AgentType: startReq.Params.AgentType,
+			Oneshot:   startReq.Params.Oneshot,
+			Teams:     teams,
+			MemoryKey: startReq.MemoryKey,
+		},
+		Env: startReq.Environment,
+	}
+	if startReq.Params != nil && startReq.Params.Message != "" {
+		settings.InitialMessage = startReq.Params.Message
+	}
+
+	// Marshal to JSON
+	body, err := json.Marshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal session settings: %w", err)
+	}
+
+	// Compute HMAC-SHA256 signature
+	mac := hmac.New(sha256.New, []byte(esm.HMACSecret))
+	mac.Write(body)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	// POST to Proxy B
+	targetURL := strings.TrimRight(esm.URL, "/") + "/api/v1/sessions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request to Proxy B: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Hub-Signature-256", sig)
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Proxy B: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("proxy B returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var createResp struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
+		return nil, fmt.Errorf("failed to decode Proxy B response: %w", err)
+	}
+
+	remoteSessionID := createResp.SessionID
+	log.Printf("[REMOTE_SESSION] Created remote session %s on Proxy B (remote ID: %s, manager: %s)",
+		sessionID, remoteSessionID, managerID)
+
+	// Save routing entry
+	if s.sessionRouteRepo != nil {
+		route := &portrepos.SessionRoute{
+			SessionID:       sessionID,
+			RemoteSessionID: remoteSessionID,
+			ProxyURL:        esm.URL,
+			HMACSecret:      esm.HMACSecret,
+		}
+		if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
+			log.Printf("[REMOTE_SESSION] Warning: failed to save session route: %v", saveErr)
+		}
+	}
+
+	// Return a ProxySession entity
+	session := entities.NewProxySession(
+		sessionID,
+		userID,
+		startReq.Scope,
+		startReq.TeamID,
+		startReq.Tags,
+		time.Now(),
+	)
+	return session, nil
+}
+
+// findESMByID searches the user's settings and team settings for an ESM entry with the given ID.
+func (s *Server) findESMByID(ctx context.Context, userID string, teams []string, managerID string) (*entities.ExternalSessionManagerEntry, error) {
+	if s.settingsRepo == nil {
+		return nil, nil
+	}
+
+	// Search user settings
+	userSettings, err := s.settingsRepo.FindByName(ctx, userID)
+	if err == nil && userSettings != nil {
+		for _, esm := range userSettings.ExternalSessionManagers() {
+			if esm.ID == managerID {
+				return &esm, nil
+			}
+		}
+	}
+
+	// Search team settings
+	for _, teamID := range teams {
+		teamSettings, err := s.settingsRepo.FindByName(ctx, teamID)
+		if err != nil {
+			continue
+		}
+		for _, esm := range teamSettings.ExternalSessionManagers() {
+			if esm.ID == managerID {
+				return &esm, nil
+			}
+		}
+	}
+
+	return nil, nil
 }
 
 // DeleteSessionByID deletes a session by ID
