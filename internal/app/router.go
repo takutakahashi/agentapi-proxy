@@ -248,6 +248,7 @@ func (r *Router) registerConditionalRoutes() error {
 	// Add settings routes if settings repository is available (Kubernetes mode only)
 	if r.server.settingsRepo != nil && r.handlers.settingsController != nil {
 		log.Printf("[ROUTES] Registering settings endpoints...")
+		r.echo.GET("/settings/managers", r.handlers.settingsController.GetAvailableManagers, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/settings/:name", r.handlers.settingsController.GetSettings, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.PUT("/settings/:name", r.handlers.settingsController.UpdateSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.DELETE("/settings/:name", r.handlers.settingsController.DeleteSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
