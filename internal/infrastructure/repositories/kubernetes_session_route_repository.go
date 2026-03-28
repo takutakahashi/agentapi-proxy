@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -20,10 +21,15 @@ const (
 )
 
 type routeJSON struct {
-	SessionID       string `json:"session_id"`
-	RemoteSessionID string `json:"remote_session_id"`
-	ProxyURL        string `json:"proxy_url"`
-	HMACSecret      string `json:"hmac_secret"`
+	SessionID       string            `json:"session_id"`
+	RemoteSessionID string            `json:"remote_session_id"`
+	ProxyURL        string            `json:"proxy_url"`
+	HMACSecret      string            `json:"hmac_secret"`
+	UserID          string            `json:"user_id,omitempty"`
+	Scope           string            `json:"scope,omitempty"`
+	TeamID          string            `json:"team_id,omitempty"`
+	Tags            map[string]string `json:"tags,omitempty"`
+	StartedAt       time.Time         `json:"started_at,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -52,6 +58,11 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		RemoteSessionID: route.RemoteSessionID,
 		ProxyURL:        route.ProxyURL,
 		HMACSecret:      route.HMACSecret,
+		UserID:          route.UserID,
+		Scope:           route.Scope,
+		TeamID:          route.TeamID,
+		Tags:            route.Tags,
+		StartedAt:       route.StartedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal route: %w", err)
@@ -110,7 +121,50 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 		RemoteSessionID: rj.RemoteSessionID,
 		ProxyURL:        rj.ProxyURL,
 		HMACSecret:      rj.HMACSecret,
+		UserID:          rj.UserID,
+		Scope:           rj.Scope,
+		TeamID:          rj.TeamID,
+		Tags:            rj.Tags,
+		StartedAt:       rj.StartedAt,
 	}, nil
+}
+
+// List retrieves all session routes; if userID is non-empty, only routes for that user are returned
+func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID string) ([]*portrepos.SessionRoute, error) {
+	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: LabelSessionRoute + "=true",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list session route secrets: %w", err)
+	}
+
+	routes := make([]*portrepos.SessionRoute, 0, len(secrets.Items))
+	for i := range secrets.Items {
+		secret := &secrets.Items[i]
+		raw, ok := secret.Data[SessionRouteSecretKey]
+		if !ok {
+			continue
+		}
+		var rj routeJSON
+		if err := json.Unmarshal(raw, &rj); err != nil {
+			continue
+		}
+		if userID != "" && rj.UserID != userID {
+			continue
+		}
+		routes = append(routes, &portrepos.SessionRoute{
+			SessionID:       rj.SessionID,
+			RemoteSessionID: rj.RemoteSessionID,
+			ProxyURL:        rj.ProxyURL,
+			HMACSecret:      rj.HMACSecret,
+			UserID:          rj.UserID,
+			Scope:           rj.Scope,
+			TeamID:          rj.TeamID,
+			Tags:            rj.Tags,
+			StartedAt:       rj.StartedAt,
+		})
+	}
+	return routes, nil
 }
 
 // Delete removes the routing information for the given session ID
