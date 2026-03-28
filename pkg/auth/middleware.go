@@ -68,9 +68,15 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			// This enables small-cluster mode where Proxy A proxies session requests to Proxy B
 			if cfg.SessionManager.HMACSecret != "" {
 				if skipAuthForHMACRequest(c, cfg.SessionManager.HMACSecret) {
-					// Set a synthetic trusted-proxy user context
+					// Use the forwarded user identity if provided (set by Proxy A when proxying requests)
+					// This allows Proxy B to enforce resource ownership with the original requester's identity
+					forwardedUserID := c.Request().Header.Get("X-Forwarded-User")
+					if forwardedUserID == "" {
+						forwardedUserID = "proxy-a"
+					}
+					// Set a synthetic trusted-proxy user context with the original user's identity
 					proxyUser := entities.NewServiceAccountUser(
-						entities.UserID("proxy-a"),
+						entities.UserID(forwardedUserID),
 						"",
 						[]entities.Permission{
 							entities.PermissionSessionCreate,

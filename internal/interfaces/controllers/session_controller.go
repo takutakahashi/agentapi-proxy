@@ -511,6 +511,12 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	}
 	upstreamReq.Header.Set("X-Hub-Signature-256", sig)
 
+	// Include original user identity so Proxy B can enforce access control
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
+		upstreamReq.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+	}
+
 	// Forward to Proxy B
 	httpClient := &http.Client{Timeout: 60 * time.Second}
 	resp, err := httpClient.Do(upstreamReq)
