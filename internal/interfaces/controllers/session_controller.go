@@ -3,6 +3,9 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,17 +43,41 @@ type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
 	sessionCreator         SessionCreator
 	validateTeamUC         *sessionuc.ValidateTeamAccessUseCase
+	sessionRouteRepo       repositories.SessionRouteRepository
+	settingsRepo           repositories.SettingsRepository
 }
 
 // NewSessionController creates a new SessionController instance
 func NewSessionController(
 	sessionManagerProvider SessionManagerProvider,
 	sessionCreator SessionCreator,
+	opts ...SessionControllerOption,
 ) *SessionController {
-	return &SessionController{
+	c := &SessionController{
 		sessionManagerProvider: sessionManagerProvider,
 		sessionCreator:         sessionCreator,
 		validateTeamUC:         sessionuc.NewValidateTeamAccessUseCase(),
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// SessionControllerOption is a functional option for SessionController
+type SessionControllerOption func(*SessionController)
+
+// WithSessionRouteRepository sets the session route repository on the controller
+func WithSessionRouteRepository(repo repositories.SessionRouteRepository) SessionControllerOption {
+	return func(c *SessionController) {
+		c.sessionRouteRepo = repo
+	}
+}
+
+// WithSettingsRepository sets the settings repository on the controller
+func WithSettingsRepository(repo repositories.SettingsRepository) SessionControllerOption {
+	return func(c *SessionController) {
+		c.settingsRepo = repo
 	}
 }
 
@@ -238,6 +265,14 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		filteredSessions = append(filteredSessions, sessionData)
 	}
 
+	// Fetch sessions from remote ESMs and merge
+	if c.settingsRepo != nil {
+		userID := authzCtx.PersonalScope.UserID
+		teams := authzCtx.TeamScope.Teams
+		remoteSessions := c.fetchRemoteSessions(ctx.Request().Context(), userID, teams, filter)
+		filteredSessions = append(filteredSessions, remoteSessions...)
+	}
+
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"sessions": filteredSessions,
 	})
@@ -259,6 +294,15 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 
 	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
+		// Check if it's a remote session
+		if c.sessionRouteRepo != nil {
+			route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+			if err != nil {
+				log.Printf("Delete session: failed to look up route for %s: %v", sessionID, err)
+			} else if route != nil {
+				return c.deleteRemoteSession(ctx, route)
+			}
+		}
 		log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
@@ -293,6 +337,15 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 
 	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
+		// Check if this is a remote session on Proxy B
+		if c.sessionRouteRepo != nil {
+			route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+			if err != nil {
+				log.Printf("[ROUTE] Failed to look up session route for %s: %v", sessionID, err)
+			} else if route != nil {
+				return c.routeToRemoteSession(ctx, route)
+			}
+		}
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
 
@@ -405,6 +458,130 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	return nil
 }
 
+// routeToRemoteSession proxies a session request to an external session manager (Proxy B).
+// It signs the request with HMAC-SHA256 before forwarding.
+func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	sessionID := ctx.Param("sessionId")
+
+	// Check authorization
+	if ctx.Request().Method != "OPTIONS" {
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if authzCtx == nil {
+			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+		}
+		// Basic auth check - we can't check session ownership without the actual session object,
+		// but we can verify the user is authenticated. Full ownership check would require
+		// fetching session info from B.
+	}
+
+	// Build target URL: replace A's session ID with B's remote session ID in the path
+	originalPath := ctx.Request().URL.Path
+	// Path is /<sessionId>/rest/of/path - replace sessionId with remoteSessionID
+	suffix := strings.TrimPrefix(originalPath, "/"+sessionID)
+	targetPath := "/" + route.RemoteSessionID + suffix
+
+	targetURL := strings.TrimRight(route.ProxyURL, "/") + targetPath
+	if ctx.Request().URL.RawQuery != "" {
+		targetURL += "?" + ctx.Request().URL.RawQuery
+	}
+
+	// Read body for HMAC signing
+	body, err := io.ReadAll(ctx.Request().Body)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Failed to read request body")
+	}
+	ctx.Request().Body = io.NopCloser(bytes.NewReader(body))
+
+	// Compute HMAC signature over the body
+	mac := hmac.New(sha256.New, []byte(route.HMACSecret))
+	mac.Write(body)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	// Build upstream request
+	upstreamReq, err := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build upstream request")
+	}
+
+	// Copy headers
+	for key, values := range ctx.Request().Header {
+		for _, v := range values {
+			upstreamReq.Header.Add(key, v)
+		}
+	}
+	upstreamReq.Header.Set("X-Hub-Signature-256", sig)
+
+	// Forward to Proxy B
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+	resp, err := httpClient.Do(upstreamReq)
+	if err != nil {
+		log.Printf("[REMOTE_ROUTE] Failed to proxy request to Proxy B for session %s: %v", sessionID, err)
+		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Copy response headers
+	for key, values := range resp.Header {
+		for _, v := range values {
+			ctx.Response().Header().Add(key, v)
+		}
+	}
+	ctx.Response().Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Copy response body
+	ctx.Response().WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(ctx.Response().Writer, resp.Body); err != nil {
+		log.Printf("[REMOTE_ROUTE] Failed to copy response body: %v", err)
+	}
+	return nil
+}
+
+// deleteRemoteSession deletes a session on Proxy B via the session manager API.
+func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	sessionID := ctx.Param("sessionId")
+
+	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/api/v1/sessions/" + route.RemoteSessionID
+
+	// HMAC over empty body for DELETE request
+	mac := hmac.New(sha256.New, []byte(route.HMACSecret))
+	mac.Write([]byte{})
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodDelete, targetURL, nil)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build delete request")
+	}
+	req.Header.Set("X-Hub-Signature-256", sig)
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("[REMOTE_DELETE] Failed to delete remote session %s on %s: %v", route.RemoteSessionID, route.ProxyURL, err)
+		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		log.Printf("[REMOTE_DELETE] Proxy B returned status %d: %s", resp.StatusCode, string(respBody))
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete remote session")
+	}
+
+	// Clean up local route entry
+	if c.sessionRouteRepo != nil {
+		if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
+			log.Printf("[REMOTE_DELETE] Warning: failed to delete route entry for session %s: %v", sessionID, err)
+		}
+	}
+
+	log.Printf("[REMOTE_DELETE] Deleted remote session %s (remote ID: %s) on %s", sessionID, route.RemoteSessionID, route.ProxyURL)
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"message":    "Session terminated successfully",
+		"session_id": sessionID,
+		"status":     "terminated",
+	})
+}
+
 // captureFirstMessage captures the first message content for session description
 func (c *SessionController) captureFirstMessage(ctx echo.Context, session entities.Session) {
 	// Skip if description already exists
@@ -463,6 +640,135 @@ func filterHiddenSessions(sessions []entities.Session) []entities.Session {
 		if s.Tags()["hidden"] != "true" {
 			result = append(result, s)
 		}
+	}
+	return result
+}
+
+// fetchRemoteSessions queries all known external session managers (Proxy B instances) and returns
+// their sessions as raw maps suitable for inclusion in the search response.
+func (c *SessionController) fetchRemoteSessions(ctx context.Context, userID string, teams []string, filter entities.SessionFilter) []map[string]interface{} {
+	if c.settingsRepo == nil {
+		return nil
+	}
+
+	// Collect unique ESMs from user settings and team settings
+	seen := make(map[string]struct{}) // deduplicate by ESM URL
+	type esmEntry struct {
+		url    string
+		secret string
+	}
+	var esms []esmEntry
+
+	addESMs := func(settingsName string) {
+		settings, err := c.settingsRepo.FindByName(ctx, settingsName)
+		if err != nil || settings == nil {
+			return
+		}
+		for _, esm := range settings.ExternalSessionManagers() {
+			if _, exists := seen[esm.URL]; !exists {
+				seen[esm.URL] = struct{}{}
+				esms = append(esms, esmEntry{url: esm.URL, secret: esm.HMACSecret})
+			}
+		}
+	}
+
+	addESMs(userID)
+	for _, teamID := range teams {
+		addESMs(teamID)
+	}
+
+	if len(esms) == 0 {
+		return nil
+	}
+
+	var result []map[string]interface{}
+	for _, esm := range esms {
+		sessions := c.fetchSessionsFromESM(ctx, esm.url, esm.secret, userID, filter)
+		result = append(result, sessions...)
+	}
+	return result
+}
+
+// fetchSessionsFromESM calls a single Proxy B's /api/v1/sessions endpoint and returns the sessions
+func (c *SessionController) fetchSessionsFromESM(ctx context.Context, proxyURL, hmacSecret, userID string, filter entities.SessionFilter) []map[string]interface{} {
+	// Build query params
+	params := url.Values{}
+	if filter.UserID != "" {
+		params.Set("user_id", filter.UserID)
+	} else {
+		params.Set("user_id", userID)
+	}
+	if filter.Status != "" {
+		params.Set("status", filter.Status)
+	}
+	if filter.Scope != "" {
+		params.Set("scope", string(filter.Scope))
+	}
+	if filter.TeamID != "" {
+		params.Set("team_id", filter.TeamID)
+	}
+
+	targetURL := strings.TrimRight(proxyURL, "/") + "/api/v1/sessions"
+	if len(params) > 0 {
+		targetURL += "?" + params.Encode()
+	}
+
+	// HMAC over empty body for GET request
+	mac := hmac.New(sha256.New, []byte(hmacSecret))
+	mac.Write([]byte{})
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		log.Printf("[REMOTE_SEARCH] Failed to build request to %s: %v", proxyURL, err)
+		return nil
+	}
+	req.Header.Set("X-Hub-Signature-256", sig)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("[REMOTE_SEARCH] Failed to query ESM at %s: %v", proxyURL, err)
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[REMOTE_SEARCH] ESM at %s returned status %d", proxyURL, resp.StatusCode)
+		return nil
+	}
+
+	var listResp struct {
+		Sessions []struct {
+			ID        string    `json:"id"`
+			UserID    string    `json:"user_id"`
+			Status    string    `json:"status"`
+			CreatedAt time.Time `json:"created_at"`
+		} `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		log.Printf("[REMOTE_SEARCH] Failed to decode response from %s: %v", proxyURL, err)
+		return nil
+	}
+
+	result := make([]map[string]interface{}, 0, len(listResp.Sessions))
+	for _, s := range listResp.Sessions {
+		result = append(result, map[string]interface{}{
+			"session_id":      s.ID,
+			"user_id":         s.UserID,
+			"scope":           "user",
+			"team_id":         "",
+			"status":          s.Status,
+			"started_at":      s.CreatedAt,
+			"updated_at":      s.CreatedAt,
+			"last_message_at": s.CreatedAt,
+			"addr":            "",
+			"tags":            map[string]string{},
+			"metadata": map[string]interface{}{
+				"description": "",
+			},
+			"proxy_url": proxyURL, // indicate this is a remote session
+		})
 	}
 	return result
 }
