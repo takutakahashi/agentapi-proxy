@@ -17,6 +17,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/externalsessionmanager"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionmanager"
@@ -116,6 +117,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register session manager handler (small-cluster / forwarding mode)
 	registerSessionManagerHandlers(configData, proxyServer)
+
+	// Register external session manager handlers (Proxy A registration API)
+	registerExternalSessionManagerHandlers(configData, proxyServer)
 
 	// Start server in a goroutine
 	go func() {
@@ -723,6 +727,37 @@ func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.
 	handlers := sessionmanager.NewHandlers(sessionManager, configData.SessionManager.HMACSecret)
 	proxyServer.AddCustomHandler(handlers)
 	log.Printf("[SESSION_MANAGER] Session manager handler registered")
+}
+
+// registerExternalSessionManagerHandlers registers the external session manager REST API
+func registerExternalSessionManagerHandlers(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[EXTERNAL_SESSION_MANAGER] Registering external session manager handlers...")
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[EXTERNAL_SESSION_MANAGER] Kubernetes config not available, skipping: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[EXTERNAL_SESSION_MANAGER] Failed to create Kubernetes client, skipping: %v", err)
+		return
+	}
+
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	repo := repositories.NewKubernetesExternalSessionManagerRepository(client, namespace)
+	handlers := externalsessionmanager.NewHandlers(repo)
+	proxyServer.AddCustomHandler(handlers)
+
+	log.Printf("[EXTERNAL_SESSION_MANAGER] External session manager handlers registered in namespace: %s", namespace)
 }
 
 // registerMCPHandler registers MCP HTTP handler
