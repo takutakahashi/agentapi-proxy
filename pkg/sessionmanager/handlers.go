@@ -5,19 +5,23 @@
 // without needing any local secrets (agentapi-settings-*, GitHub secrets, etc.).
 //
 // All requests to /api/v1/sessions must carry an HMAC-SHA256 signature in the
-// X-Hub-Signature-256 header, computed over the raw request body using the
-// shared secret configured via SESSION_MANAGER_HMAC_SECRET (or config file).
+// X-Hub-Signature-256 header and the Unix timestamp in the X-Timestamp header.
+// The signature covers "METHOD\nPATH?QUERY\nTIMESTAMP\nBODY", preventing both
+// request forgery and replay attacks.
+// The shared secret is configured via SESSION_MANAGER_HMAC_SECRET (or config file).
+//
+// Backward compatibility: if X-Timestamp is absent the middleware falls back to
+// the legacy body-only HMAC verification and logs a warning.  Set the environment
+// variable SESSION_MANAGER_HMAC_STRICT=true to reject legacy requests entirely.
 package sessionmanager
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -26,6 +30,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -73,9 +78,16 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
 // HMAC middleware
 // ---------------------------------------------------------------------------
 
-// hmacMiddleware verifies X-Hub-Signature-256: sha256=<hex> on every request.
-// It reads and restores the body so downstream handlers can also read it.
+// hmacMiddleware verifies X-Hub-Signature-256 and X-Timestamp on every request.
+//
+// New format (preferred): signature covers "METHOD\nPATH?QUERY\nTIMESTAMP\nBODY".
+// Legacy format (fallback): signature covers the raw body only (no timestamp).
+//
+// When SESSION_MANAGER_HMAC_STRICT=true the legacy fallback is disabled and
+// requests without X-Timestamp are rejected immediately.
 func (h *Handlers) hmacMiddleware() echo.MiddlewareFunc {
+	strictMode := os.Getenv("SESSION_MANAGER_HMAC_STRICT") == "true"
+
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			sig := c.Request().Header.Get("X-Hub-Signature-256")
@@ -90,14 +102,43 @@ func (h *Handlers) hmacMiddleware() echo.MiddlewareFunc {
 			}
 			c.Request().Body = io.NopCloser(bytes.NewReader(body))
 
-			// Compute expected signature.
-			mac := hmac.New(sha256.New, h.hmacSecret)
-			mac.Write(body)
-			expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+			ts := c.Request().Header.Get(hmacutil.TimestampHeader)
 
-			// Constant-time comparison to prevent timing attacks.
-			if !hmac.Equal([]byte(sig), []byte(expected)) {
-				log.Printf("[SESSION_MANAGER] HMAC verification failed for %s %s",
+			if ts != "" {
+				// ---- New format: METHOD\nPATH?QUERY\nTIMESTAMP\nBODY ----
+
+				// Validate timestamp to prevent replay attacks.
+				if err := hmacutil.ValidateTimestamp(ts); err != nil {
+					log.Printf("[SESSION_MANAGER] Timestamp validation failed for %s %s: %v",
+						c.Request().Method, c.Request().URL.Path, err)
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired timestamp")
+				}
+
+				pathWithQuery := c.Request().URL.RequestURI()
+				msg := hmacutil.BuildMessage(c.Request().Method, pathWithQuery, ts, body)
+				if !hmacutil.Verify(h.hmacSecret, msg, sig) {
+					log.Printf("[SESSION_MANAGER] HMAC verification failed (new format) for %s %s",
+						c.Request().Method, c.Request().URL.Path)
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
+				}
+
+				return next(c)
+			}
+
+			// ---- Legacy fallback: body-only HMAC ----
+			if strictMode {
+				log.Printf("[SESSION_MANAGER] Strict mode: rejecting request without %s for %s %s",
+					hmacutil.TimestampHeader, c.Request().Method, c.Request().URL.Path)
+				return echo.NewHTTPError(http.StatusUnauthorized, "missing "+hmacutil.TimestampHeader+" header")
+			}
+
+			log.Printf("[SESSION_MANAGER] Warning: request without %s received for %s %s — "+
+				"falling back to legacy HMAC verification. Set SESSION_MANAGER_HMAC_STRICT=true to disable.",
+				hmacutil.TimestampHeader, c.Request().Method, c.Request().URL.Path)
+
+			// Legacy format: HMAC was computed over the raw body only (no canonical prefix).
+			if !hmacutil.Verify(h.hmacSecret, body, sig) {
+				log.Printf("[SESSION_MANAGER] HMAC verification failed (legacy format) for %s %s",
 					c.Request().Method, c.Request().URL.Path)
 				return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
 			}

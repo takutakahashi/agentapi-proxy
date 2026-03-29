@@ -3,9 +3,6 @@ package controllers
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +21,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
 // SessionCreator is an interface for creating sessions
@@ -495,16 +493,17 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	}
 	ctx.Request().Body = io.NopCloser(bytes.NewReader(body))
 
-	// Compute HMAC signature over the body
-	mac := hmac.New(sha256.New, []byte(route.HMACSecret))
-	mac.Write(body)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
 	// Build upstream request
 	upstreamReq, err := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build upstream request")
 	}
+
+	// Compute HMAC signature over METHOD\nPATH?QUERY\nTIMESTAMP\nBODY
+	ts := hmacutil.NowTimestamp()
+	pathWithQuery := upstreamReq.URL.RequestURI()
+	msg := hmacutil.BuildMessage(ctx.Request().Method, pathWithQuery, ts, body)
+	sig := hmacutil.Sign([]byte(route.HMACSecret), msg)
 
 	// Copy headers
 	for key, values := range ctx.Request().Header {
@@ -513,6 +512,7 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		}
 	}
 	upstreamReq.Header.Set("X-Hub-Signature-256", sig)
+	upstreamReq.Header.Set(hmacutil.TimestampHeader, ts)
 
 	// Include original user identity so Proxy B can enforce access control
 	authzCtx := auth.GetAuthorizationContext(ctx)
@@ -551,16 +551,18 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 
 	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/api/v1/sessions/" + route.RemoteSessionID
 
-	// HMAC over empty body for DELETE request
-	mac := hmac.New(sha256.New, []byte(route.HMACSecret))
-	mac.Write([]byte{})
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodDelete, targetURL, nil)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build delete request")
 	}
+
+	// Compute HMAC signature over METHOD\nPATH?QUERY\nTIMESTAMP\n(empty body)
+	ts := hmacutil.NowTimestamp()
+	parsedTarget, _ := url.Parse(targetURL)
+	msg := hmacutil.BuildMessage(http.MethodDelete, parsedTarget.RequestURI(), ts, nil)
+	sig := hmacutil.Sign([]byte(route.HMACSecret), msg)
 	req.Header.Set("X-Hub-Signature-256", sig)
+	req.Header.Set(hmacutil.TimestampHeader, ts)
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	resp, err := httpClient.Do(req)
@@ -722,17 +724,19 @@ func (c *SessionController) fetchSessionsFromESM(ctx context.Context, proxyURL, 
 		targetURL += "?" + params.Encode()
 	}
 
-	// HMAC over empty body for GET request
-	mac := hmac.New(sha256.New, []byte(hmacSecret))
-	mac.Write([]byte{})
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		log.Printf("[REMOTE_SEARCH] Failed to build request to %s: %v", proxyURL, err)
 		return nil
 	}
+
+	// Compute HMAC signature over METHOD\nPATH?QUERY\nTIMESTAMP\n(empty body)
+	ts := hmacutil.NowTimestamp()
+	parsedTarget, _ := url.Parse(targetURL)
+	msg := hmacutil.BuildMessage(http.MethodGet, parsedTarget.RequestURI(), ts, nil)
+	sig := hmacutil.Sign([]byte(hmacSecret), msg)
 	req.Header.Set("X-Hub-Signature-256", sig)
+	req.Header.Set(hmacutil.TimestampHeader, ts)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Do(req)
