@@ -254,6 +254,10 @@ func (h *Handlers) DeleteSession(c echo.Context) error {
 	}
 
 	if err := h.sessionManager.DeleteSession(sessionID); err != nil {
+		// Surface "not found" as 404 so callers can distinguish it from real errors.
+		if strings.Contains(err.Error(), "not found") {
+			return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("session not found: %s", sessionID))
+		}
 		log.Printf("[SESSION_MANAGER] Failed to delete session %s: %v", sessionID, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to delete session: %v", err))
 	}
