@@ -4321,29 +4321,33 @@
       "UserInfoResponse": {
         "type": "object",
         "properties": {
-          "user_id": {
+          "id": {
             "type": "string",
             "description": "User ID"
           },
           "username": {
             "type": "string",
-            "description": "Username (GitHub login, service account name, or user ID)"
+            "description": "Username (GitHub login or user ID)"
           },
-          "user_type": {
+          "login": {
             "type": "string",
-            "description": "Authentication type of the user",
-            "enum": ["github", "api_key", "service_account", "aws"]
+            "description": "GitHub login name"
           },
-          "teams": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Teams the user belongs to as 'org/team-slug' strings"
-          },
-          "team_id": {
+          "name": {
             "type": "string",
-            "description": "Team ID for service accounts (format: 'org/team-slug')"
+            "description": "Display name"
+          },
+          "email": {
+            "type": "string",
+            "description": "Email address"
+          },
+          "avatar_url": {
+            "type": "string",
+            "description": "Avatar URL"
+          },
+          "role": {
+            "type": "string",
+            "description": "User role (admin, user, etc.)"
           },
           "is_admin": {
             "type": "boolean",
@@ -4355,9 +4359,15 @@
               "type": "string"
             },
             "description": "User permissions"
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Teams the user belongs to as 'org/team-slug' strings"
           }
-        },
-        "required": ["user_id", "username", "user_type", "teams", "is_admin", "permissions"]
+        }
       },
       "TeamInfo": {
         "type": "object",
