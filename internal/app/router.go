@@ -11,6 +11,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
 
@@ -116,7 +117,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			healthController:         controllers.NewHealthController(),
 			sessionController:        sessionController,
 			settingsController:       settingsController,
-			userController:           controllers.NewUserController(),
+			userController:           controllers.NewUserController(githubBaseURLFromConfig(server.config)),
 			shareController:          shareController,
 			personalAPIKeyController: personalAPIKeyController,
 			memoryController:         memoryController,
@@ -321,4 +322,13 @@ func (r *Router) registerCustomHandlers() error {
 	}
 
 	return nil
+}
+
+// githubBaseURLFromConfig extracts the GitHub API base URL from config safely.
+// Falls back to "https://api.github.com" if GitHub auth is not configured.
+func githubBaseURLFromConfig(cfg *config.Config) string {
+	if cfg != nil && cfg.Auth.GitHub != nil && cfg.Auth.GitHub.BaseURL != "" {
+		return cfg.Auth.GitHub.BaseURL
+	}
+	return "https://api.github.com"
 }
