@@ -5,15 +5,14 @@
 // without needing any local secrets (agentapi-settings-*, GitHub secrets, etc.).
 //
 // All requests to /api/v1/sessions must carry an HMAC-SHA256 signature in the
-// X-Hub-Signature-256 header, computed over the raw request body using the
-// shared secret configured via SESSION_MANAGER_HMAC_SECRET (or config file).
+// X-Hub-Signature-256 header and the Unix timestamp in the X-Timestamp header.
+// The signature covers "METHOD\nPATH?QUERY\nTIMESTAMP\nBODY", preventing both
+// request forgery and replay attacks.
+// The shared secret is configured via SESSION_MANAGER_HMAC_SECRET (or config file).
 package sessionmanager
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +25,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -73,14 +73,27 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
 // HMAC middleware
 // ---------------------------------------------------------------------------
 
-// hmacMiddleware verifies X-Hub-Signature-256: sha256=<hex> on every request.
-// It reads and restores the body so downstream handlers can also read it.
+// hmacMiddleware verifies X-Hub-Signature-256 and X-Timestamp on every request.
+// The signature must cover "METHOD\nPATH?QUERY\nTIMESTAMP\nBODY".
+// Requests missing X-Timestamp or carrying an expired timestamp are rejected.
 func (h *Handlers) hmacMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			sig := c.Request().Header.Get("X-Hub-Signature-256")
 			if sig == "" {
 				return echo.NewHTTPError(http.StatusUnauthorized, "missing X-Hub-Signature-256 header")
+			}
+
+			ts := c.Request().Header.Get(hmacutil.TimestampHeader)
+			if ts == "" {
+				return echo.NewHTTPError(http.StatusUnauthorized, "missing "+hmacutil.TimestampHeader+" header")
+			}
+
+			// Validate timestamp to prevent replay attacks.
+			if err := hmacutil.ValidateTimestamp(ts); err != nil {
+				log.Printf("[SESSION_MANAGER] Timestamp validation failed for %s %s: %v",
+					c.Request().Method, c.Request().URL.Path, err)
+				return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired timestamp")
 			}
 
 			// Read body and immediately restore it for downstream handlers.
@@ -90,13 +103,9 @@ func (h *Handlers) hmacMiddleware() echo.MiddlewareFunc {
 			}
 			c.Request().Body = io.NopCloser(bytes.NewReader(body))
 
-			// Compute expected signature.
-			mac := hmac.New(sha256.New, h.hmacSecret)
-			mac.Write(body)
-			expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-			// Constant-time comparison to prevent timing attacks.
-			if !hmac.Equal([]byte(sig), []byte(expected)) {
+			pathWithQuery := c.Request().URL.RequestURI()
+			msg := hmacutil.BuildMessage(c.Request().Method, pathWithQuery, ts, body)
+			if !hmacutil.Verify(h.hmacSecret, msg, sig) {
 				log.Printf("[SESSION_MANAGER] HMAC verification failed for %s %s",
 					c.Request().Method, c.Request().URL.Path)
 				return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")

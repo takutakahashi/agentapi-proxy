@@ -3,14 +3,12 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -31,6 +29,7 @@ import (
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -660,19 +659,21 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		return nil, fmt.Errorf("failed to marshal session settings: %w", err)
 	}
 
-	// Compute HMAC-SHA256 signature
-	mac := hmac.New(sha256.New, []byte(esm.HMACSecret))
-	mac.Write(body)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
 	// POST to Proxy B
 	targetURL := strings.TrimRight(esm.URL, "/") + "/api/v1/sessions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request to Proxy B: %w", err)
 	}
+
+	// Compute HMAC signature over METHOD\nPATH?QUERY\nTIMESTAMP\nBODY
+	ts := hmacutil.NowTimestamp()
+	parsedTarget, _ := url.Parse(targetURL)
+	msg := hmacutil.BuildMessage(http.MethodPost, parsedTarget.RequestURI(), ts, body)
+	sig := hmacutil.Sign([]byte(esm.HMACSecret), msg)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Hub-Signature-256", sig)
+	httpReq.Header.Set(hmacutil.TimestampHeader, ts)
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	resp, err := httpClient.Do(httpReq)
