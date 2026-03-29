@@ -631,13 +631,20 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusNoContent, http.StatusOK:
+		// success
+	case http.StatusNotFound:
+		// Session already gone on Proxy B — treat as success so we can
+		// still clean up the local route entry.
+		log.Printf("[REMOTE_DELETE] Remote session %s not found on Proxy B (already deleted), cleaning up local route", route.RemoteSessionID)
+	default:
 		respBody, _ := io.ReadAll(resp.Body)
 		log.Printf("[REMOTE_DELETE] Proxy B returned status %d: %s", resp.StatusCode, string(respBody))
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete remote session")
 	}
 
-	// Clean up local route entry
+	// Clean up local route entry regardless of whether Proxy B had the session.
 	if c.sessionRouteRepo != nil {
 		if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
 			log.Printf("[REMOTE_DELETE] Warning: failed to delete route entry for session %s: %v", sessionID, err)
