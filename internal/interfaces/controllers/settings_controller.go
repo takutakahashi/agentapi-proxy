@@ -132,11 +132,11 @@ type SettingsResponse struct {
 
 // ExternalSessionManagerResponse represents a single external session manager in responses
 type ExternalSessionManagerResponse struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	HMACSecret string `json:"hmac_secret,omitempty"`
-	Default    bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	HasHMACSecret bool   `json:"has_hmac_secret"`   // true if an HMAC secret is configured (secret itself is never returned)
+	Default       bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
 }
 
 // AvailableManagerEntry represents a single available ESM entry returned by GET /settings/managers
@@ -718,16 +718,16 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
 
-	// External session managers: return full secret
+	// External session managers: never return the HMAC secret — indicate only whether one is set.
 	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {
 		resp.ExternalSessionManagers = make([]ExternalSessionManagerResponse, 0, len(managers))
 		for _, m := range managers {
 			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
-				ID:         m.ID,
-				Name:       m.Name,
-				URL:        m.URL,
-				HMACSecret: m.HMACSecret,
-				Default:    m.Default,
+				ID:            m.ID,
+				Name:          m.Name,
+				URL:           m.URL,
+				HasHMACSecret: m.HMACSecret != "",
+				Default:       m.Default,
 			})
 		}
 	}

@@ -573,10 +573,16 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	upstreamReq.Header.Set("X-Hub-Signature-256", sig)
 	upstreamReq.Header.Set(hmacutil.TimestampHeader, ts)
 
-	// Include original user identity so Proxy B can enforce access control
+	// Include original user identity so Proxy B can enforce access control.
+	// X-Forwarded-User is mandatory on Proxy B — always set it when proxying.
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
 		upstreamReq.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+	}
+	// For team-scoped sessions, also forward the team ID so Proxy B can build
+	// the correct authorization context (service account tied to that team).
+	if route.TeamID != "" {
+		upstreamReq.Header.Set("X-Forwarded-Team", route.TeamID)
 	}
 
 	// Forward to Proxy B
