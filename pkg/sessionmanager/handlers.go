@@ -9,10 +9,6 @@
 // The signature covers "METHOD\nPATH?QUERY\nTIMESTAMP\nBODY", preventing both
 // request forgery and replay attacks.
 // The shared secret is configured via SESSION_MANAGER_HMAC_SECRET (or config file).
-//
-// Backward compatibility: if X-Timestamp is absent the middleware falls back to
-// the legacy body-only HMAC verification and logs a warning.  Set the environment
-// variable SESSION_MANAGER_HMAC_STRICT=true to reject legacy requests entirely.
 package sessionmanager
 
 import (
@@ -21,7 +17,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -79,20 +74,26 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
 // ---------------------------------------------------------------------------
 
 // hmacMiddleware verifies X-Hub-Signature-256 and X-Timestamp on every request.
-//
-// New format (preferred): signature covers "METHOD\nPATH?QUERY\nTIMESTAMP\nBODY".
-// Legacy format (fallback): signature covers the raw body only (no timestamp).
-//
-// When SESSION_MANAGER_HMAC_STRICT=true the legacy fallback is disabled and
-// requests without X-Timestamp are rejected immediately.
+// The signature must cover "METHOD\nPATH?QUERY\nTIMESTAMP\nBODY".
+// Requests missing X-Timestamp or carrying an expired timestamp are rejected.
 func (h *Handlers) hmacMiddleware() echo.MiddlewareFunc {
-	strictMode := os.Getenv("SESSION_MANAGER_HMAC_STRICT") == "true"
-
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			sig := c.Request().Header.Get("X-Hub-Signature-256")
 			if sig == "" {
 				return echo.NewHTTPError(http.StatusUnauthorized, "missing X-Hub-Signature-256 header")
+			}
+
+			ts := c.Request().Header.Get(hmacutil.TimestampHeader)
+			if ts == "" {
+				return echo.NewHTTPError(http.StatusUnauthorized, "missing "+hmacutil.TimestampHeader+" header")
+			}
+
+			// Validate timestamp to prevent replay attacks.
+			if err := hmacutil.ValidateTimestamp(ts); err != nil {
+				log.Printf("[SESSION_MANAGER] Timestamp validation failed for %s %s: %v",
+					c.Request().Method, c.Request().URL.Path, err)
+				return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired timestamp")
 			}
 
 			// Read body and immediately restore it for downstream handlers.
@@ -102,43 +103,10 @@ func (h *Handlers) hmacMiddleware() echo.MiddlewareFunc {
 			}
 			c.Request().Body = io.NopCloser(bytes.NewReader(body))
 
-			ts := c.Request().Header.Get(hmacutil.TimestampHeader)
-
-			if ts != "" {
-				// ---- New format: METHOD\nPATH?QUERY\nTIMESTAMP\nBODY ----
-
-				// Validate timestamp to prevent replay attacks.
-				if err := hmacutil.ValidateTimestamp(ts); err != nil {
-					log.Printf("[SESSION_MANAGER] Timestamp validation failed for %s %s: %v",
-						c.Request().Method, c.Request().URL.Path, err)
-					return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired timestamp")
-				}
-
-				pathWithQuery := c.Request().URL.RequestURI()
-				msg := hmacutil.BuildMessage(c.Request().Method, pathWithQuery, ts, body)
-				if !hmacutil.Verify(h.hmacSecret, msg, sig) {
-					log.Printf("[SESSION_MANAGER] HMAC verification failed (new format) for %s %s",
-						c.Request().Method, c.Request().URL.Path)
-					return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
-				}
-
-				return next(c)
-			}
-
-			// ---- Legacy fallback: body-only HMAC ----
-			if strictMode {
-				log.Printf("[SESSION_MANAGER] Strict mode: rejecting request without %s for %s %s",
-					hmacutil.TimestampHeader, c.Request().Method, c.Request().URL.Path)
-				return echo.NewHTTPError(http.StatusUnauthorized, "missing "+hmacutil.TimestampHeader+" header")
-			}
-
-			log.Printf("[SESSION_MANAGER] Warning: request without %s received for %s %s — "+
-				"falling back to legacy HMAC verification. Set SESSION_MANAGER_HMAC_STRICT=true to disable.",
-				hmacutil.TimestampHeader, c.Request().Method, c.Request().URL.Path)
-
-			// Legacy format: HMAC was computed over the raw body only (no canonical prefix).
-			if !hmacutil.Verify(h.hmacSecret, body, sig) {
-				log.Printf("[SESSION_MANAGER] HMAC verification failed (legacy format) for %s %s",
+			pathWithQuery := c.Request().URL.RequestURI()
+			msg := hmacutil.BuildMessage(c.Request().Method, pathWithQuery, ts, body)
+			if !hmacutil.Verify(h.hmacSecret, msg, sig) {
+				log.Printf("[SESSION_MANAGER] HMAC verification failed for %s %s",
 					c.Request().Method, c.Request().URL.Path)
 				return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
 			}
