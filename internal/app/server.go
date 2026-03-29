@@ -697,13 +697,25 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	log.Printf("[REMOTE_SESSION] Created remote session %s on Proxy B (remote ID: %s, manager: %s)",
 		sessionID, remoteSessionID, managerID)
 
-	// Save routing entry
+	startedAt := time.Now()
+
+	// Save routing entry with metadata
 	if s.sessionRouteRepo != nil {
+		tags := startReq.Tags
+		if tags == nil {
+			tags = map[string]string{}
+		}
 		route := &portrepos.SessionRoute{
 			SessionID:       sessionID,
 			RemoteSessionID: remoteSessionID,
 			ProxyURL:        esm.URL,
 			HMACSecret:      esm.HMACSecret,
+			UserID:          userID,
+			Scope:           string(startReq.Scope),
+			TeamID:          startReq.TeamID,
+			Tags:            tags,
+			StartedAt:       startedAt,
+			InitialMessage:  initialMessage,
 		}
 		if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
 			log.Printf("[REMOTE_SESSION] Warning: failed to save session route: %v", saveErr)
@@ -717,7 +729,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		startReq.Scope,
 		startReq.TeamID,
 		startReq.Tags,
-		time.Now(),
+		startedAt,
 	)
 	return session, nil
 }
