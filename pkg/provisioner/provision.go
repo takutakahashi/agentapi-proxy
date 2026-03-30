@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -22,6 +23,13 @@ const (
 	sessionEnvFile        = "/home/agentapi/.session/env"
 	claudeMDPath          = "/home/agentapi/.claude/CLAUDE.md"
 	workdirRepoPath       = "/home/agentapi/workdir/repo"
+	// webhookPayloadPath is the well-known path where the webhook payload JSON
+	// is exposed inside the session container.
+	// For non-stock sessions this file is provided by a read-only Kubernetes
+	// Secret volume mount.  For stock sessions (pre-warmed pods) the volume is
+	// absent; the provisioner writes the file itself from SessionSettings so
+	// that both paths behave identically.
+	webhookPayloadPath = "/opt/webhook/payload.json"
 )
 
 // runProvision executes the full provisioning sequence and then supervises
@@ -49,6 +57,18 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	if err := os.WriteFile(provisionTempSettings, data, 0o600); err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("failed to write temp settings: %v", err))
 		return
+	}
+
+	// ── Step 1.5: write webhook payload file ─────────────────────────────────
+	// For stock sessions the pod is pre-created without a webhook-payload
+	// Secret volume (payload unknown at pod creation time).  We write the
+	// payload to the well-known path here so that /opt/webhook/payload.json is
+	// available to the agent regardless of whether the session was fulfilled
+	// from the stock inventory or from a freshly created pod.
+	// For non-stock sessions the file already exists (read-only Secret volume
+	// mount), so writeWebhookPayloadFile is a no-op in that case.
+	if settings.WebhookPayload != "" {
+		writeWebhookPayloadFile(settings.WebhookPayload)
 	}
 
 	// ── Step 2: run setup ─────────────────────────────────────────────────────
@@ -649,6 +669,39 @@ func unquoteValue(v string) string {
 		}
 	}
 	return v
+}
+
+// writeWebhookPayloadFile writes the webhook payload JSON string to
+// webhookPayloadPath.  It is a no-op when the file already exists, which is
+// the case for non-stock sessions where a read-only Kubernetes Secret volume
+// provides the file.  For stock sessions the volume is absent, so the
+// provisioner writes the file itself to ensure the agent always finds the
+// payload at the same well-known path.
+func writeWebhookPayloadFile(payload string) {
+	writeWebhookPayloadFileToPath(webhookPayloadPath, payload)
+}
+
+// writeWebhookPayloadFileToPath is the path-parameterised implementation
+// shared by writeWebhookPayloadFile and unit tests.
+func writeWebhookPayloadFileToPath(path, payload string) {
+	if _, err := os.Stat(path); err == nil {
+		// File already present (non-stock session: Secret volume mount).
+		log.Printf("[PROVISIONER] Webhook payload file already exists at %s, skipping write", path)
+		return
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to create webhook payload dir %s: %v", dir, err)
+		return
+	}
+
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write webhook payload file %s: %v", path, err)
+		return
+	}
+
+	log.Printf("[PROVISIONER] Wrote webhook payload to %s (%d bytes)", path, len(payload))
 }
 
 // mergeEnv takes the current os.Environ() slice and overlays envMap entries.
