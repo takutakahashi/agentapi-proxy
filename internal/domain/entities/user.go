@@ -443,6 +443,11 @@ func (u *User) CanAccessSession(sessionUserID UserID) bool {
 // IsMemberOfTeam checks if the user is a member of the specified team
 // teamID must be in the format "org/team-slug" (slash-separated)
 func (u *User) IsMemberOfTeam(teamID string) bool {
+	// Service accounts are associated with a specific team via teamID field
+	if u.userType == UserTypeServiceAccount {
+		return u.teamID == teamID
+	}
+
 	if u.githubInfo == nil {
 		return false
 	}
