@@ -283,7 +283,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 		if user == nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required for team-scoped webhooks")
 		}
-		if !user.IsMemberOfTeam(req.TeamID) {
+		// Use AuthorizationContext.CanCreateInTeam which handles service accounts correctly.
+		// service accounts have their team populated in TeamScope.TeamPermissions via buildAuthorizationContext.
+		if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx == nil || !authzCtx.CanCreateInTeam(req.TeamID) {
 			log.Printf("User %s is not a member of team %s", userID, req.TeamID)
 			return echo.NewHTTPError(http.StatusForbidden, "You are not a member of this team")
 		}
