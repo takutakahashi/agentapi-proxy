@@ -268,6 +268,13 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 		userID = "anonymous"
 	}
 
+	// Service accounts cannot use user scope; transparently route to team scope.
+	{
+		resolvedScope, resolvedTeamID := auth.ResolveUserScope(user, string(req.Scope), req.TeamID)
+		req.Scope = entities.ResourceScope(resolvedScope)
+		req.TeamID = resolvedTeamID
+	}
+
 	// Validate team scope
 	if req.Scope == entities.ScopeTeam {
 		if req.TeamID == "" {
@@ -276,7 +283,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 		if user == nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required for team-scoped webhooks")
 		}
-		if !user.IsMemberOfTeam(req.TeamID) {
+		// Use AuthorizationContext.CanCreateInTeam which handles service accounts correctly.
+		// service accounts have their team populated in TeamScope.TeamPermissions via buildAuthorizationContext.
+		if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx == nil || !authzCtx.CanCreateInTeam(req.TeamID) {
 			log.Printf("User %s is not a member of team %s", userID, req.TeamID)
 			return echo.NewHTTPError(http.StatusForbidden, "You are not a member of this team")
 		}
@@ -339,6 +348,9 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	scopeFilter := ctx.QueryParam("scope")
 	teamIDFilter := ctx.QueryParam("team_id")
+
+	// Service accounts cannot use user scope; transparently route to team scope.
+	scopeFilter, teamIDFilter = auth.ResolveUserScope(user, scopeFilter, teamIDFilter)
 
 	var userID string
 	var userTeamIDs []string

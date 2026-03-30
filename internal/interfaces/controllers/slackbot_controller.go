@@ -143,6 +143,14 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
+	// Service accounts cannot use user scope; transparently route to team scope.
+	{
+		user := auth.GetUserFromContext(ctx)
+		resolvedScope, resolvedTeamID := auth.ResolveUserScope(user, string(req.Scope), req.TeamID)
+		req.Scope = entities.ResourceScope(resolvedScope)
+		req.TeamID = resolvedTeamID
+	}
+
 	id := uuid.New().String()
 	bot := entities.NewSlackBot(id, req.Name, userID)
 
@@ -219,6 +227,12 @@ func (c *SlackBotController) ListSlackBots(ctx echo.Context) error {
 	scopeParam := ctx.QueryParam("scope")
 	teamIDParam := ctx.QueryParam("team_id")
 	statusParam := ctx.QueryParam("status")
+
+	// Service accounts cannot use user scope; transparently route to team scope.
+	{
+		user := auth.GetUserFromContext(ctx)
+		scopeParam, teamIDParam = auth.ResolveUserScope(user, scopeParam, teamIDParam)
+	}
 
 	filter := repositories.SlackBotFilter{
 		UserID:  userID,

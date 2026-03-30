@@ -102,6 +102,9 @@ func (c *TaskController) CreateTask(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
 	}
 
+	// Service accounts cannot use user scope; transparently route to team scope.
+	req.Scope, req.TeamID = auth.ResolveUserScope(user, req.Scope, req.TeamID)
+
 	// Validate
 	if req.Title == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "title is required")
@@ -190,6 +193,9 @@ func (c *TaskController) ListTasks(ctx echo.Context) error {
 	groupIDParam := ctx.QueryParam("group_id")
 	statusParam := ctx.QueryParam("status")
 	taskTypeParam := ctx.QueryParam("task_type")
+
+	// Service accounts cannot use user scope; transparently route to team scope.
+	scopeParam, teamIDParam = auth.ResolveUserScope(user, scopeParam, teamIDParam)
 
 	// Validate optional filter params
 	if statusParam != "" && statusParam != string(entities.TaskStatusTodo) && statusParam != string(entities.TaskStatusDone) {

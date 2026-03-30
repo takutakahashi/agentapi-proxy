@@ -82,6 +82,9 @@ func (c *MemoryController) CreateMemory(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
 	}
 
+	// Service accounts cannot use user scope; transparently route to team scope.
+	req.Scope, req.TeamID = auth.ResolveUserScope(user, req.Scope, req.TeamID)
+
 	// Validate
 	if req.Title == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "title is required")
@@ -152,6 +155,9 @@ func (c *MemoryController) ListMemories(ctx echo.Context) error {
 	query := ctx.QueryParam("q")
 	includeTagFilters := c.parseIncludeTagFilters(ctx)
 	excludeTagFilters := c.parseExcludeTagFilters(ctx)
+
+	// Service accounts cannot use user scope; transparently route to team scope.
+	scopeParam, teamIDParam = auth.ResolveUserScope(user, scopeParam, teamIDParam)
 
 	var memories []*entities.Memory
 
