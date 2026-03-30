@@ -155,7 +155,9 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 	req.Scope = entities.ResourceScope(resolvedScope)
 	req.TeamID = resolvedTeamID
 
-	// Validate team scope: user must be a member of the team
+	// Validate team scope: user must be a member of the team.
+	// Use AuthorizationContext.CanCreateInTeam which handles service accounts correctly
+	// (service accounts have their team populated in TeamScope.TeamPermissions).
 	if req.Scope == entities.ScopeTeam {
 		if req.TeamID == "" {
 			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required when scope is 'team'")
@@ -163,7 +165,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		if user == nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required for team-scoped schedules")
 		}
-		if !user.IsMemberOfTeam(req.TeamID) {
+		if authzCtx := auth.GetAuthorizationContext(c); authzCtx == nil || !authzCtx.CanCreateInTeam(req.TeamID) {
 			log.Printf("User %s is not a member of team %s", userID, req.TeamID)
 			return echo.NewHTTPError(http.StatusForbidden, "You are not a member of this team")
 		}
