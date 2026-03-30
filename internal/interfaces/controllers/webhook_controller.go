@@ -268,6 +268,13 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 		userID = "anonymous"
 	}
 
+	// Service accounts cannot use user scope; transparently route to team scope.
+	{
+		resolvedScope, resolvedTeamID := auth.ResolveUserScope(user, string(req.Scope), req.TeamID)
+		req.Scope = entities.ResourceScope(resolvedScope)
+		req.TeamID = resolvedTeamID
+	}
+
 	// Validate team scope
 	if req.Scope == entities.ScopeTeam {
 		if req.TeamID == "" {
@@ -339,6 +346,9 @@ func (c *WebhookController) ListWebhooks(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	scopeFilter := ctx.QueryParam("scope")
 	teamIDFilter := ctx.QueryParam("team_id")
+
+	// Service accounts cannot use user scope; transparently route to team scope.
+	scopeFilter, teamIDFilter = auth.ResolveUserScope(user, scopeFilter, teamIDFilter)
 
 	var userID string
 	var userTeamIDs []string

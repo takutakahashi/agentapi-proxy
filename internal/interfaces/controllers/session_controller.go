@@ -136,6 +136,17 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		startReq.Scope = entities.ScopeUser
 	}
 
+	// Service accounts cannot use user scope.
+	// Automatically route to the service account's team scope.
+	{
+		resolvedScope, resolvedTeamID := authzCtx.ResolveScope(string(startReq.Scope), startReq.TeamID)
+		if resolvedScope != string(startReq.Scope) || resolvedTeamID != startReq.TeamID {
+			log.Printf("[SESSION_DEBUG] Service account %s: routing scope %q → %q (team %q)", userID, startReq.Scope, resolvedScope, resolvedTeamID)
+		}
+		startReq.Scope = entities.ResourceScope(resolvedScope)
+		startReq.TeamID = resolvedTeamID
+	}
+
 	// Validate team scope authorization
 	if startReq.Scope == entities.ScopeTeam {
 		if startReq.TeamID == "" {
@@ -176,6 +187,17 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 
 	userID := authzCtx.PersonalScope.UserID
 	userTeamIDs := authzCtx.TeamScope.Teams
+
+	// Service accounts cannot use user scope.
+	// Automatically route to the service account's team scope when scope is not explicitly "team".
+	{
+		resolvedScope, resolvedTeamID := authzCtx.ResolveScope(scopeFilter, teamIDFilter)
+		if resolvedScope != scopeFilter || resolvedTeamID != teamIDFilter {
+			log.Printf("[SESSION_DEBUG] Service account %s search: routing scope %q → %q (team %q)", userID, scopeFilter, resolvedScope, resolvedTeamID)
+		}
+		scopeFilter = resolvedScope
+		teamIDFilter = resolvedTeamID
+	}
 
 	tagFilters := make(map[string]string)
 	for paramName, paramValues := range ctx.QueryParams() {

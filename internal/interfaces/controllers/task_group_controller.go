@@ -75,6 +75,9 @@ func (c *TaskGroupController) CreateTaskGroup(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
 	}
 
+	// Service accounts cannot use user scope; transparently route to team scope.
+	req.Scope, req.TeamID = auth.ResolveUserScope(user, req.Scope, req.TeamID)
+
 	// Validate
 	if req.Name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
@@ -137,6 +140,9 @@ func (c *TaskGroupController) ListTaskGroups(ctx echo.Context) error {
 
 	scopeParam := ctx.QueryParam("scope")
 	teamIDParam := ctx.QueryParam("team_id")
+
+	// Service accounts cannot use user scope; transparently route to team scope.
+	scopeParam, teamIDParam = auth.ResolveUserScope(user, scopeParam, teamIDParam)
 
 	var groups []*entities.TaskGroup
 

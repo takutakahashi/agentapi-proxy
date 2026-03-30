@@ -148,3 +148,40 @@ func (a *AuthorizationContext) IsServiceAccount() bool {
 	}
 	return a.User.UserType() == entities.UserTypeServiceAccount
 }
+
+// ServiceAccountTeamID returns the team ID associated with a service account.
+// Returns an empty string if the user is not a service account or has no team.
+func (a *AuthorizationContext) ServiceAccountTeamID() string {
+	if !a.IsServiceAccount() {
+		return ""
+	}
+	if a.User == nil {
+		return ""
+	}
+	return a.User.TeamID()
+}
+
+// ResolveScope returns the effective (scope, teamID) pair for the current user.
+// For service accounts, any non-team scope is automatically routed to the
+// service account's team scope.  All other users are returned unchanged.
+func (a *AuthorizationContext) ResolveScope(scope string, teamID string) (string, string) {
+	return ResolveUserScope(a.User, scope, teamID)
+}
+
+// ResolveUserScope is the package-level variant of ResolveScope that operates
+// directly on a User entity. It can be used by controllers that only hold a
+// *entities.User rather than a full AuthorizationContext.
+func ResolveUserScope(user *entities.User, scope string, teamID string) (string, string) {
+	if user == nil || user.UserType() != entities.UserTypeServiceAccount {
+		return scope, teamID
+	}
+	// Service accounts cannot use user scope; transparently route to team scope.
+	if scope == string(entities.ScopeTeam) {
+		return scope, teamID
+	}
+	saTeamID := user.TeamID()
+	if saTeamID != "" {
+		return string(entities.ScopeTeam), saTeamID
+	}
+	return scope, teamID
+}
