@@ -149,6 +149,12 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		userID = "anonymous"
 	}
 
+	// Resolve scope for service accounts: service accounts are transparently routed
+	// to team scope so that their resources are owned by the team, not a personal user.
+	resolvedScope, resolvedTeamID := auth.ResolveUserScope(user, string(req.Scope), req.TeamID)
+	req.Scope = entities.ResourceScope(resolvedScope)
+	req.TeamID = resolvedTeamID
+
 	// Validate team scope: user must be a member of the team
 	if req.Scope == entities.ScopeTeam {
 		if req.TeamID == "" {
@@ -228,6 +234,9 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 	user := auth.GetUserFromContext(c)
 	scopeFilter := c.QueryParam("scope")
 	teamIDFilter := c.QueryParam("team_id")
+
+	// Resolve scope for service accounts: transparently route to team scope.
+	scopeFilter, teamIDFilter = auth.ResolveUserScope(user, scopeFilter, teamIDFilter)
 
 	var userID string
 	var userTeamIDs []string
