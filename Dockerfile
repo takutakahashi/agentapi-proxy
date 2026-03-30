@@ -98,6 +98,12 @@ RUN ARCH=$(dpkg --print-architecture) && \
     chmod +x /usr/local/bin/otelcol && \
     rm /tmp/otelcol.tar.gz
 
+# Pre-create /opt/webhook so that the agent-provisioner (running as agentapi)
+# can write the webhook payload file for stock sessions.  In non-stock sessions
+# this directory is provided by the Kubernetes Secret volume mount, but stock
+# sessions have no such mount at pod creation time.
+RUN mkdir -p /opt/webhook && chown agentapi:agentapi /opt/webhook
+
 # Switch to non-root user
 USER agentapi
 
