@@ -56,6 +56,21 @@ func (v *Validator) Validate(resources *TeamResources) error {
 		}
 	}
 
+	// Validate slackbots
+	slackBotIDs := make(map[string]bool)
+	for idx, slackBot := range resources.SlackBots {
+		if err := v.ValidateSlackBot(slackBot); err != nil {
+			return fmt.Errorf("slackbot[%d] validation failed: %w", idx, err)
+		}
+		// Check for duplicate IDs (if ID is provided)
+		if slackBot.ID != "" {
+			if slackBotIDs[slackBot.ID] {
+				return fmt.Errorf("duplicate slackbot ID: %s", slackBot.ID)
+			}
+			slackBotIDs[slackBot.ID] = true
+		}
+	}
+
 	return nil
 }
 
@@ -283,6 +298,38 @@ func (v *Validator) ValidateJSONPathCondition(condition JSONPathConditionImport)
 	// For exists operator, value is not required
 	if condition.Operator != "exists" && condition.Value == nil {
 		return fmt.Errorf("value is required for operator %s", condition.Operator)
+	}
+
+	return nil
+}
+
+// ValidateSlackBot validates a single SlackBot
+func (v *Validator) ValidateSlackBot(slackBot SlackBotImport) error {
+	if slackBot.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+
+	// Validate status
+	if slackBot.Status != "" {
+		validStatuses := map[string]bool{"active": true, "paused": true}
+		if !validStatuses[slackBot.Status] {
+			return fmt.Errorf("invalid status: %s (must be active or paused)", slackBot.Status)
+		}
+	}
+
+	// Validate max_sessions
+	if slackBot.MaxSessions < 0 {
+		return fmt.Errorf("max_sessions must be non-negative")
+	}
+	if slackBot.MaxSessions > 100 {
+		return fmt.Errorf("max_sessions must not exceed 100")
+	}
+
+	// Validate session config if provided
+	if slackBot.SessionConfig != nil {
+		if err := v.ValidateSessionConfig(*slackBot.SessionConfig); err != nil {
+			return fmt.Errorf("session_config validation failed: %w", err)
+		}
 	}
 
 	return nil

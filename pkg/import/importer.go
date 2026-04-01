@@ -18,6 +18,7 @@ import (
 type Importer struct {
 	scheduleManager    schedule.Manager
 	webhookRepository  repositories.WebhookRepository
+	slackBotRepository repositories.SlackBotRepository
 	settingsRepository repositories.SettingsRepository
 	encryptionService  services.EncryptionService
 	validator          *Validator
@@ -27,12 +28,14 @@ type Importer struct {
 func NewImporter(
 	scheduleManager schedule.Manager,
 	webhookRepository repositories.WebhookRepository,
+	slackBotRepository repositories.SlackBotRepository,
 	settingsRepository repositories.SettingsRepository,
 	encryptionService services.EncryptionService,
 ) *Importer {
 	return &Importer{
 		scheduleManager:    scheduleManager,
 		webhookRepository:  webhookRepository,
+		slackBotRepository: slackBotRepository,
 		settingsRepository: settingsRepository,
 		encryptionService:  encryptionService,
 		validator:          NewValidator(),
@@ -103,6 +106,28 @@ func (i *Importer) Import(ctx context.Context, resources *TeamResources, userID 
 		}
 	}
 
+	// Import slackbots
+	for _, slackBotImport := range resources.SlackBots {
+		detail := i.importSlackBot(ctx, slackBotImport, resources.Metadata.TeamID, userID, options)
+		result.Details = append(result.Details, detail)
+
+		switch detail.Action {
+		case "created":
+			result.Summary.SlackBots.Created++
+		case "updated":
+			result.Summary.SlackBots.Updated++
+		case "skipped":
+			result.Summary.SlackBots.Skipped++
+		case "failed":
+			result.Summary.SlackBots.Failed++
+			result.Errors = append(result.Errors, detail.Error)
+			if !options.AllowPartial {
+				result.Success = false
+				return result, nil
+			}
+		}
+	}
+
 	// Import settings
 	if resources.Settings != nil {
 		detail := i.importSettings(ctx, *resources.Settings, resources.Metadata.TeamID, userID, options)
@@ -126,7 +151,7 @@ func (i *Importer) Import(ctx context.Context, resources *TeamResources, userID 
 	}
 
 	// Check if any failures occurred
-	if result.Summary.Schedules.Failed > 0 || result.Summary.Webhooks.Failed > 0 || result.Summary.Settings.Failed > 0 {
+	if result.Summary.Schedules.Failed > 0 || result.Summary.Webhooks.Failed > 0 || result.Summary.SlackBots.Failed > 0 || result.Summary.Settings.Failed > 0 {
 		result.Success = false
 	}
 
@@ -671,6 +696,232 @@ func (i *Importer) convertWebhookSessionConfig(ctx context.Context, configImport
 	}
 
 	return config, nil
+}
+
+func (i *Importer) importSlackBot(ctx context.Context, slackBotImport SlackBotImport, teamID, userID string, options ImportOptions) ImportDetail {
+	detail := ImportDetail{
+		ResourceType: "slackbot",
+		ResourceName: slackBotImport.Name,
+		Status:       "success",
+	}
+
+	// SlackBot repository must be available
+	if i.slackBotRepository == nil {
+		detail.Action = "failed"
+		detail.Status = "error"
+		detail.Error = "slackbot repository not available"
+		return detail
+	}
+
+	// Find existing slackbot by ID (preferred) or name (fallback) if mode is update or upsert
+	var existingSlackBot *entities.SlackBot
+	if options.Mode == ImportModeUpdate || options.Mode == ImportModeUpsert {
+		slackBots, err := i.slackBotRepository.List(ctx, repositories.SlackBotFilter{
+			UserID: userID,
+			Scope:  entities.ScopeTeam,
+			TeamID: teamID,
+		})
+		if err == nil {
+			// First, try to match by ID if provided
+			if slackBotImport.ID != "" {
+				for _, sb := range slackBots {
+					if sb.ID() == slackBotImport.ID {
+						existingSlackBot = sb
+						break
+					}
+				}
+			}
+			// Fallback to name matching if ID not found or not provided
+			if existingSlackBot == nil {
+				for _, sb := range slackBots {
+					if sb.Name() == slackBotImport.Name {
+						existingSlackBot = sb
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Determine action based on mode and existence
+	var action string
+	switch options.Mode {
+	case ImportModeCreate:
+		if existingSlackBot != nil {
+			detail.Action = "failed"
+			detail.Status = "error"
+			detail.Error = fmt.Sprintf("slackbot with name %q already exists", slackBotImport.Name)
+			return detail
+		}
+		action = "create"
+	case ImportModeUpdate:
+		if existingSlackBot == nil {
+			detail.Action = "failed"
+			detail.Status = "error"
+			detail.Error = fmt.Sprintf("slackbot with name %q does not exist", slackBotImport.Name)
+			return detail
+		}
+		action = "update"
+	case ImportModeUpsert:
+		if existingSlackBot != nil {
+			action = "update"
+		} else {
+			action = "create"
+		}
+	}
+
+	// Convert import to slackbot entity
+	slackBotEntity, err := i.convertSlackBotImport(ctx, slackBotImport, teamID, userID, existingSlackBot, options)
+	if err != nil {
+		detail.Action = "failed"
+		detail.Status = "error"
+		detail.Error = err.Error()
+		return detail
+	}
+
+	// Dry run - don't actually create/update, but generate diff
+	if options.DryRun {
+		detail.Action = action + "d (dry-run)"
+		if existingSlackBot != nil {
+			detail.ID = existingSlackBot.ID()
+			diff, err := generateDiff(existingSlackBot, slackBotEntity, slackBotImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		} else {
+			diff, err := generateDiff(nil, slackBotEntity, slackBotImport.Name)
+			if err == nil && diff != nil {
+				detail.Diff = diff
+			}
+		}
+		return detail
+	}
+
+	// Create or update
+	if action == "create" {
+		if err := i.slackBotRepository.Create(ctx, slackBotEntity); err != nil {
+			detail.Action = "failed"
+			detail.Status = "error"
+			detail.Error = err.Error()
+			return detail
+		}
+		detail.Action = "created"
+	} else {
+		if err := i.slackBotRepository.Update(ctx, slackBotEntity); err != nil {
+			detail.Action = "failed"
+			detail.Status = "error"
+			detail.Error = err.Error()
+			return detail
+		}
+		detail.Action = "updated"
+	}
+
+	detail.ID = slackBotEntity.ID()
+	return detail
+}
+
+func (i *Importer) convertSlackBotImport(ctx context.Context, slackBotImport SlackBotImport, teamID, userID string, existing *entities.SlackBot, options ImportOptions) (*entities.SlackBot, error) {
+	var slackBotEntity *entities.SlackBot
+	if existing != nil {
+		slackBotEntity = existing
+	} else {
+		id := slackBotImport.ID
+		if id == "" {
+			id = uuid.New().String()
+		}
+		slackBotEntity = entities.NewSlackBot(id, slackBotImport.Name, userID)
+	}
+
+	slackBotEntity.SetName(slackBotImport.Name)
+	slackBotEntity.SetScope(entities.ScopeTeam)
+	slackBotEntity.SetTeamID(teamID)
+
+	// Set status
+	if slackBotImport.Status != "" {
+		slackBotEntity.SetStatus(entities.SlackBotStatus(slackBotImport.Status))
+	} else {
+		slackBotEntity.SetStatus(entities.SlackBotStatusActive)
+	}
+
+	// Set optional fields
+	if len(slackBotImport.AllowedEventTypes) > 0 {
+		slackBotEntity.SetAllowedEventTypes(slackBotImport.AllowedEventTypes)
+	}
+	if len(slackBotImport.AllowedChannelNames) > 0 {
+		slackBotEntity.SetAllowedChannelNames(slackBotImport.AllowedChannelNames)
+	}
+	if slackBotImport.MaxSessions > 0 {
+		slackBotEntity.SetMaxSessions(slackBotImport.MaxSessions)
+	}
+	if slackBotImport.NotifyOnSessionCreated != nil {
+		slackBotEntity.SetNotifyOnSessionCreated(slackBotImport.NotifyOnSessionCreated)
+	}
+	if slackBotImport.AllowBotMessages != nil {
+		slackBotEntity.SetAllowBotMessages(slackBotImport.AllowBotMessages)
+	}
+
+	// Decrypt and set bot token
+	if slackBotImport.BotToken != "" {
+		if slackBotImport.BotTokenEncrypted != nil {
+			if i.encryptionService == nil {
+				return nil, fmt.Errorf("encrypted bot token found but encryption service not configured")
+			}
+			encrypted := &services.EncryptedData{
+				EncryptedValue: slackBotImport.BotToken,
+				Metadata: services.EncryptionMetadata{
+					Algorithm:   slackBotImport.BotTokenEncrypted.Algorithm,
+					KeyID:       slackBotImport.BotTokenEncrypted.KeyID,
+					EncryptedAt: slackBotImport.BotTokenEncrypted.EncryptedAt,
+					Version:     slackBotImport.BotTokenEncrypted.Version,
+				},
+			}
+			plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt bot token: %w", err)
+			}
+			slackBotEntity.SetBotToken(plaintext)
+		} else {
+			// Plain text token
+			slackBotEntity.SetBotToken(slackBotImport.BotToken)
+		}
+	}
+
+	// Decrypt and set app token
+	if slackBotImport.AppToken != "" {
+		if slackBotImport.AppTokenEncrypted != nil {
+			if i.encryptionService == nil {
+				return nil, fmt.Errorf("encrypted app token found but encryption service not configured")
+			}
+			encrypted := &services.EncryptedData{
+				EncryptedValue: slackBotImport.AppToken,
+				Metadata: services.EncryptionMetadata{
+					Algorithm:   slackBotImport.AppTokenEncrypted.Algorithm,
+					KeyID:       slackBotImport.AppTokenEncrypted.KeyID,
+					EncryptedAt: slackBotImport.AppTokenEncrypted.EncryptedAt,
+					Version:     slackBotImport.AppTokenEncrypted.Version,
+				},
+			}
+			plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt app token: %w", err)
+			}
+			slackBotEntity.SetAppToken(plaintext)
+		} else {
+			// Plain text token
+			slackBotEntity.SetAppToken(slackBotImport.AppToken)
+		}
+	}
+
+	// Convert session config
+	if slackBotImport.SessionConfig != nil {
+		sessionConfig, err := i.convertWebhookSessionConfig(ctx, *slackBotImport.SessionConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert session config: %w", err)
+		}
+		slackBotEntity.SetSessionConfig(sessionConfig)
+	}
+
+	return slackBotEntity, nil
 }
 
 // generateSecret generates a random secret of the specified length

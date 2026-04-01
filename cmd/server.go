@@ -556,6 +556,9 @@ func registerImportExportHandlers(configData *config.Config, proxyServer *app.Se
 	// Get settings repository from server
 	settingsRepo := proxyServer.GetSettingsRepository()
 
+	// Create slackbot repository
+	slackBotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
+
 	// Create encryption service for import/export
 	encryptionFactory := services.NewEncryptionServiceFactory("AGENTAPI_ENCRYPTION")
 	encryptionService, err := encryptionFactory.Create()
@@ -566,7 +569,7 @@ func registerImportExportHandlers(configData *config.Config, proxyServer *app.Se
 	log.Printf("[IMPORT_EXPORT_HANDLERS] Using encryption algorithm: %s", encryptionService.Algorithm())
 
 	// Create and register import/export handlers
-	importExportHandlers := importexport.NewHandlers(scheduleManager, webhookRepo, settingsRepo, encryptionService)
+	importExportHandlers := importexport.NewHandlers(scheduleManager, webhookRepo, slackBotRepo, settingsRepo, encryptionService)
 	proxyServer.AddCustomHandler(importExportHandlers)
 
 	log.Printf("[IMPORT_EXPORT_HANDLERS] Import/export handlers registered successfully")

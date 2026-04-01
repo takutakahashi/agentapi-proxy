@@ -2821,10 +2821,489 @@
           "404": {"description": "Task group not found"}
         }
       }
+    },
+    "/manage/{team_id}": {
+      "get": {
+        "summary": "Export team resources",
+        "description": "Exports all team-scoped resources (schedules, webhooks, slackbots, settings) as a structured document. Secrets (webhook secrets, bot tokens, environment variables, etc.) are encrypted when an encryption service is configured.",
+        "operationId": "exportTeamResources",
+        "tags": ["TeamResources"],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string"},
+            "description": "Team ID in the format 'org-team-slug'"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {"type": "string", "enum": ["yaml", "toml", "json"], "default": "yaml"},
+            "description": "Output format"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Team resources exported successfully",
+            "content": {
+              "application/yaml": {
+                "schema": {"$ref": "#/components/schemas/TeamResources"}
+              },
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TeamResources"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden - user is not a member of the team"},
+          "500": {"description": "Internal server error"}
+        }
+      },
+      "post": {
+        "summary": "Import team resources (create mode)",
+        "description": "Imports team resources in create mode. Fails if any resource already exists unless allow_partial is set.",
+        "operationId": "importTeamResourcesCreate",
+        "tags": ["TeamResources"],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string"},
+            "description": "Team ID in the format 'org-team-slug'"
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {"type": "boolean", "default": false},
+            "description": "Validate only, do not create resources"
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "schema": {"type": "string", "enum": ["create", "update", "upsert"]},
+            "description": "Import mode (default: create for POST, upsert for PUT)"
+          },
+          {
+            "name": "allow_partial",
+            "in": "query",
+            "schema": {"type": "boolean", "default": false},
+            "description": "Allow partial success (continue on individual resource failures)"
+          },
+          {
+            "name": "regenerate_secrets",
+            "in": "query",
+            "schema": {"type": "boolean", "default": false},
+            "description": "Regenerate all secrets instead of importing existing values"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/yaml": {
+              "schema": {"$ref": "#/components/schemas/TeamResources"}
+            },
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/TeamResources"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Import succeeded",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ImportResult"}
+              }
+            }
+          },
+          "207": {
+            "description": "Import partially succeeded",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ImportResult"}
+              }
+            }
+          },
+          "400": {"description": "Bad request - invalid input or team_id mismatch"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden - user is not a member of the team"},
+          "500": {"description": "Internal server error"}
+        }
+      },
+      "put": {
+        "summary": "Import team resources (upsert mode)",
+        "description": "Imports team resources in upsert mode. Creates new resources and updates existing ones.",
+        "operationId": "importTeamResourcesUpsert",
+        "tags": ["TeamResources"],
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string"},
+            "description": "Team ID in the format 'org-team-slug'"
+          },
+          {
+            "name": "dry_run",
+            "in": "query",
+            "schema": {"type": "boolean", "default": false},
+            "description": "Validate only, do not create/update resources"
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "schema": {"type": "string", "enum": ["create", "update", "upsert"]},
+            "description": "Import mode (default: upsert for PUT)"
+          },
+          {
+            "name": "allow_partial",
+            "in": "query",
+            "schema": {"type": "boolean", "default": false},
+            "description": "Allow partial success"
+          },
+          {
+            "name": "regenerate_secrets",
+            "in": "query",
+            "schema": {"type": "boolean", "default": false},
+            "description": "Regenerate all secrets instead of importing existing values"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/yaml": {
+              "schema": {"$ref": "#/components/schemas/TeamResources"}
+            },
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/TeamResources"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Import succeeded",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ImportResult"}
+              }
+            }
+          },
+          "207": {
+            "description": "Import partially succeeded",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ImportResult"}
+              }
+            }
+          },
+          "400": {"description": "Bad request"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "500": {"description": "Internal server error"}
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "EncryptedSecretData": {
+        "type": "object",
+        "description": "Metadata for an encrypted secret value",
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "description": "Encryption algorithm used (e.g. aws-kms, aes-256-gcm, noop)"
+          },
+          "key_id": {
+            "type": "string",
+            "description": "Key identifier used for encryption"
+          },
+          "encrypted_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the value was encrypted"
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of the encryption scheme"
+          }
+        }
+      },
+      "SessionConfigImport": {
+        "type": "object",
+        "description": "Session configuration for import/export",
+        "properties": {
+          "environment": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "description": "Environment variables (values may be encrypted ciphertext when environment_encrypted is present)"
+          },
+          "environment_encrypted": {
+            "type": "object",
+            "additionalProperties": {"$ref": "#/components/schemas/EncryptedSecretData"},
+            "description": "Encryption metadata for each encrypted environment variable"
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "description": "Tags to apply to created sessions"
+          },
+          "params": {
+            "type": "object",
+            "description": "Session creation parameters",
+            "properties": {
+              "initial_message": {
+                "type": "string",
+                "description": "Initial message to send to the agent"
+              },
+              "initial_message_template": {
+                "type": "string",
+                "description": "Go template for the initial message"
+              },
+              "github_token": {
+                "type": "string",
+                "description": "GitHub token (may be encrypted ciphertext)"
+              },
+              "github_token_encrypted": {
+                "$ref": "#/components/schemas/EncryptedSecretData"
+              }
+            }
+          }
+        }
+      },
+      "SlackBotImport": {
+        "type": "object",
+        "description": "SlackBot configuration for import/export",
+        "required": ["name"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "SlackBot ID (auto-generated if not provided on import)"
+          },
+          "name": {
+            "type": "string",
+            "description": "SlackBot name"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["active", "paused"],
+            "description": "SlackBot status"
+          },
+          "bot_token": {
+            "type": "string",
+            "description": "Slack bot token (xoxb-...). Encrypted ciphertext when bot_token_encrypted is present."
+          },
+          "bot_token_encrypted": {
+            "$ref": "#/components/schemas/EncryptedSecretData",
+            "description": "Encryption metadata for the bot token"
+          },
+          "app_token": {
+            "type": "string",
+            "description": "Slack app-level token (xapp-...). Encrypted ciphertext when app_token_encrypted is present."
+          },
+          "app_token_encrypted": {
+            "$ref": "#/components/schemas/EncryptedSecretData",
+            "description": "Encryption metadata for the app token"
+          },
+          "allowed_event_types": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Allowed Slack event types. Empty means all types allowed."
+          },
+          "allowed_channel_names": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Allowed channel name patterns (partial match). Empty means all channels allowed."
+          },
+          "max_sessions": {
+            "type": "integer",
+            "description": "Maximum concurrent sessions"
+          },
+          "notify_on_session_created": {
+            "type": "boolean",
+            "description": "Post a Slack notification when a session is created (default: true)"
+          },
+          "allow_bot_messages": {
+            "type": "boolean",
+            "description": "Process messages from bots (default: false)"
+          },
+          "session_config": {
+            "$ref": "#/components/schemas/SessionConfigImport"
+          }
+        }
+      },
+      "ScheduleImport": {
+        "type": "object",
+        "description": "Schedule configuration for import/export",
+        "required": ["name"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "status": {"type": "string", "enum": ["active", "paused", "completed"]},
+          "scheduled_at": {"type": "string", "format": "date-time"},
+          "cron_expr": {"type": "string"},
+          "timezone": {"type": "string"},
+          "session_config": {"$ref": "#/components/schemas/SessionConfigImport"}
+        }
+      },
+      "WebhookTriggerConditionsImport": {
+        "type": "object",
+        "properties": {
+          "github": {
+            "type": "object",
+            "properties": {
+              "events": {"type": "array", "items": {"type": "string"}},
+              "actions": {"type": "array", "items": {"type": "string"}},
+              "branches": {"type": "array", "items": {"type": "string"}},
+              "repositories": {"type": "array", "items": {"type": "string"}},
+              "labels": {"type": "array", "items": {"type": "string"}},
+              "paths": {"type": "array", "items": {"type": "string"}},
+              "base_branches": {"type": "array", "items": {"type": "string"}},
+              "draft": {"type": "boolean"},
+              "sender": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+          "go_template": {"type": "string"}
+        }
+      },
+      "WebhookTriggerImport": {
+        "type": "object",
+        "required": ["name", "enabled", "conditions"],
+        "properties": {
+          "name": {"type": "string"},
+          "priority": {"type": "integer"},
+          "enabled": {"type": "boolean"},
+          "conditions": {"$ref": "#/components/schemas/WebhookTriggerConditionsImport"},
+          "session_config": {"$ref": "#/components/schemas/SessionConfigImport"},
+          "stop_on_match": {"type": "boolean"}
+        }
+      },
+      "WebhookImport": {
+        "type": "object",
+        "description": "Webhook configuration for import/export",
+        "required": ["name", "webhook_type", "triggers"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "status": {"type": "string", "enum": ["active", "paused"]},
+          "webhook_type": {"type": "string", "enum": ["github", "custom"]},
+          "secret": {
+            "type": "string",
+            "description": "Webhook secret. Encrypted ciphertext when secret_encrypted is present."
+          },
+          "secret_encrypted": {"$ref": "#/components/schemas/EncryptedSecretData"},
+          "signature_header": {"type": "string"},
+          "signature_type": {"type": "string", "enum": ["hmac", "static"]},
+          "signature_prefix": {"type": "string"},
+          "max_sessions": {"type": "integer"},
+          "github": {
+            "type": "object",
+            "properties": {
+              "enterprise_url": {"type": "string"},
+              "allowed_events": {"type": "array", "items": {"type": "string"}},
+              "allowed_repositories": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+          "triggers": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/WebhookTriggerImport"}
+          },
+          "session_config": {"$ref": "#/components/schemas/SessionConfigImport"}
+        }
+      },
+      "TeamResources": {
+        "type": "object",
+        "description": "Root structure for team resource import/export",
+        "required": ["apiVersion", "kind", "metadata"],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "example": "agentapi.proxy/v1"
+          },
+          "kind": {
+            "type": "string",
+            "example": "TeamResources"
+          },
+          "metadata": {
+            "type": "object",
+            "required": ["team_id"],
+            "properties": {
+              "team_id": {
+                "type": "string",
+                "description": "Team ID in the format 'org-team-slug'"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          },
+          "schedules": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/ScheduleImport"},
+            "description": "List of team-scoped schedules"
+          },
+          "webhooks": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/WebhookImport"},
+            "description": "List of team-scoped webhooks"
+          },
+          "slackbots": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/SlackBotImport"},
+            "description": "List of team-scoped SlackBots. Bot tokens and app tokens are encrypted when an encryption service is configured."
+          },
+          "settings": {
+            "type": "object",
+            "description": "Team-level settings (Bedrock, MCP servers, OAuth tokens, etc.)"
+          }
+        }
+      },
+      "ImportResourceSummary": {
+        "type": "object",
+        "properties": {
+          "created": {"type": "integer"},
+          "updated": {"type": "integer"},
+          "skipped": {"type": "integer"},
+          "failed": {"type": "integer"}
+        }
+      },
+      "ImportResult": {
+        "type": "object",
+        "description": "Result of a team resource import operation",
+        "properties": {
+          "success": {"type": "boolean"},
+          "summary": {
+            "type": "object",
+            "properties": {
+              "schedules": {"$ref": "#/components/schemas/ImportResourceSummary"},
+              "webhooks": {"$ref": "#/components/schemas/ImportResourceSummary"},
+              "slackbots": {"$ref": "#/components/schemas/ImportResourceSummary"},
+              "settings": {"$ref": "#/components/schemas/ImportResourceSummary"}
+            }
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "resource_type": {"type": "string"},
+                "resource_name": {"type": "string"},
+                "action": {"type": "string"},
+                "id": {"type": "string"},
+                "status": {"type": "string"},
+                "error": {"type": "string"},
+                "diff": {"type": "string"}
+              }
+            }
+          },
+          "errors": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      },
       "Memory": {
         "type": "object",
         "description": "A memory entry belonging to a user or team",
@@ -4954,6 +5433,10 @@
     {
       "name": "TaskGroups",
       "description": "Task group management for organizing tasks into logical collections. Groups support user and team scopes."
+    },
+    {
+      "name": "TeamResources",
+      "description": "Team resource import/export management. Supports exporting and importing schedules, webhooks, SlackBots, and settings as structured documents. Sensitive values (secrets, tokens) are encrypted when an encryption service is configured."
     }
   ]
 }

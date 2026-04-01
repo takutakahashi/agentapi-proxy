@@ -28,12 +28,13 @@ type Handlers struct {
 func NewHandlers(
 	scheduleManager schedule.Manager,
 	webhookRepository repositories.WebhookRepository,
+	slackBotRepository repositories.SlackBotRepository,
 	settingsRepository repositories.SettingsRepository,
 	encryptionService services.EncryptionService,
 ) *Handlers {
 	return &Handlers{
-		importer:  NewImporter(scheduleManager, webhookRepository, settingsRepository, encryptionService),
-		exporter:  NewExporter(scheduleManager, webhookRepository, settingsRepository, encryptionService),
+		importer:  NewImporter(scheduleManager, webhookRepository, slackBotRepository, settingsRepository, encryptionService),
+		exporter:  NewExporter(scheduleManager, webhookRepository, slackBotRepository, settingsRepository, encryptionService),
 		parser:    NewParser(),
 		formatter: NewFormatter(),
 	}

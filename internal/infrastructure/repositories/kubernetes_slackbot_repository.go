@@ -363,6 +363,26 @@ func (r *KubernetesSlackBotRepository) saveSlackBot(ctx context.Context, slackBo
 	return nil
 }
 
+// GetTokens retrieves the bot token and app token stored in the SlackBot's own secret.
+// Returns empty strings if tokens are not stored in the bot's own secret.
+func (r *KubernetesSlackBotRepository) GetTokens(ctx context.Context, id string) (string, string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	secretName := slackBotSecretName(id)
+	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return "", "", nil
+		}
+		return "", "", fmt.Errorf("failed to get slackbot tokens: %w", err)
+	}
+
+	botToken := string(secret.Data["bot-token"])
+	appToken := string(secret.Data["app-token"])
+	return botToken, appToken, nil
+}
+
 // jsonToEntity converts JSON representation to entity
 func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities.SlackBot {
 	slackBot := entities.NewSlackBot(sbj.ID, sbj.Name, sbj.UserID)
