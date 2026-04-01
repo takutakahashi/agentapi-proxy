@@ -64,8 +64,9 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 	}
 
 	// Export schedules (all team-scoped schedules for this team)
+	// Note: UserID is intentionally omitted to export all team members' resources.
+	// Authorization is already verified at the handler level (user must be a team member).
 	schedules, err := e.scheduleManager.List(ctx, schedule.ScheduleFilter{
-		UserID: userID,
 		Scope:  entities.ScopeTeam,
 		TeamID: teamID,
 	})
@@ -81,8 +82,8 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 	}
 
 	// Export webhooks (all team-scoped webhooks for this team, with secrets)
+	// Note: UserID is intentionally omitted to export all team members' resources.
 	webhooks, err := e.webhookRepository.List(ctx, repositories.WebhookFilter{
-		UserID: userID,
 		Scope:  entities.ScopeTeam,
 		TeamID: teamID,
 	})
@@ -98,9 +99,9 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 	}
 
 	// Export slackbots (all team-scoped slackbots for this team)
+	// Note: UserID is intentionally omitted to export all team members' resources.
 	if e.slackBotRepository != nil {
 		slackBots, err := e.slackBotRepository.List(ctx, repositories.SlackBotFilter{
-			UserID: userID,
 			Scope:  entities.ScopeTeam,
 			TeamID: teamID,
 		})
