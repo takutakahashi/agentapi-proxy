@@ -459,6 +459,32 @@ func (s *SimpleAuthService) LoadPersonalAPIKey(ctx context.Context, personalAPIK
 		s.users[userID] = user
 	}
 
+	// Set team memberships if teams are specified on the personal API key.
+	// This allows personal API keys to access team-scoped resources (e.g. /manage/:team_id).
+	if teams := personalAPIKey.Teams(); len(teams) > 0 {
+		memberships := make([]entities.GitHubTeamMembership, 0, len(teams))
+		for _, teamSlug := range teams {
+			// Parse "org/team-slug" format
+			parts := splitTeamSlug(teamSlug)
+			if parts == nil {
+				continue
+			}
+			memberships = append(memberships, entities.GitHubTeamMembership{
+				Organization: parts[0],
+				TeamSlug:     parts[1],
+				TeamName:     parts[1],
+				Role:         "member",
+			})
+		}
+		if len(memberships) > 0 {
+			githubInfo := user.GitHubInfo()
+			if githubInfo == nil {
+				githubInfo = entities.NewGitHubUserInfo(0, string(userID), string(userID), "", "", "", "")
+			}
+			user.SetGitHubInfo(githubInfo, memberships)
+		}
+	}
+
 	// Store API key in memory maps
 	s.apiKeys[apiKey] = &services.APIKey{
 		Key:         apiKey,
@@ -470,4 +496,14 @@ func (s *SimpleAuthService) LoadPersonalAPIKey(ctx context.Context, personalAPIK
 	s.keyToUserID[apiKey] = userID
 
 	return nil
+}
+
+// splitTeamSlug splits a "org/team-slug" string into [org, team-slug].
+// Returns nil if the format is invalid.
+func splitTeamSlug(teamSlug string) []string {
+	parts := strings.SplitN(teamSlug, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil
+	}
+	return parts
 }
