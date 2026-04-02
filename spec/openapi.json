@@ -2834,7 +2834,7 @@
             "in": "path",
             "required": true,
             "schema": {"type": "string"},
-            "description": "Team ID in the format 'org-team-slug'"
+            "description": "Team ID. Supports both 'org/team-slug' (slash-separated, recommended) and 'org-team-slug' (dash-separated, legacy) formats. Admin users can access any team's resources regardless of membership."
           },
           {
             "name": "format",
@@ -2871,7 +2871,7 @@
             "in": "path",
             "required": true,
             "schema": {"type": "string"},
-            "description": "Team ID in the format 'org-team-slug'"
+            "description": "Team ID. Supports both 'org/team-slug' (slash-separated, recommended) and 'org-team-slug' (dash-separated, legacy) formats. Admin users can access any team's resources regardless of membership."
           },
           {
             "name": "dry_run",
@@ -2943,7 +2943,7 @@
             "in": "path",
             "required": true,
             "schema": {"type": "string"},
-            "description": "Team ID in the format 'org-team-slug'"
+            "description": "Team ID. Supports both 'org/team-slug' (slash-separated, recommended) and 'org-team-slug' (dash-separated, legacy) formats. Admin users can access any team's resources regardless of membership."
           },
           {
             "name": "dry_run",
@@ -3232,7 +3232,7 @@
             "properties": {
               "team_id": {
                 "type": "string",
-                "description": "Team ID in the format 'org-team-slug'"
+                "description": "Team ID. Supports both 'org/team-slug' (slash-separated, recommended) and 'org-team-slug' (dash-separated, legacy) formats. Admin users can access any team's resources regardless of membership."
               },
               "description": {
                 "type": "string"

@@ -48,26 +48,29 @@ func (h *Handlers) GetName() string {
 // RegisterRoutes registers import/export routes
 // Implements the app.CustomHandler interface
 func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
-	// GET /manage/:team_id - Export team resources
-	e.GET("/manage/:team_id", h.ExportTeamResources)
+	// GET /manage/* - Export team resources
+	// The team_id can contain slashes (e.g. "org/team-slug") or dashes ("org-team-slug").
+	// Wildcard is used so that slash-separated team IDs work correctly.
+	e.GET("/manage/*", h.ExportTeamResources)
 
-	// POST /manage/:team_id - Import team resources (create mode)
-	e.POST("/manage/:team_id", h.ImportTeamResources)
+	// POST /manage/* - Import team resources (create mode)
+	e.POST("/manage/*", h.ImportTeamResources)
 
-	// PUT /manage/:team_id - Import team resources (update/upsert mode)
-	e.PUT("/manage/:team_id", h.ImportTeamResources)
+	// PUT /manage/* - Import team resources (update/upsert mode)
+	e.PUT("/manage/*", h.ImportTeamResources)
 
-	log.Printf("Registered team resources management routes: GET/POST/PUT /manage/:team_id")
+	log.Printf("Registered team resources management routes: GET/POST/PUT /manage/*")
 	return nil
 }
 
-// ImportTeamResources handles POST/PUT /manage/:team_id
+// ImportTeamResources handles POST/PUT /manage/*
 // POST: Import with create mode (default)
 // PUT: Import with upsert mode (default)
+// The team_id path segment supports both "org/team-slug" (slash) and "org-team-slug" (dash) formats.
 func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	h.setCORSHeaders(c)
 
-	teamID := c.Param("team_id")
+	teamID := c.Param("*")
 	if teamID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "team_id is required")
 	}
@@ -153,11 +156,12 @@ func (h *Handlers) ImportTeamResources(c echo.Context) error {
 	return c.JSON(http.StatusMultiStatus, result)
 }
 
-// ExportTeamResources handles GET /manage/:team_id
+// ExportTeamResources handles GET /manage/*
+// The team_id path segment supports both "org/team-slug" (slash) and "org-team-slug" (dash) formats.
 func (h *Handlers) ExportTeamResources(c echo.Context) error {
 	h.setCORSHeaders(c)
 
-	teamID := c.Param("team_id")
+	teamID := c.Param("*")
 	if teamID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "team_id is required")
 	}

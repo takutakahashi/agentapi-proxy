@@ -421,12 +421,14 @@ func (u *User) HasAnyPermission(permissions ...Permission) bool {
 
 // IsAdmin returns true if the user is an admin
 func (u *User) IsAdmin() bool {
+	// Check roles (set via TeamRoleMapping for GitHub/AWS users)
 	for _, role := range u.roles {
 		if role == RoleAdmin {
 			return true
 		}
 	}
-	return false
+	// Also treat UserTypeAdmin as admin (e.g. password-authenticated admin users)
+	return u.userType == UserTypeAdmin
 }
 
 // CanAccessSession checks if the user can access a specific session
