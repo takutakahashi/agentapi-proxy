@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,11 +12,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -165,6 +172,12 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		go s.runClaudePosts(ctx, settings.SlackParams)
 	}
 
+	// ── Step 12: start credentials sync goroutine ─────────────────────────────
+	// Syncs ~/.codex/auth.json → Kubernetes Secret agentapi-agent-env-{userID}.
+	// Runs in-process instead of as a sidecar so that UserID is always set
+	// (stock pool pods have empty UserID at pod creation time).
+	go s.runCredentialsSync(ctx, settings.Session.UserID)
+
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
 		if err := cmd.Wait(); err != nil {
@@ -216,6 +229,126 @@ func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.Sla
 	} else {
 		log.Printf("[CLAUDE_POSTS] Exited normally")
 	}
+}
+
+// runCredentialsSync watches ~/.codex/auth.json for changes and syncs them
+// to the Kubernetes Secret agentapi-agent-env-{userID} using the in-cluster
+// k8s client. It replaces the credentials-sync sidecar container, ensuring
+// that UserID is always available (stock pool pods have an empty UserID at
+// pod creation time, which caused the sidecar to fail).
+// The goroutine is tied to ctx: when ctx is cancelled the loop exits.
+func (s *Server) runCredentialsSync(ctx context.Context, userID string) {
+	const credentialsFile = "/home/agentapi/.codex/auth.json"
+	const syncInterval = 10 * time.Second
+
+	if userID == "" {
+		log.Printf("[CREDENTIALS_SYNC] No user ID set, skipping credentials sync")
+		return
+	}
+
+	secretName := "agentapi-agent-env-" + sanitizeCredentialSecretName(userID)
+
+	// Read namespace from the in-cluster service-account namespace file.
+	nsBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		log.Printf("[CREDENTIALS_SYNC] Not running in a k8s cluster (namespace file not found): %v, skipping", err)
+		return
+	}
+	namespace := strings.TrimSpace(string(nsBytes))
+
+	log.Printf("[CREDENTIALS_SYNC] Starting: watching %s -> Secret %s/%s (interval: %s)", credentialsFile, namespace, secretName, syncInterval)
+
+	k8sCfg, err := rest.InClusterConfig()
+	if err != nil {
+		log.Printf("[CREDENTIALS_SYNC] Failed to get in-cluster config: %v, skipping", err)
+		return
+	}
+	clientset, err := kubernetes.NewForConfig(k8sCfg)
+	if err != nil {
+		log.Printf("[CREDENTIALS_SYNC] Failed to create k8s client: %v, skipping", err)
+		return
+	}
+
+	var lastHash string
+	ticker := time.NewTicker(syncInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[CREDENTIALS_SYNC] Context cancelled, stopping")
+			return
+		case <-ticker.C:
+			data, hash, err := readFileWithHash(credentialsFile)
+			if err != nil {
+				// File may not exist yet (agent not logged in); not an error.
+				continue
+			}
+			if hash == lastHash {
+				continue
+			}
+
+			log.Printf("[CREDENTIALS_SYNC] Credentials file changed, syncing to Secret %s", secretName)
+			if err := upsertCredentialsSecret(ctx, clientset, namespace, secretName, data); err != nil {
+				log.Printf("[CREDENTIALS_SYNC] ERROR: failed to upsert Secret: %v", err)
+			} else {
+				log.Printf("[CREDENTIALS_SYNC] Successfully synced to Secret %s", secretName)
+				lastHash = hash
+			}
+		}
+	}
+}
+
+// readFileWithHash reads a file and returns its content and hex-encoded SHA256 hash.
+func readFileWithHash(path string) ([]byte, string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(data)
+	return data, fmt.Sprintf("%x", sum), nil
+}
+
+// upsertCredentialsSecret creates or updates a Kubernetes Secret with the
+// provided credentials data (key: auth.json).
+func upsertCredentialsSecret(ctx context.Context, clientset kubernetes.Interface, namespace, name string, data []byte) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "agentapi-agent-credentials",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"auth.json": data,
+		},
+	}
+
+	_, err := clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err == nil {
+		return nil
+	}
+	if k8serrors.IsAlreadyExists(err) {
+		_, err = clientset.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{})
+		return err
+	}
+	return err
+}
+
+// sanitizeCredentialSecretName converts a userID into a valid Kubernetes Secret
+// name component (lowercase alphanumeric and dashes only, max 50 chars).
+func sanitizeCredentialSecretName(s string) string {
+	s = strings.ToLower(s)
+	re := regexp.MustCompile(`[^a-z0-9-]`)
+	s = re.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 50 {
+		s = s[:50]
+	}
+	return s
 }
 
 // runOtelcol starts the OpenTelemetry Collector binary as a subprocess.

@@ -1308,15 +1308,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session)
 
-	// Build containers list (main container + credentials sync sidecar)
+	// Build containers list (main container only)
+	// Note: credentials-sync is now handled as a goroutine inside agent-provisioner
+	// (pkg/provisioner/provision.go) after user context is established, so the
+	// UserID is always set correctly even for stock pool pods.
 	containers := []corev1.Container{container}
-
-	// Add credentials sync sidecar
-	// This sidecar watches for credential file changes and syncs them to the user-level Secret
-	if sidecar := m.buildCredentialsSyncSidecar(session); sidecar != nil {
-		containers = append(containers, *sidecar)
-		log.Printf("[K8S_SESSION] Added credentials-sync sidecar for session %s", session.id)
-	}
 
 	// Note: Initial message is now sent by agent-provisioner internally after agentapi
 	// becomes ready. The initial-message-sender sidecar has been removed.
@@ -1398,147 +1394,10 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	return err
 }
 
-// credentialsSyncScript is the shell script for the credentials sync sidecar
-// It watches for changes to ~/.codex/auth.json and syncs them to the Kubernetes Secret
-// Note: This script does NOT require secrets:get permission. It uses patch-first approach
-// and falls back to create if the secret doesn't exist.
-const credentialsSyncScript = `
-#!/bin/sh
-
-CREDENTIALS_PATH="${CREDENTIALS_FILE_PATH:-/home/agentapi/.codex/auth.json}"
-SECRET_NAME="${SECRET_NAME}"
-NAMESPACE="${SECRET_NAMESPACE}"
-INTERVAL="${SYNC_INTERVAL:-10}"
-LAST_HASH=""
-
-log() {
-    echo "[$(date -Iseconds)] [credentials-sync] $1"
-}
-
-sync_to_secret() {
-    if [ ! -f "$CREDENTIALS_PATH" ]; then
-        return
-    fi
-
-    CURRENT_HASH=$(sha256sum "$CREDENTIALS_PATH" 2>/dev/null | cut -d' ' -f1 || echo "")
-
-    if [ -z "$CURRENT_HASH" ]; then
-        return
-    fi
-
-    if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
-        return
-    fi
-
-    log "Credentials file changed, syncing to Secret $SECRET_NAME..."
-
-    # Base64 encode the file content
-    ENCODED=$(base64 -w0 "$CREDENTIALS_PATH")
-
-    # Generate Secret manifest
-    SECRET_YAML=$(cat <<EOFYAML
-apiVersion: v1
-kind: Secret
-metadata:
-  name: $SECRET_NAME
-  namespace: $NAMESPACE
-  labels:
-    app.kubernetes.io/name: agentapi-agent-credentials
-    app.kubernetes.io/managed-by: agentapi-proxy
-type: Opaque
-data:
-  auth.json: $ENCODED
-EOFYAML
-)
-
-    # Try to create the secret first (works if secret does not exist)
-    RESULT=$(echo "$SECRET_YAML" | kubectl create -f - 2>&1)
-    if [ $? -eq 0 ]; then
-        log "Successfully created Secret"
-        LAST_HASH="$CURRENT_HASH"
-        return
-    fi
-
-    # Check if the error is "AlreadyExists" - if so, replace the secret
-    if echo "$RESULT" | grep -q "AlreadyExists\|already exists"; then
-        RESULT=$(echo "$SECRET_YAML" | kubectl replace -f - 2>&1)
-        if [ $? -eq 0 ]; then
-            log "Successfully updated Secret"
-            LAST_HASH="$CURRENT_HASH"
-        else
-            log "ERROR: Failed to replace Secret: $RESULT"
-        fi
-    else
-        log "ERROR: Failed to create Secret: $RESULT"
-    fi
-}
-
-log "Starting credentials sync sidecar"
-log "Watching: $CREDENTIALS_PATH"
-log "Target Secret: $SECRET_NAME in $NAMESPACE"
-log "Sync interval: ${INTERVAL}s"
-
-while true; do
-    sync_to_secret
-    sleep "$INTERVAL"
-done
-`
-
-// credentialsSyncSidecarImage is the image used for the credentials sync sidecar
-// This image must contain kubectl for interacting with Kubernetes API
-const credentialsSyncSidecarImage = "mirror.gcr.io/bitnami/kubectl:latest"
-
-// buildCredentialsSyncSidecar builds the sidecar container for syncing credentials to Secret
-func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *KubernetesSession) *corev1.Container {
-	// Use bitnami/kubectl image which contains kubectl
-	sidecarImage := credentialsSyncSidecarImage
-
-	// Secret name is per-user, not per-session
-	// Format: agentapi-agent-env-{userID}
-	credentialsSecretName := fmt.Sprintf("agentapi-agent-env-%s", sanitizeLabelValue(session.Request().UserID))
-
-	return &corev1.Container{
-		Name:            "credentials-sync",
-		Image:           sidecarImage,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"sh", "-c"},
-		Args:            []string{credentialsSyncScript},
-		Env: []corev1.EnvVar{
-			{Name: "CREDENTIALS_FILE_PATH", Value: "/home/agentapi/.codex/auth.json"},
-			{Name: "SECRET_NAME", Value: credentialsSecretName},
-			{
-				Name: "SECRET_NAMESPACE",
-				ValueFrom: &corev1.EnvVarSource{
-					FieldRef: &corev1.ObjectFieldSelector{
-						FieldPath: "metadata.namespace",
-					},
-				},
-			},
-			{Name: "SYNC_INTERVAL", Value: "10"},
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			// Mount shared .codex directory (written by setup, read by credentials-sync)
-			{
-				Name:      "dot-codex",
-				MountPath: "/home/agentapi/.codex",
-			},
-		},
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("64Mi"),
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:  int64Ptr(999),
-			RunAsGroup: int64Ptr(999),
-		},
-	}
-}
+// NOTE: The credentialsSyncScript / credentialsSyncSidecarImage / buildCredentialsSyncSidecar
+// have been removed. Credentials sync is now handled as a goroutine inside agent-provisioner
+// (pkg/provisioner/provision.go) after user context is established. This ensures the
+// UserID is always available (stock pool pods have an empty UserID at pod creation time).
 
 // NOTE: The initialMessageSenderScript and buildInitialMessageSenderSidecar have been
 // removed. Initial message sending is now handled inside agent-provisioner
@@ -1748,14 +1607,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		// dot-claude EmptyDir – used by main container for Claude Code settings
 		{
 			Name: "dot-claude",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		},
-		// dot-codex EmptyDir – shared between main container and credentials-sync sidecar
-		// setup writes ~/.codex/auth.json here; credentials-sync reads auth.json from here
-		{
-			Name: "dot-codex",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
@@ -2422,11 +2273,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		{
 			Name:      "dot-claude",
 			MountPath: "/home/agentapi/.claude",
-		},
-		// dot-codex EmptyDir – setup writes auth.json here; shared with credentials-sync sidecar
-		{
-			Name:      "dot-codex",
-			MountPath: "/home/agentapi/.codex",
 		},
 		// credentials-config – read by setup on startup
 		{
