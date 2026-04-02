@@ -20,6 +20,13 @@ type SessionSettings struct {
 	Github         *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
 	SlackParams    *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
 	OtelCollector  *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
+	// Credentials is the raw JSON content of ~/.codex/auth.json from the previous session.
+	// It is read from the agentapi-agent-env-{userID} Secret at session creation time and
+	// delivered to the provisioner via the provision endpoint so that stock pool pods
+	// (which have no user-specific volume mounts) can also restore credentials.
+	// After provision, the runCredentialsSync goroutine watches the file and syncs
+	// any changes back to the Secret.
+	Credentials string `yaml:"credentials,omitempty" json:"credentials,omitempty"`
 }
 
 // OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.
