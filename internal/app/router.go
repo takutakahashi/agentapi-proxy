@@ -27,6 +27,7 @@ type HandlerRegistry struct {
 	healthController         *controllers.HealthController
 	sessionController        *controllers.SessionController
 	settingsController       *controllers.SettingsController
+	credentialsController    *controllers.CredentialsController
 	userController           *controllers.UserController
 	shareController          *controllers.ShareController
 	personalAPIKeyController *controllers.PersonalAPIKeyController
@@ -46,6 +47,13 @@ type CustomHandler interface {
 func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create settings controller
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc)
+
+	// Create credentials controller
+	var credentialsController *controllers.CredentialsController
+	if server.credentialsRepo != nil {
+		credentialsController = controllers.NewCredentialsController(server.credentialsRepo)
+		log.Printf("[ROUTER] Credentials controller initialized")
+	}
 
 	// Create session controller with proper dependencies
 	// server implements SessionManagerProvider interface via GetSessionManager()
@@ -116,6 +124,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			healthController:         controllers.NewHealthController(),
 			sessionController:        sessionController,
 			settingsController:       settingsController,
+			credentialsController:    credentialsController,
 			userController:           controllers.NewUserController(),
 			shareController:          shareController,
 			personalAPIKeyController: personalAPIKeyController,
@@ -255,6 +264,17 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Settings endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Settings repository not available, skipping settings routes")
+	}
+
+	// Add credentials routes if credentials repository is available (Kubernetes mode only)
+	if r.server.credentialsRepo != nil && r.handlers.credentialsController != nil {
+		log.Printf("[ROUTES] Registering credentials endpoints...")
+		r.echo.GET("/credentials/:name", r.handlers.credentialsController.GetCredentials, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/credentials/:name", r.handlers.credentialsController.UploadCredentials, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/credentials/:name", r.handlers.credentialsController.DeleteCredentials, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Credentials endpoints registered")
+	} else {
+		log.Printf("[ROUTES] Credentials repository not available, skipping credentials routes")
 	}
 
 	// Add personal API key routes if controller is available (Kubernetes mode only)

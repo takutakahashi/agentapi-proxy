@@ -48,6 +48,7 @@ type Server struct {
 	container        *di.Container                    // Internal DI container
 	sessionManager   portrepos.SessionManager         // Session lifecycle manager
 	settingsRepo     portrepos.SettingsRepository     // Settings repository
+	credentialsRepo  portrepos.CredentialsRepository  // Credentials repository
 	shareRepo        portrepos.ShareRepository        // Share repository for session sharing
 	teamConfigRepo   portrepos.TeamConfigRepository   // Team configuration repository
 	memoryRepo       portrepos.MemoryRepository       // Memory repository
@@ -93,7 +94,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials"
 			}
 			return false
 		},
@@ -185,6 +186,13 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Set settings repository in session manager for Bedrock integration
 	k8sSessionManager.SetSettingsRepository(settingsRepo)
 	log.Printf("[SERVER] Settings repository initialized")
+
+	// Initialize credentials repository
+	credentialsRepo := portrepos.CredentialsRepository(repositories.NewKubernetesCredentialsRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	))
+	log.Printf("[SERVER] Credentials repository initialized")
 	// Initialize share repository
 	shareRepo = repositories.NewKubernetesShareRepository(
 		k8sSessionManager.GetClient(),
@@ -267,6 +275,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		container:        container,
 		sessionManager:   sessionManager,
 		settingsRepo:     settingsRepo,
+		credentialsRepo:  credentialsRepo,
 		shareRepo:        shareRepo,
 		teamConfigRepo:   teamConfigRepo,
 		memoryRepo:       memoryRepo,
