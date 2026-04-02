@@ -3079,11 +3079,33 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] OtelCollector in-process config embedded for session %s", session.id)
 	}
 
-	// Embed credentials from the user's agentapi-agent-env-{userID} Secret so that
+	// Embed credentials from the user's credential Secret so that
 	// stock pool pods (which have no user-specific volume mounts) can restore
 	// ~/.codex/auth.json on startup via the provision endpoint payload.
 	// Only applies to user-scoped sessions with a known UserID.
+	//
+	// Priority (highest wins):
+	//   1. agentapi-agent-env-{userID} / auth.json  (legacy, direct raw JSON)
+	//   2. agentapi-credentials-{userID} / credentials.json  (uploaded via /credentials API)
 	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" {
+		// (2) Try new credentials API Secret first as the base value.
+		apiCredSecretName := fmt.Sprintf("agentapi-credentials-%s", sanitizeLabelValue(req.UserID))
+		apiCredSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, apiCredSecretName, metav1.GetOptions{})
+		if err == nil {
+			if raw, ok := apiCredSecret.Data["credentials.json"]; ok && len(raw) > 0 {
+				// credentials.json wraps the user data: {"name":"...","data":{...},...}
+				// Extract the inner "data" field which is the actual auth.json content.
+				var wrapper struct {
+					Data json.RawMessage `json:"data"`
+				}
+				if jsonErr := json.Unmarshal(raw, &wrapper); jsonErr == nil && len(wrapper.Data) > 0 {
+					settings.Credentials = string(wrapper.Data)
+					log.Printf("[K8S_SESSION] Embedded credentials from Secret %s for session %s", apiCredSecretName, session.id)
+				}
+			}
+		}
+
+		// (1) Legacy agentapi-agent-env-{userID} / auth.json overrides if present.
 		credSecretName := fmt.Sprintf("agentapi-agent-env-%s", sanitizeLabelValue(req.UserID))
 		credSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, credSecretName, metav1.GetOptions{})
 		if err == nil {
