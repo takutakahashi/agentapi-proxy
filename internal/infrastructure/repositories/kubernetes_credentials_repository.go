@@ -2,7 +2,6 @@ package repositories
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -19,21 +18,23 @@ const (
 	LabelCredentials = "agentapi.proxy/credentials"
 	// LabelCredentialsName is the label key for credentials name
 	LabelCredentialsName = "agentapi.proxy/credentials-name"
-	// SecretKeyCredentials is the key in the Secret data for credentials JSON
-	SecretKeyCredentials = "credentials.json"
+	// SecretKeyCredentials is the key in the Secret data for the raw auth.json content.
+	// Using "auth.json" so it is consistent with the legacy agentapi-agent-env-* mechanism
+	// and can be read directly by the session manager without any unwrapping.
+	SecretKeyCredentials = "auth.json"
 	// CredentialsSecretPrefix is the prefix for credentials Secret names
 	CredentialsSecretPrefix = "agentapi-credentials-"
+	// AnnotationCredentialsName stores the original (unsanitised) credentials name
+	AnnotationCredentialsName = "agentapi.proxy/credentials-name"
+	// AnnotationCredentialsCreatedAt stores the creation timestamp in RFC3339 format
+	AnnotationCredentialsCreatedAt = "agentapi.proxy/credentials-created-at"
+	// AnnotationCredentialsUpdatedAt stores the last update timestamp in RFC3339 format
+	AnnotationCredentialsUpdatedAt = "agentapi.proxy/credentials-updated-at"
 )
 
-// credentialsJSON is the JSON representation of credentials stored in a Secret
-type credentialsJSON struct {
-	Name      string          `json:"name"`
-	Data      json.RawMessage `json:"data"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
-}
-
-// KubernetesCredentialsRepository implements CredentialsRepository using Kubernetes Secrets
+// KubernetesCredentialsRepository implements CredentialsRepository using Kubernetes Secrets.
+// The raw auth.json content is stored directly under the "auth.json" key so that the
+// session manager can embed it into the provision payload without any parsing.
 type KubernetesCredentialsRepository struct {
 	client    kubernetes.Interface
 	namespace string
@@ -55,10 +56,15 @@ func (r *KubernetesCredentialsRepository) Save(ctx context.Context, creds *entit
 
 	secretName := r.secretName(creds.Name())
 	labelValue := sanitizeLabelValue(creds.Name())
+	now := time.Now().UTC().Format(time.RFC3339)
 
-	data, err := r.toJSON(creds)
-	if err != nil {
-		return fmt.Errorf("failed to marshal credentials: %w", err)
+	// Fetch existing to preserve created_at annotation
+	createdAt := now
+	existing, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err == nil {
+		if v, ok := existing.Annotations[AnnotationCredentialsCreatedAt]; ok && v != "" {
+			createdAt = v
+		}
 	}
 
 	secret := &corev1.Secret{
@@ -69,10 +75,16 @@ func (r *KubernetesCredentialsRepository) Save(ctx context.Context, creds *entit
 				LabelCredentials:     "true",
 				LabelCredentialsName: labelValue,
 			},
+			Annotations: map[string]string{
+				AnnotationCredentialsName:      creds.Name(),
+				AnnotationCredentialsCreatedAt: createdAt,
+				AnnotationCredentialsUpdatedAt: now,
+			},
 		},
 		Type: corev1.SecretTypeOpaque,
+		// Store raw auth.json bytes directly under "auth.json" key.
 		Data: map[string][]byte{
-			SecretKeyCredentials: data,
+			SecretKeyCredentials: creds.Data(),
 		},
 	}
 
@@ -80,7 +92,6 @@ func (r *KubernetesCredentialsRepository) Save(ctx context.Context, creds *entit
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			// Update existing
 			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to update credentials secret: %w", err)
@@ -110,7 +121,6 @@ func (r *KubernetesCredentialsRepository) FindByName(ctx context.Context, name s
 		return nil, err
 	}
 
-	// Always ensure the name matches the requested name
 	if creds.Name() == "" {
 		creds.SetName(name)
 	}
@@ -161,7 +171,6 @@ func (r *KubernetesCredentialsRepository) List(ctx context.Context) ([]*entities
 	for i := range secrets.Items {
 		creds, err := r.fromSecret(&secrets.Items[i])
 		if err != nil {
-			// Skip invalid entries
 			continue
 		}
 		credsList = append(credsList, creds)
@@ -173,7 +182,6 @@ func (r *KubernetesCredentialsRepository) List(ctx context.Context) ([]*entities
 // secretName returns the Secret name for the given credentials name
 func (r *KubernetesCredentialsRepository) secretName(name string) string {
 	sanitized := sanitizeSecretName(name)
-	// Truncate to fit within 253 char limit accounting for prefix
 	maxLen := 253 - len(CredentialsSecretPrefix)
 	if len(sanitized) > maxLen {
 		sanitized = sanitized[:maxLen]
@@ -181,38 +189,39 @@ func (r *KubernetesCredentialsRepository) secretName(name string) string {
 	return CredentialsSecretPrefix + sanitized
 }
 
-// toJSON converts Credentials entity to JSON bytes
-func (r *KubernetesCredentialsRepository) toJSON(creds *entities.Credentials) ([]byte, error) {
-	cj := &credentialsJSON{
-		Name:      creds.Name(),
-		Data:      creds.Data(),
-		CreatedAt: creds.CreatedAt(),
-		UpdatedAt: creds.UpdatedAt(),
-	}
-	return json.Marshal(cj)
-}
-
-// fromSecret converts a Kubernetes Secret to Credentials entity
+// fromSecret converts a Kubernetes Secret to a Credentials entity.
+// The raw auth.json bytes are stored directly under the "auth.json" key.
+// Timestamps are stored in annotations.
 func (r *KubernetesCredentialsRepository) fromSecret(secret *corev1.Secret) (*entities.Credentials, error) {
-	data, ok := secret.Data[SecretKeyCredentials]
+	rawData, ok := secret.Data[SecretKeyCredentials]
 	if !ok {
-		return nil, fmt.Errorf("secret missing credentials data")
+		return nil, fmt.Errorf("secret missing auth.json data")
 	}
 
-	var cj credentialsJSON
-	if err := json.Unmarshal(data, &cj); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal credentials: %w", err)
+	// Determine name: annotation → label fallback
+	credName := ""
+	if secret.Annotations != nil {
+		credName = secret.Annotations[AnnotationCredentialsName]
 	}
-
-	// Use the name from JSON; fall back to the Secret label if it is empty
-	credName := cj.Name
 	if credName == "" {
 		credName = secret.Labels[LabelCredentialsName]
 	}
 
-	creds := entities.NewCredentials(credName, cj.Data)
-	creds.SetCreatedAt(cj.CreatedAt)
-	creds.SetUpdatedAt(cj.UpdatedAt)
+	creds := entities.NewCredentials(credName, rawData)
+
+	// Restore timestamps from annotations
+	if secret.Annotations != nil {
+		if v := secret.Annotations[AnnotationCredentialsCreatedAt]; v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				creds.SetCreatedAt(t)
+			}
+		}
+		if v := secret.Annotations[AnnotationCredentialsUpdatedAt]; v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				creds.SetUpdatedAt(t)
+			}
+		}
+	}
 
 	return creds, nil
 }

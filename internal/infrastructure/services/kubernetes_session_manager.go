@@ -3089,19 +3089,13 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	//   2. agentapi-credentials-{userID} / credentials.json  (uploaded via /credentials API)
 	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" {
 		// (2) Try new credentials API Secret first as the base value.
+		// Raw auth.json bytes are stored directly under the "auth.json" key (no wrapper).
 		apiCredSecretName := fmt.Sprintf("agentapi-credentials-%s", sanitizeLabelValue(req.UserID))
 		apiCredSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, apiCredSecretName, metav1.GetOptions{})
 		if err == nil {
-			if raw, ok := apiCredSecret.Data["credentials.json"]; ok && len(raw) > 0 {
-				// credentials.json wraps the user data: {"name":"...","data":{...},...}
-				// Extract the inner "data" field which is the actual auth.json content.
-				var wrapper struct {
-					Data json.RawMessage `json:"data"`
-				}
-				if jsonErr := json.Unmarshal(raw, &wrapper); jsonErr == nil && len(wrapper.Data) > 0 {
-					settings.Credentials = string(wrapper.Data)
-					log.Printf("[K8S_SESSION] Embedded credentials from Secret %s for session %s", apiCredSecretName, session.id)
-				}
+			if raw, ok := apiCredSecret.Data["auth.json"]; ok && len(raw) > 0 {
+				settings.Credentials = string(raw)
+				log.Printf("[K8S_SESSION] Embedded credentials from Secret %s for session %s", apiCredSecretName, session.id)
 			}
 		}
 
