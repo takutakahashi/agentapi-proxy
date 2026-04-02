@@ -16,7 +16,6 @@ import (
 type Exporter struct {
 	scheduleManager    schedule.Manager
 	webhookRepository  repositories.WebhookRepository
-	slackBotRepository repositories.SlackBotRepository
 	settingsRepository repositories.SettingsRepository
 	encryptionService  services.EncryptionService
 }
@@ -25,14 +24,12 @@ type Exporter struct {
 func NewExporter(
 	scheduleManager schedule.Manager,
 	webhookRepository repositories.WebhookRepository,
-	slackBotRepository repositories.SlackBotRepository,
 	settingsRepository repositories.SettingsRepository,
 	encryptionService services.EncryptionService,
 ) *Exporter {
 	return &Exporter{
 		scheduleManager:    scheduleManager,
 		webhookRepository:  webhookRepository,
-		slackBotRepository: slackBotRepository,
 		settingsRepository: settingsRepository,
 		encryptionService:  encryptionService,
 	}
@@ -60,13 +57,11 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 		},
 		Schedules: []ScheduleImport{},
 		Webhooks:  []WebhookImport{},
-		SlackBots: []SlackBotImport{},
 	}
 
 	// Export schedules (all team-scoped schedules for this team)
-	// Note: UserID is intentionally omitted to export all team members' resources.
-	// Authorization is already verified at the handler level (user must be a team member).
 	schedules, err := e.scheduleManager.List(ctx, schedule.ScheduleFilter{
+		UserID: userID,
 		Scope:  entities.ScopeTeam,
 		TeamID: teamID,
 	})
@@ -82,8 +77,8 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 	}
 
 	// Export webhooks (all team-scoped webhooks for this team, with secrets)
-	// Note: UserID is intentionally omitted to export all team members' resources.
 	webhooks, err := e.webhookRepository.List(ctx, repositories.WebhookFilter{
+		UserID: userID,
 		Scope:  entities.ScopeTeam,
 		TeamID: teamID,
 	})
@@ -96,25 +91,6 @@ func (e *Exporter) Export(ctx context.Context, teamID, userID string, options Ex
 			return nil, fmt.Errorf("failed to convert webhook %s: %w", w.Name(), err)
 		}
 		resources.Webhooks = append(resources.Webhooks, webhookImport)
-	}
-
-	// Export slackbots (all team-scoped slackbots for this team)
-	// Note: UserID is intentionally omitted to export all team members' resources.
-	if e.slackBotRepository != nil {
-		slackBots, err := e.slackBotRepository.List(ctx, repositories.SlackBotFilter{
-			Scope:  entities.ScopeTeam,
-			TeamID: teamID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list slackbots: %w", err)
-		}
-		for _, sb := range slackBots {
-			slackBotImport, err := e.convertSlackBotToImport(ctx, sb)
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert slackbot %s: %w", sb.Name(), err)
-			}
-			resources.SlackBots = append(resources.SlackBots, slackBotImport)
-		}
 	}
 
 	// Export settings (always include if exists)
@@ -486,62 +462,4 @@ func (e *Exporter) convertMCPServerToImport(ctx context.Context, server *entitie
 	}
 
 	return serverImport, nil
-}
-
-func (e *Exporter) convertSlackBotToImport(ctx context.Context, sb *entities.SlackBot) (SlackBotImport, error) {
-	slackBotImport := SlackBotImport{
-		ID:                     sb.ID(),
-		Name:                   sb.Name(),
-		Status:                 string(sb.Status()),
-		AllowedEventTypes:      sb.AllowedEventTypes(),
-		AllowedChannelNames:    sb.AllowedChannelNames(),
-		MaxSessions:            sb.MaxSessions(),
-		NotifyOnSessionCreated: sb.RawNotifyOnSessionCreated(),
-		AllowBotMessages:       sb.RawAllowBotMessages(),
-	}
-
-	// Retrieve and encrypt bot token and app token from the bot's own secret
-	if e.slackBotRepository != nil {
-		botToken, appToken, err := e.slackBotRepository.GetTokens(ctx, sb.ID())
-		if err != nil {
-			return slackBotImport, fmt.Errorf("failed to get slackbot tokens: %w", err)
-		}
-
-		if botToken != "" {
-			if e.shouldEncrypt() {
-				encrypted, err := e.encryptionService.Encrypt(ctx, botToken)
-				if err != nil {
-					return slackBotImport, fmt.Errorf("failed to encrypt bot token: %w", err)
-				}
-				slackBotImport.BotToken = encrypted.EncryptedValue
-				slackBotImport.BotTokenEncrypted = e.toEncryptedSecretData(encrypted)
-			} else if e.isNoopEncryption() {
-				slackBotImport.BotToken = botToken
-			}
-		}
-
-		if appToken != "" {
-			if e.shouldEncrypt() {
-				encrypted, err := e.encryptionService.Encrypt(ctx, appToken)
-				if err != nil {
-					return slackBotImport, fmt.Errorf("failed to encrypt app token: %w", err)
-				}
-				slackBotImport.AppToken = encrypted.EncryptedValue
-				slackBotImport.AppTokenEncrypted = e.toEncryptedSecretData(encrypted)
-			} else if e.isNoopEncryption() {
-				slackBotImport.AppToken = appToken
-			}
-		}
-	}
-
-	// Convert session config
-	if sb.SessionConfig() != nil {
-		sessionConfig, err := e.convertWebhookSessionConfigToImport(ctx, sb.SessionConfig())
-		if err != nil {
-			return slackBotImport, fmt.Errorf("failed to convert session config: %w", err)
-		}
-		slackBotImport.SessionConfig = &sessionConfig
-	}
-
-	return slackBotImport, nil
 }

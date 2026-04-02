@@ -24,19 +24,12 @@ func NewGetOrCreatePersonalAPIKeyUseCase(
 	}
 }
 
-// Execute gets or creates a personal API key for the specified user.
-// If teams is non-nil, the team list is updated on the existing or new key.
-func (uc *GetOrCreatePersonalAPIKeyUseCase) Execute(ctx context.Context, userID entities.UserID, teams []string) (*entities.PersonalAPIKey, error) {
+// Execute gets or creates a personal API key for the specified user
+func (uc *GetOrCreatePersonalAPIKeyUseCase) Execute(ctx context.Context, userID entities.UserID) (*entities.PersonalAPIKey, error) {
 	// Try to find existing personal API key
 	apiKey, err := uc.apiKeyRepo.FindByUserID(ctx, userID)
 	if err == nil && apiKey != nil {
-		// API key already exists; update teams if provided
-		if teams != nil {
-			apiKey.SetTeams(teams)
-			if saveErr := uc.apiKeyRepo.Save(ctx, apiKey); saveErr != nil {
-				return nil, fmt.Errorf("failed to update personal API key teams for user %s: %w", userID, saveErr)
-			}
-		}
+		// API key already exists
 		return apiKey, nil
 	}
 
@@ -47,9 +40,6 @@ func (uc *GetOrCreatePersonalAPIKeyUseCase) Execute(ctx context.Context, userID 
 	}
 
 	apiKey = entities.NewPersonalAPIKey(userID, generatedKey)
-	if teams != nil {
-		apiKey.SetTeams(teams)
-	}
 
 	// Save to repository
 	if err := uc.apiKeyRepo.Save(ctx, apiKey); err != nil {

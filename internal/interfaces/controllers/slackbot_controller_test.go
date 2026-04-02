@@ -109,13 +109,6 @@ func (r *mockSlackBotRepository) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func (r *mockSlackBotRepository) GetTokens(_ context.Context, _ string) (string, string, error) {
-	if r.errOn == "GetTokens" {
-		return "", "", errors.New("storage error")
-	}
-	return "", "", nil
-}
-
 // --- Test helpers ---
 
 func makeSlackBotEchoContext(t *testing.T, method, path string, body interface{}, userID string) (echo.Context, *httptest.ResponseRecorder) {

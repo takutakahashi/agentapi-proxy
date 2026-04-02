@@ -36,8 +36,4 @@ type SlackBotRepository interface {
 
 	// Delete removes a SlackBot by ID
 	Delete(ctx context.Context, id string) error
-
-	// GetTokens retrieves the bot token and app token stored in the SlackBot's own secret.
-	// Returns empty strings if tokens are not stored in the bot's own secret.
-	GetTokens(ctx context.Context, id string) (botToken, appToken string, err error)
 }

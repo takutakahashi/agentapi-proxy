@@ -28,7 +28,6 @@ const (
 // personalAPIKeyJSON is the JSON representation of personal API key metadata
 type personalAPIKeyJSON struct {
 	UserID    string    `json:"user_id"`
-	Teams     []string  `json:"teams,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -59,7 +58,6 @@ func (r *KubernetesPersonalAPIKeyRepository) Save(ctx context.Context, apiKey *e
 	// Prepare metadata JSON
 	metadata := personalAPIKeyJSON{
 		UserID:    string(apiKey.UserID()),
-		Teams:     apiKey.Teams(),
 		CreatedAt: apiKey.CreatedAt(),
 		UpdatedAt: apiKey.UpdatedAt(),
 	}
@@ -184,9 +182,6 @@ func (r *KubernetesPersonalAPIKeyRepository) fromSecret(secret *corev1.Secret) (
 	}
 
 	apiKey := entities.NewPersonalAPIKey(entities.UserID(metadata.UserID), string(apiKeyBytes))
-	if len(metadata.Teams) > 0 {
-		apiKey.SetTeams(metadata.Teams)
-	}
 	apiKey.SetCreatedAt(metadata.CreatedAt)
 	apiKey.SetUpdatedAt(metadata.UpdatedAt)
 

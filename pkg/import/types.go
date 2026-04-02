@@ -11,7 +11,6 @@ type TeamResources struct {
 	Metadata   ResourceMetadata `yaml:"metadata" toml:"metadata" json:"metadata"`
 	Schedules  []ScheduleImport `yaml:"schedules,omitempty" toml:"schedules,omitempty" json:"schedules,omitempty"`
 	Webhooks   []WebhookImport  `yaml:"webhooks,omitempty" toml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	SlackBots  []SlackBotImport `yaml:"slackbots,omitempty" toml:"slackbots,omitempty" json:"slackbots,omitempty"`
 	Settings   *SettingsImport  `yaml:"settings,omitempty" toml:"settings,omitempty" json:"settings,omitempty"`
 }
 
@@ -143,7 +142,6 @@ type ImportResult struct {
 type ImportSummary struct {
 	Schedules ImportResourceSummary `json:"schedules"`
 	Webhooks  ImportResourceSummary `json:"webhooks"`
-	SlackBots ImportResourceSummary `json:"slackbots"`
 	Settings  ImportResourceSummary `json:"settings"`
 }
 
@@ -192,23 +190,6 @@ type EncryptedSecretData struct {
 	KeyID       string    `yaml:"key_id" toml:"key_id" json:"key_id"`
 	EncryptedAt time.Time `yaml:"encrypted_at" toml:"encrypted_at" json:"encrypted_at"`
 	Version     string    `yaml:"version" toml:"version" json:"version"`
-}
-
-// SlackBotImport represents a SlackBot for import/export
-type SlackBotImport struct {
-	ID                     string               `yaml:"id" toml:"id" json:"id"`
-	Name                   string               `yaml:"name" toml:"name" json:"name"`
-	Status                 string               `yaml:"status,omitempty" toml:"status,omitempty" json:"status,omitempty"`
-	BotToken               string               `yaml:"bot_token,omitempty" toml:"bot_token,omitempty" json:"bot_token,omitempty"`
-	BotTokenEncrypted      *EncryptedSecretData `yaml:"bot_token_encrypted,omitempty" toml:"bot_token_encrypted,omitempty" json:"bot_token_encrypted,omitempty"`
-	AppToken               string               `yaml:"app_token,omitempty" toml:"app_token,omitempty" json:"app_token,omitempty"`
-	AppTokenEncrypted      *EncryptedSecretData `yaml:"app_token_encrypted,omitempty" toml:"app_token_encrypted,omitempty" json:"app_token_encrypted,omitempty"`
-	AllowedEventTypes      []string             `yaml:"allowed_event_types,omitempty" toml:"allowed_event_types,omitempty" json:"allowed_event_types,omitempty"`
-	AllowedChannelNames    []string             `yaml:"allowed_channel_names,omitempty" toml:"allowed_channel_names,omitempty" json:"allowed_channel_names,omitempty"`
-	MaxSessions            int                  `yaml:"max_sessions,omitempty" toml:"max_sessions,omitempty" json:"max_sessions,omitempty"`
-	NotifyOnSessionCreated *bool                `yaml:"notify_on_session_created,omitempty" toml:"notify_on_session_created,omitempty" json:"notify_on_session_created,omitempty"`
-	AllowBotMessages       *bool                `yaml:"allow_bot_messages,omitempty" toml:"allow_bot_messages,omitempty" json:"allow_bot_messages,omitempty"`
-	SessionConfig          *SessionConfigImport `yaml:"session_config,omitempty" toml:"session_config,omitempty" json:"session_config,omitempty"`
 }
 
 // SettingsImport represents settings for import/export

@@ -9,7 +9,6 @@ import (
 type PersonalAPIKey struct {
 	userID    UserID
 	apiKey    string
-	teams     []string // GitHub team slugs in "org/team-slug" format this key can access
 	createdAt time.Time
 	updatedAt time.Time
 }
@@ -33,20 +32,6 @@ func (p *PersonalAPIKey) UserID() UserID {
 // APIKey returns the API key
 func (p *PersonalAPIKey) APIKey() string {
 	return p.apiKey
-}
-
-// Teams returns the list of GitHub team slugs ("org/team-slug") this key can access.
-// Empty means the key has no explicit team access.
-func (p *PersonalAPIKey) Teams() []string {
-	result := make([]string, len(p.teams))
-	copy(result, p.teams)
-	return result
-}
-
-// SetTeams sets the GitHub team slugs this key can access.
-func (p *PersonalAPIKey) SetTeams(teams []string) {
-	p.teams = teams
-	p.updatedAt = time.Now()
 }
 
 // CreatedAt returns the creation time
