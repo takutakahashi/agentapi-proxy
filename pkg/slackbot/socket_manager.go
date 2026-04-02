@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	repoports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -51,6 +52,7 @@ type SlackSocketManager struct {
 type runningEntry struct {
 	cancel    context.CancelFunc
 	updatedAt time.Time // snapshot of bot.UpdatedAt() when worker started
+	id        string    // unique ID to detect stale entries after natural goroutine exit
 }
 
 // SlackSocketManagerConfig holds configuration for SlackSocketManager
@@ -206,26 +208,40 @@ func (m *SlackSocketManager) startLeaderElection(ctx context.Context, botKey str
 	elector := schedule.NewLeaderElector(m.kubeClient, electionConfig)
 
 	childCtx, cancel := context.WithCancel(ctx)
+	entryID := uuid.New().String()
 	m.mu.Lock()
-	m.running[botKey] = runningEntry{cancel: cancel, updatedAt: updatedAt}
+	m.running[botKey] = runningEntry{cancel: cancel, updatedAt: updatedAt, id: entryID}
 	m.mu.Unlock()
 
 	log.Printf("[SOCKET_MANAGER] Starting leader election for botKey=%s (lease=%s)", botKey, leaseName)
 
-	go elector.Run(childCtx,
-		func(leaderCtx context.Context) {
-			log.Printf("[SOCKET_MANAGER] Became leader for botKey=%s", botKey)
-			worker := m.newWorker(botKey)
-			if worker == nil {
-				log.Printf("[SOCKET_MANAGER] Cannot create worker for botKey=%s (missing configuration)", botKey)
-				return
-			}
-			worker.Run(leaderCtx)
-		},
-		func() {
-			log.Printf("[SOCKET_MANAGER] Lost leadership for botKey=%s", botKey)
-		},
-	)
+	go func() {
+		elector.Run(childCtx,
+			func(leaderCtx context.Context) {
+				log.Printf("[SOCKET_MANAGER] Became leader for botKey=%s", botKey)
+				worker := m.newWorker(botKey)
+				if worker == nil {
+					log.Printf("[SOCKET_MANAGER] Cannot create worker for botKey=%s (missing configuration)", botKey)
+					return
+				}
+				worker.Run(leaderCtx)
+			},
+			func() {
+				log.Printf("[SOCKET_MANAGER] Lost leadership for botKey=%s", botKey)
+			},
+		)
+		// When the leader election goroutine exits naturally (e.g. lease renewal failure,
+		// network partition), clean up the running entry so the next reconcile cycle can
+		// restart the election.  We only delete if the entry still belongs to this
+		// goroutine (matched by entryID); stopWorker() may have already replaced it with
+		// a newer entry.
+		m.mu.Lock()
+		if entry, ok := m.running[botKey]; ok && entry.id == entryID {
+			delete(m.running, botKey)
+			log.Printf("[SOCKET_MANAGER] Leader election goroutine exited for botKey=%s, entry removed for restart", botKey)
+		}
+		m.mu.Unlock()
+	}()
 }
 
 // newWorker creates a SlackSocketWorker for the given bot key
