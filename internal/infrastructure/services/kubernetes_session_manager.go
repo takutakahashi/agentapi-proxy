@@ -1399,13 +1399,13 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 }
 
 // credentialsSyncScript is the shell script for the credentials sync sidecar
-// It watches for changes to .credentials.json and syncs them to the Kubernetes Secret
+// It watches for changes to ~/.codex/auth.json and syncs them to the Kubernetes Secret
 // Note: This script does NOT require secrets:get permission. It uses patch-first approach
 // and falls back to create if the secret doesn't exist.
 const credentialsSyncScript = `
 #!/bin/sh
 
-CREDENTIALS_PATH="${CREDENTIALS_FILE_PATH:-/home/agentapi/.claude/.credentials.json}"
+CREDENTIALS_PATH="${CREDENTIALS_FILE_PATH:-/home/agentapi/.codex/auth.json}"
 SECRET_NAME="${SECRET_NAME}"
 NAMESPACE="${SECRET_NAMESPACE}"
 INTERVAL="${SYNC_INTERVAL:-10}"
@@ -1447,7 +1447,7 @@ metadata:
     app.kubernetes.io/managed-by: agentapi-proxy
 type: Opaque
 data:
-  credentials.json: $ENCODED
+  auth.json: $ENCODED
 EOFYAML
 )
 
@@ -1504,7 +1504,7 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *Kubernet
 		Command:         []string{"sh", "-c"},
 		Args:            []string{credentialsSyncScript},
 		Env: []corev1.EnvVar{
-			{Name: "CREDENTIALS_FILE_PATH", Value: "/home/agentapi/.claude/.credentials.json"},
+			{Name: "CREDENTIALS_FILE_PATH", Value: "/home/agentapi/.codex/auth.json"},
 			{Name: "SECRET_NAME", Value: credentialsSecretName},
 			{
 				Name: "SECRET_NAMESPACE",
@@ -1517,10 +1517,10 @@ func (m *KubernetesSessionManager) buildCredentialsSyncSidecar(session *Kubernet
 			{Name: "SYNC_INTERVAL", Value: "10"},
 		},
 		VolumeMounts: []corev1.VolumeMount{
-			// Mount shared .claude directory (written by setup, read by credentials-sync)
+			// Mount shared .codex directory (written by setup, read by credentials-sync)
 			{
-				Name:      "dot-claude",
-				MountPath: "/home/agentapi/.claude",
+				Name:      "dot-codex",
+				MountPath: "/home/agentapi/.codex",
 			},
 		},
 		Resources: corev1.ResourceRequirements{
@@ -1745,10 +1745,17 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		// Credentials volume (Secret for user-scoped, EmptyDir for team-scoped)
 		// This Secret is managed by the credentials-sync sidecar for user-scoped sessions
 		credentialsVolume,
-		// dot-claude EmptyDir – shared between main container and credentials-sync sidecar
-		// setup writes ~/.claude/ here; credentials-sync reads .credentials.json from here
+		// dot-claude EmptyDir – used by main container for Claude Code settings
 		{
 			Name: "dot-claude",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+		// dot-codex EmptyDir – shared between main container and credentials-sync sidecar
+		// setup writes ~/.codex/auth.json here; credentials-sync reads auth.json from here
+		{
+			Name: "dot-codex",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
@@ -2411,10 +2418,15 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			Name:      "workdir",
 			MountPath: "/home/agentapi/workdir",
 		},
-		// dot-claude EmptyDir – setup writes .claude/ here; shared with credentials-sync sidecar
+		// dot-claude EmptyDir – used by main container for Claude Code settings
 		{
 			Name:      "dot-claude",
 			MountPath: "/home/agentapi/.claude",
+		},
+		// dot-codex EmptyDir – setup writes auth.json here; shared with credentials-sync sidecar
+		{
+			Name:      "dot-codex",
+			MountPath: "/home/agentapi/.codex",
 		},
 		// credentials-config – read by setup on startup
 		{

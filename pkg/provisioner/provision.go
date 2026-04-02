@@ -80,7 +80,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	opts := sessionsettings.SetupOptions{
 		InputPath:                 provisionTempSettings,
 		CompileOptions:            compileOpts,
-		CredentialsFile:           "/credentials-config/credentials.json",
+		CredentialsFile:           "/credentials-config/auth.json",
 		NotificationSubscriptions: "/notification-subscriptions-source",
 		NotificationsDir:          "/home/agentapi/notifications",
 		RegisterMarketplaces:      true,
