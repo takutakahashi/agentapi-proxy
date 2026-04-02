@@ -87,7 +87,6 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	opts := sessionsettings.SetupOptions{
 		InputPath:                 provisionTempSettings,
 		CompileOptions:            compileOpts,
-		CredentialsFile:           "/credentials-config/auth.json",
 		NotificationSubscriptions: "/notification-subscriptions-source",
 		NotificationsDir:          "/home/agentapi/notifications",
 		RegisterMarketplaces:      true,
@@ -98,6 +97,18 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
+
+	// ── Step 2.5: restore credentials from provision payload ─────────────────
+	// Credentials are embedded in SessionSettings.Credentials by the proxy at
+	// session creation time (read from agentapi-agent-env-{userID} Secret).
+	// Write them to ~/.codex/auth.json so codex-agentapi can use them immediately.
+	if settings.Credentials != "" {
+		if err := writeCredentials(settings.Credentials); err != nil {
+			log.Printf("[PROVISIONER] Warning: failed to write credentials: %v", err)
+		} else {
+			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json")
+		}
+	}
 
 	// ── Step 3: load session env file ─────────────────────────────────────────
 	envMap := loadEnvFile(sessionEnvFile)
@@ -229,6 +240,24 @@ func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.Sla
 	} else {
 		log.Printf("[CLAUDE_POSTS] Exited normally")
 	}
+}
+
+// writeCredentials writes the given JSON string to ~/.codex/auth.json (mode 0600).
+// It is called once at provision time to restore credentials delivered via the
+// SessionSettings payload, before runCredentialsSync starts watching the file.
+func writeCredentials(credentialsJSON string) error {
+	codexDir := filepath.Join(os.Getenv("HOME"), ".codex")
+	if codexDir == "/.codex" {
+		codexDir = "/home/agentapi/.codex"
+	}
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+	destPath := filepath.Join(codexDir, "auth.json")
+	if err := os.WriteFile(destPath, []byte(credentialsJSON), 0600); err != nil {
+		return fmt.Errorf("failed to write auth.json: %w", err)
+	}
+	return nil
 }
 
 // runCredentialsSync watches ~/.codex/auth.json for changes and syncs them

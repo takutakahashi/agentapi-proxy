@@ -1570,40 +1570,14 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		}
 	}
 
-	// Build credentials volume based on scope
-	// For team-scoped sessions: use EmptyDir (no user credentials)
-	// For user-scoped sessions: mount user's credentials Secret
-	var credentialsVolume corev1.Volume
-	if session.Request().Scope == entities.ScopeTeam {
-		// Team-scoped: do not mount user credentials, use EmptyDir
-		credentialsVolume = corev1.Volume{
-			Name: "claude-credentials",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		}
-		log.Printf("[K8S_SESSION] Using EmptyDir for credentials volume (team-scoped session %s)", session.id)
-	} else {
-		// User-scoped: mount user's credentials Secret
-		// Credentials Secret name follows the pattern: agentapi-agent-env-{userID}
-		credentialsSecretName := fmt.Sprintf("agentapi-agent-env-%s", sanitizeLabelValue(session.Request().UserID))
-		credentialsVolume = corev1.Volume{
-			Name: "claude-credentials",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: credentialsSecretName,
-					Optional:   boolPtr(true), // Optional - user may not have logged in yet
-				},
-			},
-		}
-	}
+	// Note: credentials are no longer mounted as a volume. Instead they are
+	// embedded in SessionSettings.Credentials and written to ~/.codex/auth.json
+	// by the provisioner at startup. The runCredentialsSync goroutine then
+	// watches the file and syncs any changes back to the Secret.
 
 	volumes := []corev1.Volume{
 		// Workdir volume (PVC or EmptyDir based on configuration)
 		workdirVolume,
-		// Credentials volume (Secret for user-scoped, EmptyDir for team-scoped)
-		// This Secret is managed by the credentials-sync sidecar for user-scoped sessions
-		credentialsVolume,
 		// dot-claude EmptyDir – used by main container for Claude Code settings
 		{
 			Name: "dot-claude",
@@ -2273,12 +2247,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		{
 			Name:      "dot-claude",
 			MountPath: "/home/agentapi/.claude",
-		},
-		// credentials-config – read by setup on startup
-		{
-			Name:      "claude-credentials",
-			MountPath: "/credentials-config",
-			ReadOnly:  true,
 		},
 		// notification subscriptions source – read by setup on startup
 		{
@@ -3109,6 +3077,22 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			AgentType:      agentType,
 		}
 		log.Printf("[K8S_SESSION] OtelCollector in-process config embedded for session %s", session.id)
+	}
+
+	// Embed credentials from the user's agentapi-agent-env-{userID} Secret so that
+	// stock pool pods (which have no user-specific volume mounts) can restore
+	// ~/.codex/auth.json on startup via the provision endpoint payload.
+	// Only applies to user-scoped sessions with a known UserID.
+	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" {
+		credSecretName := fmt.Sprintf("agentapi-agent-env-%s", sanitizeLabelValue(req.UserID))
+		credSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, credSecretName, metav1.GetOptions{})
+		if err == nil {
+			if data, ok := credSecret.Data["auth.json"]; ok && len(data) > 0 {
+				settings.Credentials = string(data)
+				log.Printf("[K8S_SESSION] Embedded credentials from Secret %s for session %s", credSecretName, session.id)
+			}
+		}
+		// Not found or no data is normal (user hasn't logged in yet); skip silently.
 	}
 
 	return settings
