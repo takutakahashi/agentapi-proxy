@@ -66,7 +66,7 @@ func init() {
 	migrateCredentialsCmd.Flags().BoolVarP(&migrateCredsVerbose, "verbose", "v", false,
 		"Verbose output")
 
-	HelpersCmd.AddCommand(migrateCredentialsCmd)
+	OneshotCmd.AddCommand(migrateCredentialsCmd)
 }
 
 // credMigrationEntry holds the data to be written into agentapi-agent-files-{name}.

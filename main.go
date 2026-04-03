@@ -19,6 +19,7 @@ func init() {
 	rootCmd.AddCommand(cmd.HelpersCmd)
 	rootCmd.AddCommand(cmd.ClientCmd)
 	rootCmd.AddCommand(cmd.AgentProvisionerCmd)
+	rootCmd.AddCommand(cmd.OneshotCmd)
 }
 
 func main() {
