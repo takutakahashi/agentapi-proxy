@@ -496,7 +496,8 @@ func installPlugin(outputDir string, pluginIdentifier string) error {
 	return nil
 }
 
-// syncCredentials copies auth.json from the mounted Secret to ~/.codex/auth.json
+// syncCredentials copies credentials.json from the mounted Secret to
+// ~/.claude/.credentials.json (Claude Code CLI credentials).
 func syncCredentials(credentialsFile, outputDir string) error {
 	if _, err := os.Stat(credentialsFile); os.IsNotExist(err) {
 		log.Printf("[SYNC] Credentials file not found at %s, skipping", credentialsFile)
@@ -512,12 +513,12 @@ func syncCredentials(credentialsFile, outputDir string) error {
 		return fmt.Errorf("credentials file is not valid JSON")
 	}
 
-	codexDir := filepath.Join(outputDir, ".codex")
-	if err := os.MkdirAll(codexDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .codex directory: %w", err)
+	claudeDir := filepath.Join(outputDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .claude directory: %w", err)
 	}
 
-	destPath := filepath.Join(codexDir, "auth.json")
+	destPath := filepath.Join(claudeDir, ".credentials.json")
 	if err := os.WriteFile(destPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write credentials file: %w", err)
 	}

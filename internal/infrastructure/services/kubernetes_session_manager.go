@@ -3079,33 +3079,21 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] OtelCollector in-process config embedded for session %s", session.id)
 	}
 
-	// Embed credentials from the user's credential Secret so that
-	// stock pool pods (which have no user-specific volume mounts) can restore
-	// ~/.codex/auth.json on startup via the provision endpoint payload.
+	// Embed managed files from the user's agentapi-agent-files-{userID} Secret so that
+	// stock pool pods (which have no user-specific volume mounts) can restore files
+	// on startup via the provision endpoint payload.
 	// Only applies to user-scoped sessions with a known UserID.
-	//
-	// Priority (highest wins):
-	//   1. agentapi-agent-env-{userID} / auth.json  (legacy, direct raw JSON)
-	//   2. agentapi-credentials-{userID} / credentials.json  (uploaded via /credentials API)
 	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" {
-		// (2) Try new credentials API Secret first as the base value.
-		// Raw auth.json bytes are stored directly under the "auth.json" key (no wrapper).
-		apiCredSecretName := fmt.Sprintf("agentapi-credentials-%s", sanitizeLabelValue(req.UserID))
-		apiCredSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, apiCredSecretName, metav1.GetOptions{})
-		if err == nil {
-			if raw, ok := apiCredSecret.Data["auth.json"]; ok && len(raw) > 0 {
-				settings.Credentials = string(raw)
-				log.Printf("[K8S_SESSION] Embedded credentials from Secret %s for session %s", apiCredSecretName, session.id)
-			}
-		}
-
-		// (1) Legacy agentapi-agent-env-{userID} / auth.json overrides if present.
-		credSecretName := fmt.Sprintf("agentapi-agent-env-%s", sanitizeLabelValue(req.UserID))
-		credSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, credSecretName, metav1.GetOptions{})
-		if err == nil {
-			if data, ok := credSecret.Data["auth.json"]; ok && len(data) > 0 {
-				settings.Credentials = string(data)
-				log.Printf("[K8S_SESSION] Embedded credentials from Secret %s for session %s", credSecretName, session.id)
+		filesSecretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(req.UserID))
+		filesSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, filesSecretName, metav1.GetOptions{})
+		if err == nil && len(filesSecret.Data) > 0 {
+			settings.Files = sessionsettings.SecretDataToFiles(filesSecret.Data)
+			if len(settings.Files) == 0 {
+				log.Printf("[K8S_SESSION] WARNING: Secret %s has %d data entries but SecretDataToFiles returned empty for session %s",
+					filesSecretName, len(filesSecret.Data), session.id)
+			} else {
+				log.Printf("[K8S_SESSION] Embedded %d managed file(s) from Secret %s for session %s",
+					len(settings.Files), filesSecretName, session.id)
 			}
 		}
 		// Not found or no data is normal (user hasn't logged in yet); skip silently.
