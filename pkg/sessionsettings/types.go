@@ -3,6 +3,7 @@ package sessionsettings
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -56,18 +57,26 @@ func FilesToSecretData(files []ManagedFile) map[string][]byte {
 
 // SecretDataToFiles reconstructs a slice of ManagedFile from the flat index-based
 // map produced by FilesToSecretData.  Entries that do not match the expected format
-// are silently skipped.
+// are silently skipped.  The result is ordered by ascending index so that the
+// output is deterministic regardless of Go's map iteration order.
 func SecretDataToFiles(data map[string][]byte) []ManagedFile {
 	// Collect unique indices first.
-	indices := map[int]struct{}{}
+	indexSet := map[int]struct{}{}
 	for k := range data {
 		if idx, ok := parseFileSecretKey(k); ok {
-			indices[idx] = struct{}{}
+			indexSet[idx] = struct{}{}
 		}
 	}
 
+	// Sort indices for deterministic output.
+	indices := make([]int, 0, len(indexSet))
+	for idx := range indexSet {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
 	files := make([]ManagedFile, 0, len(indices))
-	for idx := range indices {
+	for _, idx := range indices {
 		prefix := strconv.Itoa(idx)
 		path, hasPath := data[prefix+".path"]
 		content, hasContent := data[prefix+".content"]
@@ -84,6 +93,9 @@ func SecretDataToFiles(data map[string][]byte) []ManagedFile {
 
 // parseFileSecretKey parses a key of the form "<index>.path" or "<index>.content"
 // and returns the index.  Returns (0, false) if the key does not match.
+// LastIndex is used instead of Index so that the suffix ("path" or "content")
+// is always the part after the final dot, which correctly handles any future
+// index values that might themselves contain dots.
 func parseFileSecretKey(k string) (int, bool) {
 	dot := strings.LastIndex(k, ".")
 	if dot < 0 {

@@ -3089,6 +3089,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		if err == nil && len(filesSecret.Data) > 0 {
 			settings.Files = sessionsettings.SecretDataToFiles(filesSecret.Data)
 			if len(settings.Files) == 0 {
+				// Secret exists and has data but no valid index-based entries were parsed.
+				// This could indicate corrupted or manually edited Secret data.
 				log.Printf("[K8S_SESSION] WARNING: Secret %s has %d data entries but SecretDataToFiles returned empty for session %s",
 					filesSecretName, len(filesSecret.Data), session.id)
 			} else {

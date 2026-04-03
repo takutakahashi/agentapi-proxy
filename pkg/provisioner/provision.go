@@ -345,32 +345,46 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 			log.Printf("[FILES_SYNC] Context cancelled, stopping")
 			return
 		case <-ticker.C:
-			changed := false
+			// Read each file exactly once to avoid TOCTOU races between the
+			// hash-check pass and the content-collection pass.
+			type fileSnapshot struct {
+				data []byte
+				hash string
+			}
+			snapshots := make(map[string]fileSnapshot, len(managedFilePaths))
 			for _, path := range managedFilePaths {
-				_, hash, err := readFileWithHash(path)
+				data, hash, err := readFileWithHash(path)
 				if err != nil {
 					// File may not exist yet; not an error.
 					continue
 				}
-				if hash != lastHashes[path] {
+				snapshots[path] = fileSnapshot{data: data, hash: hash}
+			}
+
+			changed := false
+			for _, path := range managedFilePaths {
+				snap, ok := snapshots[path]
+				if !ok {
+					continue
+				}
+				if snap.hash != lastHashes[path] {
 					changed = true
-					lastHashes[path] = hash
 				}
 			}
 			if !changed {
 				continue
 			}
 
-			// Build the full snapshot of all managed files.
-			files := make([]sessionsettings.ManagedFile, 0, len(managedFilePaths))
+			// Build the full snapshot of all managed files from the single read above.
+			files := make([]sessionsettings.ManagedFile, 0, len(snapshots))
 			for _, path := range managedFilePaths {
-				data, _, err := readFileWithHash(path)
-				if err != nil {
+				snap, ok := snapshots[path]
+				if !ok {
 					continue
 				}
 				files = append(files, sessionsettings.ManagedFile{
 					Path:    path,
-					Content: string(data),
+					Content: string(snap.data),
 				})
 			}
 
@@ -378,8 +392,15 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 			log.Printf("[FILES_SYNC] Files changed, syncing %d file(s) to Secret %s", len(files), secretName)
 			if err := upsertFilesSecret(ctx, clientset, namespace, secretName, secretData); err != nil {
 				log.Printf("[FILES_SYNC] ERROR: failed to upsert Secret: %v", err)
+				// Do not update lastHashes so the next tick retries the sync.
 			} else {
 				log.Printf("[FILES_SYNC] Successfully synced to Secret %s", secretName)
+				// Update hashes only after a successful sync so failed upserts are retried.
+				for _, path := range managedFilePaths {
+					if snap, ok := snapshots[path]; ok {
+						lastHashes[path] = snap.hash
+					}
+				}
 			}
 		}
 	}
