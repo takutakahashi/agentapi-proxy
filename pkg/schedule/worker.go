@@ -143,19 +143,26 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 	// Check if previous session is still active
 	if schedule.LastExecution != nil && schedule.LastExecution.SessionID != "" {
 		if w.isSessionActive(schedule.LastExecution.SessionID) {
-			log.Printf("[SCHEDULE_WORKER] Skipping schedule %s: previous session %s still active",
-				schedule.ID, schedule.LastExecution.SessionID)
-			w.recordExecution(ctx, schedule, ExecutionRecord{
-				ExecutedAt: time.Now(),
-				Status:     "skipped",
-				Error:      "previous session still active",
-			})
-			// Update next execution time even when skipped
-			w.updateNextExecution(ctx, schedule)
-			return
+			// When session reuse is enabled, we do NOT skip — the LaunchUseCase will
+			// send the message to the existing active session instead of creating a new one.
+			if !schedule.SessionConfig.ReuseSession {
+				log.Printf("[SCHEDULE_WORKER] Skipping schedule %s: previous session %s still active",
+					schedule.ID, schedule.LastExecution.SessionID)
+				w.recordExecution(ctx, schedule, ExecutionRecord{
+					ExecutedAt: time.Now(),
+					Status:     "skipped",
+					Error:      "previous session still active",
+				})
+				// Update next execution time even when skipped
+				w.updateNextExecution(ctx, schedule)
+				return
+			}
+			log.Printf("[SCHEDULE_WORKER] Reusing previous session %s for schedule %s",
+				schedule.LastExecution.SessionID, schedule.ID)
+		} else if !schedule.SessionConfig.ReuseSession {
+			// Delete previous session if it's no longer active (only when not using reuse mode)
+			w.deletePreviousSession(schedule.LastExecution.SessionID)
 		}
-		// Delete previous session if it's no longer active
-		w.deletePreviousSession(schedule.LastExecution.SessionID)
 	}
 
 	// Create session
@@ -174,25 +181,32 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 		return
 	}
 
-	log.Printf("[SCHEDULE_WORKER] Successfully created session %s for schedule %s",
-		result.SessionID, schedule.ID)
+	if result.SessionReused {
+		log.Printf("[SCHEDULE_WORKER] Reused session %s for schedule %s",
+			result.SessionID, schedule.ID)
+	} else {
+		log.Printf("[SCHEDULE_WORKER] Successfully created session %s for schedule %s",
+			result.SessionID, schedule.ID)
+	}
 
 	// Update schedule status
 	if schedule.IsRecurring() {
 		// Record execution first, then update next execution time
 		w.recordExecution(ctx, schedule, ExecutionRecord{
-			ExecutedAt: time.Now(),
-			SessionID:  result.SessionID,
-			Status:     "success",
+			ExecutedAt:    time.Now(),
+			SessionID:     result.SessionID,
+			Status:        "success",
+			SessionReused: result.SessionReused,
 		})
 		w.updateNextExecution(ctx, schedule)
 	} else {
 		// For one-time schedule: record execution and mark as completed together
 		// First record the execution
 		record := ExecutionRecord{
-			ExecutedAt: time.Now(),
-			SessionID:  result.SessionID,
-			Status:     "success",
+			ExecutedAt:    time.Now(),
+			SessionID:     result.SessionID,
+			Status:        "success",
+			SessionReused: result.SessionReused,
 		}
 		if err := w.manager.RecordExecution(ctx, schedule.ID, record); err != nil {
 			log.Printf("[SCHEDULE_WORKER] Failed to record execution for schedule %s: %v",
@@ -274,6 +288,11 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		Oneshot:        oneshot,
 		MemoryKey:      memoryKey,
 		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
+		// Session reuse: when enabled, an existing active session matching schedule_id
+		// tag receives the message instead of a new session being created.
+		ReuseSession:   schedule.SessionConfig.ReuseSession,
+		ReuseMatchTags: map[string]string{"schedule_id": schedule.ID},
+		ReuseMessage:   schedule.SessionConfig.ReuseMessage,
 	}
 }
 

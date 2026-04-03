@@ -541,6 +541,11 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		Oneshot:        oneshot,
 		MemoryKey:      schedule.SessionConfig.MemoryKey,
 		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
+		// Session reuse: when enabled, an existing active session matching schedule_id
+		// tag receives the message instead of a new session being created.
+		ReuseSession:   schedule.SessionConfig.ReuseSession,
+		ReuseMatchTags: map[string]string{"schedule_id": schedule.ID},
+		ReuseMessage:   schedule.SessionConfig.ReuseMessage,
 	})
 	if err != nil {
 		log.Printf("Failed to trigger schedule %s: %v", id, err)
@@ -558,19 +563,25 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 	// Record successful execution
 	record := ExecutionRecord{
-		ExecutedAt: time.Now(),
-		SessionID:  result.SessionID,
-		Status:     "success",
+		ExecutedAt:    time.Now(),
+		SessionID:     result.SessionID,
+		Status:        "success",
+		SessionReused: result.SessionReused,
 	}
 	if err := h.manager.RecordExecution(c.Request().Context(), id, record); err != nil {
 		log.Printf("Failed to record execution for schedule %s: %v", id, err)
 	}
 
-	log.Printf("Manually triggered schedule %s, created session %s", id, result.SessionID)
+	if result.SessionReused {
+		log.Printf("Manually triggered schedule %s, reused session %s", id, result.SessionID)
+	} else {
+		log.Printf("Manually triggered schedule %s, created session %s", id, result.SessionID)
+	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"session_id":   result.SessionID,
-		"triggered_at": record.ExecutedAt,
+		"session_id":     result.SessionID,
+		"triggered_at":   record.ExecutedAt,
+		"session_reused": result.SessionReused,
 	})
 }
 
