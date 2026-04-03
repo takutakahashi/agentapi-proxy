@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 const (
@@ -18,12 +19,8 @@ const (
 	LabelCredentials = "agentapi.proxy/credentials"
 	// LabelCredentialsName is the label key for credentials name
 	LabelCredentialsName = "agentapi.proxy/credentials-name"
-	// SecretKeyCredentials is the key in the Secret data for the raw auth.json content.
-	// Using "auth.json" so it is consistent with the legacy agentapi-agent-env-* mechanism
-	// and can be read directly by the session manager without any unwrapping.
-	SecretKeyCredentials = "auth.json"
-	// CredentialsSecretPrefix is the prefix for credentials Secret names
-	CredentialsSecretPrefix = "agentapi-credentials-"
+	// AgentFilesSecretPrefix is the prefix for the agentapi-agent-files-* Secrets.
+	AgentFilesSecretPrefix = "agentapi-agent-files-"
 	// AnnotationCredentialsName stores the original (unsanitised) credentials name
 	AnnotationCredentialsName = "agentapi.proxy/credentials-name"
 	// AnnotationCredentialsCreatedAt stores the creation timestamp in RFC3339 format
@@ -32,15 +29,22 @@ const (
 	AnnotationCredentialsUpdatedAt = "agentapi.proxy/credentials-updated-at"
 )
 
-// KubernetesCredentialsRepository implements CredentialsRepository using Kubernetes Secrets.
-// The raw auth.json content is stored directly under the "auth.json" key so that the
-// session manager can embed it into the provision payload without any parsing.
+// KubernetesCredentialsRepository implements CredentialsRepository using the
+// agentapi-agent-files-{name} Kubernetes Secret with index-based KV format.
+//
+// Each file is stored as a pair of entries:
+//
+//	"<index>.path"    → absolute file path (e.g. /home/agentapi/.codex/auth.json)
+//	"<index>.content" → raw file content (JSON for credential files)
+//
+// The mapping between file-type names and indices is determined by
+// sessionsettings.ManagedFileTypeOrder.
 type KubernetesCredentialsRepository struct {
 	client    kubernetes.Interface
 	namespace string
 }
 
-// NewKubernetesCredentialsRepository creates a new KubernetesCredentialsRepository
+// NewKubernetesCredentialsRepository creates a new KubernetesCredentialsRepository.
 func NewKubernetesCredentialsRepository(client kubernetes.Interface, namespace string) *KubernetesCredentialsRepository {
 	return &KubernetesCredentialsRepository{
 		client:    client,
@@ -48,24 +52,49 @@ func NewKubernetesCredentialsRepository(client kubernetes.Interface, namespace s
 	}
 }
 
-// Save persists credentials (creates or updates)
+// Save persists credentials for a single file type in the agentapi-agent-files-{name} Secret.
+// It reads the current Secret first to preserve any existing entries for other file types.
 func (r *KubernetesCredentialsRepository) Save(ctx context.Context, creds *entities.Credentials) error {
 	if err := creds.Validate(); err != nil {
 		return fmt.Errorf("invalid credentials: %w", err)
 	}
 
 	secretName := r.secretName(creds.Name())
-	labelValue := sanitizeLabelValue(creds.Name())
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Fetch existing to preserve created_at annotation
-	createdAt := now
+	// Load existing files to preserve other file types.
 	existing, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	var currentFiles []sessionsettings.ManagedFile
+	createdAt := now
 	if err == nil {
+		currentFiles = sessionsettings.SecretDataToFiles(existing.Data)
 		if v, ok := existing.Annotations[AnnotationCredentialsCreatedAt]; ok && v != "" {
 			createdAt = v
 		}
 	}
+
+	// Update or append the entry for this file type.
+	filePath, ok := sessionsettings.ManagedFileTypes[creds.FileType()]
+	if !ok {
+		return fmt.Errorf("unknown file type: %s", creds.FileType())
+	}
+	updated := false
+	for i, f := range currentFiles {
+		if f.Path == filePath {
+			currentFiles[i].Content = string(creds.Data())
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		currentFiles = append(currentFiles, sessionsettings.ManagedFile{
+			Path:    filePath,
+			Content: string(creds.Data()),
+		})
+	}
+
+	secretData := sessionsettings.FilesToSecretData(currentFiles)
+	labelValue := sanitizeLabelValue(creds.Name())
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -82,13 +111,9 @@ func (r *KubernetesCredentialsRepository) Save(ctx context.Context, creds *entit
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
-		// Store raw auth.json bytes directly under "auth.json" key.
-		Data: map[string][]byte{
-			SecretKeyCredentials: creds.Data(),
-		},
+		Data: secretData,
 	}
 
-	// Try to create first
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
@@ -100,11 +125,11 @@ func (r *KubernetesCredentialsRepository) Save(ctx context.Context, creds *entit
 		}
 		return fmt.Errorf("failed to create credentials secret: %w", err)
 	}
-
 	return nil
 }
 
-// FindByName retrieves credentials by name
+// FindByName retrieves all managed files for the given name from the
+// agentapi-agent-files-{name} Secret and returns an aggregate Credentials entity.
 func (r *KubernetesCredentialsRepository) FindByName(ctx context.Context, name string) (*entities.Credentials, error) {
 	secretName := r.secretName(name)
 
@@ -116,100 +141,20 @@ func (r *KubernetesCredentialsRepository) FindByName(ctx context.Context, name s
 		return nil, fmt.Errorf("failed to get credentials secret: %w", err)
 	}
 
-	creds, err := r.fromSecret(secret)
-	if err != nil {
-		return nil, err
-	}
+	files := sessionsettings.SecretDataToFiles(secret.Data)
 
-	if creds.Name() == "" {
-		creds.SetName(name)
-	}
-
-	return creds, nil
-}
-
-// Delete removes credentials by name
-func (r *KubernetesCredentialsRepository) Delete(ctx context.Context, name string) error {
-	secretName := r.secretName(name)
-
-	err := r.client.CoreV1().Secrets(r.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return fmt.Errorf("credentials not found: %s", name)
-		}
-		return fmt.Errorf("failed to delete credentials secret: %w", err)
-	}
-
-	return nil
-}
-
-// Exists checks if credentials exist for the given name
-func (r *KubernetesCredentialsRepository) Exists(ctx context.Context, name string) (bool, error) {
-	secretName := r.secretName(name)
-
-	_, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to check credentials existence: %w", err)
-	}
-
-	return true, nil
-}
-
-// List retrieves all credentials
-func (r *KubernetesCredentialsRepository) List(ctx context.Context) ([]*entities.Credentials, error) {
-	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("%s=true", LabelCredentials),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list credentials secrets: %w", err)
-	}
-
-	var credsList []*entities.Credentials
-	for i := range secrets.Items {
-		creds, err := r.fromSecret(&secrets.Items[i])
-		if err != nil {
-			continue
-		}
-		credsList = append(credsList, creds)
-	}
-
-	return credsList, nil
-}
-
-// secretName returns the Secret name for the given credentials name
-func (r *KubernetesCredentialsRepository) secretName(name string) string {
-	sanitized := sanitizeSecretName(name)
-	maxLen := 253 - len(CredentialsSecretPrefix)
-	if len(sanitized) > maxLen {
-		sanitized = sanitized[:maxLen]
-	}
-	return CredentialsSecretPrefix + sanitized
-}
-
-// fromSecret converts a Kubernetes Secret to a Credentials entity.
-// The raw auth.json bytes are stored directly under the "auth.json" key.
-// Timestamps are stored in annotations.
-func (r *KubernetesCredentialsRepository) fromSecret(secret *corev1.Secret) (*entities.Credentials, error) {
-	rawData, ok := secret.Data[SecretKeyCredentials]
-	if !ok {
-		return nil, fmt.Errorf("secret missing auth.json data")
-	}
-
-	// Determine name: annotation → label fallback
-	credName := ""
+	// Build a Credentials entity that summarises all stored files.
+	// Data() is intentionally empty — individual file contents are never exposed via the API.
+	credName := name
 	if secret.Annotations != nil {
-		credName = secret.Annotations[AnnotationCredentialsName]
-	}
-	if credName == "" {
-		credName = secret.Labels[LabelCredentialsName]
+		if v := secret.Annotations[AnnotationCredentialsName]; v != "" {
+			credName = v
+		}
 	}
 
-	creds := entities.NewCredentials(credName, rawData)
+	creds := entities.NewCredentials(credName, nil)
+	creds.SetFiles(files)
 
-	// Restore timestamps from annotations
 	if secret.Annotations != nil {
 		if v := secret.Annotations[AnnotationCredentialsCreatedAt]; v != "" {
 			if t, err := time.Parse(time.RFC3339, v); err == nil {
@@ -224,4 +169,65 @@ func (r *KubernetesCredentialsRepository) fromSecret(secret *corev1.Secret) (*en
 	}
 
 	return creds, nil
+}
+
+// Delete removes the entire agentapi-agent-files-{name} Secret.
+func (r *KubernetesCredentialsRepository) Delete(ctx context.Context, name string) error {
+	secretName := r.secretName(name)
+
+	err := r.client.CoreV1().Secrets(r.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("credentials not found: %s", name)
+		}
+		return fmt.Errorf("failed to delete credentials secret: %w", err)
+	}
+	return nil
+}
+
+// Exists checks whether the agentapi-agent-files-{name} Secret exists.
+func (r *KubernetesCredentialsRepository) Exists(ctx context.Context, name string) (bool, error) {
+	_, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, r.secretName(name), metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check credentials existence: %w", err)
+	}
+	return true, nil
+}
+
+// List retrieves metadata for all agentapi-agent-files-* Secrets.
+func (r *KubernetesCredentialsRepository) List(ctx context.Context) ([]*entities.Credentials, error) {
+	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s=true", LabelCredentials),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list credentials secrets: %w", err)
+	}
+
+	var list []*entities.Credentials
+	for i := range secrets.Items {
+		s := &secrets.Items[i]
+		credName := s.Labels[LabelCredentialsName]
+		if s.Annotations != nil {
+			if v := s.Annotations[AnnotationCredentialsName]; v != "" {
+				credName = v
+			}
+		}
+		creds := entities.NewCredentials(credName, nil)
+		creds.SetFiles(sessionsettings.SecretDataToFiles(s.Data))
+		list = append(list, creds)
+	}
+	return list, nil
+}
+
+// secretName returns the agentapi-agent-files-{sanitized} Secret name for the given name.
+func (r *KubernetesCredentialsRepository) secretName(name string) string {
+	sanitized := sanitizeSecretName(name)
+	maxLen := 253 - len(AgentFilesSecretPrefix)
+	if len(sanitized) > maxLen {
+		sanitized = sanitized[:maxLen]
+	}
+	return AgentFilesSecretPrefix + sanitized
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 // CredentialsController handles credentials-related HTTP requests
@@ -30,12 +31,20 @@ func (c *CredentialsController) GetName() string {
 	return "CredentialsController"
 }
 
-// CredentialsResponse is the response body for credentials (data is never returned)
+// CredentialsFileInfo holds per-file-type metadata in a CredentialsResponse.
+type CredentialsFileInfo struct {
+	Type    string `json:"type"`     // e.g. "codex_auth" or "claude_credentials"
+	Path    string `json:"path"`     // absolute path inside the agent container
+	HasData bool   `json:"has_data"` // whether content has been uploaded
+}
+
+// CredentialsResponse is the response body for credentials (raw data is never returned).
 type CredentialsResponse struct {
-	Name      string `json:"name"`
-	HasData   bool   `json:"has_data"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Name      string                `json:"name"`
+	HasData   bool                  `json:"has_data"` // true if any file has been uploaded
+	Files     []CredentialsFileInfo `json:"files"`    // per-file-type status
+	CreatedAt string                `json:"created_at"`
+	UpdatedAt string                `json:"updated_at"`
 }
 
 // ListCredentialsResponse is the response for listing credentials
@@ -71,8 +80,11 @@ func (c *CredentialsController) GetCredentials(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, c.toResponse(creds))
 }
 
-// UploadCredentials handles PUT /credentials/:name
-// Accepts raw JSON body as credential data (e.g., auth.json contents)
+// UploadCredentials handles PUT /credentials/:name?type=<file_type>
+// Accepts raw JSON body as credential data.
+// The optional `type` query parameter selects which file to update:
+//   - "codex_auth"         → ~/.codex/auth.json  (default)
+//   - "claude_credentials" → ~/.claude/.credentials.json
 func (c *CredentialsController) UploadCredentials(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
@@ -88,7 +100,16 @@ func (c *CredentialsController) UploadCredentials(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
 	}
 
-	// Read raw body as JSON
+	// Resolve file type; default to codex_auth for backward compatibility.
+	fileType := ctx.QueryParam("type")
+	if fileType == "" {
+		fileType = sessionsettings.FileTypeCodexAuth
+	}
+	if _, ok := sessionsettings.ManagedFileTypes[fileType]; !ok {
+		return echo.NewHTTPError(http.StatusBadRequest, "Unknown type; valid values: codex_auth, claude_credentials")
+	}
+
+	// Read raw body as JSON.
 	var rawData json.RawMessage
 	if err := ctx.Bind(&rawData); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid JSON body")
@@ -96,29 +117,26 @@ func (c *CredentialsController) UploadCredentials(ctx echo.Context) error {
 	if len(rawData) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "Request body must not be empty")
 	}
-
-	// Validate that the body is valid JSON
 	var tmp interface{}
 	if err := json.Unmarshal(rawData, &tmp); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Request body must be valid JSON")
 	}
 
-	// Get existing credentials or create new
-	creds, err := c.repo.FindByName(ctx.Request().Context(), name)
-	if err != nil {
-		// Create new
-		creds = entities.NewCredentials(name, rawData)
-	} else {
-		// Update existing
-		creds.SetData(rawData)
-	}
+	creds := entities.NewCredentials(name, rawData)
+	creds.SetFileType(fileType)
 
 	if err := c.repo.Save(ctx.Request().Context(), creds); err != nil {
-		log.Printf("[CREDENTIALS] Failed to save credentials %s: %v", name, err)
+		log.Printf("[CREDENTIALS] Failed to save credentials %s (type=%s): %v", name, fileType, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save credentials")
 	}
 
-	return ctx.JSON(http.StatusOK, c.toResponse(creds))
+	// Return the aggregate view so the caller sees the full per-file status.
+	updated, err := c.repo.FindByName(ctx.Request().Context(), name)
+	if err != nil {
+		// Fallback: return what we know.
+		return ctx.JSON(http.StatusOK, c.toResponse(creds))
+	}
+	return ctx.JSON(http.StatusOK, c.toResponse(updated))
 }
 
 // DeleteCredentials handles DELETE /credentials/:name
@@ -231,11 +249,28 @@ func (c *CredentialsController) sanitizeName(s string) string {
 	return sanitized
 }
 
-// toResponse converts Credentials entity to response (never exposes raw data)
+// toResponse converts a Credentials entity to a response (raw data is never exposed).
 func (c *CredentialsController) toResponse(creds *entities.Credentials) *CredentialsResponse {
+	// Build per-file-type status from the stored ManagedFile slice.
+	storedPaths := map[string]bool{}
+	for _, f := range creds.Files() {
+		storedPaths[f.Path] = true
+	}
+
+	fileInfos := make([]CredentialsFileInfo, 0, len(sessionsettings.ManagedFileTypeOrder))
+	for _, ft := range sessionsettings.ManagedFileTypeOrder {
+		path := sessionsettings.ManagedFileTypes[ft]
+		fileInfos = append(fileInfos, CredentialsFileInfo{
+			Type:    ft,
+			Path:    path,
+			HasData: storedPaths[path],
+		})
+	}
+
 	return &CredentialsResponse{
 		Name:      creds.Name(),
-		HasData:   len(creds.Data()) > 0,
+		HasData:   creds.HasData(),
+		Files:     fileInfos,
 		CreatedAt: creds.CreatedAt().Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt: creds.UpdatedAt().Format("2006-01-02T15:04:05Z07:00"),
 	}
