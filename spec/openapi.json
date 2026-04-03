@@ -2077,6 +2077,153 @@
         }
       }
     },
+    "/credentials/{name}": {
+      "get": {
+        "summary": "Get credential metadata",
+        "description": "Returns metadata for a named credential (e.g., auth.json). The raw credential data is never exposed — only whether it exists is indicated.",
+        "operationId": "getCredentials",
+        "tags": [
+          "Credentials"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Credential name (e.g., 'auth'). Users can access their own credentials or credentials of teams they belong to.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Credential metadata retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - cannot access these credentials"
+          },
+          "404": {
+            "description": "Credentials not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Upload credentials",
+        "description": "Uploads or replaces a named credential file (e.g., auth.json). The request body must be valid JSON. Users can upload their own credentials or team credentials if they belong to that team.",
+        "operationId": "uploadCredentials",
+        "tags": [
+          "Credentials"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Credential name (e.g., 'auth')",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Raw JSON credential data (e.g., contents of auth.json)",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "example": {
+                "claudeAiOauth": {
+                  "accessToken": "sk-ant-...",
+                  "refreshToken": "...",
+                  "expiresAt": 1234567890
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Credentials uploaded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - cannot modify these credentials"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete credentials",
+        "description": "Removes a named credential.",
+        "operationId": "deleteCredentials",
+        "tags": [
+          "Credentials"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Credential name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Credentials deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - cannot delete these credentials"
+          },
+          "404": {
+            "description": "Credentials not found"
+          }
+        }
+      }
+    },
     "/user/info": {
       "get": {
         "summary": "Get current user info",
@@ -4180,6 +4327,29 @@
           "url": {
             "type": "string",
             "description": "Git repository URL of the marketplace"
+          }
+        }
+      },
+      "CredentialsResponse": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Credential name"
+          },
+          "has_data": {
+            "type": "boolean",
+            "description": "Whether credential data has been uploaded"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp"
           }
         }
       },
