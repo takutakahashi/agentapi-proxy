@@ -3,9 +3,114 @@ package sessionsettings
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// FileTypeCodexAuth is the type name for ~/.codex/auth.json (Codex CLI credentials).
+const FileTypeCodexAuth = "codex_auth"
+
+// FileTypeClaudeCredentials is the type name for ~/.claude/.credentials.json (Claude Code credentials).
+const FileTypeClaudeCredentials = "claude_credentials"
+
+// ManagedFileTypes maps a file type name to its absolute path inside the agent container.
+// This is the single source of truth shared by the provisioner (runFilesSync) and
+// the credentials controller (PUT /credentials/{name}).
+var ManagedFileTypes = map[string]string{
+	FileTypeCodexAuth:         "/home/agentapi/.codex/auth.json",
+	FileTypeClaudeCredentials: "/home/agentapi/.claude/.credentials.json",
+}
+
+// ManagedFileTypeOrder defines the canonical ordering of file types used when
+// serialising ManagedFile slices to/from Kubernetes Secret data.
+var ManagedFileTypeOrder = []string{
+	FileTypeCodexAuth,
+	FileTypeClaudeCredentials,
+}
+
+// ManagedFile represents a file path and its contents, used to persist arbitrary
+// files across sessions via the agentapi-agent-files-{userID} Kubernetes Secret.
+type ManagedFile struct {
+	Path    string `yaml:"path"    json:"path"`
+	Content string `yaml:"content" json:"content"`
+}
+
+// FilesToSecretData converts a slice of ManagedFile into a flat map suitable for
+// storing in a Kubernetes Secret.  The format is index-based:
+//
+//	"0.path"    → files[0].Path
+//	"0.content" → files[0].Content
+//	"1.path"    → files[1].Path
+//	…
+func FilesToSecretData(files []ManagedFile) map[string][]byte {
+	data := make(map[string][]byte, len(files)*2)
+	for i, f := range files {
+		prefix := strconv.Itoa(i)
+		data[prefix+".path"] = []byte(f.Path)
+		data[prefix+".content"] = []byte(f.Content)
+	}
+	return data
+}
+
+// SecretDataToFiles reconstructs a slice of ManagedFile from the flat index-based
+// map produced by FilesToSecretData.  Entries that do not match the expected format
+// are silently skipped.  The result is ordered by ascending index so that the
+// output is deterministic regardless of Go's map iteration order.
+func SecretDataToFiles(data map[string][]byte) []ManagedFile {
+	// Collect unique indices first.
+	indexSet := map[int]struct{}{}
+	for k := range data {
+		if idx, ok := parseFileSecretKey(k); ok {
+			indexSet[idx] = struct{}{}
+		}
+	}
+
+	// Sort indices for deterministic output.
+	indices := make([]int, 0, len(indexSet))
+	for idx := range indexSet {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	files := make([]ManagedFile, 0, len(indices))
+	for _, idx := range indices {
+		prefix := strconv.Itoa(idx)
+		path, hasPath := data[prefix+".path"]
+		content, hasContent := data[prefix+".content"]
+		if !hasPath || !hasContent {
+			continue
+		}
+		files = append(files, ManagedFile{
+			Path:    string(path),
+			Content: string(content),
+		})
+	}
+	return files
+}
+
+// parseFileSecretKey parses a key of the form "<index>.path" or "<index>.content"
+// and returns the index.  Returns (0, false) if the key does not match.
+// LastIndex is used instead of Index so that the suffix ("path" or "content")
+// is always the part after the final dot, which correctly handles any future
+// index values that might themselves contain dots.
+func parseFileSecretKey(k string) (int, bool) {
+	dot := strings.LastIndex(k, ".")
+	if dot < 0 {
+		return 0, false
+	}
+	suffix := k[dot+1:]
+	if suffix != "path" && suffix != "content" {
+		return 0, false
+	}
+	idx, err := strconv.Atoi(k[:dot])
+	if err != nil {
+		return 0, false
+	}
+	return idx, true
+}
 
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
@@ -20,12 +125,14 @@ type SessionSettings struct {
 	Github         *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
 	SlackParams    *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
 	OtelCollector  *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
-	// Credentials is the raw JSON content of ~/.codex/auth.json from the previous session.
-	// It is read from the agentapi-agent-env-{userID} Secret at session creation time and
-	// delivered to the provisioner via the provision endpoint so that stock pool pods
-	// (which have no user-specific volume mounts) can also restore credentials.
-	// After provision, the runCredentialsSync goroutine watches the file and syncs
-	// any changes back to the Secret.
+	// Files holds the managed files to be restored at session startup.
+	// They are read from the agentapi-agent-files-{userID} Secret at session creation
+	// time and written to their respective paths by the provisioner.
+	// The runFilesSync goroutine watches those paths and syncs changes back to the Secret.
+	Files []ManagedFile `yaml:"files,omitempty" json:"files,omitempty"`
+	// Credentials is deprecated: use Files instead.
+	// Kept for backward compatibility with sessions provisioned before the Files field
+	// was introduced.  The provisioner falls back to this field when Files is empty.
 	Credentials string `yaml:"credentials,omitempty" json:"credentials,omitempty"`
 }
 

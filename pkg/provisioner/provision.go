@@ -98,15 +98,20 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
 
-	// ── Step 2.5: restore credentials from provision payload ─────────────────
-	// Credentials are embedded in SessionSettings.Credentials by the proxy at
-	// session creation time (read from agentapi-agent-env-{userID} Secret).
-	// Write them to ~/.codex/auth.json so codex-agentapi can use them immediately.
-	if settings.Credentials != "" {
+	// ── Step 2.5: restore managed files from provision payload ───────────────
+	// Files are embedded in SessionSettings.Files by the proxy at session creation
+	// time (read from agentapi-agent-files-{userID} Secret).
+	// Write each file to its path so agents can use them immediately.
+	if len(settings.Files) > 0 {
+		if err := writeFiles(settings.Files); err != nil {
+			log.Printf("[PROVISIONER] Warning: failed to write managed files: %v", err)
+		}
+	} else if settings.Credentials != "" {
+		// Backward compat: old sessions only have Credentials (= ~/.codex/auth.json).
 		if err := writeCredentials(settings.Credentials); err != nil {
-			log.Printf("[PROVISIONER] Warning: failed to write credentials: %v", err)
+			log.Printf("[PROVISIONER] Warning: failed to write credentials (legacy): %v", err)
 		} else {
-			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json")
+			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json (legacy)")
 		}
 	}
 
@@ -183,11 +188,11 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		go s.runClaudePosts(ctx, settings.SlackParams)
 	}
 
-	// ── Step 12: start credentials sync goroutine ─────────────────────────────
-	// Syncs ~/.codex/auth.json → Kubernetes Secret agentapi-agent-env-{userID}.
+	// ── Step 12: start files sync goroutine ───────────────────────────────────
+	// Syncs managedFilePaths → Kubernetes Secret agentapi-agent-files-{userID}.
 	// Runs in-process instead of as a sidecar so that UserID is always set
 	// (stock pool pods have empty UserID at pod creation time).
-	go s.runCredentialsSync(ctx, settings.Session.UserID)
+	go s.runFilesSync(ctx, settings.Session.UserID)
 
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
@@ -242,9 +247,42 @@ func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.Sla
 	}
 }
 
+// managedFilePaths lists the absolute paths that runFilesSync watches and persists
+// to the agentapi-agent-files-{userID} Secret.  Order determines the index used as
+// the Secret key prefix (0, 1, …).
+var managedFilePaths = []string{
+	"/home/agentapi/.codex/auth.json",
+	"/home/agentapi/.claude/.credentials.json",
+}
+
+// writeFiles writes each ManagedFile to its path (mode 0600), creating parent
+// directories as needed.  It is called once at provision time to restore files
+// delivered via the SessionSettings payload.
+func writeFiles(files []sessionsettings.ManagedFile) error {
+	var firstErr error
+	for _, f := range files {
+		if err := os.MkdirAll(filepath.Dir(f.Path), 0755); err != nil {
+			log.Printf("[PROVISIONER] Warning: failed to create dir for %s: %v", f.Path, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if err := os.WriteFile(f.Path, []byte(f.Content), 0600); err != nil {
+			log.Printf("[PROVISIONER] Warning: failed to write %s: %v", f.Path, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		log.Printf("[PROVISIONER] Restored managed file: %s", f.Path)
+	}
+	return firstErr
+}
+
 // writeCredentials writes the given JSON string to ~/.codex/auth.json (mode 0600).
-// It is called once at provision time to restore credentials delivered via the
-// SessionSettings payload, before runCredentialsSync starts watching the file.
+// Deprecated: used only for backward compatibility with old SessionSettings that
+// do not have the Files field.  New sessions use writeFiles instead.
 func writeCredentials(credentialsJSON string) error {
 	codexDir := filepath.Join(os.Getenv("HOME"), ".codex")
 	if codexDir == "/.codex" {
@@ -260,69 +298,109 @@ func writeCredentials(credentialsJSON string) error {
 	return nil
 }
 
-// runCredentialsSync watches ~/.codex/auth.json for changes and syncs them
-// to the Kubernetes Secret agentapi-agent-env-{userID} using the in-cluster
-// k8s client. It replaces the credentials-sync sidecar container, ensuring
-// that UserID is always available (stock pool pods have an empty UserID at
-// pod creation time, which caused the sidecar to fail).
+// runFilesSync watches the paths listed in managedFilePaths for changes and syncs
+// all of them to the Kubernetes Secret agentapi-agent-files-{userID} using the
+// in-cluster k8s client.
 // The goroutine is tied to ctx: when ctx is cancelled the loop exits.
-func (s *Server) runCredentialsSync(ctx context.Context, userID string) {
-	const credentialsFile = "/home/agentapi/.codex/auth.json"
+func (s *Server) runFilesSync(ctx context.Context, userID string) {
 	const syncInterval = 10 * time.Second
 
 	if userID == "" {
-		log.Printf("[CREDENTIALS_SYNC] No user ID set, skipping credentials sync")
+		log.Printf("[FILES_SYNC] No user ID set, skipping files sync")
 		return
 	}
 
-	secretName := "agentapi-agent-env-" + sanitizeCredentialSecretName(userID)
+	secretName := "agentapi-agent-files-" + sanitizeCredentialSecretName(userID)
 
 	// Read namespace from the in-cluster service-account namespace file.
 	nsBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {
-		log.Printf("[CREDENTIALS_SYNC] Not running in a k8s cluster (namespace file not found): %v, skipping", err)
+		log.Printf("[FILES_SYNC] Not running in a k8s cluster (namespace file not found): %v, skipping", err)
 		return
 	}
 	namespace := strings.TrimSpace(string(nsBytes))
 
-	log.Printf("[CREDENTIALS_SYNC] Starting: watching %s -> Secret %s/%s (interval: %s)", credentialsFile, namespace, secretName, syncInterval)
+	log.Printf("[FILES_SYNC] Starting: watching %v -> Secret %s/%s (interval: %s)", managedFilePaths, namespace, secretName, syncInterval)
 
 	k8sCfg, err := rest.InClusterConfig()
 	if err != nil {
-		log.Printf("[CREDENTIALS_SYNC] Failed to get in-cluster config: %v, skipping", err)
+		log.Printf("[FILES_SYNC] Failed to get in-cluster config: %v, skipping", err)
 		return
 	}
 	clientset, err := kubernetes.NewForConfig(k8sCfg)
 	if err != nil {
-		log.Printf("[CREDENTIALS_SYNC] Failed to create k8s client: %v, skipping", err)
+		log.Printf("[FILES_SYNC] Failed to create k8s client: %v, skipping", err)
 		return
 	}
 
-	var lastHash string
+	// Track last hash per file path to detect changes.
+	lastHashes := make(map[string]string, len(managedFilePaths))
+
 	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[CREDENTIALS_SYNC] Context cancelled, stopping")
+			log.Printf("[FILES_SYNC] Context cancelled, stopping")
 			return
 		case <-ticker.C:
-			data, hash, err := readFileWithHash(credentialsFile)
-			if err != nil {
-				// File may not exist yet (agent not logged in); not an error.
-				continue
+			// Read each file exactly once to avoid TOCTOU races between the
+			// hash-check pass and the content-collection pass.
+			type fileSnapshot struct {
+				data []byte
+				hash string
 			}
-			if hash == lastHash {
+			snapshots := make(map[string]fileSnapshot, len(managedFilePaths))
+			for _, path := range managedFilePaths {
+				data, hash, err := readFileWithHash(path)
+				if err != nil {
+					// File may not exist yet; not an error.
+					continue
+				}
+				snapshots[path] = fileSnapshot{data: data, hash: hash}
+			}
+
+			changed := false
+			for _, path := range managedFilePaths {
+				snap, ok := snapshots[path]
+				if !ok {
+					continue
+				}
+				if snap.hash != lastHashes[path] {
+					changed = true
+				}
+			}
+			if !changed {
 				continue
 			}
 
-			log.Printf("[CREDENTIALS_SYNC] Credentials file changed, syncing to Secret %s", secretName)
-			if err := upsertCredentialsSecret(ctx, clientset, namespace, secretName, data); err != nil {
-				log.Printf("[CREDENTIALS_SYNC] ERROR: failed to upsert Secret: %v", err)
+			// Build the full snapshot of all managed files from the single read above.
+			files := make([]sessionsettings.ManagedFile, 0, len(snapshots))
+			for _, path := range managedFilePaths {
+				snap, ok := snapshots[path]
+				if !ok {
+					continue
+				}
+				files = append(files, sessionsettings.ManagedFile{
+					Path:    path,
+					Content: string(snap.data),
+				})
+			}
+
+			secretData := sessionsettings.FilesToSecretData(files)
+			log.Printf("[FILES_SYNC] Files changed, syncing %d file(s) to Secret %s", len(files), secretName)
+			if err := upsertFilesSecret(ctx, clientset, namespace, secretName, secretData); err != nil {
+				log.Printf("[FILES_SYNC] ERROR: failed to upsert Secret: %v", err)
+				// Do not update lastHashes so the next tick retries the sync.
 			} else {
-				log.Printf("[CREDENTIALS_SYNC] Successfully synced to Secret %s", secretName)
-				lastHash = hash
+				log.Printf("[FILES_SYNC] Successfully synced to Secret %s", secretName)
+				// Update hashes only after a successful sync so failed upserts are retried.
+				for _, path := range managedFilePaths {
+					if snap, ok := snapshots[path]; ok {
+						lastHashes[path] = snap.hash
+					}
+				}
 			}
 		}
 	}
@@ -338,22 +416,20 @@ func readFileWithHash(path string) ([]byte, string, error) {
 	return data, fmt.Sprintf("%x", sum), nil
 }
 
-// upsertCredentialsSecret creates or updates a Kubernetes Secret with the
-// provided credentials data (key: auth.json).
-func upsertCredentialsSecret(ctx context.Context, clientset kubernetes.Interface, namespace, name string, data []byte) error {
+// upsertFilesSecret creates or updates the agentapi-agent-files-{userID} Kubernetes
+// Secret with the provided index-based file data produced by FilesToSecretData.
+func upsertFilesSecret(ctx context.Context, clientset kubernetes.Interface, namespace, name string, data map[string][]byte) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/name":       "agentapi-agent-credentials",
+				"app.kubernetes.io/name":       "agentapi-agent-files",
 				"app.kubernetes.io/managed-by": "agentapi-proxy",
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"auth.json": data,
-		},
+		Data: data,
 	}
 
 	_, err := clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
