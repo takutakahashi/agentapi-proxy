@@ -112,6 +112,13 @@ func runMigrateCredentials(_ *cobra.Command, _ []string) error {
 	fmt.Printf("Found %d agentapi-credentials-* secret(s) [codex_auth]\n", len(codexSecrets.Items))
 
 	for _, s := range codexSecrets.Items {
+		// Skip agentapi-agent-files-* Secrets – they are the migration target, not the source.
+		if strings.HasPrefix(s.Name, "agentapi-agent-files-") {
+			if migrateCredsVerbose {
+				fmt.Printf("  [SKIP] %s: already in new format\n", s.Name)
+			}
+			continue
+		}
 		name := credNameFromSecret(&s, "agentapi-credentials-")
 		content, ok := s.Data["auth.json"]
 		if !ok || len(content) == 0 {
