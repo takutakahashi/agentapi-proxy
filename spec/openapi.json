@@ -890,11 +890,15 @@
                   "properties": {
                     "session_id": {
                       "type": "string",
-                      "description": "ID of the created session"
+                      "description": "ID of the created or reused session"
                     },
                     "triggered_at": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "session_reused": {
+                      "type": "boolean",
+                      "description": "Indicates whether an existing session was reused instead of creating a new one"
                     }
                   }
                 }
@@ -3686,6 +3690,22 @@
           },
           "params": {
             "$ref": "#/components/schemas/SessionParams"
+          },
+          "memory_key": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Tag map used to identify memories for this session. When non-empty, memories matching these tags are injected into CLAUDE.md at startup. Supports Go template expressions (e.g. {{ .schedule_id }})."
+          },
+          "reuse_session": {
+            "type": "boolean",
+            "description": "When true, reuse an existing active session matching the schedule_id tag instead of creating a new session. The existing session receives reuse_message (or params.message if not set).",
+            "default": false
+          },
+          "reuse_message": {
+            "type": "string",
+            "description": "Message sent to the reused session when reuse_session is true. Falls back to params.message when empty."
           }
         }
       },
@@ -3698,7 +3718,7 @@
           },
           "session_id": {
             "type": "string",
-            "description": "ID of the created session (if successful)"
+            "description": "ID of the created or reused session (if successful)"
           },
           "status": {
             "type": "string",
@@ -3712,6 +3732,10 @@
           "error": {
             "type": "string",
             "description": "Error message (if failed or skipped)"
+          },
+          "session_reused": {
+            "type": "boolean",
+            "description": "Indicates whether an existing session was reused instead of creating a new one"
           }
         }
       },

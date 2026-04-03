@@ -81,18 +81,27 @@ type SessionConfig struct {
 	// MemoryKey is an optional tag map used to identify memories for this session.
 	// When non-empty, memories matching these tags are injected into CLAUDE.md at startup.
 	MemoryKey map[string]string `json:"memory_key,omitempty"`
+	// ReuseSession when true, will reuse an existing active session matching schedule_id tag
+	// instead of creating a new session. The existing session receives the initial message (or
+	// ReuseMessage if set) instead of starting a new process.
+	ReuseSession bool `json:"reuse_session,omitempty"`
+	// ReuseMessage is the message sent to the reused session when ReuseSession is true.
+	// Falls back to Params.Message when empty.
+	ReuseMessage string `json:"reuse_message,omitempty"`
 }
 
 // ExecutionRecord represents a single execution attempt
 type ExecutionRecord struct {
 	// ExecutedAt is when the execution was attempted
 	ExecutedAt time.Time `json:"executed_at"`
-	// SessionID is the ID of the created session (if successful)
+	// SessionID is the ID of the created or reused session (if successful)
 	SessionID string `json:"session_id,omitempty"`
 	// Status is the result of the execution: "success", "failed", or "skipped"
 	Status string `json:"status"`
 	// Error contains the error message if execution failed
 	Error string `json:"error,omitempty"`
+	// SessionReused indicates whether an existing session was reused instead of creating a new one
+	SessionReused bool `json:"session_reused,omitempty"`
 }
 
 // GetScope returns the resource scope, defaulting to "user" if not set
