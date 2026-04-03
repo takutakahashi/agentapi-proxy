@@ -154,6 +154,9 @@ ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/h
 # install claude-agentapi
 RUN bun install -g @takutakahashi/claude-agentapi
 
+# Install codex CLI
+RUN bun install -g @openai/codex
+
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
 
