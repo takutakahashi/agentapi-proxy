@@ -281,13 +281,13 @@ func TestRunHistoryWithMockServer(t *testing.T) {
 					ID:        "msg-1",
 					Role:      "user",
 					Content:   "Hello",
-					Timestamp: time.Now().Add(-5 * time.Minute),
+					Timestamp: func() *time.Time { t := time.Now().Add(-5 * time.Minute); return &t }(),
 				},
 				{
 					ID:        "msg-2",
 					Role:      "assistant",
 					Content:   "Hi there!",
-					Timestamp: time.Now(),
+					Timestamp: func() *time.Time { t := time.Now(); return &t }(),
 				},
 			},
 		}

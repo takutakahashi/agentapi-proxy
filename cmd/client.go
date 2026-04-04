@@ -709,7 +709,11 @@ func runHistory(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Conversation History (%d messages):\n", len(messagesResp.Messages))
 	for _, msg := range messagesResp.Messages {
-		fmt.Printf("[%s] %s: %s\n", msg.Timestamp.Format("15:04:05"), msg.Role, msg.Content)
+		ts := ""
+		if msg.Timestamp != nil {
+			ts = msg.Timestamp.Format("15:04:05")
+		}
+		fmt.Printf("[%s] %s: %s\n", ts, msg.Role, msg.Content)
 	}
 }
 
