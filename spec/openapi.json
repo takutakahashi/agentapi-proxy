@@ -3459,7 +3459,7 @@
           "cycle_max_count": {
             "type": "integer",
             "description": "Maximum number of cycles to run. 0 means unlimited. Requires cycle_message to be set. The current count is tracked in /tmp/check/CYCLE_COUNT inside the session.",
-            "default": 0,
+            "default": 10,
             "example": 10
           }
         }

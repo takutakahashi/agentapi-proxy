@@ -502,7 +502,7 @@ func init() {
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyUserID, "notify-user-id", "", "User ID to send the notification to")
 
 	// cycle flags
-	cycleCmd.Flags().IntVar(&cycleMaxCount, "max-count", 0, "Maximum number of cycles (0 means unlimited). Exits when the count in /tmp/check/CYCLE_COUNT reaches this limit.")
+	cycleCmd.Flags().IntVar(&cycleMaxCount, "max-count", 10, "Maximum number of cycles (0 means unlimited, default: 10). Exits when the count in /tmp/check/CYCLE_COUNT reaches this limit.")
 
 	ClientCmd.AddCommand(cycleCmd)
 	ClientCmd.AddCommand(sendCmd)
