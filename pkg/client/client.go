@@ -122,11 +122,11 @@ type SearchResponse struct {
 
 // Message represents an agentapi message
 type Message struct {
-	Content   string    `json:"content"`
-	Type      string    `json:"type"` // "user" or "raw"
-	Role      string    `json:"role,omitempty"`
-	Timestamp time.Time `json:"timestamp,omitempty"`
-	ID        string    `json:"id,omitempty"`
+	Content   string     `json:"content"`
+	Type      string     `json:"type"` // "user" or "raw"
+	Role      string     `json:"role,omitempty"`
+	Timestamp *time.Time `json:"timestamp,omitempty"`
+	ID        string     `json:"id,omitempty"`
 }
 
 // MessageResponse represents the response from sending a message

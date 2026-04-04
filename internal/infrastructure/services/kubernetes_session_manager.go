@@ -2935,12 +2935,54 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	settings.Env = env
 
 	// Claude config
+	settingsJSON := materialized.SettingsJSON
+
+	// Inject cycle Stop hook if CycleMessage is set.
+	// The hook runs the cycle command in background (nohup ... &) so that it exits
+	// immediately without blocking Claude Code's hook runner. The background process
+	// then waits for the session to become "stable" before sending the message,
+	// avoiding the 422 error that occurs when the agent is still "running".
+	if req.CycleMessage != "" {
+		innerCmd := fmt.Sprintf("agentapi-proxy client cycle %q", req.CycleMessage)
+		if req.CycleMaxCount > 0 {
+			innerCmd += fmt.Sprintf(" --max-count %d", req.CycleMaxCount)
+		}
+		// Wrap with nohup + background so the hook exits immediately (exit 0)
+		// and the actual wait+send happens asynchronously after all hooks complete.
+		command := fmt.Sprintf("nohup %s >> /tmp/cycle.log 2>&1 &", innerCmd)
+
+		cycleHookEntry := map[string]interface{}{
+			"hooks": []map[string]interface{}{
+				{"type": "command", "command": command},
+			},
+		}
+
+		if settingsJSON == nil {
+			settingsJSON = make(map[string]interface{})
+		}
+
+		hooksMap, ok := settingsJSON["hooks"].(map[string]interface{})
+		if !ok {
+			hooksMap = make(map[string]interface{})
+		}
+
+		// Merge with existing Stop hooks (e.g., from oneshot settings)
+		if existing, ok := hooksMap["Stop"].([]interface{}); ok {
+			hooksMap["Stop"] = append(existing, cycleHookEntry)
+		} else {
+			hooksMap["Stop"] = []interface{}{cycleHookEntry}
+		}
+
+		settingsJSON["hooks"] = hooksMap
+		log.Printf("[K8S_SESSION] Injected cycle Stop hook for session %s (max-count=%d)", session.id, req.CycleMaxCount)
+	}
+
 	settings.Claude = sessionsettings.ClaudeConfig{
 		ClaudeJSON: map[string]interface{}{
 			"hasCompletedOnboarding":        true,
 			"bypassPermissionsModeAccepted": true,
 		},
-		SettingsJSON: materialized.SettingsJSON,
+		SettingsJSON: settingsJSON,
 		MCPServers:   materialized.MCPServers,
 	}
 

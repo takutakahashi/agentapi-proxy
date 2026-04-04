@@ -281,13 +281,13 @@ func TestRunHistoryWithMockServer(t *testing.T) {
 					ID:        "msg-1",
 					Role:      "user",
 					Content:   "Hello",
-					Timestamp: time.Now().Add(-5 * time.Minute),
+					Timestamp: func() *time.Time { t := time.Now().Add(-5 * time.Minute); return &t }(),
 				},
 				{
 					ID:        "msg-2",
 					Role:      "assistant",
 					Content:   "Hi there!",
-					Timestamp: time.Now(),
+					Timestamp: func() *time.Time { t := time.Now(); return &t }(),
 				},
 			},
 		}
@@ -599,4 +599,204 @@ func TestFormatMemoriesMarkdown(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestCycleCmd(t *testing.T) {
+	assert.Equal(t, "cycle [message]", cycleCmd.Use)
+	assert.Equal(t, "Send a message to the session unless CYCLE_OK is present", cycleCmd.Short)
+	assert.NotNil(t, cycleCmd.RunE)
+}
+
+func TestRunCycleWithCycleOK(t *testing.T) {
+	// Create the marker file
+	dir := t.TempDir()
+	markerPath := dir + "/CYCLE_OK"
+	if err := os.WriteFile(markerPath, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("failed to create marker file: %v", err)
+	}
+
+	// Temporarily override the cycleOKPath constant by using a wrapper test
+	// We'll patch the path via the environment and test indirectly.
+	// Since cycleOKPath is a const, we test runCycle behavior by checking
+	// that when the default path exists, it exits early.
+
+	// Create /tmp/check directory and CYCLE_OK file for the actual const path
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	if err := os.WriteFile(cycleOKPath, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_OK: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleOKPath) }()
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := runCycle(&cobra.Command{}, []string{"this message should not be sent"})
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	output := buf.String()
+
+	assert.NoError(t, err)
+	assert.Contains(t, output, "CYCLE_OK found")
+}
+
+func TestRunCycleWithoutCycleOK(t *testing.T) {
+	// Make sure CYCLE_OK does NOT exist
+	_ = os.Remove(cycleOKPath)
+	_ = os.Remove(cycleCountPath)
+	cycleMaxCount = 0
+	defer func() { cycleMaxCount = 0 }()
+
+	// Create a mock server that handles the status and message endpoints
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/status") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.StatusResponse{Status: "stable"})
+			return
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/message") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.MessageResponse{OK: true})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// Set flags
+	endpoint = server.URL
+	sessionID = "test-cycle-session"
+	defer func() {
+		endpoint = ""
+		sessionID = ""
+	}()
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	rp, wp, _ := os.Pipe()
+	os.Stdout = wp
+
+	err := runCycle(&cobra.Command{}, []string{"hello from cycle"})
+
+	_ = wp.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(rp)
+	output := buf.String()
+
+	assert.NoError(t, err)
+	assert.Contains(t, output, "Message sent successfully")
+}
+
+func TestReadWriteCycleCount(t *testing.T) {
+	// Clean up before and after
+	_ = os.Remove(cycleCountPath)
+	defer func() { _ = os.Remove(cycleCountPath) }()
+
+	// Read when file does not exist → should return 0
+	count, err := readCycleCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 0, count)
+
+	// Write a count and read it back
+	err = writeCycleCount(3)
+	assert.NoError(t, err)
+
+	count, err = readCycleCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 3, count)
+}
+
+func TestRunCycleMaxCountNotReached(t *testing.T) {
+	_ = os.Remove(cycleOKPath)
+	_ = os.Remove(cycleCountPath)
+	cycleMaxCount = 5
+	defer func() {
+		cycleMaxCount = 0
+		_ = os.Remove(cycleCountPath)
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/status") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.StatusResponse{Status: "stable"})
+			return
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/message") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.MessageResponse{OK: true})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	endpoint = server.URL
+	sessionID = "test-cycle-session"
+	defer func() {
+		endpoint = ""
+		sessionID = ""
+	}()
+
+	oldStdout := os.Stdout
+	rp, wp, _ := os.Pipe()
+	os.Stdout = wp
+
+	err := runCycle(&cobra.Command{}, []string{"hello"})
+
+	_ = wp.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(rp)
+	output := buf.String()
+
+	assert.NoError(t, err)
+	assert.Contains(t, output, "1/5")
+	assert.Contains(t, output, "Message sent successfully")
+
+	// Counter file should contain 1
+	count, err := readCycleCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 1, count)
+}
+
+func TestRunCycleMaxCountReached(t *testing.T) {
+	_ = os.Remove(cycleOKPath)
+	// Pre-write the count at the limit
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	if err := writeCycleCount(5); err != nil {
+		t.Fatalf("failed to write cycle count: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleCountPath) }()
+
+	cycleMaxCount = 5
+	defer func() { cycleMaxCount = 0 }()
+
+	oldStdout := os.Stdout
+	rp, wp, _ := os.Pipe()
+	os.Stdout = wp
+
+	err := runCycle(&cobra.Command{}, []string{"this should not be sent"})
+
+	_ = wp.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(rp)
+	output := buf.String()
+
+	assert.NoError(t, err)
+	assert.Contains(t, output, "Cycle count limit reached")
+	assert.Contains(t, output, "5/5")
 }

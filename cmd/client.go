@@ -68,6 +68,11 @@ var (
 	clientNotifyUserID    string
 )
 
+// cycle subcommand flags
+var (
+	cycleMaxCount int
+)
+
 // resolveClient creates a client using flags if provided, otherwise falling back
 // to environment variables (AGENTAPI_PROXY_SERVICE_HOST, AGENTAPI_PROXY_SERVICE_PORT_HTTP,
 // AGENTAPI_SESSION_ID, AGENTAPI_KEY).
@@ -129,6 +134,32 @@ var ClientCmd = &cobra.Command{
 	Use:   "client",
 	Short: "AgentAPI Client CLI",
 	Long:  "Command line client for interacting with AgentAPI endpoints",
+}
+
+var cycleCmd = &cobra.Command{
+	Use:   "cycle [message]",
+	Short: "Send a message to the session unless CYCLE_OK is present",
+	Long: `Check if /tmp/check/CYCLE_OK exists. If it does, exit without doing anything.
+Otherwise, send the given message to the session.
+
+Each invocation increments a counter stored in /tmp/check/CYCLE_COUNT.
+If --max-count is set and the counter reaches the limit, the command exits
+without sending a message (same behavior as CYCLE_OK).
+
+This command is useful for cyclic agent workflows where the cycle should stop
+once a completion marker file has been written or after a maximum number of attempts.
+
+Examples:
+  agentapi-proxy client cycle "Please continue the task"
+
+  # Stop after 10 cycles at most
+  agentapi-proxy client cycle --max-count 10 "Please continue the task"
+
+  agentapi-proxy client cycle \
+    --session-id my-session \
+    "Review the output and proceed"`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runCycle,
 }
 
 var sendCmd = &cobra.Command{
@@ -470,6 +501,10 @@ func init() {
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifySessionID, "notify-session-id", "", "Session ID whose subscribers will receive the notification")
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyUserID, "notify-user-id", "", "User ID to send the notification to")
 
+	// cycle flags
+	cycleCmd.Flags().IntVar(&cycleMaxCount, "max-count", 0, "Maximum number of cycles (0 means unlimited). Exits when the count in /tmp/check/CYCLE_COUNT reaches this limit.")
+
+	ClientCmd.AddCommand(cycleCmd)
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
@@ -479,6 +514,135 @@ func init() {
 	ClientCmd.AddCommand(sendNotificationClientCmd)
 	ClientCmd.AddCommand(taskCmd)
 	ClientCmd.AddCommand(memoryCmd)
+}
+
+const (
+	cycleOKPath    = "/tmp/check/CYCLE_OK"
+	cycleCountPath = "/tmp/check/CYCLE_COUNT"
+)
+
+// readCycleCount reads the current cycle count from cycleCountPath.
+// Returns 0 if the file does not exist.
+func readCycleCount() (int, error) {
+	data, err := os.ReadFile(cycleCountPath)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to read cycle count: %w", err)
+	}
+	var count int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &count); err != nil {
+		return 0, fmt.Errorf("invalid cycle count in %s: %w", cycleCountPath, err)
+	}
+	return count, nil
+}
+
+// writeCycleCount writes the given count to cycleCountPath.
+func writeCycleCount(count int) error {
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		return fmt.Errorf("failed to create /tmp/check: %w", err)
+	}
+	if err := os.WriteFile(cycleCountPath, []byte(fmt.Sprintf("%d\n", count)), 0o644); err != nil {
+		return fmt.Errorf("failed to write cycle count: %w", err)
+	}
+	return nil
+}
+
+func runCycle(cmd *cobra.Command, args []string) error {
+	// Check if the CYCLE_OK marker file exists
+	if _, err := os.Stat(cycleOKPath); err == nil {
+		fmt.Println("CYCLE_OK found, exiting cycle")
+		return nil
+	}
+
+	// Read and check the cycle count when --max-count is set
+	if cycleMaxCount > 0 {
+		count, err := readCycleCount()
+		if err != nil {
+			return err
+		}
+		if count >= cycleMaxCount {
+			fmt.Printf("Cycle count limit reached (%d/%d), exiting cycle\n", count, cycleMaxCount)
+			return nil
+		}
+		// Increment and persist the counter before sending
+		if err := writeCycleCount(count + 1); err != nil {
+			return err
+		}
+		fmt.Printf("Cycle count: %d/%d\n", count+1, cycleMaxCount)
+	}
+
+	// Determine the message to send
+	var message string
+	if len(args) > 0 {
+		message = args[0]
+	} else {
+		fmt.Print("Enter message: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			message = scanner.Text()
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("error reading input: %w", err)
+		}
+	}
+
+	if message == "" {
+		return fmt.Errorf("message cannot be empty")
+	}
+
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		return fmt.Errorf("failed to resolve client: %w", err)
+	}
+
+	// Wait for the session to become stable before sending.
+	// The Stop hook fires while Claude is still wrapping up ("running"),
+	// and agentapi rejects user messages with 422 until the status is "stable".
+	ctx := context.Background()
+	if err := waitForStable(ctx, c, resolvedSessionID); err != nil {
+		return fmt.Errorf("timed out waiting for stable status: %w", err)
+	}
+
+	msg := &client.Message{
+		Content: message,
+		Type:    "user",
+	}
+
+	msgResp, err := c.SendMessage(ctx, resolvedSessionID, msg)
+	if err != nil {
+		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	if msgResp.OK {
+		fmt.Println("Message sent successfully")
+	} else {
+		return fmt.Errorf("message was not sent successfully")
+	}
+
+	return nil
+}
+
+// waitForStable polls the session status until it is "stable" or the timeout is reached.
+func waitForStable(ctx context.Context, c *client.Client, sessionID string) error {
+	const (
+		pollInterval = 2 * time.Second
+		timeout      = 120 * time.Second
+	)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		statusResp, err := c.GetStatus(ctx, sessionID)
+		if err == nil && statusResp.Status == "stable" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+	return fmt.Errorf("session did not become stable within %s", timeout)
 }
 
 func runSend(cmd *cobra.Command, args []string) {
@@ -545,7 +709,11 @@ func runHistory(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Conversation History (%d messages):\n", len(messagesResp.Messages))
 	for _, msg := range messagesResp.Messages {
-		fmt.Printf("[%s] %s: %s\n", msg.Timestamp.Format("15:04:05"), msg.Role, msg.Content)
+		ts := ""
+		if msg.Timestamp != nil {
+			ts = msg.Timestamp.Format("15:04:05")
+		}
+		fmt.Printf("[%s] %s: %s\n", ts, msg.Role, msg.Content)
 	}
 }
 
