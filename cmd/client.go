@@ -131,6 +131,25 @@ var ClientCmd = &cobra.Command{
 	Long:  "Command line client for interacting with AgentAPI endpoints",
 }
 
+var cycleCmd = &cobra.Command{
+	Use:   "cycle [message]",
+	Short: "Send a message to the session unless CYCLE_OK is present",
+	Long: `Check if /tmp/check/CYCLE_OK exists. If it does, exit without doing anything.
+Otherwise, send the given message to the session.
+
+This command is useful for cyclic agent workflows where the cycle should stop
+once a completion marker file has been written.
+
+Examples:
+  agentapi-proxy client cycle "Please continue the task"
+
+  agentapi-proxy client cycle \
+    --session-id my-session \
+    "Review the output and proceed"`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runCycle,
+}
+
 var sendCmd = &cobra.Command{
 	Use:   "send [message]",
 	Short: "Send a message to the agent",
@@ -470,6 +489,7 @@ func init() {
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifySessionID, "notify-session-id", "", "Session ID whose subscribers will receive the notification")
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyUserID, "notify-user-id", "", "User ID to send the notification to")
 
+	ClientCmd.AddCommand(cycleCmd)
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
@@ -479,6 +499,58 @@ func init() {
 	ClientCmd.AddCommand(sendNotificationClientCmd)
 	ClientCmd.AddCommand(taskCmd)
 	ClientCmd.AddCommand(memoryCmd)
+}
+
+const cycleOKPath = "/tmp/check/CYCLE_OK"
+
+func runCycle(cmd *cobra.Command, args []string) error {
+	// Check if the CYCLE_OK marker file exists
+	if _, err := os.Stat(cycleOKPath); err == nil {
+		fmt.Println("CYCLE_OK found, exiting cycle")
+		return nil
+	}
+
+	// Determine the message to send
+	var message string
+	if len(args) > 0 {
+		message = args[0]
+	} else {
+		fmt.Print("Enter message: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			message = scanner.Text()
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("error reading input: %w", err)
+		}
+	}
+
+	if message == "" {
+		return fmt.Errorf("message cannot be empty")
+	}
+
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		return fmt.Errorf("failed to resolve client: %w", err)
+	}
+
+	msg := &client.Message{
+		Content: message,
+		Type:    "user",
+	}
+
+	msgResp, err := c.SendMessage(context.Background(), resolvedSessionID, msg)
+	if err != nil {
+		return fmt.Errorf("error sending message: %w", err)
+	}
+
+	if msgResp.OK {
+		fmt.Println("Message sent successfully")
+	} else {
+		return fmt.Errorf("message was not sent successfully")
+	}
+
+	return nil
 }
 
 func runSend(cmd *cobra.Command, args []string) {

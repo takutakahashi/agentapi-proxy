@@ -600,3 +600,90 @@ func TestFormatMemoriesMarkdown(t *testing.T) {
 		})
 	}
 }
+
+func TestCycleCmd(t *testing.T) {
+	assert.Equal(t, "cycle [message]", cycleCmd.Use)
+	assert.Equal(t, "Send a message to the session unless CYCLE_OK is present", cycleCmd.Short)
+	assert.NotNil(t, cycleCmd.RunE)
+}
+
+func TestRunCycleWithCycleOK(t *testing.T) {
+	// Create the marker file
+	dir := t.TempDir()
+	markerPath := dir + "/CYCLE_OK"
+	if err := os.WriteFile(markerPath, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("failed to create marker file: %v", err)
+	}
+
+	// Temporarily override the cycleOKPath constant by using a wrapper test
+	// We'll patch the path via the environment and test indirectly.
+	// Since cycleOKPath is a const, we test runCycle behavior by checking
+	// that when the default path exists, it exits early.
+
+	// Create /tmp/check directory and CYCLE_OK file for the actual const path
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	if err := os.WriteFile(cycleOKPath, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_OK: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleOKPath) }()
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := runCycle(&cobra.Command{}, []string{"this message should not be sent"})
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	output := buf.String()
+
+	assert.NoError(t, err)
+	assert.Contains(t, output, "CYCLE_OK found")
+}
+
+func TestRunCycleWithoutCycleOK(t *testing.T) {
+	// Make sure CYCLE_OK does NOT exist
+	_ = os.Remove(cycleOKPath)
+
+	// Create a mock server that handles the message endpoint
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/message") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.MessageResponse{OK: true})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// Set flags
+	endpoint = server.URL
+	sessionID = "test-cycle-session"
+	defer func() {
+		endpoint = ""
+		sessionID = ""
+	}()
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	rp, wp, _ := os.Pipe()
+	os.Stdout = wp
+
+	err := runCycle(&cobra.Command{}, []string{"hello from cycle"})
+
+	_ = wp.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(rp)
+	output := buf.String()
+
+	assert.NoError(t, err)
+	assert.Contains(t, output, "Message sent successfully")
+}
