@@ -654,8 +654,13 @@ func TestRunCycleWithoutCycleOK(t *testing.T) {
 	cycleMaxCount = 0
 	defer func() { cycleMaxCount = 0 }()
 
-	// Create a mock server that handles the message endpoint
+	// Create a mock server that handles the status and message endpoints
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/status") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.StatusResponse{Status: "stable"})
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/message") {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(client.MessageResponse{OK: true})
@@ -720,6 +725,11 @@ func TestRunCycleMaxCountNotReached(t *testing.T) {
 	}()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/status") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.StatusResponse{Status: "stable"})
+			return
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/message") {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(client.MessageResponse{OK: true})

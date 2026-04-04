@@ -597,12 +597,20 @@ func runCycle(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to resolve client: %w", err)
 	}
 
+	// Wait for the session to become stable before sending.
+	// The Stop hook fires while Claude is still wrapping up ("running"),
+	// and agentapi rejects user messages with 422 until the status is "stable".
+	ctx := context.Background()
+	if err := waitForStable(ctx, c, resolvedSessionID); err != nil {
+		return fmt.Errorf("timed out waiting for stable status: %w", err)
+	}
+
 	msg := &client.Message{
 		Content: message,
 		Type:    "user",
 	}
 
-	msgResp, err := c.SendMessage(context.Background(), resolvedSessionID, msg)
+	msgResp, err := c.SendMessage(ctx, resolvedSessionID, msg)
 	if err != nil {
 		return fmt.Errorf("error sending message: %w", err)
 	}
@@ -614,6 +622,27 @@ func runCycle(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// waitForStable polls the session status until it is "stable" or the timeout is reached.
+func waitForStable(ctx context.Context, c *client.Client, sessionID string) error {
+	const (
+		pollInterval = 2 * time.Second
+		timeout      = 120 * time.Second
+	)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		statusResp, err := c.GetStatus(ctx, sessionID)
+		if err == nil && statusResp.Status == "stable" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+	return fmt.Errorf("session did not become stable within %s", timeout)
 }
 
 func runSend(cmd *cobra.Command, args []string) {
