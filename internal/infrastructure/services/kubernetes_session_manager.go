@@ -2937,12 +2937,19 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Claude config
 	settingsJSON := materialized.SettingsJSON
 
-	// Inject cycle Stop hook if CycleMessage is set
+	// Inject cycle Stop hook if CycleMessage is set.
+	// The hook runs the cycle command in background (nohup ... &) so that it exits
+	// immediately without blocking Claude Code's hook runner. The background process
+	// then waits for the session to become "stable" before sending the message,
+	// avoiding the 422 error that occurs when the agent is still "running".
 	if req.CycleMessage != "" {
-		command := fmt.Sprintf("agentapi-proxy client cycle %q", req.CycleMessage)
+		innerCmd := fmt.Sprintf("agentapi-proxy client cycle %q", req.CycleMessage)
 		if req.CycleMaxCount > 0 {
-			command += fmt.Sprintf(" --max-count %d", req.CycleMaxCount)
+			innerCmd += fmt.Sprintf(" --max-count %d", req.CycleMaxCount)
 		}
+		// Wrap with nohup + background so the hook exits immediately (exit 0)
+		// and the actual wait+send happens asynchronously after all hooks complete.
+		command := fmt.Sprintf("nohup %s >> /tmp/cycle.log 2>&1 &", innerCmd)
 
 		cycleHookEntry := map[string]interface{}{
 			"hooks": []map[string]interface{}{
