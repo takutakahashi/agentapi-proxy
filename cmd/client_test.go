@@ -696,6 +696,55 @@ func TestRunCycleWithoutCycleOK(t *testing.T) {
 	assert.Contains(t, output, "Message sent successfully")
 }
 
+func TestRunCycleMessageContainsConditionCheck(t *testing.T) {
+	_ = os.Remove(cycleOKPath)
+	_ = os.Remove(cycleCountPath)
+	cycleMaxCount = 0
+	defer func() { cycleMaxCount = 0 }()
+
+	var receivedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/status") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.StatusResponse{Status: "stable"})
+			return
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/message") {
+			receivedBody, _ = io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.MessageResponse{OK: true})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	endpoint = server.URL
+	sessionID = "test-cycle-session"
+	defer func() {
+		endpoint = ""
+		sessionID = ""
+	}()
+
+	oldStdout := os.Stdout
+	rp, wp, _ := os.Pipe()
+	os.Stdout = wp
+
+	err := runCycle(&cobra.Command{}, []string{"作業を続けてください"})
+
+	_ = wp.Close()
+	os.Stdout = oldStdout
+	_, _ = io.Copy(io.Discard, rp)
+
+	assert.NoError(t, err)
+
+	// The sent message must contain the original message
+	assert.Contains(t, string(receivedBody), "作業を続けてください")
+	// The sent message must contain the condition check instructions
+	assert.Contains(t, string(receivedBody), "CYCLE_OK 作成条件")
+	assert.Contains(t, string(receivedBody), "/tmp/check/CYCLE_OK")
+}
+
 func TestReadWriteCycleCount(t *testing.T) {
 	// Clean up before and after
 	_ = os.Remove(cycleCountPath)
