@@ -170,6 +170,57 @@ func TestBuildSessionSettings_CycleHookWithoutMaxCount(t *testing.T) {
 	}
 }
 
+// TestBuildSessionSettings_CycleEnabledFileInjected verifies that /tmp/check/CYCLE_ENABLED
+// is added to settings.Files when CycleMessage is set.
+func TestBuildSessionSettings_CycleEnabledFileInjected(t *testing.T) {
+	manager := newTestManagerForCycle(t)
+	session := newTestSessionForCycle("test-user")
+
+	req := &entities.RunServerRequest{
+		UserID:       "test-user",
+		CycleMessage: "Please continue the task",
+	}
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if settings == nil {
+		t.Fatal("Expected non-nil settings")
+	}
+
+	found := false
+	for _, f := range settings.Files {
+		if f.Path == "/tmp/check/CYCLE_ENABLED" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected /tmp/check/CYCLE_ENABLED in settings.Files, got: %+v", settings.Files)
+	}
+}
+
+// TestBuildSessionSettings_NoCycleEnabledFileWhenMessageEmpty verifies that
+// /tmp/check/CYCLE_ENABLED is NOT added to settings.Files when CycleMessage is empty.
+func TestBuildSessionSettings_NoCycleEnabledFileWhenMessageEmpty(t *testing.T) {
+	manager := newTestManagerForCycle(t)
+	session := newTestSessionForCycle("test-user")
+
+	req := &entities.RunServerRequest{
+		UserID:       "test-user",
+		CycleMessage: "",
+	}
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if settings == nil {
+		t.Fatal("Expected non-nil settings")
+	}
+
+	for _, f := range settings.Files {
+		if f.Path == "/tmp/check/CYCLE_ENABLED" {
+			t.Errorf("Unexpected /tmp/check/CYCLE_ENABLED in settings.Files when CycleMessage is empty")
+		}
+	}
+}
+
 // TestBuildSessionSettings_NoCycleHookWhenMessageEmpty verifies that no cycle hook
 // is injected when CycleMessage is empty.
 func TestBuildSessionSettings_NoCycleHookWhenMessageEmpty(t *testing.T) {

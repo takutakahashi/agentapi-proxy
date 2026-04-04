@@ -3143,6 +3143,18 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// Not found or no data is normal (user hasn't logged in yet); skip silently.
 	}
 
+	// When CycleMessage is set, inject /tmp/check/CYCLE_ENABLED so the provisioner
+	// creates it on startup. The cycle command now requires this file to be present
+	// before it will actually send messages, which allows the Stop hook to be
+	// registered permanently and activated simply by the file's existence.
+	if req.CycleMessage != "" {
+		settings.Files = append(settings.Files, sessionsettings.ManagedFile{
+			Path:    "/tmp/check/CYCLE_ENABLED",
+			Content: "",
+		})
+		log.Printf("[K8S_SESSION] Injected CYCLE_ENABLED file for session %s", session.id)
+	}
+
 	return settings
 }
 
