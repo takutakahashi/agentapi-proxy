@@ -521,6 +521,21 @@ const (
 	cycleCountPath = "/tmp/check/CYCLE_COUNT"
 )
 
+// cycleConditionCheckSuffix is appended to every message sent by the cycle command.
+// It instructs the agent to check whether the conditions described in the message
+// are met, and to create CYCLE_OK if so.
+const cycleConditionCheckSuffix = `
+
+---
+⚠️ [cycle セッション] このメッセージを受け取ったら、まず上記の達成条件を確認してください。
+条件をすべて満たしている場合は、追加の作業は行わずに直ちに以下のコマンドを実行してサイクルを終了させてください:
+
+` + "```" + `bash
+mkdir -p /tmp/check && touch /tmp/check/CYCLE_OK
+` + "```" + `
+
+条件を満たしていない場合は、引き続き作業を行ってください。`
+
 // readCycleCount reads the current cycle count from cycleCountPath.
 // Returns 0 if the file does not exist.
 func readCycleCount() (int, error) {
@@ -606,7 +621,7 @@ func runCycle(cmd *cobra.Command, args []string) error {
 	}
 
 	msg := &client.Message{
-		Content: message,
+		Content: message + cycleConditionCheckSuffix,
 		Type:    "user",
 	}
 
