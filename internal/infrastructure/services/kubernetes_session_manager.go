@@ -2943,7 +2943,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// then waits for the session to become "stable" before sending the message,
 	// avoiding the 422 error that occurs when the agent is still "running".
 	if req.CycleMessage != "" {
-		innerCmd := fmt.Sprintf("agentapi-proxy client cycle %q", req.CycleMessage)
+		// The cycle message is stored in /tmp/check/CYCLE_ENABLED (written by the
+		// provisioner via settings.Files below).  The cycle command reads the message
+		// from that file, so no message argument is needed here.
+		innerCmd := "agentapi-proxy client cycle"
 		if req.CycleMaxCount > 0 {
 			innerCmd += fmt.Sprintf(" --max-count %d", req.CycleMaxCount)
 		}
@@ -3143,16 +3146,17 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// Not found or no data is normal (user hasn't logged in yet); skip silently.
 	}
 
-	// When CycleMessage is set, inject /tmp/check/CYCLE_ENABLED so the provisioner
-	// creates it on startup. The cycle command now requires this file to be present
-	// before it will actually send messages, which allows the Stop hook to be
-	// registered permanently and activated simply by the file's existence.
+	// When CycleMessage is set, write the message into /tmp/check/CYCLE_ENABLED so
+	// the provisioner creates it on startup.  The cycle command reads the message
+	// directly from this file, so no message argument is needed in the Stop hook.
+	// Deleting CYCLE_ENABLED (done by the agent when the goal is met, or when
+	// --max-count is reached) disables further cycles without any extra marker file.
 	if req.CycleMessage != "" {
 		settings.Files = append(settings.Files, sessionsettings.ManagedFile{
 			Path:    "/tmp/check/CYCLE_ENABLED",
-			Content: "",
+			Content: req.CycleMessage,
 		})
-		log.Printf("[K8S_SESSION] Injected CYCLE_ENABLED file for session %s", session.id)
+		log.Printf("[K8S_SESSION] Injected CYCLE_ENABLED file (with message) for session %s", session.id)
 	}
 
 	return settings
