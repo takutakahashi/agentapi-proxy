@@ -2935,12 +2935,47 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	settings.Env = env
 
 	// Claude config
+	settingsJSON := materialized.SettingsJSON
+
+	// Inject cycle Stop hook if CycleMessage is set
+	if req.CycleMessage != "" {
+		command := fmt.Sprintf("agentapi-proxy client cycle %q", req.CycleMessage)
+		if req.CycleMaxCount > 0 {
+			command += fmt.Sprintf(" --max-count %d", req.CycleMaxCount)
+		}
+
+		cycleHookEntry := map[string]interface{}{
+			"hooks": []map[string]interface{}{
+				{"type": "command", "command": command},
+			},
+		}
+
+		if settingsJSON == nil {
+			settingsJSON = make(map[string]interface{})
+		}
+
+		hooksMap, ok := settingsJSON["hooks"].(map[string]interface{})
+		if !ok {
+			hooksMap = make(map[string]interface{})
+		}
+
+		// Merge with existing Stop hooks (e.g., from oneshot settings)
+		if existing, ok := hooksMap["Stop"].([]interface{}); ok {
+			hooksMap["Stop"] = append(existing, cycleHookEntry)
+		} else {
+			hooksMap["Stop"] = []interface{}{cycleHookEntry}
+		}
+
+		settingsJSON["hooks"] = hooksMap
+		log.Printf("[K8S_SESSION] Injected cycle Stop hook for session %s (max-count=%d)", session.id, req.CycleMaxCount)
+	}
+
 	settings.Claude = sessionsettings.ClaudeConfig{
 		ClaudeJSON: map[string]interface{}{
 			"hasCompletedOnboarding":        true,
 			"bypassPermissionsModeAccepted": true,
 		},
-		SettingsJSON: materialized.SettingsJSON,
+		SettingsJSON: settingsJSON,
 		MCPServers:   materialized.MCPServers,
 	}
 

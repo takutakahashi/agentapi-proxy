@@ -575,6 +575,14 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		initialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
 	}
 
+	// Determine cycle params from Params.CycleMessage / Params.CycleMaxCount
+	var cycleMessage string
+	var cycleMaxCount int
+	if startReq.Params != nil {
+		cycleMessage = startReq.Params.CycleMessage
+		cycleMaxCount = startReq.Params.CycleMaxCount
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:                   userID,
@@ -591,6 +599,8 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		MemoryKey:                startReq.MemoryKey,
+		CycleMessage:             cycleMessage,
+		CycleMaxCount:            cycleMaxCount,
 	}
 
 	// Delegate to session manager

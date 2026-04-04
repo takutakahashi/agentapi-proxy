@@ -49,6 +49,14 @@ type SessionParams struct {
 	// When set, Proxy A will proxy this session creation to the specified Proxy B instance.
 	// The ID must match an ExternalSessionManagerEntry registered in the user's or team's settings.
 	ManagerID string `json:"manager_id,omitempty"`
+	// CycleMessage is the message to send to the session after each Claude stop event.
+	// When set, a Stop hook is injected into the session's Claude settings that runs
+	// `agentapi-proxy client cycle <message>`. The cycle continues until
+	// /tmp/check/CYCLE_OK exists or CycleMaxCount is reached.
+	CycleMessage string `json:"cycle_message,omitempty"`
+	// CycleMaxCount is the maximum number of cycles to run. 0 means unlimited.
+	// Requires CycleMessage to be set. The cycle count is tracked in /tmp/check/CYCLE_COUNT.
+	CycleMaxCount int `json:"cycle_max_count,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -89,6 +97,8 @@ type RunServerRequest struct {
 	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
+	CycleMessage             string            // Message to send to session after each Claude stop event (injects Stop hook)
+	CycleMaxCount            int               // Maximum number of cycles (0 = unlimited); requires CycleMessage
 	// ProvisionSettings, when non-nil, is used directly as the provision payload
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).

@@ -3450,6 +3450,17 @@
             "description": "Number of seconds to wait after the agent becomes stable before sending the initial message. Defaults to 2 seconds if not specified.",
             "default": 2,
             "example": 5
+          },
+          "cycle_message": {
+            "type": "string",
+            "description": "Message to send to the session after each Claude stop event. When set, a Stop hook is injected into the session's Claude settings that runs `agentapi-proxy client cycle <message>`. The cycle continues until /tmp/check/CYCLE_OK exists or cycle_max_count is reached.",
+            "example": "Please continue the task"
+          },
+          "cycle_max_count": {
+            "type": "integer",
+            "description": "Maximum number of cycles to run. 0 means unlimited. Requires cycle_message to be set. The current count is tracked in /tmp/check/CYCLE_COUNT inside the session.",
+            "default": 0,
+            "example": 10
           }
         }
       },
