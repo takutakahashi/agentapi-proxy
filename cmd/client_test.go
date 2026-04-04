@@ -740,9 +740,9 @@ func TestRunCycleMessageContainsConditionCheck(t *testing.T) {
 
 	// The sent message must contain the original message
 	assert.Contains(t, string(receivedBody), "作業を続けてください")
-	// The sent message must contain the condition check instructions
-	assert.Contains(t, string(receivedBody), "CYCLE_OK 作成条件")
+	// The sent message must contain the cycle suffix instructing to create CYCLE_OK
 	assert.Contains(t, string(receivedBody), "/tmp/check/CYCLE_OK")
+	assert.Contains(t, string(receivedBody), "cycle セッション")
 }
 
 func TestReadWriteCycleCount(t *testing.T) {
