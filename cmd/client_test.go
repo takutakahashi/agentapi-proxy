@@ -603,8 +603,30 @@ func TestFormatMemoriesMarkdown(t *testing.T) {
 
 func TestCycleCmd(t *testing.T) {
 	assert.Equal(t, "cycle [message]", cycleCmd.Use)
-	assert.Equal(t, "Send a message to the session unless CYCLE_OK is present", cycleCmd.Short)
+	assert.Equal(t, "Send a message to the session if CYCLE_ENABLED is present and CYCLE_OK is absent", cycleCmd.Short)
 	assert.NotNil(t, cycleCmd.RunE)
+}
+
+func TestRunCycleWithoutCycleEnabled(t *testing.T) {
+	// Ensure CYCLE_ENABLED does NOT exist
+	_ = os.Remove(cycleEnabledPath)
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := runCycle(&cobra.Command{}, []string{"this message should not be sent"})
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	output := buf.String()
+
+	assert.NoError(t, err)
+	assert.Contains(t, output, "CYCLE_ENABLED not found")
 }
 
 func TestRunCycleWithCycleOK(t *testing.T) {
@@ -620,10 +642,14 @@ func TestRunCycleWithCycleOK(t *testing.T) {
 	// Since cycleOKPath is a const, we test runCycle behavior by checking
 	// that when the default path exists, it exits early.
 
-	// Create /tmp/check directory and CYCLE_OK file for the actual const path
+	// Create /tmp/check directory and CYCLE_ENABLED + CYCLE_OK files for the actual const paths
 	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
 		t.Fatalf("failed to create /tmp/check: %v", err)
 	}
+	if err := os.WriteFile(cycleEnabledPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleEnabledPath) }()
 	if err := os.WriteFile(cycleOKPath, []byte("ok"), 0o644); err != nil {
 		t.Fatalf("failed to write CYCLE_OK: %v", err)
 	}
@@ -648,9 +674,16 @@ func TestRunCycleWithCycleOK(t *testing.T) {
 }
 
 func TestRunCycleWithoutCycleOK(t *testing.T) {
-	// Make sure CYCLE_OK does NOT exist
+	// Make sure CYCLE_OK does NOT exist, but CYCLE_ENABLED does
 	_ = os.Remove(cycleOKPath)
 	_ = os.Remove(cycleCountPath)
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	if err := os.WriteFile(cycleEnabledPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleEnabledPath) }()
 	cycleMaxCount = 0
 	defer func() { cycleMaxCount = 0 }()
 
@@ -699,6 +732,13 @@ func TestRunCycleWithoutCycleOK(t *testing.T) {
 func TestRunCycleMessageContainsConditionCheck(t *testing.T) {
 	_ = os.Remove(cycleOKPath)
 	_ = os.Remove(cycleCountPath)
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	if err := os.WriteFile(cycleEnabledPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleEnabledPath) }()
 	cycleMaxCount = 0
 	defer func() { cycleMaxCount = 0 }()
 
@@ -767,10 +807,17 @@ func TestReadWriteCycleCount(t *testing.T) {
 func TestRunCycleMaxCountNotReached(t *testing.T) {
 	_ = os.Remove(cycleOKPath)
 	_ = os.Remove(cycleCountPath)
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	if err := os.WriteFile(cycleEnabledPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
+	}
 	cycleMaxCount = 5
 	defer func() {
 		cycleMaxCount = 0
 		_ = os.Remove(cycleCountPath)
+		_ = os.Remove(cycleEnabledPath)
 	}()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -824,6 +871,10 @@ func TestRunCycleMaxCountReached(t *testing.T) {
 	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
 		t.Fatalf("failed to create /tmp/check: %v", err)
 	}
+	if err := os.WriteFile(cycleEnabledPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleEnabledPath) }()
 	if err := writeCycleCount(5); err != nil {
 		t.Fatalf("failed to write cycle count: %v", err)
 	}

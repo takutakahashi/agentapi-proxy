@@ -138,8 +138,14 @@ var ClientCmd = &cobra.Command{
 
 var cycleCmd = &cobra.Command{
 	Use:   "cycle [message]",
-	Short: "Send a message to the session unless CYCLE_OK is present",
-	Long: `Check if /tmp/check/CYCLE_OK exists. If it does, exit without doing anything.
+	Short: "Send a message to the session if CYCLE_ENABLED is present and CYCLE_OK is absent",
+	Long: `Check if /tmp/check/CYCLE_ENABLED exists. If it does not, exit without doing anything.
+This allows the command to be registered permanently in a Stop hook and activated
+on demand simply by creating /tmp/check/CYCLE_ENABLED.
+
+If CYCLE_ENABLED exists, check if /tmp/check/CYCLE_OK exists. If it does, exit
+without doing anything (cycle completed).
+
 Otherwise, send the given message to the session.
 
 Each invocation increments a counter stored in /tmp/check/CYCLE_COUNT.
@@ -150,6 +156,8 @@ This command is useful for cyclic agent workflows where the cycle should stop
 once a completion marker file has been written or after a maximum number of attempts.
 
 Examples:
+  # Enable cycling by creating the marker file first
+  mkdir -p /tmp/check && touch /tmp/check/CYCLE_ENABLED
   agentapi-proxy client cycle "Please continue the task"
 
   # Stop after 10 cycles at most
@@ -517,8 +525,9 @@ func init() {
 }
 
 const (
-	cycleOKPath    = "/tmp/check/CYCLE_OK"
-	cycleCountPath = "/tmp/check/CYCLE_COUNT"
+	cycleEnabledPath = "/tmp/check/CYCLE_ENABLED"
+	cycleOKPath      = "/tmp/check/CYCLE_OK"
+	cycleCountPath   = "/tmp/check/CYCLE_COUNT"
 )
 
 // cycleConditionCheckSuffix is appended to every message sent by the cycle command.
@@ -565,6 +574,14 @@ func writeCycleCount(count int) error {
 }
 
 func runCycle(cmd *cobra.Command, args []string) error {
+	// Check if the CYCLE_ENABLED marker file exists; if not, this is a no-op.
+	// This allows the cycle command to be registered permanently in a Stop hook
+	// and activated on demand by creating /tmp/check/CYCLE_ENABLED.
+	if _, err := os.Stat(cycleEnabledPath); os.IsNotExist(err) {
+		fmt.Println("CYCLE_ENABLED not found, skipping cycle")
+		return nil
+	}
+
 	// Check if the CYCLE_OK marker file exists
 	if _, err := os.Stat(cycleOKPath); err == nil {
 		fmt.Println("CYCLE_OK found, exiting cycle")
