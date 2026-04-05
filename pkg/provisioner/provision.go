@@ -194,6 +194,18 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// (stock pool pods have empty UserID at pod creation time).
 	go s.runFilesSync(ctx, settings.Session.UserID)
 
+	// ── Step 13: save session memory on SIGTERM ───────────────────────────────
+	// When the Pod receives SIGTERM (ctx cancelled), run memory save-session
+	// to persist the conversation to the memory backend before the container
+	// exits.  This is cheaper than firing the Stop hook on every Claude stop
+	// because it only runs once per Pod lifetime.
+	go func() {
+		<-ctx.Done()
+		log.Printf("[PROVISIONER] SIGTERM received, saving session memory")
+		saveSessionMemory()
+		log.Printf("[PROVISIONER] Session memory save complete")
+	}()
+
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
 		if err := cmd.Wait(); err != nil {
@@ -202,6 +214,24 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+// saveSessionMemory runs `agentapi-proxy client memory save-session` to persist
+// the current session's conversation to the memory backend.
+// Environment variables (AGENTAPI_SESSION_ID, AGENTAPI_KEY, etc.) are
+// inherited from the provisioner process — they are set by the proxy when
+// building the session Pod's env vars.
+func saveSessionMemory() {
+	// Use a fresh context so that the save is not cancelled by the already-done
+	// parent context.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "agentapi-proxy", "client", "memory", "save-session")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		log.Printf("[PROVISIONER] Warning: memory save-session failed: %v", err)
+	}
 }
 
 // runClaudePosts starts the claude-posts binary as a subprocess, forwarding
