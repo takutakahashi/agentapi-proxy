@@ -41,11 +41,12 @@ type Server struct {
 	port         int
 	settingsFile string // path to optional auto-provision settings file
 
-	mu        sync.RWMutex
-	status    Status
-	message   string
-	everReady bool            // true once status has reached StatusReady; never reset
-	serverCtx context.Context // long-lived context for provisioning goroutines
+	mu          sync.RWMutex
+	status      Status
+	message     string
+	everReady   bool            // true once status has reached StatusReady; never reset
+	agentKillFn func()          // kills the agent subprocess; set after agent starts
+	serverCtx   context.Context // long-lived context for provisioning goroutines
 }
 
 // New creates a new Server.
@@ -97,8 +98,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Shutdown when context is cancelled.
-	// Before shutting down, save session memory if the session was ready and
-	// AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN is not set to "false".
+	// Save session memory BEFORE killing the agent subprocess so that the
+	// agentapi /messages endpoint is still reachable during the save.
+	// After the save (or if disabled), kill the agent then shut down the HTTP server.
 	go func() {
 		<-ctx.Done()
 		// Check AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN from both process env and
@@ -112,6 +114,14 @@ func (s *Server) Start(ctx context.Context) error {
 			log.Printf("[PROVISIONER] Context cancelled, saving session memory before shutdown")
 			saveSessionMemory()
 			log.Printf("[PROVISIONER] Session memory save complete")
+		}
+		// Now kill the agent subprocess (it was started with an independent
+		// context so it is still alive at this point).
+		s.mu.RLock()
+		killFn := s.agentKillFn
+		s.mu.RUnlock()
+		if killFn != nil {
+			killFn()
 		}
 		log.Printf("[PROVISIONER] Shutting down HTTP server")
 		_ = srv.Shutdown(context.Background())

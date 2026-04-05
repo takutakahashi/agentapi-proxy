@@ -141,16 +141,27 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
-	cmd := exec.CommandContext(ctx, agentCmd, agentArgs...)
+	// Use an independent context so that the server context cancellation (SIGTERM)
+	// does NOT immediately kill agentapi.  The shutdown goroutine in server.go
+	// saves session memory first, then calls agentKillFn() to stop the agent.
+	agentCtx, agentCancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(agentCtx, agentCmd, agentArgs...)
 	cmd.Env = mergeEnv(os.Environ(), envMap)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
+		agentCancel()
 		s.setStatus(StatusError, fmt.Sprintf("failed to start agent: %v", err))
 		return
 	}
 	log.Printf("[PROVISIONER] Agent process started (pid %d)", cmd.Process.Pid)
+
+	// Register kill function so the shutdown goroutine can stop the agent
+	// after saving session memory.
+	s.mu.Lock()
+	s.agentKillFn = agentCancel
+	s.mu.Unlock()
 
 	// ── Step 8: wait for agentapi to be ready ─────────────────────────────────
 	agentapiPort := os.Getenv("AGENTAPI_PORT")
