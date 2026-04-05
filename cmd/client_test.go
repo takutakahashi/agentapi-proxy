@@ -602,39 +602,21 @@ func TestFormatMemoriesMarkdown(t *testing.T) {
 }
 
 func TestCycleCmd(t *testing.T) {
-	assert.Equal(t, "cycle [message]", cycleCmd.Use)
-	assert.Equal(t, "Send a message to the session unless CYCLE_OK is present", cycleCmd.Short)
+	assert.Equal(t, "cycle", cycleCmd.Use)
+	assert.Equal(t, "Send a cycle message read from CYCLE_ENABLED; no-op if the file is absent", cycleCmd.Short)
 	assert.NotNil(t, cycleCmd.RunE)
 }
 
-func TestRunCycleWithCycleOK(t *testing.T) {
-	// Create the marker file
-	dir := t.TempDir()
-	markerPath := dir + "/CYCLE_OK"
-	if err := os.WriteFile(markerPath, []byte("ok"), 0o644); err != nil {
-		t.Fatalf("failed to create marker file: %v", err)
-	}
-
-	// Temporarily override the cycleOKPath constant by using a wrapper test
-	// We'll patch the path via the environment and test indirectly.
-	// Since cycleOKPath is a const, we test runCycle behavior by checking
-	// that when the default path exists, it exits early.
-
-	// Create /tmp/check directory and CYCLE_OK file for the actual const path
-	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
-		t.Fatalf("failed to create /tmp/check: %v", err)
-	}
-	if err := os.WriteFile(cycleOKPath, []byte("ok"), 0o644); err != nil {
-		t.Fatalf("failed to write CYCLE_OK: %v", err)
-	}
-	defer func() { _ = os.Remove(cycleOKPath) }()
+func TestRunCycleWithoutCycleEnabled(t *testing.T) {
+	// Ensure CYCLE_ENABLED does NOT exist
+	_ = os.Remove(cycleEnabledPath)
 
 	// Capture stdout
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := runCycle(&cobra.Command{}, []string{"this message should not be sent"})
+	err := runCycle(&cobra.Command{}, []string{})
 
 	_ = w.Close()
 	os.Stdout = oldStdout
@@ -644,13 +626,19 @@ func TestRunCycleWithCycleOK(t *testing.T) {
 	output := buf.String()
 
 	assert.NoError(t, err)
-	assert.Contains(t, output, "CYCLE_OK found")
+	assert.Contains(t, output, "CYCLE_ENABLED not found")
 }
 
-func TestRunCycleWithoutCycleOK(t *testing.T) {
-	// Make sure CYCLE_OK does NOT exist
-	_ = os.Remove(cycleOKPath)
+// TestRunCycleWithMessage verifies that the message stored in CYCLE_ENABLED is sent.
+func TestRunCycleWithMessage(t *testing.T) {
 	_ = os.Remove(cycleCountPath)
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	if err := os.WriteFile(cycleEnabledPath, []byte("hello from cycle"), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleEnabledPath) }()
 	cycleMaxCount = 0
 	defer func() { cycleMaxCount = 0 }()
 
@@ -670,7 +658,6 @@ func TestRunCycleWithoutCycleOK(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Set flags
 	endpoint = server.URL
 	sessionID = "test-cycle-session"
 	defer func() {
@@ -678,12 +665,11 @@ func TestRunCycleWithoutCycleOK(t *testing.T) {
 		sessionID = ""
 	}()
 
-	// Capture stdout
 	oldStdout := os.Stdout
 	rp, wp, _ := os.Pipe()
 	os.Stdout = wp
 
-	err := runCycle(&cobra.Command{}, []string{"hello from cycle"})
+	err := runCycle(&cobra.Command{}, []string{})
 
 	_ = wp.Close()
 	os.Stdout = oldStdout
@@ -697,8 +683,15 @@ func TestRunCycleWithoutCycleOK(t *testing.T) {
 }
 
 func TestRunCycleMessageContainsConditionCheck(t *testing.T) {
-	_ = os.Remove(cycleOKPath)
 	_ = os.Remove(cycleCountPath)
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	// Write the cycle message into CYCLE_ENABLED
+	if err := os.WriteFile(cycleEnabledPath, []byte("作業を続けてください"), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
+	}
+	defer func() { _ = os.Remove(cycleEnabledPath) }()
 	cycleMaxCount = 0
 	defer func() { cycleMaxCount = 0 }()
 
@@ -730,7 +723,7 @@ func TestRunCycleMessageContainsConditionCheck(t *testing.T) {
 	rp, wp, _ := os.Pipe()
 	os.Stdout = wp
 
-	err := runCycle(&cobra.Command{}, []string{"作業を続けてください"})
+	err := runCycle(&cobra.Command{}, []string{})
 
 	_ = wp.Close()
 	os.Stdout = oldStdout
@@ -738,10 +731,10 @@ func TestRunCycleMessageContainsConditionCheck(t *testing.T) {
 
 	assert.NoError(t, err)
 
-	// The sent message must contain the original message
+	// The sent message must contain the message read from CYCLE_ENABLED
 	assert.Contains(t, string(receivedBody), "作業を続けてください")
-	// The sent message must contain the cycle suffix instructing to create CYCLE_OK
-	assert.Contains(t, string(receivedBody), "/tmp/check/CYCLE_OK")
+	// The suffix must instruct deleting CYCLE_ENABLED (not creating CYCLE_OK)
+	assert.Contains(t, string(receivedBody), "rm -f /tmp/check/CYCLE_ENABLED")
 	assert.Contains(t, string(receivedBody), "cycle セッション")
 }
 
@@ -765,12 +758,19 @@ func TestReadWriteCycleCount(t *testing.T) {
 }
 
 func TestRunCycleMaxCountNotReached(t *testing.T) {
-	_ = os.Remove(cycleOKPath)
 	_ = os.Remove(cycleCountPath)
+	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
+		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	// Write the cycle message into CYCLE_ENABLED
+	if err := os.WriteFile(cycleEnabledPath, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
+	}
 	cycleMaxCount = 5
 	defer func() {
 		cycleMaxCount = 0
 		_ = os.Remove(cycleCountPath)
+		_ = os.Remove(cycleEnabledPath)
 	}()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -799,7 +799,7 @@ func TestRunCycleMaxCountNotReached(t *testing.T) {
 	rp, wp, _ := os.Pipe()
 	os.Stdout = wp
 
-	err := runCycle(&cobra.Command{}, []string{"hello"})
+	err := runCycle(&cobra.Command{}, []string{})
 
 	_ = wp.Close()
 	os.Stdout = oldStdout
@@ -819,10 +819,12 @@ func TestRunCycleMaxCountNotReached(t *testing.T) {
 }
 
 func TestRunCycleMaxCountReached(t *testing.T) {
-	_ = os.Remove(cycleOKPath)
-	// Pre-write the count at the limit
+	// Pre-write the count at the limit and write message into CYCLE_ENABLED
 	if err := os.MkdirAll("/tmp/check", 0o755); err != nil {
 		t.Fatalf("failed to create /tmp/check: %v", err)
+	}
+	if err := os.WriteFile(cycleEnabledPath, []byte("this should not be sent"), 0o644); err != nil {
+		t.Fatalf("failed to write CYCLE_ENABLED: %v", err)
 	}
 	if err := writeCycleCount(5); err != nil {
 		t.Fatalf("failed to write cycle count: %v", err)
@@ -836,7 +838,7 @@ func TestRunCycleMaxCountReached(t *testing.T) {
 	rp, wp, _ := os.Pipe()
 	os.Stdout = wp
 
-	err := runCycle(&cobra.Command{}, []string{"this should not be sent"})
+	err := runCycle(&cobra.Command{}, []string{})
 
 	_ = wp.Close()
 	os.Stdout = oldStdout
@@ -848,4 +850,7 @@ func TestRunCycleMaxCountReached(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, output, "Cycle count limit reached")
 	assert.Contains(t, output, "5/5")
+	// CYCLE_ENABLED must have been deleted when the limit was reached
+	_, statErr := os.Stat(cycleEnabledPath)
+	assert.True(t, os.IsNotExist(statErr), "CYCLE_ENABLED should have been removed when max-count was reached")
 }

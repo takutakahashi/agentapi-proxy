@@ -96,7 +96,8 @@ func TestBuildSessionSettings_CycleHookInjected(t *testing.T) {
 		t.Fatal("Expected at least one Stop hook entry")
 	}
 
-	// Find the cycle hook command among the entries
+	// Find the cycle hook command among the entries.
+	// The message is no longer in the command (it's stored in CYCLE_ENABLED).
 	found := false
 	for _, entry := range stopList {
 		entryMap, ok := entry.(map[string]interface{})
@@ -109,14 +110,33 @@ func TestBuildSessionSettings_CycleHookInjected(t *testing.T) {
 		}
 		for _, h := range hooksInner {
 			cmd, _ := h["command"].(string)
-			if strings.Contains(cmd, "cycle") && strings.Contains(cmd, "Please continue the task") && strings.Contains(cmd, "--max-count 5") {
+			if strings.Contains(cmd, "cycle") && strings.Contains(cmd, "--max-count 5") {
+				// Must NOT contain the raw message text in the command line
+				if strings.Contains(cmd, "Please continue the task") {
+					t.Errorf("Cycle command must not contain the message text (should be in CYCLE_ENABLED): %s", cmd)
+				}
 				found = true
 			}
 		}
 	}
 
 	if !found {
-		t.Errorf("Expected cycle command in Stop hooks, got: %+v", stopList)
+		t.Errorf("Expected cycle command with --max-count 5 in Stop hooks, got: %+v", stopList)
+	}
+
+	// CYCLE_ENABLED must be present in settings.Files with the correct message content
+	foundFile := false
+	for _, f := range settings.Files {
+		if f.Path == "/tmp/check/CYCLE_ENABLED" {
+			if f.Content != "Please continue the task" {
+				t.Errorf("Expected CYCLE_ENABLED content %q, got %q", "Please continue the task", f.Content)
+			}
+			foundFile = true
+			break
+		}
+	}
+	if !foundFile {
+		t.Errorf("Expected /tmp/check/CYCLE_ENABLED in settings.Files, got: %+v", settings.Files)
 	}
 }
 
@@ -156,9 +176,13 @@ func TestBuildSessionSettings_CycleHookWithoutMaxCount(t *testing.T) {
 		}
 		for _, h := range hooksInner {
 			cmd, _ := h["command"].(string)
-			if strings.Contains(cmd, "cycle") && strings.Contains(cmd, "Keep going") {
+			if strings.Contains(cmd, "cycle") {
 				if strings.Contains(cmd, "--max-count") {
 					t.Errorf("Expected no --max-count in command when CycleMaxCount=0, got: %s", cmd)
+				}
+				// Must NOT contain the message text in the command line
+				if strings.Contains(cmd, "Keep going") {
+					t.Errorf("Cycle command must not contain the message text: %s", cmd)
 				}
 				found = true
 			}
@@ -167,6 +191,75 @@ func TestBuildSessionSettings_CycleHookWithoutMaxCount(t *testing.T) {
 
 	if !found {
 		t.Errorf("Expected cycle command in Stop hooks, got: %+v", stopList)
+	}
+
+	// CYCLE_ENABLED must carry the message
+	foundFile := false
+	for _, f := range settings.Files {
+		if f.Path == "/tmp/check/CYCLE_ENABLED" {
+			if f.Content != "Keep going" {
+				t.Errorf("Expected CYCLE_ENABLED content %q, got %q", "Keep going", f.Content)
+			}
+			foundFile = true
+			break
+		}
+	}
+	if !foundFile {
+		t.Errorf("Expected /tmp/check/CYCLE_ENABLED in settings.Files, got: %+v", settings.Files)
+	}
+}
+
+// TestBuildSessionSettings_CycleEnabledFileInjected verifies that /tmp/check/CYCLE_ENABLED
+// is added to settings.Files when CycleMessage is set.
+func TestBuildSessionSettings_CycleEnabledFileInjected(t *testing.T) {
+	manager := newTestManagerForCycle(t)
+	session := newTestSessionForCycle("test-user")
+
+	req := &entities.RunServerRequest{
+		UserID:       "test-user",
+		CycleMessage: "Please continue the task",
+	}
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if settings == nil {
+		t.Fatal("Expected non-nil settings")
+	}
+
+	found := false
+	for _, f := range settings.Files {
+		if f.Path == "/tmp/check/CYCLE_ENABLED" {
+			if f.Content != "Please continue the task" {
+				t.Errorf("Expected CYCLE_ENABLED content %q, got %q", "Please continue the task", f.Content)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected /tmp/check/CYCLE_ENABLED in settings.Files, got: %+v", settings.Files)
+	}
+}
+
+// TestBuildSessionSettings_NoCycleEnabledFileWhenMessageEmpty verifies that
+// /tmp/check/CYCLE_ENABLED is NOT added to settings.Files when CycleMessage is empty.
+func TestBuildSessionSettings_NoCycleEnabledFileWhenMessageEmpty(t *testing.T) {
+	manager := newTestManagerForCycle(t)
+	session := newTestSessionForCycle("test-user")
+
+	req := &entities.RunServerRequest{
+		UserID:       "test-user",
+		CycleMessage: "",
+	}
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if settings == nil {
+		t.Fatal("Expected non-nil settings")
+	}
+
+	for _, f := range settings.Files {
+		if f.Path == "/tmp/check/CYCLE_ENABLED" {
+			t.Errorf("Unexpected /tmp/check/CYCLE_ENABLED in settings.Files when CycleMessage is empty")
+		}
 	}
 }
 

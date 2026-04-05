@@ -137,28 +137,33 @@ var ClientCmd = &cobra.Command{
 }
 
 var cycleCmd = &cobra.Command{
-	Use:   "cycle [message]",
-	Short: "Send a message to the session unless CYCLE_OK is present",
-	Long: `Check if /tmp/check/CYCLE_OK exists. If it does, exit without doing anything.
-Otherwise, send the given message to the session.
+	Use:   "cycle",
+	Short: "Send a cycle message read from CYCLE_ENABLED; no-op if the file is absent",
+	Long: `Read /tmp/check/CYCLE_ENABLED. If the file does not exist, exit without doing
+anything (cycle is disabled).
+
+The file content is used as the message sent to the session.  This allows the
+Stop hook to be registered permanently in Claude's settings and the cycle to be
+activated simply by writing the desired message into /tmp/check/CYCLE_ENABLED.
+
+To stop the cycle, the agent (or a user) deletes /tmp/check/CYCLE_ENABLED.  The
+auto-appended suffix included in every sent message instructs the agent to do this
+when the goal is achieved.
 
 Each invocation increments a counter stored in /tmp/check/CYCLE_COUNT.
-If --max-count is set and the counter reaches the limit, the command exits
-without sending a message (same behavior as CYCLE_OK).
-
-This command is useful for cyclic agent workflows where the cycle should stop
-once a completion marker file has been written or after a maximum number of attempts.
+If --max-count is set and the counter reaches the limit, the command exits without
+sending a message and also removes CYCLE_ENABLED to prevent further cycles.
 
 Examples:
-  agentapi-proxy client cycle "Please continue the task"
+  # Enable cycling by writing a message into the marker file
+  mkdir -p /tmp/check
+  echo "Please continue the task" > /tmp/check/CYCLE_ENABLED
 
   # Stop after 10 cycles at most
-  agentapi-proxy client cycle --max-count 10 "Please continue the task"
+  agentapi-proxy client cycle --max-count 10
 
-  agentapi-proxy client cycle \
-    --session-id my-session \
-    "Review the output and proceed"`,
-	Args: cobra.MaximumNArgs(1),
+  agentapi-proxy client cycle --session-id my-session`,
+	Args: cobra.NoArgs,
 	RunE: runCycle,
 }
 
@@ -502,7 +507,7 @@ func init() {
 	sendNotificationClientCmd.Flags().StringVar(&clientNotifyUserID, "notify-user-id", "", "User ID to send the notification to")
 
 	// cycle flags
-	cycleCmd.Flags().IntVar(&cycleMaxCount, "max-count", 0, "Maximum number of cycles (0 means unlimited). Exits when the count in /tmp/check/CYCLE_COUNT reaches this limit.")
+	cycleCmd.Flags().IntVar(&cycleMaxCount, "max-count", 10, "Maximum number of cycles (0 means unlimited, default: 10). Exits when the count in /tmp/check/CYCLE_COUNT reaches this limit.")
 
 	ClientCmd.AddCommand(cycleCmd)
 	ClientCmd.AddCommand(sendCmd)
@@ -517,13 +522,13 @@ func init() {
 }
 
 const (
-	cycleOKPath    = "/tmp/check/CYCLE_OK"
-	cycleCountPath = "/tmp/check/CYCLE_COUNT"
+	cycleEnabledPath = "/tmp/check/CYCLE_ENABLED"
+	cycleCountPath   = "/tmp/check/CYCLE_COUNT"
 )
 
 // cycleConditionCheckSuffix is appended to every message sent by the cycle command.
 // It instructs the agent to check whether the conditions described in the message
-// are met, and to create CYCLE_OK if so.
+// are met, and to delete CYCLE_ENABLED if so (which stops further cycles).
 const cycleConditionCheckSuffix = `
 
 ---
@@ -531,7 +536,7 @@ const cycleConditionCheckSuffix = `
 条件をすべて満たしている場合は、追加の作業は行わずに直ちに以下のコマンドを実行してサイクルを終了させてください:
 
 ` + "```" + `bash
-mkdir -p /tmp/check && touch /tmp/check/CYCLE_OK
+rm -f /tmp/check/CYCLE_ENABLED
 ` + "```" + `
 
 条件を満たしていない場合は、引き続き作業を行ってください。`
@@ -565,10 +570,20 @@ func writeCycleCount(count int) error {
 }
 
 func runCycle(cmd *cobra.Command, args []string) error {
-	// Check if the CYCLE_OK marker file exists
-	if _, err := os.Stat(cycleOKPath); err == nil {
-		fmt.Println("CYCLE_OK found, exiting cycle")
+	// Read /tmp/check/CYCLE_ENABLED. Its content is the message to send.
+	// If the file does not exist the cycle is disabled — exit without doing anything.
+	messageBytes, err := os.ReadFile(cycleEnabledPath)
+	if os.IsNotExist(err) {
+		fmt.Println("CYCLE_ENABLED not found, skipping cycle")
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", cycleEnabledPath, err)
+	}
+
+	message := strings.TrimSpace(string(messageBytes))
+	if message == "" {
+		return fmt.Errorf("%s exists but is empty; write the cycle message into it", cycleEnabledPath)
 	}
 
 	// Read and check the cycle count when --max-count is set
@@ -578,7 +593,9 @@ func runCycle(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if count >= cycleMaxCount {
-			fmt.Printf("Cycle count limit reached (%d/%d), exiting cycle\n", count, cycleMaxCount)
+			fmt.Printf("Cycle count limit reached (%d/%d), removing CYCLE_ENABLED\n", count, cycleMaxCount)
+			// Remove CYCLE_ENABLED so the hook becomes a no-op from now on.
+			_ = os.Remove(cycleEnabledPath)
 			return nil
 		}
 		// Increment and persist the counter before sending
@@ -586,25 +603,6 @@ func runCycle(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("Cycle count: %d/%d\n", count+1, cycleMaxCount)
-	}
-
-	// Determine the message to send
-	var message string
-	if len(args) > 0 {
-		message = args[0]
-	} else {
-		fmt.Print("Enter message: ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			message = scanner.Text()
-		}
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("error reading input: %w", err)
-		}
-	}
-
-	if message == "" {
-		return fmt.Errorf("message cannot be empty")
 	}
 
 	c, resolvedSessionID, err := resolveClient()
