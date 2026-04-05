@@ -1307,12 +1307,12 @@ func runMemoryUpsert(cmd *cobra.Command, args []string) {
 }
 
 func runMemorySaveSession(cmd *cobra.Command, args []string) {
-	// Allow opting out via AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN=false.
+	// Memory save is opt-in: only run when AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN=true.
 	// This is checked here (in the client command) rather than in the hook
 	// so that the hook definition stays simple and the flag works regardless
 	// of how the command is invoked.
-	if os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN") == "false" {
-		fmt.Println("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN=false, skipping memory save")
+	if os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN") != "true" {
+		fmt.Println("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN is not set to true, skipping memory save")
 		return
 	}
 
