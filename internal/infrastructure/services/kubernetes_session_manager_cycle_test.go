@@ -263,15 +263,17 @@ func TestBuildSessionSettings_NoCycleEnabledFileWhenMessageEmpty(t *testing.T) {
 	}
 }
 
-// TestBuildSessionSettings_NoCycleHookWhenMessageEmpty verifies that no cycle hook
-// is injected when CycleMessage is empty.
-func TestBuildSessionSettings_NoCycleHookWhenMessageEmpty(t *testing.T) {
+// TestBuildSessionSettings_CycleHookAlwaysInjected verifies that the cycle Stop hook
+// is injected even when CycleMessage is empty.  The hook is a no-op when
+// /tmp/check/CYCLE_ENABLED does not exist, so registering it unconditionally allows
+// cycling to be activated later without restarting the session.
+func TestBuildSessionSettings_CycleHookAlwaysInjected(t *testing.T) {
 	manager := newTestManagerForCycle(t)
 	session := newTestSessionForCycle("test-user")
 
 	req := &entities.RunServerRequest{
 		UserID:        "test-user",
-		CycleMessage:  "",
+		CycleMessage:  "", // empty — hook must still be injected
 		CycleMaxCount: 5,
 	}
 
@@ -280,28 +282,51 @@ func TestBuildSessionSettings_NoCycleHookWhenMessageEmpty(t *testing.T) {
 		t.Fatal("Expected non-nil settings")
 	}
 
-	// Either no hooks key, or hooks without Stop containing cycle command
-	if hooksRaw, ok := settings.Claude.SettingsJSON["hooks"]; ok {
-		if hooksMap, ok := hooksRaw.(map[string]interface{}); ok {
-			if stopHooks, ok := hooksMap["Stop"]; ok {
-				stopList, _ := stopHooks.([]interface{})
-				for _, entry := range stopList {
-					entryMap, ok := entry.(map[string]interface{})
-					if !ok {
-						continue
-					}
-					hooksInner, ok := entryMap["hooks"].([]map[string]interface{})
-					if !ok {
-						continue
-					}
-					for _, h := range hooksInner {
-						cmd, _ := h["command"].(string)
-						if strings.Contains(cmd, "cycle") {
-							t.Errorf("Unexpected cycle command in Stop hooks when CycleMessage is empty: %s", cmd)
-						}
-					}
-				}
+	hooksRaw, ok := settings.Claude.SettingsJSON["hooks"]
+	if !ok {
+		t.Fatal("Expected 'hooks' key in SettingsJSON even when CycleMessage is empty")
+	}
+
+	hooksMap, ok := hooksRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected hooks to be map[string]interface{}, got %T", hooksRaw)
+	}
+
+	stopHooks, ok := hooksMap["Stop"]
+	if !ok {
+		t.Fatal("Expected 'Stop' hook in hooks map even when CycleMessage is empty")
+	}
+
+	stopList, ok := stopHooks.([]interface{})
+	if !ok || len(stopList) == 0 {
+		t.Fatal("Expected at least one Stop hook entry")
+	}
+
+	found := false
+	for _, entry := range stopList {
+		entryMap, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hooksInner, ok := entryMap["hooks"].([]map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, h := range hooksInner {
+			cmd, _ := h["command"].(string)
+			if strings.Contains(cmd, "cycle") && strings.Contains(cmd, "--max-count 5") {
+				found = true
 			}
+		}
+	}
+	if !found {
+		t.Errorf("Expected cycle command with --max-count 5 in Stop hooks even when CycleMessage is empty, got: %+v", stopList)
+	}
+
+	// CYCLE_ENABLED must NOT be added to settings.Files when CycleMessage is empty
+	for _, f := range settings.Files {
+		if f.Path == "/tmp/check/CYCLE_ENABLED" {
+			t.Errorf("Unexpected /tmp/check/CYCLE_ENABLED in settings.Files when CycleMessage is empty")
 		}
 	}
 }

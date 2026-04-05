@@ -2937,15 +2937,17 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Claude config
 	settingsJSON := materialized.SettingsJSON
 
-	// Inject cycle Stop hook if CycleMessage is set.
+	// Always inject a cycle Stop hook so that writing /tmp/check/CYCLE_ENABLED at
+	// any point activates cycling without requiring a session restart.
+	// The hook is a no-op when CYCLE_ENABLED does not exist (the cycle command exits
+	// immediately with "CYCLE_ENABLED not found"), so it is safe to register
+	// unconditionally.
 	// The hook runs the cycle command in background (nohup ... &) so that it exits
-	// immediately without blocking Claude Code's hook runner. The background process
-	// then waits for the session to become "stable" before sending the message,
-	// avoiding the 422 error that occurs when the agent is still "running".
-	if req.CycleMessage != "" {
+	// immediately without blocking Claude Code's hook runner.
+	{
 		// The cycle message is stored in /tmp/check/CYCLE_ENABLED (written by the
-		// provisioner via settings.Files below).  The cycle command reads the message
-		// from that file, so no message argument is needed here.
+		// provisioner via settings.Files below when CycleMessage is set).
+		// The cycle command reads the message directly from that file.
 		innerCmd := "agentapi-proxy client cycle"
 		if req.CycleMaxCount > 0 {
 			innerCmd += fmt.Sprintf(" --max-count %d", req.CycleMaxCount)
