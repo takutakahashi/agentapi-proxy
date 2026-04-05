@@ -96,11 +96,11 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Shutdown when context is cancelled.
-	// Before shutting down, save session memory if the session was ready so that
-	// the conversation is persisted to the memory backend on Pod termination.
+	// Before shutting down, save session memory if the session was ready and
+	// AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN is not set to "false".
 	go func() {
 		<-ctx.Done()
-		if s.GetStatus() == StatusReady {
+		if s.GetStatus() == StatusReady && os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN") != "false" {
 			log.Printf("[PROVISIONER] Context cancelled, saving session memory before shutdown")
 			saveSessionMemory()
 			log.Printf("[PROVISIONER] Session memory save complete")
