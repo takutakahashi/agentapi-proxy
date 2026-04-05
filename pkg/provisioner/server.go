@@ -101,7 +101,14 @@ func (s *Server) Start(ctx context.Context) error {
 	// AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN is not set to "false".
 	go func() {
 		<-ctx.Done()
-		if s.wasEverReady() && os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN") != "false" {
+		// Check AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN from both process env and
+		// session env file (personal settings are written there, not to pod env).
+		sessionEnv := loadEnvFile(sessionEnvFile)
+		memorySaveEnabled := os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN")
+		if v, ok := sessionEnv["AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN"]; ok {
+			memorySaveEnabled = v
+		}
+		if s.wasEverReady() && memorySaveEnabled != "false" {
 			log.Printf("[PROVISIONER] Context cancelled, saving session memory before shutdown")
 			saveSessionMemory()
 			log.Printf("[PROVISIONER] Session memory save complete")
