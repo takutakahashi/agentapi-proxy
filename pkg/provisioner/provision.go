@@ -141,27 +141,16 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
-	// Use an independent context so that the server context cancellation (SIGTERM)
-	// does NOT immediately kill agentapi.  The shutdown goroutine in server.go
-	// saves session memory first, then calls agentKillFn() to stop the agent.
-	agentCtx, agentCancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(agentCtx, agentCmd, agentArgs...)
+	cmd := exec.CommandContext(ctx, agentCmd, agentArgs...)
 	cmd.Env = mergeEnv(os.Environ(), envMap)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		agentCancel()
 		s.setStatus(StatusError, fmt.Sprintf("failed to start agent: %v", err))
 		return
 	}
 	log.Printf("[PROVISIONER] Agent process started (pid %d)", cmd.Process.Pid)
-
-	// Register kill function so the shutdown goroutine can stop the agent
-	// after saving session memory.
-	s.mu.Lock()
-	s.agentKillFn = agentCancel
-	s.mu.Unlock()
 
 	// ── Step 8: wait for agentapi to be ready ─────────────────────────────────
 	agentapiPort := os.Getenv("AGENTAPI_PORT")
@@ -213,34 +202,6 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
-}
-
-// saveSessionMemory runs `agentapi-proxy client memory save-session` to persist
-// the current session's conversation to the memory backend.
-// AGENTAPI_KEY is read from the session env file if not already set in the
-// process environment (session pods write the personal API key there).
-func saveSessionMemory() {
-	// Use a fresh context so that the save is not cancelled by the already-done
-	// parent context.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "agentapi-proxy", "client", "memory", "save-session")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	// Build environment: start from current process env, then overlay session
-	// env file values so that AGENTAPI_KEY (and any other keys written there)
-	// are available even when the pod's container env doesn't have them set.
-	env := os.Environ()
-	if envMap := loadEnvFile(sessionEnvFile); len(envMap) > 0 {
-		env = mergeEnv(env, envMap)
-		log.Printf("[PROVISIONER] Loaded %d env vars from %s for memory save", len(envMap), sessionEnvFile)
-	}
-	cmd.Env = env
-
-	if err := cmd.Run(); err != nil {
-		log.Printf("[PROVISIONER] Warning: memory save-session failed: %v", err)
-	}
 }
 
 // runClaudePosts starts the claude-posts binary as a subprocess, forwarding

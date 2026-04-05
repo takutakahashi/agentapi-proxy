@@ -41,12 +41,10 @@ type Server struct {
 	port         int
 	settingsFile string // path to optional auto-provision settings file
 
-	mu          sync.RWMutex
-	status      Status
-	message     string
-	everReady   bool            // true once status has reached StatusReady; never reset
-	agentKillFn func()          // kills the agent subprocess; set after agent starts
-	serverCtx   context.Context // long-lived context for provisioning goroutines
+	mu        sync.RWMutex
+	status    Status
+	message   string
+	serverCtx context.Context // long-lived context for provisioning goroutines
 }
 
 // New creates a new Server.
@@ -98,32 +96,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Shutdown when context is cancelled.
-	// Save session memory BEFORE killing the agent subprocess so that the
-	// agentapi /messages endpoint is still reachable during the save.
-	// After the save (or if disabled), kill the agent then shut down the HTTP server.
 	go func() {
 		<-ctx.Done()
-		// Check AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN from both process env and
-		// session env file (personal settings are written there, not to pod env).
-		sessionEnv := loadEnvFile(sessionEnvFile)
-		memorySaveEnabled := os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN")
-		if v, ok := sessionEnv["AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN"]; ok {
-			memorySaveEnabled = v
-		}
-		if s.wasEverReady() && memorySaveEnabled != "false" {
-			log.Printf("[PROVISIONER] Context cancelled, saving session memory before shutdown")
-			saveSessionMemory()
-			log.Printf("[PROVISIONER] Session memory save complete")
-		}
-		// Now kill the agent subprocess (it was started with an independent
-		// context so it is still alive at this point).
-		s.mu.RLock()
-		killFn := s.agentKillFn
-		s.mu.RUnlock()
-		if killFn != nil {
-			killFn()
-		}
-		log.Printf("[PROVISIONER] Shutting down HTTP server")
+		log.Printf("[PROVISIONER] Context cancelled, shutting down HTTP server")
 		_ = srv.Shutdown(context.Background())
 	}()
 
@@ -213,9 +188,6 @@ func (s *Server) setStatus(st Status, msg string) {
 	defer s.mu.Unlock()
 	s.status = st
 	s.message = msg
-	if st == StatusReady {
-		s.everReady = true
-	}
 	log.Printf("[PROVISIONER] Status changed to %s%s", st, func() string {
 		if msg != "" {
 			return ": " + msg
@@ -229,13 +201,4 @@ func (s *Server) GetStatus() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.status
-}
-
-// wasEverReady returns true if the provisioner has ever reached StatusReady.
-// Unlike GetStatus, this is never reset even when the agent process exits,
-// making it safe to use in the shutdown goroutine without a race condition.
-func (s *Server) wasEverReady() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.everReady
 }
