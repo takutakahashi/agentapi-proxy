@@ -122,11 +122,20 @@ type SearchResponse struct {
 
 // Message represents an agentapi message
 type Message struct {
-	Content   string     `json:"content"`
-	Type      string     `json:"type"` // "user" or "raw"
-	Role      string     `json:"role,omitempty"`
-	Timestamp *time.Time `json:"timestamp,omitempty"`
-	ID        string     `json:"id,omitempty"`
+	Content   string          `json:"content"`
+	Type      string          `json:"type"` // "user" or "raw"
+	Role      string          `json:"role,omitempty"`
+	Timestamp *time.Time      `json:"timestamp,omitempty"`
+	Time      *time.Time      `json:"time,omitempty"`
+	ID        json.RawMessage `json:"id,omitempty"`
+}
+
+// GetTimestamp returns the message timestamp, checking both Time and Timestamp fields.
+func (m *Message) GetTimestamp() *time.Time {
+	if m.Time != nil {
+		return m.Time
+	}
+	return m.Timestamp
 }
 
 // MessageResponse represents the response from sending a message

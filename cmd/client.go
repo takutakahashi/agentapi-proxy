@@ -1436,8 +1436,8 @@ func buildSessionMemoryContent(sessionID, repo, trigger string, messages []clien
 		if role == "" {
 			role = msg.Type
 		}
-		if msg.Timestamp != nil {
-			fmt.Fprintf(&sb, "**[%s] %s**:\n", msg.Timestamp.Format("15:04:05"), role)
+		if ts := msg.GetTimestamp(); ts != nil {
+			fmt.Fprintf(&sb, "**[%s] %s**:\n", ts.Format("15:04:05"), role)
 		} else {
 			fmt.Fprintf(&sb, "**%s**:\n", role)
 		}
