@@ -194,18 +194,6 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// (stock pool pods have empty UserID at pod creation time).
 	go s.runFilesSync(ctx, settings.Session.UserID)
 
-	// ── Step 13: save session memory on SIGTERM ───────────────────────────────
-	// When the Pod receives SIGTERM (ctx cancelled), run memory save-session
-	// to persist the conversation to the memory backend before the container
-	// exits.  This is cheaper than firing the Stop hook on every Claude stop
-	// because it only runs once per Pod lifetime.
-	go func() {
-		<-ctx.Done()
-		log.Printf("[PROVISIONER] SIGTERM received, saving session memory")
-		saveSessionMemory()
-		log.Printf("[PROVISIONER] Session memory save complete")
-	}()
-
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
 		if err := cmd.Wait(); err != nil {
@@ -218,9 +206,8 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 
 // saveSessionMemory runs `agentapi-proxy client memory save-session` to persist
 // the current session's conversation to the memory backend.
-// Environment variables (AGENTAPI_SESSION_ID, AGENTAPI_KEY, etc.) are
-// inherited from the provisioner process — they are set by the proxy when
-// building the session Pod's env vars.
+// AGENTAPI_KEY is read from the session env file if not already set in the
+// process environment (session pods write the personal API key there).
 func saveSessionMemory() {
 	// Use a fresh context so that the save is not cancelled by the already-done
 	// parent context.
@@ -229,6 +216,17 @@ func saveSessionMemory() {
 	cmd := exec.CommandContext(ctx, "agentapi-proxy", "client", "memory", "save-session")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	// Build environment: start from current process env, then overlay session
+	// env file values so that AGENTAPI_KEY (and any other keys written there)
+	// are available even when the pod's container env doesn't have them set.
+	env := os.Environ()
+	if envMap := loadEnvFile(sessionEnvFile); len(envMap) > 0 {
+		env = mergeEnv(env, envMap)
+		log.Printf("[PROVISIONER] Loaded %d env vars from %s for memory save", len(envMap), sessionEnvFile)
+	}
+	cmd.Env = env
+
 	if err := cmd.Run(); err != nil {
 		log.Printf("[PROVISIONER] Warning: memory save-session failed: %v", err)
 	}

@@ -96,9 +96,16 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Shutdown when context is cancelled.
+	// Before shutting down, save session memory if the session was ready so that
+	// the conversation is persisted to the memory backend on Pod termination.
 	go func() {
 		<-ctx.Done()
-		log.Printf("[PROVISIONER] Context cancelled, shutting down HTTP server")
+		if s.GetStatus() == StatusReady {
+			log.Printf("[PROVISIONER] Context cancelled, saving session memory before shutdown")
+			saveSessionMemory()
+			log.Printf("[PROVISIONER] Session memory save complete")
+		}
+		log.Printf("[PROVISIONER] Shutting down HTTP server")
 		_ = srv.Shutdown(context.Background())
 	}()
 
