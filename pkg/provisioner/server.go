@@ -44,6 +44,7 @@ type Server struct {
 	mu        sync.RWMutex
 	status    Status
 	message   string
+	everReady bool            // true once status has reached StatusReady; never reset
 	serverCtx context.Context // long-lived context for provisioning goroutines
 }
 
@@ -100,7 +101,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN is not set to "false".
 	go func() {
 		<-ctx.Done()
-		if s.GetStatus() == StatusReady && os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN") != "false" {
+		if s.wasEverReady() && os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN") != "false" {
 			log.Printf("[PROVISIONER] Context cancelled, saving session memory before shutdown")
 			saveSessionMemory()
 			log.Printf("[PROVISIONER] Session memory save complete")
@@ -195,6 +196,9 @@ func (s *Server) setStatus(st Status, msg string) {
 	defer s.mu.Unlock()
 	s.status = st
 	s.message = msg
+	if st == StatusReady {
+		s.everReady = true
+	}
 	log.Printf("[PROVISIONER] Status changed to %s%s", st, func() string {
 		if msg != "" {
 			return ": " + msg
@@ -208,4 +212,13 @@ func (s *Server) GetStatus() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.status
+}
+
+// wasEverReady returns true if the provisioner has ever reached StatusReady.
+// Unlike GetStatus, this is never reset even when the agent process exits,
+// making it safe to use in the shutdown goroutine without a race condition.
+func (s *Server) wasEverReady() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.everReady
 }
