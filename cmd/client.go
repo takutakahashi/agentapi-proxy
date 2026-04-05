@@ -52,6 +52,12 @@ var (
 	memoryUnion       bool
 )
 
+// memory save-session subcommand flags
+var (
+	memorySaveSessionScope  string
+	memorySaveSessionTeamID string
+)
+
 // summarize-drafts subcommand flags
 var (
 	summarizeDraftsSourceSessionID string
@@ -300,6 +306,36 @@ Examples:
 	Run: runMemoryUpsert,
 }
 
+var memorySaveSessionCmd = &cobra.Command{
+	Use:   "save-session",
+	Short: "Save current session conversation to memory",
+	Long: `Save the current session's conversation history to a memory entry.
+
+Session information is resolved from environment variables:
+  AGENTAPI_SESSION_ID             Session ID to save (required)
+  AGENTAPI_REPO_FULLNAME          Repository full name (e.g., owner/repo)
+  AGENTAPI_TEAM_ID                Team ID (used when --scope team is not specified)
+
+Memory tags are populated automatically:
+  session_id=<id>                 Always set (used as unique key)
+  repo=<owner/repo>               Set when AGENTAPI_REPO_FULLNAME is available
+  schedule_id=<id>                Set when the session was triggered by a schedule
+  webhook_id=<id>                 Set when the session was triggered by a webhook
+  slackbot_id=<id>                Set when the session was triggered by a slackbot
+  date=<YYYY-MM-DD>               Date the memory was saved
+
+This command is intended to be called from a Stop hook to automatically
+accumulate session knowledge into a memory-based knowledge base.
+
+Examples:
+  # Save current session using env vars (typical Stop hook usage)
+  agentapi-proxy client memory save-session
+
+  # Save as team-scoped memory
+  agentapi-proxy client memory save-session --scope team --team-id myorg/myteam`,
+	Run: runMemorySaveSession,
+}
+
 var summarizeDraftsCmd = &cobra.Command{
 	Use:   "summarize-drafts",
 	Short: "Create a one-shot session to summarize draft memories",
@@ -486,6 +522,10 @@ func init() {
 	memoryUpsertCmd.Flags().StringArrayVar(&memoryKeys, "key", nil, "Key tag in key=value format for lookup (AND logic, can be specified multiple times)")
 	memoryUpsertCmd.Flags().StringArrayVar(&memoryTags, "tag", nil, "Additional tag in key=value format (merged with --key tags)")
 
+	// memory save-session flags
+	memorySaveSessionCmd.Flags().StringVar(&memorySaveSessionScope, "scope", "user", `Memory scope: "user" or "team"`)
+	memorySaveSessionCmd.Flags().StringVar(&memorySaveSessionTeamID, "team-id", "", "Team ID (required when scope is 'team')")
+
 	// memory subcommands
 	memoryCmd.AddCommand(memoryListCmd)
 	memoryCmd.AddCommand(memoryGetCmd)
@@ -493,6 +533,7 @@ func init() {
 	memoryCmd.AddCommand(memoryUpdateCmd)
 	memoryCmd.AddCommand(memoryDeleteCmd)
 	memoryCmd.AddCommand(memoryUpsertCmd)
+	memoryCmd.AddCommand(memorySaveSessionCmd)
 
 	// summarize-drafts flags
 	summarizeDraftsCmd.Flags().StringVar(&summarizeDraftsSourceSessionID, "source-session-id", "", "Session ID whose draft memories should be summarized (required)")
@@ -1263,6 +1304,157 @@ func runMemoryUpsert(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	fmt.Println(string(out))
+}
+
+func runMemorySaveSession(cmd *cobra.Command, args []string) {
+	// Memory save is opt-in: only run when AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN=true.
+	// This is checked here (in the client command) rather than in the hook
+	// so that the hook definition stays simple and the flag works regardless
+	// of how the command is invoked.
+	if os.Getenv("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN") != "true" {
+		fmt.Println("AGENTAPI_MEMORY_SAVE_ON_SHUTDOWN is not set to true, skipping memory save")
+		return
+	}
+
+	ctx := context.Background()
+
+	// Resolve client and session ID (required)
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Get conversation messages
+	messagesResp, err := c.GetMessages(ctx, resolvedSessionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting messages: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(messagesResp.Messages) == 0 {
+		fmt.Println("No messages in session, skipping memory save")
+		return
+	}
+
+	// Try to get session metadata (tags) from the proxy; non-fatal if unavailable.
+	var sessionTags map[string]string
+	sessionInfo, err := c.GetSessionByID(ctx, resolvedSessionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not retrieve session info (tags will be omitted): %v\n", err)
+		sessionTags = make(map[string]string)
+	} else {
+		if sessionInfo.Tags != nil {
+			sessionTags = sessionInfo.Tags
+		} else {
+			sessionTags = make(map[string]string)
+		}
+	}
+
+	// Gather metadata from environment variables
+	repo := os.Getenv("AGENTAPI_REPO_FULLNAME")
+	teamID := memorySaveSessionTeamID
+	if teamID == "" {
+		teamID = os.Getenv("AGENTAPI_TEAM_ID")
+	}
+
+	scope := memorySaveSessionScope
+	if scope == "user" && teamID != "" {
+		scope = "team"
+	}
+
+	// Build memory tags
+	tags := map[string]string{
+		"session_id": resolvedSessionID,
+		"date":       time.Now().Format("2006-01-02"),
+	}
+	if repo != "" {
+		tags["repo"] = repo
+	}
+	for _, key := range []string{"schedule_id", "webhook_id", "slackbot_id"} {
+		if v := sessionTags[key]; v != "" {
+			tags[key] = v
+		}
+	}
+
+	// Determine trigger source for display
+	trigger := "manual"
+	switch {
+	case tags["schedule_id"] != "":
+		trigger = "schedule:" + tags["schedule_id"]
+	case tags["webhook_id"] != "":
+		trigger = "webhook:" + tags["webhook_id"]
+	case tags["slackbot_id"] != "":
+		trigger = "slackbot:" + tags["slackbot_id"]
+	}
+
+	// Build memory content
+	content := buildSessionMemoryContent(resolvedSessionID, repo, trigger, messagesResp.Messages)
+
+	// Build title: use short session ID prefix + date
+	shortID := resolvedSessionID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	title := fmt.Sprintf("Session %s (%s)", shortID, time.Now().Format("2006-01-02"))
+
+	// Use memory client (does not require session ID)
+	mc, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	req := &client.CreateMemoryRequest{
+		Title:   title,
+		Content: content,
+		Scope:   scope,
+		TeamID:  teamID,
+		Tags:    tags,
+	}
+
+	entry, err := mc.CreateMemory(ctx, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+// buildSessionMemoryContent formats session messages into a structured markdown memory entry.
+func buildSessionMemoryContent(sessionID, repo, trigger string, messages []client.Message) string {
+	var sb strings.Builder
+
+	fmt.Fprintf(&sb, "## Session: %s\n", sessionID)
+	fmt.Fprintf(&sb, "**Date**: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	if repo != "" {
+		fmt.Fprintf(&sb, "**Repository**: %s\n", repo)
+	}
+	fmt.Fprintf(&sb, "**Triggered by**: %s\n", trigger)
+	fmt.Fprintf(&sb, "**Message count**: %d\n\n", len(messages))
+	sb.WriteString("### Conversation\n\n")
+
+	for _, msg := range messages {
+		role := msg.Role
+		if role == "" {
+			role = msg.Type
+		}
+		if ts := msg.GetTimestamp(); ts != nil {
+			fmt.Fprintf(&sb, "**[%s] %s**:\n", ts.Format("15:04:05"), role)
+		} else {
+			fmt.Fprintf(&sb, "**%s**:\n", role)
+		}
+		sb.WriteString(msg.Content)
+		sb.WriteString("\n\n")
+	}
+
+	return sb.String()
 }
 
 // buildSummarizationMessage returns the initial message for the draft summarization session.

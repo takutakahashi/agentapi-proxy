@@ -278,13 +278,13 @@ func TestRunHistoryWithMockServer(t *testing.T) {
 		response := client.MessagesResponse{
 			Messages: []client.Message{
 				{
-					ID:        "msg-1",
+					ID:        json.RawMessage(`"msg-1"`),
 					Role:      "user",
 					Content:   "Hello",
 					Timestamp: func() *time.Time { t := time.Now().Add(-5 * time.Minute); return &t }(),
 				},
 				{
-					ID:        "msg-2",
+					ID:        json.RawMessage(`"msg-2"`),
 					Role:      "assistant",
 					Content:   "Hi there!",
 					Timestamp: func() *time.Time { t := time.Now(); return &t }(),

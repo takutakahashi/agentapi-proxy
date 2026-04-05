@@ -122,11 +122,20 @@ type SearchResponse struct {
 
 // Message represents an agentapi message
 type Message struct {
-	Content   string     `json:"content"`
-	Type      string     `json:"type"` // "user" or "raw"
-	Role      string     `json:"role,omitempty"`
-	Timestamp *time.Time `json:"timestamp,omitempty"`
-	ID        string     `json:"id,omitempty"`
+	Content   string          `json:"content"`
+	Type      string          `json:"type"` // "user" or "raw"
+	Role      string          `json:"role,omitempty"`
+	Timestamp *time.Time      `json:"timestamp,omitempty"`
+	Time      *time.Time      `json:"time,omitempty"`
+	ID        json.RawMessage `json:"id,omitempty"`
+}
+
+// GetTimestamp returns the message timestamp, checking both Time and Timestamp fields.
+func (m *Message) GetTimestamp() *time.Time {
+	if m.Time != nil {
+		return m.Time
+	}
+	return m.Timestamp
 }
 
 // MessageResponse represents the response from sending a message
@@ -238,6 +247,28 @@ func (c *Client) SearchWithTags(ctx context.Context, status string, tags map[str
 	}
 
 	return &searchResp, nil
+}
+
+// GetSessionByID retrieves a single session by its ID.
+// It calls the search endpoint and returns the first session with a matching SessionID.
+// Returns an error if the session is not found.
+func (c *Client) GetSessionByID(ctx context.Context, sessionID string) (*SessionInfo, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("session ID is required")
+	}
+
+	resp, err := c.Search(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to search sessions: %w", err)
+	}
+
+	for i := range resp.Sessions {
+		if resp.Sessions[i].SessionID == sessionID {
+			return &resp.Sessions[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("session %s not found", sessionID)
 }
 
 // DeleteSession terminates and deletes a session
