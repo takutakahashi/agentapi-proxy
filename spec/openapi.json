@@ -3434,7 +3434,7 @@
           },
           "agent_type": {
             "type": "string",
-            "description": "Agent type for the session. Supported values: 'claude-agentapi' (uses claude-agentapi command with HOST=0.0.0.0 and PORT=9000), 'codex-agentapi' (uses codex-agentapi command with HOST=0.0.0.0 and PORT=9000, configured via environment variables), 'claude-acp' (uses acp-ws-server wrapping claude-agentapi; exposes ACP WebSocket endpoint — clients connect via ws://<session>/ws). If not specified, uses default agentapi.",
+            "description": "Agent type for the session. Supported values: 'claude-agentapi' (uses claude-agentapi command with HOST=0.0.0.0 and PORT=9000), 'codex-agentapi' (uses codex-agentapi command with HOST=0.0.0.0 and PORT=9000, configured via environment variables), 'claude-acp' (uses acp-ws-server wrapping @agentclientprotocol/claude-agent-acp; exposes ACP WebSocket endpoint — clients connect via ws://<session>/ws using ACP JSON-RPC protocol). If not specified, uses default agentapi.",
             "example": "claude-agentapi"
           },
           "slack": {

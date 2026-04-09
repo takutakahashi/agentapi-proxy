@@ -581,14 +581,10 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	case "claude-acp":
 		// acp-ws-server bridges WebSocket ↔ stdio of the ACP agent.
 		// It listens on HOST:PORT (injected as env vars) and spawns
-		// claude-agentapi as a subprocess per WebSocket connection.
-		claudeAcpArgs := []string{"--output-file", "/opt/claude-agentapi/history.jsonl"}
-		if claudeArgs := os.Getenv("CLAUDE_ARGS"); claudeArgs != "" {
-			claudeAcpArgs = append(claudeAcpArgs, strings.Fields(claudeArgs)...)
-		}
-		args := []string{"--", "claude-agentapi"}
-		args = append(args, claudeAcpArgs...)
-		return "acp-ws-server", args
+		// claude-agent-acp (@agentclientprotocol/claude-agent-acp) as a
+		// subprocess per WebSocket connection.
+		// claude-agent-acp speaks the ACP protocol over stdio (ndjson).
+		return "acp-ws-server", []string{"--", "claude-agent-acp"}
 
 	default:
 		// Default: agentapi server wrapping claude

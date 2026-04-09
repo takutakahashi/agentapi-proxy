@@ -3030,10 +3030,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			Command: []string{"claude-agentapi"},
 		}
 	case "claude-acp":
-		// acp-ws-server is the entry point; it spawns claude-agentapi per WS connection.
+		// acp-ws-server is the entry point; it spawns claude-agent-acp
+		// (@agentclientprotocol/claude-agent-acp) per WS connection.
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"acp-ws-server"},
-			Args:    []string{"--", "claude-agentapi", "--output-file", "/opt/claude-agentapi/history.jsonl"},
+			Args:    []string{"--", "claude-agent-acp"},
 		}
 	default:
 		settings.Startup = sessionsettings.StartupConfig{
