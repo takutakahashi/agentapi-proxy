@@ -441,6 +441,11 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 		}
 	}
 
+	// If this is a WebSocket upgrade request, hand off to the WS proxy handler.
+	if isWebSocketUpgrade(ctx.Request()) {
+		return c.handleWebSocketProxy(ctx, session)
+	}
+
 	// Determine target URL using session address
 	targetURL := fmt.Sprintf("http://%s", session.Addr())
 	target, err := url.Parse(targetURL)
