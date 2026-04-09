@@ -446,6 +446,39 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 		return c.handleWebSocketProxy(ctx, session)
 	}
 
+	// For claude-acp sessions (WebSocket-only), handle HTTP paths that have no
+	// equivalent on acp-ws-server to avoid 400/error responses that break the UI.
+	if ks, ok := session.(*services.KubernetesSession); ok && ks.Request() != nil && ks.Request().AgentType == "claude-acp" {
+		requestPath := ctx.Request().URL.Path
+		// Strip the leading /{sessionId} prefix from the path
+		pathParts := strings.SplitN(requestPath, "/", 3)
+		subPath := ""
+		if len(pathParts) >= 3 {
+			subPath = "/" + pathParts[2]
+		}
+		switch {
+		case strings.HasPrefix(subPath, "/messages"):
+			// Return empty messages list; messages are streamed via ACP WebSocket
+			return ctx.JSON(http.StatusOK, map[string]interface{}{
+				"messages": []interface{}{},
+				"total":    0,
+				"hasMore":  false,
+			})
+		case strings.HasPrefix(subPath, "/status"):
+			// Return a minimal status so the UI knows the session is up
+			return ctx.JSON(http.StatusOK, map[string]interface{}{
+				"status":  session.Status(),
+				"message": "",
+			})
+		case strings.HasPrefix(subPath, "/message") && ctx.Request().Method == http.MethodPost:
+			// Sending messages to ACP sessions via HTTP is not supported;
+			// messages must be sent over the ACP WebSocket protocol.
+			return ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+				"message": "claude-acp sessions require ACP WebSocket for messaging",
+			})
+		}
+	}
+
 	// Determine target URL using session address
 	targetURL := fmt.Sprintf("http://%s", session.Addr())
 	target, err := url.Parse(targetURL)
