@@ -2367,6 +2367,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		servicePort = int(svc.Spec.Ports[0].Port)
 	}
 
+	// Restore agent type from annotation (set at session creation time)
+	agentType := svc.Annotations["agentapi.proxy/agent-type"]
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create session using constructor
@@ -2380,6 +2383,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 			InitialMessage: initialMessage,
 			MemoryKey:      memoryKey,
 			Teams:          teams,
+			AgentType:      agentType,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -2404,7 +2408,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Start watching deployment status
 	go m.watchDeploymentStatus(ctx, session)
 
-	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
+	log.Printf("[K8S_SESSION] Restored session %s from Service (agent_type=%q)", sessionID, agentType)
 
 	return session
 }
@@ -2484,6 +2488,9 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 		servicePort = int(svc.Spec.Ports[0].Port)
 	}
 
+	// Restore agent type from annotation (set at session creation time)
+	agentType := svc.Annotations["agentapi.proxy/agent-type"]
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create session using constructor
@@ -2497,6 +2504,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 			InitialMessage: initialMessage,
 			MemoryKey:      memoryKey,
 			Teams:          teams,
+			AgentType:      agentType,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -2521,7 +2529,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	// Start watching deployment status
 	go m.watchDeploymentStatus(ctx, session)
 
-	log.Printf("[K8S_SESSION] Restored session %s from Service (with pre-fetched deployment)", sessionID)
+	log.Printf("[K8S_SESSION] Restored session %s from Service with pre-fetched deployment (agent_type=%q)", sessionID, agentType)
 
 	return session
 }
