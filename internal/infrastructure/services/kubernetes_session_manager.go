@@ -2047,8 +2047,10 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	if req.AgentType != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_AGENT_TYPE", Value: req.AgentType})
 
-		// Add claude-agentapi / codex-agentapi specific environment variables
-		if req.AgentType == "claude-agentapi" || req.AgentType == "codex-agentapi" {
+		// Add HOST/PORT env vars so the agent binary knows where to bind.
+		// Required by: claude-agentapi, codex-agentapi, and claude-acp
+		// (acp-ws-server uses the same HOST/PORT convention).
+		if req.AgentType == "claude-agentapi" || req.AgentType == "codex-agentapi" || req.AgentType == "claude-acp" {
 			envVars = append(envVars, corev1.EnvVar{Name: "HOST", Value: "0.0.0.0"})
 			envVars = append(envVars, corev1.EnvVar{Name: "PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)})
 		}
@@ -2776,8 +2778,9 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	if req.AgentType != "" {
 		env["AGENTAPI_AGENT_TYPE"] = req.AgentType
 
-		// Add claude-agentapi / codex-agentapi specific environment variables
-		if req.AgentType == "claude-agentapi" || req.AgentType == "codex-agentapi" {
+		// Add HOST/PORT env vars so the agent binary knows where to bind.
+		// Required by: claude-agentapi, codex-agentapi, and claude-acp.
+		if req.AgentType == "claude-agentapi" || req.AgentType == "codex-agentapi" || req.AgentType == "claude-acp" {
 			env["HOST"] = "0.0.0.0"
 			env["PORT"] = fmt.Sprintf("%d", m.k8sConfig.BasePort)
 		}
@@ -3021,11 +3024,18 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// Startup command (simplified version for now - full command logic in pod)
-	if req.AgentType == "claude-agentapi" {
+	switch req.AgentType {
+	case "claude-agentapi":
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"claude-agentapi"},
 		}
-	} else {
+	case "claude-acp":
+		// acp-ws-server is the entry point; it spawns claude-agentapi per WS connection.
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"acp-ws-server"},
+			Args:    []string{"--", "claude-agentapi", "--output-file", "/opt/claude-agentapi/history.jsonl"},
+		}
+	default:
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi", "server"},
 			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort)},

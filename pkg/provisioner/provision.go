@@ -578,6 +578,18 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	case "codex-agentapi":
 		return "bunx", []string{"@takutakahashi/codex-agentapi"}
 
+	case "claude-acp":
+		// acp-ws-server bridges WebSocket ↔ stdio of the ACP agent.
+		// It listens on HOST:PORT (injected as env vars) and spawns
+		// claude-agentapi as a subprocess per WebSocket connection.
+		claudeAcpArgs := []string{"--output-file", "/opt/claude-agentapi/history.jsonl"}
+		if claudeArgs := os.Getenv("CLAUDE_ARGS"); claudeArgs != "" {
+			claudeAcpArgs = append(claudeAcpArgs, strings.Fields(claudeArgs)...)
+		}
+		args := []string{"--", "claude-agentapi"}
+		args = append(args, claudeAcpArgs...)
+		return "acp-ws-server", args
+
 	default:
 		// Default: agentapi server wrapping claude
 		claudeCmd := "claude"
