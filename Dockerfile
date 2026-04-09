@@ -81,6 +81,18 @@ RUN ARCH=$(dpkg --print-architecture) && \
       -o /usr/local/bin/claude-posts && \
     chmod +x /usr/local/bin/claude-posts
 
+# Download acp-ws-server binary for ACP WebSocket transport (used by claude-acp agent type)
+ARG ACP_WS_SERVER_VERSION=server/v0.1.0
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) ACP_WS_ARCH="linux-amd64" ;; \
+      arm64) ACP_WS_ARCH="linux-arm64" ;; \
+      *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/takutakahashi/acp-transport-ws/releases/download/${ACP_WS_SERVER_VERSION}/acp-ws-server-${ACP_WS_ARCH}" \
+      -o /usr/local/bin/acp-ws-server && \
+    chmod +x /usr/local/bin/acp-ws-server
+
 # Download otelcol-contrib binary for in-process OpenTelemetry Collector support.
 # Used when OtelCollectorInProcess=true (e.g. when stock inventory is enabled) so
 # that otelcol starts after user context is known instead of at Pod creation time.
@@ -158,6 +170,9 @@ RUN bun install -g @takutakahashi/claude-agentapi
 
 # Install codex CLI
 RUN bun install -g @openai/codex
+
+# Install claude-agent-acp for ACP protocol support (used by claude-acp agent type)
+RUN bun install -g @agentclientprotocol/claude-agent-acp
 
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
