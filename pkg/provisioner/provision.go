@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -159,13 +160,26 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	agentapiURL := fmt.Sprintf("http://localhost:%s", agentapiPort)
 
-	log.Printf("[PROVISIONER] Waiting for agentapi to be ready at %s", agentapiURL)
-	if err := waitForAgentAPI(ctx, agentapiURL, 120); err != nil {
-		s.setStatus(StatusError, fmt.Sprintf("agentapi not ready: %v", err))
-		_ = cmd.Process.Kill()
-		return
+	if settings.Session.AgentType == "claude-acp" {
+		// acp-ws-server is a WebSocket-only server; it does not serve the
+		// agentapi HTTP /status endpoint.  Use a plain TCP connect check
+		// to confirm the server is accepting connections.
+		log.Printf("[PROVISIONER] Waiting for acp-ws-server to be ready on port %s", agentapiPort)
+		if err := waitForTCPConnect(ctx, "localhost", agentapiPort, 120); err != nil {
+			s.setStatus(StatusError, fmt.Sprintf("acp-ws-server not ready: %v", err))
+			_ = cmd.Process.Kill()
+			return
+		}
+		log.Printf("[PROVISIONER] acp-ws-server is ready")
+	} else {
+		log.Printf("[PROVISIONER] Waiting for agentapi to be ready at %s", agentapiURL)
+		if err := waitForAgentAPI(ctx, agentapiURL, 120); err != nil {
+			s.setStatus(StatusError, fmt.Sprintf("agentapi not ready: %v", err))
+			_ = cmd.Process.Kill()
+			return
+		}
+		log.Printf("[PROVISIONER] agentapi is ready")
 	}
-	log.Printf("[PROVISIONER] agentapi is ready")
 
 	// ── Step 9: send initial message ─────────────────────────────────────────
 	if settings.InitialMessage != "" {
@@ -584,7 +598,9 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// claude-agent-acp (@agentclientprotocol/claude-agent-acp) as a
 		// subprocess per WebSocket connection.
 		// claude-agent-acp speaks the ACP protocol over stdio (ndjson).
-		return "acp-ws-server", []string{"--", "claude-agent-acp"}
+		// acp-ws-server uses --host/--port flags (not env vars), so we
+		// pass them explicitly using the same port as the agentapi proxy expects.
+		return "acp-ws-server", []string{"--host", "0.0.0.0", "--port", agentapiPort, "--", "claude-agent-acp"}
 
 	default:
 		// Default: agentapi server wrapping claude
@@ -627,6 +643,29 @@ func waitForAgentAPI(ctx context.Context, agentapiURL string, maxRetries int) er
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("agentapi not ready after %d retries", maxRetries)
+}
+
+// waitForTCPConnect polls host:port with a plain TCP dial until the connection
+// succeeds or maxRetries is exhausted.  Used for servers (e.g. acp-ws-server)
+// that do not expose a standard HTTP /status endpoint.
+func waitForTCPConnect(ctx context.Context, host, port string, maxRetries int) error {
+	addr := net.JoinHostPort(host, port)
+	for i := 0; i < maxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled")
+		default:
+		}
+
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("server not ready at %s after %d retries", addr, maxRetries)
 }
 
 // agentStatusResponse is the minimal shape of agentapi's /status response.
