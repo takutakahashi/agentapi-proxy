@@ -1105,6 +1105,14 @@ func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) (
 		return nil, fmt.Errorf("session not found: %s", id)
 	}
 
+	// ACP WebSocket sessions (claude-acp) do not expose an HTTP /messages endpoint.
+	// Messages are streamed via the ACP WebSocket protocol instead.
+	// Return an empty list so the UI can still initialize and use ACP WS for messaging.
+	if ks, ok := session.(*KubernetesSession); ok && ks.Request() != nil && ks.Request().AgentType == "claude-acp" {
+		log.Printf("[K8S_SESSION] Skipping GetMessages for claude-acp session %s (ACP WS only)", id)
+		return []portrepos.Message{}, nil
+	}
+
 	// Build service name and endpoint URL
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
 	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/messages",

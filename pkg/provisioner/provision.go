@@ -182,7 +182,9 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 9: send initial message ─────────────────────────────────────────
-	if settings.InitialMessage != "" {
+	// claude-acp sessions use ACP WebSocket protocol and do not expose an HTTP
+	// message endpoint, so initial messages cannot be sent via HTTP.
+	if settings.InitialMessage != "" && settings.Session.AgentType != "claude-acp" {
 		log.Printf("[PROVISIONER] Sending initial message")
 		agentType := settings.Session.AgentType
 		waitSec := 2
@@ -192,6 +194,8 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			}
 		}
 		sendInitialMessage(ctx, agentapiURL, settings.InitialMessage, agentType, waitSec)
+	} else if settings.InitialMessage != "" && settings.Session.AgentType == "claude-acp" {
+		log.Printf("[PROVISIONER] Skipping initial message for claude-acp session (ACP WS only)")
 	}
 
 	// ── Step 10: mark ready and supervise ────────────────────────────────────
