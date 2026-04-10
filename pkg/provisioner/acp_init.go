@@ -27,8 +27,8 @@ func initACPSession(ctx context.Context, port, agentapiSessionID, initialMessage
 
 	// 1. initialize
 	_, err = client.call("initialize", map[string]interface{}{
-		"protocolVersion":    0,
-		"clientInfo":         map[string]string{"name": "agentapi-proxy-provisioner", "version": "1.0.0"},
+		"protocolVersion": 0,
+		"clientInfo":      map[string]string{"name": "agentapi-proxy-provisioner", "version": "1.0.0"},
 		"clientCapabilities": map[string]interface{}{},
 	}, 15*time.Second)
 	if err != nil {
@@ -92,7 +92,7 @@ func initACPSession(ctx context.Context, port, agentapiSessionID, initialMessage
 		log.Printf("[ACP_INIT] Failed to register ACP session ID with proxy: %v", err)
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("[ACP_INIT] Proxy returned non-OK status %d", resp.StatusCode)
 		return

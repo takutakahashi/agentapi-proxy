@@ -37,7 +37,19 @@ type jsonRPCMsg struct {
 	Error   json.RawMessage `json:"error,omitempty"`
 }
 
-// sessionNewResult is the result of session/new.
+// sessionNewParams is the params of session/new.
+type sessionNewParams struct {
+	CWD        string        `json:"cwd"`
+	MCPServers []interface{} `json:"mcpServers"`
+}
+
+// sessionResumeParams is the params of session/resume.
+type sessionResumeParams struct {
+	SessionID string `json:"sessionId"`
+	CWD       string `json:"cwd"`
+}
+
+// sessionNewResult is the result of session/new or session/resume.
 type sessionNewResult struct {
 	SessionID string `json:"sessionId"`
 }
@@ -71,11 +83,16 @@ func (c *SessionController) handleWebSocketProxy(ctx echo.Context, session entit
 	targetURL := fmt.Sprintf("ws://%s%s", session.Addr(), subPath)
 	log.Printf("[WS] Proxying WebSocket for session %s → %s", sessionID, targetURL)
 
-	// Determine if ACP session ID capture is needed (for persisting new session IDs).
+	// Determine if ACP session interception is needed.
 	isACP := false
+	var acpSavedID string
 	if ks, ok := session.(*services.KubernetesSession); ok &&
 		ks.Request() != nil && ks.Request().AgentType == "claude-acp" {
 		isACP = true
+		acpSavedID = ks.ACPSessionID()
+		if acpSavedID != "" {
+			log.Printf("[WS] ACP session %s has saved ACP session ID: %s", sessionID, acpSavedID)
+		}
 	}
 
 	// 1. Upgrade the incoming HTTP connection to WebSocket.
@@ -102,13 +119,37 @@ func (c *SessionController) handleWebSocketProxy(ctx echo.Context, session entit
 	// 3. Bidirectional bridge — two goroutines, one error channel.
 	errChan := make(chan error, 2)
 
-	// client → downstream
+	// client → downstream (with ACP session/new interception)
 	go func() {
 		for {
 			msgType, payload, err := clientConn.ReadMessage()
 			if err != nil {
 				errChan <- fmt.Errorf("client read: %w", err)
 				return
+			}
+
+			// For claude-acp sessions: intercept session/new and replace with session/resume.
+			if isACP && msgType == websocket.TextMessage && acpSavedID != "" {
+				var msg jsonRPCMsg
+				if json.Unmarshal(payload, &msg) == nil && msg.Method == "session/new" {
+					log.Printf("[WS] Intercepting session/new for session %s → session/resume(%s)", sessionID, acpSavedID)
+					var origParams sessionNewParams
+					_ = json.Unmarshal(msg.Params, &origParams)
+					cwd := origParams.CWD
+					if cwd == "" {
+						cwd = "/"
+					}
+					resumeParams, _ := json.Marshal(sessionResumeParams{
+						SessionID: acpSavedID,
+						CWD:       cwd,
+					})
+					msg.Method = "session/resume"
+					msg.Params = json.RawMessage(resumeParams)
+					replaced, err := json.Marshal(msg)
+					if err == nil {
+						payload = replaced
+					}
+				}
 			}
 
 			if err := serverConn.WriteMessage(msgType, payload); err != nil {
@@ -127,17 +168,20 @@ func (c *SessionController) handleWebSocketProxy(ctx echo.Context, session entit
 				return
 			}
 
-			// For claude-acp sessions: capture ACP session ID from session/new responses
-			// and persist to Kubernetes Service annotation (for diagnostics / future use).
+			// For claude-acp sessions: capture ACP session ID from session/new or session/resume responses.
 			if isACP && msgType == websocket.TextMessage {
 				var msg jsonRPCMsg
 				if json.Unmarshal(payload, &msg) == nil && msg.ID != nil && msg.Result != nil && msg.Error == nil {
 					var result sessionNewResult
 					if json.Unmarshal(msg.Result, &result) == nil && result.SessionID != "" {
-						log.Printf("[WS] ACP session created for agentapi session %s: %s", sessionID, result.SessionID)
-						if sm, ok := c.sessionManagerProvider.GetSessionManager().(*services.KubernetesSessionManager); ok {
-							if patchErr := sm.PatchACPSessionID(context.Background(), sessionID, result.SessionID); patchErr != nil {
-								log.Printf("[WS] Failed to patch ACP session ID for %s: %v", sessionID, patchErr)
+						if result.SessionID != acpSavedID {
+							log.Printf("[WS] Saving ACP session ID for agentapi session %s: %s", sessionID, result.SessionID)
+							acpSavedID = result.SessionID
+							// Persist to Kubernetes Service annotation.
+							if sm, ok := c.sessionManagerProvider.GetSessionManager().(*services.KubernetesSessionManager); ok {
+								if patchErr := sm.PatchACPSessionID(context.Background(), sessionID, result.SessionID); patchErr != nil {
+									log.Printf("[WS] Failed to patch ACP session ID for %s: %v", sessionID, patchErr)
+								}
 							}
 						}
 					}
