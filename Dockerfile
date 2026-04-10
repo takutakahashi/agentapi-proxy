@@ -82,7 +82,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
     chmod +x /usr/local/bin/claude-posts
 
 # Download acp-ws-server binary for ACP WebSocket transport (used by claude-acp agent type)
-ARG ACP_WS_SERVER_VERSION=server/v0.2.0
+ARG ACP_WS_SERVER_VERSION=server/v0.3.0
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) ACP_WS_ARCH="linux-amd64" ;; \
