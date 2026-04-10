@@ -2369,6 +2369,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 
 	// Restore agent type from annotation (set at session creation time)
 	agentType := svc.Annotations["agentapi.proxy/agent-type"]
+	acpSessionID := svc.Annotations["agentapi.proxy/acp-session-id"]
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -2399,6 +2400,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
 	session.SetDescription(initialMessage) // Cache initial message as description
+	if acpSessionID != "" {
+		session.SetACPSessionID(acpSessionID)
+	}
 
 	// Add to memory map
 	m.mutex.Lock()
@@ -2490,6 +2494,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 
 	// Restore agent type from annotation (set at session creation time)
 	agentType := svc.Annotations["agentapi.proxy/agent-type"]
+	acpSessionID := svc.Annotations["agentapi.proxy/acp-session-id"]
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -2520,6 +2525,9 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getStatusFromDeploymentObject(deployment))
 	session.SetDescription(initialMessage) // Cache initial message as description
+	if acpSessionID != "" {
+		session.SetACPSessionID(acpSessionID)
+	}
 
 	// Add to memory map
 	m.mutex.Lock()
@@ -2532,6 +2540,34 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	log.Printf("[K8S_SESSION] Restored session %s from Service with pre-fetched deployment (agent_type=%q)", sessionID, agentType)
 
 	return session
+}
+
+// PatchACPSessionID stores the ACP session ID in the Service annotation and in-memory.
+func (m *KubernetesSessionManager) PatchACPSessionID(ctx context.Context, agentapiSessionID, acpSessionID string) error {
+	session := m.GetSession(agentapiSessionID)
+	if session == nil {
+		return fmt.Errorf("session %s not found", agentapiSessionID)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session %s is not a KubernetesSession", agentapiSessionID)
+	}
+	ks.SetACPSessionID(acpSessionID)
+
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]string{
+				"agentapi.proxy/acp-session-id": acpSessionID,
+			},
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch: %w", err)
+	}
+	_, err = m.client.CoreV1().Services(m.namespace).Patch(
+		ctx, ks.ServiceName(), types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	return err
 }
 
 // getStatusFromDeploymentObject determines session status from a pre-fetched Deployment object

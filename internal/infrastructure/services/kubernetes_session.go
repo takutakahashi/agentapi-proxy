@@ -31,6 +31,7 @@ type KubernetesSession struct {
 	provisionPayload  []byte                           // JSON body for POST /provision to agent-provisioner
 	provisionSettings *sessionsettings.SessionSettings // Settings used for provisioning (stored after successful provisioning)
 	isStock           bool                             // Whether this is a pre-warmed stock session
+	acpSessionID      string                           // ACP session ID for resuming claude-acp sessions
 }
 
 // NewKubernetesSession creates a new KubernetesSession
@@ -274,6 +275,20 @@ func (s *KubernetesSession) IsStock() bool { return s.isStock }
 
 // SetIsStock sets the stock flag for this session.
 func (s *KubernetesSession) SetIsStock(v bool) { s.isStock = v }
+
+// ACPSessionID returns the ACP session ID for resuming claude-acp sessions.
+func (s *KubernetesSession) ACPSessionID() string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.acpSessionID
+}
+
+// SetACPSessionID stores the ACP session ID for resuming claude-acp sessions.
+func (s *KubernetesSession) SetACPSessionID(id string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.acpSessionID = id
+}
 
 // Ensure KubernetesSession implements entities.Session
 var _ entities.Session = (*KubernetesSession)(nil)
