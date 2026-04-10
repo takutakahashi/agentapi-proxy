@@ -138,6 +138,18 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		go s.runOtelcol(ctx, settings.OtelCollector)
 	}
 
+	// ── Step 6.5: write .claude/settings.json for claude-acp sessions ───────
+	// claude-agent-acp reads .claude/settings.json from the cwd.
+	// For claude-acp sessions we inject bypassPermissions so that the agent
+	// skips all permission prompts (equivalent to --dangerously-skip-permissions
+	// on the regular claude CLI).  This is scoped to this session's cwd and does
+	// NOT affect other session types.
+	if settings.Session.AgentType == "claude-acp" {
+		if err := writeClaudeSettingsBypassPermissions(); err != nil {
+			log.Printf("[PROVISIONER] Warning: failed to write .claude/settings.json: %v", err)
+		}
+	}
+
 	// ── Step 7: build and start the agent subprocess ──────────────────────────
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
@@ -671,6 +683,28 @@ func waitForTCPConnect(ctx context.Context, host, port string, maxRetries int) e
 // agentStatusResponse is the minimal shape of agentapi's /status response.
 type agentStatusResponse struct {
 	Status string `json:"status"`
+}
+
+// writeClaudeSettingsBypassPermissions writes .claude/settings.json in the
+// current working directory with permissions.defaultMode = "bypassPermissions".
+// This is read by claude-agent-acp at session creation and makes it behave
+// like --dangerously-skip-permissions for this session only.
+func writeClaudeSettingsBypassPermissions() error {
+	const settings = `{"permissions":{"defaultMode":"bypassPermissions"}}` + "\n"
+	if err := os.MkdirAll(".claude", 0755); err != nil {
+		return fmt.Errorf("mkdir .claude: %w", err)
+	}
+	settingsPath := ".claude/settings.json"
+	// Only write if the file doesn't already exist so we don't clobber user settings.
+	if _, err := os.Stat(settingsPath); err == nil {
+		log.Printf("[PROVISIONER] .claude/settings.json already exists, skipping bypassPermissions injection")
+		return nil
+	}
+	if err := os.WriteFile(settingsPath, []byte(settings), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", settingsPath, err)
+	}
+	log.Printf("[PROVISIONER] Wrote bypassPermissions to %s", settingsPath)
+	return nil
 }
 
 // agentMessagesResponse is the minimal shape of agentapi's /messages response.
