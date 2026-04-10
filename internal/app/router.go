@@ -207,6 +207,9 @@ func (r *Router) registerCoreRoutes() error {
 		log.Printf("[ROUTES] Session sharing endpoints registered")
 	}
 
+	// ACP session registration endpoint (must be before the catch-all)
+	r.echo.POST("/sessions/:sessionId/acp-session", r.handlers.sessionController.RegisterACPSession)
+
 	// Session proxy route
 	r.echo.Any("/:sessionId/*", r.handlers.sessionController.RouteToSession)
 	log.Printf("[ROUTES] Session management endpoints registered")

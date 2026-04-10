@@ -171,6 +171,8 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			return
 		}
 		log.Printf("[PROVISIONER] acp-ws-server is ready")
+		// Initialize ACP session and register ID with proxy
+		go initACPSession(ctx, agentapiPort, settings.Session.ID, settings.InitialMessage)
 	} else {
 		log.Printf("[PROVISIONER] Waiting for agentapi to be ready at %s", agentapiURL)
 		if err := waitForAgentAPI(ctx, agentapiURL, 120); err != nil {

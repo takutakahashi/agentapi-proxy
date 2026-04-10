@@ -928,3 +928,31 @@ func (c *SessionController) setCORSHeaders(ctx echo.Context) {
 	ctx.Response().Header().Set("Access-Control-Allow-Credentials", "true")
 	ctx.Response().Header().Set("Access-Control-Max-Age", "86400")
 }
+
+// RegisterACPSession stores the ACP session ID for a claude-acp session.
+// Called by the agent-provisioner after it initializes the ACP WebSocket session.
+// POST /sessions/:sessionId/acp-session
+// Body: {"acp_session_id": "..."}
+func (c *SessionController) RegisterACPSession(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	var body struct {
+		ACPSessionID string `json:"acp_session_id"`
+	}
+	if err := ctx.Bind(&body); err != nil || body.ACPSessionID == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "acp_session_id required"})
+	}
+
+	sm := c.sessionManagerProvider.GetSessionManager()
+	ksm, ok := sm.(*services.KubernetesSessionManager)
+	if !ok {
+		return ctx.JSON(http.StatusNotImplemented, map[string]string{"error": "not supported"})
+	}
+
+	if err := ksm.PatchACPSessionID(ctx.Request().Context(), sessionID, body.ACPSessionID); err != nil {
+		log.Printf("[SESSION] Failed to patch ACP session ID for %s: %v", sessionID, err)
+		return ctx.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	log.Printf("[SESSION] Registered ACP session ID %s for session %s", body.ACPSessionID, sessionID)
+	return ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
