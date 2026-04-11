@@ -173,9 +173,9 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	agentapiURL := fmt.Sprintf("http://localhost:%s", agentapiPort)
 
 	if settings.Session.AgentType == "claude-acp" {
-		// acp-ws-server now listens on port 8081 (internal).
-		// Wait for it to be ready, then start the intercept server on port 8080.
-		const acpInternalPort = "8081"
+		// acp-ws-server listens on the internal port (agentapiPort+2).
+		// Wait for it, then start the ACPInterceptServer on agentapiPort (public).
+		acpInternalPort := deriveACPInternalPort(agentapiPort)
 		log.Printf("[PROVISIONER] Waiting for acp-ws-server to be ready on port %s", acpInternalPort)
 		if err := waitForTCPConnect(ctx, "localhost", acpInternalPort, 120); err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("acp-ws-server not ready: %v", err))
@@ -612,13 +612,14 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 
 	case "claude-acp":
 		// acp-ws-server bridges WebSocket ↔ stdio of the ACP agent.
-		// It listens on HOST:PORT (injected as env vars) and spawns
-		// claude-agent-acp (@agentclientprotocol/claude-agent-acp) as a
-		// subprocess per WebSocket connection.
-		// claude-agent-acp speaks the ACP protocol over stdio (ndjson).
-		// acp-ws-server uses --host/--port flags (not env vars), so we
-		// pass them explicitly using the same port as the agentapi proxy expects.
-		return "acp-ws-server", []string{"--host", "0.0.0.0", "--port", "8081", "--", "claude-agent-acp"}
+		// It listens on an internal port (agentapiPort+2) and is fronted by the
+		// ACPInterceptServer which listens on agentapiPort (the public-facing port).
+		// Port assignment:
+		//   agentapiPort   (e.g. 9000) — ACPInterceptServer (public)
+		//   agentapiPort+1 (e.g. 9001) — provisioner status server (reserved)
+		//   agentapiPort+2 (e.g. 9002) — acp-ws-server (internal)
+		acpInternalPort := deriveACPInternalPort(agentapiPort)
+		return "acp-ws-server", []string{"--host", "0.0.0.0", "--port", acpInternalPort, "--", "claude-agent-acp"}
 
 	default:
 		// Default: agentapi server wrapping claude
@@ -695,6 +696,17 @@ type agentStatusResponse struct {
 // current working directory with permissions.defaultMode = "bypassPermissions".
 // This is read by claude-agent-acp at session creation and makes it behave
 // like --dangerously-skip-permissions for this session only.
+// deriveACPInternalPort returns the internal port for acp-ws-server, which is
+// agentapiPort+2. Port +1 is reserved for the provisioner status server.
+// Example: agentapiPort="9000" → "9002"
+func deriveACPInternalPort(agentapiPort string) string {
+	port := 0
+	if _, err := fmt.Sscanf(agentapiPort, "%d", &port); err != nil || port == 0 {
+		return "9002"
+	}
+	return fmt.Sprintf("%d", port+2)
+}
+
 func writeClaudeSettingsBypassPermissions() error {
 	const settings = `{"permissions":{"defaultMode":"bypassPermissions"}}` + "\n"
 	if err := os.MkdirAll(".claude", 0755); err != nil {
