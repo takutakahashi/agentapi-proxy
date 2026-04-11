@@ -210,13 +210,22 @@ func (s *ACPInterceptServer) interceptClientFrame(data []byte) []byte {
 		s.mu.RUnlock()
 
 		if sessionID != "" {
-			// Rewrite to session/resume
+			// Parse original session/new params to extract cwd/mcpServers.
+			// session/resume requires the same params as session/new plus sessionId.
+			var req jsonRPCRequest
+			if err := json.Unmarshal(data, &req); err != nil {
+				break
+			}
+			var origParams map[string]interface{}
+			if err := json.Unmarshal(req.Params, &origParams); err != nil {
+				origParams = map[string]interface{}{}
+			}
+			// Build session/resume params: keep all original fields, add sessionId
+			origParams["sessionId"] = sessionID
 			rewritten := map[string]interface{}{
 				"jsonrpc": "2.0",
 				"method":  "session/resume",
-				"params": map[string]string{
-					"sessionId": sessionID,
-				},
+				"params":  origParams,
 			}
 			if base.ID != nil {
 				rewritten["id"] = base.ID
