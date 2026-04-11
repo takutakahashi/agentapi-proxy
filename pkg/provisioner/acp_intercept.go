@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -36,13 +38,67 @@ type ACPInterceptServer struct {
 	pendingSessionNew json.RawMessage // original session/new params, set when rewriting to session/resume
 }
 
+// sessionStateDir returns the directory used to persist ACP session state.
+// It defaults to ~/.session but can be overridden with the
+// ACP_SESSION_STATE_DIR environment variable.
+func sessionStateDir() string {
+	if d := os.Getenv("ACP_SESSION_STATE_DIR"); d != "" {
+		return d
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".session"
+	}
+	return filepath.Join(home, ".session")
+}
+
+// sessionIDFile returns the path to the persisted ACP session ID file.
+func sessionIDFile() string {
+	return filepath.Join(sessionStateDir(), "acp_session_id")
+}
+
+// loadPersistedSessionID reads the ACP session ID from disk, returning ""
+// if the file does not exist or cannot be read.
+func loadPersistedSessionID() string {
+	data, err := os.ReadFile(sessionIDFile())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// persistSessionID writes the ACP session ID to disk.
+func persistSessionID(id string) {
+	dir := sessionStateDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		log.Printf("[ACP_INTERCEPT] Failed to create session state dir %s: %v", dir, err)
+		return
+	}
+	if err := os.WriteFile(sessionIDFile(), []byte(id), 0600); err != nil {
+		log.Printf("[ACP_INTERCEPT] Failed to persist session ID: %v", err)
+	}
+}
+
+// clearPersistedSessionID removes the persisted session ID file.
+func clearPersistedSessionID() {
+	if err := os.Remove(sessionIDFile()); err != nil && !os.IsNotExist(err) {
+		log.Printf("[ACP_INTERCEPT] Failed to clear persisted session ID: %v", err)
+	}
+}
+
 // NewACPInterceptServer creates a new ACPInterceptServer that proxies to the
-// given downstream address.
+// given downstream address. It loads any previously persisted ACP session ID
+// so that session/resume can be attempted on the first connection.
 func NewACPInterceptServer(downstreamAddr string) *ACPInterceptServer {
-	return &ACPInterceptServer{
+	s := &ACPInterceptServer{
 		downstreamAddr: downstreamAddr,
 		nextID:         1,
 	}
+	if id := loadPersistedSessionID(); id != "" {
+		s.acpSessionID = id
+		log.Printf("[ACP_INTERCEPT] Loaded persisted ACP session ID: %s", id)
+	}
+	return s
 }
 
 // Start starts the HTTP/WebSocket server on listenAddr (e.g. ":8080").
@@ -167,7 +223,7 @@ func (s *ACPInterceptServer) handleRoot(w http.ResponseWriter, r *http.Request) 
 			// It's a response (has id).
 			if wasResume && isResourceNotFoundError(resp) {
 				log.Printf("[ACP_INTERCEPT] session/resume failed (Resource not found), falling back to session/new")
-				// Reset stored session state.
+				// Reset stored session state (in-memory and on disk).
 				s.mu.Lock()
 				s.acpSessionID = ""
 				s.messages = nil
@@ -175,6 +231,7 @@ func (s *ACPInterceptServer) handleRoot(w http.ResponseWriter, r *http.Request) 
 				orig := s.pendingSessionNew
 				s.pendingSessionNew = nil
 				s.mu.Unlock()
+				clearPersistedSessionID()
 
 				// Send the original session/new to downstream.
 				if orig != nil {
@@ -433,6 +490,7 @@ func (s *ACPInterceptServer) handleServerResponse(data []byte) {
 	s.mu.Lock()
 	s.acpSessionID = result.SessionID
 	s.mu.Unlock()
+	persistSessionID(result.SessionID)
 	log.Printf("[ACP_INTERCEPT] Stored ACP session ID: %s", result.SessionID)
 }
 
