@@ -39,8 +39,9 @@ type ACPInterceptServer struct {
 }
 
 // sessionStateDir returns the directory used to persist ACP session state.
-// It defaults to ~/.session but can be overridden with the
-// ACP_SESSION_STATE_DIR environment variable.
+// It can be overridden with ACP_SESSION_STATE_DIR. The default is
+// ~/workdir/.session which lands on the PVC-backed persistent volume that
+// session pods mount at /home/agentapi/workdir.
 func sessionStateDir() string {
 	if d := os.Getenv("ACP_SESSION_STATE_DIR"); d != "" {
 		return d
@@ -49,7 +50,7 @@ func sessionStateDir() string {
 	if err != nil {
 		return ".session"
 	}
-	return filepath.Join(home, ".session")
+	return filepath.Join(home, "workdir", ".session")
 }
 
 // sessionIDFile returns the path to the persisted ACP session ID file.
