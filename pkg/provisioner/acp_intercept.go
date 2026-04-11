@@ -297,7 +297,19 @@ func (s *ACPInterceptServer) interceptClientFrame(data []byte) {
 	if err := json.Unmarshal(data, &base); err != nil || base.Method == "" {
 		return
 	}
-	if base.Method == "session/prompt" {
+	switch base.Method {
+	case "session/new":
+		log.Printf("[ACP_INTERCEPT] Received session/new from client")
+	case "session/resume":
+		var req jsonRPCRequest
+		if err := json.Unmarshal(data, &req); err == nil {
+			var params struct {
+				SessionID string `json:"sessionId"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			log.Printf("[ACP_INTERCEPT] Received session/resume from client (sessionId=%s)", params.SessionID)
+		}
+	case "session/prompt":
 		s.extractUserMessage(data)
 	}
 }
@@ -403,11 +415,18 @@ func (s *ACPInterceptServer) handleServerResponse(data []byte) {
 		return
 	}
 
+	s.mu.RLock()
+	prev := s.acpSessionID
+	s.mu.RUnlock()
 	s.mu.Lock()
 	s.acpSessionID = result.SessionID
 	s.mu.Unlock()
 	persistSessionID(result.SessionID)
-	log.Printf("[ACP_INTERCEPT] Stored ACP session ID: %s", result.SessionID)
+	if prev == result.SessionID {
+		log.Printf("[ACP_INTERCEPT] Resumed ACP session ID: %s", result.SessionID)
+	} else {
+		log.Printf("[ACP_INTERCEPT] Stored new ACP session ID: %s (was: %s)", result.SessionID, prev)
+	}
 }
 
 // extractUserMessage parses a session/prompt request and stores the user text.
