@@ -28,11 +28,12 @@ type ACPMessage struct {
 // underlying acp-ws-server, accumulating message history and storing the ACP
 // session ID for reconnects.
 type ACPInterceptServer struct {
-	mu             sync.RWMutex
-	acpSessionID   string
-	messages       []ACPMessage
-	nextID         int
-	downstreamAddr string // e.g. "localhost:8081"
+	mu               sync.RWMutex
+	acpSessionID     string
+	messages         []ACPMessage
+	nextID           int
+	downstreamAddr   string           // e.g. "localhost:8081"
+	pendingSessionNew json.RawMessage // original session/new params, set when rewriting to session/resume
 }
 
 // NewACPInterceptServer creates a new ACPInterceptServer that proxies to the
@@ -130,6 +131,70 @@ func (s *ACPInterceptServer) handleRoot(w http.ResponseWriter, r *http.Request) 
 
 	log.Printf("[ACP_INTERCEPT] WS session started, proxying to %s", downstreamURL)
 
+	// ── Phase 1: session establishment ──────────────────────────────────────
+	// Read the first client message (expected: session/new or session/resume).
+	// If we rewrite it to session/resume and the server returns "Resource not
+	// found", we reset state and retry with the original session/new.
+	{
+		msgType, data, err := clientConn.ReadMessage()
+		if err != nil {
+			log.Printf("[ACP_INTERCEPT] Error reading first client message: %v", err)
+			return
+		}
+
+		rewritten, wasResume := s.interceptClientFrame(data)
+		if err := downstreamConn.WriteMessage(msgType, rewritten); err != nil {
+			log.Printf("[ACP_INTERCEPT] Error sending session message to downstream: %v", err)
+			return
+		}
+
+		// Wait for the session establishment response (skip any notifications).
+		for {
+			_, resp, err := downstreamConn.ReadMessage()
+			if err != nil {
+				log.Printf("[ACP_INTERCEPT] Error reading session response: %v", err)
+				return
+			}
+
+			// Check if it's a notification (has method, no id) — forward and keep waiting.
+			var base jsonRPCBase
+			if json.Unmarshal(resp, &base) == nil && base.Method != "" && base.ID == nil {
+				s.interceptDownstreamFrame(resp)
+				_ = clientConn.WriteMessage(websocket.TextMessage, resp)
+				continue
+			}
+
+			// It's a response (has id).
+			if wasResume && isResourceNotFoundError(resp) {
+				log.Printf("[ACP_INTERCEPT] session/resume failed (Resource not found), falling back to session/new")
+				// Reset stored session state.
+				s.mu.Lock()
+				s.acpSessionID = ""
+				s.messages = nil
+				s.nextID = 1
+				orig := s.pendingSessionNew
+				s.pendingSessionNew = nil
+				s.mu.Unlock()
+
+				// Send the original session/new to downstream.
+				if orig != nil {
+					if err := downstreamConn.WriteMessage(websocket.TextMessage, orig); err != nil {
+						log.Printf("[ACP_INTERCEPT] Error sending session/new fallback: %v", err)
+						return
+					}
+					// Wait for the new session response.
+					continue
+				}
+			}
+
+			// Forward the response to the client and proceed to normal proxy.
+			s.interceptDownstreamFrame(resp)
+			_ = clientConn.WriteMessage(websocket.TextMessage, resp)
+			break
+		}
+	}
+
+	// ── Phase 2: normal bidirectional proxy ──────────────────────────────────
 	errCh := make(chan error, 2)
 
 	// client → downstream
@@ -140,8 +205,8 @@ func (s *ACPInterceptServer) handleRoot(w http.ResponseWriter, r *http.Request) 
 				errCh <- err
 				return
 			}
-			data = s.interceptClientFrame(data)
-			if err := downstreamConn.WriteMessage(msgType, data); err != nil {
+			out, _ := s.interceptClientFrame(data)
+			if err := downstreamConn.WriteMessage(msgType, out); err != nil {
 				errCh <- err
 				return
 			}
@@ -197,10 +262,11 @@ type jsonRPCResponse struct {
 
 // interceptClientFrame processes frames sent from client → downstream.
 // It may rewrite the frame (e.g. session/new → session/resume).
-func (s *ACPInterceptServer) interceptClientFrame(data []byte) []byte {
+// Returns the (possibly rewritten) frame, and whether it was rewritten to session/resume.
+func (s *ACPInterceptServer) interceptClientFrame(data []byte) (out []byte, wasResume bool) {
 	var base jsonRPCBase
 	if err := json.Unmarshal(data, &base); err != nil || base.Method == "" {
-		return data
+		return data, false
 	}
 
 	switch base.Method {
@@ -232,7 +298,11 @@ func (s *ACPInterceptServer) interceptClientFrame(data []byte) []byte {
 			}
 			if newData, err := json.Marshal(rewritten); err == nil {
 				log.Printf("[ACP_INTERCEPT] Rewrote session/new → session/resume (sessionId=%s)", sessionID)
-				return newData
+				// Store original session/new for potential fallback
+				s.mu.Lock()
+				s.pendingSessionNew = data
+				s.mu.Unlock()
+				return newData, true
 			}
 		}
 
@@ -240,7 +310,23 @@ func (s *ACPInterceptServer) interceptClientFrame(data []byte) []byte {
 		s.extractUserMessage(data)
 	}
 
-	return data
+	return data, false
+}
+
+// isResourceNotFoundError checks whether a JSON-RPC response is an error
+// indicating that a resource (session) was not found.
+func isResourceNotFoundError(data []byte) bool {
+	var resp struct {
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil || resp.Error == nil {
+		return false
+	}
+	// -32002 is "Resource not found" in the ACP spec
+	return resp.Error.Code == -32002
 }
 
 // interceptDownstreamFrame processes frames sent from downstream → client.
