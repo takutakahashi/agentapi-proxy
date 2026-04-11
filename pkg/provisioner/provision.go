@@ -173,16 +173,22 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	agentapiURL := fmt.Sprintf("http://localhost:%s", agentapiPort)
 
 	if settings.Session.AgentType == "claude-acp" {
-		// acp-ws-server is a WebSocket-only server; it does not serve the
-		// agentapi HTTP /status endpoint.  Use a plain TCP connect check
-		// to confirm the server is accepting connections.
-		log.Printf("[PROVISIONER] Waiting for acp-ws-server to be ready on port %s", agentapiPort)
-		if err := waitForTCPConnect(ctx, "localhost", agentapiPort, 120); err != nil {
+		// acp-ws-server now listens on port 8081 (internal).
+		// Wait for it to be ready, then start the intercept server on port 8080.
+		const acpInternalPort = "8081"
+		log.Printf("[PROVISIONER] Waiting for acp-ws-server to be ready on port %s", acpInternalPort)
+		if err := waitForTCPConnect(ctx, "localhost", acpInternalPort, 120); err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("acp-ws-server not ready: %v", err))
 			_ = cmd.Process.Kill()
 			return
 		}
-		log.Printf("[PROVISIONER] acp-ws-server is ready")
+		log.Printf("[PROVISIONER] acp-ws-server is ready, starting ACP intercept server on :%s", agentapiPort)
+		intercept := NewACPInterceptServer("localhost:" + acpInternalPort)
+		go func() {
+			if err := intercept.Start(ctx, ":"+agentapiPort); err != nil {
+				log.Printf("[PROVISIONER] ACP intercept server exited: %v", err)
+			}
+		}()
 	} else {
 		log.Printf("[PROVISIONER] Waiting for agentapi to be ready at %s", agentapiURL)
 		if err := waitForAgentAPI(ctx, agentapiURL, 120); err != nil {
@@ -612,7 +618,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// claude-agent-acp speaks the ACP protocol over stdio (ndjson).
 		// acp-ws-server uses --host/--port flags (not env vars), so we
 		// pass them explicitly using the same port as the agentapi proxy expects.
-		return "acp-ws-server", []string{"--host", "0.0.0.0", "--port", agentapiPort, "--", "claude-agent-acp"}
+		return "acp-ws-server", []string{"--host", "0.0.0.0", "--port", "8081", "--", "claude-agent-acp"}
 
 	default:
 		// Default: agentapi server wrapping claude
