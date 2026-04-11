@@ -283,7 +283,7 @@ func (s *ACPInterceptServer) handleServerNotification(method string, data []byte
 		} `json:"_meta"`
 		RawInput  json.RawMessage `json:"rawInput"`
 		Status    string          `json:"status"`
-		RawOutput string          `json:"rawOutput"`
+		RawOutput json.RawMessage `json:"rawOutput"`
 	}
 	if err := json.Unmarshal(params.Update, &update); err != nil {
 		return
@@ -407,19 +407,35 @@ func (s *ACPInterceptServer) addToolUseMessage(toolCallID, toolName, rawInput st
 	defer s.mu.Unlock()
 
 	for _, m := range s.messages {
-		if m.Role == "tool_use" && m.ToolUseID == toolCallID {
+		if m.Role == "agent" && m.ToolUseID == toolCallID {
 			return // duplicate
 		}
 	}
 
-	content := toolName
-	if rawInput != "" && rawInput != "{}" {
-		content = fmt.Sprintf("%s\n%s", toolName, rawInput)
+	// Build content as the JSON shape expected by the UI's MessageItem component:
+	// {type: "tool_use", name: "...", id: "...", input: {...}}
+	var inputObj interface{}
+	if rawInput != "" {
+		if err := json.Unmarshal([]byte(rawInput), &inputObj); err != nil {
+			inputObj = map[string]string{"raw": rawInput}
+		}
+	} else {
+		inputObj = map[string]interface{}{}
+	}
+	contentBytes, err := json.Marshal(map[string]interface{}{
+		"type":  "tool_use",
+		"name":  toolName,
+		"id":    toolCallID,
+		"input": inputObj,
+	})
+	content := "{}"
+	if err == nil {
+		content = string(contentBytes)
 	}
 
 	s.messages = append(s.messages, ACPMessage{
 		ID:        s.nextID,
-		Role:      "tool_use",
+		Role:      "agent",
 		Content:   content,
 		Time:      time.Now().Format(time.RFC3339),
 		ToolUseID: toolCallID,
@@ -429,7 +445,7 @@ func (s *ACPInterceptServer) addToolUseMessage(toolCallID, toolName, rawInput st
 
 // addToolResultMessage adds a tool_result message for the given toolCallId.
 // Duplicate completions are ignored.
-func (s *ACPInterceptServer) addToolResultMessage(toolCallID, output, status string) {
+func (s *ACPInterceptServer) addToolResultMessage(toolCallID string, rawOutput json.RawMessage, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -439,10 +455,29 @@ func (s *ACPInterceptServer) addToolResultMessage(toolCallID, output, status str
 		}
 	}
 
+	// Build content as the JSON shape expected by the UI's MessageItem component:
+	// {result: ...} for success, {error: ...} for failure
+	// rawOutput can be any JSON value (string, object, array, etc.)
+	outputVal := interface{}(nil)
+	if len(rawOutput) > 0 {
+		_ = json.Unmarshal(rawOutput, &outputVal)
+	}
+	var contentMap map[string]interface{}
+	if status == "error" {
+		contentMap = map[string]interface{}{"error": outputVal}
+	} else {
+		contentMap = map[string]interface{}{"result": outputVal}
+	}
+	contentBytes, err := json.Marshal(contentMap)
+	content := "{}"
+	if err == nil {
+		content = string(contentBytes)
+	}
+
 	s.messages = append(s.messages, ACPMessage{
 		ID:              s.nextID,
 		Role:            "tool_result",
-		Content:         output,
+		Content:         content,
 		Time:            time.Now().Format(time.RFC3339),
 		ParentToolUseID: toolCallID,
 		Status:          status,
