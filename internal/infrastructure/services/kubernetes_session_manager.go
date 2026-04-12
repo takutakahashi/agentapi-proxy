@@ -3021,11 +3021,23 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// Startup command (simplified version for now - full command logic in pod)
-	if req.AgentType == "claude-agentapi" {
+	switch req.AgentType {
+	case "claude-agentapi":
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"claude-agentapi"},
 		}
-	} else {
+	case "claude-acp":
+		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--",
+				"bunx", "@agentclientprotocol/claude-agent-acp",
+			},
+		}
+	default:
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi", "server"},
 			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort)},

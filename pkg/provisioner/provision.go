@@ -578,6 +578,18 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	case "codex-agentapi":
 		return "bunx", []string{"@takutakahashi/codex-agentapi"}
 
+	case "claude-acp":
+		// Start the acp-server bridge that wraps claude-agent-acp (ACP agent) via stdio.
+		// The bridge exposes an agentapi-compatible HTTP server on AGENTAPI_PORT.
+		// claude-agent-acp is the official ACP adapter for the Claude Agent SDK:
+		// https://github.com/agentclientprotocol/claude-agent-acp
+		return "agentapi-proxy", []string{
+			"acp-server",
+			"--port", agentapiPort,
+			"--",
+			"bunx", "@agentclientprotocol/claude-agent-acp",
+		}
+
 	default:
 		// Default: agentapi server wrapping claude
 		claudeCmd := "claude"
