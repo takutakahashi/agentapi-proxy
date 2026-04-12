@@ -268,24 +268,36 @@ func ExtractTextContent(raw json.RawMessage) string {
 // ----------------------------------------------------------------------------
 
 // PermissionOption is one choice the user can make.
+// Field names match the ACP spec: optionId (identifier) and name (display label).
 type PermissionOption struct {
-	Id          string `json:"id"`
-	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
+	Kind     string `json:"kind,omitempty"` // "allow_always", "allow_once", "reject_once"
+	Name     string `json:"name"`           // human-readable display label
+	OptionId string `json:"optionId"`       // machine identifier sent back in the response
+}
+
+// RequestPermissionToolCall contains the tool call details nested in RequestPermissionParams.
+type RequestPermissionToolCall struct {
+	ToolCallId string `json:"toolCallId"`
 }
 
 // RequestPermissionParams is the params for "session/request_permission"
 // (agent→client request).
 type RequestPermissionParams struct {
-	SessionId   string             `json:"sessionId"`
-	ToolCallId  string             `json:"toolCallId"`
-	Description string             `json:"description"`
-	Options     []PermissionOption `json:"options"`
+	SessionId string                    `json:"sessionId"`
+	Options   []PermissionOption        `json:"options"`
+	ToolCall  RequestPermissionToolCall `json:"toolCall"`
+}
+
+// RequestPermissionOutcome is the inner outcome object of RequestPermissionResult.
+type RequestPermissionOutcome struct {
+	Outcome  string `json:"outcome"`            // "selected" or "cancelled"
+	OptionId string `json:"optionId,omitempty"` // set when outcome="selected"
 }
 
 // RequestPermissionResult is the response to "session/request_permission".
+// The ACP spec requires: {outcome: {outcome: "selected", optionId: "<id>"}}
 type RequestPermissionResult struct {
-	OptionId string `json:"optionId"`
+	Outcome RequestPermissionOutcome `json:"outcome"`
 }
 
 // ----------------------------------------------------------------------------

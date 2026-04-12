@@ -85,9 +85,14 @@ func (c *Client) registerHandlers() {
 		select {
 		case c.permCh <- req:
 		default:
-			// If nobody is listening, auto-deny with first option.
+			// If nobody is listening, auto-approve with first option.
 			if len(p.Options) > 0 {
-				return RequestPermissionResult{OptionId: p.Options[0].Id}, nil
+				return RequestPermissionResult{
+					Outcome: RequestPermissionOutcome{
+						Outcome:  "selected",
+						OptionId: p.Options[0].OptionId,
+					},
+				}, nil
 			}
 			return nil, fmt.Errorf("no options available")
 		}
@@ -95,9 +100,16 @@ func (c *Client) registerHandlers() {
 		// Wait for the reply (or context cancellation).
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return RequestPermissionResult{
+				Outcome: RequestPermissionOutcome{Outcome: "cancelled"},
+			}, nil
 		case optionId := <-replyCh:
-			return RequestPermissionResult{OptionId: optionId}, nil
+			return RequestPermissionResult{
+				Outcome: RequestPermissionOutcome{
+					Outcome:  "selected",
+					OptionId: optionId,
+				},
+			}, nil
 		}
 	})
 

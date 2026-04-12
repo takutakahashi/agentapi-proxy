@@ -364,12 +364,13 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 	p := req.Params
 
 	// Build frontend-compatible options (QuestionOption[]).
-	// The frontend expects { label, description } per option, NOT { id, label, description }.
+	// The frontend expects { label, description } per option.
+	// ACP options have: { kind, name, optionId }.
 	//
 	// Check whether the ACP agent provided any meaningful option content.
 	hasMeaningfulOptions := false
 	for _, opt := range p.Options {
-		if opt.Label != "" || opt.Id != "" {
+		if opt.Name != "" || opt.OptionId != "" {
 			hasMeaningfulOptions = true
 			break
 		}
@@ -378,13 +379,13 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 	opts := make([]frontendQuestionOption, 0, len(p.Options))
 	if hasMeaningfulOptions {
 		for _, opt := range p.Options {
-			label := opt.Label
+			label := opt.Name
 			if label == "" {
-				label = opt.Id // Fall back to id when label is empty.
+				label = opt.OptionId // Fall back to optionId when name is empty.
 			}
 			opts = append(opts, frontendQuestionOption{
 				Label:       label,
-				Description: opt.Description,
+				Description: "",
 			})
 		}
 	}
@@ -398,16 +399,17 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 			{Label: "No", Description: "Deny this action"},
 		}
 		originalOptions = []acp.PermissionOption{
-			{Id: "yes", Label: "Yes"},
-			{Id: "no_dont_ask", Label: "No, and don't ask again"},
-			{Id: "no", Label: "No"},
+			{OptionId: "yes", Name: "Yes"},
+			{OptionId: "no_dont_ask", Name: "No, and don't ask again"},
+			{OptionId: "no", Name: "No"},
 		}
 	}
 
-	desc := p.Description
-	if desc == "" {
-		desc = "Permission required"
-	}
+	// Use the toolCallId from the nested toolCall object.
+	toolCallId := p.ToolCall.ToolCallId
+
+	// Build a human-readable description from the options or use a default.
+	desc := "Permission required"
 
 	// Build one Question object (frontend type).
 	question := frontendQuestion{
@@ -425,7 +427,7 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 		Content:   desc,
 		Time:      time.Now(),
 		Type:      MessageTypeQuestion,
-		ToolUseId: p.ToolCallId,
+		ToolUseId: toolCallId,
 	}
 	b.messages = append(b.messages, qMsg)
 	b.broadcastMessageUpdateLocked(qMsg)
@@ -436,14 +438,14 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 	b.actionsMu.Lock()
 	b.pendingActions = append(b.pendingActions, PendingAction{
 		Type:      ActionTypeAnswerQuestion,
-		ToolUseId: p.ToolCallId,
+		ToolUseId: toolCallId,
 		Content: map[string]interface{}{
 			"questions": []frontendQuestion{question},
 		},
 	})
-	b.actionReplyCh[p.ToolCallId] = replyCh
+	b.actionReplyCh[toolCallId] = replyCh
 	// Store the original options so we can map label → optionId when the user answers.
-	b.permOptionMaps[p.ToolCallId] = originalOptions
+	b.permOptionMaps[toolCallId] = originalOptions
 	b.actionsMu.Unlock()
 
 	// Wait for the HTTP client to POST /action and provide an answer.
@@ -623,12 +625,13 @@ func (b *Bridge) SubmitAction(ctx context.Context, req ActionRequest) error {
 				toolUseId := pendingQToolUseIds[idx]
 
 				// Map the selected label back to the original ACP option ID.
+				// ACP options have Name (display) and OptionId (machine id).
 				optionId := selectedLabel // Default: use label as ID.
 				if opts, ok := b.permOptionMaps[toolUseId]; ok {
 					for _, opt := range opts {
-						if opt.Label == selectedLabel {
-							if opt.Id != "" {
-								optionId = opt.Id
+						if opt.Name == selectedLabel {
+							if opt.OptionId != "" {
+								optionId = opt.OptionId
 							}
 							break
 						}
