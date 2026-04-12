@@ -69,10 +69,18 @@ type SessionNewParams struct {
 	McpServers []McpServer `json:"mcpServers"`
 }
 
-// Mode is an agent operating mode.
-type Mode struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
+// SessionMode is a single mode available in a session.
+type SessionMode struct {
+	Id          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
+}
+
+// SessionModeState is the modes object returned in session/new response.
+// Per spec: modes is an object with currentModeId and availableModes, not a flat array.
+type SessionModeState struct {
+	CurrentModeId  string        `json:"currentModeId"`
+	AvailableModes []SessionMode `json:"availableModes"`
 }
 
 // ConfigOption is a runtime config option offered by the agent.
@@ -84,9 +92,9 @@ type ConfigOption struct {
 
 // SessionNewResult is the response to "session/new".
 type SessionNewResult struct {
-	SessionId     string         `json:"sessionId"`
-	Modes         []Mode         `json:"modes,omitempty"`
-	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
+	SessionId     string            `json:"sessionId"`
+	Modes         *SessionModeState `json:"modes,omitempty"`
+	ConfigOptions []ConfigOption    `json:"configOptions,omitempty"`
 }
 
 // SessionInfo describes a session returned by "session/list".
