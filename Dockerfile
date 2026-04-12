@@ -156,6 +156,9 @@ RUN bun install -g @takutakahashi/claude-agentapi
 # Install codex CLI
 RUN bun install -g @openai/codex
 
+# Install claude-agent-acp (ACP protocol adapter for Claude)
+RUN bun install -g @agentclientprotocol/claude-agent-acp
+
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
 
