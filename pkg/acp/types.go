@@ -66,7 +66,7 @@ type McpServer struct {
 // SessionNewParams is the params for "session/new" (client→agent).
 type SessionNewParams struct {
 	Cwd        string      `json:"cwd"`
-	McpServers []McpServer `json:"mcpServers,omitempty"`
+	McpServers []McpServer `json:"mcpServers"`
 }
 
 // Mode is an agent operating mode.

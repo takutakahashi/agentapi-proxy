@@ -159,6 +159,9 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 // NewSession creates a new ACP session and stores the session ID.
 func (c *Client) NewSession(ctx context.Context, cwd string, mcpServers []McpServer) error {
+	if mcpServers == nil {
+		mcpServers = []McpServer{}
+	}
 	params := SessionNewParams{
 		Cwd:        cwd,
 		McpServers: mcpServers,
