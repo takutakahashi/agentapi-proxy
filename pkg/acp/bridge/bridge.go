@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -121,6 +122,21 @@ type PendingAction struct {
 	Content   interface{} `json:"content,omitempty"`
 }
 
+// frontendQuestionOption matches the QuestionOption interface in the frontend.
+type frontendQuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// frontendQuestion matches the Question interface in the frontend
+// (src/types/agentapi.ts: { question, header, options, multiSelect }).
+type frontendQuestion struct {
+	Question    string                   `json:"question"`
+	Header      string                   `json:"header"`
+	Options     []frontendQuestionOption `json:"options"`
+	MultiSelect bool                     `json:"multiSelect"`
+}
+
 // PendingActionsResponse is the body for GET /action.
 type PendingActionsResponse struct {
 	PendingActions []PendingAction `json:"pending_actions"`
@@ -164,16 +180,18 @@ type Bridge struct {
 
 	actionsMu      sync.Mutex
 	pendingActions []PendingAction
-	actionReplyCh  map[string]chan string // toolUseId → selected optionId
+	actionReplyCh  map[string]chan string            // toolUseId → selected optionId
+	permOptionMaps map[string][]acp.PermissionOption // toolUseId → original ACP options (for label→id mapping)
 }
 
 // New creates a Bridge backed by the given ACP client.
 func New(client *acp.Client, verbose bool) *Bridge {
 	return &Bridge{
-		acp:           client,
-		verbose:       verbose,
-		status:        AgentStatusStable,
-		actionReplyCh: make(map[string]chan string),
+		acp:            client,
+		verbose:        verbose,
+		status:         AgentStatusStable,
+		actionReplyCh:  make(map[string]chan string),
+		permOptionMaps: make(map[string][]acp.PermissionOption),
 	}
 }
 
@@ -334,21 +352,53 @@ func (b *Bridge) addNewMessage(role MessageRole, content string, msgType Message
 func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 	p := req.Params
 
-	// Build the "question" message visible in the HTTP conversation.
-	questions := make([]map[string]string, 0, len(p.Options))
+	// Build frontend-compatible options (QuestionOption[]).
+	// The frontend expects { label, description } per option, NOT { id, label, description }.
+	opts := make([]frontendQuestionOption, 0, len(p.Options))
 	for _, opt := range p.Options {
-		questions = append(questions, map[string]string{
-			"id":          opt.Id,
-			"label":       opt.Label,
-			"description": opt.Description,
+		label := opt.Label
+		if label == "" {
+			label = opt.Id // Fall back to id when label is empty.
+		}
+		opts = append(opts, frontendQuestionOption{
+			Label:       label,
+			Description: opt.Description,
 		})
 	}
+	// Provide sensible defaults when the ACP agent sends no options.
+	originalOptions := p.Options
+	if len(opts) == 0 {
+		opts = []frontendQuestionOption{
+			{Label: "Yes", Description: "Allow this action"},
+			{Label: "No, and don't ask again", Description: "Deny and remember"},
+			{Label: "No", Description: "Deny this action"},
+		}
+		originalOptions = []acp.PermissionOption{
+			{Id: "yes", Label: "Yes"},
+			{Id: "no_dont_ask", Label: "No, and don't ask again"},
+			{Id: "no", Label: "No"},
+		}
+	}
+
+	desc := p.Description
+	if desc == "" {
+		desc = "Permission required"
+	}
+
+	// Build one Question object (frontend type).
+	question := frontendQuestion{
+		Question:    desc,
+		Header:      "Permission Required",
+		Options:     opts,
+		MultiSelect: false,
+	}
+
 	b.mu.Lock()
 	b.nextID++
 	qMsg := Message{
 		ID:        b.nextID,
 		Role:      MessageRoleAgent,
-		Content:   p.Description,
+		Content:   desc,
 		Time:      time.Now(),
 		Type:      MessageTypeQuestion,
 		ToolUseId: p.ToolCallId,
@@ -364,11 +414,12 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 		Type:      ActionTypeAnswerQuestion,
 		ToolUseId: p.ToolCallId,
 		Content: map[string]interface{}{
-			"description": p.Description,
-			"questions":   questions,
+			"questions": []frontendQuestion{question},
 		},
 	})
 	b.actionReplyCh[p.ToolCallId] = replyCh
+	// Store the original options so we can map label → optionId when the user answers.
+	b.permOptionMaps[p.ToolCallId] = originalOptions
 	b.actionsMu.Unlock()
 
 	// Wait for the HTTP client to POST /action and provide an answer.
@@ -519,16 +570,68 @@ func (b *Bridge) SubmitAction(ctx context.Context, req ActionRequest) error {
 		b.actionsMu.Lock()
 		defer b.actionsMu.Unlock()
 
-		// req.Answers maps toolUseId → optionId
-		for toolUseId, optionId := range req.Answers {
-			ch, ok := b.actionReplyCh[toolUseId]
-			if !ok {
-				return fmt.Errorf("no pending action for tool_use_id %q", toolUseId)
+		// The frontend sends answers as {"0": "optionLabel"} (question index → label).
+		// The legacy format is {toolUseId: optionId}.
+		// Detect format by checking whether all keys are numeric.
+		allNumeric := len(req.Answers) > 0
+		for k := range req.Answers {
+			if _, err := strconv.Atoi(k); err != nil {
+				allNumeric = false
+				break
 			}
-			ch <- optionId
-			delete(b.actionReplyCh, toolUseId)
-			// Remove from pending list.
-			b.removePendingActionLocked(toolUseId)
+		}
+
+		if allNumeric {
+			// New format from frontend: question index → selected option label.
+			// Collect pending answer_question actions in insertion order.
+			pendingQToolUseIds := make([]string, 0)
+			for _, pa := range b.pendingActions {
+				if pa.Type == ActionTypeAnswerQuestion {
+					pendingQToolUseIds = append(pendingQToolUseIds, pa.ToolUseId)
+				}
+			}
+
+			for idxStr, selectedLabel := range req.Answers {
+				idx, _ := strconv.Atoi(idxStr)
+				if idx >= len(pendingQToolUseIds) {
+					return fmt.Errorf("no pending action at question index %d", idx)
+				}
+				toolUseId := pendingQToolUseIds[idx]
+
+				// Map the selected label back to the original ACP option ID.
+				optionId := selectedLabel // Default: use label as ID.
+				if opts, ok := b.permOptionMaps[toolUseId]; ok {
+					for _, opt := range opts {
+						if opt.Label == selectedLabel {
+							if opt.Id != "" {
+								optionId = opt.Id
+							}
+							break
+						}
+					}
+					delete(b.permOptionMaps, toolUseId)
+				}
+
+				ch, ok := b.actionReplyCh[toolUseId]
+				if !ok {
+					return fmt.Errorf("no pending action for question index %d", idx)
+				}
+				ch <- optionId
+				delete(b.actionReplyCh, toolUseId)
+				b.removePendingActionLocked(toolUseId)
+			}
+		} else {
+			// Legacy format: toolUseId → optionId.
+			for toolUseId, optionId := range req.Answers {
+				ch, ok := b.actionReplyCh[toolUseId]
+				if !ok {
+					return fmt.Errorf("no pending action for tool_use_id %q", toolUseId)
+				}
+				ch <- optionId
+				delete(b.actionReplyCh, toolUseId)
+				delete(b.permOptionMaps, toolUseId)
+				b.removePendingActionLocked(toolUseId)
+			}
 		}
 		return nil
 
