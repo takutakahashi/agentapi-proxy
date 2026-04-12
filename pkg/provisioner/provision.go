@@ -579,10 +579,12 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		return "bunx", []string{"@takutakahashi/codex-agentapi"}
 
 	case "claude-acp":
-		// claude-agent-acp uses ACP over stdio; wrap with agentapi server to
-		// expose a standard HTTP endpoint that agentapi-proxy can proxy to.
+		// claude-agent-acp uses ACP over stdio; use --experimental-acp so that
+		// agentapi switches to ACP transport instead of PTY, enabling proper
+		// bidirectional communication with the ACP process.
 		return "agentapi", []string{
 			"server",
+			"--experimental-acp",
 			"--allowed-hosts", "*",
 			"--allowed-origins", "*",
 			"--port", agentapiPort,

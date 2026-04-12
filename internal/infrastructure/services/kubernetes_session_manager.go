@@ -3027,10 +3027,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			Command: []string{"claude-agentapi"},
 		}
 	case "claude-acp":
-		// claude-acp wraps claude-agent-acp (ACP/stdio) with agentapi server
+		// claude-acp uses --experimental-acp transport so agentapi communicates
+		// with claude-agent-acp via ACP protocol instead of PTY
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi", "server"},
-			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort), "--", "claude-agent-acp"},
+			Args:    []string{"--experimental-acp", "--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort), "--", "claude-agent-acp"},
 		}
 	default:
 		settings.Startup = sessionsettings.StartupConfig{
