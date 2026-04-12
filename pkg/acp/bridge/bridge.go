@@ -4,6 +4,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -53,6 +54,7 @@ type Message struct {
 	ToolUseId       string      `json:"toolUseId,omitempty"`
 	ParentToolUseId string      `json:"parentToolUseId,omitempty"`
 	Status          string      `json:"status,omitempty"` // "success"|"error"
+	Error           string      `json:"error,omitempty"`  // present when status=="error"
 }
 
 // StatusResponse mirrors coder/agentapi /status response.
@@ -82,12 +84,9 @@ type Event struct {
 }
 
 // MessageUpdateData is the data for message_update events.
-type MessageUpdateData struct {
-	ID      int64       `json:"id"`
-	Message string      `json:"message"`
-	Role    MessageRole `json:"role"`
-	Time    time.Time   `json:"time"`
-}
+// It sends the full Message object (matching takutakahashi/claude-agentapi format).
+// The content key is "content" (not "message") as expected by the frontend.
+type MessageUpdateData = Message
 
 // StatusChangeData is the data for status_change events.
 type StatusChangeData struct {
@@ -230,17 +229,50 @@ func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 		b.appendOrCreateMessage(MessageRoleAssistant, text, MessageTypeNormal, "", "")
 
 	case acp.SessionUpdateKindToolCall:
-		// New tool invocation – create a distinct message.
-		content := fmt.Sprintf("[tool:%s] %v", update.ToolKind, update.RawInput)
-		b.addNewMessage(MessageRoleAgent, content, MessageTypeNormal, update.ToolCallId, "")
+		// New tool invocation – serialize as JSON string matching claude-agentapi format.
+		// Frontend expects: {"type":"tool_use","name":"<kind>","id":"<toolCallId>","input":{...}}
+		toolObj := map[string]interface{}{
+			"type":  "tool_use",
+			"name":  update.ToolKind,
+			"id":    update.ToolCallId,
+			"input": update.RawInput,
+		}
+		toolJSON, err := json.Marshal(toolObj)
+		if err != nil {
+			toolJSON = []byte(fmt.Sprintf(`{"type":"tool_use","name":%q,"id":%q}`, update.ToolKind, update.ToolCallId))
+		}
+		b.addNewMessage(MessageRoleAgent, string(toolJSON), MessageTypeNormal, update.ToolCallId, "")
 
 	case acp.SessionUpdateKindToolCallUpdate:
-		// Update existing tool message status.
-		statusStr := string(update.Status)
+		// Add a tool_result message when the tool finishes.
 		if update.Status == acp.ToolCallStatusSuccess || update.Status == acp.ToolCallStatusError {
-			content := fmt.Sprintf("%v", update.RawOutput)
-			b.addNewMessage(MessageRoleToolResult, content, MessageTypeNormal, "", update.ToolCallId)
-			_ = statusStr
+			statusStr := "success"
+			if update.Status == acp.ToolCallStatusError {
+				statusStr = "error"
+			}
+			// Serialize raw output as string content.
+			var content string
+			if update.RawOutput != nil {
+				if b, err := json.Marshal(update.RawOutput); err == nil {
+					content = string(b)
+				} else {
+					content = fmt.Sprintf("%v", update.RawOutput)
+				}
+			}
+			b.mu.Lock()
+			b.nextID++
+			msg := Message{
+				ID:              b.nextID,
+				Role:            MessageRoleToolResult,
+				Content:         content,
+				Time:            time.Now(),
+				Type:            MessageTypeNormal,
+				ParentToolUseId: update.ToolCallId,
+				Status:          statusStr,
+			}
+			b.messages = append(b.messages, msg)
+			b.broadcastMessageUpdateLocked(msg)
+			b.mu.Unlock()
 		}
 
 	case acp.SessionUpdateKindPlan:
@@ -445,12 +477,7 @@ func (b *Bridge) Subscribe() (<-chan Event, func()) {
 		for _, msg := range msgs {
 			sub.ch <- Event{
 				Type: EventTypeMessageUpdate,
-				Data: MessageUpdateData{
-					ID:      msg.ID,
-					Message: msg.Content,
-					Role:    msg.Role,
-					Time:    msg.Time,
-				},
+				Data: msg, // Full Message object
 			}
 		}
 		sub.ch <- Event{
@@ -567,12 +594,7 @@ func (b *Bridge) broadcast(e Event) {
 func (b *Bridge) broadcastMessageUpdateLocked(msg Message) {
 	e := Event{
 		Type: EventTypeMessageUpdate,
-		Data: MessageUpdateData{
-			ID:      msg.ID,
-			Message: msg.Content,
-			Role:    msg.Role,
-			Time:    msg.Time,
-		},
+		Data: msg, // Send full Message object (matches takutakahashi/claude-agentapi format)
 	}
 	b.subsMu.Lock()
 	defer b.subsMu.Unlock()
