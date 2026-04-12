@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -305,7 +306,12 @@ func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 		}
 
 	case acp.SessionUpdateKindPlan:
-		b.addNewMessage(MessageRoleAgent, update.Plan, MessageTypePlan, "", "")
+		// ACP sends plan as a structured entries list (from TodoWrite), not a plain string.
+		// Convert to a markdown task list for display in the frontend plan modal.
+		if len(update.Entries) > 0 {
+			planMD := planEntriesToMarkdown(update.Entries)
+			b.addNewMessage(MessageRoleAgent, planMD, MessageTypePlan, "", "")
+		}
 	}
 }
 
@@ -362,6 +368,17 @@ func (b *Bridge) addNewMessage(role MessageRole, content string, msgType Message
 
 func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 	p := req.Params
+	toolCallId := p.ToolCall.ToolCallId
+
+	// ExitPlanMode sends kind="switch_mode" with rawInput.plan containing the plan markdown.
+	// Show it as a type="plan" message with an approve_plan action so the user can review
+	// and approve/reject from the PlanApprovalModal.
+	if p.ToolCall.Kind == "switch_mode" {
+		b.handleExitPlanModePermission(req, toolCallId)
+		return
+	}
+
+	// ── Generic permission request ──────────────────────────────────────────────
 
 	// Build frontend-compatible options (QuestionOption[]).
 	// The frontend expects { label, description } per option.
@@ -405,10 +422,7 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 		}
 	}
 
-	// Use the toolCallId from the nested toolCall object.
-	toolCallId := p.ToolCall.ToolCallId
-
-	// Build a human-readable description from the options or use a default.
+	// Build a human-readable description or use a default.
 	desc := "Permission required"
 
 	// Build one Question object (frontend type).
@@ -451,6 +465,84 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 	// Wait for the HTTP client to POST /action and provide an answer.
 	go func() {
 		optionId := <-replyCh
+		_ = req.Reply(optionId)
+	}()
+}
+
+// handleExitPlanModePermission handles ExitPlanMode permission requests (kind="switch_mode").
+// It extracts the plan markdown from rawInput, emits a type="plan" message, and waits for
+// an approve_plan action from the user. Approve maps to the first allow option; reject maps
+// to "plan" (stay in plan mode).
+func (b *Bridge) handleExitPlanModePermission(req acp.PermissionRequest, toolCallId string) {
+	p := req.Params
+
+	// Extract plan text from rawInput.
+	planText := ""
+	if len(p.ToolCall.RawInput) > 0 {
+		var rawInput map[string]interface{}
+		if err := json.Unmarshal(p.ToolCall.RawInput, &rawInput); err == nil {
+			if v, ok := rawInput["plan"]; ok {
+				if s, ok := v.(string); ok {
+					planText = s
+				}
+			}
+		}
+	}
+	if planText == "" {
+		planText = "Plan ready for review."
+	}
+
+	// Emit the plan message (type="plan") so the frontend shows PlanApprovalModal.
+	b.mu.Lock()
+	b.nextID++
+	planMsg := Message{
+		ID:        b.nextID,
+		Role:      MessageRoleAgent,
+		Content:   planText,
+		Time:      time.Now(),
+		Type:      MessageTypePlan,
+		ToolUseId: toolCallId,
+	}
+	b.messages = append(b.messages, planMsg)
+	b.broadcastMessageUpdateLocked(planMsg)
+	b.mu.Unlock()
+
+	// Determine the "allow" and "reject" optionIds from the ACP options.
+	allowOptionId := ""
+	rejectOptionId := "plan"
+	for _, opt := range p.Options {
+		if opt.Kind == "allow_always" || opt.Kind == "allow_once" {
+			if allowOptionId == "" {
+				allowOptionId = opt.OptionId
+			}
+		}
+		if opt.OptionId == "plan" {
+			rejectOptionId = "plan"
+		}
+	}
+	if allowOptionId == "" && len(p.Options) > 0 {
+		allowOptionId = p.Options[0].OptionId
+	}
+
+	// Register an approve_plan pending action.
+	replyCh := make(chan string, 1)
+	b.actionsMu.Lock()
+	b.pendingActions = append(b.pendingActions, PendingAction{
+		Type:      ActionTypeApprovePlan,
+		ToolUseId: toolCallId,
+	})
+	b.actionReplyCh[toolCallId] = replyCh
+	b.actionsMu.Unlock()
+
+	capturedAllow := allowOptionId
+	capturedReject := rejectOptionId
+
+	go func() {
+		answer := <-replyCh
+		optionId := capturedReject
+		if answer == "approve" {
+			optionId = capturedAllow
+		}
 		_ = req.Reply(optionId)
 	}()
 }
@@ -777,4 +869,36 @@ func (b *Bridge) updateToolUseInput(toolCallId string, rawInput interface{}) {
 		b.broadcastMessageUpdateLocked(*msg)
 		return
 	}
+}
+
+// planEntriesToMarkdown converts ACP plan entries (from TodoWrite) into a markdown
+// task list suitable for display in the frontend's PlanApprovalModal.
+func planEntriesToMarkdown(entries []acp.PlanEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("## Plan\n\n")
+	for _, e := range entries {
+		var marker string
+		switch e.Status {
+		case "completed":
+			marker = "- [x]"
+		case "in_progress":
+			marker = "- [~]"
+		case "cancelled":
+			marker = "- [!]"
+		default: // "pending"
+			marker = "- [ ]"
+		}
+		priority := ""
+		switch e.Priority {
+		case "high":
+			priority = " 🔴"
+		case "low":
+			priority = " 🔵"
+		}
+		fmt.Fprintf(&sb, "%s %s%s\n", marker, e.Content, priority)
+	}
+	return sb.String()
 }

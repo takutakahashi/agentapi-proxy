@@ -206,6 +206,14 @@ const (
 	ToolCallStatusCancelled ToolCallStatus = "cancelled"
 )
 
+// PlanEntry is a single entry in an ACP plan update.
+// See ACP spec: sessionUpdate="plan" entries field.
+type PlanEntry struct {
+	Content  string `json:"content"`
+	Status   string `json:"status"`   // "pending", "in_progress", "completed", "cancelled"
+	Priority string `json:"priority"` // "high", "medium", "low"
+}
+
 // SessionUpdate is a discriminated union; Kind determines which fields apply.
 type SessionUpdate struct {
 	// Discriminant field
@@ -224,8 +232,8 @@ type SessionUpdate struct {
 	Status    ToolCallStatus `json:"status,omitempty"`
 	RawOutput interface{}    `json:"rawOutput,omitempty"`
 
-	// plan
-	Plan string `json:"plan,omitempty"`
+	// plan – ACP sends entries (structured list), not a plain string.
+	Entries []PlanEntry `json:"entries,omitempty"`
 
 	// session_info_update
 	Title string `json:"title,omitempty"`
@@ -277,7 +285,9 @@ type PermissionOption struct {
 
 // RequestPermissionToolCall contains the tool call details nested in RequestPermissionParams.
 type RequestPermissionToolCall struct {
-	ToolCallId string `json:"toolCallId"`
+	ToolCallId string          `json:"toolCallId"`
+	Kind       string          `json:"kind,omitempty"`     // e.g. "switch_mode" for ExitPlanMode
+	RawInput   json.RawMessage `json:"rawInput,omitempty"` // raw tool input JSON
 }
 
 // RequestPermissionParams is the params for "session/request_permission"
