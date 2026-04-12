@@ -262,11 +262,22 @@ func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 		b.addNewMessage(MessageRoleAgent, string(toolJSON), MessageTypeNormal, update.ToolCallId, "")
 
 	case acp.SessionUpdateKindToolCallUpdate:
-		// Add a tool_result message when the tool finishes.
-		if update.Status == acp.ToolCallStatusSuccess || update.Status == acp.ToolCallStatusError {
-			statusStr := "success"
-			if update.Status == acp.ToolCallStatusError {
-				statusStr = "error"
+		// If rawInput is provided, refine the existing tool_use message.
+		// claude-agent-acp sends an initial tool_call with empty input (streaming start),
+		// then a tool_call_update with the actual input once the full params are known.
+		if update.RawInput != nil {
+			b.updateToolUseInput(update.ToolCallId, update.RawInput)
+		}
+
+		// Map status: ACP spec uses "success"/"error", claude-agent-acp uses "completed"/"failed".
+		statusStr := string(update.Status)
+		isSuccess := update.Status == acp.ToolCallStatusSuccess || statusStr == "completed"
+		isError := update.Status == acp.ToolCallStatusError || statusStr == "failed"
+
+		if isSuccess || isError {
+			resolvedStatus := "success"
+			if isError {
+				resolvedStatus = "error"
 			}
 			// Serialize raw output as string content.
 			var content string
@@ -286,7 +297,7 @@ func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 				Time:            time.Now(),
 				Type:            MessageTypeNormal,
 				ParentToolUseId: update.ToolCallId,
-				Status:          statusStr,
+				Status:          resolvedStatus,
 			}
 			b.messages = append(b.messages, msg)
 			b.broadcastMessageUpdateLocked(msg)
@@ -728,5 +739,39 @@ func (b *Bridge) removePendingActionLocked(toolUseId string) {
 			b.pendingActions = append(b.pendingActions[:i], b.pendingActions[i+1:]...)
 			return
 		}
+	}
+}
+
+// updateToolUseInput refines the input of an existing tool_use message.
+// claude-agent-acp emits an initial tool_call with empty input during streaming,
+// then sends a tool_call_update with the full rawInput once the block is complete.
+func (b *Bridge) updateToolUseInput(toolCallId string, rawInput interface{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i := len(b.messages) - 1; i >= 0; i-- {
+		msg := &b.messages[i]
+		if msg.ToolUseId != toolCallId {
+			continue
+		}
+		// Parse the existing content JSON.
+		var toolObj map[string]interface{}
+		if err := json.Unmarshal([]byte(msg.Content), &toolObj); err != nil {
+			return
+		}
+		// Only update if the current input is nil/empty.
+		if existing, ok := toolObj["input"]; ok {
+			if m, ok := existing.(map[string]interface{}); ok && len(m) > 0 {
+				return // already has input, don't overwrite
+			}
+		}
+		toolObj["input"] = rawInput
+		updated, err := json.Marshal(toolObj)
+		if err != nil {
+			return
+		}
+		msg.Content = string(updated)
+		b.broadcastMessageUpdateLocked(*msg)
+		return
 	}
 }
