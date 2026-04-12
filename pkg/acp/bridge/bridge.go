@@ -354,20 +354,33 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 
 	// Build frontend-compatible options (QuestionOption[]).
 	// The frontend expects { label, description } per option, NOT { id, label, description }.
-	opts := make([]frontendQuestionOption, 0, len(p.Options))
+	//
+	// Check whether the ACP agent provided any meaningful option content.
+	hasMeaningfulOptions := false
 	for _, opt := range p.Options {
-		label := opt.Label
-		if label == "" {
-			label = opt.Id // Fall back to id when label is empty.
+		if opt.Label != "" || opt.Id != "" {
+			hasMeaningfulOptions = true
+			break
 		}
-		opts = append(opts, frontendQuestionOption{
-			Label:       label,
-			Description: opt.Description,
-		})
 	}
-	// Provide sensible defaults when the ACP agent sends no options.
+
+	opts := make([]frontendQuestionOption, 0, len(p.Options))
+	if hasMeaningfulOptions {
+		for _, opt := range p.Options {
+			label := opt.Label
+			if label == "" {
+				label = opt.Id // Fall back to id when label is empty.
+			}
+			opts = append(opts, frontendQuestionOption{
+				Label:       label,
+				Description: opt.Description,
+			})
+		}
+	}
+
+	// Provide sensible defaults when the ACP agent sends no options or empty options.
 	originalOptions := p.Options
-	if len(opts) == 0 {
+	if !hasMeaningfulOptions {
 		opts = []frontendQuestionOption{
 			{Label: "Yes", Description: "Allow this action"},
 			{Label: "No, and don't ask again", Description: "Deny and remember"},
