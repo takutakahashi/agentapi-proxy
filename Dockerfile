@@ -26,9 +26,14 @@ FROM golang:1.25-alpine AS agentapi-builder
 # Install git for cloning
 RUN apk add --no-cache git
 
+# AGENTAPI_CACHE_BUST is set at build time to force re-cloning when upstream changes.
+# Pass --build-arg AGENTAPI_CACHE_BUST=$(date +%s) or a commit hash to invalidate cache.
+ARG AGENTAPI_CACHE_BUST=unknown
+
 # Clone and build agentapi from source (takutakahashi fork, main branch)
 WORKDIR /agentapi-src
 RUN set -ex && \
+    echo "Cache bust: ${AGENTAPI_CACHE_BUST}" && \
     echo "Building agentapi from takutakahashi/agentapi main branch for native architecture" && \
     git clone --depth 1 --branch main https://github.com/takutakahashi/agentapi.git . && \
     go mod download && \

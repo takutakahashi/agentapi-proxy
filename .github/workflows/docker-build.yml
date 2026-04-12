@@ -61,3 +61,4 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             AGENTAPI_VERSION=v0.2.1
+            AGENTAPI_CACHE_BUST=${{ github.run_id }}-${{ github.run_attempt }}
