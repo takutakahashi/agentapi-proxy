@@ -20,6 +20,7 @@ func init() {
 	rootCmd.AddCommand(cmd.ClientCmd)
 	rootCmd.AddCommand(cmd.AgentProvisionerCmd)
 	rootCmd.AddCommand(cmd.OneshotCmd)
+	rootCmd.AddCommand(cmd.ACPCmd)
 }
 
 func main() {
