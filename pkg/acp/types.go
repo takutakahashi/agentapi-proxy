@@ -42,13 +42,13 @@ type TerminalCapability struct {
 
 // InitializeParams is the params for the "initialize" request (client→agent).
 type InitializeParams struct {
-	ProtocolVersion    string             `json:"protocolVersion"`
+	ProtocolVersion    int                `json:"protocolVersion"`
 	ClientCapabilities ClientCapabilities `json:"clientCapabilities"`
 }
 
 // InitializeResult is the response to "initialize".
 type InitializeResult struct {
-	ProtocolVersion   string            `json:"protocolVersion"`
+	ProtocolVersion   int               `json:"protocolVersion"`
 	AgentCapabilities AgentCapabilities `json:"agentCapabilities"`
 }
 

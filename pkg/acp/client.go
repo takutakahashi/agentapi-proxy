@@ -12,7 +12,8 @@ import (
 )
 
 // ProtocolVersion is the ACP version this client targets.
-const ProtocolVersion = "0.1"
+// Per spec: uint16, only bumped for breaking changes.
+const ProtocolVersion = 0
 
 // PermissionRequest is an inbound permission request from the agent.
 type PermissionRequest struct {
@@ -151,7 +152,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("acp initialize: parse result: %w", err)
 	}
 	if c.verbose {
-		log.Printf("[acp] initialized: protocol=%s agentCaps=%+v", result.ProtocolVersion, result.AgentCapabilities)
+		log.Printf("[acp] initialized: protocol=%d agentCaps=%+v", result.ProtocolVersion, result.AgentCapabilities)
 	}
 	return nil
 }
