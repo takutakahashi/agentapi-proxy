@@ -3037,6 +3037,14 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"bunx", "@agentclientprotocol/claude-agent-acp",
 			},
 		}
+		// Bypass permission prompts for claude-acp sessions so tool calls
+		// proceed without waiting for user approval.
+		if settingsJSON == nil {
+			settingsJSON = make(map[string]interface{})
+		}
+		settingsJSON["permissions"] = map[string]interface{}{
+			"defaultMode": "bypassPermissions",
+		}
 	default:
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi", "server"},
