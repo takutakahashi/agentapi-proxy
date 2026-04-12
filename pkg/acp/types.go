@@ -2,7 +2,10 @@
 // Spec: https://github.com/agentclientprotocol/agent-client-protocol
 package acp
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ----------------------------------------------------------------------------
 // Capabilities
@@ -209,7 +212,8 @@ type SessionUpdate struct {
 	Kind SessionUpdateKind `json:"sessionUpdate"`
 
 	// agent_message_chunk / user_message_chunk / agent_thought_chunk
-	Content string `json:"content,omitempty"`
+	// Content is a ContentBlock object (not a string) per ACP spec.
+	Content json.RawMessage `json:"content,omitempty"`
 
 	// tool_call
 	ToolCallId string      `json:"toolCallId,omitempty"`
@@ -235,6 +239,28 @@ type SessionUpdate struct {
 type SessionUpdateNotification struct {
 	SessionId string        `json:"sessionId"`
 	Update    SessionUpdate `json:"update"`
+}
+
+// ContentBlockText is the text variant of a ContentBlock (type="text").
+type ContentBlockText struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// ExtractTextContent extracts the text string from a raw ContentBlock JSON value.
+// If the block is not a text block or is invalid, returns an empty string.
+func ExtractTextContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var block ContentBlockText
+	if err := json.Unmarshal(raw, &block); err != nil {
+		return ""
+	}
+	if block.Type != "text" {
+		return ""
+	}
+	return block.Text
 }
 
 // ----------------------------------------------------------------------------

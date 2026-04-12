@@ -151,6 +151,10 @@ type Bridge struct {
 	acp     *acp.Client
 	verbose bool
 
+	// serverCtx is the long-lived context from Run(); used for ACP Prompt calls
+	// so they survive beyond the HTTP request that triggered them.
+	serverCtx context.Context
+
 	mu       sync.RWMutex
 	status   AgentStatus
 	messages []Message
@@ -176,7 +180,10 @@ func New(client *acp.Client, verbose bool) *Bridge {
 
 // Run starts the background goroutines that consume ACP notifications and
 // feed the bridge state. Call this in a goroutine; it blocks until ctx is done.
+// The ctx is stored as the server context for use in background operations
+// (e.g., ACP Prompt calls that outlive the HTTP request that triggered them).
 func (b *Bridge) Run(ctx context.Context) {
+	b.serverCtx = ctx
 	updates := b.acp.Updates()
 	perms := b.acp.PermissionRequests()
 
@@ -209,16 +216,18 @@ func (b *Bridge) Run(ctx context.Context) {
 
 func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 	if b.verbose {
-		log.Printf("[bridge] update kind=%s content=%q", update.Kind, update.Content)
+		log.Printf("[bridge] update kind=%s content=%s", update.Kind, update.Content)
 	}
 
 	switch update.Kind {
 	case acp.SessionUpdateKindAgentMessageChunk:
-		b.appendOrCreateMessage(MessageRoleAgent, update.Content, MessageTypeNormal, "", "")
+		text := acp.ExtractTextContent(update.Content)
+		b.appendOrCreateMessage(MessageRoleAgent, text, MessageTypeNormal, "", "")
 
 	case acp.SessionUpdateKindAgentThoughtChunk:
 		// Thoughts are surfaced as assistant messages for transparency.
-		b.appendOrCreateMessage(MessageRoleAssistant, update.Content, MessageTypeNormal, "", "")
+		text := acp.ExtractTextContent(update.Content)
+		b.appendOrCreateMessage(MessageRoleAssistant, text, MessageTypeNormal, "", "")
 
 	case acp.SessionUpdateKindToolCall:
 		// New tool invocation – create a distinct message.
@@ -369,9 +378,14 @@ func (b *Bridge) SendMessage(ctx context.Context, content string) error {
 		Data: StatusChangeData{Status: AgentStatusRunning, AgentType: "acp"},
 	})
 
-	// Run the prompt in the background; restore stable status when done.
+	// Run the prompt in the background using the long-lived server context,
+	// NOT the HTTP request context (which is cancelled when the response returns).
+	promptCtx := b.serverCtx
+	if promptCtx == nil {
+		promptCtx = ctx
+	}
 	go func() {
-		stopReason, err := b.acp.Prompt(ctx, content)
+		stopReason, err := b.acp.Prompt(promptCtx, content)
 		if err != nil {
 			log.Printf("[bridge] prompt error: %v", err)
 			b.broadcastError(err.Error())
