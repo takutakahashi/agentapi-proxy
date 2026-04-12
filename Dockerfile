@@ -26,14 +26,11 @@ FROM golang:1.25-alpine AS agentapi-builder
 # Install git for cloning
 RUN apk add --no-cache git
 
-# Set the agentapi version
-ARG AGENTAPI_VERSION=v0.11.8
-
-# Clone and build agentapi from source
+# Clone and build agentapi from source (takutakahashi fork, main branch)
 WORKDIR /agentapi-src
 RUN set -ex && \
-    echo "Building agentapi ${AGENTAPI_VERSION} from source for native architecture" && \
-    git clone --depth 1 --branch ${AGENTAPI_VERSION} https://github.com/coder/agentapi.git . && \
+    echo "Building agentapi from takutakahashi/agentapi main branch for native architecture" && \
+    git clone --depth 1 --branch main https://github.com/takutakahashi/agentapi.git . && \
     go mod download && \
     CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentapi . && \
     echo "Built agentapi binary info:" && \
