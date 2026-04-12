@@ -651,10 +651,17 @@ type agentMessagesResponse struct {
 // sendInitialMessage sends an initial message to agentapi after it has
 // started, replicating the logic of initialMessageSenderScript.
 func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	// Use a short-timeout client for status/count checks and a long-timeout
+	// client for the /message POST itself. The /message endpoint is synchronous:
+	// agentapi waits until the agent starts processing before responding, which
+	// can take well over 5 seconds when Claude is slow to start. Using a short
+	// timeout here causes spurious retries that send the same message multiple
+	// times.
+	checkClient := &http.Client{Timeout: 5 * time.Second}
+	sendClient := &http.Client{Timeout: 120 * time.Second}
 
 	// Check for existing user messages (idempotency / Pod restart).
-	if count := countUserMessages(client, agentapiURL); count > 0 {
+	if count := countUserMessages(checkClient, agentapiURL); count > 0 {
 		log.Printf("[PROVISIONER] User messages already exist (%d), skipping initial message", count)
 		return
 	}
@@ -662,10 +669,10 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 	// Wait for Claude to be ready (strategy depends on agentType).
 	if agentType == "" {
 		// Default agentapi: wait for running→stable transition OR stable + non-empty message.
-		waitForDefaultAgentReady(ctx, client, agentapiURL)
+		waitForDefaultAgentReady(ctx, checkClient, agentapiURL)
 	} else {
-		// claude-agentapi / codex-agentapi: just wait for stable.
-		waitForStable(ctx, client, agentapiURL, 60)
+		// claude-agentapi / codex-agentapi / claude-acp: just wait for stable.
+		waitForStable(ctx, checkClient, agentapiURL, 60)
 	}
 
 	// Configured delay before sending.
@@ -677,7 +684,7 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 	}
 
 	// Double-check race condition.
-	if count := countUserMessages(client, agentapiURL); count > 0 {
+	if count := countUserMessages(checkClient, agentapiURL); count > 0 {
 		log.Printf("[PROVISIONER] User messages appeared during wait (%d), skipping", count)
 		return
 	}
@@ -689,10 +696,20 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 	for attempt := 1; attempt <= 5; attempt++ {
 		log.Printf("[PROVISIONER] Initial message send attempt %d/5", attempt)
 
+		// Re-check idempotency before each retry: if a previous attempt timed out
+		// on the HTTP response but the message was actually delivered, we must not
+		// send it again.
+		if attempt > 1 {
+			if count := countUserMessages(checkClient, agentapiURL); count > 0 {
+				log.Printf("[PROVISIONER] User messages appeared before retry (%d), skipping duplicate send", count)
+				return
+			}
+		}
+
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, agentapiURL+"/message", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := client.Do(req)
+		resp, err := sendClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
