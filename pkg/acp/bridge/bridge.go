@@ -615,11 +615,14 @@ func (b *Bridge) GetMessages() []Message {
 }
 
 // GetStatus returns the current agent status.
+// AgentType is reported as "claude" so the frontend routes stop_agent via
+// the /action endpoint (which the ACP bridge supports) rather than sending
+// a raw Ctrl-C character (which the ACP bridge does not support).
 func (b *Bridge) GetStatus() StatusResponse {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return StatusResponse{
-		AgentType: "acp",
+		AgentType: "claude",
 		Status:    b.status,
 		Transport: "acp",
 	}
