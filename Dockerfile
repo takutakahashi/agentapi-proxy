@@ -37,7 +37,7 @@ RUN set -ex && \
     ls -la /agentapi
 
 # Runtime stage
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 # Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps && \
