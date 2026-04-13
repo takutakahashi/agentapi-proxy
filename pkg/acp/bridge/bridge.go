@@ -243,9 +243,7 @@ func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 		b.appendOrCreateMessage(MessageRoleAgent, text, MessageTypeNormal, "", "")
 
 	case acp.SessionUpdateKindAgentThoughtChunk:
-		// Thoughts are surfaced as assistant messages for transparency.
-		text := acp.ExtractTextContent(update.Content)
-		b.appendOrCreateMessage(MessageRoleAssistant, text, MessageTypeNormal, "", "")
+		// Thinking/reasoning content – intentionally not surfaced to the frontend.
 
 	case acp.SessionUpdateKindToolCall:
 		// New tool invocation – serialize as JSON string matching claude-agentapi format.
