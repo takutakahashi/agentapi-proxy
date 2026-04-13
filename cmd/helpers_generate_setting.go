@@ -534,16 +534,26 @@ func applySessionEnv(env map[string]string, sessionEnv map[string]string) {
 
 // buildStartupConfig returns the startup command config for the given agent type.
 func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
-	if agentType == "claude-agentapi" {
+	switch agentType {
+	case "claude-agentapi":
 		log.Printf("[GENERATE-SETTING]   startup.command: [claude-agentapi]")
 		return sessionsettings.StartupConfig{
 			Command: []string{"claude-agentapi"},
 		}
-	}
-	log.Printf("[GENERATE-SETTING]   startup.command: [agentapi server --allowed-hosts * --allowed-origins *]")
-	return sessionsettings.StartupConfig{
-		Command: []string{"agentapi", "server"},
-		Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*"},
+	case "claude-acp":
+		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
+		// Port is determined at runtime via AGENTAPI_PORT env var.
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- bunx @agentclientprotocol/claude-agent-acp]")
+		return sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args:    []string{"acp-server", "--", "bunx", "@agentclientprotocol/claude-agent-acp"},
+		}
+	default:
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi server --allowed-hosts * --allowed-origins *]")
+		return sessionsettings.StartupConfig{
+			Command: []string{"agentapi", "server"},
+			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*"},
+		}
 	}
 }
 
