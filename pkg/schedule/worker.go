@@ -178,6 +178,8 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 			Status:     "failed",
 			Error:      err.Error(),
 		})
+		// Update next execution time even on failure to prevent retrying every check interval
+		w.updateNextExecution(ctx, schedule)
 		return
 	}
 
