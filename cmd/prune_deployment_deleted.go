@@ -23,17 +23,31 @@ var pruneOrphanedResourcesCmd = &cobra.Command{
 	Short: "Delete stale Kubernetes resources left behind after a session Deployment was deleted",
 	Long: `Delete stale Kubernetes resources for agentapi sessions whose Deployment no longer exists.
 
-A session is considered orphaned when its Deployment
-(agentapi-session-{id}) no longer exists but other associated resources
-(Service, PVC, Secrets) are still present. This can happen when a
-Deployment is deleted manually or an incomplete cleanup leaves residual objects.
+A session is considered orphaned when its Deployment (agentapi-session-{id})
+no longer exists but other associated resources are still present.
+This can happen when a Deployment is deleted manually or an incomplete cleanup
+leaves residual objects.
+
+Detection uses two complementary passes so that every stale pattern is covered:
+
+  Pass 1 – Service scan:
+    Sessions whose Service (agentapi-session-{id}-svc) still exists but
+    whose Deployment is gone are considered orphaned.
+
+  Pass 2 – Settings Secret scan:
+    Sessions whose settings Secret (agentapi-session-{id}-settings) still
+    exists but whose Deployment is gone are considered orphaned.
+    This catches the case where the Service was already cleaned up but the
+    settings Secret was left behind.
+
+Results from both passes are merged and deduplicated before deletion.
 
 The following resources are deleted for each orphaned session:
-  - Deployment  agentapi-session-{id}               (may already be gone)
-  - Service     agentapi-session-{id}-svc
-  - PVC         agentapi-session-{id}-pvc            (if present)
-  - Secret      agentapi-session-{id}-settings        (if present)
-  - Secret      agentapi-session-{id}-svc-webhook-payload (if present)
+  - Deployment  agentapi-session-{id}                     (may already be gone)
+  - Service     agentapi-session-{id}-svc                 (if present)
+  - PVC         agentapi-session-{id}-pvc                 (if present)
+  - Secret      agentapi-session-{id}-settings             (if present)
+  - Secret      agentapi-session-{id}-svc-webhook-payload  (if present)
   - Secret      agentapi-session-{id}-svc-oneshot-settings (if present)
 
 Use --dry-run to preview what would be deleted without making any changes.
@@ -61,6 +75,13 @@ func init() {
 	HelpersCmd.AddCommand(pruneOrphanedResourcesCmd)
 }
 
+// orphanedSession holds the minimum information needed to delete all residual
+// resources for a single session.
+type orphanedSession struct {
+	id     string
+	source string // "service" or "settings-secret" – for logging only
+}
+
 func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
@@ -81,7 +102,14 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Scanning namespace: %s\n", ns)
 	}
 
-	// Step 1: List all session Services
+	// seen tracks already-detected session IDs to avoid double-processing.
+	seen := make(map[string]struct{})
+	var orphanedSessions []orphanedSession
+
+	// ------------------------------------------------------------------ //
+	// Pass 1: Service-based detection
+	//   Sessions whose Service still exists but whose Deployment is gone.
+	// ------------------------------------------------------------------ //
 	svcList, err := client.CoreV1().Services(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=agentapi-session,app.kubernetes.io/managed-by=agentapi-proxy",
 	})
@@ -89,15 +117,7 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list session services: %w", err)
 	}
 
-	fmt.Printf("Found %d session service(s)\n", len(svcList.Items))
-
-	// Step 2: Identify orphaned sessions by checking for their Deployment
-	type orphanedSession struct {
-		id          string
-		serviceName string
-	}
-
-	var orphanedSessions []orphanedSession
+	fmt.Printf("Pass 1 (Service scan): found %d session service(s)\n", len(svcList.Items))
 
 	for _, svc := range svcList.Items {
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
@@ -111,7 +131,6 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 		deploymentName := fmt.Sprintf("agentapi-session-%s", sessionID)
 		_, getErr := client.AppsV1().Deployments(ns).Get(ctx, deploymentName, metav1.GetOptions{})
 		if getErr == nil {
-			// Deployment exists -> active session, skip
 			if orphanedVerbose {
 				fmt.Printf("  [ACTIVE] session %s: Deployment %s found\n", sessionID, deploymentName)
 			}
@@ -123,11 +142,64 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Deployment not found -> orphaned session
-		fmt.Printf("  [ORPHANED] session %s: Deployment %s not found\n", sessionID, deploymentName)
+		fmt.Printf("  [ORPHANED] session %s: Deployment %s not found (detected via Service)\n", sessionID, deploymentName)
+		seen[sessionID] = struct{}{}
 		orphanedSessions = append(orphanedSessions, orphanedSession{
-			id:          sessionID,
-			serviceName: svc.Name,
+			id:     sessionID,
+			source: "service",
+		})
+	}
+
+	// ------------------------------------------------------------------ //
+	// Pass 2: Settings Secret-based detection
+	//   Sessions whose settings Secret still exists but whose Deployment
+	//   (and likely Service) is gone.
+	// ------------------------------------------------------------------ //
+	secretList, err := client.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/resource=session-settings",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session settings secrets: %w", err)
+	}
+
+	fmt.Printf("Pass 2 (Settings Secret scan): found %d settings secret(s)\n", len(secretList.Items))
+
+	for _, secret := range secretList.Items {
+		sessionID := secret.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] Secret %s: missing agentapi.proxy/session-id label\n", secret.Name)
+			}
+			continue
+		}
+
+		// Skip if already detected via Service scan.
+		if _, alreadySeen := seen[sessionID]; alreadySeen {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] session %s: already detected in Pass 1\n", sessionID)
+			}
+			continue
+		}
+
+		deploymentName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		_, getErr := client.AppsV1().Deployments(ns).Get(ctx, deploymentName, metav1.GetOptions{})
+		if getErr == nil {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: Deployment %s found\n", sessionID, deploymentName)
+			}
+			continue
+		}
+
+		if !errors.IsNotFound(getErr) {
+			fmt.Printf("  [WARN] session %s: error checking Deployment %s: %v\n", sessionID, deploymentName, getErr)
+			continue
+		}
+
+		fmt.Printf("  [ORPHANED] session %s: Deployment %s not found (detected via Settings Secret)\n", sessionID, deploymentName)
+		seen[sessionID] = struct{}{}
+		orphanedSessions = append(orphanedSessions, orphanedSession{
+			id:     sessionID,
+			source: "settings-secret",
 		})
 	}
 
@@ -136,7 +208,7 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("\nFound %d orphaned session(s).\n", len(orphanedSessions))
+	fmt.Printf("\nFound %d orphaned session(s) in total.\n", len(orphanedSessions))
 	if orphanedDryRun {
 		fmt.Println("[DRY-RUN] The following resources would be deleted:")
 	} else {
@@ -147,9 +219,9 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 
 	for _, orphaned := range orphanedSessions {
 		id := orphaned.id
-		svcName := orphaned.serviceName
+		svcName := fmt.Sprintf("agentapi-session-%s-svc", id)
 
-		fmt.Printf("\n  Session: %s\n", id)
+		fmt.Printf("\n  Session: %s (detected via %s)\n", id, orphaned.source)
 
 		type resource struct {
 			kind string
