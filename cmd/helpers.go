@@ -40,6 +40,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  migrate - Migrate derived Secrets into agentapi-settings-* (unified source)")
 		fmt.Println("  prune-stale-resources - Delete stale Kubernetes resources for sessions missing their settings secret")
 		fmt.Println("  delete-expired-sessions - Delete Kubernetes resources for sessions created more than N days ago")
+		fmt.Println("  prune-orphaned-resources - Delete stale Kubernetes resources left behind after a session Deployment was deleted")
 		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
 	},
 }
