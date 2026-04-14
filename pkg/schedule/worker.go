@@ -331,6 +331,17 @@ func (w *Worker) updateNextExecution(ctx context.Context, schedule *Schedule) {
 	if err != nil {
 		log.Printf("[SCHEDULE_WORKER] Failed to calculate next execution for schedule %s: %v",
 			schedule.ID, err)
+		// Push the next execution time into the future to prevent infinite retry loops.
+		// Without this, the schedule would remain perpetually "due" and be re-executed
+		// every check interval (e.g. every 30 seconds) due to the calculation failure.
+		fallback := time.Now().Add(time.Hour)
+		if updateErr := w.manager.UpdateNextExecution(ctx, schedule.ID, fallback); updateErr != nil {
+			log.Printf("[SCHEDULE_WORKER] Failed to set fallback next execution for schedule %s: %v",
+				schedule.ID, updateErr)
+		} else {
+			log.Printf("[SCHEDULE_WORKER] Set fallback next execution for schedule %s to %v (1h delay due to calculation error)",
+				schedule.ID, fallback)
+		}
 		return
 	}
 

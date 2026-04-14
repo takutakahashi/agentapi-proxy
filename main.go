@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	_ "time/tzdata" // embed IANA timezone database so time.LoadLocation works in containers without tzdata installed
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/cmd"
