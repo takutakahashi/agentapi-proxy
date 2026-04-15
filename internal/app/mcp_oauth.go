@@ -76,13 +76,39 @@ func (s *Server) handleMCPOAuthConnect(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "mcp_server_url is required")
 	}
 
+	// Fill in ClientID / ClientSecret / Scopes from saved oauth_config when
+	// the request did not supply them, so users only need to save the
+	// credentials once in Settings → MCP Servers.
+	clientID := req.ClientID
+	clientSecret := req.ClientSecret
+	scopes := req.Scopes
+	if (clientID == "" || clientSecret == "") && s.settingsRepo != nil {
+		if userSettings, sErr := s.settingsRepo.FindByName(c.Request().Context(), string(user.ID())); sErr == nil && userSettings != nil {
+			if mcpServers := userSettings.MCPServers(); mcpServers != nil {
+				if srv := mcpServers.GetServer(req.ServerName); srv != nil {
+					if cfg := srv.OAuthConfig(); cfg != nil {
+						if clientID == "" {
+							clientID = cfg.ClientID
+						}
+						if clientSecret == "" {
+							clientSecret = cfg.ClientSecret
+						}
+						if len(scopes) == 0 && len(cfg.Scopes) > 0 {
+							scopes = cfg.Scopes
+						}
+					}
+				}
+			}
+		}
+	}
+
 	result, err := s.mcpOAuthManager.Connect(c.Request().Context(), mcpoauth.ConnectRequest{
 		UserID:       string(user.ID()),
 		ServerName:   req.ServerName,
 		MCPServerURL: req.MCPServerURL,
-		ClientID:     req.ClientID,
-		ClientSecret: req.ClientSecret,
-		Scopes:       req.Scopes,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Scopes:       scopes,
 	})
 	if err != nil {
 		log.Printf("[MCP-OAUTH] connect error for user=%s server=%s: %v", user.ID(), req.ServerName, err)
