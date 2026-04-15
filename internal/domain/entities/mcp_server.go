@@ -5,15 +5,32 @@ import (
 	"sort"
 )
 
+// MCPServerOAuthConfig holds the OAuth client configuration for a remote MCP server.
+// When set, agentapi-proxy will manage the OAuth flow on behalf of the user and
+// inject the resulting Bearer token into the session headers at startup.
+type MCPServerOAuthConfig struct {
+	// ClientID is the OAuth client_id. Leave empty to use DCR.
+	ClientID string
+	// ClientSecret is the OAuth client_secret (confidential clients only).
+	ClientSecret string
+	// Scopes is the list of OAuth scopes to request.
+	Scopes []string
+	// AuthURL overrides the authorization endpoint discovered via .well-known.
+	AuthURL string
+	// TokenURL overrides the token endpoint discovered via .well-known.
+	TokenURL string
+}
+
 // MCPServer represents a single MCP server configuration
 type MCPServer struct {
-	name    string
-	type_   string            // "stdio", "http", "sse"
-	url     string            // for http/sse
-	command string            // for stdio
-	args    []string          // for stdio
-	env     map[string]string // environment variables (may contain secrets)
-	headers map[string]string // for http/sse (may contain secrets)
+	name        string
+	type_       string            // "stdio", "http", "sse"
+	url         string            // for http/sse
+	command     string            // for stdio
+	args        []string          // for stdio
+	env         map[string]string // environment variables (may contain secrets)
+	headers     map[string]string // for http/sse (may contain secrets)
+	oauthConfig *MCPServerOAuthConfig
 }
 
 // NewMCPServer creates a new MCPServer
@@ -97,6 +114,21 @@ func (s *MCPServer) SetHeaders(headers map[string]string) {
 	} else {
 		s.headers = headers
 	}
+}
+
+// OAuthConfig returns the OAuth configuration, or nil if not set.
+func (s *MCPServer) OAuthConfig() *MCPServerOAuthConfig {
+	return s.oauthConfig
+}
+
+// SetOAuthConfig sets the OAuth configuration.
+func (s *MCPServer) SetOAuthConfig(cfg *MCPServerOAuthConfig) {
+	s.oauthConfig = cfg
+}
+
+// HasOAuth returns true when an OAuth configuration is present.
+func (s *MCPServer) HasOAuth() bool {
+	return s.oauthConfig != nil
 }
 
 // Validate validates the MCPServer configuration

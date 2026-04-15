@@ -1,0 +1,219 @@
+package app
+
+import (
+	"bytes"
+	"html/template"
+	"log"
+	"net/http"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/mcpoauth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/mcpoauth/callbackui"
+)
+
+// MCPOAuthConnectRequest is the body for POST /mcp-oauth/connect.
+type MCPOAuthConnectRequest struct {
+	// ServerName is the key in the user's mcp_servers settings map.
+	ServerName string `json:"server_name"`
+	// MCPServerURL is the remote MCP server URL (required).
+	MCPServerURL string `json:"mcp_server_url"`
+	// ClientID overrides DCR (optional).
+	ClientID string `json:"client_id,omitempty"`
+	// ClientSecret is used for confidential clients (optional).
+	ClientSecret string `json:"client_secret,omitempty"`
+	// Scopes is the list of OAuth scopes to request (optional).
+	Scopes []string `json:"scopes,omitempty"`
+}
+
+// MCPOAuthConnectResponse is returned by POST /mcp-oauth/connect.
+type MCPOAuthConnectResponse struct {
+	AuthorizationURL string `json:"authorization_url"`
+	State            string `json:"state"`
+}
+
+// MCPOAuthStatusResponse is returned by GET /mcp-oauth/status/:serverName.
+type MCPOAuthStatusResponse struct {
+	ServerName      string `json:"server_name"`
+	Connected       bool   `json:"connected"`
+	ExpiresAt       string `json:"expires_at,omitempty"`
+	HasRefreshToken bool   `json:"has_refresh_token"`
+}
+
+// setupMCPOAuthRoutes registers all MCP OAuth endpoints.
+func (s *Server) setupMCPOAuthRoutes() {
+	// Authenticated endpoints.
+	s.echo.POST("/mcp-oauth/connect", s.handleMCPOAuthConnect,
+		auth.RequirePermission(entities.PermissionSessionRead, s.container.AuthService))
+	s.echo.GET("/mcp-oauth/status/:serverName", s.handleMCPOAuthStatus,
+		auth.RequirePermission(entities.PermissionSessionRead, s.container.AuthService))
+	s.echo.DELETE("/mcp-oauth/disconnect/:serverName", s.handleMCPOAuthDisconnect,
+		auth.RequirePermission(entities.PermissionSessionRead, s.container.AuthService))
+
+	// Callback is unauthenticated (browser redirect from OAuth provider).
+	s.echo.GET("/mcp-oauth/callback", s.handleMCPOAuthCallback)
+
+	log.Println("[MCP-OAUTH] Routes registered: /mcp-oauth/connect, /mcp-oauth/callback, /mcp-oauth/status/:serverName, /mcp-oauth/disconnect/:serverName")
+}
+
+// handleMCPOAuthConnect begins the OAuth flow and returns the authorization URL.
+func (s *Server) handleMCPOAuthConnect(c echo.Context) error {
+	user := auth.GetUserFromContext(c)
+	if user == nil {
+		return echo.ErrUnauthorized
+	}
+
+	var req MCPOAuthConnectRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if req.ServerName == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "server_name is required")
+	}
+	if req.MCPServerURL == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "mcp_server_url is required")
+	}
+
+	// Fill in ClientID / ClientSecret / Scopes from saved oauth_config when
+	// the request did not supply them, so users only need to save the
+	// credentials once in Settings → MCP Servers.
+	clientID := req.ClientID
+	clientSecret := req.ClientSecret
+	scopes := req.Scopes
+	if (clientID == "" || clientSecret == "") && s.settingsRepo != nil {
+		if userSettings, sErr := s.settingsRepo.FindByName(c.Request().Context(), string(user.ID())); sErr == nil && userSettings != nil {
+			if mcpServers := userSettings.MCPServers(); mcpServers != nil {
+				if srv := mcpServers.GetServer(req.ServerName); srv != nil {
+					if cfg := srv.OAuthConfig(); cfg != nil {
+						if clientID == "" {
+							clientID = cfg.ClientID
+						}
+						if clientSecret == "" {
+							clientSecret = cfg.ClientSecret
+						}
+						if len(scopes) == 0 && len(cfg.Scopes) > 0 {
+							scopes = cfg.Scopes
+						}
+					}
+				}
+			}
+		}
+	}
+
+	result, err := s.mcpOAuthManager.Connect(c.Request().Context(), mcpoauth.ConnectRequest{
+		UserID:       string(user.ID()),
+		ServerName:   req.ServerName,
+		MCPServerURL: req.MCPServerURL,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Scopes:       scopes,
+	})
+	if err != nil {
+		log.Printf("[MCP-OAUTH] connect error for user=%s server=%s: %v", user.ID(), req.ServerName, err)
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, friendlyOAuthError(err))
+	}
+
+	return c.JSON(http.StatusOK, MCPOAuthConnectResponse{
+		AuthorizationURL: result.AuthorizationURL,
+		State:            result.State,
+	})
+}
+
+// handleMCPOAuthCallback receives the authorization code redirect and exchanges it for tokens.
+func (s *Server) handleMCPOAuthCallback(c echo.Context) error {
+	code := c.QueryParam("code")
+	state := c.QueryParam("state")
+	errParam := c.QueryParam("error")
+
+	if errParam != "" {
+		desc := c.QueryParam("error_description")
+		if desc == "" {
+			desc = errParam
+		}
+		return c.HTML(http.StatusOK, renderCallbackHTML("", desc))
+	}
+	if code == "" || state == "" {
+		return c.HTML(http.StatusBadRequest, renderCallbackHTML("", "missing code or state parameter"))
+	}
+
+	token, err := s.mcpOAuthManager.HandleCallback(c.Request().Context(), code, state)
+	if err != nil {
+		log.Printf("[MCP-OAUTH] callback error: %v", err)
+		return c.HTML(http.StatusOK, renderCallbackHTML("", err.Error()))
+	}
+
+	return c.HTML(http.StatusOK, renderCallbackHTML(token.ServerName(), ""))
+}
+
+// handleMCPOAuthStatus returns the connection status for a specific MCP server.
+func (s *Server) handleMCPOAuthStatus(c echo.Context) error {
+	user := auth.GetUserFromContext(c)
+	if user == nil {
+		return echo.ErrUnauthorized
+	}
+	serverName := c.Param("serverName")
+
+	token, err := s.mcpOAuthTokenRepo.FindByUserAndServer(c.Request().Context(), string(user.ID()), serverName)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	resp := MCPOAuthStatusResponse{ServerName: serverName}
+	if token != nil && !token.IsEmpty() {
+		resp.Connected = true
+		resp.HasRefreshToken = token.RefreshToken() != ""
+		if !token.ExpiresAt().IsZero() {
+			resp.ExpiresAt = token.ExpiresAt().UTC().Format("2006-01-02T15:04:05Z")
+		}
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// handleMCPOAuthDisconnect removes the stored token for a specific MCP server.
+func (s *Server) handleMCPOAuthDisconnect(c echo.Context) error {
+	user := auth.GetUserFromContext(c)
+	if user == nil {
+		return echo.ErrUnauthorized
+	}
+	serverName := c.Param("serverName")
+
+	if err := s.mcpOAuthTokenRepo.Delete(c.Request().Context(), string(user.ID()), serverName); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// ---- helpers ----
+
+// friendlyOAuthError converts internal OAuth errors into user-readable messages.
+func friendlyOAuthError(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "discovery") || strings.Contains(msg, "fetch protected resource") || strings.Contains(msg, "fetch authorization server"):
+		return "OAuth 2.0 エンドポイントが見つかりませんでした。このサーバーは OAuth 2.0 に対応していないか、URL が正しくない可能性があります。"
+	case strings.Contains(msg, "DCR") || strings.Contains(msg, "registration"):
+		return "OAuth クライアントの自動登録 (DCR) に失敗しました。OAuth 設定に Client ID と Client Secret を手動で入力してください。"
+	case strings.Contains(msg, "no client_id"):
+		return "Client ID が取得できませんでした。OAuth 設定で Client ID を指定するか、DCR に対応したサーバーの URL を使用してください。"
+	default:
+		return "OAuth 接続に失敗しました: " + msg
+	}
+}
+
+type callbackTemplateData struct {
+	ServerName string
+	Error      string
+}
+
+var callbackTmpl = template.Must(template.New("callback").Parse(callbackui.CallbackHTML))
+
+func renderCallbackHTML(serverName, errMsg string) string {
+	var buf bytes.Buffer
+	_ = callbackTmpl.Execute(&buf, callbackTemplateData{
+		ServerName: serverName,
+		Error:      errMsg,
+	})
+	return buf.String()
+}

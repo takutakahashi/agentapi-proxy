@@ -76,15 +76,26 @@ type BedrockPatch struct {
 	Profile         string `json:"profile,omitempty"`
 }
 
+// MCPServerOAuthConfigPatch holds OAuth client configuration for a remote MCP server.
+// When present, agentapi-proxy will attempt to inject a Bearer token at session creation.
+type MCPServerOAuthConfigPatch struct {
+	ClientID     string   `json:"client_id,omitempty"`
+	ClientSecret string   `json:"client_secret,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+	AuthURL      string   `json:"auth_url,omitempty"`
+	TokenURL     string   `json:"token_url,omitempty"`
+}
+
 // MCPServerPatch represents a single MCP server configuration.
 // All fields are replaced as a whole when the server key is present.
 type MCPServerPatch struct {
-	Type    string            `json:"type,omitempty"`
-	URL     string            `json:"url,omitempty"`
-	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Type        string                     `json:"type,omitempty"`
+	URL         string                     `json:"url,omitempty"`
+	Command     string                     `json:"command,omitempty"`
+	Args        []string                   `json:"args,omitempty"`
+	Env         map[string]string          `json:"env,omitempty"`
+	Headers     map[string]string          `json:"headers,omitempty"`
+	OAuthConfig *MCPServerOAuthConfigPatch `json:"oauth_config,omitempty"`
 }
 
 // MarketplacePatch represents a single plugin marketplace configuration.

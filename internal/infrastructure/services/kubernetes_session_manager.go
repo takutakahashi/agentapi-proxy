@@ -76,6 +76,15 @@ type KubernetesSessionManager struct {
 	// Protected by handlersMutex.
 	onSessionDeletedHandlers []SessionDeletedHandler
 	handlersMutex            sync.RWMutex
+	// mcpOAuthManager handles OAuth token retrieval/refresh for MCP servers.
+	// nil when the feature is not configured.
+	mcpOAuthManager mcpOAuthManagerIface
+}
+
+// mcpOAuthManagerIface is a minimal interface for the MCP OAuth manager,
+// allowing the session manager to be tested without a real k8s cluster.
+type mcpOAuthManagerIface interface {
+	GetValidToken(ctx context.Context, userID, serverName string) (*entities.MCPOAuthToken, error)
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -2982,13 +2991,16 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] Injected cycle Stop hook for session %s (max-count=%d)", session.id, req.CycleMaxCount)
 	}
 
+	// Inject MCP OAuth tokens into the MCP server headers.
+	mcpServers := m.injectMCPOAuthTokens(ctx, req.UserID, materialized.MCPServers)
+
 	settings.Claude = sessionsettings.ClaudeConfig{
 		ClaudeJSON: map[string]interface{}{
 			"hasCompletedOnboarding":        true,
 			"bypassPermissionsModeAccepted": true,
 		},
 		SettingsJSON: settingsJSON,
-		MCPServers:   materialized.MCPServers,
+		MCPServers:   mcpServers,
 	}
 
 	// Repository info
@@ -3370,4 +3382,70 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 	}
 	settings := m.buildSessionSettings(ctx, tempSession, req, nil)
 	return settings, nil
+}
+
+// SetMCPOAuthManager injects the MCP OAuth manager into the session manager.
+// Must be called before the first session is created.
+func (m *KubernetesSessionManager) SetMCPOAuthManager(mgr mcpOAuthManagerIface) {
+	m.mcpOAuthManager = mgr
+}
+
+// injectMCPOAuthTokens iterates the MCP server map and, for any server that has
+// an oauth_config entry, retrieves (and if necessary refreshes) the stored token
+// and injects it as "Authorization: Bearer …" into the server's headers map.
+// The oauth_config key is removed from the output so it is not forwarded to the
+// Claude Code container.
+func (m *KubernetesSessionManager) injectMCPOAuthTokens(ctx context.Context, userID string, mcpServers map[string]interface{}) map[string]interface{} {
+	if m.mcpOAuthManager == nil || len(mcpServers) == 0 {
+		return mcpServers
+	}
+
+	result := make(map[string]interface{}, len(mcpServers))
+	for name, raw := range mcpServers {
+		serverMap, ok := raw.(map[string]interface{})
+		if !ok {
+			result[name] = raw
+			continue
+		}
+
+		// Copy the server map so we don't mutate the original.
+		out := make(map[string]interface{}, len(serverMap))
+		for k, v := range serverMap {
+			out[k] = v
+		}
+
+		// Only process servers that have an oauth_config.
+		if _, hasOAuth := out["oauth_config"]; !hasOAuth {
+			result[name] = out
+			continue
+		}
+
+		// Remove oauth_config from the output (never forwarded to container).
+		delete(out, "oauth_config")
+
+		// Retrieve (and optionally refresh) the stored token.
+		token, err := m.mcpOAuthManager.GetValidToken(ctx, userID, name)
+		if err != nil {
+			log.Printf("[MCP-OAUTH] failed to get token for user=%s server=%s: %v", userID, name, err)
+			result[name] = out
+			continue
+		}
+		if token == nil || token.IsEmpty() {
+			log.Printf("[MCP-OAUTH] no token for user=%s server=%s, skipping injection", userID, name)
+			result[name] = out
+			continue
+		}
+
+		// Inject the Bearer token into headers.
+		headers, _ := out["headers"].(map[string]interface{})
+		if headers == nil {
+			headers = make(map[string]interface{})
+		}
+		headers["Authorization"] = token.BearerHeader()
+		out["headers"] = headers
+
+		log.Printf("[MCP-OAUTH] injected token for user=%s server=%s", userID, name)
+		result[name] = out
+	}
+	return result
 }

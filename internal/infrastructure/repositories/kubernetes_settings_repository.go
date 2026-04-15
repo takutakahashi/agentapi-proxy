@@ -55,14 +55,24 @@ type bedrockJSON struct {
 	Profile         string `json:"profile,omitempty"`
 }
 
+// mcpServerOAuthConfigJSON is the JSON representation of OAuth client config.
+type mcpServerOAuthConfigJSON struct {
+	ClientID     string   `json:"client_id,omitempty"`
+	ClientSecret string   `json:"client_secret,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+	AuthURL      string   `json:"auth_url,omitempty"`
+	TokenURL     string   `json:"token_url,omitempty"`
+}
+
 // mcpServerJSON is the JSON representation of a single MCP server
 type mcpServerJSON struct {
-	Type    string            `json:"type"`
-	URL     string            `json:"url,omitempty"`
-	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Type        string                    `json:"type"`
+	URL         string                    `json:"url,omitempty"`
+	Command     string                    `json:"command,omitempty"`
+	Args        []string                  `json:"args,omitempty"`
+	Env         map[string]string         `json:"env,omitempty"`
+	Headers     map[string]string         `json:"headers,omitempty"`
+	OAuthConfig *mcpServerOAuthConfigJSON `json:"oauth_config,omitempty"`
 }
 
 // marketplaceJSON is the JSON representation of a single marketplace
@@ -238,7 +248,7 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
 		sj.MCPServers = make(map[string]*mcpServerJSON)
 		for name, server := range mcpServers.Servers() {
-			sj.MCPServers[name] = &mcpServerJSON{
+			serverJSON := &mcpServerJSON{
 				Type:    server.Type(),
 				URL:     server.URL(),
 				Command: server.Command(),
@@ -246,6 +256,16 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 				Env:     server.Env(),
 				Headers: server.Headers(),
 			}
+			if cfg := server.OAuthConfig(); cfg != nil {
+				serverJSON.OAuthConfig = &mcpServerOAuthConfigJSON{
+					ClientID:     cfg.ClientID,
+					ClientSecret: cfg.ClientSecret,
+					Scopes:       cfg.Scopes,
+					AuthURL:      cfg.AuthURL,
+					TokenURL:     cfg.TokenURL,
+				}
+			}
+			sj.MCPServers[name] = serverJSON
 		}
 	}
 
@@ -328,6 +348,15 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 			server.SetArgs(serverJSON.Args)
 			server.SetEnv(serverJSON.Env)
 			server.SetHeaders(serverJSON.Headers)
+			if serverJSON.OAuthConfig != nil {
+				server.SetOAuthConfig(&entities.MCPServerOAuthConfig{
+					ClientID:     serverJSON.OAuthConfig.ClientID,
+					ClientSecret: serverJSON.OAuthConfig.ClientSecret,
+					Scopes:       serverJSON.OAuthConfig.Scopes,
+					AuthURL:      serverJSON.OAuthConfig.AuthURL,
+					TokenURL:     serverJSON.OAuthConfig.TokenURL,
+				})
+			}
 
 			mcpServers.SetServer(name, server)
 		}

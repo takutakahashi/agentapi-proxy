@@ -31,6 +31,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/mcpoauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"k8s.io/client-go/kubernetes/fake"
@@ -38,24 +39,26 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	config           *config.Config
-	echo             *echo.Echo
-	verbose          bool
-	logger           *logger.Logger
-	oauthProvider    *auth.GitHubOAuthProvider
-	oauthSessions    sync.Map // sessionID -> OAuthSession
-	notificationSvc  *notification.Service
-	container        *di.Container                    // Internal DI container
-	sessionManager   portrepos.SessionManager         // Session lifecycle manager
-	settingsRepo     portrepos.SettingsRepository     // Settings repository
-	credentialsRepo  portrepos.CredentialsRepository  // Credentials repository
-	shareRepo        portrepos.ShareRepository        // Share repository for session sharing
-	teamConfigRepo   portrepos.TeamConfigRepository   // Team configuration repository
-	memoryRepo       portrepos.MemoryRepository       // Memory repository
-	taskRepo         portrepos.TaskRepository         // Task repository
-	taskGroupRepo    portrepos.TaskGroupRepository    // Task group repository
-	sessionRouteRepo portrepos.SessionRouteRepository // Session route repository for proxy B routing
-	router           *Router                          // Router for custom handler registration
+	config            *config.Config
+	echo              *echo.Echo
+	verbose           bool
+	logger            *logger.Logger
+	oauthProvider     *auth.GitHubOAuthProvider
+	oauthSessions     sync.Map // sessionID -> OAuthSession
+	notificationSvc   *notification.Service
+	container         *di.Container                     // Internal DI container
+	sessionManager    portrepos.SessionManager          // Session lifecycle manager
+	settingsRepo      portrepos.SettingsRepository      // Settings repository
+	credentialsRepo   portrepos.CredentialsRepository   // Credentials repository
+	shareRepo         portrepos.ShareRepository         // Share repository for session sharing
+	teamConfigRepo    portrepos.TeamConfigRepository    // Team configuration repository
+	memoryRepo        portrepos.MemoryRepository        // Memory repository
+	taskRepo          portrepos.TaskRepository          // Task repository
+	taskGroupRepo     portrepos.TaskGroupRepository     // Task group repository
+	sessionRouteRepo  portrepos.SessionRouteRepository  // Session route repository for proxy B routing
+	mcpOAuthManager   *mcpoauth.Manager                 // MCP OAuth flow manager (nil if not configured)
+	mcpOAuthTokenRepo portrepos.MCPOAuthTokenRepository // MCP OAuth token storage
+	router            *Router                           // Router for custom handler registration
 }
 
 // NewServer creates a new server instance
@@ -267,21 +270,37 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	)
 	log.Printf("[SERVER] Session route repository initialized")
 
+	// Initialize MCP OAuth token repository and manager.
+	mcpOAuthTokenRepo := repositories.NewKubernetesMCPOAuthTokenRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	externalURL := os.Getenv("AGENTAPI_EXTERNAL_URL")
+	if externalURL == "" {
+		// Best-effort default; OAuth callbacks will fail unless overridden.
+		externalURL = "http://localhost:8080"
+	}
+	mcpOAuthMgr := mcpoauth.NewManager(mcpOAuthTokenRepo, externalURL)
+	k8sSessionManager.SetMCPOAuthManager(mcpOAuthMgr)
+	log.Printf("[SERVER] MCP OAuth manager initialized (external URL: %s)", externalURL)
+
 	s := &Server{
-		config:           cfg,
-		echo:             e,
-		verbose:          verbose,
-		logger:           lgr,
-		container:        container,
-		sessionManager:   sessionManager,
-		settingsRepo:     settingsRepo,
-		credentialsRepo:  credentialsRepo,
-		shareRepo:        shareRepo,
-		teamConfigRepo:   teamConfigRepo,
-		memoryRepo:       memoryRepo,
-		taskRepo:         taskRepo,
-		taskGroupRepo:    taskGroupRepo,
-		sessionRouteRepo: sessionRouteRepo,
+		config:            cfg,
+		echo:              e,
+		verbose:           verbose,
+		logger:            lgr,
+		container:         container,
+		sessionManager:    sessionManager,
+		settingsRepo:      settingsRepo,
+		credentialsRepo:   credentialsRepo,
+		shareRepo:         shareRepo,
+		teamConfigRepo:    teamConfigRepo,
+		memoryRepo:        memoryRepo,
+		taskRepo:          taskRepo,
+		taskGroupRepo:     taskGroupRepo,
+		sessionRouteRepo:  sessionRouteRepo,
+		mcpOAuthManager:   mcpOAuthMgr,
+		mcpOAuthTokenRepo: mcpOAuthTokenRepo,
 	}
 
 	// Add logging middleware if verbose
@@ -453,6 +472,11 @@ func (s *Server) setupRoutes() {
 
 	// Register auth-related routes directly
 	s.setupAuthRoutes()
+
+	// Register MCP OAuth routes when the manager is configured.
+	if s.mcpOAuthManager != nil {
+		s.setupMCPOAuthRoutes()
+	}
 }
 
 // AddCustomHandler adds a custom handler to the router
@@ -1026,6 +1050,11 @@ func (s *Server) GetTaskRepository() portrepos.TaskRepository {
 // GetTaskGroupRepository returns the task group repository
 func (s *Server) GetTaskGroupRepository() portrepos.TaskGroupRepository {
 	return s.taskGroupRepo
+}
+
+// GetMCPOAuthTokenRepository returns the MCP OAuth token repository.
+func (s *Server) GetMCPOAuthTokenRepository() portrepos.MCPOAuthTokenRepository {
+	return s.mcpOAuthTokenRepo
 }
 
 // ExtractRepositoryInfo extracts repository information from tags.
