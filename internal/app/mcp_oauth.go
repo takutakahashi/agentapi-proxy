@@ -86,7 +86,7 @@ func (s *Server) handleMCPOAuthConnect(c echo.Context) error {
 	})
 	if err != nil {
 		log.Printf("[MCP-OAUTH] connect error for user=%s server=%s: %v", user.ID(), req.ServerName, err)
-		return echo.NewHTTPError(http.StatusBadGateway, friendlyOAuthError(err))
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, friendlyOAuthError(err))
 	}
 
 	return c.JSON(http.StatusOK, MCPOAuthConnectResponse{
