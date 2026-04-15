@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -85,7 +86,7 @@ func (s *Server) handleMCPOAuthConnect(c echo.Context) error {
 	})
 	if err != nil {
 		log.Printf("[MCP-OAUTH] connect error for user=%s server=%s: %v", user.ID(), req.ServerName, err)
-		return echo.NewHTTPError(http.StatusBadGateway, "OAuth discovery failed: "+err.Error())
+		return echo.NewHTTPError(http.StatusBadGateway, friendlyOAuthError(err))
 	}
 
 	return c.JSON(http.StatusOK, MCPOAuthConnectResponse{
@@ -159,6 +160,21 @@ func (s *Server) handleMCPOAuthDisconnect(c echo.Context) error {
 }
 
 // ---- helpers ----
+
+// friendlyOAuthError converts internal OAuth errors into user-readable messages.
+func friendlyOAuthError(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "discovery") || strings.Contains(msg, "fetch protected resource") || strings.Contains(msg, "fetch authorization server"):
+		return "OAuth 2.0 エンドポイントが見つかりませんでした。このサーバーは OAuth 2.0 に対応していないか、URL が正しくない可能性があります。"
+	case strings.Contains(msg, "DCR") || strings.Contains(msg, "registration"):
+		return "OAuth クライアントの自動登録 (DCR) に失敗しました。OAuth 設定に Client ID と Client Secret を手動で入力してください。"
+	case strings.Contains(msg, "no client_id"):
+		return "Client ID が取得できませんでした。OAuth 設定で Client ID を指定するか、DCR に対応したサーバーの URL を使用してください。"
+	default:
+		return "OAuth 接続に失敗しました: " + msg
+	}
+}
 
 type callbackTemplateData struct {
 	ServerName string
