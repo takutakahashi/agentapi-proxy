@@ -48,14 +48,29 @@ type BedrockSettingsRequest struct {
 	Profile         string `json:"profile,omitempty"`
 }
 
+// MCPServerOAuthConfigRequest is the OAuth client config for a remote MCP server.
+type MCPServerOAuthConfigRequest struct {
+	// ClientID overrides DCR. Leave empty to use Dynamic Client Registration.
+	ClientID string `json:"client_id,omitempty"`
+	// ClientSecret is for confidential clients only.
+	ClientSecret string `json:"client_secret,omitempty"`
+	// Scopes is the list of OAuth scopes to request.
+	Scopes []string `json:"scopes,omitempty"`
+	// AuthURL overrides the authorization endpoint (optional).
+	AuthURL string `json:"auth_url,omitempty"`
+	// TokenURL overrides the token endpoint (optional).
+	TokenURL string `json:"token_url,omitempty"`
+}
+
 // MCPServerRequest is the request body for a single MCP server
 type MCPServerRequest struct {
-	Type    string            `json:"type"`              // "stdio", "http", "sse"
-	URL     string            `json:"url,omitempty"`     // for http/sse
-	Command string            `json:"command,omitempty"` // for stdio
-	Args    []string          `json:"args,omitempty"`    // for stdio
-	Env     map[string]string `json:"env,omitempty"`     // environment variables
-	Headers map[string]string `json:"headers,omitempty"` // for http/sse
+	Type        string                       `json:"type"`                   // "stdio", "http", "sse"
+	URL         string                       `json:"url,omitempty"`          // for http/sse
+	Command     string                       `json:"command,omitempty"`      // for stdio
+	Args        []string                     `json:"args,omitempty"`         // for stdio
+	Env         map[string]string            `json:"env,omitempty"`          // environment variables
+	Headers     map[string]string            `json:"headers,omitempty"`      // for http/sse
+	OAuthConfig *MCPServerOAuthConfigRequest `json:"oauth_config,omitempty"` // optional OAuth config
 }
 
 // MarketplaceRequest is the request body for a single marketplace
@@ -99,12 +114,14 @@ type BedrockSettingsResponse struct {
 
 // MCPServerResponse is the response body for a single MCP server
 type MCPServerResponse struct {
-	Type       string   `json:"type"`
-	URL        string   `json:"url,omitempty"`
-	Command    string   `json:"command,omitempty"`
-	Args       []string `json:"args,omitempty"`
-	EnvKeys    []string `json:"env_keys,omitempty"`    // only keys, not values
-	HeaderKeys []string `json:"header_keys,omitempty"` // only keys, not values
+	Type           string   `json:"type"`
+	URL            string   `json:"url,omitempty"`
+	Command        string   `json:"command,omitempty"`
+	Args           []string `json:"args,omitempty"`
+	EnvKeys        []string `json:"env_keys,omitempty"`         // only keys, not values
+	HeaderKeys     []string `json:"header_keys,omitempty"`      // only keys, not values
+	HasOAuthConfig bool     `json:"has_oauth_config,omitempty"` // true when an OAuth config is stored
+	OAuthScopes    []string `json:"oauth_scopes,omitempty"`     // requested scopes (no secrets)
 }
 
 // MarketplaceResponse is the response body for a single marketplace
@@ -325,6 +342,26 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				}
 			}
 			server.SetHeaders(headers)
+
+			// Handle OAuth config
+			if serverReq.OAuthConfig != nil {
+				oauthCfg := &entities.MCPServerOAuthConfig{
+					ClientID:     serverReq.OAuthConfig.ClientID,
+					ClientSecret: serverReq.OAuthConfig.ClientSecret,
+					Scopes:       serverReq.OAuthConfig.Scopes,
+					AuthURL:      serverReq.OAuthConfig.AuthURL,
+					TokenURL:     serverReq.OAuthConfig.TokenURL,
+				}
+				// Preserve existing client_secret when not provided
+				if oauthCfg.ClientSecret == "" && existingMCPServers != nil {
+					if existingServer := existingMCPServers.GetServer(serverName); existingServer != nil {
+						if existingCfg := existingServer.OAuthConfig(); existingCfg != nil {
+							oauthCfg.ClientSecret = existingCfg.ClientSecret
+						}
+					}
+				}
+				server.SetOAuthConfig(oauthCfg)
+			}
 
 			mcpServers.SetServer(serverName, server)
 		}
@@ -686,7 +723,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
 		resp.MCPServers = make(map[string]*MCPServerResponse)
 		for name, server := range mcpServers.Servers() {
-			resp.MCPServers[name] = &MCPServerResponse{
+			mcpResp := &MCPServerResponse{
 				Type:       server.Type(),
 				URL:        server.URL(),
 				Command:    server.Command(),
@@ -694,6 +731,11 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 				EnvKeys:    server.EnvKeys(),
 				HeaderKeys: server.HeaderKeys(),
 			}
+			if cfg := server.OAuthConfig(); cfg != nil {
+				mcpResp.HasOAuthConfig = true
+				mcpResp.OAuthScopes = cfg.Scopes
+			}
+			resp.MCPServers[name] = mcpResp
 		}
 	}
 
