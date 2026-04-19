@@ -34,6 +34,7 @@ type HandlerRegistry struct {
 	memoryController         *controllers.MemoryController
 	taskController           *controllers.TaskController
 	taskGroupController      *controllers.TaskGroupController
+	fileController           *controllers.FileController
 	customHandlers           []CustomHandler
 }
 
@@ -116,6 +117,13 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Task group controller initialized")
 	}
 
+	// Create file controller if user file repository is available
+	var fileController *controllers.FileController
+	if server.userFileRepo != nil {
+		fileController = controllers.NewFileController(server.userFileRepo)
+		log.Printf("[ROUTER] File controller initialized")
+	}
+
 	return &Router{
 		echo:   e,
 		server: server,
@@ -131,6 +139,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			memoryController:         memoryController,
 			taskController:           taskController,
 			taskGroupController:      taskGroupController,
+			fileController:           fileController,
 			customHandlers:           make([]CustomHandler, 0),
 		},
 	}
@@ -324,6 +333,19 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Task group endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Task group repository not available, skipping task group routes")
+	}
+
+	// Add file routes if user file repository is available (Kubernetes mode only)
+	if r.server.userFileRepo != nil && r.handlers.fileController != nil {
+		log.Printf("[ROUTES] Registering user file endpoints...")
+		r.echo.POST("/files", r.handlers.fileController.CreateFile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/files", r.handlers.fileController.ListFiles, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/files/:fileId", r.handlers.fileController.GetFile, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/files/:fileId", r.handlers.fileController.UpdateFile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/files/:fileId", r.handlers.fileController.DeleteFile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] User file endpoints registered")
+	} else {
+		log.Printf("[ROUTES] User file repository not available, skipping file routes")
 	}
 
 	return nil

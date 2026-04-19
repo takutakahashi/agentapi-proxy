@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -3166,6 +3167,19 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			}
 		}
 		// Not found or no data is normal (user hasn't logged in yet); skip silently.
+
+		// Also embed user-managed files from the agentapi-user-files-{userID} Secret.
+		userFilesSecretName := fmt.Sprintf("agentapi-user-files-%s", sanitizeLabelValue(req.UserID))
+		userFilesSecret, userFilesErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, userFilesSecretName, metav1.GetOptions{})
+		if userFilesErr == nil && len(userFilesSecret.Data) > 0 {
+			userManagedFiles := userFilesSecretDataToManagedFiles(userFilesSecret.Data)
+			if len(userManagedFiles) > 0 {
+				settings.Files = append(settings.Files, userManagedFiles...)
+				log.Printf("[K8S_SESSION] Embedded %d user file(s) from Secret %s for session %s",
+					len(userManagedFiles), userFilesSecretName, session.id)
+			}
+		}
+		// Not found or no data is normal (user has no registered files); skip silently.
 	}
 
 	// When CycleMessage is set, write the message into /tmp/check/CYCLE_ENABLED so
@@ -3370,4 +3384,52 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 	}
 	settings := m.buildSessionSettings(ctx, tempSession, req, nil)
 	return settings, nil
+}
+
+// userFilesSecretDataToManagedFiles converts the index-based Secret data from
+// agentapi-user-files-{userID} into a slice of ManagedFile for embedding in
+// SessionSettings.Files.  Only entries that have both a non-empty path and
+// content are included.
+func userFilesSecretDataToManagedFiles(data map[string][]byte) []sessionsettings.ManagedFile {
+	// Collect unique indices.
+	indexSet := map[int]struct{}{}
+	for k := range data {
+		dot := strings.LastIndex(k, ".")
+		if dot < 0 {
+			continue
+		}
+		suffix := k[dot+1:]
+		if suffix != "id" && suffix != "name" && suffix != "path" && suffix != "content" &&
+			suffix != "permissions" && suffix != "created_at" && suffix != "updated_at" {
+			continue
+		}
+		idxStr := k[:dot]
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil {
+			continue
+		}
+		indexSet[idx] = struct{}{}
+	}
+
+	indices := make([]int, 0, len(indexSet))
+	for idx := range indexSet {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	files := make([]sessionsettings.ManagedFile, 0, len(indices))
+	for _, idx := range indices {
+		prefix := strconv.Itoa(idx)
+		path := string(data[prefix+".path"])
+		content := string(data[prefix+".content"])
+		if path == "" {
+			continue
+		}
+		files = append(files, sessionsettings.ManagedFile{
+			Path:        path,
+			Content:     content,
+			Permissions: string(data[prefix+".permissions"]),
+		})
+	}
+	return files
 }
