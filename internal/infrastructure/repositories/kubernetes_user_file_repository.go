@@ -196,8 +196,9 @@ func (r *KubernetesUserFileRepository) ToManagedFiles(ctx context.Context, userI
 	managed := make([]sessionsettings.ManagedFile, 0, len(files))
 	for _, f := range files {
 		managed = append(managed, sessionsettings.ManagedFile{
-			Path:    f.Path(),
-			Content: f.Content(),
+			Path:        f.Path(),
+			Content:     f.Content(),
+			Permissions: f.Permissions(),
 		})
 	}
 	return managed, nil

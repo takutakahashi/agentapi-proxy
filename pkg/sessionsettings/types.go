@@ -34,8 +34,9 @@ var ManagedFileTypeOrder = []string{
 // ManagedFile represents a file path and its contents, used to persist arbitrary
 // files across sessions via the agentapi-agent-files-{userID} Kubernetes Secret.
 type ManagedFile struct {
-	Path    string `yaml:"path"    json:"path"`
-	Content string `yaml:"content" json:"content"`
+	Path        string `yaml:"path"                  json:"path"`
+	Content     string `yaml:"content"               json:"content"`
+	Permissions string `yaml:"permissions,omitempty" json:"permissions,omitempty"`
 }
 
 // FilesToSecretData converts a slice of ManagedFile into a flat map suitable for

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -255,12 +256,21 @@ var managedFilePaths = []string{
 	"/home/agentapi/.claude/.credentials.json",
 }
 
-// writeFiles writes each ManagedFile to its path (mode 0600), creating parent
-// directories as needed.  It is called once at provision time to restore files
-// delivered via the SessionSettings payload.
+// writeFiles writes each ManagedFile to its path, creating parent directories
+// as needed.  The file mode is taken from ManagedFile.Permissions (octal string,
+// e.g. "0600"); if empty or unparseable, 0600 is used as a safe default.
+// Called once at provision time to restore files delivered via SessionSettings.
 func writeFiles(files []sessionsettings.ManagedFile) error {
 	var firstErr error
 	for _, f := range files {
+		perm := os.FileMode(0600)
+		if f.Permissions != "" {
+			if p, err := strconv.ParseUint(f.Permissions, 8, 32); err == nil {
+				perm = os.FileMode(p)
+			} else {
+				log.Printf("[PROVISIONER] Warning: invalid permissions %q for %s, using 0600", f.Permissions, f.Path)
+			}
+		}
 		if err := os.MkdirAll(filepath.Dir(f.Path), 0755); err != nil {
 			log.Printf("[PROVISIONER] Warning: failed to create dir for %s: %v", f.Path, err)
 			if firstErr == nil {
@@ -268,14 +278,14 @@ func writeFiles(files []sessionsettings.ManagedFile) error {
 			}
 			continue
 		}
-		if err := os.WriteFile(f.Path, []byte(f.Content), 0600); err != nil {
+		if err := os.WriteFile(f.Path, []byte(f.Content), perm); err != nil {
 			log.Printf("[PROVISIONER] Warning: failed to write %s: %v", f.Path, err)
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		log.Printf("[PROVISIONER] Restored managed file: %s", f.Path)
+		log.Printf("[PROVISIONER] Restored managed file: %s (mode %s)", f.Path, perm)
 	}
 	return firstErr
 }

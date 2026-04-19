@@ -3426,8 +3426,9 @@ func userFilesSecretDataToManagedFiles(data map[string][]byte) []sessionsettings
 			continue
 		}
 		files = append(files, sessionsettings.ManagedFile{
-			Path:    path,
-			Content: content,
+			Path:        path,
+			Content:     content,
+			Permissions: string(data[prefix+".permissions"]),
 		})
 	}
 	return files
