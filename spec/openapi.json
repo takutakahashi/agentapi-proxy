@@ -1513,7 +1513,10 @@
                     "team_id": "myorg/backend",
                     "bot_token_secret_name": "my-slack-bot-token",
                     "bot_token_secret_key": "bot-token",
-                    "allowed_channel_names": ["dev", "backend"],
+                    "allowed_channel_names": [
+                      "dev",
+                      "backend"
+                    ],
                     "session_config": {
                       "initial_message_template": "{{.event.text}}",
                       "tags": {
@@ -2389,8 +2392,12 @@
           "Notifications"
         ],
         "security": [
-          {"ApiKeyAuth": []},
-          {"BearerAuth": []}
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
         ],
         "requestBody": {
           "required": true,
@@ -2430,13 +2437,24 @@
         "summary": "Create a memory entry",
         "description": "Creates a new memory entry for a user or team. User-scoped memories are private to the owner. Team-scoped memories are accessible to all team members.",
         "operationId": "createMemory",
-        "tags": ["Memory"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Memory"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateMemoryRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateMemoryRequest"
+              }
             }
           }
         },
@@ -2445,49 +2463,78 @@
             "description": "Memory entry created",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Memory"}
+                "schema": {
+                  "$ref": "#/components/schemas/Memory"
+                }
               }
             }
           },
-          "400": {"description": "Invalid request"},
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"}
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       },
       "get": {
         "summary": "List memory entries",
         "description": "Lists memory entries accessible to the authenticated user. User-scoped queries return only the user's own entries. Team-scoped queries return entries for teams the user belongs to.",
         "operationId": "listMemories",
-        "tags": ["Memory"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Memory"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "scope",
             "in": "query",
             "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
             "required": false,
-            "schema": {"type": "string", "enum": ["user", "team"]}
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "team"
+              ]
+            }
           },
           {
             "name": "team_id",
             "in": "query",
             "description": "Filter by team ID (required when scope=team)",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "q",
             "in": "query",
             "description": "Full-text search query applied to title and content (case-insensitive)",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "include_tag.{key}",
             "in": "query",
             "description": "Include only memories whose tags contain ALL of the specified key=value pairs. For example, `include_tag.category=news` returns only memories tagged with `category=news`. Multiple include_tag parameters are AND-combined.",
             "required": false,
-            "schema": {"type": "string"},
+            "schema": {
+              "type": "string"
+            },
             "example": "include_tag.category=news"
           },
           {
@@ -2495,7 +2542,9 @@
             "in": "query",
             "description": "Exclude memories whose tags contain ALL of the specified key=value pairs. For example, `exclude_tag.category=news` excludes memories tagged with `category=news`. Multiple exclude_tag parameters are AND-combined.",
             "required": false,
-            "schema": {"type": "string"},
+            "schema": {
+              "type": "string"
+            },
             "example": "exclude_tag.category=news"
           }
         ],
@@ -2504,12 +2553,18 @@
             "description": "List of memory entries",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/MemoryListResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryListResponse"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       }
     },
@@ -2518,15 +2573,26 @@
         "summary": "Get a memory entry",
         "description": "Retrieves a specific memory entry by ID. Access is restricted to the owner (user-scoped) or team members (team-scoped). Admin privilege does NOT bypass these restrictions.",
         "operationId": "getMemory",
-        "tags": ["Memory"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Memory"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "memoryId",
             "in": "path",
             "required": true,
             "description": "UUID of the memory entry",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2534,35 +2600,56 @@
             "description": "Memory entry",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Memory"}
+                "schema": {
+                  "$ref": "#/components/schemas/Memory"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Memory entry not found"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Memory entry not found"
+          }
         }
       },
       "put": {
         "summary": "Update a memory entry",
         "description": "Updates a memory entry. Only the owner (user-scoped) or team members (team-scoped) can update. Omitted fields are not changed.",
         "operationId": "updateMemory",
-        "tags": ["Memory"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Memory"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "memoryId",
             "in": "path",
             "required": true,
             "description": "UUID of the memory entry",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/UpdateMemoryRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMemoryRequest"
+              }
             }
           }
         },
@@ -2571,29 +2658,50 @@
             "description": "Updated memory entry",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Memory"}
+                "schema": {
+                  "$ref": "#/components/schemas/Memory"
+                }
               }
             }
           },
-          "400": {"description": "Invalid request"},
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Memory entry not found"}
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Memory entry not found"
+          }
         }
       },
       "delete": {
         "summary": "Delete a memory entry",
         "description": "Deletes a memory entry. Only the owner (user-scoped) or team members (team-scoped) can delete.",
         "operationId": "deleteMemory",
-        "tags": ["Memory"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Memory"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "memoryId",
             "in": "path",
             "required": true,
             "description": "UUID of the memory entry",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2604,15 +2712,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "success": {"type": "boolean"}
+                    "success": {
+                      "type": "boolean"
+                    }
                   }
                 }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Memory entry not found"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Memory entry not found"
+          }
         }
       }
     },
@@ -2621,13 +2737,24 @@
         "summary": "Create a task",
         "description": "Creates a new task for a user or team. User-scoped tasks are private to the owner. Team-scoped tasks are accessible to all team members.",
         "operationId": "createTask",
-        "tags": ["Tasks"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Tasks"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateTaskRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
             }
           }
         },
@@ -2636,56 +2763,95 @@
             "description": "Task created",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Task"}
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
               }
             }
           },
-          "400": {"description": "Invalid request"},
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"}
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       },
       "get": {
         "summary": "List tasks",
         "description": "Lists tasks accessible to the authenticated user. Supports filtering by scope, team, group, status, and task type.",
         "operationId": "listTasks",
-        "tags": ["Tasks"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Tasks"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "scope",
             "in": "query",
             "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
             "required": false,
-            "schema": {"type": "string", "enum": ["user", "team"]}
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "team"
+              ]
+            }
           },
           {
             "name": "team_id",
             "in": "query",
             "description": "Filter by team ID (required when scope=team)",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "group_id",
             "in": "query",
             "description": "Filter by task group ID",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "status",
             "in": "query",
             "description": "Filter by status: 'todo' or 'done'",
             "required": false,
-            "schema": {"type": "string", "enum": ["todo", "done"]}
+            "schema": {
+              "type": "string",
+              "enum": [
+                "todo",
+                "done"
+              ]
+            }
           },
           {
             "name": "task_type",
             "in": "query",
             "description": "Filter by task type: 'user' or 'agent'",
             "required": false,
-            "schema": {"type": "string", "enum": ["user", "agent"]}
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "agent"
+              ]
+            }
           }
         ],
         "responses": {
@@ -2693,12 +2859,18 @@
             "description": "List of tasks",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/TaskListResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskListResponse"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       }
     },
@@ -2707,15 +2879,26 @@
         "summary": "Get a task",
         "description": "Retrieves a specific task by ID.",
         "operationId": "getTask",
-        "tags": ["Tasks"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Tasks"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "taskId",
             "in": "path",
             "required": true,
             "description": "UUID of the task",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2723,35 +2906,56 @@
             "description": "Task",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Task"}
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Task not found"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Task not found"
+          }
         }
       },
       "put": {
         "summary": "Update a task",
         "description": "Updates a task. Only the owner (user-scoped) or team members (team-scoped) can update. Omitted fields are not changed.",
         "operationId": "updateTask",
-        "tags": ["Tasks"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Tasks"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "taskId",
             "in": "path",
             "required": true,
             "description": "UUID of the task",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/UpdateTaskRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTaskRequest"
+              }
             }
           }
         },
@@ -2760,29 +2964,50 @@
             "description": "Updated task",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Task"}
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
               }
             }
           },
-          "400": {"description": "Invalid request"},
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Task not found"}
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Task not found"
+          }
         }
       },
       "delete": {
         "summary": "Delete a task",
         "description": "Deletes a task. Only the owner (user-scoped) or team members (team-scoped) can delete.",
         "operationId": "deleteTask",
-        "tags": ["Tasks"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "Tasks"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "taskId",
             "in": "path",
             "required": true,
             "description": "UUID of the task",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2793,15 +3018,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "success": {"type": "boolean"}
+                    "success": {
+                      "type": "boolean"
+                    }
                   }
                 }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Task not found"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Task not found"
+          }
         }
       }
     },
@@ -2810,13 +3043,24 @@
         "summary": "Create a task group",
         "description": "Creates a new task group for organizing tasks. Groups support user and team scopes.",
         "operationId": "createTaskGroup",
-        "tags": ["TaskGroups"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "TaskGroups"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateTaskGroupRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskGroupRequest"
+              }
             }
           }
         },
@@ -2825,35 +3069,60 @@
             "description": "Task group created",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/TaskGroup"}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskGroup"
+                }
               }
             }
           },
-          "400": {"description": "Invalid request"},
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"}
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       },
       "get": {
         "summary": "List task groups",
         "description": "Lists task groups accessible to the authenticated user.",
         "operationId": "listTaskGroups",
-        "tags": ["TaskGroups"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "TaskGroups"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "scope",
             "in": "query",
             "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
             "required": false,
-            "schema": {"type": "string", "enum": ["user", "team"]}
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "team"
+              ]
+            }
           },
           {
             "name": "team_id",
             "in": "query",
             "description": "Filter by team ID (required when scope=team)",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2861,12 +3130,18 @@
             "description": "List of task groups",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/TaskGroupListResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskGroupListResponse"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       }
     },
@@ -2875,15 +3150,26 @@
         "summary": "Get a task group",
         "description": "Retrieves a specific task group by ID.",
         "operationId": "getTaskGroup",
-        "tags": ["TaskGroups"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "TaskGroups"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "groupId",
             "in": "path",
             "required": true,
             "description": "UUID of the task group",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2891,35 +3177,56 @@
             "description": "Task group",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/TaskGroup"}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskGroup"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Task group not found"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Task group not found"
+          }
         }
       },
       "put": {
         "summary": "Update a task group",
         "description": "Updates a task group. Omitted fields are not changed.",
         "operationId": "updateTaskGroup",
-        "tags": ["TaskGroups"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "TaskGroups"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "groupId",
             "in": "path",
             "required": true,
             "description": "UUID of the task group",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/UpdateTaskGroupRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTaskGroupRequest"
+              }
             }
           }
         },
@@ -2928,29 +3235,50 @@
             "description": "Updated task group",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/TaskGroup"}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskGroup"
+                }
               }
             }
           },
-          "400": {"description": "Invalid request"},
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Task group not found"}
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Task group not found"
+          }
         }
       },
       "delete": {
         "summary": "Delete a task group",
         "description": "Deletes a task group.",
         "operationId": "deleteTaskGroup",
-        "tags": ["TaskGroups"],
-        "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+        "tags": [
+          "TaskGroups"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "groupId",
             "in": "path",
             "required": true,
             "description": "UUID of the task group",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2961,15 +3289,252 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "success": {"type": "boolean"}
+                    "success": {
+                      "type": "boolean"
+                    }
                   }
                 }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Task group not found"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Task group not found"
+          }
+        }
+      }
+    },
+    "/files": {
+      "post": {
+        "summary": "Create a user file",
+        "description": "Register an arbitrary file (e.g. SSH key) that will be placed inside agent sessions at startup.",
+        "operationId": "createFile",
+        "tags": [
+          "Files"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "File created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserFile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      },
+      "get": {
+        "summary": "List user files",
+        "description": "List all files registered for the authenticated user.",
+        "operationId": "listFiles",
+        "tags": [
+          "Files"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/files/{fileId}": {
+      "get": {
+        "summary": "Get a user file",
+        "operationId": "getFile",
+        "tags": [
+          "Files"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserFile"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a user file",
+        "operationId": "updateFile",
+        "tags": [
+          "Files"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserFile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a user file",
+        "operationId": "deleteFile",
+        "tags": [
+          "Files"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted successfully"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
         }
       }
     }
@@ -2995,7 +3560,10 @@
           },
           "scope": {
             "type": "string",
-            "enum": ["user", "team"],
+            "enum": [
+              "user",
+              "team"
+            ],
             "description": "Scope of the memory entry"
           },
           "owner_id": {
@@ -3008,7 +3576,9 @@
           },
           "tags": {
             "type": "object",
-            "additionalProperties": {"type": "string"},
+            "additionalProperties": {
+              "type": "string"
+            },
             "description": "Key-value tags for filtering"
           },
           "created_at": {
@@ -3022,12 +3592,23 @@
             "description": "Last update timestamp"
           }
         },
-        "required": ["id", "title", "content", "scope", "owner_id", "created_at", "updated_at"]
+        "required": [
+          "id",
+          "title",
+          "content",
+          "scope",
+          "owner_id",
+          "created_at",
+          "updated_at"
+        ]
       },
       "CreateMemoryRequest": {
         "type": "object",
         "description": "Request body for creating a memory entry",
-        "required": ["title", "scope"],
+        "required": [
+          "title",
+          "scope"
+        ],
         "properties": {
           "title": {
             "type": "string",
@@ -3039,7 +3620,10 @@
           },
           "scope": {
             "type": "string",
-            "enum": ["user", "team"],
+            "enum": [
+              "user",
+              "team"
+            ],
             "description": "Scope of the memory entry"
           },
           "team_id": {
@@ -3048,7 +3632,9 @@
           },
           "tags": {
             "type": "object",
-            "additionalProperties": {"type": "string"},
+            "additionalProperties": {
+              "type": "string"
+            },
             "description": "Key-value tags for filtering"
           }
         }
@@ -3067,7 +3653,9 @@
           },
           "tags": {
             "type": "object",
-            "additionalProperties": {"type": "string"},
+            "additionalProperties": {
+              "type": "string"
+            },
             "description": "New tags (when present, replaces ALL existing tags; omit to keep existing)"
           }
         }
@@ -3078,7 +3666,9 @@
         "properties": {
           "memories": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/Memory"},
+            "items": {
+              "$ref": "#/components/schemas/Memory"
+            },
             "description": "List of memory entries"
           },
           "total": {
@@ -3086,7 +3676,10 @@
             "description": "Total number of entries in the response"
           }
         },
-        "required": ["memories", "total"]
+        "required": [
+          "memories",
+          "total"
+        ]
       },
       "TaskLink": {
         "type": "object",
@@ -3107,7 +3700,10 @@
             "description": "Optional label for the link"
           }
         },
-        "required": ["id", "url"]
+        "required": [
+          "id",
+          "url"
+        ]
       },
       "TaskLinkRequest": {
         "type": "object",
@@ -3123,7 +3719,9 @@
             "description": "Optional label for the link"
           }
         },
-        "required": ["url"]
+        "required": [
+          "url"
+        ]
       },
       "Task": {
         "type": "object",
@@ -3144,17 +3742,26 @@
           },
           "status": {
             "type": "string",
-            "enum": ["todo", "done"],
+            "enum": [
+              "todo",
+              "done"
+            ],
             "description": "Current status of the task"
           },
           "task_type": {
             "type": "string",
-            "enum": ["user", "agent"],
+            "enum": [
+              "user",
+              "agent"
+            ],
             "description": "Who manages the task: 'user' for human-managed, 'agent' for AI agent-managed"
           },
           "scope": {
             "type": "string",
-            "enum": ["user", "team"],
+            "enum": [
+              "user",
+              "team"
+            ],
             "description": "Scope of the task"
           },
           "owner_id": {
@@ -3176,7 +3783,9 @@
           },
           "links": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/TaskLink"},
+            "items": {
+              "$ref": "#/components/schemas/TaskLink"
+            },
             "description": "List of associated links"
           },
           "created_at": {
@@ -3190,7 +3799,17 @@
             "description": "Last update timestamp (ISO 8601)"
           }
         },
-        "required": ["id", "title", "status", "task_type", "scope", "owner_id", "links", "created_at", "updated_at"]
+        "required": [
+          "id",
+          "title",
+          "status",
+          "task_type",
+          "scope",
+          "owner_id",
+          "links",
+          "created_at",
+          "updated_at"
+        ]
       },
       "CreateTaskRequest": {
         "type": "object",
@@ -3206,12 +3825,18 @@
           },
           "task_type": {
             "type": "string",
-            "enum": ["user", "agent"],
+            "enum": [
+              "user",
+              "agent"
+            ],
             "description": "Who manages the task"
           },
           "scope": {
             "type": "string",
-            "enum": ["user", "team"],
+            "enum": [
+              "user",
+              "team"
+            ],
             "description": "Scope of the task"
           },
           "team_id": {
@@ -3229,11 +3854,17 @@
           },
           "links": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/TaskLinkRequest"},
+            "items": {
+              "$ref": "#/components/schemas/TaskLinkRequest"
+            },
             "description": "Associated links"
           }
         },
-        "required": ["title", "task_type", "scope"]
+        "required": [
+          "title",
+          "task_type",
+          "scope"
+        ]
       },
       "UpdateTaskRequest": {
         "type": "object",
@@ -3249,7 +3880,10 @@
           },
           "status": {
             "type": "string",
-            "enum": ["todo", "done"],
+            "enum": [
+              "todo",
+              "done"
+            ],
             "description": "New status"
           },
           "group_id": {
@@ -3262,7 +3896,9 @@
           },
           "links": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/TaskLinkRequest"},
+            "items": {
+              "$ref": "#/components/schemas/TaskLinkRequest"
+            },
             "description": "Replaces all existing links when present"
           }
         }
@@ -3273,7 +3909,9 @@
         "properties": {
           "tasks": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/Task"},
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
             "description": "List of tasks"
           },
           "total": {
@@ -3281,7 +3919,10 @@
             "description": "Total number of tasks in the response"
           }
         },
-        "required": ["tasks", "total"]
+        "required": [
+          "tasks",
+          "total"
+        ]
       },
       "TaskGroup": {
         "type": "object",
@@ -3302,7 +3943,10 @@
           },
           "scope": {
             "type": "string",
-            "enum": ["user", "team"],
+            "enum": [
+              "user",
+              "team"
+            ],
             "description": "Scope of the task group"
           },
           "owner_id": {
@@ -3324,7 +3968,14 @@
             "description": "Last update timestamp (ISO 8601)"
           }
         },
-        "required": ["id", "name", "scope", "owner_id", "created_at", "updated_at"]
+        "required": [
+          "id",
+          "name",
+          "scope",
+          "owner_id",
+          "created_at",
+          "updated_at"
+        ]
       },
       "CreateTaskGroupRequest": {
         "type": "object",
@@ -3340,7 +3991,10 @@
           },
           "scope": {
             "type": "string",
-            "enum": ["user", "team"],
+            "enum": [
+              "user",
+              "team"
+            ],
             "description": "Scope of the task group"
           },
           "team_id": {
@@ -3348,7 +4002,10 @@
             "description": "Team ID (required when scope is 'team')"
           }
         },
-        "required": ["name", "scope"]
+        "required": [
+          "name",
+          "scope"
+        ]
       },
       "UpdateTaskGroupRequest": {
         "type": "object",
@@ -3370,7 +4027,9 @@
         "properties": {
           "task_groups": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/TaskGroup"},
+            "items": {
+              "$ref": "#/components/schemas/TaskGroup"
+            },
             "description": "List of task groups"
           },
           "total": {
@@ -3378,7 +4037,10 @@
             "description": "Total number of task groups in the response"
           }
         },
-        "required": ["task_groups", "total"]
+        "required": [
+          "task_groups",
+          "total"
+        ]
       },
       "StartRequest": {
         "type": "object",
@@ -4631,7 +5293,10 @@
       },
       "SendNotificationRequest": {
         "type": "object",
-        "required": ["title", "body"],
+        "required": [
+          "title",
+          "body"
+        ],
         "properties": {
           "title": {
             "type": "string",
@@ -4814,11 +5479,99 @@
             "type": "string"
           }
         }
+      },
+      "UserFile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique file identifier (UUID)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable display name"
+          },
+          "path": {
+            "type": "string",
+            "description": "Destination path inside the agent container (e.g. /home/agentapi/.ssh/id_rsa)"
+          },
+          "content": {
+            "type": "string",
+            "description": "File content (plain text or base64-encoded)"
+          },
+          "permissions": {
+            "type": "string",
+            "description": "File permissions hint (e.g. \"0600\"). The provisioner writes files with mode 0600 by default."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateFileRequest": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable display name"
+          },
+          "path": {
+            "type": "string",
+            "description": "Destination path inside the agent container"
+          },
+          "content": {
+            "type": "string",
+            "description": "File content"
+          },
+          "permissions": {
+            "type": "string",
+            "description": "Permissions hint (informational)"
+          }
+        }
+      },
+      "UpdateFileRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": "string"
+          }
+        }
+      },
+      "FileListResponse": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserFile"
+            }
+          }
+        }
       }
     },
     "SlackBotStatus": {
       "type": "string",
-      "enum": ["active", "paused"],
+      "enum": [
+        "active",
+        "paused"
+      ],
       "description": "SlackBot operational status"
     },
     "SlackBotSessionParams": {
@@ -4871,7 +5624,9 @@
     },
     "CreateSlackBotRequest": {
       "type": "object",
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -4902,7 +5657,10 @@
             "type": "string"
           },
           "description": "Slack event types to process. Empty means all event types are allowed.",
-          "example": ["message", "app_mention"]
+          "example": [
+            "message",
+            "app_mention"
+          ]
         },
         "allowed_channel_names": {
           "type": "array",
@@ -4910,7 +5668,10 @@
             "type": "string"
           },
           "description": "Slack channel name patterns to listen to (partial match). Empty means all channels are allowed.",
-          "example": ["dev", "backend"]
+          "example": [
+            "dev",
+            "backend"
+          ]
         },
         "session_config": {
           "$ref": "#/components/schemas/SlackBotSessionConfig"
@@ -5159,6 +5920,10 @@
     {
       "name": "TaskGroups",
       "description": "Task group management for organizing tasks into logical collections. Groups support user and team scopes."
+    },
+    {
+      "name": "Files",
+      "description": "User-managed files to be placed inside agent sessions"
     }
   ]
 }

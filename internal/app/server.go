@@ -55,6 +55,7 @@ type Server struct {
 	taskRepo         portrepos.TaskRepository         // Task repository
 	taskGroupRepo    portrepos.TaskGroupRepository    // Task group repository
 	sessionRouteRepo portrepos.SessionRouteRepository // Session route repository for proxy B routing
+	userFileRepo     portrepos.UserFileRepository     // User-managed files repository
 	router           *Router                          // Router for custom handler registration
 }
 
@@ -94,7 +95,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files"
 			}
 			return false
 		},
@@ -267,6 +268,13 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	)
 	log.Printf("[SERVER] Session route repository initialized")
 
+	// Initialize user file repository (Kubernetes Secret-backed)
+	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	))
+	log.Printf("[SERVER] User file repository initialized")
+
 	s := &Server{
 		config:           cfg,
 		echo:             e,
@@ -282,6 +290,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		taskRepo:         taskRepo,
 		taskGroupRepo:    taskGroupRepo,
 		sessionRouteRepo: sessionRouteRepo,
+		userFileRepo:     userFileRepo,
 	}
 
 	// Add logging middleware if verbose
