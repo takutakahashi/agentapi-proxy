@@ -322,35 +322,6 @@ func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 	}
 }
 
-// appendOrCreateMessage appends content to the last agent/assistant message if
-// it has the same role and is not a tool message; otherwise creates a new one.
-func (b *Bridge) appendOrCreateMessage(role MessageRole, content string, msgType MessageType, toolUseId, parentToolUseId string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if len(b.messages) > 0 {
-		last := &b.messages[len(b.messages)-1]
-		if last.Role == role && last.ToolUseId == "" && last.Type == msgType {
-			last.Content += content
-			last.Time = time.Now()
-			b.broadcastMessageUpdateLocked(*last)
-			return
-		}
-	}
-	b.nextID++
-	msg := Message{
-		ID:              b.nextID,
-		Role:            role,
-		Content:         content,
-		Time:            time.Now(),
-		Type:            msgType,
-		ToolUseId:       toolUseId,
-		ParentToolUseId: parentToolUseId,
-	}
-	b.messages = append(b.messages, msg)
-	b.broadcastMessageUpdateLocked(msg)
-}
-
 func (b *Bridge) addNewMessage(role MessageRole, content string, msgType MessageType, toolUseId, parentToolUseId string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
