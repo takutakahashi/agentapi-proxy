@@ -171,10 +171,11 @@ type Bridge struct {
 	// so they survive beyond the HTTP request that triggered them.
 	serverCtx context.Context
 
-	mu       sync.RWMutex
-	status   AgentStatus
-	messages []Message
-	nextID   int64
+	mu               sync.RWMutex
+	status           AgentStatus
+	messages         []Message
+	nextID           int64
+	pendingAgentText strings.Builder // buffers agent_message_chunk until message boundary
 
 	subsMu sync.Mutex
 	subs   []*subscriber
@@ -239,13 +240,19 @@ func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 
 	switch update.Kind {
 	case acp.SessionUpdateKindAgentMessageChunk:
+		// Buffer chunks; the complete message is emitted when a boundary event
+		// (tool_call, plan, or turn-end via setStatus) is reached.
 		text := acp.ExtractTextContent(update.Content)
-		b.appendOrCreateMessage(MessageRoleAgent, text, MessageTypeNormal, "", "")
+		b.mu.Lock()
+		b.pendingAgentText.WriteString(text)
+		b.mu.Unlock()
 
 	case acp.SessionUpdateKindAgentThoughtChunk:
 		// Thinking/reasoning content – intentionally not surfaced to the frontend.
 
 	case acp.SessionUpdateKindToolCall:
+		// Flush any buffered agent text before recording the tool call.
+		b.flushPendingAgentText()
 		// New tool invocation – serialize as JSON string matching claude-agentapi format.
 		// Frontend expects: {"type":"tool_use","name":"<kind>","id":"<toolCallId>","input":{...}}
 		toolObj := map[string]interface{}{
@@ -304,6 +311,8 @@ func (b *Bridge) handleUpdate(update acp.SessionUpdate) {
 		}
 
 	case acp.SessionUpdateKindPlan:
+		// Flush any buffered agent text before recording the plan.
+		b.flushPendingAgentText()
 		// ACP sends plan as a structured entries list (from TodoWrite), not a plain string.
 		// Convert to a markdown task list for display in the frontend plan modal.
 		if len(update.Entries) > 0 {
@@ -786,6 +795,9 @@ func (b *Bridge) SubmitAction(ctx context.Context, req ActionRequest) error {
 // ----------------------------------------------------------------------------
 
 func (b *Bridge) setStatus(s AgentStatus) {
+	// Flush any remaining buffered agent text before changing status so that
+	// a complete message is visible before the "stable" status is broadcast.
+	b.flushPendingAgentText()
 	b.mu.Lock()
 	b.status = s
 	b.mu.Unlock()
@@ -793,6 +805,31 @@ func (b *Bridge) setStatus(s AgentStatus) {
 		Type: EventTypeStatusChange,
 		Data: StatusChangeData{Status: s, AgentType: "acp"},
 	})
+}
+
+// flushPendingAgentText commits any buffered agent_message_chunk text as a
+// single complete Message and broadcasts it to SSE subscribers.
+// It is a no-op when the buffer is empty.
+// Must NOT be called while b.mu is held (it acquires b.mu internally).
+func (b *Bridge) flushPendingAgentText() {
+	b.mu.Lock()
+	text := b.pendingAgentText.String()
+	if text == "" {
+		b.mu.Unlock()
+		return
+	}
+	b.pendingAgentText.Reset()
+	b.nextID++
+	msg := Message{
+		ID:      b.nextID,
+		Role:    MessageRoleAgent,
+		Content: text,
+		Time:    time.Now(),
+		Type:    MessageTypeNormal,
+	}
+	b.messages = append(b.messages, msg)
+	b.broadcastMessageUpdateLocked(msg)
+	b.mu.Unlock()
 }
 
 func (b *Bridge) broadcastError(msg string) {
