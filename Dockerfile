@@ -172,6 +172,8 @@ ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
 
 # Set CLAUDE_CODE_EXECUTABLE_PATH to use claude-agent-sdk native binary (via arch-agnostic symlink)
 ENV CLAUDE_CODE_EXECUTABLE_PATH=/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
+# Set CLAUDE_CODE_EXECUTABLE for @agentclientprotocol/claude-agent-acp (reads this env var, not CLAUDE_CODE_EXECUTABLE_PATH)
+ENV CLAUDE_CODE_EXECUTABLE=/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
