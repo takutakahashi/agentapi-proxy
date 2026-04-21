@@ -156,8 +156,22 @@ RUN bun install -g @takutakahashi/claude-agentapi
 # Install codex CLI
 RUN bun install -g @openai/codex
 
+# Install claude-agent-sdk CLI and create arch-agnostic symlink
+RUN bun install -g @anthropic-ai/claude-agent-sdk && \
+    ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) SDK_ARCH="linux-x64" ;; \
+      arm64) SDK_ARCH="linux-arm64" ;; \
+      *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    ln -sf "/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk-${SDK_ARCH}/claude" \
+           /home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
+
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
+
+# Set CLAUDE_CODE_EXECUTABLE_PATH to use claude-agent-sdk native binary (via arch-agnostic symlink)
+ENV CLAUDE_CODE_EXECUTABLE_PATH=/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
