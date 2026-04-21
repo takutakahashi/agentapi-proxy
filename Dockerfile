@@ -156,8 +156,14 @@ RUN bun install -g @takutakahashi/claude-agentapi
 # Install codex CLI
 RUN bun install -g @openai/codex
 
+# Install claude-agent-sdk CLI
+RUN bun install -g @anthropic-ai/claude-agent-sdk
+
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
+
+# Set CLAUDE_CODE_EXECUTABLE_PATH to use claude-agent-sdk CLI
+ENV CLAUDE_CODE_EXECUTABLE_PATH=/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/cli.js
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
