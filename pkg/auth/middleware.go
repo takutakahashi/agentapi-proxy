@@ -2,9 +2,6 @@ package auth
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"log"
 	"net/http"
@@ -14,6 +11,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
 // UserContext represents the authenticated user context (for legacy compatibility)
@@ -398,9 +396,20 @@ func extractAPIKeyFromAuthHeader(header string) string {
 
 // skipAuthForHMACRequest checks if the request carries a valid HMAC-SHA256 signature.
 // Used to allow trusted Proxy A requests to bypass standard authentication on Proxy B.
+// The signature must cover the canonical message: METHOD\nPATH?QUERY\nTIMESTAMP\nBODY
 func skipAuthForHMACRequest(c echo.Context, hmacSecret string) bool {
 	sig := c.Request().Header.Get("X-Hub-Signature-256")
 	if sig == "" {
+		return false
+	}
+
+	ts := c.Request().Header.Get(hmacutil.TimestampHeader)
+	if ts == "" {
+		return false
+	}
+
+	// Validate timestamp to prevent replay attacks
+	if err := hmacutil.ValidateTimestamp(ts); err != nil {
 		return false
 	}
 
@@ -415,11 +424,11 @@ func skipAuthForHMACRequest(c echo.Context, hmacSecret string) bool {
 		c.Request().Body = io.NopCloser(bytes.NewReader(body))
 	}
 
-	mac := hmac.New(sha256.New, []byte(hmacSecret))
-	mac.Write(body)
-	expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	// Build the canonical signing message: METHOD\nPATH?QUERY\nTIMESTAMP\nBODY
+	pathWithQuery := c.Request().URL.RequestURI()
+	msg := hmacutil.BuildMessage(c.Request().Method, pathWithQuery, ts, body)
 
-	return hmac.Equal([]byte(sig), []byte(expected))
+	return hmacutil.Verify([]byte(hmacSecret), msg, sig)
 }
 
 // tryInternalAWSAuth attempts AWS authentication using Basic Auth
