@@ -215,7 +215,7 @@ func TestResolveBotByChannel_Success(t *testing.T) {
 	// Bot with matching AllowedChannelNames and no custom bot token
 	repo := newMockSlackBotRepository()
 	bot := entities.NewSlackBot("bot-uuid-1", "Dev Alerts Bot", "user-1")
-	bot.SetAllowedChannelNames([]string{"dev"}) // partial match: "dev" ⊆ "dev-alerts"
+	bot.SetAllowedChannelNames([]string{"dev"}) // prefix match: "dev-alerts" starts with "dev"
 	// BotTokenSecretName = "" → uses default
 	repo.bots["bot-uuid-1"] = bot
 
@@ -335,6 +335,75 @@ func TestResolveBotByChannel_EmptyAllowedChannelNames_Skipped(t *testing.T) {
 
 	resolved := handler.resolveBotByChannel(context.Background(), channelID)
 	assert.Nil(t, resolved, "bot with empty AllowedChannelNames cannot be identified via default endpoint")
+}
+
+func TestResolveBotByChannel_LongestMatch(t *testing.T) {
+	const (
+		namespace  = "test-ns"
+		secretName = "bot-token-secret"
+		channelID  = "C-dev-alerts"
+	)
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			Data:       map[string][]byte{"bot-token": []byte("xoxb-test")},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-slack-channel-cache", Namespace: namespace},
+			Data:       map[string]string{channelID: "dev-alerts"},
+		},
+	)
+	resolver := services.NewSlackChannelResolver(fakeClient, namespace)
+
+	repo := newMockSlackBotRepository()
+
+	// Bot A: shorter prefix "dev" — matches "dev-alerts" but less specific
+	botA := entities.NewSlackBot("bot-uuid-a", "Dev Bot", "user-1")
+	botA.SetAllowedChannelNames([]string{"dev"})
+	repo.bots["bot-uuid-a"] = botA
+
+	// Bot B: longer prefix "dev-alerts" — more specific, should win
+	botB := entities.NewSlackBot("bot-uuid-b", "Dev Alerts Bot", "user-1")
+	botB.SetAllowedChannelNames([]string{"dev-alerts"})
+	repo.bots["bot-uuid-b"] = botB
+
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil)
+
+	resolved := handler.resolveBotByChannel(context.Background(), channelID)
+	require.NotNil(t, resolved, "should resolve a bot by channel name")
+	assert.Equal(t, "bot-uuid-b", resolved.ID(), "longest matching prefix bot should be selected")
+}
+
+func TestResolveBotByChannel_PrefixOnly_NoSuffixMatch(t *testing.T) {
+	const (
+		namespace  = "test-ns"
+		secretName = "bot-token-secret"
+		channelID  = "C-dev-alerts"
+	)
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			Data:       map[string][]byte{"bot-token": []byte("xoxb-test")},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-slack-channel-cache", Namespace: namespace},
+			Data:       map[string]string{channelID: "dev-alerts"},
+		},
+	)
+	resolver := services.NewSlackChannelResolver(fakeClient, namespace)
+
+	repo := newMockSlackBotRepository()
+	// Bot with suffix-only pattern — must NOT match because matching is prefix only
+	bot := entities.NewSlackBot("bot-uuid-1", "Alerts Bot", "user-1")
+	bot.SetAllowedChannelNames([]string{"alerts"}) // "dev-alerts" does NOT start with "alerts"
+	repo.bots["bot-uuid-1"] = bot
+
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil)
+
+	resolved := handler.resolveBotByChannel(context.Background(), channelID)
+	assert.Nil(t, resolved, "suffix-only pattern should not match with prefix matching")
 }
 
 // ---- Tests for ProcessEvent ----

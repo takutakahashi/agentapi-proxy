@@ -206,22 +206,22 @@ func TestSlackBot_IsChannelNameAllowed(t *testing.T) {
 			want:                true,
 		},
 		{
-			name:                "partial match (prefix)",
+			name:                "prefix match",
 			allowedChannelNames: []string{"dev"},
 			channelName:         "dev-alerts",
 			want:                true,
 		},
 		{
-			name:                "partial match (suffix)",
+			name:                "suffix-only does not match (not prefix)",
 			allowedChannelNames: []string{"alerts"},
 			channelName:         "dev-alerts",
-			want:                true,
+			want:                false,
 		},
 		{
-			name:                "partial match (substring)",
-			allowedChannelNames: []string{"back"},
+			name:                "substring-only does not match (not prefix)",
+			allowedChannelNames: []string{"end"},
 			channelName:         "backend-team",
-			want:                true,
+			want:                false,
 		},
 		{
 			name:                "no match",
@@ -244,6 +244,63 @@ func TestSlackBot_IsChannelNameAllowed(t *testing.T) {
 			got := bot.IsChannelNameAllowed(tt.channelName)
 			if got != tt.want {
 				t.Errorf("IsChannelNameAllowed(%q) = %v, want %v", tt.channelName, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSlackBot_LongestMatchingChannelPatternLength(t *testing.T) {
+	tests := []struct {
+		name                string
+		allowedChannelNames []string
+		channelName         string
+		want                int
+	}{
+		{
+			name:                "no patterns configured",
+			allowedChannelNames: []string{},
+			channelName:         "dev-alerts",
+			want:                0,
+		},
+		{
+			name:                "no prefix match",
+			allowedChannelNames: []string{"prod", "staging"},
+			channelName:         "dev-alerts",
+			want:                0,
+		},
+		{
+			name:                "single prefix match",
+			allowedChannelNames: []string{"dev"},
+			channelName:         "dev-alerts",
+			want:                3,
+		},
+		{
+			name:                "exact match",
+			allowedChannelNames: []string{"dev-alerts"},
+			channelName:         "dev-alerts",
+			want:                10, // len("dev-alerts") == 10
+		},
+		{
+			name:                "longer pattern wins",
+			allowedChannelNames: []string{"dev", "dev-alerts"},
+			channelName:         "dev-alerts",
+			want:                10, // len("dev-alerts") == 10 > len("dev") == 3
+		},
+		{
+			name:                "suffix-only pattern does not match",
+			allowedChannelNames: []string{"alerts"},
+			channelName:         "dev-alerts",
+			want:                0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot := NewSlackBot("id-1", "bot", "user-1")
+			bot.SetAllowedChannelNames(tt.allowedChannelNames)
+			got := bot.LongestMatchingChannelPatternLength(tt.channelName)
+			if got != tt.want {
+				t.Errorf("LongestMatchingChannelPatternLength(%q) = %d, want %d", tt.channelName, got, tt.want)
 			}
 		})
 	}
