@@ -31,7 +31,7 @@ type SlackBot struct {
 	botTokenSecretKey      string                // Key within the Secret; default: "bot-token"
 	appTokenSecretKey      string                // Key within botTokenSecretName Secret for xapp-... token; default: "app-token"
 	allowedEventTypes      []string              // Empty means all event types
-	allowedChannelNames    []string              // Empty means all channels; partial match on resolved channel name
+	allowedChannelNames    []string              // Empty means all channels; prefix match on resolved channel name
 	sessionConfig          *WebhookSessionConfig // Reuse existing type
 	maxSessions            int
 	notifyOnSessionCreated *bool // nil means true (default: notify)
@@ -174,7 +174,7 @@ func (s *SlackBot) SetAllowedEventTypes(types []string) {
 }
 
 // AllowedChannelNames returns the list of allowed Slack channel name patterns.
-// Empty means all channels are allowed. Matching is partial (substring).
+// Empty means all channels are allowed. Matching is prefix (前方一致).
 func (s *SlackBot) AllowedChannelNames() []string { return s.allowedChannelNames }
 
 // SetAllowedChannelNames sets the list of allowed Slack channel name patterns
@@ -276,18 +276,32 @@ func (s *SlackBot) IsEventTypeAllowed(eventType string) bool {
 }
 
 // IsChannelNameAllowed returns true if the given channel name matches any of the allowed patterns.
-// Matching is partial (substring): a pattern is considered matched if the channel name contains it.
+// Matching is prefix (前方一致): a pattern is considered matched if the channel name starts with it.
 // If no patterns are configured, all channels are allowed.
 func (s *SlackBot) IsChannelNameAllowed(channelName string) bool {
 	if len(s.allowedChannelNames) == 0 {
 		return true
 	}
 	for _, pattern := range s.allowedChannelNames {
-		if strings.Contains(channelName, pattern) {
+		if strings.HasPrefix(channelName, pattern) {
 			return true
 		}
 	}
 	return false
+}
+
+// LongestMatchingChannelPatternLength returns the length of the longest channel name pattern
+// that matches channelName by prefix (前方一致). Returns 0 if no pattern matches or if
+// allowedChannelNames is empty. This is used for longest-match bot selection when multiple
+// bots have patterns that match the same channel.
+func (s *SlackBot) LongestMatchingChannelPatternLength(channelName string) int {
+	maxLen := 0
+	for _, pattern := range s.allowedChannelNames {
+		if strings.HasPrefix(channelName, pattern) && len(pattern) > maxLen {
+			maxLen = len(pattern)
+		}
+	}
+	return maxLen
 }
 
 // BotToken returns the transient bot token value (write-only, never returned in API)

@@ -484,6 +484,8 @@ func (h *SlackBotEventHandler) resolveBotByChannel(ctx context.Context, channelI
 		log.Printf("[SLACKBOT] resolveBotByChannel: failed to list bots: %v", err)
 		return nil
 	}
+	var bestCandidate *entities.SlackBot
+	var bestMatchLen int
 	for _, candidate := range allBots {
 		// Only match bots that rely on the default bot token
 		if candidate.BotTokenSecretName() != "" {
@@ -493,11 +495,16 @@ func (h *SlackBotEventHandler) resolveBotByChannel(ctx context.Context, channelI
 		if len(candidate.AllowedChannelNames()) == 0 {
 			continue
 		}
-		if candidate.IsChannelNameAllowed(channelName) {
-			log.Printf("[SLACKBOT] resolveBotByChannel: matched bot id=%s for channel=%s (name=%s)",
-				candidate.ID(), channelID, channelName)
-			return candidate
+		matchLen := candidate.LongestMatchingChannelPatternLength(channelName)
+		if matchLen > bestMatchLen {
+			bestMatchLen = matchLen
+			bestCandidate = candidate
 		}
+	}
+	if bestCandidate != nil {
+		log.Printf("[SLACKBOT] resolveBotByChannel: matched bot id=%s for channel=%s (name=%s, matchLen=%d)",
+			bestCandidate.ID(), channelID, channelName, bestMatchLen)
+		return bestCandidate
 	}
 	return nil
 }
