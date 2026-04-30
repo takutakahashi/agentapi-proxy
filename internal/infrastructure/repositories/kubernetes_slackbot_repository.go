@@ -50,6 +50,7 @@ type slackBotJSON struct {
 	AppTokenSecretKey      string                    `json:"app_token_secret_key,omitempty"`
 	AllowedEventTypes      []string                  `json:"allowed_event_types,omitempty"`
 	AllowedChannelNames    []string                  `json:"allowed_channel_names,omitempty"`
+	AllowedUserIDs         []string                  `json:"allowed_user_ids,omitempty"`
 	SessionConfig          *webhookSessionConfigJSON `json:"session_config,omitempty"`
 	MaxSessions            int                       `json:"max_sessions,omitempty"`
 	NotifyOnSessionCreated *bool                     `json:"notify_on_session_created,omitempty"`
@@ -387,6 +388,9 @@ func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities
 	if len(sbj.AllowedChannelNames) > 0 {
 		slackBot.SetAllowedChannelNames(sbj.AllowedChannelNames)
 	}
+	if len(sbj.AllowedUserIDs) > 0 {
+		slackBot.SetAllowedUserIDs(sbj.AllowedUserIDs)
+	}
 	if sbj.MaxSessions > 0 {
 		slackBot.SetMaxSessions(sbj.MaxSessions)
 	}
@@ -415,6 +419,7 @@ func (r *KubernetesSlackBotRepository) entityToJSON(sb *entities.SlackBot) *slac
 		AppTokenSecretKey:   sb.AppTokenSecretKey(),
 		AllowedEventTypes:   sb.AllowedEventTypes(),
 		AllowedChannelNames: sb.AllowedChannelNames(),
+		AllowedUserIDs:      sb.AllowedUserIDs(),
 		MaxSessions:         sb.MaxSessions(),
 		CreatedAt:           sb.CreatedAt(),
 		UpdatedAt:           sb.UpdatedAt(),

@@ -249,6 +249,69 @@ func TestSlackBot_IsChannelNameAllowed(t *testing.T) {
 	}
 }
 
+func TestSlackBot_IsUserIDAllowed(t *testing.T) {
+	tests := []struct {
+		name           string
+		allowedUserIDs []string
+		userID         string
+		want           bool
+	}{
+		{
+			name:           "all users allowed (empty list)",
+			allowedUserIDs: []string{},
+			userID:         "U012AB3CD",
+			want:           true,
+		},
+		{
+			name:           "nil allowed list (all users allowed)",
+			allowedUserIDs: nil,
+			userID:         "U012AB3CD",
+			want:           true,
+		},
+		{
+			name:           "user in allowed list",
+			allowedUserIDs: []string{"U012AB3CD", "U987XY654"},
+			userID:         "U012AB3CD",
+			want:           true,
+		},
+		{
+			name:           "second user in allowed list",
+			allowedUserIDs: []string{"U012AB3CD", "U987XY654"},
+			userID:         "U987XY654",
+			want:           true,
+		},
+		{
+			name:           "user not in allowed list",
+			allowedUserIDs: []string{"U012AB3CD"},
+			userID:         "UNOTALLOWED",
+			want:           false,
+		},
+		{
+			name:           "partial match does not count (exact match required)",
+			allowedUserIDs: []string{"U012AB"},
+			userID:         "U012AB3CD",
+			want:           false,
+		},
+		{
+			name:           "empty user ID not in non-empty list",
+			allowedUserIDs: []string{"U012AB3CD"},
+			userID:         "",
+			want:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot := NewSlackBot("id-1", "bot", "user-1")
+			bot.SetAllowedUserIDs(tt.allowedUserIDs)
+			got := bot.IsUserIDAllowed(tt.userID)
+			if got != tt.want {
+				t.Errorf("IsUserIDAllowed(%q) = %v, want %v", tt.userID, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSlackBot_BotTokenSecretKey_Default(t *testing.T) {
 	bot := NewSlackBot("id-1", "bot", "user-1")
 	// When not set, should return default "bot-token"

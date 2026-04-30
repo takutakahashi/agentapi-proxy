@@ -37,6 +37,9 @@ type CreateSlackBotRequest struct {
 	BotTokenSecretKey   string                 `json:"bot_token_secret_key,omitempty"`
 	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
 	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
+	// AllowedUserIDs is the list of Slack user IDs allowed to trigger the bot.
+	// Empty means all users are allowed. Matching is exact (e.g., "U012AB3CD").
+	AllowedUserIDs      []string               `json:"allowed_user_ids,omitempty"`
 	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
 	MaxSessions         int                    `json:"max_sessions,omitempty"`
 	// NotifyOnSessionCreated controls whether the bot posts a Slack message with
@@ -65,6 +68,9 @@ type UpdateSlackBotRequest struct {
 	BotTokenSecretKey   *string                `json:"bot_token_secret_key"`
 	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
 	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
+	// AllowedUserIDs is the list of Slack user IDs allowed to trigger the bot.
+	// Empty means all users are allowed. Matching is exact (e.g., "U012AB3CD").
+	AllowedUserIDs      []string               `json:"allowed_user_ids,omitempty"`
 	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
 	MaxSessions         int                    `json:"max_sessions,omitempty"`
 	// NotifyOnSessionCreated controls whether the bot posts a Slack message with
@@ -112,6 +118,7 @@ type SlackBotResponse struct {
 	BotTokenSecretKey      string                  `json:"bot_token_secret_key,omitempty"`
 	AllowedEventTypes      []string                `json:"allowed_event_types,omitempty"`
 	AllowedChannelNames    []string                `json:"allowed_channel_names,omitempty"`
+	AllowedUserIDs         []string                `json:"allowed_user_ids,omitempty"`
 	SessionConfig          *SlackBotSessionConfig  `json:"session_config,omitempty"`
 	MaxSessions            int                     `json:"max_sessions"`
 	NotifyOnSessionCreated bool                    `json:"notify_on_session_created"`
@@ -175,6 +182,9 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	}
 	if len(req.AllowedChannelNames) > 0 {
 		bot.SetAllowedChannelNames(req.AllowedChannelNames)
+	}
+	if len(req.AllowedUserIDs) > 0 {
+		bot.SetAllowedUserIDs(req.AllowedUserIDs)
 	}
 	if req.MaxSessions > 0 {
 		bot.SetMaxSessions(req.MaxSessions)
@@ -324,6 +334,9 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 	if req.AllowedChannelNames != nil {
 		bot.SetAllowedChannelNames(req.AllowedChannelNames)
 	}
+	if req.AllowedUserIDs != nil {
+		bot.SetAllowedUserIDs(req.AllowedUserIDs)
+	}
 	if req.MaxSessions > 0 {
 		bot.SetMaxSessions(req.MaxSessions)
 	}
@@ -403,6 +416,7 @@ func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotRespons
 		BotTokenSecretKey:      bot.BotTokenSecretKey(),
 		AllowedEventTypes:      bot.AllowedEventTypes(),
 		AllowedChannelNames:    bot.AllowedChannelNames(),
+		AllowedUserIDs:         bot.AllowedUserIDs(),
 		MaxSessions:            bot.MaxSessions(),
 		NotifyOnSessionCreated: bot.NotifyOnSessionCreated(),
 		AllowBotMessages:       bot.AllowBotMessages(),
