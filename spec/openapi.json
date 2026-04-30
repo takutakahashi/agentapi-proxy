@@ -5586,6 +5586,11 @@
           "type": "boolean",
           "description": "If true, session exits after one response",
           "default": false
+        },
+        "repo_full_name": {
+          "type": "string",
+          "description": "Full name of the GitHub repository to clone (e.g. 'org/repo'). When set, AGENTAPI_REPO_FULLNAME and AGENTAPI_CLONE_DIR are injected into the session environment so the repository is cloned at session startup. Takes priority over any repository auto-detected from the Slack message text.",
+          "example": "myorg/myrepo"
         }
       }
     },
