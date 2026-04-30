@@ -32,6 +32,7 @@ type SlackBot struct {
 	appTokenSecretKey      string                // Key within botTokenSecretName Secret for xapp-... token; default: "app-token"
 	allowedEventTypes      []string              // Empty means all event types
 	allowedChannelNames    []string              // Empty means all channels; partial match on resolved channel name
+	allowedUserIDs         []string              // Empty means all users; exact match on Slack user ID
 	sessionConfig          *WebhookSessionConfig // Reuse existing type
 	maxSessions            int
 	notifyOnSessionCreated *bool // nil means true (default: notify)
@@ -183,6 +184,16 @@ func (s *SlackBot) SetAllowedChannelNames(names []string) {
 	s.updatedAt = time.Now()
 }
 
+// AllowedUserIDs returns the list of allowed Slack user IDs.
+// Empty means all users are allowed. Matching is exact (e.g., "U012AB3CD").
+func (s *SlackBot) AllowedUserIDs() []string { return s.allowedUserIDs }
+
+// SetAllowedUserIDs sets the list of allowed Slack user IDs
+func (s *SlackBot) SetAllowedUserIDs(userIDs []string) {
+	s.allowedUserIDs = userIDs
+	s.updatedAt = time.Now()
+}
+
 // SessionConfig returns the session configuration
 func (s *SlackBot) SessionConfig() *WebhookSessionConfig { return s.sessionConfig }
 
@@ -284,6 +295,20 @@ func (s *SlackBot) IsChannelNameAllowed(channelName string) bool {
 	}
 	for _, pattern := range s.allowedChannelNames {
 		if strings.Contains(channelName, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsUserIDAllowed returns true if the given Slack user ID is allowed.
+// Matching is exact. If no user IDs are configured, all users are allowed.
+func (s *SlackBot) IsUserIDAllowed(userID string) bool {
+	if len(s.allowedUserIDs) == 0 {
+		return true
+	}
+	for _, id := range s.allowedUserIDs {
+		if id == userID {
 			return true
 		}
 	}

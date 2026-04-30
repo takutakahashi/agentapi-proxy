@@ -159,6 +159,11 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			log.Printf("[SLACKBOT] Event type not allowed: id=%s, type=%s", botID, event.Type)
 			return nil
 		}
+		// User ID filter: check if the sender's Slack user ID is allowed
+		if !bot.IsUserIDAllowed(event.User) {
+			log.Printf("[SLACKBOT] User ID not allowed: id=%s, user=%s", botID, event.User)
+			return nil
+		}
 		// Channel name filter: resolve channel ID → name, then apply partial-match filter
 		if len(bot.AllowedChannelNames()) > 0 && h.channelResolver != nil {
 			secretName := bot.BotTokenSecretName()

@@ -5678,6 +5678,17 @@
             "backend"
           ]
         },
+        "allowed_user_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack user IDs allowed to trigger this bot (exact match, e.g. \"U012AB3CD\"). Empty means all users are allowed.",
+          "example": [
+            "U012AB3CD",
+            "U987XY654"
+          ]
+        },
         "session_config": {
           "$ref": "#/components/schemas/SlackBotSessionConfig"
         },
@@ -5740,6 +5751,13 @@
             "type": "string"
           },
           "description": "Slack channel name patterns to listen to (partial match). Empty means all channels are allowed."
+        },
+        "allowed_user_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack user IDs allowed to trigger this bot (exact match, e.g. \"U012AB3CD\"). Empty means all users are allowed."
         },
         "session_config": {
           "$ref": "#/components/schemas/SlackBotSessionConfig"
@@ -5825,6 +5843,13 @@
             "type": "string"
           },
           "description": "Slack channel name patterns monitored by this bot (partial match)"
+        },
+        "allowed_user_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Slack user IDs allowed to trigger this bot (exact match). Empty means all users are allowed."
         },
         "session_config": {
           "$ref": "#/components/schemas/SlackBotSessionConfig"
