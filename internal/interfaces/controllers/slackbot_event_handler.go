@@ -243,8 +243,21 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// The result is used directly to populate RepoInfo in the LaunchRequest;
 	// the tag is set only as informational metadata.
 	detectedRepo := parseRepository(event.Text)
-	if detectedRepo != "" {
-		tags["repository"] = detectedRepo
+
+	// Determine the effective repository for this session.
+	// Priority: session_config.params.repo_full_name (static bot config) > message auto-detection.
+	// A statically configured repo means the bot always operates on that repository,
+	// regardless of what is mentioned in the Slack message.
+	configuredRepo := ""
+	if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
+		configuredRepo = bot.SessionConfig().Params().RepoFullName
+	}
+	effectiveRepoForTag := configuredRepo
+	if effectiveRepoForTag == "" {
+		effectiveRepoForTag = detectedRepo
+	}
+	if effectiveRepoForTag != "" {
+		tags["repository"] = effectiveRepoForTag
 	}
 
 	// Apply session config tags if present
@@ -378,13 +391,16 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			}
 		}
 
-		// Build RepoInfo directly from the detected repository identifier.
-		// This drives AGENTAPI_CLONE_DIR and AGENTAPI_REPO_FULLNAME in the session;
-		// the tag is separate metadata and must not be used as a trigger for behavior.
+		// Build RepoInfo for the session.
+		// Use the already-computed effective repo (configuredRepo takes priority, then detectedRepo).
 		var repoInfo *entities.RepositoryInfo
-		if detectedRepo != "" {
+		effectiveRepo := configuredRepo
+		if effectiveRepo == "" {
+			effectiveRepo = detectedRepo
+		}
+		if effectiveRepo != "" {
 			repoInfo = &entities.RepositoryInfo{
-				FullName: detectedRepo,
+				FullName: effectiveRepo,
 				CloneDir: "/home/agentapi/workdir/repo",
 			}
 		}

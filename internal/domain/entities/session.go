@@ -57,6 +57,11 @@ type SessionParams struct {
 	// CycleMaxCount is the maximum number of cycles to run. 0 means unlimited.
 	// Requires CycleMessage to be set. The cycle count is tracked in /tmp/check/CYCLE_COUNT.
 	CycleMaxCount int `json:"cycle_max_count,omitempty"`
+	// RepoFullName is the full name of the GitHub repository to clone (e.g. "org/repo").
+	// When set, AGENTAPI_REPO_FULLNAME and AGENTAPI_CLONE_DIR are injected into the session
+	// environment so the repository is cloned at session startup.
+	// For SlackBot sessions, this takes priority over any repository auto-detected from the message text.
+	RepoFullName string `json:"repo_full_name,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
