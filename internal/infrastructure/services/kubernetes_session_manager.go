@@ -53,6 +53,15 @@ type ServiceAccountEnsurer interface {
 	EnsureServiceAccount(ctx context.Context, teamID string) error
 }
 
+// SessionStatusEvent represents a proxy-level status change event for any session.
+// It is emitted by KubernetesSessionManager whenever a session's status changes,
+// and is delivered to all active SSE/long-poll subscribers.
+type SessionStatusEvent struct {
+	SessionID string    `json:"session_id"`
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // SessionDeletedHandler is a callback invoked just before a session's Kubernetes resources
 // are removed. At this point the session's Service endpoint is still reachable, so handlers
 // can safely call GetMessages or other in-session APIs.
@@ -77,6 +86,13 @@ type KubernetesSessionManager struct {
 	// Protected by handlersMutex.
 	onSessionDeletedHandlers []SessionDeletedHandler
 	handlersMutex            sync.RWMutex
+
+	// Proxy-wide status change pub/sub.
+	// globalSubs maps subscriber ID → buffered channel of SessionStatusEvent.
+	// Protected by globalSubsMu.
+	globalSubsMu    sync.Mutex
+	globalSubs      map[uint64]chan SessionStatusEvent
+	nextGlobalSubID uint64
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -119,13 +135,14 @@ func NewKubernetesSessionManagerWithClient(
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
 	manager := &KubernetesSessionManager{
-		config:    cfg,
-		k8sConfig: k8sConfig,
-		client:    client,
-		verbose:   verbose,
-		logger:    lgr,
-		sessions:  make(map[string]*KubernetesSession),
-		namespace: namespace,
+		config:     cfg,
+		k8sConfig:  k8sConfig,
+		client:     client,
+		verbose:    verbose,
+		logger:     lgr,
+		sessions:   make(map[string]*KubernetesSession),
+		namespace:  namespace,
+		globalSubs: make(map[uint64]chan SessionStatusEvent),
 	}
 
 	// Ensure OpenTelemetry Collector ConfigMap exists
@@ -176,6 +193,8 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		cancel,
 		webhookPayload,
 	)
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
 
 	// Store session
 	m.mutex.Lock()
@@ -495,6 +514,9 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	if req.InitialMessage != "" {
 		session.SetDescription(req.InitialMessage)
 	}
+
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
 
 	// Register session in memory.
 	m.mutex.Lock()
@@ -2205,6 +2227,47 @@ func (m *KubernetesSessionManager) AddSessionDeletedHandler(handler SessionDelet
 	m.onSessionDeletedHandlers = append(m.onSessionDeletedHandlers, handler)
 }
 
+// broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
+// It is registered as the statusChangeCallback on each KubernetesSession.
+// Non-blocking: slow subscribers are skipped to avoid stalling SetStatus.
+func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status string) {
+	evt := SessionStatusEvent{
+		SessionID: sessionID,
+		Status:    status,
+		Timestamp: time.Now(),
+	}
+	m.globalSubsMu.Lock()
+	defer m.globalSubsMu.Unlock()
+	for _, ch := range m.globalSubs {
+		select {
+		case ch <- evt:
+		default:
+			// subscriber channel is full; drop to avoid blocking the caller
+		}
+	}
+}
+
+// SubscribeStatusEvents registers a new proxy-wide subscriber for session status changes.
+// Returns a channel that receives SessionStatusEvent values whenever any session's status
+// changes, and a cancel func that must be called to unsubscribe (closes the channel).
+func (m *KubernetesSessionManager) SubscribeStatusEvents() (<-chan SessionStatusEvent, func()) {
+	m.globalSubsMu.Lock()
+	defer m.globalSubsMu.Unlock()
+	id := m.nextGlobalSubID
+	m.nextGlobalSubID++
+	ch := make(chan SessionStatusEvent, 32)
+	m.globalSubs[id] = ch
+	cancel := func() {
+		m.globalSubsMu.Lock()
+		defer m.globalSubsMu.Unlock()
+		if ch, ok := m.globalSubs[id]; ok {
+			close(ch)
+			delete(m.globalSubs, id)
+		}
+	}
+	return ch, cancel
+}
+
 // SetPersonalAPIKeyRepository sets the personal API key repository
 func (m *KubernetesSessionManager) SetPersonalAPIKeyRepository(repo portrepos.PersonalAPIKeyRepository) {
 	m.personalAPIKeyRepo = repo
@@ -2387,6 +2450,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
 	session.SetDescription(initialMessage) // Cache initial message as description
 
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
+
 	// Add to memory map
 	m.mutex.Lock()
 	m.sessions[sessionID] = session
@@ -2503,6 +2569,9 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getStatusFromDeploymentObject(deployment))
 	session.SetDescription(initialMessage) // Cache initial message as description
+
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
 
 	// Add to memory map
 	m.mutex.Lock()

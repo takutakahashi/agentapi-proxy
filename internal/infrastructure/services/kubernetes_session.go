@@ -31,6 +31,10 @@ type KubernetesSession struct {
 	provisionPayload  []byte                           // JSON body for POST /provision to agent-provisioner
 	provisionSettings *sessionsettings.SessionSettings // Settings used for provisioning (stored after successful provisioning)
 	isStock           bool                             // Whether this is a pre-warmed stock session
+
+	// statusChangeCallback is called by SetStatus when the status changes.
+	// Set by KubernetesSessionManager at session creation to enable proxy-wide pub/sub.
+	statusChangeCallback func(sessionID, newStatus string)
 }
 
 // NewKubernetesSession creates a new KubernetesSession
@@ -155,11 +159,19 @@ func (s *KubernetesSession) Cancel() {
 	}
 }
 
-// SetStatus updates the session status
+// SetStatus updates the session status.
+// If the status changed, the statusChangeCallback (if set) is called outside
+// the mutex to notify proxy-wide subscribers without risk of deadlock.
 func (s *KubernetesSession) SetStatus(status string) {
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	changed := s.status != status
 	s.status = status
+	cb := s.statusChangeCallback
+	s.mutex.Unlock()
+
+	if changed && cb != nil {
+		cb(s.id, status)
+	}
 }
 
 // SetStartedAt sets the session start time (used for restored sessions)

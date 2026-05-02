@@ -259,6 +259,91 @@
         }
       }
     },
+    "/sessions/status/stream": {
+      "get": {
+        "summary": "Stream all session status changes (SSE)",
+        "description": "Opens a Server-Sent Events stream that pushes a `SessionStatusEvent` whenever any session accessible to the authenticated user changes status. A heartbeat comment (`: heartbeat`) is sent every 30 seconds to keep the connection alive. The stream stays open until the client disconnects.",
+        "operationId": "streamSessionsStatus",
+        "tags": [
+          "Sessions"
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream of SessionStatusEvent objects. Each event line: `data: {\"session_id\":\"...\",\"status\":\"...\",\"timestamp\":\"...\"}`",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "data: {\"session_id\":\"abc123\",\"status\":\"active\",\"timestamp\":\"2026-05-02T12:00:00Z\"}\n\n"
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "501": {
+            "description": "Not implemented for this session manager type"
+          }
+        }
+      }
+    },
+    "/sessions/status/wait": {
+      "get": {
+        "summary": "Long-poll next session status change",
+        "description": "Blocks until any session accessible to the authenticated user changes status, or until the timeout expires. Returns a `SessionStatusEvent` on change, or `{\"events\": []}` on timeout.",
+        "operationId": "waitSessionsStatus",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "Maximum wait time in seconds (default: 30, max: 60).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60,
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A `SessionStatusEvent` if a status change occurred before the timeout, or `{\"events\": []}` if the timeout elapsed with no change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SessionStatusEvent"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "events": {
+                          "type": "array",
+                          "items": {},
+                          "maxItems": 0
+                        }
+                      },
+                      "required": ["events"]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "501": {
+            "description": "Not implemented for this session manager type"
+          }
+        }
+      }
+    },
     "/sessions/{sessionId}/share": {
       "post": {
         "summary": "Create a share URL",
@@ -4213,6 +4298,25 @@
           "unknown"
         ],
         "description": "Session status"
+      },
+      "SessionStatusEvent": {
+        "type": "object",
+        "description": "A proxy-level event emitted whenever a session's status changes.",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "The session whose status changed"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the status change was detected by the proxy"
+          }
+        },
+        "required": ["session_id", "status", "timestamp"]
       },
       "CreateScheduleRequest": {
         "type": "object",
