@@ -188,6 +188,11 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.GET("/search", r.handlers.sessionController.SearchSessions)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 
+	// Proxy-wide session status push endpoints (registered before /:sessionId/* catch-all)
+	r.echo.GET("/sessions/status/stream", r.handlers.sessionController.StreamSessionsStatus)
+	r.echo.GET("/sessions/status/wait", r.handlers.sessionController.WaitSessionsStatus)
+	log.Printf("[ROUTES] Session status push endpoints registered (SSE + long-poll)")
+
 	// Session sharing routes
 	if r.handlers.shareController != nil {
 		log.Printf("[ROUTES] Registering session sharing endpoints...")

@@ -32,16 +32,16 @@ type CreateSlackBotRequest struct {
 	// (MCP servers, env vars, Bedrock config, etc.) will be merged into sessions
 	// created by this bot. When omitted, the server falls back to the authenticated
 	// user's team memberships at creation time.
-	Teams               []string               `json:"teams,omitempty"`
-	BotTokenSecretName  string                 `json:"bot_token_secret_name,omitempty"`
-	BotTokenSecretKey   string                 `json:"bot_token_secret_key,omitempty"`
-	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
-	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
+	Teams               []string `json:"teams,omitempty"`
+	BotTokenSecretName  string   `json:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey   string   `json:"bot_token_secret_key,omitempty"`
+	AllowedEventTypes   []string `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames []string `json:"allowed_channel_names,omitempty"`
 	// AllowedUserIDs is the list of Slack user IDs allowed to trigger the bot.
 	// Empty means all users are allowed. Matching is exact (e.g., "U012AB3CD").
-	AllowedUserIDs      []string               `json:"allowed_user_ids,omitempty"`
-	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
-	MaxSessions         int                    `json:"max_sessions,omitempty"`
+	AllowedUserIDs []string               `json:"allowed_user_ids,omitempty"`
+	SessionConfig  *SlackBotSessionConfig `json:"session_config,omitempty"`
+	MaxSessions    int                    `json:"max_sessions,omitempty"`
 	// NotifyOnSessionCreated controls whether the bot posts a Slack message with
 	// the session URL when a new session is created. Defaults to true.
 	NotifyOnSessionCreated *bool `json:"notify_on_session_created,omitempty"`
@@ -64,15 +64,15 @@ type UpdateSlackBotRequest struct {
 	Teams []string `json:"teams,omitempty"`
 	// BotTokenSecretName is a pointer to allow clearing the value by passing an empty string "".
 	// nil means "not provided / do not change"; "" means "clear (revert to global default)".
-	BotTokenSecretName  *string                `json:"bot_token_secret_name"`
-	BotTokenSecretKey   *string                `json:"bot_token_secret_key"`
-	AllowedEventTypes   []string               `json:"allowed_event_types,omitempty"`
-	AllowedChannelNames []string               `json:"allowed_channel_names,omitempty"`
+	BotTokenSecretName  *string  `json:"bot_token_secret_name"`
+	BotTokenSecretKey   *string  `json:"bot_token_secret_key"`
+	AllowedEventTypes   []string `json:"allowed_event_types,omitempty"`
+	AllowedChannelNames []string `json:"allowed_channel_names,omitempty"`
 	// AllowedUserIDs is the list of Slack user IDs allowed to trigger the bot.
 	// Empty means all users are allowed. Matching is exact (e.g., "U012AB3CD").
-	AllowedUserIDs      []string               `json:"allowed_user_ids,omitempty"`
-	SessionConfig       *SlackBotSessionConfig `json:"session_config,omitempty"`
-	MaxSessions         int                    `json:"max_sessions,omitempty"`
+	AllowedUserIDs []string               `json:"allowed_user_ids,omitempty"`
+	SessionConfig  *SlackBotSessionConfig `json:"session_config,omitempty"`
+	MaxSessions    int                    `json:"max_sessions,omitempty"`
 	// NotifyOnSessionCreated controls whether the bot posts a Slack message with
 	// the session URL when a new session is created. Defaults to true.
 	NotifyOnSessionCreated *bool `json:"notify_on_session_created,omitempty"`

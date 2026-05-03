@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -53,6 +54,15 @@ type ServiceAccountEnsurer interface {
 	EnsureServiceAccount(ctx context.Context, teamID string) error
 }
 
+// SessionStatusEvent represents a proxy-level status change event for any session.
+// It is emitted by KubernetesSessionManager whenever a session's status changes,
+// and is delivered to all active SSE/long-poll subscribers.
+type SessionStatusEvent struct {
+	SessionID string    `json:"session_id"`
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // SessionDeletedHandler is a callback invoked just before a session's Kubernetes resources
 // are removed. At this point the session's Service endpoint is still reachable, so handlers
 // can safely call GetMessages or other in-session APIs.
@@ -77,6 +87,13 @@ type KubernetesSessionManager struct {
 	// Protected by handlersMutex.
 	onSessionDeletedHandlers []SessionDeletedHandler
 	handlersMutex            sync.RWMutex
+
+	// Proxy-wide status change pub/sub.
+	// globalSubs maps subscriber ID → buffered channel of SessionStatusEvent.
+	// Protected by globalSubsMu.
+	globalSubsMu    sync.Mutex
+	globalSubs      map[uint64]chan SessionStatusEvent
+	nextGlobalSubID uint64
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -119,13 +136,14 @@ func NewKubernetesSessionManagerWithClient(
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
 	manager := &KubernetesSessionManager{
-		config:    cfg,
-		k8sConfig: k8sConfig,
-		client:    client,
-		verbose:   verbose,
-		logger:    lgr,
-		sessions:  make(map[string]*KubernetesSession),
-		namespace: namespace,
+		config:     cfg,
+		k8sConfig:  k8sConfig,
+		client:     client,
+		verbose:    verbose,
+		logger:     lgr,
+		sessions:   make(map[string]*KubernetesSession),
+		namespace:  namespace,
+		globalSubs: make(map[uint64]chan SessionStatusEvent),
 	}
 
 	// Ensure OpenTelemetry Collector ConfigMap exists
@@ -176,6 +194,8 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		cancel,
 		webhookPayload,
 	)
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
 
 	// Store session
 	m.mutex.Lock()
@@ -496,6 +516,9 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		session.SetDescription(req.InitialMessage)
 	}
 
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
+
 	// Register session in memory.
 	m.mutex.Lock()
 	m.sessions[stockID] = session
@@ -673,7 +696,8 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	session.SetStatus("active")
 	log.Printf("[K8S_SESSION] Stock session %s is now active", session.id)
 
-	// Continue watching deployment status for the lifetime of the session.
+	// Continue watching deployment health and agentapi runtime status.
+	go m.watchAgentAPIStatus(ctx, session)
 	m.watchDeploymentStatus(ctx, session)
 }
 
@@ -1754,7 +1778,8 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 				session.SetStatus("active")
 				log.Printf("[K8S_SESSION] Session %s is now active", session.id)
 
-				// Continue watching for changes.
+				// Continue watching deployment health and agentapi runtime status.
+				go m.watchAgentAPIStatus(ctx, session)
 				m.watchDeploymentStatus(ctx, session)
 				return
 			}
@@ -1878,7 +1903,12 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 			if deployment.Status.ReadyReplicas == 0 {
 				session.SetStatus("unhealthy")
 			} else {
-				session.SetStatus("active")
+				// Only recover to "active" from a bad state.
+				// Do not overwrite "running" (agentapi is processing a message).
+				current := session.Status()
+				if current == "unhealthy" || current == "stopped" || current == "error" || current == "timeout" {
+					session.SetStatus("active")
+				}
 			}
 		}
 	}
@@ -2205,6 +2235,144 @@ func (m *KubernetesSessionManager) AddSessionDeletedHandler(handler SessionDelet
 	m.onSessionDeletedHandlers = append(m.onSessionDeletedHandlers, handler)
 }
 
+// broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
+// It is registered as the statusChangeCallback on each KubernetesSession.
+// Non-blocking: slow subscribers are skipped to avoid stalling SetStatus.
+func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status string) {
+	evt := SessionStatusEvent{
+		SessionID: sessionID,
+		Status:    status,
+		Timestamp: time.Now(),
+	}
+	m.globalSubsMu.Lock()
+	defer m.globalSubsMu.Unlock()
+	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d", sessionID, status, len(m.globalSubs))
+	for _, ch := range m.globalSubs {
+		select {
+		case ch <- evt:
+		default:
+			// subscriber channel is full; drop to avoid blocking the caller
+		}
+	}
+}
+
+// SubscribeStatusEvents registers a new proxy-wide subscriber for session status changes.
+// Returns a channel that receives SessionStatusEvent values whenever any session's status
+// changes, and a cancel func that must be called to unsubscribe (closes the channel).
+func (m *KubernetesSessionManager) SubscribeStatusEvents() (<-chan SessionStatusEvent, func()) {
+	m.globalSubsMu.Lock()
+	defer m.globalSubsMu.Unlock()
+	id := m.nextGlobalSubID
+	m.nextGlobalSubID++
+	ch := make(chan SessionStatusEvent, 32)
+	m.globalSubs[id] = ch
+	cancel := func() {
+		m.globalSubsMu.Lock()
+		defer m.globalSubsMu.Unlock()
+		if ch, ok := m.globalSubs[id]; ok {
+			close(ch)
+			delete(m.globalSubs, id)
+		}
+	}
+	return ch, cancel
+}
+
+// watchAgentAPIStatus subscribes to the agentapi backend's /events SSE stream for the
+// given session. Whenever the runtime status changes (stable ↔ running), SetStatus is
+// called so the change propagates to proxy-wide SSE subscribers.
+// The goroutine exits when ctx is cancelled.
+func (m *KubernetesSessionManager) watchAgentAPIStatus(ctx context.Context, session *KubernetesSession) {
+	backoff := 2 * time.Second
+	const maxBackoff = 30 * time.Second
+	url := fmt.Sprintf("http://%s/events", session.Addr())
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		if err := m.streamAgentAPIEvents(ctx, session, url); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("[AGENT_STATUS] Session %s: /events stream error: %v; retrying in %s", session.id, err, backoff)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+}
+
+// streamAgentAPIEvents connects to the agentapi backend's /events SSE endpoint and
+// maps status_change events to proxy-level session status changes.
+// Returns when the stream ends or the context is cancelled.
+func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, session *KubernetesSession, url string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d from /events", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	var eventType string
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		line := scanner.Text()
+		if line == "" {
+			eventType = ""
+			continue
+		}
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+			continue
+		}
+		if strings.HasPrefix(line, "data: ") && eventType == "status_change" {
+			data := strings.TrimPrefix(line, "data: ")
+			var body struct {
+				Status string `json:"status"`
+			}
+			if jsonErr := json.Unmarshal([]byte(data), &body); jsonErr != nil {
+				continue
+			}
+			switch body.Status {
+			case "running":
+				session.SetStatus("running")
+				log.Printf("[AGENT_STATUS] Session %s is now running", session.id)
+			case "stable":
+				session.SetStatus("active")
+				log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
+			}
+		}
+	}
+	return scanner.Err()
+}
+
 // SetPersonalAPIKeyRepository sets the personal API key repository
 func (m *KubernetesSessionManager) SetPersonalAPIKeyRepository(repo portrepos.PersonalAPIKeyRepository) {
 	m.personalAPIKeyRepo = repo
@@ -2387,13 +2555,17 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
 	session.SetDescription(initialMessage) // Cache initial message as description
 
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
+
 	// Add to memory map
 	m.mutex.Lock()
 	m.sessions[sessionID] = session
 	m.mutex.Unlock()
 
-	// Start watching deployment status
+	// Start watching deployment health and agentapi runtime status.
 	go m.watchDeploymentStatus(ctx, session)
+	go m.watchAgentAPIStatus(ctx, session)
 
 	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
 
@@ -2504,13 +2676,17 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	session.SetStatus(m.getStatusFromDeploymentObject(deployment))
 	session.SetDescription(initialMessage) // Cache initial message as description
 
+	// Register proxy-wide status change broadcaster
+	session.statusChangeCallback = m.broadcastStatusChange
+
 	// Add to memory map
 	m.mutex.Lock()
 	m.sessions[sessionID] = session
 	m.mutex.Unlock()
 
-	// Start watching deployment status
+	// Start watching deployment health and agentapi runtime status.
 	go m.watchDeploymentStatus(ctx, session)
+	go m.watchAgentAPIStatus(ctx, session)
 
 	log.Printf("[K8S_SESSION] Restored session %s from Service (with pre-fetched deployment)", sessionID)
 
