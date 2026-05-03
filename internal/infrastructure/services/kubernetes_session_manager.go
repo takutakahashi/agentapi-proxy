@@ -2238,6 +2238,7 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 	}
 	m.globalSubsMu.Lock()
 	defer m.globalSubsMu.Unlock()
+	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d", sessionID, status, len(m.globalSubs))
 	for _, ch := range m.globalSubs {
 		select {
 		case ch <- evt:

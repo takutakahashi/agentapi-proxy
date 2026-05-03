@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,6 +34,9 @@ func (c *SessionController) StreamSessionsStatus(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotImplemented, "status streaming not supported by this session manager")
 	}
 
+	clientIP := ctx.RealIP()
+	log.Printf("[SSE] Client connected to /sessions/status/stream from %s (user: %s)", clientIP, authzCtx.PersonalScope.UserID)
+
 	// Set SSE response headers
 	r := ctx.Response()
 	r.Header().Set("Content-Type", "text/event-stream")
@@ -49,7 +53,10 @@ func (c *SessionController) StreamSessionsStatus(ctx echo.Context) error {
 	}
 
 	eventCh, cancel := watcher.SubscribeStatusEvents()
-	defer cancel()
+	defer func() {
+		cancel()
+		log.Printf("[SSE] Client disconnected from /sessions/status/stream (user: %s)", authzCtx.PersonalScope.UserID)
+	}()
 
 	heartbeat := time.NewTicker(30 * time.Second)
 	defer heartbeat.Stop()
