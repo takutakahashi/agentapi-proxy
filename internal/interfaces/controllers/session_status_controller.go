@@ -41,6 +41,13 @@ func (c *SessionController) StreamSessionsStatus(ctx echo.Context) error {
 	r.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering
 	r.WriteHeader(http.StatusOK)
 
+	// Flush the response headers immediately so the client knows the stream is open.
+	// Without this, headers stay in the buffer until the first event/heartbeat.
+	flusher, hasFlusher := r.Writer.(http.Flusher)
+	if hasFlusher {
+		flusher.Flush()
+	}
+
 	eventCh, cancel := watcher.SubscribeStatusEvents()
 	defer cancel()
 
@@ -48,7 +55,6 @@ func (c *SessionController) StreamSessionsStatus(ctx echo.Context) error {
 	defer heartbeat.Stop()
 
 	reqCtx := ctx.Request().Context()
-	flusher, hasFlusher := r.Writer.(http.Flusher)
 
 	for {
 		select {
