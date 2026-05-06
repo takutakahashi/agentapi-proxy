@@ -287,9 +287,12 @@ func (m *KubernetesSessionManager) consumeStatusEvents(ctx context.Context, ch <
 				session.SetStatusSilent(evt.Status)
 			}
 
-			// Forward to local SSE subscribers regardless of whether the session
-			// is in memory (clients may be subscribed to the global feed).
-			m.broadcastStatusChange(evt.SessionID, evt.Status)
+			// Forward to local SSE subscribers only.
+			// IMPORTANT: do NOT call broadcastStatusChange here because that
+			// function also re-publishes to Redis, which would create an infinite
+			// feedback loop across pods (Pod B re-publishes → Pod C processes →
+			// Pod C re-publishes → Pod A processes → ...).
+			m.broadcastStatusChangeLocal(evt.SessionID, evt.Status)
 		}
 	}
 }
@@ -2546,6 +2549,27 @@ func (m *KubernetesSessionManager) AddSessionDeletedHandler(handler SessionDelet
 	m.handlersMutex.Lock()
 	defer m.handlersMutex.Unlock()
 	m.onSessionDeletedHandlers = append(m.onSessionDeletedHandlers, handler)
+}
+
+// broadcastStatusChangeLocal broadcasts a SessionStatusEvent to all local
+// (in-process) SSE subscribers without publishing to Redis.
+// Called by consumeStatusEvents when replaying a cross-pod event so the event
+// reaches local SSE clients without causing a Redis re-publish loop.
+func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status string) {
+	evt := SessionStatusEvent{
+		SessionID: sessionID,
+		Status:    status,
+		Timestamp: time.Now(),
+	}
+	m.globalSubsMu.Lock()
+	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d (cross-pod relay)", sessionID, status, len(m.globalSubs))
+	for _, ch := range m.globalSubs {
+		select {
+		case ch <- evt:
+		default:
+		}
+	}
+	m.globalSubsMu.Unlock()
 }
 
 // broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
