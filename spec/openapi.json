@@ -372,11 +372,19 @@
               "maximum": 60,
               "default": 30
             }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Timestamp of the last known message update. If the session has received a message_update after this time, the response is returned immediately without waiting. Accepts Unix timestamp in milliseconds (integer) or RFC3339 string. Use the `timestamp` value from the previous response.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "A message update occurred or the timeout elapsed.",
+            "description": "A message update occurred, a catch-up update was detected via `since`, or the timeout elapsed.",
             "content": {
               "application/json": {
                 "schema": {
