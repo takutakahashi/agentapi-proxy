@@ -19,6 +19,14 @@ const (
 	// redisStatusTTL is the TTL applied to session status keys.
 	// It is intentionally longer than any realistic session lifetime.
 	redisStatusTTL = 48 * time.Hour
+
+	// redisSessionListCachePrefix is the prefix for session-list cache keys.
+	// Key format: agentapi:sessions:list:{namespace}:{labelSelectorHash}
+	redisSessionListCachePrefix = "agentapi:sessions:list:"
+	// redisSessionListCacheTTL is how long a session-list cache entry is kept.
+	// Short enough that mutations (create/delete) are visible quickly even on
+	// cache invalidation failure, but long enough to absorb burst list requests.
+	redisSessionListCacheTTL = 15 * time.Second
 )
 
 // redisStatusFields are the hash field names used within a status key.
@@ -158,5 +166,77 @@ func (r *RedisStatusRepository) DeleteStatus(ctx context.Context, sessionID stri
 	if err := r.client.Del(ctx, statusKey(sessionID)).Err(); err != nil {
 		return fmt.Errorf("redis DeleteStatus %s: %w", sessionID, err)
 	}
+	return nil
+}
+
+// --------------------------------------------------------------------------
+// SessionListCacheRepository implementation
+// --------------------------------------------------------------------------
+
+func sessionListCacheKey(namespace, labelSelectorHash string) string {
+	return redisSessionListCachePrefix + namespace + ":" + labelSelectorHash
+}
+
+func sessionListCachePattern(namespace string) string {
+	return redisSessionListCachePrefix + namespace + ":*"
+}
+
+// SetSessionListCache serialises sessions to JSON and stores them in Redis
+// under cacheKey with ttl expiry.
+func (r *RedisStatusRepository) SetSessionListCache(ctx context.Context, cacheKey string, sessions []portrepos.CachedSessionDTO, ttl time.Duration) error {
+	payload, err := json.Marshal(sessions)
+	if err != nil {
+		return fmt.Errorf("redis SetSessionListCache marshal: %w", err)
+	}
+	if err := r.client.Set(ctx, cacheKey, payload, ttl).Err(); err != nil {
+		return fmt.Errorf("redis SetSessionListCache set %s: %w", cacheKey, err)
+	}
+	return nil
+}
+
+// GetSessionListCache retrieves DTOs stored under cacheKey.
+// Returns (nil, nil) on a cache miss.
+func (r *RedisStatusRepository) GetSessionListCache(ctx context.Context, cacheKey string) ([]portrepos.CachedSessionDTO, error) {
+	payload, err := r.client.Get(ctx, cacheKey).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil // cache miss
+		}
+		return nil, fmt.Errorf("redis GetSessionListCache get %s: %w", cacheKey, err)
+	}
+	var sessions []portrepos.CachedSessionDTO
+	if err := json.Unmarshal(payload, &sessions); err != nil {
+		return nil, fmt.Errorf("redis GetSessionListCache unmarshal: %w", err)
+	}
+	return sessions, nil
+}
+
+// InvalidateSessionListCache deletes all session-list cache entries whose key
+// matches the agentapi:sessions:list:{namespace}:* pattern.  It uses SCAN to
+// avoid blocking the Redis server on large key spaces.
+func (r *RedisStatusRepository) InvalidateSessionListCache(ctx context.Context, namespace string) error {
+	pattern := sessionListCachePattern(namespace)
+	var cursor uint64
+	var keysToDelete []string
+
+	for {
+		keys, nextCursor, err := r.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("redis InvalidateSessionListCache scan: %w", err)
+		}
+		keysToDelete = append(keysToDelete, keys...)
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if len(keysToDelete) == 0 {
+		return nil
+	}
+	if err := r.client.Del(ctx, keysToDelete...).Err(); err != nil {
+		return fmt.Errorf("redis InvalidateSessionListCache del: %w", err)
+	}
+	log.Printf("[REDIS_CACHE] Invalidated %d session-list cache entries for namespace=%s", len(keysToDelete), namespace)
 	return nil
 }

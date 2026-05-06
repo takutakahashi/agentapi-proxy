@@ -7,6 +7,10 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
+// Compile-time assertions: ensure NoopStatusRepository satisfies both interfaces.
+var _ portrepos.StatusEventRepository = (*NoopStatusRepository)(nil)
+var _ portrepos.SessionListCacheRepository = (*NoopStatusRepository)(nil)
+
 // NoopStatusRepository is a no-op implementation of StatusEventRepository.
 // It is used when Redis is not configured so that the rest of the code can
 // remain unaware of whether a real backend is available.
@@ -44,5 +48,24 @@ func (n *NoopStatusRepository) SubscribeGlobal(ctx context.Context) (<-chan port
 
 // DeleteStatus does nothing and returns nil.
 func (n *NoopStatusRepository) DeleteStatus(_ context.Context, _ string) error {
+	return nil
+}
+
+// --------------------------------------------------------------------------
+// SessionListCacheRepository (noop) implementation
+// --------------------------------------------------------------------------
+
+// SetSessionListCache does nothing (no-op).
+func (n *NoopStatusRepository) SetSessionListCache(_ context.Context, _ string, _ []portrepos.CachedSessionDTO, _ time.Duration) error {
+	return nil
+}
+
+// GetSessionListCache always returns a cache miss.
+func (n *NoopStatusRepository) GetSessionListCache(_ context.Context, _ string) ([]portrepos.CachedSessionDTO, error) {
+	return nil, nil
+}
+
+// InvalidateSessionListCache does nothing.
+func (n *NoopStatusRepository) InvalidateSessionListCache(_ context.Context, _ string) error {
 	return nil
 }

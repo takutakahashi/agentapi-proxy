@@ -154,6 +154,12 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	statusEventRepo := buildStatusEventRepository(cfg)
 	k8sSessionManager.SetStatusEventRepository(statusEventRepo)
 
+	// Wire session-list cache if the status-event repository also implements
+	// SessionListCacheRepository (both Redis and Noop variants do).
+	if listCacheRepo, ok := statusEventRepo.(portrepos.SessionListCacheRepository); ok {
+		k8sSessionManager.SetSessionListCacheRepository(listCacheRepo)
+	}
+
 	// Initialize encryption service registry
 	// The registry manages multiple encryption services and selects the appropriate one
 	// based on encryption metadata when decrypting

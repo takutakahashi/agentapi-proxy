@@ -119,6 +119,11 @@ type KubernetesSessionManager struct {
 	// statusSubCtx / statusSubCancel control the lifetime of the Redis subscriber goroutine.
 	statusSubCtx    context.Context
 	statusSubCancel context.CancelFunc
+
+	// sessionListCacheRepo is the short-lived session-list cache backend.
+	// When Redis is configured this reduces Kubernetes API calls for frequent
+	// ListSessions requests.
+	sessionListCacheRepo portrepos.SessionListCacheRepository
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -207,6 +212,17 @@ func (m *KubernetesSessionManager) SetStatusEventRepository(repo portrepos.Statu
 	// Start the Redis subscriber goroutine that fans out cross-pod events to
 	// local SSE subscribers.
 	go m.runStatusSubscriber(m.statusSubCtx)
+}
+
+// SetSessionListCacheRepository injects a SessionListCacheRepository for
+// short-lived session-list caching.  Must be called before the manager starts
+// handling traffic.  If repo is nil the call is ignored.
+func (m *KubernetesSessionManager) SetSessionListCacheRepository(repo portrepos.SessionListCacheRepository) {
+	if repo == nil {
+		return
+	}
+	m.sessionListCacheRepo = repo
+	log.Printf("[K8S_SESSION] SessionListCacheRepository configured")
 }
 
 // runStatusSubscriber subscribes to the global status-change channel and
@@ -428,6 +444,13 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	}
 	if err := m.logger.LogSessionStart(id, repository); err != nil {
 		log.Printf("[K8S_SESSION] Failed to log session start: %v", err)
+	}
+
+	// Invalidate session-list cache so the new session appears immediately.
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after create: %v", err)
+		}
 	}
 
 	log.Printf("[K8S_SESSION] Session %s created successfully", id)
@@ -938,41 +961,79 @@ func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, sessio
 	}
 }
 
-// ListSessions returns all sessions matching the filter
-// Sessions are retrieved from Kubernetes Services to survive proxy restarts
+// ListSessions returns all sessions matching the filter.
+// Sessions are retrieved from a Redis cache when available, falling back to
+// Kubernetes API calls on a cache miss.  The cache is keyed by the label
+// selector (which encodes user-id, scope and team-id) so each filter
+// combination has its own independent cache entry.
 func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
-	// Build label selector for Kubernetes API filtering
 	labelSelector := m.buildLabelSelector(filter)
+	ctx := context.Background()
 
-	// Get services from Kubernetes API
+	// --- cache-first path ---------------------------------------------------
+	if m.sessionListCacheRepo != nil {
+		cacheKey := m.buildSessionListCacheKey(labelSelector)
+		if cached, err := m.sessionListCacheRepo.GetSessionListCache(ctx, cacheKey); err == nil && cached != nil {
+			return m.filterSessionsFromCache(cached, filter)
+		}
+	}
+
+	// --- cache miss: fetch from Kubernetes ----------------------------------
+	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
+
+	// Populate the cache with the full result set (before in-memory filters)
+	// so that different filter combinations that share the same labelSelector
+	// can reuse the same cached K8s data.
+	if m.sessionListCacheRepo != nil {
+		cacheKey := m.buildSessionListCacheKey(labelSelector)
+		dtos := sessionsToCacheDTOs(allSessions)
+		if err := m.sessionListCacheRepo.SetSessionListCache(ctx, cacheKey, dtos, redisSessionListCacheTTL); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to populate session list cache: %v", err)
+		}
+	}
+
+	return m.applySessionListFilters(allSessions, filter)
+}
+
+// redisSessionListCacheTTL is the TTL passed to the cache repository.
+// Mirrors the constant defined in the Redis implementation.
+const redisSessionListCacheTTL = 15 * time.Second
+
+// buildSessionListCacheKey returns a stable Redis cache key for the given
+// (namespace, labelSelector) combination.
+func (m *KubernetesSessionManager) buildSessionListCacheKey(labelSelector string) string {
+	h := sha256.Sum256([]byte(m.namespace + "|" + labelSelector))
+	return "agentapi:sessions:list:" + m.namespace + ":" + hex.EncodeToString(h[:8])
+}
+
+// fetchSessionsFromK8s performs the Kubernetes Services + Deployments list
+// calls and returns all sessions that match the label selector.
+// In-memory-only filters (status, teamIDs, tags) are NOT applied here so
+// the caller can cache the full result and reuse it across filter variants.
+func (m *KubernetesSessionManager) fetchSessionsFromK8s(ctx context.Context, labelSelector string, filter entities.SessionFilter) []entities.Session {
 	services, err := m.client.CoreV1().Services(m.namespace).List(
-		context.Background(),
-		metav1.ListOptions{
-			LabelSelector: labelSelector,
-		})
+		ctx,
+		metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list services: %v", err)
 		return []entities.Session{}
 	}
 
-	// Batch fetch all deployments to avoid N+1 API calls (using same filter)
+	// Batch fetch deployments once to avoid N+1 API calls.
 	deployments, err := m.client.AppsV1().Deployments(m.namespace).List(
-		context.Background(),
-		metav1.ListOptions{
-			LabelSelector: labelSelector,
-		})
+		ctx,
+		metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list deployments: %v", err)
-		// Continue without deployment info - sessions will have "unknown" status
+		// Continue without deployment info – sessions will have "unknown" status.
 	}
 
-	// Build deployment map by session ID for O(1) lookup
 	deploymentMap := make(map[string]*appsv1.Deployment)
 	if deployments != nil {
 		for i := range deployments.Items {
 			dep := &deployments.Items[i]
-			if sessionID := dep.Labels["agentapi.proxy/session-id"]; sessionID != "" {
-				deploymentMap[sessionID] = dep
+			if sid := dep.Labels["agentapi.proxy/session-id"]; sid != "" {
+				deploymentMap[sid] = dep
 			}
 		}
 	}
@@ -980,53 +1041,44 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 	var result []entities.Session
 	for i := range services.Items {
 		svc := &services.Items[i]
-
-		// Skip Services that are being deleted to avoid "ghost sessions"
-		// that appear in list results but are already deleted
-		// (GetSession also has this check for consistency)
 		if svc.DeletionTimestamp != nil {
 			continue
 		}
-
-		// Extract session info from Service labels
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
 		if sessionID == "" {
 			continue
 		}
-
 		userID := svc.Labels["agentapi.proxy/user-id"]
-
-		// Apply UserID filter
 		if filter.UserID != "" && userID != filter.UserID {
 			continue
 		}
-
-		// Get or restore session using pre-fetched deployment
 		session := m.getOrRestoreSessionWithDeployment(svc, deploymentMap[sessionID])
 		if session == nil {
 			continue
 		}
+		result = append(result, session)
+	}
+	return result
+}
 
-		// Apply Status filter
+// applySessionListFilters applies the in-memory-only parts of filter to
+// sessions and returns the matching subset.
+func (m *KubernetesSessionManager) applySessionListFilters(sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
+	var result []entities.Session
+	for _, session := range sessions {
 		if filter.Status != "" && session.Status() != filter.Status {
 			continue
 		}
-
-		// Apply Scope filter
 		if filter.Scope != "" && session.Scope() != filter.Scope {
 			continue
 		}
-
-		// Apply TeamID filter
 		if filter.TeamID != "" && session.TeamID() != filter.TeamID {
 			continue
 		}
-
-		// Apply TeamIDs filter (for team-scoped sessions, check if session's team is in user's teams)
 		if len(filter.TeamIDs) > 0 && session.Scope() == entities.ScopeTeam {
 			teamMatch := false
-			for _, teamID := range filter.TeamIDs {
-				if session.TeamID() == teamID {
+			for _, tid := range filter.TeamIDs {
+				if session.TeamID() == tid {
 					teamMatch = true
 					break
 				}
@@ -1035,29 +1087,87 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 				continue
 			}
 		}
-
-		// Apply Tag filters
-		// Tags are compared after sanitization since they are stored as sanitized labels in Kubernetes
 		if len(filter.Tags) > 0 {
-			matchAllTags := true
+			matchAll := true
 			sessionTags := session.Tags()
-			for tagKey, tagValue := range filter.Tags {
-				sessionTagValue, exists := sessionTags[tagKey]
-				// Compare sanitized values since Kubernetes labels are sanitized
-				if !exists || sanitizeLabelValue(sessionTagValue) != sanitizeLabelValue(tagValue) {
-					matchAllTags = false
+			for k, v := range filter.Tags {
+				sv, exists := sessionTags[k]
+				if !exists || sanitizeLabelValue(sv) != sanitizeLabelValue(v) {
+					matchAll = false
 					break
 				}
 			}
-			if !matchAllTags {
+			if !matchAll {
 				continue
 			}
 		}
-
 		result = append(result, session)
 	}
-
 	return result
+}
+
+// filterSessionsFromCache reconstructs sessions from cached DTOs – preferring
+// the live in-memory session where available (for up-to-date status) – and
+// then applies the in-memory-only filters.
+func (m *KubernetesSessionManager) filterSessionsFromCache(dtos []portrepos.CachedSessionDTO, filter entities.SessionFilter) []entities.Session {
+	// Snapshot the live sessions map once to avoid repeated lock acquisitions.
+	m.mutex.RLock()
+	live := make(map[string]*KubernetesSession, len(m.sessions))
+	for id, s := range m.sessions {
+		live[id] = s
+	}
+	m.mutex.RUnlock()
+
+	sessions := make([]entities.Session, 0, len(dtos))
+	for _, dto := range dtos {
+		if filter.UserID != "" && dto.UserID != filter.UserID {
+			continue
+		}
+		var s entities.Session
+		if ls, ok := live[dto.ID]; ok {
+			s = ls // use live in-memory session for current status
+		} else {
+			s = newCachedSession(dto)
+		}
+		sessions = append(sessions, s)
+	}
+
+	return m.applySessionListFilters(sessions, filter)
+}
+
+// sessionsToCacheDTOs converts a slice of entities.Session to cache DTOs.
+// Only fields present on the entities.Session interface are available here;
+// extra KubernetesSession fields (deploymentName, serviceName) are captured
+// via a type assertion when possible.
+func sessionsToCacheDTOs(sessions []entities.Session) []portrepos.CachedSessionDTO {
+	dtos := make([]portrepos.CachedSessionDTO, 0, len(sessions))
+	for _, s := range sessions {
+		dto := portrepos.CachedSessionDTO{
+			ID:            s.ID(),
+			UserID:        s.UserID(),
+			Scope:         string(s.Scope()),
+			TeamID:        s.TeamID(),
+			Tags:          s.Tags(),
+			Status:        s.Status(),
+			StartedAt:     s.StartedAt(),
+			UpdatedAt:     s.UpdatedAt(),
+			LastMessageAt: s.LastMessageAt(),
+			Description:   s.Description(),
+		}
+		// Capture Kubernetes-specific fields when available.
+		if ks, ok := s.(*KubernetesSession); ok {
+			dto.ServicePort = ks.servicePort
+			dto.Namespace = ks.namespace
+			dto.DeploymentName = ks.deploymentName
+			dto.ServiceName = ks.serviceName
+			if ks.request != nil {
+				dto.InitialMessage = ks.request.InitialMessage
+			}
+			dto.IsStock = ks.isStock
+		}
+		dtos = append(dtos, dto)
+	}
+	return dtos
 }
 
 // getOrRestoreSessionWithDeployment gets a session from memory or restores it from Service
@@ -1154,6 +1264,15 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 		defer delCancel()
 		if err := m.statusEventRepo.DeleteStatus(delCtx, id); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to delete Redis status for session=%s: %v", id, err)
+		}
+	}
+
+	// Invalidate session-list cache so the deleted session disappears immediately.
+	if m.sessionListCacheRepo != nil {
+		invCtx, invCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer invCancel()
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(invCtx, m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after delete: %v", err)
 		}
 	}
 
