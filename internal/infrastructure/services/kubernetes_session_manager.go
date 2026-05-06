@@ -63,6 +63,14 @@ type SessionStatusEvent struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// SessionMessageEvent represents a message_update event for a specific session.
+// It is emitted by KubernetesSessionManager whenever the agentapi backend for a session
+// sends a message_update SSE event, and is delivered to per-session long-poll subscribers.
+type SessionMessageEvent struct {
+	SessionID string    `json:"session_id"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // SessionDeletedHandler is a callback invoked just before a session's Kubernetes resources
 // are removed. At this point the session's Service endpoint is still reachable, so handlers
 // can safely call GetMessages or other in-session APIs.
@@ -94,6 +102,13 @@ type KubernetesSessionManager struct {
 	globalSubsMu    sync.Mutex
 	globalSubs      map[uint64]chan SessionStatusEvent
 	nextGlobalSubID uint64
+
+	// Per-session message update pub/sub.
+	// messageSubs[sessionID][subscriberID] = buffered channel of SessionMessageEvent.
+	// Protected by messageSubsMu.
+	messageSubsMu    sync.Mutex
+	messageSubs      map[string]map[uint64]chan SessionMessageEvent
+	nextMessageSubID uint64
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -136,14 +151,15 @@ func NewKubernetesSessionManagerWithClient(
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
 	manager := &KubernetesSessionManager{
-		config:     cfg,
-		k8sConfig:  k8sConfig,
-		client:     client,
-		verbose:    verbose,
-		logger:     lgr,
-		sessions:   make(map[string]*KubernetesSession),
-		namespace:  namespace,
-		globalSubs: make(map[uint64]chan SessionStatusEvent),
+		config:      cfg,
+		k8sConfig:   k8sConfig,
+		client:      client,
+		verbose:     verbose,
+		logger:      lgr,
+		sessions:    make(map[string]*KubernetesSession),
+		namespace:   namespace,
+		globalSubs:  make(map[uint64]chan SessionStatusEvent),
+		messageSubs: make(map[string]map[uint64]chan SessionMessageEvent),
 	}
 
 	// Ensure OpenTelemetry Collector ConfigMap exists
@@ -1975,11 +1991,14 @@ func (m *KubernetesSessionManager) deletePVC(ctx context.Context, session *Kuber
 	return m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, session.PVCName(), metav1.DeleteOptions{})
 }
 
-// cleanupSession removes a session from the internal map
+// cleanupSession removes a session from the internal map and releases its message subscribers.
 func (m *KubernetesSessionManager) cleanupSession(id string) {
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
 	delete(m.sessions, id)
+	m.mutex.Unlock()
+	// Close all per-session message subscribers to unblock any waiting long-poll handlers.
+	// Called after releasing m.mutex to avoid holding two locks simultaneously.
+	m.cleanupMessageSubs(id)
 }
 
 // buildLabelSelector builds a Kubernetes label selector string from entities.SessionFilter
@@ -2256,6 +2275,70 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 	}
 }
 
+// broadcastMessageUpdate notifies all active per-session subscribers that a message_update
+// event was received from the agentapi backend for the given session.
+// Non-blocking: slow subscribers are skipped to avoid stalling the SSE reader goroutine.
+func (m *KubernetesSessionManager) broadcastMessageUpdate(sessionID string) {
+	evt := SessionMessageEvent{SessionID: sessionID, Timestamp: time.Now()}
+	m.messageSubsMu.Lock()
+	defer m.messageSubsMu.Unlock()
+	subs, ok := m.messageSubs[sessionID]
+	if !ok {
+		return
+	}
+	log.Printf("[MSG_BROADCAST] session=%s subscribers=%d", sessionID, len(subs))
+	for _, ch := range subs {
+		select {
+		case ch <- evt:
+		default:
+			// subscriber channel is full; drop to avoid blocking the caller
+		}
+	}
+}
+
+// SubscribeMessageEvents registers a new per-session subscriber for message_update events.
+// Returns a channel that receives SessionMessageEvent values whenever the agentapi backend
+// for the given session emits a message_update event, and a cancel func that must be called
+// to unsubscribe (closes the channel).
+func (m *KubernetesSessionManager) SubscribeMessageEvents(sessionID string) (<-chan SessionMessageEvent, func()) {
+	m.messageSubsMu.Lock()
+	defer m.messageSubsMu.Unlock()
+	if _, ok := m.messageSubs[sessionID]; !ok {
+		m.messageSubs[sessionID] = make(map[uint64]chan SessionMessageEvent)
+	}
+	id := m.nextMessageSubID
+	m.nextMessageSubID++
+	ch := make(chan SessionMessageEvent, 32)
+	m.messageSubs[sessionID][id] = ch
+	cancel := func() {
+		m.messageSubsMu.Lock()
+		defer m.messageSubsMu.Unlock()
+		if subs, ok := m.messageSubs[sessionID]; ok {
+			if c, ok := subs[id]; ok {
+				close(c)
+				delete(subs, id)
+			}
+			if len(subs) == 0 {
+				delete(m.messageSubs, sessionID)
+			}
+		}
+	}
+	return ch, cancel
+}
+
+// cleanupMessageSubs closes all active message subscribers for a session and removes them.
+// Called during session deletion to prevent goroutine leaks.
+func (m *KubernetesSessionManager) cleanupMessageSubs(sessionID string) {
+	m.messageSubsMu.Lock()
+	defer m.messageSubsMu.Unlock()
+	if subs, ok := m.messageSubs[sessionID]; ok {
+		for _, ch := range subs {
+			close(ch)
+		}
+		delete(m.messageSubs, sessionID)
+	}
+}
+
 // SubscribeStatusEvents registers a new proxy-wide subscriber for session status changes.
 // Returns a channel that receives SessionStatusEvent values whenever any session's status
 // changes, and a cancel func that must be called to unsubscribe (closes the channel).
@@ -2352,21 +2435,27 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 			eventType = strings.TrimPrefix(line, "event: ")
 			continue
 		}
-		if strings.HasPrefix(line, "data: ") && eventType == "status_change" {
+		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
-			var body struct {
-				Status string `json:"status"`
-			}
-			if jsonErr := json.Unmarshal([]byte(data), &body); jsonErr != nil {
-				continue
-			}
-			switch body.Status {
-			case "running":
-				session.SetStatus("running")
-				log.Printf("[AGENT_STATUS] Session %s is now running", session.id)
-			case "stable":
-				session.SetStatus("active")
-				log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
+			switch eventType {
+			case "status_change":
+				var body struct {
+					Status string `json:"status"`
+				}
+				if jsonErr := json.Unmarshal([]byte(data), &body); jsonErr != nil {
+					continue
+				}
+				switch body.Status {
+				case "running":
+					session.SetStatus("running")
+					log.Printf("[AGENT_STATUS] Session %s is now running", session.id)
+				case "stable":
+					session.SetStatus("active")
+					log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
+				}
+			case "message_update":
+				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
+				m.broadcastMessageUpdate(session.id)
 			}
 		}
 	}

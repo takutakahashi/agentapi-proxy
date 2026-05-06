@@ -344,6 +344,100 @@
         }
       }
     },
+    "/sessions/{sessionId}/messages/wait": {
+      "get": {
+        "summary": "Long-poll for message updates in a session",
+        "description": "Blocks until a `message_update` event is received from the agentapi backend for the specified session, or until the timeout expires. Returns `{\"updated\": true, \"session_id\": \"...\", \"timestamp\": \"...\"}` on update, or `{\"updated\": false}` on timeout. Clients should immediately re-issue the request after each response to maintain continuous notification.",
+        "operationId": "waitSessionMessages",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "Maximum wait time in seconds (default: 30, max: 60).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60,
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A message update occurred or the timeout elapsed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "description": "Message update received",
+                      "properties": {
+                        "updated": {
+                          "type": "boolean",
+                          "enum": [true]
+                        },
+                        "session_id": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": ["updated", "session_id", "timestamp"]
+                    },
+                    {
+                      "type": "object",
+                      "description": "Timeout elapsed with no update",
+                      "properties": {
+                        "updated": {
+                          "type": "boolean",
+                          "enum": [false]
+                        }
+                      },
+                      "required": ["updated"]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "501": {
+            "description": "Not implemented for this session manager type"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
     "/sessions/{sessionId}/share": {
       "post": {
         "summary": "Create a share URL",
