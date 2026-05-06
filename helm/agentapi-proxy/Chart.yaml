@@ -15,3 +15,10 @@ keywords:
   - api
   - claude
   - session-management
+dependencies:
+  # Redis is used for cross-pod session status synchronisation.
+  # Set redis.enabled=false to disable it (single-replica deployments do not need it).
+  - name: redis
+    version: "21.x.x"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: redis.enabled

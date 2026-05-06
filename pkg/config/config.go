@@ -339,6 +339,26 @@ type SessionManagerConfig struct {
 	HMACSecret string `json:"hmac_secret" mapstructure:"hmac_secret"`
 }
 
+// RedisConfig holds configuration for the optional Redis backend used for
+// cross-pod session status synchronisation.
+type RedisConfig struct {
+	// Addr is the Redis server address in "host:port" format (e.g. "redis:6379").
+	// When empty, a no-op in-memory fallback is used and no real connection is made.
+	Addr string `json:"addr" mapstructure:"addr"`
+	// Password is the Redis AUTH password (optional).
+	Password string `json:"password" mapstructure:"password"`
+	// DB is the Redis database index to use (default: 0).
+	DB int `json:"db" mapstructure:"db"`
+	// TLSEnabled enables TLS for the Redis connection.
+	TLSEnabled bool `json:"tls_enabled" mapstructure:"tls_enabled"`
+	// DialTimeout is the timeout for establishing a connection (e.g. "5s").
+	DialTimeout string `json:"dial_timeout" mapstructure:"dial_timeout"`
+	// ReadTimeout is the timeout for socket reads (e.g. "3s").
+	ReadTimeout string `json:"read_timeout" mapstructure:"read_timeout"`
+	// WriteTimeout is the timeout for socket writes (e.g. "3s").
+	WriteTimeout string `json:"write_timeout" mapstructure:"write_timeout"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
 	// Auth represents authentication configuration
@@ -363,6 +383,9 @@ type Config struct {
 	Slack SlackConfig `json:"slack" mapstructure:"slack"`
 	// SessionManager is the configuration for the session manager forwarding endpoint.
 	SessionManager SessionManagerConfig `json:"session_manager" mapstructure:"session_manager"`
+	// Redis holds optional Redis configuration for cross-pod status synchronisation.
+	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
+	Redis RedisConfig `json:"redis" mapstructure:"redis"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -700,6 +723,15 @@ func bindEnvVars(v *viper.Viper) {
 	// External memory-server backend configuration
 	_ = v.BindEnv("memory.external.url", "AGENTAPI_MEMORY_EXTERNAL_URL")
 	_ = v.BindEnv("memory.external.admin_token", "AGENTAPI_MEMORY_EXTERNAL_ADMIN_TOKEN")
+
+	// Redis configuration
+	_ = v.BindEnv("redis.addr", "AGENTAPI_REDIS_ADDR")
+	_ = v.BindEnv("redis.password", "AGENTAPI_REDIS_PASSWORD")
+	_ = v.BindEnv("redis.db", "AGENTAPI_REDIS_DB")
+	_ = v.BindEnv("redis.tls_enabled", "AGENTAPI_REDIS_TLS_ENABLED")
+	_ = v.BindEnv("redis.dial_timeout", "AGENTAPI_REDIS_DIAL_TIMEOUT")
+	_ = v.BindEnv("redis.read_timeout", "AGENTAPI_REDIS_READ_TIMEOUT")
+	_ = v.BindEnv("redis.write_timeout", "AGENTAPI_REDIS_WRITE_TIMEOUT")
 }
 
 // setDefaults sets default values for viper configuration
@@ -797,6 +829,15 @@ func setDefaults(v *viper.Viper) {
 
 	// Slack defaults
 	v.SetDefault("slack.dry_run", false)
+
+	// Redis defaults (empty addr = disabled)
+	v.SetDefault("redis.addr", "")
+	v.SetDefault("redis.password", "")
+	v.SetDefault("redis.db", 0)
+	v.SetDefault("redis.tls_enabled", false)
+	v.SetDefault("redis.dial_timeout", "5s")
+	v.SetDefault("redis.read_timeout", "3s")
+	v.SetDefault("redis.write_timeout", "3s")
 }
 
 // applyConfigDefaults applies default values to any unset configuration fields

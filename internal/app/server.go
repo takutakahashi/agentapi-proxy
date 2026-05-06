@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/redis/go-redis/v9"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
@@ -146,6 +148,17 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 	sessionManager := portrepos.SessionManager(k8sSessionManager)
 	log.Printf("[SERVER] Kubernetes session manager initialized successfully")
+
+	// Initialize cross-pod status synchronisation via Redis (optional).
+	// When Redis is not configured a no-op fallback is used transparently.
+	statusEventRepo := buildStatusEventRepository(cfg)
+	k8sSessionManager.SetStatusEventRepository(statusEventRepo)
+
+	// Wire session-list cache if the status-event repository also implements
+	// SessionListCacheRepository (both Redis and Noop variants do).
+	if listCacheRepo, ok := statusEventRepo.(portrepos.SessionListCacheRepository); ok {
+		k8sSessionManager.SetSessionListCacheRepository(listCacheRepo)
+	}
 
 	// Initialize encryption service registry
 	// The registry manages multiple encryption services and selects the appropriate one
@@ -1213,4 +1226,55 @@ func (s *Server) cleanupExpiredShares() {
 			}
 		}
 	}
+}
+
+// buildStatusEventRepository constructs the appropriate StatusEventRepository
+// based on the config:
+//   - When cfg.Redis.Addr is non-empty a real RedisStatusRepository is returned.
+//   - Otherwise a NoopStatusRepository is returned so existing single-pod
+//     behaviour is preserved without any code changes in the callers.
+func buildStatusEventRepository(cfg *config.Config) portrepos.StatusEventRepository {
+	if cfg.Redis.Addr == "" {
+		log.Printf("[SERVER] Redis not configured – using noop status event repository")
+		return repositories.NewNoopStatusRepository()
+	}
+
+	opts := &redis.Options{
+		Addr:     cfg.Redis.Addr,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	}
+
+	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
+		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.ReadTimeout); err == nil && d > 0 {
+		opts.ReadTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
+		opts.WriteTimeout = d
+	}
+	if cfg.Redis.TLSEnabled {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
+	client := redis.NewClient(opts)
+
+	// Verify connectivity at startup (non-fatal: a misconfigured Redis falls
+	// back to noop so the proxy can still serve requests).
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer pingCancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		log.Printf("[SERVER] Warning: Redis ping failed (%s) – falling back to noop status event repository: %v",
+			cfg.Redis.Addr, err)
+		_ = client.Close()
+		return repositories.NewNoopStatusRepository()
+	}
+
+	podID, _ := os.Hostname()
+	if podID == "" {
+		podID = "unknown"
+	}
+	log.Printf("[SERVER] Redis status event repository connected: addr=%s podID=%s", cfg.Redis.Addr, podID)
+	return repositories.NewRedisStatusRepository(client, podID)
 }
