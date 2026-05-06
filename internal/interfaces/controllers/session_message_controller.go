@@ -25,6 +25,10 @@ type ProxyMessageWatcher interface {
 //
 // Query parameters:
 //   - timeout: max wait time in seconds (default 30, max 60)
+//   - since: Unix timestamp in milliseconds (or RFC3339 string) of the last known update.
+//     If the session has received a message_update after this timestamp, the response is
+//     returned immediately without waiting. This allows clients that were inactive to
+//     catch up to the latest state on their next poll.
 func (c *SessionController) WaitSessionMessages(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
 	authzCtx := auth.GetAuthorizationContext(ctx)
@@ -45,14 +49,42 @@ func (c *SessionController) WaitSessionMessages(ctx echo.Context) error {
 		}
 	}
 
+	// Parse the optional since parameter (Unix ms or RFC3339).
+	var since time.Time
+	if s := ctx.QueryParam("since"); s != "" {
+		if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
+			since = time.UnixMilli(ms)
+		} else if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			since = t
+		}
+	}
+
 	watcher, ok := manager.(ProxyMessageWatcher)
 	if !ok {
 		return echo.NewHTTPError(http.StatusNotImplemented,
 			"message waiting not supported by this session manager")
 	}
 
+	// Subscribe before reading lastMessageAt to avoid a TOCTOU race: if a
+	// broadcast arrives between the check and the subscribe, the channel will
+	// already have the event and we return on the first select iteration.
 	eventCh, cancel := watcher.SubscribeMessageEvents(sessionID)
 	defer cancel()
+
+	// If the caller provided a since timestamp and the session already has a
+	// newer message update, return immediately so that clients resuming after
+	// inactivity catch up without waiting for the next event.
+	if !since.IsZero() {
+		if lastMsgAt := session.LastMessageAt(); lastMsgAt.After(since) {
+			log.Printf("[MSG_WAIT] Session %s: already updated at %s (since=%s), returning immediately",
+				sessionID, lastMsgAt, since)
+			return ctx.JSON(http.StatusOK, map[string]interface{}{
+				"updated":    true,
+				"session_id": sessionID,
+				"timestamp":  lastMsgAt,
+			})
+		}
+	}
 
 	timer := time.NewTimer(time.Duration(timeoutSec) * time.Second)
 	defer timer.Stop()

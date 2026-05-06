@@ -2626,9 +2626,18 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 
 // broadcastMessageUpdate notifies all active per-session subscribers that a message_update
 // event was received from the agentapi backend for the given session.
+// Also updates the session's lastMessageAt so late-arriving pollers can detect the update.
 // Non-blocking: slow subscribers are skipped to avoid stalling the SSE reader goroutine.
 func (m *KubernetesSessionManager) broadcastMessageUpdate(sessionID string) {
-	evt := SessionMessageEvent{SessionID: sessionID, Timestamp: time.Now()}
+	now := time.Now()
+	m.mutex.RLock()
+	session, exists := m.sessions[sessionID]
+	m.mutex.RUnlock()
+	if exists {
+		session.SetLastMessageAt(now)
+	}
+
+	evt := SessionMessageEvent{SessionID: sessionID, Timestamp: now}
 	m.messageSubsMu.Lock()
 	defer m.messageSubsMu.Unlock()
 	subs, ok := m.messageSubs[sessionID]
