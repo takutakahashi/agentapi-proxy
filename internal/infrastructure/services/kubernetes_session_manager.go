@@ -109,6 +109,16 @@ type KubernetesSessionManager struct {
 	messageSubsMu    sync.Mutex
 	messageSubs      map[string]map[uint64]chan SessionMessageEvent
 	nextMessageSubID uint64
+
+	// statusEventRepo is the cross-pod status synchronisation backend.
+	// When Redis is configured this is a RedisStatusRepository; otherwise it is
+	// a NoopStatusRepository that keeps the existing single-pod behaviour.
+	statusEventRepo portrepos.StatusEventRepository
+	// podID uniquely identifies this proxy instance for Pub/Sub deduplication.
+	podID string
+	// statusSubCtx / statusSubCancel control the lifetime of the Redis subscriber goroutine.
+	statusSubCtx    context.Context
+	statusSubCancel context.CancelFunc
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -150,16 +160,27 @@ func NewKubernetesSessionManagerWithClient(
 
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
+	// Determine pod identity for Pub/Sub deduplication.
+	podID, _ := os.Hostname()
+	if podID == "" {
+		podID = "unknown"
+	}
+
+	subCtx, subCancel := context.WithCancel(context.Background())
+
 	manager := &KubernetesSessionManager{
-		config:      cfg,
-		k8sConfig:   k8sConfig,
-		client:      client,
-		verbose:     verbose,
-		logger:      lgr,
-		sessions:    make(map[string]*KubernetesSession),
-		namespace:   namespace,
-		globalSubs:  make(map[uint64]chan SessionStatusEvent),
-		messageSubs: make(map[string]map[uint64]chan SessionMessageEvent),
+		config:          cfg,
+		k8sConfig:       k8sConfig,
+		client:          client,
+		verbose:         verbose,
+		logger:          lgr,
+		sessions:        make(map[string]*KubernetesSession),
+		namespace:       namespace,
+		globalSubs:      make(map[uint64]chan SessionStatusEvent),
+		messageSubs:     make(map[string]map[uint64]chan SessionMessageEvent),
+		podID:           podID,
+		statusSubCtx:    subCtx,
+		statusSubCancel: subCancel,
 	}
 
 	// Ensure OpenTelemetry Collector ConfigMap exists
@@ -171,6 +192,98 @@ func NewKubernetesSessionManagerWithClient(
 	}
 
 	return manager, nil
+}
+
+// SetStatusEventRepository injects a StatusEventRepository for cross-pod status
+// synchronisation.  It must be called before the manager starts handling traffic.
+// If repo is nil the existing no-op fallback is kept.
+func (m *KubernetesSessionManager) SetStatusEventRepository(repo portrepos.StatusEventRepository) {
+	if repo == nil {
+		return
+	}
+	m.statusEventRepo = repo
+	log.Printf("[K8S_SESSION] StatusEventRepository configured (podID=%s)", m.podID)
+
+	// Start the Redis subscriber goroutine that fans out cross-pod events to
+	// local SSE subscribers.
+	go m.runStatusSubscriber(m.statusSubCtx)
+}
+
+// runStatusSubscriber subscribes to the global status-change channel and
+// forwards incoming events to local in-process SSE subscribers.
+// Events that originated from this pod are ignored (self-dedup).
+func (m *KubernetesSessionManager) runStatusSubscriber(ctx context.Context) {
+	log.Printf("[K8S_SESSION] Starting cross-pod status subscriber (podID=%s)", m.podID)
+	for {
+		ch, err := m.statusEventRepo.SubscribeGlobal(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				log.Printf("[K8S_SESSION] Status subscriber context cancelled, stopping")
+				return
+			}
+			log.Printf("[K8S_SESSION] Failed to subscribe to global status channel, retrying in 5s: %v", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+			continue
+		}
+		log.Printf("[K8S_SESSION] Cross-pod status subscriber connected")
+		m.consumeStatusEvents(ctx, ch)
+		if ctx.Err() != nil {
+			return
+		}
+		// Channel closed — reconnect after a short back-off.
+		log.Printf("[K8S_SESSION] Status subscriber channel closed, reconnecting in 3s")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// consumeStatusEvents reads events from ch until it is closed or ctx is cancelled.
+// Events from this pod are silently discarded to avoid duplicate broadcasts.
+func (m *KubernetesSessionManager) consumeStatusEvents(ctx context.Context, ch <-chan portrepos.StatusChangeEvent) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Skip events that were published by this pod — we already broadcast
+			// those locally at the time of the status change.
+			if evt.PodID == m.podID {
+				continue
+			}
+			log.Printf("[K8S_SESSION] Cross-pod status event: session=%s status=%s from=%s",
+				evt.SessionID, evt.Status, evt.PodID)
+
+			// Update in-memory status if the session is loaded on this pod.
+			m.mutex.RLock()
+			session, exists := m.sessions[evt.SessionID]
+			m.mutex.RUnlock()
+			if exists {
+				session.SetStatusSilent(evt.Status)
+			}
+
+			// Forward to local SSE subscribers regardless of whether the session
+			// is in memory (clients may be subscribed to the global feed).
+			m.broadcastStatusChange(evt.SessionID, evt.Status)
+		}
+	}
+}
+
+// StopStatusSubscriber cancels the background Redis subscriber goroutine.
+// Should be called on graceful shutdown.
+func (m *KubernetesSessionManager) StopStatusSubscriber() {
+	if m.statusSubCancel != nil {
+		m.statusSubCancel()
+	}
 }
 
 // CreateSession creates a new session with a Kubernetes Deployment.
@@ -769,7 +882,60 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 	}
 
 	// Restore session from Service
-	return m.restoreSessionFromService(svc)
+	restored := m.restoreSessionFromService(svc)
+	if restored == nil {
+		return nil
+	}
+
+	// Phase 2: overlay agentapi runtime status from Redis if available.
+	// The Kubernetes Deployment can only tell us "active" or "unhealthy".
+	// Redis may have a more precise runtime status (running/error/timeout).
+	if m.statusEventRepo != nil {
+		runtimeStatusOverrideFromRedis(m.statusEventRepo, restored)
+	}
+
+	return restored
+}
+
+// runtimeStatusOverrideFromRedis reads the latest agentapi runtime status from
+// Redis and, when it is more informative than the current in-memory status,
+// applies it to the session via SetStatusSilent so no additional broadcast is
+// triggered (the broadcasting pod already did that).
+//
+// The "infrastructure" statuses (creating, starting, unhealthy, stopped,
+// unknown) are authoritative from Kubernetes and are never overridden by Redis.
+func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, session entities.Session) {
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return
+	}
+	// Infrastructure statuses must not be overridden.
+	currentStatus := ks.Status()
+	switch currentStatus {
+	case "creating", "starting", "unhealthy", "stopped", "unknown":
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	redisStatus, _, err := repo.GetStatus(ctx, ks.ID())
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to read Redis status for session=%s: %v", ks.ID(), err)
+		return
+	}
+	if redisStatus == "" {
+		return // No Redis entry; keep Kubernetes-derived status.
+	}
+
+	// Only replace with more-specific runtime statuses.
+	switch redisStatus {
+	case "running", "active", "error", "timeout":
+		if redisStatus != currentStatus {
+			log.Printf("[K8S_SESSION] Overlaying Redis runtime status session=%s %s→%s",
+				ks.ID(), currentStatus, redisStatus)
+			ks.SetStatusSilent(redisStatus)
+		}
+	}
 }
 
 // ListSessions returns all sessions matching the filter
@@ -981,6 +1147,15 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 
 	// Remove session from map
 	m.cleanupSession(id)
+
+	// Clean up Redis status key.
+	if m.statusEventRepo != nil {
+		delCtx, delCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer delCancel()
+		if err := m.statusEventRepo.DeleteStatus(delCtx, id); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to delete Redis status for session=%s: %v", id, err)
+		}
+	}
 
 	// Log session end
 	if err := m.logger.LogSessionEnd(id, 0); err != nil {
@@ -2257,6 +2432,8 @@ func (m *KubernetesSessionManager) AddSessionDeletedHandler(handler SessionDelet
 // broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
 // It is registered as the statusChangeCallback on each KubernetesSession.
 // Non-blocking: slow subscribers are skipped to avoid stalling SetStatus.
+// When a StatusEventRepository is configured it also persists the status and
+// publishes an event for other pods to pick up.
 func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status string) {
 	evt := SessionStatusEvent{
 		SessionID: sessionID,
@@ -2264,13 +2441,31 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 		Timestamp: time.Now(),
 	}
 	m.globalSubsMu.Lock()
-	defer m.globalSubsMu.Unlock()
 	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d", sessionID, status, len(m.globalSubs))
 	for _, ch := range m.globalSubs {
 		select {
 		case ch <- evt:
 		default:
 			// subscriber channel is full; drop to avoid blocking the caller
+		}
+	}
+	m.globalSubsMu.Unlock()
+
+	// Persist and publish to Redis so other pods are notified.
+	if m.statusEventRepo != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := m.statusEventRepo.SetStatus(ctx, sessionID, status, m.podID); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to persist status to Redis session=%s: %v", sessionID, err)
+		}
+		crossEvt := portrepos.StatusChangeEvent{
+			SessionID: sessionID,
+			Status:    status,
+			UpdatedAt: time.Now(),
+			PodID:     m.podID,
+		}
+		if err := m.statusEventRepo.PublishStatusChange(ctx, crossEvt); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to publish status to Redis session=%s: %v", sessionID, err)
 		}
 	}
 }

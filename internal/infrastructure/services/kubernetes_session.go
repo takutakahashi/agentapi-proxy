@@ -174,6 +174,16 @@ func (s *KubernetesSession) SetStatus(status string) {
 	}
 }
 
+// SetStatusSilent updates the in-memory status without invoking the
+// statusChangeCallback.  It is used when replaying a cross-pod status event
+// received from Redis so that the local state is kept consistent without
+// triggering a redundant broadcast (the originating pod already did that).
+func (s *KubernetesSession) SetStatusSilent(status string) {
+	s.mutex.Lock()
+	s.status = status
+	s.mutex.Unlock()
+}
+
 // SetStartedAt sets the session start time (used for restored sessions)
 func (s *KubernetesSession) SetStartedAt(t time.Time) {
 	s.startedAt = t

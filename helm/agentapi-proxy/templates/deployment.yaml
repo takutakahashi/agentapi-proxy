@@ -385,6 +385,45 @@ spec:
             - name: VAPID_CONTACT_EMAIL
               value: {{ .Values.config.vapid.contactEmail | quote }}
             {{- end }}
+            # Redis cross-pod status synchronisation
+            {{- if .Values.redis.enabled }}
+            - name: AGENTAPI_REDIS_ADDR
+              value: {{ printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) | quote }}
+            {{- if .Values.redis.auth.enabled }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-redis" (include "agentapi-proxy.fullname" .) | quote }}
+                  key: redis-password
+            {{- end }}
+            {{- else if .Values.externalRedis.addr }}
+            - name: AGENTAPI_REDIS_ADDR
+              value: {{ .Values.externalRedis.addr | quote }}
+            {{- if .Values.externalRedis.password }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              value: {{ .Values.externalRedis.password | quote }}
+            {{- end }}
+            {{- if .Values.externalRedis.db }}
+            - name: AGENTAPI_REDIS_DB
+              value: {{ .Values.externalRedis.db | quote }}
+            {{- end }}
+            {{- if .Values.externalRedis.tlsEnabled }}
+            - name: AGENTAPI_REDIS_TLS_ENABLED
+              value: {{ .Values.externalRedis.tlsEnabled | quote }}
+            {{- end }}
+            {{- if .Values.externalRedis.dialTimeout }}
+            - name: AGENTAPI_REDIS_DIAL_TIMEOUT
+              value: {{ .Values.externalRedis.dialTimeout | quote }}
+            {{- end }}
+            {{- if .Values.externalRedis.readTimeout }}
+            - name: AGENTAPI_REDIS_READ_TIMEOUT
+              value: {{ .Values.externalRedis.readTimeout | quote }}
+            {{- end }}
+            {{- if .Values.externalRedis.writeTimeout }}
+            - name: AGENTAPI_REDIS_WRITE_TIMEOUT
+              value: {{ .Values.externalRedis.writeTimeout | quote }}
+            {{- end }}
+            {{- end }}
             {{- range .Values.env }}
             - name: {{ .name }}
               value: {{ .value | quote }}

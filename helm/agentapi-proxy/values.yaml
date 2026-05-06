@@ -535,3 +535,49 @@ slackbotCleanupWorker:
     # Retry period (how often non-leaders try to acquire the lock)
     retryPeriod: "2s"
 
+# =============================================================================
+# Redis – 複数Pod間のセッションステータス同期
+# =============================================================================
+# replicaCount > 1 の場合は redis.enabled=true にすることを強く推奨します。
+# Redis が無効の場合はノーオペレーション実装が使われ、ステータス同期は各Podのメモリ内
+# のみになります（単一レプリカ運用では問題ありません）。
+#
+# enabled=true のとき Bitnami Redis サブチャートが一緒にデプロイされます。
+# 外部 Redis を使いたい場合は enabled=false にして externalRedis を設定してください。
+redis:
+  # enabled=true: Bitnami Redis サブチャートをデプロイする
+  enabled: false
+
+  # Bitnami Redis サブチャートの設定
+  # https://github.com/bitnami/charts/tree/main/bitnami/redis
+  architecture: standalone
+  auth:
+    enabled: false
+    password: ""
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+
+# 外部 Redis を使用する場合の設定（redis.enabled=false のときのみ有効）
+externalRedis:
+  # addr: "your-redis-host:6379"
+  addr: ""
+  # password: ""
+  password: ""
+  # db: 0
+  db: 0
+  # tlsEnabled: false
+  tlsEnabled: false
+  # タイムアウト設定（Goのduration文字列形式）
+  dialTimeout: "5s"
+  readTimeout: "3s"
+  writeTimeout: "3s"
+

@@ -1,0 +1,48 @@
+package repositories
+
+import (
+	"context"
+	"time"
+
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+)
+
+// NoopStatusRepository is a no-op implementation of StatusEventRepository.
+// It is used when Redis is not configured so that the rest of the code can
+// remain unaware of whether a real backend is available.
+type NoopStatusRepository struct{}
+
+// NewNoopStatusRepository returns a new NoopStatusRepository.
+func NewNoopStatusRepository() *NoopStatusRepository {
+	return &NoopStatusRepository{}
+}
+
+// SetStatus does nothing and returns nil.
+func (n *NoopStatusRepository) SetStatus(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+// GetStatus always reports "not found" (empty status).
+func (n *NoopStatusRepository) GetStatus(_ context.Context, _ string) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}
+
+// PublishStatusChange does nothing and returns nil.
+func (n *NoopStatusRepository) PublishStatusChange(_ context.Context, _ portrepos.StatusChangeEvent) error {
+	return nil
+}
+
+// SubscribeGlobal returns a channel that is immediately closed when ctx is done.
+func (n *NoopStatusRepository) SubscribeGlobal(ctx context.Context) (<-chan portrepos.StatusChangeEvent, error) {
+	ch := make(chan portrepos.StatusChangeEvent)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}
+
+// DeleteStatus does nothing and returns nil.
+func (n *NoopStatusRepository) DeleteStatus(_ context.Context, _ string) error {
+	return nil
+}
