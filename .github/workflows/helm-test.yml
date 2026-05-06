@@ -24,6 +24,10 @@ jobs:
         with:
           version: '3.18.3'
 
+      - name: Update Helm dependencies
+        run: |
+          helm dependency update helm/agentapi-proxy/
+
       - name: Lint Helm chart
         run: |
           helm lint helm/agentapi-proxy/

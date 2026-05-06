@@ -209,6 +209,11 @@ jobs:
           
           yamllint -c /tmp/yamllint-config.yaml helm/${{ env.CHART_NAME }}/
 
+      - name: Update Helm dependencies
+        run: |
+          echo "Updating Helm chart dependencies..."
+          helm dependency update helm/${{ env.CHART_NAME }}/
+
       - name: Lint Helm chart
         run: |
           echo "Running Helm lint..."
