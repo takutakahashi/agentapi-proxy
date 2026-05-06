@@ -191,7 +191,9 @@ func (r *Router) registerCoreRoutes() error {
 	// Proxy-wide session status push endpoints (registered before /:sessionId/* catch-all)
 	r.echo.GET("/sessions/status/stream", r.handlers.sessionController.StreamSessionsStatus)
 	r.echo.GET("/sessions/status/wait", r.handlers.sessionController.WaitSessionsStatus)
-	log.Printf("[ROUTES] Session status push endpoints registered (SSE + long-poll)")
+	// Per-session message update long-poll endpoint (must be before /:sessionId/* catch-all)
+	r.echo.GET("/sessions/:sessionId/messages/wait", r.handlers.sessionController.WaitSessionMessages)
+	log.Printf("[ROUTES] Session status/message push endpoints registered (SSE + long-poll)")
 
 	// Session sharing routes
 	if r.handlers.shareController != nil {
