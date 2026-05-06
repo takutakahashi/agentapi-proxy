@@ -781,6 +781,17 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		log.Printf("[K8S_SESSION] Failed to log session start for stock session %s: %v", stockID, err)
 	}
 
+	// Invalidate session-list cache so the adopted session appears immediately in
+	// list results.  The stock Service was previously excluded by the
+	// !agentapi.proxy/stock label selector; now that its labels have been updated
+	// to reflect the real owner it will be included, but only if the cache is
+	// cleared so the next ListSessions call hits Kubernetes.
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after stock adopt: %v", err)
+		}
+	}
+
 	log.Printf("[K8S_SESSION] Stock session %s adopted successfully", stockID)
 	return session, nil
 }
