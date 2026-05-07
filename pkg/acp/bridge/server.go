@@ -89,8 +89,10 @@ func (s *Server) handleHealth(c echo.Context) error {
 // GET /session
 // Returns the session ID and current status so clients know what ID to use in RPC calls.
 func (s *Server) handleGetSession(c echo.Context) error {
+	sessionId := s.bridge.SessionID()
+	log.Printf("[acp-server] GET /session -> sessionId=%s (remoteAddr=%s)", sessionId, c.RealIP())
 	return c.JSON(http.StatusOK, map[string]string{
-		"sessionId": s.bridge.SessionID(),
+		"sessionId": sessionId,
 		"status":    "ready",
 	})
 }
@@ -122,8 +124,10 @@ type rpcEnvelope struct {
 func (s *Server) handleRPC(c echo.Context) error {
 	var env rpcEnvelope
 	if err := c.Bind(&env); err != nil {
+		log.Printf("[acp-server] POST /rpc parse error (remoteAddr=%s): %v", c.RealIP(), err)
 		return c.JSON(http.StatusBadRequest, rpcErrorResp(nil, -32700, "Parse error"))
 	}
+	log.Printf("[acp-server] POST /rpc method=%q id=%v (remoteAddr=%s)", env.Method, env.ID, c.RealIP())
 
 	// ── Case 1: Response to an agent-initiated request ───────────────────────
 	// Identified by: id is set, method is absent.
@@ -207,8 +211,13 @@ func (s *Server) handleSSE(c echo.Context) error {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
+	log.Printf("[acp-server] GET /sse connected (remoteAddr=%s, lastEventID=%q)", c.RealIP(), c.Request().Header.Get("Last-Event-ID"))
+
 	ch, cancel := s.bridge.Subscribe()
-	defer cancel()
+	defer func() {
+		cancel()
+		log.Printf("[acp-server] GET /sse disconnected (remoteAddr=%s)", c.RealIP())
+	}()
 
 	flusher, hasFlusher := w.Writer.(http.Flusher)
 

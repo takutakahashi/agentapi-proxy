@@ -183,10 +183,13 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 		promptCtx = context.Background()
 	}
 
+	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, textLen=%d)", b.sessionId, clientID, len(text))
+
 	go func() {
 		stopReason, err := b.acp.Prompt(promptCtx, text)
 
 		if err != nil {
+			log.Printf("[bridge] Prompt error (session=%s): %v", b.sessionId, err)
 			b.broadcast(jsonRPCMsg{
 				JSONRPC: "2.0",
 				ID:      &clientID,
@@ -194,6 +197,7 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 			})
 			return
 		}
+		log.Printf("[bridge] Prompt done (session=%s, stopReason=%s)", b.sessionId, stopReason)
 		b.broadcast(jsonRPCMsg{
 			JSONRPC: "2.0",
 			ID:      &clientID,
@@ -234,18 +238,23 @@ func (b *Bridge) Subscribe() (<-chan json.RawMessage, func()) {
 
 	b.subsMu.Lock()
 	b.subs = append(b.subs, sub)
+	count := len(b.subs)
 	b.subsMu.Unlock()
+
+	log.Printf("[bridge] SSE subscriber connected (session=%s, total=%d)", b.sessionId, count)
 
 	cancel := func() {
 		b.subsMu.Lock()
-		defer b.subsMu.Unlock()
 		for i, s := range b.subs {
 			if s == sub {
 				b.subs = append(b.subs[:i], b.subs[i+1:]...)
 				break
 			}
 		}
+		remaining := len(b.subs)
+		b.subsMu.Unlock()
 		close(sub.ch)
+		log.Printf("[bridge] SSE subscriber disconnected (session=%s, remaining=%d)", b.sessionId, remaining)
 	}
 	return sub.ch, cancel
 }
