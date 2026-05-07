@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -26,25 +26,25 @@ type mockWaitSession struct {
 	lastMessageAt time.Time
 }
 
-func (s *mockWaitSession) ID() string                        { return s.id }
-func (s *mockWaitSession) Addr() string                      { return "localhost:9000" }
-func (s *mockWaitSession) UserID() string                    { return s.userID }
-func (s *mockWaitSession) Scope() entities.ResourceScope     { return entities.ScopeUser }
-func (s *mockWaitSession) TeamID() string                    { return "" }
-func (s *mockWaitSession) Tags() map[string]string           { return nil }
-func (s *mockWaitSession) Status() string                    { return "active" }
-func (s *mockWaitSession) StartedAt() time.Time              { return time.Time{} }
-func (s *mockWaitSession) UpdatedAt() time.Time              { return time.Time{} }
-func (s *mockWaitSession) LastMessageAt() time.Time          { return s.lastMessageAt }
-func (s *mockWaitSession) Description() string               { return "" }
-func (s *mockWaitSession) Cancel()                           {}
+func (s *mockWaitSession) ID() string                    { return s.id }
+func (s *mockWaitSession) Addr() string                  { return "localhost:9000" }
+func (s *mockWaitSession) UserID() string                { return s.userID }
+func (s *mockWaitSession) Scope() entities.ResourceScope { return entities.ScopeUser }
+func (s *mockWaitSession) TeamID() string                { return "" }
+func (s *mockWaitSession) Tags() map[string]string       { return nil }
+func (s *mockWaitSession) Status() string                { return "active" }
+func (s *mockWaitSession) StartedAt() time.Time          { return time.Time{} }
+func (s *mockWaitSession) UpdatedAt() time.Time          { return time.Time{} }
+func (s *mockWaitSession) LastMessageAt() time.Time      { return s.lastMessageAt }
+func (s *mockWaitSession) Description() string           { return "" }
+func (s *mockWaitSession) Cancel()                       {}
 
 // --- mock session manager that also implements ProxyMessageWatcher ---
 
 type mockWaitSessionManager struct {
-	session   entities.Session
-	eventCh   chan services.SessionMessageEvent
-	cancelFn  func()
+	session  entities.Session
+	eventCh  chan services.SessionMessageEvent
+	cancelFn func()
 }
 
 func newMockWaitSessionManager(session entities.Session) *mockWaitSessionManager {
