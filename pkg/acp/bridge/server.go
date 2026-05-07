@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -96,8 +97,15 @@ func (s *Server) handleHealth(c echo.Context) error {
 
 // GET /status
 // Returns agentapi-compatible status so the provisioner's health check passes.
+// Includes agent_type from the AGENTAPI_AGENT_TYPE environment variable (if set)
+// so that the UI can detect the ACP session type and enable appropriate features
+// such as Markdown rendering.
 func (s *Server) handleStatus(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]string{"status": "stable"})
+	resp := map[string]string{"status": "stable"}
+	if agentType := os.Getenv("AGENTAPI_AGENT_TYPE"); agentType != "" {
+		resp["agent_type"] = agentType
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // GET /messages
