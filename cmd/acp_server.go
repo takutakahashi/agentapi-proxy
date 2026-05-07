@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -15,10 +17,11 @@ import (
 )
 
 var (
-	acpPort      string
-	acpCwd       string
-	acpSessionID string
-	acpVerbose   bool
+	acpPort        string
+	acpCwd         string
+	acpSessionID   string
+	acpSessionFile string
+	acpVerbose     bool
 )
 
 // AcpServerCmd starts an ACP agent over stdio and exposes it as an
@@ -50,6 +53,7 @@ func init() {
 	AcpServerCmd.Flags().StringVarP(&acpPort, "port", "p", "3284", "HTTP port to listen on")
 	AcpServerCmd.Flags().StringVar(&acpCwd, "cwd", "", "Working directory for the ACP session (defaults to current directory)")
 	AcpServerCmd.Flags().StringVar(&acpSessionID, "session-id", "", "Session ID to use (defaults to auto-generated)")
+	AcpServerCmd.Flags().StringVar(&acpSessionFile, "session-file", "", "File to persist ACP session ID for reuse across restarts (defaults to {cwd}/.acp-session-id)")
 	AcpServerCmd.Flags().BoolVarP(&acpVerbose, "verbose", "v", false, "Enable verbose logging")
 }
 
@@ -114,10 +118,41 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("ACP initialization failed: %w", err)
 	}
 
-	// Create the ACP session.
-	if err := acpClient.NewSession(ctx, cwd, nil); err != nil {
-		return fmt.Errorf("ACP session creation failed: %w", err)
+	// Resolve session file path (used to persist the session ID across restarts).
+	sessionFile := acpSessionFile
+	if sessionFile == "" {
+		sessionFile = filepath.Join(cwd, ".acp-session-id")
 	}
+
+	// Try to restore a previous session if the agent supports session/load.
+	restored := false
+	if acpClient.AgentCaps().SessionLoad {
+		if data, err := os.ReadFile(sessionFile); err == nil {
+			savedID := strings.TrimSpace(string(data))
+			if savedID != "" {
+				if err := acpClient.LoadSession(ctx, savedID); err != nil {
+					log.Printf("[acp-server] session/load failed (%v), creating new session", err)
+				} else {
+					log.Printf("[acp-server] restored previous session (session=%s)", acpClient.SessionID())
+					restored = true
+				}
+			}
+		}
+	}
+
+	if !restored {
+		// Create a fresh ACP session.
+		if err := acpClient.NewSession(ctx, cwd, nil); err != nil {
+			return fmt.Errorf("ACP session creation failed: %w", err)
+		}
+		// Persist the new session ID so future restarts can attempt to restore it.
+		if err := os.WriteFile(sessionFile, []byte(acpClient.SessionID()), 0600); err != nil {
+			log.Printf("[acp-server] warning: failed to save session ID to %s: %v", sessionFile, err)
+		} else {
+			log.Printf("[acp-server] session ID saved to %s", sessionFile)
+		}
+	}
+
 	log.Printf("[acp-server] ACP session ready (session=%s)", acpClient.SessionID())
 
 	// Create the bridge and start its event loop.
