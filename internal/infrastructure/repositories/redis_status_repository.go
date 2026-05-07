@@ -23,10 +23,6 @@ const (
 	// redisSessionListCachePrefix is the prefix for session-list cache keys.
 	// Key format: agentapi:sessions:list:{namespace}:{labelSelectorHash}
 	redisSessionListCachePrefix = "agentapi:sessions:list:"
-	// redisSessionListCacheTTL is how long a session-list cache entry is kept.
-	// Short enough that mutations (create/delete) are visible quickly even on
-	// cache invalidation failure, but long enough to absorb burst list requests.
-	redisSessionListCacheTTL = 15 * time.Second
 )
 
 // redisStatusFields are the hash field names used within a status key.
@@ -172,10 +168,6 @@ func (r *RedisStatusRepository) DeleteStatus(ctx context.Context, sessionID stri
 // --------------------------------------------------------------------------
 // SessionListCacheRepository implementation
 // --------------------------------------------------------------------------
-
-func sessionListCacheKey(namespace, labelSelectorHash string) string {
-	return redisSessionListCachePrefix + namespace + ":" + labelSelectorHash
-}
 
 func sessionListCachePattern(namespace string) string {
 	return redisSessionListCachePrefix + namespace + ":*"

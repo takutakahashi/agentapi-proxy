@@ -2581,6 +2581,14 @@ func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status 
 		}
 	}
 	m.globalSubsMu.Unlock()
+
+	// Invalidate session-list cache so the updated status is reflected immediately
+	// on this pod as well (the originating pod already invalidated its own cache).
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on cross-pod status change session=%s: %v", sessionID, err)
+		}
+	}
 }
 
 // broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
@@ -2620,6 +2628,13 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 		}
 		if err := m.statusEventRepo.PublishStatusChange(ctx, crossEvt); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to publish status to Redis session=%s: %v", sessionID, err)
+		}
+	}
+
+	// Invalidate session-list cache so the updated status is reflected immediately.
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on status change session=%s: %v", sessionID, err)
 		}
 	}
 }
