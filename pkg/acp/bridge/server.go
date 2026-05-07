@@ -52,6 +52,10 @@ func NewServer(b *Bridge, verbose bool) *Server {
 
 func (s *Server) registerRoutes() {
 	s.echo.GET("/health", s.handleHealth)
+	// /status is polled by the provisioner to detect when the agent is ready.
+	// It must return HTTP 200; the body mirrors the agentapi status shape so
+	// that existing tooling can parse it without changes.
+	s.echo.GET("/status", s.handleStatus)
 	s.echo.GET("/session", s.handleGetSession)
 	s.echo.POST("/rpc", s.handleRPC)
 	s.echo.GET("/sse", s.handleSSE)
@@ -84,6 +88,12 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 // GET /health
 func (s *Server) handleHealth(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// GET /status
+// Returns agentapi-compatible status so the provisioner's health check passes.
+func (s *Server) handleStatus(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{"status": "stable"})
 }
 
 // GET /session
