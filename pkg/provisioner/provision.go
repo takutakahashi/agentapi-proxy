@@ -656,9 +656,28 @@ type agentMessagesResponse struct {
 	} `json:"messages"`
 }
 
+// acpSessionResponse is the shape of the ACP bridge's GET /session response.
+type acpSessionResponse struct {
+	SessionId string `json:"sessionId"`
+	Status    string `json:"status"`
+}
+
+// acpMessagesResponse is the shape of the ACP bridge's GET /messages response.
+// Each message is a raw JSON-RPC 2.0 envelope; we only need to inspect
+// the method and the sessionUpdate discriminant inside params.update.
+type acpMessagesResponse struct {
+	Messages []json.RawMessage `json:"messages"`
+}
+
 // sendInitialMessage sends an initial message to agentapi after it has
 // started, replicating the logic of initialMessageSenderScript.
 func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int) {
+	// ACP sessions use a different transport (JSON-RPC 2.0 over POST /rpc).
+	if agentType == "claude-acp" {
+		sendACPInitialMessage(ctx, agentapiURL, message, waitSec)
+		return
+	}
+
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Check for existing user messages (idempotency / Pod restart).
@@ -721,6 +740,153 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 		}
 	}
 	log.Printf("[PROVISIONER] ERROR: Failed to send initial message after 5 attempts")
+}
+
+// sendACPInitialMessage sends an initial message to an ACP bridge session
+// via POST /rpc (JSON-RPC 2.0 session/prompt).
+func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, waitSec int) {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Idempotency: check whether user messages already exist in ACP format.
+	if count := countACPUserMessages(client, agentapiURL); count > 0 {
+		log.Printf("[PROVISIONER] ACP user messages already exist (%d), skipping initial message", count)
+		return
+	}
+
+	// Wait for the ACP bridge /status to report "stable".
+	waitForStable(ctx, client, agentapiURL, 60)
+
+	// Configured delay before sending.
+	log.Printf("[PROVISIONER] Waiting %d second(s) before sending ACP initial message", waitSec)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(time.Duration(waitSec) * time.Second):
+	}
+
+	// Double-check idempotency after wait.
+	if count := countACPUserMessages(client, agentapiURL); count > 0 {
+		log.Printf("[PROVISIONER] ACP user messages appeared during wait (%d), skipping", count)
+		return
+	}
+
+	// Fetch the ACP session ID from GET /session.
+	acpSessionId, err := getACPSessionId(client, agentapiURL)
+	if err != nil {
+		log.Printf("[PROVISIONER] ERROR: failed to get ACP session ID: %v", err)
+		return
+	}
+	log.Printf("[PROVISIONER] ACP session ID: %s", acpSessionId)
+
+	// Build JSON-RPC 2.0 session/prompt payload.
+	type contentBlock struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	type promptParams struct {
+		SessionId string         `json:"sessionId"`
+		Prompt    []contentBlock `json:"prompt"`
+	}
+	type rpcRequest struct {
+		JSONRPC string       `json:"jsonrpc"`
+		ID      int          `json:"id"`
+		Method  string       `json:"method"`
+		Params  promptParams `json:"params"`
+	}
+	payload := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "session/prompt",
+		Params: promptParams{
+			SessionId: acpSessionId,
+			Prompt:    []contentBlock{{Type: "text", Text: message}},
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	for attempt := 1; attempt <= 5; attempt++ {
+		log.Printf("[PROVISIONER] ACP initial message send attempt %d/5", attempt)
+
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, agentapiURL+"/rpc", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			// Bridge returns 202 Accepted for session/prompt (async).
+			if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK {
+				log.Printf("[PROVISIONER] ACP initial message sent successfully (HTTP %d)", resp.StatusCode)
+				return
+			}
+			log.Printf("[PROVISIONER] ACP send failed (HTTP %d), attempt %d/5", resp.StatusCode, attempt)
+		} else {
+			log.Printf("[PROVISIONER] ACP send error: %v, attempt %d/5", err, attempt)
+		}
+
+		if attempt < 5 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+		}
+	}
+	log.Printf("[PROVISIONER] ERROR: Failed to send ACP initial message after 5 attempts")
+}
+
+// getACPSessionId fetches the ACP session ID from GET /session.
+func getACPSessionId(client *http.Client, agentapiURL string) (string, error) {
+	resp, err := client.Get(agentapiURL + "/session")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var sr acpSessionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+		return "", err
+	}
+	if sr.SessionId == "" {
+		return "", fmt.Errorf("empty sessionId in /session response")
+	}
+	return sr.SessionId, nil
+}
+
+// countACPUserMessages returns the number of user_message_chunk events in the
+// ACP bridge's GET /messages history. Used for idempotency on Pod restarts.
+func countACPUserMessages(client *http.Client, agentapiURL string) int {
+	resp, err := client.Get(agentapiURL + "/messages")
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var mr acpMessagesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&mr); err != nil {
+		return 0
+	}
+
+	// Each element is a raw JSON-RPC 2.0 message. We look for:
+	//   { "method": "session/update", "params": { "update": { "sessionUpdate": "user_message_chunk" } } }
+	type acpUpdateParams struct {
+		Update struct {
+			SessionUpdate string `json:"sessionUpdate"`
+		} `json:"update"`
+	}
+	type acpMsg struct {
+		Method string          `json:"method"`
+		Params acpUpdateParams `json:"params"`
+	}
+	count := 0
+	for _, raw := range mr.Messages {
+		var m acpMsg
+		if err := json.Unmarshal(raw, &m); err != nil {
+			continue
+		}
+		if m.Method == "session/update" && m.Params.Update.SessionUpdate == "user_message_chunk" {
+			count++
+		}
+	}
+	return count
 }
 
 // waitForDefaultAgentReady uses the two-phase strategy from the original shell
