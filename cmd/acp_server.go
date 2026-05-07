@@ -121,7 +121,7 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 	log.Printf("[acp-server] ACP session ready (session=%s)", acpClient.SessionID())
 
 	// Create the bridge and start its event loop.
-	b := bridge.New(acpClient, acpVerbose)
+	b := bridge.New(acpClient, acpClient.SessionID(), acpVerbose)
 	go b.Run(ctx)
 
 	// Start the HTTP server.

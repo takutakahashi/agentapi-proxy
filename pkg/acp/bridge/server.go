@@ -6,29 +6,26 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/takutakahashi/agentapi-proxy/pkg/acp"
 )
 
-// Server is an agentapi-compatible HTTP server backed by a Bridge.
-// It exposes the following endpoints (compatible with takutakahashi/claude-agentapi):
+// Server is a minimal HTTP transport for ACP.
+// It exposes three endpoints that mirror the ACP JSON-RPC 2.0 protocol over HTTP:
 //
-//	GET  /health
-//	GET  /status
-//	GET  /messages
-//	POST /message
-//	GET  /events   (SSE)
-//	GET  /action
-//	POST /action
+//	GET  /session  – session info (sessionId, status)
+//	POST /rpc      – JSON-RPC 2.0 messages from HTTP client to ACP agent
+//	GET  /sse      – SSE stream of JSON-RPC 2.0 messages from ACP agent to HTTP client
+//	GET  /health   – health check (for compatibility)
 type Server struct {
 	bridge  *Bridge
 	echo    *echo.Echo
 	verbose bool
 }
 
-// NewServer creates a new HTTP server wrapping the given Bridge.
+// NewServer creates a new HTTP transport server backed by the given Bridge.
 func NewServer(b *Bridge, verbose bool) *Server {
 	e := echo.New()
 	e.HideBanner = true
@@ -55,12 +52,9 @@ func NewServer(b *Bridge, verbose bool) *Server {
 
 func (s *Server) registerRoutes() {
 	s.echo.GET("/health", s.handleHealth)
-	s.echo.GET("/status", s.handleStatus)
-	s.echo.GET("/messages", s.handleGetMessages)
-	s.echo.POST("/message", s.handlePostMessage)
-	s.echo.GET("/events", s.handleEvents)
-	s.echo.GET("/action", s.handleGetAction)
-	s.echo.POST("/action", s.handlePostAction)
+	s.echo.GET("/session", s.handleGetSession)
+	s.echo.POST("/rpc", s.handleRPC)
+	s.echo.GET("/sse", s.handleSSE)
 }
 
 // Start starts the HTTP server on the given address (e.g. ":3284").
@@ -92,140 +86,120 @@ func (s *Server) handleHealth(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// GET /status
-func (s *Server) handleStatus(c echo.Context) error {
-	return c.JSON(http.StatusOK, s.bridge.GetStatus())
-}
-
-// GET /messages
-//
-// Query parameters (takutakahashi/claude-agentapi compatible):
-//
-//	limit     int    – max messages to return (default 50)
-//	direction string – "head" | "tail" (default "tail")
-//	around    int    – message ID to centre the window on
-//	context   int    – number of messages before/after `around` (default 10)
-//	after     int    – cursor: messages with ID > after
-//	before    int    – cursor: messages with ID < before
-func (s *Server) handleGetMessages(c echo.Context) error {
-	all := s.bridge.GetMessages()
-
-	limit := 50
-	if v := c.QueryParam("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	direction := c.QueryParam("direction")
-	if direction == "" {
-		direction = "tail"
-	}
-
-	// Cursor filters
-	if after := c.QueryParam("after"); after != "" {
-		if id, err := strconv.ParseInt(after, 10, 64); err == nil {
-			filtered := all[:0]
-			for _, m := range all {
-				if m.ID > id {
-					filtered = append(filtered, m)
-				}
-			}
-			all = filtered
-		}
-	}
-	if before := c.QueryParam("before"); before != "" {
-		if id, err := strconv.ParseInt(before, 10, 64); err == nil {
-			filtered := all[:0]
-			for _, m := range all {
-				if m.ID < id {
-					filtered = append(filtered, m)
-				}
-			}
-			all = filtered
-		}
-	}
-
-	// around / context window
-	if aroundStr := c.QueryParam("around"); aroundStr != "" {
-		if aroundID, err := strconv.ParseInt(aroundStr, 10, 64); err == nil {
-			ctx := 10
-			if v := c.QueryParam("context"); v != "" {
-				if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-					ctx = n
-				}
-			}
-			centerIdx := -1
-			for i, m := range all {
-				if m.ID == aroundID {
-					centerIdx = i
-					break
-				}
-			}
-			if centerIdx >= 0 {
-				start := centerIdx - ctx
-				if start < 0 {
-					start = 0
-				}
-				end := centerIdx + ctx + 1
-				if end > len(all) {
-					end = len(all)
-				}
-				all = all[start:end]
-			}
-		}
-	}
-
-	total := len(all)
-	hasMore := false
-
-	if direction == "tail" {
-		if len(all) > limit {
-			all = all[len(all)-limit:]
-			hasMore = true
-		}
-	} else {
-		if len(all) > limit {
-			all = all[:limit]
-			hasMore = true
-		}
-	}
-
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"messages": all,
-		"total":    total,
-		"hasMore":  hasMore,
+// GET /session
+// Returns the session ID and current status so clients know what ID to use in RPC calls.
+func (s *Server) handleGetSession(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{
+		"sessionId": s.bridge.SessionID(),
+		"status":    "ready",
 	})
 }
 
-// postMessageRequest is the body for POST /message.
-type postMessageRequest struct {
-	Content string `json:"content"`
-	Type    string `json:"type"` // "user" | "raw"
+// rpcEnvelope is the JSON-RPC 2.0 message envelope received on POST /rpc.
+// Covers all three message kinds: request, notification, and response.
+type rpcEnvelope struct {
+	JSONRPC string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id,omitempty"`
+	Method  string           `json:"method,omitempty"`
+	Params  json.RawMessage  `json:"params,omitempty"`
+	Result  json.RawMessage  `json:"result,omitempty"`
+	Error   json.RawMessage  `json:"error,omitempty"`
 }
 
-// POST /message
-func (s *Server) handlePostMessage(c echo.Context) error {
-	var req postMessageRequest
-	if err := c.Bind(&req); err != nil {
-		return problemJSON(c, http.StatusBadRequest, "invalid request body", err.Error())
-	}
-	if req.Content == "" {
-		return problemJSON(c, http.StatusBadRequest, "content is required", "")
+// POST /rpc
+//
+// Accepts three kinds of JSON-RPC 2.0 messages:
+//
+//  1. Client-initiated requests (id + method):
+//     - "session/prompt"  → forwards text to ACP agent; result comes via SSE
+//     - "session/cancel"  → cancels the current agent turn
+//
+//  2. Client-initiated notifications (no id, method set):
+//     - "session/cancel"  → same as above, no response expected
+//
+//  3. Client responses to agent-initiated requests (id set, no method):
+//     - Response to "session/request_permission" emitted via SSE
+func (s *Server) handleRPC(c echo.Context) error {
+	var env rpcEnvelope
+	if err := c.Bind(&env); err != nil {
+		return c.JSON(http.StatusBadRequest, rpcErrorResp(nil, -32700, "Parse error"))
 	}
 
-	// "raw" type is not applicable for ACP (no PTY) – treat same as user.
-	if err := s.bridge.SendMessage(c.Request().Context(), req.Content); err != nil {
-		if err.Error() == "agent is busy" {
-			return problemJSON(c, http.StatusConflict, "agent is busy", "wait for status to become stable")
+	// ── Case 1: Response to an agent-initiated request ───────────────────────
+	// Identified by: id is set, method is absent.
+	if env.ID != nil && env.Method == "" {
+		if env.Result == nil {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(env.ID, -32600, "result is required for response messages"))
 		}
-		return problemJSON(c, http.StatusInternalServerError, "failed to send message", err.Error())
+		var id int64
+		if err := json.Unmarshal(*env.ID, &id); err != nil {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(env.ID, -32600, "id must be an integer for agent-initiated requests"))
+		}
+		if err := s.bridge.HandleReply(id, env.Result); err != nil {
+			return c.JSON(http.StatusBadRequest, rpcErrorResp(env.ID, -32600, err.Error()))
+		}
+		return c.JSON(http.StatusOK, map[string]bool{"ok": true})
 	}
 
-	return c.JSON(http.StatusOK, map[string]bool{"ok": true})
+	// ── Case 2: Client-initiated request or notification ─────────────────────
+	switch env.Method {
+	case "session/prompt":
+		// Require an id so we can correlate the async result via SSE.
+		if env.ID == nil {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(nil, -32600, "id is required for session/prompt"))
+		}
+		var params acp.PromptParams
+		if err := json.Unmarshal(env.Params, &params); err != nil {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(env.ID, -32602, "invalid params: "+err.Error()))
+		}
+		// Extract the first text content block.
+		text := ""
+		for _, block := range params.Prompt {
+			if block.Type == acp.ContentBlockTypeText {
+				text = block.Text
+				break
+			}
+		}
+		if text == "" {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(env.ID, -32602, "prompt must contain at least one text content block"))
+		}
+		if err := s.bridge.SendPrompt(*env.ID, text); err != nil {
+			return c.JSON(http.StatusInternalServerError,
+				rpcErrorResp(env.ID, -32000, err.Error()))
+		}
+		// 202: the agent is working asynchronously; the result arrives via SSE.
+		return c.JSON(http.StatusAccepted, map[string]bool{"ok": true})
+
+	case "session/cancel":
+		_ = s.bridge.Cancel(c.Request().Context())
+		// Notifications don't require a response; requests get a simple ack.
+		return c.JSON(http.StatusOK, map[string]bool{"ok": true})
+
+	default:
+		return c.JSON(http.StatusBadRequest,
+			rpcErrorResp(env.ID, -32601, "method not supported: "+env.Method))
+	}
 }
 
-// GET /events – Server-Sent Events
-func (s *Server) handleEvents(c echo.Context) error {
+// GET /sse
+//
+// Server-Sent Events stream of JSON-RPC 2.0 messages from the ACP agent.
+// Each SSE event has type "message" and carries a raw JSON-RPC object:
+//
+//	event: message
+//	data: {"jsonrpc":"2.0","method":"session/update","params":{...}}
+//
+//	event: message
+//	data: {"jsonrpc":"2.0","id":1,"method":"session/request_permission","params":{...}}
+//
+//	event: message
+//	data: {"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}
+func (s *Server) handleSSE(c echo.Context) error {
 	w := c.Response()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -236,60 +210,37 @@ func (s *Server) handleEvents(c echo.Context) error {
 	ch, cancel := s.bridge.Subscribe()
 	defer cancel()
 
-	flusher, ok := w.Writer.(http.Flusher)
+	flusher, hasFlusher := w.Writer.(http.Flusher)
 
 	ctx := c.Request().Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case event, open := <-ch:
+		case raw, open := <-ch:
 			if !open {
 				return nil
 			}
-			data, err := json.Marshal(event.Data)
-			if err != nil {
-				continue
-			}
-			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, data)
-			if ok {
+			_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", raw)
+			if hasFlusher {
 				flusher.Flush()
 			}
 		}
 	}
 }
 
-// GET /action
-func (s *Server) handleGetAction(c echo.Context) error {
-	return c.JSON(http.StatusOK, s.bridge.GetPendingActions())
-}
-
-// POST /action
-func (s *Server) handlePostAction(c echo.Context) error {
-	var req ActionRequest
-	if err := c.Bind(&req); err != nil {
-		return problemJSON(c, http.StatusBadRequest, "invalid request body", err.Error())
-	}
-
-	if err := s.bridge.SubmitAction(c.Request().Context(), req); err != nil {
-		return problemJSON(c, http.StatusBadRequest, "action failed", err.Error())
-	}
-	return c.JSON(http.StatusOK, map[string]bool{"ok": true})
-}
-
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
 
-// problemJSON returns an RFC 9457 problem detail response.
-func problemJSON(c echo.Context, status int, title, detail string) error {
-	body := map[string]interface{}{
-		"type":   fmt.Sprintf("https://httpstatuses.io/%d", status),
-		"title":  title,
-		"status": status,
+// rpcErrorResp builds a JSON-RPC 2.0 error response object.
+func rpcErrorResp(id *json.RawMessage, code int, message string) map[string]interface{} {
+	return map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]interface{}{
+			"code":    code,
+			"message": message,
+		},
 	}
-	if detail != "" {
-		body["detail"] = detail
-	}
-	return c.JSON(status, body)
 }
