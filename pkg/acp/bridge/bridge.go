@@ -200,6 +200,21 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 
 	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, textLen=%d)", b.sessionId, clientID, len(text))
 
+	// Record the user's prompt as a synthetic session/update notification so
+	// it appears in GET /messages history alongside the agent's replies.
+	userContentRaw, _ := json.Marshal(acp.ContentBlockText{Type: "text", Text: text})
+	b.broadcast(jsonRPCMsg{
+		JSONRPC: "2.0",
+		Method:  "session/update",
+		Params: sessionUpdateParams{
+			SessionId: b.sessionId,
+			Update: acp.SessionUpdate{
+				Kind:    acp.SessionUpdateKindUserMessageChunk,
+				Content: json.RawMessage(userContentRaw),
+			},
+		},
+	})
+
 	go func() {
 		stopReason, err := b.acp.Prompt(promptCtx, text)
 
