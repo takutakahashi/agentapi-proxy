@@ -57,6 +57,10 @@ func (s *Server) registerRoutes() {
 	// that existing tooling can parse it without changes.
 	s.echo.GET("/status", s.handleStatus)
 	s.echo.GET("/session", s.handleGetSession)
+	// /messages returns the full in-memory message history as a JSON array of
+	// raw JSON-RPC 2.0 objects.  Reconnecting clients use this to replay events
+	// they missed while disconnected from the SSE stream.
+	s.echo.GET("/messages", s.handleGetMessages)
 	s.echo.POST("/rpc", s.handleRPC)
 	s.echo.GET("/sse", s.handleSSE)
 }
@@ -94,6 +98,18 @@ func (s *Server) handleHealth(c echo.Context) error {
 // Returns agentapi-compatible status so the provisioner's health check passes.
 func (s *Server) handleStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "stable"})
+}
+
+// GET /messages
+// Returns all JSON-RPC 2.0 messages that have been broadcast since the bridge started.
+// The response is a JSON object with a "messages" array so the client can distinguish
+// an empty history ({"messages":[]}) from an error.
+func (s *Server) handleGetMessages(c echo.Context) error {
+	msgs := s.bridge.Messages()
+	if msgs == nil {
+		msgs = []json.RawMessage{}
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"messages": msgs})
 }
 
 // GET /session

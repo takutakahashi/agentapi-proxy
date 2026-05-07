@@ -63,6 +63,11 @@ type Bridge struct {
 	subsMu sync.Mutex
 	subs   []*subscriber
 
+	// Message history: every broadcast message is appended so that reconnecting
+	// SSE clients can replay missed events via GET /messages.
+	histMu  sync.RWMutex
+	history []json.RawMessage
+
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
 	agentReqSeq    atomic.Int64
@@ -79,6 +84,16 @@ func New(client *acp.Client, sessionId string, verbose bool) *Bridge {
 		verbose:        verbose,
 		pendingReplies: make(map[int64]chan json.RawMessage),
 	}
+}
+
+// Messages returns a snapshot of all broadcasted JSON-RPC messages since the
+// bridge started.  Callers can use this to replay history for reconnecting clients.
+func (b *Bridge) Messages() []json.RawMessage {
+	b.histMu.RLock()
+	defer b.histMu.RUnlock()
+	out := make([]json.RawMessage, len(b.history))
+	copy(out, b.history)
+	return out
 }
 
 // SessionID returns the ACP session ID.
@@ -274,6 +289,11 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	if b.verbose {
 		log.Printf("[bridge] broadcast: %s", raw)
 	}
+
+	// Persist to history so reconnecting clients can replay.
+	b.histMu.Lock()
+	b.history = append(b.history, raw)
+	b.histMu.Unlock()
 
 	b.subsMu.Lock()
 	defer b.subsMu.Unlock()
