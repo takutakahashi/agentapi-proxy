@@ -245,9 +245,12 @@ func (c *Client) dispatch(ctx context.Context, msg *Message) {
 		}()
 
 	// Notification (no id)
+	// NOTE: handlers are called synchronously (no goroutine) to preserve the
+	// order in which notifications arrive.  Notification handlers must not
+	// block; use a non-blocking channel send or similar.
 	case msg.ID == nil && msg.Method != "":
 		if h, ok := c.notifHandlers[msg.Method]; ok {
-			go h(msg.Params)
+			h(msg.Params)
 		}
 	}
 }
