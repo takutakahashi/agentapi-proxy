@@ -859,8 +859,14 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 		}
 	}
 
-	session.SetStatus("active")
-	log.Printf("[K8S_SESSION] Stock session %s is now active", session.id)
+	// Don't downgrade to "active" if watchAgentAPIStatus already detected the
+	// agent is running (e.g. provisioner's initial message is still in flight).
+	if session.Status() != "running" {
+		session.SetStatus("active")
+		log.Printf("[K8S_SESSION] Stock session %s is now active", session.id)
+	} else {
+		log.Printf("[K8S_SESSION] Stock session %s skipped SetStatus(active): agent already running", session.id)
+	}
 
 	// Continue watching deployment health and agentapi runtime status.
 	go m.watchAgentAPIStatus(ctx, session)
