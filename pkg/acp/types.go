@@ -113,6 +113,19 @@ type SessionListResult struct {
 	Sessions []SessionInfo `json:"sessions"`
 }
 
+// SessionLoadParams is the params for "session/load" (client→agent).
+// Only valid when AgentCapabilities.SessionLoad is true.
+type SessionLoadParams struct {
+	SessionId string `json:"sessionId"`
+}
+
+// SessionLoadResult is the response to "session/load".
+type SessionLoadResult struct {
+	SessionId     string            `json:"sessionId"`
+	Modes         *SessionModeState `json:"modes,omitempty"`
+	ConfigOptions []ConfigOption    `json:"configOptions,omitempty"`
+}
+
 // SessionSetModeParams is the params for "session/set_mode".
 type SessionSetModeParams struct {
 	SessionId string `json:"sessionId"`

@@ -29,6 +29,7 @@ type Client struct {
 	verbose bool
 
 	sessionId string
+	agentCaps AgentCapabilities
 
 	// updateCh is closed when the client is stopped.
 	updateCh chan SessionUpdate
@@ -163,10 +164,16 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return fmt.Errorf("acp initialize: parse result: %w", err)
 	}
+	c.agentCaps = result.AgentCapabilities
 	if c.verbose {
 		log.Printf("[acp] initialized: protocol=%d agentCaps=%+v", result.ProtocolVersion, result.AgentCapabilities)
 	}
 	return nil
+}
+
+// AgentCaps returns the capabilities reported by the agent during Initialize.
+func (c *Client) AgentCaps() AgentCapabilities {
+	return c.agentCaps
 }
 
 // NewSession creates a new ACP session and stores the session ID.
@@ -196,6 +203,27 @@ func (c *Client) NewSession(ctx context.Context, cwd string, mcpServers []McpSer
 // SessionID returns the current session ID (set after NewSession).
 func (c *Client) SessionID() string {
 	return c.sessionId
+}
+
+// LoadSession restores a previously created ACP session by its ID.
+// Only call this when AgentCaps().SessionLoad is true; otherwise fall back to NewSession.
+// On success the session ID is updated; on failure (session not found, etc.) the caller
+// should call NewSession to start fresh.
+func (c *Client) LoadSession(ctx context.Context, sessionId string) error {
+	params := SessionLoadParams{SessionId: sessionId}
+	raw, err := c.rpc.Call(ctx, "session/load", params)
+	if err != nil {
+		return fmt.Errorf("acp session/load: %w", err)
+	}
+	var result SessionLoadResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("acp session/load: parse result: %w", err)
+	}
+	c.sessionId = result.SessionId
+	if c.verbose {
+		log.Printf("[acp] session loaded: id=%s", result.SessionId)
+	}
+	return nil
 }
 
 // Prompt sends a user message and returns when the agent has finished the turn.
