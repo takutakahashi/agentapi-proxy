@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -73,6 +74,14 @@ type Bridge struct {
 	agentReqSeq    atomic.Int64
 	pendingReplyMu sync.Mutex
 	pendingReplies map[int64]chan json.RawMessage // local agentReqId → reply channel
+
+	// Chunk buffer: accumulates consecutive chunk updates of the same kind and
+	// emits them as a single batched session/update when the kind changes or the
+	// agent turn ends.  This converts the per-chunk stream into a per-comment bulk
+	// delivery so that consumers receive one complete message at a time.
+	chunkMu   sync.Mutex
+	chunkKind acp.SessionUpdateKind
+	chunkText strings.Builder
 }
 
 // New creates a Bridge backed by the given ACP client.
@@ -130,8 +139,33 @@ func (b *Bridge) Run(ctx context.Context) {
 	}
 }
 
-// emitUpdate broadcasts a session/update notification as a JSON-RPC 2.0 message.
+// isChunkKind reports whether kind is a streaming chunk that should be buffered.
+func isChunkKind(kind acp.SessionUpdateKind) bool {
+	return kind == acp.SessionUpdateKindAgentMessageChunk ||
+		kind == acp.SessionUpdateKindUserMessageChunk ||
+		kind == acp.SessionUpdateKindAgentThoughtChunk
+}
+
+// emitUpdate buffers consecutive chunk updates of the same kind and broadcasts
+// them as a single batched session/update when the kind changes or a non-chunk
+// event arrives.  Non-chunk events (tool_call, plan, …) are broadcast immediately
+// after the pending chunk buffer is flushed.
 func (b *Bridge) emitUpdate(update acp.SessionUpdate) {
+	if isChunkKind(update.Kind) {
+		b.chunkMu.Lock()
+		if b.chunkKind != "" && b.chunkKind != update.Kind {
+			// Kind changed – flush the previous buffer before accumulating.
+			b.flushChunkBufferLocked()
+		}
+		b.chunkKind = update.Kind
+		b.chunkText.WriteString(acp.ExtractTextContent(update.Content))
+		b.chunkMu.Unlock()
+		return
+	}
+
+	// Non-chunk event: flush pending chunks first, then broadcast immediately.
+	b.flushChunkBuffer()
+
 	msg := jsonRPCMsg{
 		JSONRPC: "2.0",
 		Method:  "session/update",
@@ -141,6 +175,42 @@ func (b *Bridge) emitUpdate(update acp.SessionUpdate) {
 		},
 	}
 	b.broadcast(msg)
+}
+
+// flushChunkBuffer flushes the accumulated chunk buffer as a single session/update.
+// Safe to call from any goroutine.
+func (b *Bridge) flushChunkBuffer() {
+	b.chunkMu.Lock()
+	defer b.chunkMu.Unlock()
+	b.flushChunkBufferLocked()
+}
+
+// flushChunkBufferLocked flushes the buffer. Must be called with b.chunkMu held.
+func (b *Bridge) flushChunkBufferLocked() {
+	if b.chunkKind == "" || b.chunkText.Len() == 0 {
+		return
+	}
+	text := b.chunkText.String()
+	kind := b.chunkKind
+	b.chunkKind = ""
+	b.chunkText.Reset()
+
+	contentRaw, _ := json.Marshal(acp.ContentBlockText{Type: "text", Text: text})
+	msg := jsonRPCMsg{
+		JSONRPC: "2.0",
+		Method:  "session/update",
+		Params: sessionUpdateParams{
+			SessionId: b.sessionId,
+			Update: acp.SessionUpdate{
+				Kind:    kind,
+				Content: json.RawMessage(contentRaw),
+			},
+		},
+	}
+	// broadcast without holding chunkMu to avoid lock-order inversion.
+	b.chunkMu.Unlock()
+	b.broadcast(msg)
+	b.chunkMu.Lock()
 }
 
 // handlePermissionRequest emits a session/request_permission request via SSE
@@ -217,6 +287,9 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 
 	go func() {
 		stopReason, err := b.acp.Prompt(promptCtx, text)
+
+		// Flush any chunk that was still buffered when the agent turn ended.
+		b.flushChunkBuffer()
 
 		if err != nil {
 			log.Printf("[bridge] Prompt error (session=%s): %v", b.sessionId, err)
