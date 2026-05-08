@@ -101,11 +101,13 @@ func (s *Server) handleHealth(c echo.Context) error {
 
 // GET /status
 // Returns agentapi-compatible status so the provisioner's health check passes.
+// Returns the actual agent status ("running" while processing a prompt, "stable" otherwise)
+// so that the UI can disable input and show a stop button while the agent is busy.
 // Includes agent_type from the AGENTAPI_AGENT_TYPE environment variable (if set)
 // so that the UI can detect the ACP session type and enable appropriate features
 // such as Markdown rendering.
 func (s *Server) handleStatus(c echo.Context) error {
-	resp := map[string]string{"status": "stable"}
+	resp := map[string]string{"status": s.bridge.Status()}
 	if agentType := os.Getenv("AGENTAPI_AGENT_TYPE"); agentType != "" {
 		resp["agent_type"] = agentType
 	}
