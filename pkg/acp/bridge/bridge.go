@@ -82,6 +82,17 @@ type Bridge struct {
 	chunkMu   sync.Mutex
 	chunkKind acp.SessionUpdateKind
 	chunkText strings.Builder
+
+	// Status tracking: "running" while a prompt is being processed, "stable" otherwise.
+	// Mirrors the agentapi status convention so the proxy can watch GET /events.
+	statusMu      sync.RWMutex
+	currentStatus string
+	statusSubsMu  sync.Mutex
+	statusSubs    []*statusSubscriber
+}
+
+type statusSubscriber struct {
+	ch chan string
 }
 
 // New creates a Bridge backed by the given ACP client.
@@ -92,6 +103,7 @@ func New(client *acp.Client, sessionId string, verbose bool) *Bridge {
 		sessionId:      sessionId,
 		verbose:        verbose,
 		pendingReplies: make(map[int64]chan json.RawMessage),
+		currentStatus:  "stable",
 	}
 }
 
@@ -107,6 +119,59 @@ func (b *Bridge) Messages() []json.RawMessage {
 
 // SessionID returns the ACP session ID.
 func (b *Bridge) SessionID() string { return b.sessionId }
+
+// Status returns the current agent status ("running" or "stable").
+func (b *Bridge) Status() string {
+	b.statusMu.RLock()
+	defer b.statusMu.RUnlock()
+	return b.currentStatus
+}
+
+// SubscribeStatus returns a channel that receives status strings whenever the
+// agent status changes, and a cancel function that must be called on disconnect.
+func (b *Bridge) SubscribeStatus() (<-chan string, func()) {
+	sub := &statusSubscriber{ch: make(chan string, 4)}
+	b.statusSubsMu.Lock()
+	b.statusSubs = append(b.statusSubs, sub)
+	b.statusSubsMu.Unlock()
+
+	cancel := func() {
+		b.statusSubsMu.Lock()
+		for i, s := range b.statusSubs {
+			if s == sub {
+				b.statusSubs = append(b.statusSubs[:i], b.statusSubs[i+1:]...)
+				break
+			}
+		}
+		b.statusSubsMu.Unlock()
+		close(sub.ch)
+	}
+	return sub.ch, cancel
+}
+
+// setStatus updates the current status and notifies all subscribers.
+func (b *Bridge) setStatus(status string) {
+	b.statusMu.Lock()
+	prev := b.currentStatus
+	b.currentStatus = status
+	b.statusMu.Unlock()
+
+	if prev == status {
+		return
+	}
+	if b.verbose {
+		log.Printf("[bridge] status: %s → %s (session=%s)", prev, status, b.sessionId)
+	}
+
+	b.statusSubsMu.Lock()
+	defer b.statusSubsMu.Unlock()
+	for _, sub := range b.statusSubs {
+		select {
+		case sub.ch <- status:
+		default:
+		}
+	}
+}
 
 // ----------------------------------------------------------------------------
 // Event loop
@@ -285,11 +350,14 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 		},
 	})
 
+	b.setStatus("running")
+
 	go func() {
 		stopReason, err := b.acp.Prompt(promptCtx, text)
 
 		// Flush any chunk that was still buffered when the agent turn ended.
 		b.flushChunkBuffer()
+		b.setStatus("stable")
 
 		if err != nil {
 			log.Printf("[bridge] Prompt error (session=%s): %v", b.sessionId, err)

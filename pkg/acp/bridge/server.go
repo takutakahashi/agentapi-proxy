@@ -64,6 +64,10 @@ func (s *Server) registerRoutes() {
 	s.echo.GET("/messages", s.handleGetMessages)
 	s.echo.POST("/rpc", s.handleRPC)
 	s.echo.GET("/sse", s.handleSSE)
+	// /events is the agentapi-compatible SSE endpoint consumed by the proxy's
+	// watchAgentAPIStatus goroutine.  It emits status_change events whenever
+	// the agent transitions between "running" and "stable".
+	s.echo.GET("/events", s.handleEvents)
 }
 
 // Start starts the HTTP server on the given address (e.g. ":3284").
@@ -265,6 +269,49 @@ func (s *Server) handleSSE(c echo.Context) error {
 				return nil
 			}
 			_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", raw)
+			if hasFlusher {
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+// GET /events
+//
+// agentapi-compatible SSE stream consumed by the proxy's watchAgentAPIStatus goroutine.
+// On connect it immediately emits a status_change event with the current status so
+// reconnecting consumers always get a consistent starting point, then streams every
+// subsequent status transition.
+func (s *Server) handleEvents(c echo.Context) error {
+	w := c.Response()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, hasFlusher := w.Writer.(http.Flusher)
+
+	// Emit the current status immediately so the consumer doesn't have to wait
+	// for the next transition.
+	_, _ = fmt.Fprintf(w, "event: status_change\ndata: {\"status\":%q}\n\n", s.bridge.Status())
+	if hasFlusher {
+		flusher.Flush()
+	}
+
+	ch, cancel := s.bridge.SubscribeStatus()
+	defer cancel()
+
+	ctx := c.Request().Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case status, open := <-ch:
+			if !open {
+				return nil
+			}
+			_, _ = fmt.Fprintf(w, "event: status_change\ndata: {\"status\":%q}\n\n", status)
 			if hasFlusher {
 				flusher.Flush()
 			}
