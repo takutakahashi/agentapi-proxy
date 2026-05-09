@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/acp"
 )
@@ -38,6 +39,7 @@ type rpcError struct {
 type sessionUpdateParams struct {
 	SessionId string            `json:"sessionId"`
 	Update    acp.SessionUpdate `json:"update"`
+	Time      time.Time         `json:"time"`
 }
 
 // ----------------------------------------------------------------------------
@@ -237,6 +239,7 @@ func (b *Bridge) emitUpdate(update acp.SessionUpdate) {
 		Params: sessionUpdateParams{
 			SessionId: b.sessionId,
 			Update:    update,
+			Time:      time.Now(),
 		},
 	}
 	b.broadcast(msg)
@@ -261,6 +264,7 @@ func (b *Bridge) flushChunkBufferLocked() {
 	b.chunkText.Reset()
 
 	contentRaw, _ := json.Marshal(acp.ContentBlockText{Type: "text", Text: text})
+	now := time.Now()
 	msg := jsonRPCMsg{
 		JSONRPC: "2.0",
 		Method:  "session/update",
@@ -270,6 +274,7 @@ func (b *Bridge) flushChunkBufferLocked() {
 				Kind:    kind,
 				Content: json.RawMessage(contentRaw),
 			},
+			Time: now,
 		},
 	}
 	// broadcast without holding chunkMu to avoid lock-order inversion.
@@ -347,6 +352,7 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 				Kind:    acp.SessionUpdateKindUserMessageChunk,
 				Content: json.RawMessage(userContentRaw),
 			},
+			Time: time.Now(),
 		},
 	})
 
