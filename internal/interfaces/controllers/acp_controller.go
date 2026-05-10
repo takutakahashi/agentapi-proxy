@@ -334,8 +334,10 @@ func (c *ACPController) handleSessionResume(ctx echo.Context, req acpRequest) er
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "permission denied"))
 	}
 
+	// "active" is the proxy-level status for a running K8s session.
+	// "running"/"stable" are agentapi-level statuses used in other contexts.
 	status := session.Status()
-	if status != "running" && status != "stable" {
+	if status != "active" && status != "running" && status != "stable" {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "session is not active (status: "+status+")"))
 	}
 
