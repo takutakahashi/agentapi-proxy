@@ -26,6 +26,7 @@ type HandlerRegistry struct {
 	notificationHandlers     *controllers.NotificationHandlers
 	healthController         *controllers.HealthController
 	sessionController        *controllers.SessionController
+	acpController            *controllers.ACPController
 	settingsController       *controllers.SettingsController
 	credentialsController    *controllers.CredentialsController
 	userController           *controllers.UserController
@@ -124,6 +125,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] File controller initialized")
 	}
 
+	acpController := controllers.NewACPController(server, server)
+
 	return &Router{
 		echo:   e,
 		server: server,
@@ -131,6 +134,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			notificationHandlers:     controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
 			healthController:         controllers.NewHealthController(),
 			sessionController:        sessionController,
+			acpController:            acpController,
 			settingsController:       settingsController,
 			credentialsController:    credentialsController,
 			userController:           controllers.NewUserController(),
@@ -181,6 +185,12 @@ func (r *Router) registerCoreRoutes() error {
 	// Must be registered before the /:sessionId/* catch-all route
 	r.echo.StaticFS("/public", spec.FS())
 	log.Printf("[ROUTES] Static file serving registered at /public/*")
+
+	// ACP (Agent Client Protocol) JSON-RPC 2.0 endpoints
+	log.Printf("[ROUTES] Registering ACP endpoints...")
+	r.echo.POST("/acp", r.handlers.acpController.HandleRPC, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	r.echo.GET("/acp/sse", r.handlers.acpController.HandleSSE, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	log.Printf("[ROUTES] ACP endpoints registered")
 
 	// Session management routes
 	log.Printf("[ROUTES] Registering session management endpoints...")
