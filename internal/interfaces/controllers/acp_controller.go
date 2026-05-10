@@ -425,13 +425,13 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusAccepted {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, struct{}{}))
 	}
 
 	var rpcResp interface{}
 	_ = json.NewDecoder(resp.Body).Decode(&rpcResp)
-	return ctx.JSON(resp.StatusCode, rpcResp)
+	return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, fmt.Sprintf("bridge error (HTTP %d)", resp.StatusCode)))
 }
 
 // ----------------------------------------------------------------------------
