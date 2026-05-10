@@ -375,24 +375,35 @@ func (c *ACPController) handleSessionLoad(ctx echo.Context, req acpRequest) erro
 }
 
 // ----------------------------------------------------------------------------
-// proxy to bridge (session/prompt, session/cancel)
+// session/prompt and session/cancel → agentapi native API
 // ----------------------------------------------------------------------------
 
+type sessionPromptParams struct {
+	SessionId string `json:"sessionId"`
+	Prompt    []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"prompt"`
+}
+
+// proxyToBridge translates ACP session/prompt and session/cancel to the agentapi
+// native HTTP API (POST /message). The session address in K8s points directly to
+// the agentapi process, which has no /rpc endpoint.
 func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
-	var params struct {
+	var baseParams struct {
 		SessionId string `json:"sessionId"`
 	}
 	if len(req.Params) > 0 {
-		if err := json.Unmarshal(req.Params, &params); err != nil {
+		if err := json.Unmarshal(req.Params, &baseParams); err != nil {
 			return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32602, "invalid params: "+err.Error()))
 		}
 	}
-	if params.SessionId == "" {
+	if baseParams.SessionId == "" {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32602, "sessionId is required"))
 	}
 
 	authzCtx := auth.GetAuthorizationContext(ctx)
-	session := c.sessionManagerProvider.GetSessionManager().GetSession(params.SessionId)
+	session := c.sessionManagerProvider.GetSessionManager().GetSession(baseParams.SessionId)
 	if session == nil {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32602, "session not found"))
 	}
@@ -405,28 +416,53 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "session has no address"))
 	}
 
-	body, err := json.Marshal(req)
+	if req.Method == "session/cancel" {
+		// Send Ctrl+C as a raw keystroke to interrupt the agent.
+		return c.sendAgentapiMessage(ctx, req, addr, "raw", "\x03")
+	}
+
+	// session/prompt: extract text content blocks and send as a user message.
+	var promptParams sessionPromptParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &promptParams); err != nil {
+			return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32602, "invalid params: "+err.Error()))
+		}
+	}
+	var textParts []string
+	for _, block := range promptParams.Prompt {
+		if block.Type == "text" && block.Text != "" {
+			textParts = append(textParts, block.Text)
+		}
+	}
+	if len(textParts) == 0 {
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32602, "no text content in prompt"))
+	}
+	content := strings.Join(textParts, "\n")
+	return c.sendAgentapiMessage(ctx, req, addr, "user", content)
+}
+
+// sendAgentapiMessage POSTs to the agentapi /message endpoint.
+func (c *ACPController) sendAgentapiMessage(ctx echo.Context, req acpRequest, addr, msgType, content string) error {
+	body, err := json.Marshal(map[string]string{"type": msgType, "content": content})
 	if err != nil {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to marshal request"))
 	}
 
-	bridgeURL := "http://" + addr + "/rpc"
-	log.Printf("[ACP] proxy %s → %s", req.Method, bridgeURL)
+	msgURL := "http://" + addr + "/message"
+	log.Printf("[ACP] %s → POST %s (type=%s)", req.Method, msgURL, msgType)
 
-	resp, err := http.Post(bridgeURL, "application/json", bytes.NewReader(body)) //nolint:gosec
+	resp, err := http.Post(msgURL, "application/json", bytes.NewReader(body)) //nolint:gosec
 	if err != nil {
-		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "bridge unreachable: "+err.Error()))
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "agentapi unreachable: "+err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == http.StatusAccepted {
-		// Async: result will arrive via SSE.
-		return ctx.JSON(http.StatusAccepted, map[string]bool{"ok": true})
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, struct{}{}))
 	}
-
-	var bridgeResp interface{}
-	_ = json.NewDecoder(resp.Body).Decode(&bridgeResp)
-	return ctx.JSON(resp.StatusCode, bridgeResp)
+	var agentResp interface{}
+	_ = json.NewDecoder(resp.Body).Decode(&agentResp)
+	return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, fmt.Sprintf("agentapi error (HTTP %d)", resp.StatusCode)))
 }
 
 // ----------------------------------------------------------------------------
@@ -501,9 +537,9 @@ func (c *ACPController) replayHistory(addr string, w io.Writer, flusher http.Flu
 	return nil
 }
 
-// streamBridgeSSE proxies the bridge's /sse stream to the current response writer.
+// streamBridgeSSE proxies the agentapi /events SSE stream to the current response writer.
 func (c *ACPController) streamBridgeSSE(ctx interface{ Done() <-chan struct{} }, addr string, w io.Writer, flusher http.Flusher, hasFlusher bool) {
-	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/sse", nil)
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/events", nil)
 	if err != nil {
 		log.Printf("[ACP] SSE: failed to create bridge request: %v", err)
 		return
