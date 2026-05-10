@@ -194,21 +194,20 @@ func (c *acpClient) sseEvents(sessionID string, timeout time.Duration) ([]string
 	return lines, nil
 }
 
-// waitActive polls session/list until the session is found with addr resolvable
-// and the agentapi /status reports "stable".
+// waitActive polls until both the proxy-level status is "active" and the agentapi
+// process itself reports "stable".
 func waitActive(c *acpClient, sessionID string, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		addr := sessionAddr(c, sessionID)
-		if addr != "" {
-			st := agentapiStatus(addr)
-			if st == "stable" {
+		addr, proxyStatus := sessionAddrAndStatus(c, sessionID)
+		if addr != "" && proxyStatus == "active" {
+			if agentapiStatus(addr) == "stable" {
 				return addr
 			}
 		}
 		time.Sleep(5 * time.Second)
 	}
-	fail("session never became stable within timeout")
+	fail("session never became active within timeout")
 	return ""
 }
 
@@ -224,29 +223,30 @@ func waitForPong(c *acpClient, sessionID string, timeout time.Duration) bool {
 	return false
 }
 
-func sessionAddr(c *acpClient, sessionID string) string {
+func sessionAddrAndStatus(c *acpClient, sessionID string) (addr, status string) {
 	req, _ := http.NewRequest(http.MethodGet, c.proxyURL+"/search", nil)
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer resp.Body.Close()
 	var result struct {
 		Sessions []struct {
 			SessionID string `json:"session_id"`
 			Addr      string `json:"addr"`
+			Status    string `json:"status"`
 		} `json:"sessions"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return ""
+		return "", ""
 	}
 	for _, s := range result.Sessions {
 		if s.SessionID == sessionID {
-			return s.Addr
+			return s.Addr, s.Status
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func agentapiStatus(addr string) string {
