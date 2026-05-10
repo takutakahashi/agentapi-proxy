@@ -138,7 +138,8 @@ type sessionNewParams struct {
 	Meta       struct {
 		Tags   map[string]string `json:"tags"`
 		Params struct {
-			Message string `json:"message"`
+			Message   string `json:"message"`
+			AgentType string `json:"agentType"`
 		} `json:"params"`
 	} `json:"_meta"`
 }
@@ -172,7 +173,8 @@ func (c *ACPController) handleSessionNew(ctx echo.Context, req acpRequest) error
 		Scope: entities.ScopeUser,
 		Tags:  tags,
 		Params: &entities.SessionParams{
-			Message: params.Meta.Params.Message,
+			Message:   params.Meta.Params.Message,
+			AgentType: params.Meta.Params.AgentType,
 		},
 	}
 
