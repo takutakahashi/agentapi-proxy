@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	acpProtocolVersion = "2025-01-15"
+	acpProtocolVersion  = "2025-01-15"
 	acpSessionListLimit = 20
 )
 
@@ -181,15 +181,18 @@ func (c *ACPController) handleSessionNew(ctx echo.Context, req acpRequest) error
 	startReq.TeamID = resolvedTeamID
 
 	sessionID := uuid.New().String()
-	_, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
+	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
 	if err != nil {
 		log.Printf("[ACP] session/new failed: %v", err)
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to create session: "+err.Error()))
 	}
 
-	log.Printf("[ACP] session/new created sessionId=%s for user=%s", sessionID, userID)
+	// Use the actual session ID from the returned entity: a stock K8s session may have been
+	// adopted with a different ID than the one we generated.
+	actualID := session.ID()
+	log.Printf("[ACP] session/new created sessionId=%s for user=%s", actualID, userID)
 	return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, map[string]string{
-		"sessionId": sessionID,
+		"sessionId": actualID,
 	}))
 }
 
