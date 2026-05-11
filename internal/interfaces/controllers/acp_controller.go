@@ -587,6 +587,8 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 }
 
 // streamBridgeSSE proxies the ACP bridge's /sse stream to the current response writer.
+// A keepalive comment is sent every 15 seconds so that NGINX proxy_read_timeout does not
+// drop the connection while the agent is idle between messages.
 func (c *ACPController) streamBridgeSSE(ctx interface{ Done() <-chan struct{} }, addr string, w io.Writer, flusher http.Flusher, hasFlusher bool) {
 	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/sse", nil)
 	if err != nil {
@@ -602,19 +604,40 @@ func (c *ACPController) streamBridgeSSE(ctx interface{ Done() <-chan struct{} },
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	buf := make([]byte, 4096)
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	readCh := make(chan readResult, 4)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rdErr := resp.Body.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				readCh <- readResult{data: chunk}
+			}
+			if rdErr != nil {
+				readCh <- readResult{err: rdErr}
+				return
+			}
+		}
+	}()
+
+	keepaliveTicker := time.NewTicker(15 * time.Second)
+	defer keepaliveTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			data := buf[:n]
+		case rr := <-readCh:
+			if rr.err != nil {
+				return
+			}
 			// Pass through SSE lines, re-emitting only "data:" lines as proper SSE events.
-			for _, line := range strings.Split(string(data), "\n") {
+			for _, line := range strings.Split(string(rr.data), "\n") {
 				if strings.HasPrefix(line, "data: ") {
 					jsonData := strings.TrimPrefix(line, "data: ")
 					if jsonData != "" {
@@ -625,9 +648,11 @@ func (c *ACPController) streamBridgeSSE(ctx interface{ Done() <-chan struct{} },
 					}
 				}
 			}
-		}
-		if err != nil {
-			return
+		case <-keepaliveTicker.C:
+			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
+			if hasFlusher {
+				flusher.Flush()
+			}
 		}
 	}
 }
