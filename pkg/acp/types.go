@@ -86,11 +86,23 @@ type SessionModeState struct {
 	AvailableModes []SessionMode `json:"availableModes"`
 }
 
+// ConfigOptionValue is one selectable value in a ConfigOption.
+type ConfigOptionValue struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
 // ConfigOption is a runtime config option offered by the agent.
+// Field names match the ACP spec (session/new, session/load, config_option_update).
 type ConfigOption struct {
-	Key         string      `json:"key"`
-	Description string      `json:"description,omitempty"`
-	Default     interface{} `json:"default,omitempty"`
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description,omitempty"`
+	Category     string              `json:"category,omitempty"` // "mode", "model", "thought_level", or "_"-prefixed custom
+	Type         string              `json:"type"`               // currently only "select"
+	CurrentValue string              `json:"currentValue"`
+	Options      []ConfigOptionValue `json:"options"`
 }
 
 // SessionNewResult is the response to "session/new".
@@ -205,6 +217,7 @@ const (
 	SessionUpdateKindToolCallUpdate          SessionUpdateKind = "tool_call_update"
 	SessionUpdateKindPlan                    SessionUpdateKind = "plan"
 	SessionUpdateKindAvailableCommandsUpdate SessionUpdateKind = "available_commands_update"
+	SessionUpdateKindConfigOptionUpdate      SessionUpdateKind = "config_option_update"
 	SessionUpdateKindSessionInfoUpdate       SessionUpdateKind = "session_info_update"
 	SessionUpdateKindCurrentModeUpdate       SessionUpdateKind = "current_mode_update"
 )
@@ -213,10 +226,10 @@ const (
 type ToolCallStatus string
 
 const (
-	ToolCallStatusRunning   ToolCallStatus = "running"
-	ToolCallStatusSuccess   ToolCallStatus = "success"
-	ToolCallStatusError     ToolCallStatus = "error"
-	ToolCallStatusCancelled ToolCallStatus = "cancelled"
+	ToolCallStatusPending    ToolCallStatus = "pending"
+	ToolCallStatusInProgress ToolCallStatus = "in_progress"
+	ToolCallStatusCompleted  ToolCallStatus = "completed"
+	ToolCallStatusFailed     ToolCallStatus = "failed"
 )
 
 // PlanEntry is a single entry in an ACP plan update.
@@ -225,6 +238,18 @@ type PlanEntry struct {
 	Content  string `json:"content"`
 	Status   string `json:"status"`   // "pending", "in_progress", "completed", "cancelled"
 	Priority string `json:"priority"` // "high", "medium", "low"
+}
+
+// ToolCallLocation is a file/line reference attached to a tool_call update.
+type ToolCallLocation struct {
+	Path string `json:"path"`
+	Line *int   `json:"line,omitempty"` // 1-based
+}
+
+// AvailableCommand is a single slash command reported in available_commands_update.
+type AvailableCommand struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // SessionUpdate is a discriminated union; Kind determines which fields apply.
@@ -236,10 +261,12 @@ type SessionUpdate struct {
 	// Content is a ContentBlock object (not a string) per ACP spec.
 	Content json.RawMessage `json:"content,omitempty"`
 
-	// tool_call
-	ToolCallId string      `json:"toolCallId,omitempty"`
-	ToolKind   string      `json:"kind,omitempty"` // e.g. "bash", "edit", ...
-	RawInput   interface{} `json:"rawInput,omitempty"`
+	// tool_call (required: toolCallId, title); Title also carries session_info_update.title
+	ToolCallId string             `json:"toolCallId,omitempty"`
+	Title      string             `json:"title,omitempty"`
+	ToolKind   string             `json:"kind,omitempty"` // "read", "edit", "delete", "move", "search", "execute", "think", "fetch", "other"
+	Locations  []ToolCallLocation `json:"locations,omitempty"`
+	RawInput   interface{}        `json:"rawInput,omitempty"`
 
 	// tool_call_update
 	Status    ToolCallStatus `json:"status,omitempty"`
@@ -248,11 +275,14 @@ type SessionUpdate struct {
 	// plan – ACP sends entries (structured list), not a plain string.
 	Entries []PlanEntry `json:"entries,omitempty"`
 
-	// session_info_update
-	Title string `json:"title,omitempty"`
+	// available_commands_update
+	Commands []AvailableCommand `json:"commands,omitempty"`
 
-	// current_mode_update
-	Mode string `json:"mode,omitempty"`
+	// config_option_update
+	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
+
+	// current_mode_update (deprecated; prefer config_option_update)
+	CurrentModeId string `json:"currentModeId,omitempty"`
 }
 
 // SessionUpdateNotification is the params for the "session/update" notification
