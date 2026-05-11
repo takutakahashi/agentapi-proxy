@@ -618,6 +618,12 @@ func (c *ACPController) streamBridgeSSE(
 	keepaliveTicker := time.NewTicker(15 * time.Second)
 	defer keepaliveTicker.Stop()
 
+	const (
+		backoffMin = time.Second
+		backoffMax = 30 * time.Second
+	)
+	backoff := backoffMin
+
 	for {
 		// Check client disconnection before each (re)connection attempt.
 		select {
@@ -628,6 +634,8 @@ func (c *ACPController) streamBridgeSSE(
 
 		connStart := time.Now()
 		eventCh, cleanup := c.dialBridgeSSE(ctx, addr, lastEventID)
+
+		gotEvent := false
 
 		// Drain events from this bridge connection until it drops or the client leaves.
 	drainLoop:
@@ -647,6 +655,7 @@ func (c *ACPController) streamBridgeSSE(
 					log.Printf("[ACP] SSE: bridge read error (lastEventID=%s): %v", lastEventID, ev.err)
 					break drainLoop
 				}
+				gotEvent = true
 				if ev.id != "" {
 					lastEventID = ev.id
 					_, _ = fmt.Fprintf(w, "id: %s\nevent: message\ndata: %s\n\n", ev.id, ev.data)
@@ -664,15 +673,27 @@ func (c *ACPController) streamBridgeSSE(
 			}
 		}
 
-		// If the connection failed or dropped very quickly (e.g. DNS error, bridge not yet
-		// ready), wait at least 1 second before the next attempt to prevent a busy loop
-		// that would spin at CPU speed and flood the logs.
-		if elapsed := time.Since(connStart); elapsed < time.Second {
+		// Reset backoff when the connection was healthy (delivered at least one event
+		// or stayed alive for over 5 seconds). Otherwise use exponential backoff so
+		// permanently unreachable bridges (deleted sessions) don't spin-log.
+		elapsed := time.Since(connStart)
+		if gotEvent || elapsed >= 5*time.Second {
+			backoff = backoffMin
+		}
+
+		wait := backoff - elapsed
+		if wait > 0 {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second - elapsed):
+			case <-time.After(wait):
 			}
+		}
+
+		// Double backoff for next attempt, capped at backoffMax.
+		backoff *= 2
+		if backoff > backoffMax {
+			backoff = backoffMax
 		}
 	}
 }
