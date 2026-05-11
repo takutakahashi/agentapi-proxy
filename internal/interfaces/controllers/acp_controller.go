@@ -488,22 +488,28 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 	sessionId := ctx.Request().Header.Get("Acp-Session-Id")
 	if sessionId == "" {
+		log.Printf("[ACP] HandleSessionSSE: missing Acp-Session-Id header")
 		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Acp-Session-Id header is required"})
 	}
 
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionId)
 	if session == nil {
+		log.Printf("[ACP] HandleSessionSSE: session not found (sessionId=%s)", sessionId)
 		return ctx.JSON(http.StatusNotFound, map[string]string{"message": "session not found"})
 	}
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		log.Printf("[ACP] HandleSessionSSE: permission denied (sessionId=%s)", sessionId)
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 	}
 
 	addr := session.Addr()
 	if addr == "" {
+		log.Printf("[ACP] HandleSessionSSE: session has no address (sessionId=%s)", sessionId)
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session has no address"})
 	}
+
+	log.Printf("[ACP] HandleSessionSSE: connecting to bridge SSE (sessionId=%s, addr=%s)", sessionId, addr)
 
 	w := ctx.Response()
 	w.Header().Set("Content-Type", "text/event-stream")
