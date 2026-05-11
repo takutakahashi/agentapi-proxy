@@ -34,7 +34,7 @@ type fakeSession struct {
 	description string
 }
 
-func (s *fakeSession) ID() string                   { return s.id }
+func (s *fakeSession) ID() string                    { return s.id }
 func (s *fakeSession) Addr() string                  { return s.addr }
 func (s *fakeSession) UserID() string                { return s.userID }
 func (s *fakeSession) Scope() entities.ResourceScope { return s.scope }
