@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,9 @@ const (
 type ACPController struct {
 	sessionManagerProvider SessionManagerProvider
 	sessionCreator         SessionCreator
+	// bridgeSessionCache maps proxy session ID → bridge-internal session ID.
+	// Populated on first use to avoid fetching GET /session on every RPC call.
+	bridgeSessionCache sync.Map
 }
 
 // NewACPController creates a new ACPController.
@@ -84,6 +88,11 @@ func (c *ACPController) HandleRPC(ctx echo.Context) error {
 	}
 	if req.JSONRPC != "2.0" {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32600, "Invalid Request: jsonrpc must be \"2.0\""))
+	}
+
+	// JSON-RPC result (no method field) — route to session bridge via Acp-Session-Id header.
+	if req.Method == "" {
+		return c.proxyResultToBridge(ctx, req)
 	}
 
 	switch req.Method {
@@ -382,6 +391,31 @@ func (c *ACPController) handleSessionLoad(ctx echo.Context, req acpRequest) erro
 // session/prompt and session/cancel → ACP bridge /rpc
 // ----------------------------------------------------------------------------
 
+// getBridgeSessionID returns the bridge-internal session ID for the given proxy session ID
+// and bridge address. Results are cached so subsequent calls are free.
+func (c *ACPController) getBridgeSessionID(addr, proxySessionID string) (string, error) {
+	if cached, ok := c.bridgeSessionCache.Load(proxySessionID); ok {
+		return cached.(string), nil
+	}
+
+	resp, err := http.Get("http://" + addr + "/session") //nolint:gosec
+	if err != nil {
+		return "", fmt.Errorf("GET /session failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var bridgeSession struct {
+		SessionId string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&bridgeSession); err != nil {
+		return "", fmt.Errorf("decode /session response: %w", err)
+	}
+	if bridgeSession.SessionId != "" {
+		c.bridgeSessionCache.Store(proxySessionID, bridgeSession.SessionId)
+	}
+	return bridgeSession.SessionId, nil
+}
+
 // proxyToBridge forwards session/prompt and session/cancel to the ACP bridge's
 // /rpc endpoint. Requires the session to run with an ACP-native agent (e.g. claude-acp).
 func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
@@ -411,13 +445,33 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "session has no address"))
 	}
 
+	// The bridge uses its own internal session ID, not the proxy session ID.
+	// Fetch the bridge's session ID (cached after the first call) and substitute
+	// it into params.sessionId before forwarding.
+	bridgeSessionID, err := c.getBridgeSessionID(addr, baseParams.SessionId)
+	if err != nil || bridgeSessionID == "" {
+		log.Printf("[ACP] proxyToBridge: failed to get bridge session ID for %s: %v", baseParams.SessionId, err)
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to resolve bridge session ID"))
+	}
+
+	var rawParams map[string]json.RawMessage
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &rawParams); err == nil {
+			bridgeIDJSON, _ := json.Marshal(bridgeSessionID)
+			rawParams["sessionId"] = bridgeIDJSON
+			if newParams, err := json.Marshal(rawParams); err == nil {
+				req.Params = newParams
+			}
+		}
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to marshal request"))
 	}
 
 	rpcURL := "http://" + addr + "/rpc"
-	log.Printf("[ACP] %s → POST %s", req.Method, rpcURL)
+	log.Printf("[ACP] %s → POST %s (proxySessionId=%s bridgeSessionId=%s)", req.Method, rpcURL, baseParams.SessionId, bridgeSessionID)
 
 	resp, err := http.Post(rpcURL, "application/json", bytes.NewReader(body)) //nolint:gosec
 	if err != nil {
@@ -434,17 +488,12 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 	return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, fmt.Sprintf("bridge error (HTTP %d)", resp.StatusCode)))
 }
 
-// ----------------------------------------------------------------------------
-// HandleSSE – GET /acp/sse
-// ----------------------------------------------------------------------------
-
-// HandleSSE handles GET /acp/sse?session_id=<id>.
-// On connect it replays the stored message history from the bridge, then streams
-// live session/update notifications until the client disconnects.
-func (c *ACPController) HandleSSE(ctx echo.Context) error {
-	sessionId := ctx.QueryParam("session_id")
+// proxyResultToBridge forwards a JSON-RPC result (no method field) to the per-session
+// bridge /rpc endpoint. The target session is identified by the Acp-Session-Id header.
+func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) error {
+	sessionId := ctx.Request().Header.Get("Acp-Session-Id")
 	if sessionId == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "session_id is required"})
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Acp-Session-Id header is required"})
 	}
 
 	authzCtx := auth.GetAuthorizationContext(ctx)
@@ -461,6 +510,61 @@ func (c *ACPController) HandleSSE(ctx echo.Context) error {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session has no address"})
 	}
 
+	body, err := json.Marshal(req)
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "failed to marshal request"})
+	}
+
+	rpcURL := "http://" + addr + "/rpc"
+	log.Printf("[ACP] result → POST %s (session=%s)", rpcURL, sessionId)
+
+	resp, err := http.Post(rpcURL, "application/json", bytes.NewReader(body)) //nolint:gosec
+	if err != nil {
+		return ctx.JSON(http.StatusBadGateway, map[string]string{"message": "bridge unreachable: " + err.Error()})
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{})
+}
+
+// ----------------------------------------------------------------------------
+// HandleSessionSSE – GET /acp
+// ----------------------------------------------------------------------------
+
+// HandleSessionSSE handles GET /acp with Acp-Session-Id header.
+// Streams live session/update notifications from the per-session bridge until
+// the client disconnects. History is NOT replayed here; clients fetch it separately.
+func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
+	log.Printf("[ACP] HandleSessionSSE: called (method=%s, origin=%s, headers=%v)",
+		ctx.Request().Method,
+		ctx.Request().Header.Get("Origin"),
+		ctx.Request().Header,
+	)
+	sessionId := ctx.Request().Header.Get("Acp-Session-Id")
+	if sessionId == "" {
+		log.Printf("[ACP] HandleSessionSSE: missing Acp-Session-Id header")
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Acp-Session-Id header is required"})
+	}
+
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionId)
+	if session == nil {
+		log.Printf("[ACP] HandleSessionSSE: session not found (sessionId=%s)", sessionId)
+		return ctx.JSON(http.StatusNotFound, map[string]string{"message": "session not found"})
+	}
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		log.Printf("[ACP] HandleSessionSSE: permission denied (sessionId=%s)", sessionId)
+		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
+	}
+
+	addr := session.Addr()
+	if addr == "" {
+		log.Printf("[ACP] HandleSessionSSE: session has no address (sessionId=%s)", sessionId)
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session has no address"})
+	}
+
+	log.Printf("[ACP] HandleSessionSSE: connecting to bridge SSE (sessionId=%s, addr=%s)", sessionId, addr)
+
 	w := ctx.Response()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -470,43 +574,21 @@ func (c *ACPController) HandleSSE(ctx echo.Context) error {
 
 	flusher, hasFlusher := w.Writer.(http.Flusher)
 
-	// Replay history from the bridge's /messages endpoint.
-	if err := c.replayHistory(addr, w, flusher, hasFlusher); err != nil {
-		log.Printf("[ACP] SSE history replay error (session=%s): %v", sessionId, err)
+	// Flush response headers immediately so the client receives the 200 OK
+	// before we block waiting for the bridge's first SSE event.
+	if hasFlusher {
+		flusher.Flush()
 	}
 
 	// Stream live events from the bridge's /sse endpoint.
+	// History is NOT replayed here; clients fetch it via GET /{sessionId}/messages.
 	c.streamBridgeSSE(ctx.Request().Context(), addr, w, flusher, hasFlusher)
 	return nil
 }
 
-// replayHistory fetches and writes all stored bridge messages as SSE events.
-func (c *ACPController) replayHistory(addr string, w io.Writer, flusher http.Flusher, hasFlusher bool) error {
-	resp, err := http.Get("http://" + addr + "/messages") //nolint:gosec
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var histResp struct {
-		Messages []json.RawMessage `json:"messages"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&histResp); err != nil {
-		return err
-	}
-
-	for _, raw := range histResp.Messages {
-		if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", raw); err != nil {
-			return err
-		}
-		if hasFlusher {
-			flusher.Flush()
-		}
-	}
-	return nil
-}
-
 // streamBridgeSSE proxies the ACP bridge's /sse stream to the current response writer.
+// A keepalive comment is sent every 15 seconds so that NGINX proxy_read_timeout does not
+// drop the connection while the agent is idle between messages.
 func (c *ACPController) streamBridgeSSE(ctx interface{ Done() <-chan struct{} }, addr string, w io.Writer, flusher http.Flusher, hasFlusher bool) {
 	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/sse", nil)
 	if err != nil {
@@ -522,19 +604,40 @@ func (c *ACPController) streamBridgeSSE(ctx interface{ Done() <-chan struct{} },
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	buf := make([]byte, 4096)
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	readCh := make(chan readResult, 4)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rdErr := resp.Body.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				readCh <- readResult{data: chunk}
+			}
+			if rdErr != nil {
+				readCh <- readResult{err: rdErr}
+				return
+			}
+		}
+	}()
+
+	keepaliveTicker := time.NewTicker(15 * time.Second)
+	defer keepaliveTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			data := buf[:n]
+		case rr := <-readCh:
+			if rr.err != nil {
+				return
+			}
 			// Pass through SSE lines, re-emitting only "data:" lines as proper SSE events.
-			for _, line := range strings.Split(string(data), "\n") {
+			for _, line := range strings.Split(string(rr.data), "\n") {
 				if strings.HasPrefix(line, "data: ") {
 					jsonData := strings.TrimPrefix(line, "data: ")
 					if jsonData != "" {
@@ -545,9 +648,11 @@ func (c *ACPController) streamBridgeSSE(ctx interface{ Done() <-chan struct{} },
 					}
 				}
 			}
-		}
-		if err != nil {
-			return
+		case <-keepaliveTicker.C:
+			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
+			if hasFlusher {
+				flusher.Flush()
+			}
 		}
 	}
 }
