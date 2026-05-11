@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -565,6 +566,9 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 
 	log.Printf("[ACP] HandleSessionSSE: connecting to bridge SSE (sessionId=%s, addr=%s)", sessionId, addr)
 
+	// Forward Last-Event-ID so the bridge replays only missed messages.
+	lastEventID := ctx.Request().Header.Get("Last-Event-ID")
+
 	w := ctx.Response()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -580,79 +584,147 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 		flusher.Flush()
 	}
 
-	// Stream live events from the bridge's /sse endpoint.
-	// History is NOT replayed here; clients fetch it via GET /{sessionId}/messages.
-	c.streamBridgeSSE(ctx.Request().Context(), addr, w, flusher, hasFlusher)
+	// Stream events from the bridge's /sse endpoint, forwarding Last-Event-ID so
+	// the bridge replays history from the correct position on reconnect.
+	c.streamBridgeSSE(ctx.Request().Context(), addr, w, flusher, hasFlusher, lastEventID)
 	return nil
 }
 
+// sseEvent holds the fields of a parsed SSE event.
+type sseEvent struct {
+	id   string
+	data string
+	err  error
+}
+
 // streamBridgeSSE proxies the ACP bridge's /sse stream to the current response writer.
+//
+// When the bridge-side SSE connection drops (e.g. transient network hiccup or bridge
+// restart), this function immediately reconnects to the bridge and resumes from the
+// last forwarded event ID — keeping the client-side SSE stream alive the whole time.
+// History replay is handled by the bridge's Last-Event-ID support, so no messages are
+// lost during the reconnection window.
+//
 // A keepalive comment is sent every 15 seconds so that NGINX proxy_read_timeout does not
-// drop the connection while the agent is idle between messages.
-func (c *ACPController) streamBridgeSSE(ctx interface{ Done() <-chan struct{} }, addr string, w io.Writer, flusher http.Flusher, hasFlusher bool) {
-	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/sse", nil)
-	if err != nil {
-		log.Printf("[ACP] SSE: failed to create bridge request: %v", err)
-		return
-	}
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Printf("[ACP] SSE: failed to connect to bridge: %v", err)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	type readResult struct {
-		data []byte
-		err  error
-	}
-	readCh := make(chan readResult, 4)
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, rdErr := resp.Body.Read(buf)
-			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, buf[:n])
-				readCh <- readResult{data: chunk}
-			}
-			if rdErr != nil {
-				readCh <- readResult{err: rdErr}
-				return
-			}
-		}
-	}()
-
+// drop the client connection while the agent is idle between messages.
+func (c *ACPController) streamBridgeSSE(
+	ctx interface{ Done() <-chan struct{} },
+	addr string,
+	w io.Writer,
+	flusher http.Flusher,
+	hasFlusher bool,
+	lastEventID string,
+) {
 	keepaliveTicker := time.NewTicker(15 * time.Second)
 	defer keepaliveTicker.Stop()
 
 	for {
+		// Check client disconnection before each (re)connection attempt.
 		select {
 		case <-ctx.Done():
 			return
-		case rr := <-readCh:
-			if rr.err != nil {
+		default:
+		}
+
+		eventCh, cleanup := c.dialBridgeSSE(ctx, addr, lastEventID)
+
+		// Drain events from this bridge connection until it drops or the client leaves.
+	drainLoop:
+		for {
+			select {
+			case <-ctx.Done():
+				cleanup()
 				return
-			}
-			// Pass through SSE lines, re-emitting only "data:" lines as proper SSE events.
-			for _, line := range strings.Split(string(rr.data), "\n") {
-				if strings.HasPrefix(line, "data: ") {
-					jsonData := strings.TrimPrefix(line, "data: ")
-					if jsonData != "" {
-						_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", jsonData)
-						if hasFlusher {
-							flusher.Flush()
-						}
-					}
+			case ev, ok := <-eventCh:
+				if !ok {
+					// Bridge SSE ended — clean up and reconnect immediately.
+					cleanup()
+					log.Printf("[ACP] SSE: bridge SSE dropped (lastEventID=%s), reconnecting...", lastEventID)
+					break drainLoop
 				}
-			}
-		case <-keepaliveTicker.C:
-			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
-			if hasFlusher {
-				flusher.Flush()
+				if ev.err != nil {
+					cleanup()
+					log.Printf("[ACP] SSE: bridge read error (lastEventID=%s): %v", lastEventID, ev.err)
+					break drainLoop
+				}
+				if ev.id != "" {
+					lastEventID = ev.id
+					_, _ = fmt.Fprintf(w, "id: %s\nevent: message\ndata: %s\n\n", ev.id, ev.data)
+				} else {
+					_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", ev.data)
+				}
+				if hasFlusher {
+					flusher.Flush()
+				}
+			case <-keepaliveTicker.C:
+				_, _ = fmt.Fprintf(w, ": keepalive\n\n")
+				if hasFlusher {
+					flusher.Flush()
+				}
 			}
 		}
 	}
+}
+
+// dialBridgeSSE opens a single SSE connection to the bridge and returns a channel of
+// parsed events plus a cleanup function. The goroutine exits when the response body
+// closes (bridge dropped or ctx cancelled via cleanup).
+func (c *ACPController) dialBridgeSSE(
+	ctx interface{ Done() <-chan struct{} },
+	addr, lastEventID string,
+) (<-chan sseEvent, func()) {
+	eventCh := make(chan sseEvent, 8)
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/sse", nil) //nolint:noctx
+	if err != nil {
+		log.Printf("[ACP] SSE: failed to create bridge request: %v", err)
+		close(eventCh)
+		return eventCh, func() {}
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[ACP] SSE: failed to connect to bridge: %v", err)
+		close(eventCh)
+		return eventCh, func() {}
+	}
+
+	// cleanup closes the response body, which unblocks the scanner goroutine.
+	cleanup := func() { _ = resp.Body.Close() }
+
+	go func() {
+		defer close(eventCh)
+		scanner := bufio.NewScanner(resp.Body)
+		var cur sseEvent
+		for scanner.Scan() {
+			line := scanner.Text()
+			switch {
+			case strings.HasPrefix(line, "id: "):
+				cur.id = strings.TrimPrefix(line, "id: ")
+			case strings.HasPrefix(line, "data: "):
+				cur.data = strings.TrimPrefix(line, "data: ")
+			case line == "": // blank line = event boundary
+				if cur.data != "" {
+					select {
+					case eventCh <- cur:
+					case <-ctx.Done():
+						return
+					}
+				}
+				cur = sseEvent{}
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			select {
+			case eventCh <- sseEvent{err: scanErr}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+
+	return eventCh, cleanup
 }

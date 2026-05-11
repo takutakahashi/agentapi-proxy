@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -233,14 +234,18 @@ func (s *Server) handleRPC(c echo.Context) error {
 // GET /sse
 //
 // Server-Sent Events stream of JSON-RPC 2.0 messages from the ACP agent.
-// Each SSE event has type "message" and carries a raw JSON-RPC object:
+// Supports the SSE Last-Event-ID resumption mechanism: if the client sends a
+// Last-Event-ID header, only messages with a higher index are replayed, then
+// live events are streamed. On first connect (no Last-Event-ID) all history is
+// replayed so the client gets the full conversation context.
 //
+// Each SSE event carries an id (0-based history index) and a raw JSON-RPC object:
+//
+//	id: 0
 //	event: message
 //	data: {"jsonrpc":"2.0","method":"session/update","params":{...}}
 //
-//	event: message
-//	data: {"jsonrpc":"2.0","id":1,"method":"session/request_permission","params":{...}}
-//
+//	id: 1
 //	event: message
 //	data: {"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}
 func (s *Server) handleSSE(c echo.Context) error {
@@ -251,15 +256,34 @@ func (s *Server) handleSSE(c echo.Context) error {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	log.Printf("[acp-server] GET /sse connected (remoteAddr=%s, lastEventID=%q)", c.RealIP(), c.Request().Header.Get("Last-Event-ID"))
+	lastEventIDStr := c.Request().Header.Get("Last-Event-ID")
+	lastEventID := -1
+	if lastEventIDStr != "" {
+		if id, err := strconv.Atoi(lastEventIDStr); err == nil {
+			lastEventID = id
+		}
+	}
+	log.Printf("[acp-server] GET /sse connected (remoteAddr=%s, lastEventID=%d)", c.RealIP(), lastEventID)
 
-	ch, cancel := s.bridge.Subscribe()
+	ch, history, nextIdx, cancel := s.bridge.SubscribeFrom(lastEventID)
 	defer func() {
 		cancel()
 		log.Printf("[acp-server] GET /sse disconnected (remoteAddr=%s)", c.RealIP())
 	}()
 
 	flusher, hasFlusher := w.Writer.(http.Flusher)
+
+	// Replay history events that the client missed (or all of them on first connect).
+	historyStartIdx := lastEventID + 1
+	if historyStartIdx < 0 {
+		historyStartIdx = 0
+	}
+	for i, msg := range history {
+		_, _ = fmt.Fprintf(w, "id: %d\nevent: message\ndata: %s\n\n", historyStartIdx+i, msg)
+	}
+	if hasFlusher {
+		flusher.Flush()
+	}
 
 	ctx := c.Request().Context()
 	for {
@@ -270,7 +294,8 @@ func (s *Server) handleSSE(c echo.Context) error {
 			if !open {
 				return nil
 			}
-			_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", raw)
+			_, _ = fmt.Fprintf(w, "id: %d\nevent: message\ndata: %s\n\n", nextIdx, raw)
+			nextIdx++
 			if hasFlusher {
 				flusher.Flush()
 			}
