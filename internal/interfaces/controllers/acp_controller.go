@@ -525,6 +525,12 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 
 	flusher, hasFlusher := w.Writer.(http.Flusher)
 
+	// Flush response headers immediately so the client receives the 200 OK
+	// before we block waiting for the bridge's first SSE event.
+	if hasFlusher {
+		flusher.Flush()
+	}
+
 	// Stream live events from the bridge's /sse endpoint.
 	// History is NOT replayed here; clients fetch it via GET /{sessionId}/messages.
 	c.streamBridgeSSE(ctx.Request().Context(), addr, w, flusher, hasFlusher)
