@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,9 @@ const (
 type ACPController struct {
 	sessionManagerProvider SessionManagerProvider
 	sessionCreator         SessionCreator
+	// bridgeSessionCache maps proxy session ID → bridge-internal session ID.
+	// Populated on first use to avoid fetching GET /session on every RPC call.
+	bridgeSessionCache sync.Map
 }
 
 // NewACPController creates a new ACPController.
@@ -387,6 +391,31 @@ func (c *ACPController) handleSessionLoad(ctx echo.Context, req acpRequest) erro
 // session/prompt and session/cancel → ACP bridge /rpc
 // ----------------------------------------------------------------------------
 
+// getBridgeSessionID returns the bridge-internal session ID for the given proxy session ID
+// and bridge address. Results are cached so subsequent calls are free.
+func (c *ACPController) getBridgeSessionID(addr, proxySessionID string) (string, error) {
+	if cached, ok := c.bridgeSessionCache.Load(proxySessionID); ok {
+		return cached.(string), nil
+	}
+
+	resp, err := http.Get("http://" + addr + "/session") //nolint:gosec
+	if err != nil {
+		return "", fmt.Errorf("GET /session failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var bridgeSession struct {
+		SessionId string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&bridgeSession); err != nil {
+		return "", fmt.Errorf("decode /session response: %w", err)
+	}
+	if bridgeSession.SessionId != "" {
+		c.bridgeSessionCache.Store(proxySessionID, bridgeSession.SessionId)
+	}
+	return bridgeSession.SessionId, nil
+}
+
 // proxyToBridge forwards session/prompt and session/cancel to the ACP bridge's
 // /rpc endpoint. Requires the session to run with an ACP-native agent (e.g. claude-acp).
 func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
@@ -416,13 +445,33 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "session has no address"))
 	}
 
+	// The bridge uses its own internal session ID, not the proxy session ID.
+	// Fetch the bridge's session ID (cached after the first call) and substitute
+	// it into params.sessionId before forwarding.
+	bridgeSessionID, err := c.getBridgeSessionID(addr, baseParams.SessionId)
+	if err != nil || bridgeSessionID == "" {
+		log.Printf("[ACP] proxyToBridge: failed to get bridge session ID for %s: %v", baseParams.SessionId, err)
+		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to resolve bridge session ID"))
+	}
+
+	var rawParams map[string]json.RawMessage
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &rawParams); err == nil {
+			bridgeIDJSON, _ := json.Marshal(bridgeSessionID)
+			rawParams["sessionId"] = bridgeIDJSON
+			if newParams, err := json.Marshal(rawParams); err == nil {
+				req.Params = newParams
+			}
+		}
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to marshal request"))
 	}
 
 	rpcURL := "http://" + addr + "/rpc"
-	log.Printf("[ACP] %s → POST %s", req.Method, rpcURL)
+	log.Printf("[ACP] %s → POST %s (proxySessionId=%s bridgeSessionId=%s)", req.Method, rpcURL, baseParams.SessionId, bridgeSessionID)
 
 	resp, err := http.Post(rpcURL, "application/json", bytes.NewReader(body)) //nolint:gosec
 	if err != nil {
