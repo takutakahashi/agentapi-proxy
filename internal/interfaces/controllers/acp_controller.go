@@ -86,6 +86,11 @@ func (c *ACPController) HandleRPC(ctx echo.Context) error {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32600, "Invalid Request: jsonrpc must be \"2.0\""))
 	}
 
+	// JSON-RPC result (no method field) — route to session bridge via Acp-Session-Id header.
+	if req.Method == "" {
+		return c.proxyResultToBridge(ctx, req)
+	}
+
 	switch req.Method {
 	case "initialize":
 		return c.handleInitialize(ctx, req)
@@ -434,17 +439,56 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 	return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, fmt.Sprintf("bridge error (HTTP %d)", resp.StatusCode)))
 }
 
+// proxyResultToBridge forwards a JSON-RPC result (no method field) to the per-session
+// bridge /rpc endpoint. The target session is identified by the Acp-Session-Id header.
+func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) error {
+	sessionId := ctx.Request().Header.Get("Acp-Session-Id")
+	if sessionId == "" {
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Acp-Session-Id header is required"})
+	}
+
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionId)
+	if session == nil {
+		return ctx.JSON(http.StatusNotFound, map[string]string{"message": "session not found"})
+	}
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
+	}
+
+	addr := session.Addr()
+	if addr == "" {
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session has no address"})
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "failed to marshal request"})
+	}
+
+	rpcURL := "http://" + addr + "/rpc"
+	log.Printf("[ACP] result → POST %s (session=%s)", rpcURL, sessionId)
+
+	resp, err := http.Post(rpcURL, "application/json", bytes.NewReader(body)) //nolint:gosec
+	if err != nil {
+		return ctx.JSON(http.StatusBadGateway, map[string]string{"message": "bridge unreachable: " + err.Error()})
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{})
+}
+
 // ----------------------------------------------------------------------------
-// HandleSSE – GET /acp/sse
+// HandleSessionSSE – GET /acp
 // ----------------------------------------------------------------------------
 
-// HandleSSE handles GET /acp/sse?session_id=<id>.
-// On connect it replays the stored message history from the bridge, then streams
-// live session/update notifications until the client disconnects.
-func (c *ACPController) HandleSSE(ctx echo.Context) error {
-	sessionId := ctx.QueryParam("session_id")
+// HandleSessionSSE handles GET /acp with Acp-Session-Id header.
+// Streams live session/update notifications from the per-session bridge until
+// the client disconnects. History is NOT replayed here; clients fetch it separately.
+func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
+	sessionId := ctx.Request().Header.Get("Acp-Session-Id")
 	if sessionId == "" {
-		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "session_id is required"})
+		return ctx.JSON(http.StatusBadRequest, map[string]string{"message": "Acp-Session-Id header is required"})
 	}
 
 	authzCtx := auth.GetAuthorizationContext(ctx)
@@ -470,39 +514,9 @@ func (c *ACPController) HandleSSE(ctx echo.Context) error {
 
 	flusher, hasFlusher := w.Writer.(http.Flusher)
 
-	// Replay history from the bridge's /messages endpoint.
-	if err := c.replayHistory(addr, w, flusher, hasFlusher); err != nil {
-		log.Printf("[ACP] SSE history replay error (session=%s): %v", sessionId, err)
-	}
-
 	// Stream live events from the bridge's /sse endpoint.
+	// History is NOT replayed here; clients fetch it via GET /{sessionId}/messages.
 	c.streamBridgeSSE(ctx.Request().Context(), addr, w, flusher, hasFlusher)
-	return nil
-}
-
-// replayHistory fetches and writes all stored bridge messages as SSE events.
-func (c *ACPController) replayHistory(addr string, w io.Writer, flusher http.Flusher, hasFlusher bool) error {
-	resp, err := http.Get("http://" + addr + "/messages") //nolint:gosec
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var histResp struct {
-		Messages []json.RawMessage `json:"messages"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&histResp); err != nil {
-		return err
-	}
-
-	for _, raw := range histResp.Messages {
-		if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", raw); err != nil {
-			return err
-		}
-		if hasFlusher {
-			flusher.Flush()
-		}
-	}
 	return nil
 }
 

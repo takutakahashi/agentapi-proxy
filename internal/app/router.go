@@ -189,7 +189,7 @@ func (r *Router) registerCoreRoutes() error {
 	// ACP (Agent Client Protocol) JSON-RPC 2.0 endpoints
 	log.Printf("[ROUTES] Registering ACP endpoints...")
 	r.echo.POST("/acp", r.handlers.acpController.HandleRPC, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-	r.echo.GET("/acp/sse", r.handlers.acpController.HandleSSE, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	r.echo.GET("/acp", r.handlers.acpController.HandleSessionSSE, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	log.Printf("[ROUTES] ACP endpoints registered")
 
 	// Session management routes
