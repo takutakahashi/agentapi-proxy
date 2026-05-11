@@ -626,6 +626,7 @@ func (c *ACPController) streamBridgeSSE(
 		default:
 		}
 
+		connStart := time.Now()
 		eventCh, cleanup := c.dialBridgeSSE(ctx, addr, lastEventID)
 
 		// Drain events from this bridge connection until it drops or the client leaves.
@@ -637,7 +638,6 @@ func (c *ACPController) streamBridgeSSE(
 				return
 			case ev, ok := <-eventCh:
 				if !ok {
-					// Bridge SSE ended — clean up and reconnect immediately.
 					cleanup()
 					log.Printf("[ACP] SSE: bridge SSE dropped (lastEventID=%s), reconnecting...", lastEventID)
 					break drainLoop
@@ -661,6 +661,17 @@ func (c *ACPController) streamBridgeSSE(
 				if hasFlusher {
 					flusher.Flush()
 				}
+			}
+		}
+
+		// If the connection failed or dropped very quickly (e.g. DNS error, bridge not yet
+		// ready), wait at least 1 second before the next attempt to prevent a busy loop
+		// that would spin at CPU speed and flood the logs.
+		if elapsed := time.Since(connStart); elapsed < time.Second {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second - elapsed):
 			}
 		}
 	}
