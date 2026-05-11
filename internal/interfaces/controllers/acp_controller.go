@@ -486,6 +486,11 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 // Streams live session/update notifications from the per-session bridge until
 // the client disconnects. History is NOT replayed here; clients fetch it separately.
 func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
+	log.Printf("[ACP] HandleSessionSSE: called (method=%s, origin=%s, headers=%v)",
+		ctx.Request().Method,
+		ctx.Request().Header.Get("Origin"),
+		ctx.Request().Header,
+	)
 	sessionId := ctx.Request().Header.Get("Acp-Session-Id")
 	if sessionId == "" {
 		log.Printf("[ACP] HandleSessionSSE: missing Acp-Session-Id header")
