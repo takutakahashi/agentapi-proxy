@@ -340,6 +340,23 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 
 	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, textLen=%d)", b.sessionId, clientID, len(text))
 
+	// Broadcast the user's prompt as a synthetic session/update notification.
+	// The ACP server does not echo user messages, so we emit it here to ensure
+	// it appears in both the SSE live stream and GET /messages history.
+	userContentRaw, _ := json.Marshal(acp.ContentBlockText{Type: "text", Text: text})
+	b.broadcast(jsonRPCMsg{
+		JSONRPC: "2.0",
+		Method:  "session/update",
+		Params: sessionUpdateParams{
+			SessionId: b.sessionId,
+			Update: acp.SessionUpdate{
+				Kind:    acp.SessionUpdateKindUserMessageChunk,
+				Content: json.RawMessage(userContentRaw),
+			},
+			Time: time.Now(),
+		},
+	})
+
 	b.setStatus("running")
 
 	go func() {
@@ -392,9 +409,17 @@ func (b *Bridge) Cancel(ctx context.Context) error {
 	return b.acp.Cancel(ctx)
 }
 
+// SubscribeFromCurrent is a sentinel value for SubscribeFrom that means
+// "subscribe from the current position without replaying any history".
+// Use this when the caller obtains history separately (e.g. GET /messages).
+const SubscribeFromCurrent = -2
+
 // SubscribeFrom subscribes to new messages and atomically returns a snapshot of
 // history starting from lastEventID+1. This prevents race conditions where messages
 // could be missed between fetching history and subscribing to the live channel.
+//
+// Pass SubscribeFromCurrent as lastEventID to subscribe from the current position
+// without replaying any history (useful when history is fetched via GET /messages).
 //
 // Callers must invoke the returned cancel function when done.
 // The returned nextIdx is the history index that the first channel message will have.
@@ -405,12 +430,17 @@ func (b *Bridge) SubscribeFrom(lastEventID int) (<-chan json.RawMessage, []json.
 
 	b.histMu.RLock()
 	histLen := len(b.history)
-	start := lastEventID + 1
-	if start < 0 {
-		start = 0
-	}
-	if start > histLen {
-		start = histLen
+	var start int
+	if lastEventID == SubscribeFromCurrent {
+		start = histLen // no replay: subscribe from current position
+	} else {
+		start = lastEventID + 1
+		if start < 0 {
+			start = 0
+		}
+		if start > histLen {
+			start = histLen
+		}
 	}
 	history := make([]json.RawMessage, histLen-start)
 	copy(history, b.history[start:])

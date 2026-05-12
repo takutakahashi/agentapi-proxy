@@ -257,7 +257,10 @@ func (s *Server) handleSSE(c echo.Context) error {
 	w.WriteHeader(http.StatusOK)
 
 	lastEventIDStr := c.Request().Header.Get("Last-Event-ID")
-	lastEventID := -1
+	// Default: subscribe from current position (no history replay).
+	// Clients that want history should call GET /messages first, then reconnect
+	// with Last-Event-ID to resume from a known point.
+	lastEventID := SubscribeFromCurrent
 	if lastEventIDStr != "" {
 		if id, err := strconv.Atoi(lastEventIDStr); err == nil {
 			lastEventID = id
