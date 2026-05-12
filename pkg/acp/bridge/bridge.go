@@ -340,8 +340,9 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 
 	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, textLen=%d)", b.sessionId, clientID, len(text))
 
-	// Record the user's prompt as a synthetic session/update notification so
-	// it appears in GET /messages history alongside the agent's replies.
+	// Broadcast the user's prompt as a synthetic session/update notification.
+	// The ACP server does not echo user messages, so we emit it here to ensure
+	// it appears in both the SSE live stream and GET /messages history.
 	userContentRaw, _ := json.Marshal(acp.ContentBlockText{Type: "text", Text: text})
 	b.broadcast(jsonRPCMsg{
 		JSONRPC: "2.0",
@@ -408,17 +409,49 @@ func (b *Bridge) Cancel(ctx context.Context) error {
 	return b.acp.Cancel(ctx)
 }
 
-// Subscribe returns a channel of raw JSON-RPC messages and a cancel function.
-// The cancel function must be called when the subscriber disconnects.
-func (b *Bridge) Subscribe() (<-chan json.RawMessage, func()) {
-	sub := &subscriber{ch: make(chan json.RawMessage, 128)}
+// SubscribeFromCurrent is a sentinel value for SubscribeFrom that means
+// "subscribe from the current position without replaying any history".
+// Use this when the caller obtains history separately (e.g. GET /messages).
+const SubscribeFromCurrent = -2
 
+// SubscribeFrom subscribes to new messages and atomically returns a snapshot of
+// history starting from lastEventID+1. This prevents race conditions where messages
+// could be missed between fetching history and subscribing to the live channel.
+//
+// Pass SubscribeFromCurrent as lastEventID to subscribe from the current position
+// without replaying any history (useful when history is fetched via GET /messages).
+//
+// Callers must invoke the returned cancel function when done.
+// The returned nextIdx is the history index that the first channel message will have.
+func (b *Bridge) SubscribeFrom(lastEventID int) (<-chan json.RawMessage, []json.RawMessage, int, func()) {
+	// Hold subsMu first to block concurrent broadcasts while we snapshot history
+	// and add the subscriber atomically. broadcast() must also acquire subsMu first.
 	b.subsMu.Lock()
+
+	b.histMu.RLock()
+	histLen := len(b.history)
+	var start int
+	if lastEventID == SubscribeFromCurrent {
+		start = histLen // no replay: subscribe from current position
+	} else {
+		start = lastEventID + 1
+		if start < 0 {
+			start = 0
+		}
+		if start > histLen {
+			start = histLen
+		}
+	}
+	history := make([]json.RawMessage, histLen-start)
+	copy(history, b.history[start:])
+	b.histMu.RUnlock()
+
+	sub := &subscriber{ch: make(chan json.RawMessage, 128)}
 	b.subs = append(b.subs, sub)
 	count := len(b.subs)
 	b.subsMu.Unlock()
 
-	log.Printf("[bridge] SSE subscriber connected (session=%s, total=%d)", b.sessionId, count)
+	log.Printf("[bridge] SSE subscriber connected (session=%s, total=%d, lastEventID=%d, histLen=%d)", b.sessionId, count, lastEventID, histLen)
 
 	cancel := func() {
 		b.subsMu.Lock()
@@ -433,7 +466,7 @@ func (b *Bridge) Subscribe() (<-chan json.RawMessage, func()) {
 		close(sub.ch)
 		log.Printf("[bridge] SSE subscriber disconnected (session=%s, remaining=%d)", b.sessionId, remaining)
 	}
-	return sub.ch, cancel
+	return sub.ch, history, histLen, cancel
 }
 
 // ----------------------------------------------------------------------------
@@ -452,13 +485,17 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 		log.Printf("[bridge] broadcast: %s", raw)
 	}
 
-	// Persist to history so reconnecting clients can replay.
+	// Acquire subsMu FIRST (same order as SubscribeFrom) to ensure that when a
+	// new subscriber is being added concurrently, the boundary between history
+	// and live channel messages is consistent with no gaps or duplicates.
+	b.subsMu.Lock()
+	defer b.subsMu.Unlock()
+
+	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
 	b.history = append(b.history, raw)
 	b.histMu.Unlock()
 
-	b.subsMu.Lock()
-	defer b.subsMu.Unlock()
 	for _, sub := range b.subs {
 		select {
 		case sub.ch <- raw:
