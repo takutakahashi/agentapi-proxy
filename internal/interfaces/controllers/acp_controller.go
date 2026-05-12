@@ -533,8 +533,11 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 // ----------------------------------------------------------------------------
 
 // HandleSessionSSE handles GET /acp with Acp-Session-Id header.
-// Streams live session/update notifications from the per-session bridge until
-// the client disconnects. History is NOT replayed here; clients fetch it separately.
+// Streams session/update notifications from the per-session bridge until the client
+// disconnects. On a fresh connection (no Last-Event-ID) the bridge replays its full
+// in-memory event history first, then switches to live streaming — this is the
+// ACP-compliant way to deliver message history without a separate /messages REST call.
+// On reconnect with Last-Event-ID the bridge replays only events after that id.
 func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 	log.Printf("[ACP] HandleSessionSSE: called (method=%s, origin=%s, headers=%v)",
 		ctx.Request().Method,
@@ -624,6 +627,11 @@ func (c *ACPController) streamBridgeSSE(
 	)
 	backoff := backoffMin
 
+	// Sequential counter used to assign id: fields when the bridge does not provide them.
+	// The ACP spec requires every SSE event to carry an id: field so that clients can track
+	// Last-Event-ID for efficient resumption on reconnect.
+	var seqNum int64
+
 	for {
 		// Check client disconnection before each (re)connection attempt.
 		select {
@@ -656,12 +664,16 @@ func (c *ACPController) streamBridgeSSE(
 					break drainLoop
 				}
 				gotEvent = true
-				if ev.id != "" {
-					lastEventID = ev.id
-					_, _ = fmt.Fprintf(w, "id: %s\nevent: message\ndata: %s\n\n", ev.id, ev.data)
-				} else {
-					_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", ev.data)
+				// Assign id: on every event. Use the bridge-provided id when available;
+				// otherwise generate a monotone sequential id so clients can always
+				// track Last-Event-ID for ACP-compliant resumption on reconnect.
+				seqNum++
+				eventID := ev.id
+				if eventID == "" {
+					eventID = fmt.Sprintf("%d", seqNum)
 				}
+				lastEventID = eventID
+				_, _ = fmt.Fprintf(w, "id: %s\nevent: message\ndata: %s\n\n", eventID, ev.data)
 				if hasFlusher {
 					flusher.Flush()
 				}
