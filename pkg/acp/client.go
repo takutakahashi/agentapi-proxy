@@ -149,6 +149,8 @@ func (c *Client) Listen(ctx context.Context) error {
 }
 
 // Initialize performs the ACP handshake. Must be called before any other method.
+// For ACP v1 agents that advertise authMethods, this automatically calls Authenticate
+// using env-var credentials (OPENAI_API_KEY or CODEX_API_KEY) when available.
 func (c *Client) Initialize(ctx context.Context) error {
 	params := InitializeParams{
 		ProtocolVersion: ProtocolVersion,
@@ -166,7 +168,56 @@ func (c *Client) Initialize(ctx context.Context) error {
 	}
 	c.agentCaps = result.AgentCapabilities
 	if c.verbose {
-		log.Printf("[acp] initialized: protocol=%d agentCaps=%+v", result.ProtocolVersion, result.AgentCapabilities)
+		log.Printf("[acp] initialized: protocol=%d agentCaps=%+v authMethods=%d", result.ProtocolVersion, result.AgentCapabilities, len(result.AuthMethods))
+	}
+
+	// ACP v1: if the agent advertises env-var auth methods, authenticate now.
+	if methodID := pickEnvVarAuthMethod(result.AuthMethods); methodID != "" {
+		if err := c.Authenticate(ctx, methodID); err != nil {
+			return fmt.Errorf("acp authenticate: %w", err)
+		}
+	}
+	return nil
+}
+
+// pickEnvVarAuthMethod returns the first env-var auth method whose environment
+// variable is present, preferring OPENAI_API_KEY over CODEX_API_KEY.
+func pickEnvVarAuthMethod(methods []AuthMethod) string {
+	// Priority order: openai-api-key first, then codex-api-key.
+	priority := []struct {
+		id  string
+		env string
+	}{
+		{"openai-api-key", "OPENAI_API_KEY"},
+		{"codex-api-key", "CODEX_API_KEY"},
+	}
+	available := make(map[string]bool, len(methods))
+	for _, m := range methods {
+		if m.Type == "env_var" {
+			available[m.ID] = true
+		}
+	}
+	for _, p := range priority {
+		if available[p.id] && os.Getenv(p.env) != "" {
+			return p.id
+		}
+	}
+	return ""
+}
+
+// Authenticate sends an "authenticate" request to the agent (ACP v1).
+// methodID must be one of the IDs returned in InitializeResult.AuthMethods.
+func (c *Client) Authenticate(ctx context.Context, methodID string) error {
+	raw, err := c.rpc.Call(ctx, "authenticate", AuthenticateParams{MethodID: methodID})
+	if err != nil {
+		return fmt.Errorf("method=%s: %w", methodID, err)
+	}
+	var result AuthenticateResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("method=%s: parse result: %w", methodID, err)
+	}
+	if c.verbose {
+		log.Printf("[acp] authenticated: method=%s", methodID)
 	}
 	return nil
 }
