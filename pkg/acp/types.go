@@ -49,11 +49,27 @@ type InitializeParams struct {
 	ClientCapabilities ClientCapabilities `json:"clientCapabilities"`
 }
 
+// AuthMethod describes an authentication method offered by the agent (ACP v1).
+type AuthMethod struct {
+	ID   string `json:"id"`
+	Type string `json:"type,omitempty"` // "env_var" for environment-variable methods
+}
+
 // InitializeResult is the response to "initialize".
 type InitializeResult struct {
 	ProtocolVersion   int               `json:"protocolVersion"`
 	AgentCapabilities AgentCapabilities `json:"agentCapabilities"`
+	// AuthMethods is populated by ACP v1 agents that require explicit authentication.
+	AuthMethods []AuthMethod `json:"authMethods,omitempty"`
 }
+
+// AuthenticateParams is the params for the "authenticate" request (client→agent, ACP v1).
+type AuthenticateParams struct {
+	MethodID string `json:"methodId"`
+}
+
+// AuthenticateResult is the response to "authenticate".
+type AuthenticateResult struct{}
 
 // ----------------------------------------------------------------------------
 // Session management
