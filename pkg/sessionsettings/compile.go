@@ -57,6 +57,11 @@ func Compile(opts CompileOptions) error {
 		return fmt.Errorf("failed to generate settings.json: %w", err)
 	}
 
+	// 3b. Generate ~/.codex/hooks.json (codex-acp sessions only)
+	if err := generateCodexHooksJSON(opts.OutputDir, settings.Claude.CodexHooksJSON); err != nil {
+		return fmt.Errorf("failed to generate codex hooks.json: %w", err)
+	}
+
 	// 4. Generate env file
 	if err := generateEnvFile(opts.EnvFilePath, settings.Env); err != nil {
 		return fmt.Errorf("failed to generate env file: %w", err)
@@ -201,6 +206,32 @@ func generateEnvFile(envFilePath string, env map[string]string) error {
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s (%d variables)", envFilePath, len(env))
+	return nil
+}
+
+// generateCodexHooksJSON creates ~/.codex/hooks.json for Codex CLI hook configuration.
+// Only written when hooksJSON is non-empty (i.e., for codex-acp sessions).
+func generateCodexHooksJSON(outputDir string, hooksJSON map[string]interface{}) error {
+	if len(hooksJSON) == 0 {
+		return nil
+	}
+
+	codexDir := filepath.Join(outputDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+
+	hooksPath := filepath.Join(codexDir, "hooks.json")
+	data, err := json.MarshalIndent(hooksJSON, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal codex hooks.json: %w", err)
+	}
+
+	if err := os.WriteFile(hooksPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write codex hooks.json: %w", err)
+	}
+
+	log.Printf("[COMPILE-SETTINGS] Generated %s", hooksPath)
 	return nil
 }
 
