@@ -282,7 +282,7 @@ spec:
             # Settings base secret (proxy-side merge of settings.json)
             - name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET
               value: {{ .Values.kubernetesSession.settingsBaseSecret | default "agentapi-settings-base" | quote }}
-            {{- if (.Values.kubernetesSession.codexRequirements).enabled }}
+            {{- if .Values.kubernetesSession.codexRequirements.enabled }}
             # ConfigMap name for /etc/codex/requirements.toml (codex-acp managed hooks)
             - name: AGENTAPI_K8S_SESSION_CODEX_REQUIREMENTS_CONFIGMAP_NAME
               value: {{ include "agentapi-proxy.fullname" . }}-codex-requirements
