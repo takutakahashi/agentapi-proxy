@@ -439,11 +439,14 @@ kubernetesSession:
     # TOML content for /etc/codex/requirements.toml.
     # Mirrors the managed-settings.json hooks (Notification excluded — Codex does not support it).
     tomlContent: |
+      [hooks]
+      managed_dir = "/etc/codex"
+
       [[hooks.Stop]]
 
       [[hooks.Stop.hooks]]
       type = "command"
-      command = "agentapi-proxy client send-notification --notify-session-id \"$AGENTAPI_SESSION_ID\""
+      command = "agentapi-proxy client send-notification --endpoint http://$AGENTAPI_PROXY_SERVICE_HOST:$AGENTAPI_PROXY_SERVICE_PORT --title \"codex-acp セッションが完了しました\" --body \"セッション $AGENTAPI_SESSION_ID が終了しました\" --notify-user-id \"$AGENTAPI_USER_ID\" >> /tmp/notification.log 2>&1"
 
       [[hooks.Stop.hooks]]
       type = "command"
