@@ -16,7 +16,9 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	githubsync "github.com/takutakahashi/agentapi-proxy/pkg/github_sync"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionmanager"
@@ -104,6 +106,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register import/export handlers (requires Kubernetes mode)
 	registerImportExportHandlers(configData, proxyServer)
+
+	// Register GitHub sync handlers (requires Kubernetes mode)
+	registerGitHubSyncHandlers(configData, proxyServer)
 
 	// Register SlackBot handlers (requires Kubernetes mode)
 	registerSlackBotHandlers(configData, proxyServer)
@@ -723,6 +728,50 @@ func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.
 	handlers := sessionmanager.NewHandlers(sessionManager, configData.SessionManager.HMACSecret)
 	proxyServer.AddCustomHandler(handlers)
 	log.Printf("[SESSION_MANAGER] Session manager handler registered")
+}
+
+// registerGitHubSyncHandlers registers GitHub bidirectional sync REST API handlers.
+func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[GITHUB_SYNC] Registering GitHub sync handlers...")
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[GITHUB_SYNC] Kubernetes config not available, skipping GitHub sync handlers: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[GITHUB_SYNC] Failed to create Kubernetes client, skipping GitHub sync handlers: %v", err)
+		return
+	}
+
+	namespace := configData.KubernetesSession.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	scheduleManager := schedule.NewKubernetesManager(client, namespace)
+	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
+	settingsRepo := proxyServer.GetSettingsRepository()
+	memoryRepo := proxyServer.GetMemoryRepository()
+	taskRepo := proxyServer.GetTaskRepository()
+	taskGroupRepo := proxyServer.GetTaskGroupRepository()
+
+	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(client, namespace))
+
+	syncHandlers := githubsync.NewHandlers(
+		settingsRepo,
+		scheduleManager,
+		webhookRepo,
+		memoryRepo,
+		taskRepo,
+		taskGroupRepo,
+		userFileRepo,
+	)
+	proxyServer.AddCustomHandler(syncHandlers)
+
+	log.Printf("[GITHUB_SYNC] GitHub sync handlers registered successfully")
 }
 
 // registerMCPHandler registers MCP HTTP handler

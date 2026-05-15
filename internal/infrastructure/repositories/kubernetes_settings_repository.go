@@ -41,6 +41,7 @@ type settingsJSON struct {
 	SlackUserID             string                                 `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
 	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
 	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
+	GitSync                 *gitSyncJSON                           `json:"git_sync,omitempty"`
 	CreatedAt               time.Time                              `json:"created_at"`
 	UpdatedAt               time.Time                              `json:"updated_at"`
 }
@@ -68,6 +69,25 @@ type mcpServerJSON struct {
 // marketplaceJSON is the JSON representation of a single marketplace
 type marketplaceJSON struct {
 	URL string `json:"url"`
+}
+
+// syncEncryptionConfigJSON is the JSON representation of sync encryption config
+type syncEncryptionConfigJSON struct {
+	KMSKeyARN    string `json:"kms_key_arn"`
+	AWSRegion    string `json:"aws_region"`
+	EncryptedDEK string `json:"encrypted_dek,omitempty"`
+	DEKVersion   int    `json:"dek_version,omitempty"`
+}
+
+// gitSyncJSON is the JSON representation of GitHub sync configuration
+type gitSyncJSON struct {
+	Enabled      bool                     `json:"enabled"`
+	RepoFullName string                   `json:"repo_full_name"`
+	Branch       string                   `json:"branch"`
+	RootPath     string                   `json:"root_path"`
+	AutoPush     bool                     `json:"auto_push"`
+	GitHubToken  string                   `json:"github_token,omitempty"`
+	Encryption   syncEncryptionConfigJSON `json:"encryption"`
 }
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
@@ -282,6 +302,23 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 		sj.ExternalSessionManagers = managers
 	}
 
+	if gitSync := settings.GitSync(); gitSync != nil {
+		sj.GitSync = &gitSyncJSON{
+			Enabled:      gitSync.Enabled,
+			RepoFullName: gitSync.RepoFullName,
+			Branch:       gitSync.Branch,
+			RootPath:     gitSync.RootPath,
+			AutoPush:     gitSync.AutoPush,
+			GitHubToken:  gitSync.GitHubToken,
+			Encryption: syncEncryptionConfigJSON{
+				KMSKeyARN:    gitSync.Encryption.KMSKeyARN,
+				AWSRegion:    gitSync.Encryption.AWSRegion,
+				EncryptedDEK: gitSync.Encryption.EncryptedDEK,
+				DEKVersion:   gitSync.Encryption.DEKVersion,
+			},
+		}
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -392,6 +429,25 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 
 	if len(sj.ExternalSessionManagers) > 0 {
 		settings.SetExternalSessionManagers(sj.ExternalSessionManagers)
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.GitSync != nil {
+		gs := &entities.GitSyncConfig{
+			Enabled:      sj.GitSync.Enabled,
+			RepoFullName: sj.GitSync.RepoFullName,
+			Branch:       sj.GitSync.Branch,
+			RootPath:     sj.GitSync.RootPath,
+			AutoPush:     sj.GitSync.AutoPush,
+			GitHubToken:  sj.GitSync.GitHubToken,
+			Encryption: entities.SyncEncryptionConfig{
+				KMSKeyARN:    sj.GitSync.Encryption.KMSKeyARN,
+				AWSRegion:    sj.GitSync.Encryption.AWSRegion,
+				EncryptedDEK: sj.GitSync.Encryption.EncryptedDEK,
+				DEKVersion:   sj.GitSync.Encryption.DEKVersion,
+			},
+		}
+		settings.SetGitSync(gs)
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
