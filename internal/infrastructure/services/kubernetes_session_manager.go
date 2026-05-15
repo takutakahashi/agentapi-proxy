@@ -410,23 +410,6 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	}
 	session.SetProvisionSettings(sessionSettings)
 
-	// For codex-acp sessions, create /etc/codex/requirements.toml as a ConfigMap so
-	// hooks are treated as managed (auto-trusted) by codex_core. Must be created before
-	// the Deployment because the Deployment volume references this ConfigMap.
-	if req.AgentType == "codex-acp" && sessionSettings != nil {
-		codexHooks := buildCodexHooksJSON(sessionSettings.Claude.SettingsJSON)
-		if codexHooks == nil {
-			codexHooks = make(map[string]interface{})
-		}
-		tomlContent := buildCodexRequirementsTOML(codexHooks)
-		if tomlContent != "" {
-			if err := m.createCodexRequirementsConfigMap(ctx, session, tomlContent); err != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to create codex requirements ConfigMap: %v", err)
-				// Continue anyway - session will work without managed hooks
-			}
-		}
-	}
-
 	// Create Deployment
 	if err := m.createDeployment(ctx, session, req); err != nil {
 		if m.isPVCEnabled() {
@@ -1880,108 +1863,6 @@ func buildCodexHooksJSON(settingsJSON map[string]interface{}) map[string]interfa
 	return map[string]interface{}{"hooks": hooksMap}
 }
 
-// codexHookEvents lists the hook event names that codex_core understands.
-// Notification is Claude Code-only and must be excluded from requirements.toml.
-var codexHookEvents = []string{
-	"Stop", "UserPromptSubmit", "SessionStart",
-	"PreToolUse", "PostToolUse", "PermissionRequest",
-	"PreCompact", "PostCompact",
-}
-
-// buildCodexRequirementsTOML converts a hooks JSON map (Claude Code format) into a
-// TOML string suitable for /etc/codex/requirements.toml. Hooks from that file are
-// treated as "managed" by codex_core and executed without user trust approval.
-// Managed hooks from /etc/claude-code/managed-settings.json are merged in as well.
-func buildCodexRequirementsTOML(hooksJSON map[string]interface{}) string {
-	if len(hooksJSON) == 0 {
-		return ""
-	}
-
-	merged := sessionsettings.MergeCodexManagedHooks(hooksJSON)
-	hooksMap, ok := merged["hooks"].(map[string]interface{})
-	if !ok || len(hooksMap) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	for _, event := range codexHookEvents {
-		groups, ok := hooksMap[event].([]interface{})
-		if !ok || len(groups) == 0 {
-			continue
-		}
-		for _, group := range groups {
-			groupMap, ok := group.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			hooks, ok := groupMap["hooks"].([]interface{})
-			if !ok || len(hooks) == 0 {
-				continue
-			}
-			fmt.Fprintf(&sb, "\n[[hooks.%s]]\n", event)
-			for _, h := range hooks {
-				hookMap, ok := h.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				cmd, _ := hookMap["command"].(string)
-				typ, _ := hookMap["type"].(string)
-				if typ == "" {
-					typ = "command"
-				}
-				fmt.Fprintf(&sb, "\n[[hooks.%s.hooks]]\n", event)
-				fmt.Fprintf(&sb, "type = %q\n", typ)
-				fmt.Fprintf(&sb, "command = %q\n", cmd)
-			}
-		}
-	}
-	return sb.String()
-}
-
-// codexRequirementsConfigMapName returns the ConfigMap name for /etc/codex/requirements.toml.
-func codexRequirementsConfigMapName(sessionID string) string {
-	return fmt.Sprintf("agentapi-session-%s-codex-reqs", sessionID)
-}
-
-// createCodexRequirementsConfigMap creates a ConfigMap containing requirements.toml
-// for a codex-acp session. The ConfigMap is mounted at /etc/codex/ in the session pod.
-func (m *KubernetesSessionManager) createCodexRequirementsConfigMap(
-	ctx context.Context,
-	session *KubernetesSession,
-	tomlContent string,
-) error {
-	cmName := codexRequirementsConfigMapName(session.id)
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cmName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/resource":   "codex-requirements",
-			},
-		},
-		Data: map[string]string{
-			"requirements.toml": tomlContent,
-		},
-	}
-	_, err := m.client.CoreV1().ConfigMaps(m.namespace).Create(ctx, cm, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create codex requirements ConfigMap: %w", err)
-	}
-	log.Printf("[K8S_SESSION] Created codex requirements ConfigMap %s for session %s", cmName, session.id)
-	return nil
-}
-
-// deleteCodexRequirementsConfigMap deletes the codex requirements ConfigMap for a session.
-func (m *KubernetesSessionManager) deleteCodexRequirementsConfigMap(ctx context.Context, session *KubernetesSession) error {
-	cmName := codexRequirementsConfigMapName(session.id)
-	err := m.client.CoreV1().ConfigMaps(m.namespace).Delete(ctx, cmName, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete codex requirements ConfigMap %s: %w", cmName, err)
-	}
-	return nil
-}
-
 // createOneshotSettingsSecret creates a Secret containing settings.json with Stop hook
 // This is used when oneshot is enabled to automatically delete the session after stopping
 func (m *KubernetesSessionManager) createOneshotSettingsSecret(
@@ -2131,15 +2012,15 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		},
 	})
 
-	// For codex-acp sessions, mount /etc/codex/requirements.toml from a ConfigMap so that
-	// hooks are treated as managed (auto-trusted) by codex_core.
-	if session.Request().AgentType == "codex-acp" {
+	// For codex-acp sessions, mount /etc/codex/requirements.toml from a pre-created Helm
+	// ConfigMap so that hooks are treated as managed (auto-trusted) by codex_core.
+	if session.Request().AgentType == "codex-acp" && m.k8sConfig.CodexRequirementsConfigMapName != "" {
 		volumes = append(volumes, corev1.Volume{
 			Name: "codex-requirements",
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: codexRequirementsConfigMapName(session.id),
+						Name: m.k8sConfig.CodexRequirementsConfigMapName,
 					},
 				},
 			},
@@ -2434,11 +2315,6 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 	// Delete oneshot settings Secret (bug fix - was not being deleted before)
 	if err := m.deleteOneshotSettingsSecret(ctx, session); err != nil {
 		errs = append(errs, fmt.Sprintf("oneshot-settings-secret: %v", err))
-	}
-
-	// Delete codex requirements ConfigMap (codex-acp sessions only; no-op otherwise)
-	if err := m.deleteCodexRequirementsConfigMap(ctx, session); err != nil {
-		errs = append(errs, fmt.Sprintf("codex-requirements-configmap: %v", err))
 	}
 
 	if len(errs) > 0 {
@@ -3071,7 +2947,7 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 
 	// For codex-acp sessions, mount the managed requirements ConfigMap at /etc/codex/
 	// so codex_core reads hooks as managed (auto-trusted) without user approval.
-	if session.Request().AgentType == "codex-acp" {
+	if session.Request().AgentType == "codex-acp" && m.k8sConfig.CodexRequirementsConfigMapName != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "codex-requirements",
 			MountPath: "/etc/codex",
