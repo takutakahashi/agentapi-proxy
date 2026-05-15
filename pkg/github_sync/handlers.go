@@ -28,9 +28,10 @@ func NewHandlers(
 	taskRepo portrepos.TaskRepository,
 	taskGroupRepo portrepos.TaskGroupRepository,
 	userFileRepo portrepos.UserFileRepository,
+	slackbotRepo portrepos.SlackBotRepository,
 ) *Handlers {
 	return &Handlers{
-		syncer:       NewSyncer(settingsRepo, scheduleRepo, webhookRepo, memoryRepo, taskRepo, taskGroupRepo, userFileRepo),
+		syncer:       NewSyncer(settingsRepo, scheduleRepo, webhookRepo, memoryRepo, taskRepo, taskGroupRepo, userFileRepo, slackbotRepo),
 		settingsRepo: settingsRepo,
 	}
 }

@@ -759,6 +759,7 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 	taskGroupRepo := proxyServer.GetTaskGroupRepository()
 
 	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(client, namespace))
+	slackbotRepo := portrepos.SlackBotRepository(repositories.NewKubernetesSlackBotRepository(client, namespace))
 
 	syncHandlers := githubsync.NewHandlers(
 		settingsRepo,
@@ -768,6 +769,7 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 		taskRepo,
 		taskGroupRepo,
 		userFileRepo,
+		slackbotRepo,
 	)
 	proxyServer.AddCustomHandler(syncHandlers)
 

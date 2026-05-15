@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	infraservices "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -31,6 +32,7 @@ type Syncer struct {
 	settingsRepo portrepos.SettingsRepository
 	scheduleRepo schedule.Manager
 	webhookRepo  portrepos.WebhookRepository
+	slackbotRepo portrepos.SlackBotRepository
 	userFileRepo portrepos.UserFileRepository
 }
 
@@ -39,15 +41,17 @@ func NewSyncer(
 	settingsRepo portrepos.SettingsRepository,
 	scheduleRepo schedule.Manager,
 	webhookRepo portrepos.WebhookRepository,
-	_ portrepos.MemoryRepository, // unused — kept for call-site compatibility
-	_ portrepos.TaskRepository, // unused
+	_ portrepos.MemoryRepository,   // unused — kept for call-site compatibility
+	_ portrepos.TaskRepository,     // unused
 	_ portrepos.TaskGroupRepository, // unused
 	userFileRepo portrepos.UserFileRepository,
+	slackbotRepo portrepos.SlackBotRepository,
 ) *Syncer {
 	return &Syncer{
 		settingsRepo: settingsRepo,
 		scheduleRepo: scheduleRepo,
 		webhookRepo:  webhookRepo,
+		slackbotRepo: slackbotRepo,
 		userFileRepo: userFileRepo,
 	}
 }
@@ -108,6 +112,15 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		if err := s.exportUserFiles(ctx, userID, dek, rootPath, files); err != nil {
 			log.Printf("[SYNC] user file export warning for %s: %v", settingsName, err)
 		}
+		if err := s.exportUserSchedules(ctx, userID, dek, rootPath, files); err != nil {
+			log.Printf("[SYNC] user schedule export warning for %s: %v", settingsName, err)
+		}
+		if err := s.exportUserWebhooks(ctx, userID, dek, rootPath, files); err != nil {
+			log.Printf("[SYNC] user webhook export warning for %s: %v", settingsName, err)
+		}
+		if err := s.exportUserSlackbots(ctx, userID, dek, rootPath, files); err != nil {
+			log.Printf("[SYNC] user slackbot export warning for %s: %v", settingsName, err)
+		}
 	} else {
 		if err := s.exportTeamSchedules(ctx, settingsName, userID, dek, rootPath, files); err != nil {
 			log.Printf("[SYNC] schedule export warning for %s: %v", settingsName, err)
@@ -117,6 +130,9 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		}
 		if err := s.exportTeamSettings(ctx, settingsName, userID, dek, rootPath, files); err != nil {
 			log.Printf("[SYNC] settings export warning for %s: %v", settingsName, err)
+		}
+		if err := s.exportTeamSlackbots(ctx, settingsName, dek, rootPath, files); err != nil {
+			log.Printf("[SYNC] slackbot export warning for %s: %v", settingsName, err)
 		}
 	}
 
@@ -249,14 +265,24 @@ func (s *Syncer) importFileByPath(ctx context.Context, filePath string, content 
 	settingsName, userID string, dek []byte, teamPrefix, userPrefix string) error {
 
 	switch {
+	// Team sync paths
 	case strings.HasPrefix(filePath, teamPrefix+"schedules/"):
 		return s.importScheduleFile(ctx, content, settingsName, userID, dek)
 	case strings.HasPrefix(filePath, teamPrefix+"webhooks/"):
 		return s.importWebhookFile(ctx, content, settingsName, userID, dek)
 	case filePath == teamPrefix+"settings.yaml":
 		return s.importSettingsFile(ctx, content, settingsName, userID, dek)
+	case strings.HasPrefix(filePath, teamPrefix+"slackbots/"):
+		return s.importSlackbotFile(ctx, content, entities.ScopeTeam, userID, settingsName, dek)
+	// Personal sync paths
 	case strings.HasPrefix(filePath, userPrefix+"files/"):
 		return s.importUserFileRecord(ctx, content, userID, dek)
+	case strings.HasPrefix(filePath, userPrefix+"schedules/"):
+		return s.importUserScheduleFile(ctx, content, userID, dek)
+	case strings.HasPrefix(filePath, userPrefix+"webhooks/"):
+		return s.importUserWebhookFile(ctx, content, userID, dek)
+	case strings.HasPrefix(filePath, userPrefix+"slackbots/"):
+		return s.importSlackbotFile(ctx, content, entities.ScopeUser, userID, "", dek)
 	default:
 		return nil
 	}
@@ -490,6 +516,118 @@ func (s *Syncer) exportUserFiles(ctx context.Context, userID string, dek []byte,
 	return nil
 }
 
+func (s *Syncer) exportUserSchedules(ctx context.Context, userID string, dek []byte, rootPath string, files map[string][]byte) error {
+	if s.scheduleRepo == nil {
+		return nil
+	}
+	schedules, err := s.scheduleRepo.List(ctx, schedule.ScheduleFilter{
+		Scope:  entities.ScopeUser,
+		UserID: userID,
+	})
+	if err != nil {
+		return fmt.Errorf("list user schedules: %w", err)
+	}
+	dir := rootPath + "users/" + userID + "/schedules/"
+	for _, sc := range schedules {
+		si := scheduleToImport(sc)
+		wrapper := &importexport.TeamResources{
+			Metadata:  importexport.ResourceMetadata{TeamID: userID},
+			Schedules: []importexport.ScheduleImport{si},
+		}
+		if err := encryptTeamResourcesFields(wrapper, dek); err != nil {
+			log.Printf("[SYNC] Warning: encrypt user schedule %s: %v", sc.ID, err)
+			continue
+		}
+		data, err := yaml.Marshal(wrapper.Schedules[0])
+		if err != nil {
+			log.Printf("[SYNC] Warning: marshal user schedule %s: %v", sc.ID, err)
+			continue
+		}
+		files[dir+sc.ID+".yaml"] = data
+	}
+	return nil
+}
+
+func (s *Syncer) exportUserWebhooks(ctx context.Context, userID string, dek []byte, rootPath string, files map[string][]byte) error {
+	if s.webhookRepo == nil {
+		return nil
+	}
+	webhooks, err := s.webhookRepo.List(ctx, portrepos.WebhookFilter{
+		Scope:  entities.ScopeUser,
+		UserID: userID,
+	})
+	if err != nil {
+		return fmt.Errorf("list user webhooks: %w", err)
+	}
+	dir := rootPath + "users/" + userID + "/webhooks/"
+	for _, wh := range webhooks {
+		wi := webhookToImport(wh)
+		wrapper := &importexport.TeamResources{
+			Metadata: importexport.ResourceMetadata{TeamID: userID},
+			Webhooks: []importexport.WebhookImport{wi},
+		}
+		if err := encryptTeamResourcesFields(wrapper, dek); err != nil {
+			log.Printf("[SYNC] Warning: encrypt user webhook %s: %v", wh.ID(), err)
+			continue
+		}
+		data, err := yaml.Marshal(wrapper.Webhooks[0])
+		if err != nil {
+			log.Printf("[SYNC] Warning: marshal user webhook %s: %v", wh.ID(), err)
+			continue
+		}
+		files[dir+wh.ID()+".yaml"] = data
+	}
+	return nil
+}
+
+func (s *Syncer) exportUserSlackbots(ctx context.Context, userID string, dek []byte, rootPath string, files map[string][]byte) error {
+	if s.slackbotRepo == nil {
+		return nil
+	}
+	bots, err := s.slackbotRepo.List(ctx, portrepos.SlackBotFilter{
+		Scope:  entities.ScopeUser,
+		UserID: userID,
+	})
+	if err != nil {
+		return fmt.Errorf("list user slackbots: %w", err)
+	}
+	dir := rootPath + "users/" + userID + "/slackbots/"
+	for _, bot := range bots {
+		rec := slackbotToRecord(bot, dek)
+		data, err := yaml.Marshal(rec)
+		if err != nil {
+			log.Printf("[SYNC] Warning: marshal user slackbot %s: %v", bot.ID(), err)
+			continue
+		}
+		files[dir+bot.ID()+".yaml"] = data
+	}
+	return nil
+}
+
+func (s *Syncer) exportTeamSlackbots(ctx context.Context, settingsName string, dek []byte, rootPath string, files map[string][]byte) error {
+	if s.slackbotRepo == nil {
+		return nil
+	}
+	bots, err := s.slackbotRepo.List(ctx, portrepos.SlackBotFilter{
+		Scope:  entities.ScopeTeam,
+		TeamID: settingsName,
+	})
+	if err != nil {
+		return fmt.Errorf("list team slackbots: %w", err)
+	}
+	dir := rootPath + "teams/" + settingsName + "/slackbots/"
+	for _, bot := range bots {
+		rec := slackbotToRecord(bot, dek)
+		data, err := yaml.Marshal(rec)
+		if err != nil {
+			log.Printf("[SYNC] Warning: marshal team slackbot %s: %v", bot.ID(), err)
+			continue
+		}
+		files[dir+bot.ID()+".yaml"] = data
+	}
+	return nil
+}
+
 // --- Import handlers ---
 
 func (s *Syncer) importScheduleFile(ctx context.Context, data []byte, settingsName, userID string, dek []byte) error {
@@ -582,6 +720,172 @@ func (s *Syncer) importUserFileRecord(ctx context.Context, data []byte, userID s
 		return fmt.Errorf("save file %s: %w", rec.Name, err)
 	}
 	return nil
+}
+
+func (s *Syncer) importUserScheduleFile(ctx context.Context, data []byte, userID string, dek []byte) error {
+	var si importexport.ScheduleImport
+	if err := yaml.Unmarshal(data, &si); err != nil {
+		return fmt.Errorf("unmarshal schedule: %w", err)
+	}
+	wrapper := &importexport.TeamResources{
+		Metadata:  importexport.ResourceMetadata{TeamID: userID},
+		Schedules: []importexport.ScheduleImport{si},
+	}
+	if err := decryptTeamResourcesFields(wrapper, dek); err != nil {
+		return fmt.Errorf("decrypt schedule: %w", err)
+	}
+	si = wrapper.Schedules[0]
+
+	// Find existing user-scoped schedule by ID or name
+	var existing *schedule.Schedule
+	if schedules, err := s.scheduleRepo.List(ctx, schedule.ScheduleFilter{
+		Scope:  entities.ScopeUser,
+		UserID: userID,
+	}); err == nil {
+		for _, sc := range schedules {
+			if si.ID != "" && sc.ID == si.ID {
+				existing = sc
+				break
+			}
+		}
+		if existing == nil {
+			for _, sc := range schedules {
+				if sc.Name == si.Name {
+					existing = sc
+					break
+				}
+			}
+		}
+	}
+
+	id := si.ID
+	if id == "" {
+		id = uuid.New().String()
+	}
+	var sc *schedule.Schedule
+	if existing != nil {
+		sc = existing
+	} else {
+		sc = &schedule.Schedule{ID: id}
+	}
+	sc.Name = si.Name
+	sc.UserID = userID
+	sc.Scope = entities.ScopeUser
+	sc.TeamID = ""
+	if si.Status != "" {
+		sc.Status = schedule.ScheduleStatus(si.Status)
+	} else {
+		sc.Status = schedule.ScheduleStatusActive
+	}
+	sc.ScheduledAt = si.ScheduledAt
+	sc.CronExpr = si.CronExpr
+	sc.Timezone = si.Timezone
+	sc.SessionConfig = schedule.SessionConfig{
+		Tags:        si.SessionConfig.Tags,
+		Environment: si.SessionConfig.Environment,
+	}
+	if si.SessionConfig.Params != nil {
+		sc.SessionConfig.Params = &entities.SessionParams{
+			Message: si.SessionConfig.Params.InitialMessage,
+		}
+	}
+
+	if existing != nil {
+		return s.scheduleRepo.Update(ctx, sc)
+	}
+	return s.scheduleRepo.Create(ctx, sc)
+}
+
+func (s *Syncer) importUserWebhookFile(ctx context.Context, data []byte, userID string, dek []byte) error {
+	var wi importexport.WebhookImport
+	if err := yaml.Unmarshal(data, &wi); err != nil {
+		return fmt.Errorf("unmarshal webhook: %w", err)
+	}
+	wrapper := &importexport.TeamResources{
+		Metadata: importexport.ResourceMetadata{TeamID: userID},
+		Webhooks: []importexport.WebhookImport{wi},
+	}
+	if err := decryptTeamResourcesFields(wrapper, dek); err != nil {
+		return fmt.Errorf("decrypt webhook: %w", err)
+	}
+	noopSvc := infraservices.NewNoopEncryptionService()
+	importer := importexport.NewImporter(s.scheduleRepo, s.webhookRepo, s.settingsRepo, noopSvc)
+	_, err := importer.Import(ctx, wrapper, userID, importexport.ImportOptions{
+		Mode:           importexport.ImportModeUpsert,
+		IDField:        "name",
+		AllowPartial:   true,
+		SkipValidation: true,
+	})
+	return err
+}
+
+func (s *Syncer) importSlackbotFile(ctx context.Context, data []byte, scope entities.ResourceScope, userID, teamID string, dek []byte) error {
+	if s.slackbotRepo == nil {
+		return nil
+	}
+	var rec slackbotRecord
+	if err := yaml.Unmarshal(data, &rec); err != nil {
+		return fmt.Errorf("unmarshal slackbot: %w", err)
+	}
+	// Decrypt environment
+	env := make(map[string]string, len(rec.Environment))
+	for k, v := range rec.Environment {
+		if IsEncrypted(v) {
+			plain, err := DecryptField(dek, v)
+			if err != nil {
+				return fmt.Errorf("decrypt slackbot env %s: %w", k, err)
+			}
+			env[k] = plain
+		} else {
+			env[k] = v
+		}
+	}
+
+	id := rec.ID
+	if id == "" {
+		id = uuid.New().String()
+	}
+	existing, _ := s.slackbotRepo.Get(ctx, id)
+
+	bot := existing
+	if bot == nil {
+		bot = entities.NewSlackBot(id, rec.Name, userID)
+	}
+	bot.SetScope(scope)
+	if teamID != "" {
+		bot.SetTeamID(teamID)
+	}
+	if rec.Status != "" {
+		bot.SetStatus(entities.SlackBotStatus(rec.Status))
+	}
+	if rec.BotTokenSecretName != "" {
+		bot.SetBotTokenSecretName(rec.BotTokenSecretName)
+	}
+	if rec.BotTokenSecretKey != "" {
+		bot.SetBotTokenSecretKey(rec.BotTokenSecretKey)
+	}
+	if rec.AppTokenSecretKey != "" {
+		bot.SetAppTokenSecretKey(rec.AppTokenSecretKey)
+	}
+	bot.SetAllowedEventTypes(rec.AllowedEventTypes)
+	bot.SetAllowedChannelNames(rec.AllowedChannelNames)
+	bot.SetAllowedUserIDs(rec.AllowedUserIDs)
+	if rec.MaxSessions > 0 {
+		bot.SetMaxSessions(rec.MaxSessions)
+	}
+	bot.SetNotifyOnSessionCreated(rec.NotifyOnSession)
+	bot.SetAllowBotMessages(rec.AllowBotMessages)
+	if len(env) > 0 || len(rec.Tags) > 0 {
+		sc := entities.NewWebhookSessionConfig()
+		sc.SetEnvironment(env)
+		sc.SetTags(rec.Tags)
+		bot.SetSessionConfig(sc)
+	}
+
+	if existing != nil {
+		return s.slackbotRepo.Update(ctx, bot)
+	}
+	return s.slackbotRepo.Create(ctx, bot)
 }
 
 // --- Encryption helpers ---
@@ -797,6 +1101,149 @@ type userFileRecord struct {
 	Permissions string `yaml:"permissions,omitempty"`
 	CreatedAt   string `yaml:"created_at,omitempty"`
 	UpdatedAt   string `yaml:"updated_at,omitempty"`
+}
+
+// scheduleToImport converts a schedule to ScheduleImport with plaintext environment.
+// Call encryptTeamResourcesFields afterward to encrypt sensitive values.
+func scheduleToImport(sc *schedule.Schedule) importexport.ScheduleImport {
+	si := importexport.ScheduleImport{
+		ID:          sc.ID,
+		Name:        sc.Name,
+		Status:      string(sc.Status),
+		ScheduledAt: sc.ScheduledAt,
+		CronExpr:    sc.CronExpr,
+		Timezone:    sc.Timezone,
+		SessionConfig: importexport.SessionConfigImport{
+			Tags:        sc.SessionConfig.Tags,
+			Environment: sc.SessionConfig.Environment,
+		},
+	}
+	if sc.SessionConfig.Params != nil {
+		si.SessionConfig.Params = &importexport.SessionParamsImport{
+			InitialMessage: sc.SessionConfig.Params.Message,
+		}
+	}
+	return si
+}
+
+// webhookToImport converts a Webhook entity to WebhookImport with plaintext secrets.
+// Call encryptTeamResourcesFields afterward.
+func webhookToImport(wh *entities.Webhook) importexport.WebhookImport {
+	wi := importexport.WebhookImport{
+		ID:              wh.ID(),
+		Name:            wh.Name(),
+		Status:          string(wh.Status()),
+		WebhookType:     string(wh.WebhookType()),
+		Secret:          wh.Secret(),
+		SignatureHeader: wh.SignatureHeader(),
+		SignatureType:   string(wh.SignatureType()),
+		SignaturePrefix: wh.SignaturePrefix(),
+		MaxSessions:     wh.MaxSessions(),
+		Triggers:        []importexport.WebhookTriggerImport{},
+	}
+	if gh := wh.GitHub(); gh != nil {
+		wi.GitHub = &importexport.GitHubConfigImport{
+			EnterpriseURL:       gh.EnterpriseURL(),
+			AllowedEvents:       gh.AllowedEvents(),
+			AllowedRepositories: gh.AllowedRepositories(),
+		}
+	}
+	if sc := wh.SessionConfig(); sc != nil {
+		wi.SessionConfig = &importexport.SessionConfigImport{
+			Environment: sc.Environment(),
+			Tags:        sc.Tags(),
+		}
+	}
+	for _, t := range wh.Triggers() {
+		ti := importexport.WebhookTriggerImport{
+			Name:        t.Name(),
+			Priority:    t.Priority(),
+			Enabled:     t.Enabled(),
+			StopOnMatch: t.StopOnMatch(),
+		}
+		cond := t.Conditions()
+		if cond.GitHub() != nil {
+			gh := cond.GitHub()
+			ti.Conditions.GitHub = &importexport.GitHubConditionsImport{
+				Events:       gh.Events(),
+				Actions:      gh.Actions(),
+				Branches:     gh.Branches(),
+				Repositories: gh.Repositories(),
+				Labels:       gh.Labels(),
+				Paths:        gh.Paths(),
+				BaseBranches: gh.BaseBranches(),
+				Draft:        gh.Draft(),
+				Sender:       gh.Sender(),
+			}
+		}
+		if tsc := t.SessionConfig(); tsc != nil {
+			ti.SessionConfig = &importexport.SessionConfigImport{
+				Environment: tsc.Environment(),
+				Tags:        tsc.Tags(),
+			}
+		}
+		wi.Triggers = append(wi.Triggers, ti)
+	}
+	return wi
+}
+
+type slackbotRecord struct {
+	ID                  string            `yaml:"id"`
+	Name                string            `yaml:"name"`
+	UserID              string            `yaml:"user_id"`
+	Scope               string            `yaml:"scope"`
+	TeamID              string            `yaml:"team_id,omitempty"`
+	Status              string            `yaml:"status"`
+	BotTokenSecretName  string            `yaml:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey   string            `yaml:"bot_token_secret_key,omitempty"`
+	AppTokenSecretKey   string            `yaml:"app_token_secret_key,omitempty"`
+	AllowedEventTypes   []string          `yaml:"allowed_event_types,omitempty"`
+	AllowedChannelNames []string          `yaml:"allowed_channel_names,omitempty"`
+	AllowedUserIDs      []string          `yaml:"allowed_user_ids,omitempty"`
+	Environment         map[string]string `yaml:"environment,omitempty"`
+	Tags                map[string]string `yaml:"tags,omitempty"`
+	MaxSessions         int               `yaml:"max_sessions,omitempty"`
+	NotifyOnSession     *bool             `yaml:"notify_on_session_created,omitempty"`
+	AllowBotMessages    *bool             `yaml:"allow_bot_messages,omitempty"`
+	CreatedAt           string            `yaml:"created_at,omitempty"`
+	UpdatedAt           string            `yaml:"updated_at,omitempty"`
+}
+
+func slackbotToRecord(bot *entities.SlackBot, dek []byte) slackbotRecord {
+	rec := slackbotRecord{
+		ID:                  bot.ID(),
+		Name:                bot.Name(),
+		UserID:              bot.UserID(),
+		Scope:               string(bot.Scope()),
+		TeamID:              bot.TeamID(),
+		Status:              string(bot.Status()),
+		BotTokenSecretName:  bot.BotTokenSecretName(),
+		BotTokenSecretKey:   bot.BotTokenSecretKey(),
+		AppTokenSecretKey:   bot.AppTokenSecretKey(),
+		AllowedEventTypes:   bot.AllowedEventTypes(),
+		AllowedChannelNames: bot.AllowedChannelNames(),
+		AllowedUserIDs:      bot.AllowedUserIDs(),
+		MaxSessions:         bot.MaxSessions(),
+		NotifyOnSession:     bot.RawNotifyOnSessionCreated(),
+		AllowBotMessages:    bot.RawAllowBotMessages(),
+		CreatedAt:           bot.CreatedAt().Format(time.RFC3339),
+		UpdatedAt:           bot.UpdatedAt().Format(time.RFC3339),
+	}
+	if sc := bot.SessionConfig(); sc != nil {
+		env := make(map[string]string, len(sc.Environment()))
+		for k, v := range sc.Environment() {
+			if IsSensitiveKey(k) && !IsEncrypted(v) {
+				if enc, err := EncryptField(dek, v); err == nil {
+					env[k] = enc
+					continue
+				}
+			}
+			env[k] = v
+		}
+		rec.Environment = env
+		rec.Tags = sc.Tags()
+	}
+	return rec
 }
 
 func newUserFileFromRecord(rec userFileRecord, content string) *entities.UserFile {
