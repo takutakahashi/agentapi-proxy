@@ -244,9 +244,15 @@ func generateCodexHooksJSON(outputDir string, hooksJSON map[string]interface{}) 
 	return nil
 }
 
-// mergeCodexManagedHooks reads managed-settings.json and appends its hook entries
+// MergeCodexManagedHooks reads managed-settings.json and appends its hook entries
 // to each matching event in hooksJSON. Unknown events are added as new entries.
 // Returns the original hooksJSON unchanged if the file is absent or unreadable.
+// Exported so callers outside this package (e.g. the session manager) can reuse the logic.
+func MergeCodexManagedHooks(hooksJSON map[string]interface{}) map[string]interface{} {
+	return mergeCodexManagedHooks(hooksJSON)
+}
+
+// mergeCodexManagedHooks is the unexported implementation; call MergeCodexManagedHooks externally.
 func mergeCodexManagedHooks(hooksJSON map[string]interface{}) map[string]interface{} {
 	data, err := os.ReadFile(managedSettingsPath)
 	if err != nil {
