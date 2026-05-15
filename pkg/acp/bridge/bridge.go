@@ -8,9 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -360,9 +357,6 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 		},
 	})
 
-	// Run UserPromptSubmit hooks before kicking off the agent turn.
-	go runCodexHooks("UserPromptSubmit")
-
 	b.setStatus("running")
 
 	go func() {
@@ -371,9 +365,6 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
 		// Flush any chunk that was still buffered when the agent turn ended.
 		b.flushChunkBuffer()
 		b.setStatus("stable")
-
-		// Run Stop hooks (send-notification, cycle, etc.) after the turn ends.
-		go runCodexHooks("Stop")
 
 		if err != nil {
 			log.Printf("[bridge] Prompt error (session=%s): %v", b.sessionId, err)
@@ -510,53 +501,6 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 		case sub.ch <- raw:
 		default:
 			// Slow subscriber – drop the message rather than blocking.
-		}
-	}
-}
-
-// codexHooksConfig is the shape of ~/.codex/hooks.json.
-type codexHooksConfig struct {
-	Hooks map[string][]struct {
-		Hooks []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-		} `json:"hooks"`
-	} `json:"hooks"`
-}
-
-// runCodexHooks reads ~/.codex/hooks.json and runs all command hooks registered
-// for eventName. Each command is executed via "sh -c" inheriting the current
-// environment so that AGENTAPI_SESSION_ID and AGENTAPI_KEY are available.
-// Commands are run sequentially; the function returns after all complete.
-func runCodexHooks(eventName string) {
-	home := os.Getenv("HOME")
-	if home == "" {
-		home = "/home/agentapi"
-	}
-	hookFile := filepath.Join(home, ".codex", "hooks.json")
-
-	data, err := os.ReadFile(hookFile)
-	if err != nil {
-		return // hooks.json absent — nothing to do
-	}
-
-	var cfg codexHooksConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		log.Printf("[bridge] Warning: failed to parse %s: %v", hookFile, err)
-		return
-	}
-
-	entries := cfg.Hooks[eventName]
-	for _, entry := range entries {
-		for _, h := range entry.Hooks {
-			if h.Type != "command" || h.Command == "" {
-				continue
-			}
-			cmd := exec.Command("sh", "-c", h.Command)
-			cmd.Env = os.Environ()
-			if out, err := cmd.CombinedOutput(); err != nil {
-				log.Printf("[bridge] Hook %s command error: %v (output: %s)", eventName, err, strings.TrimSpace(string(out)))
-			}
 		}
 	}
 }
