@@ -746,7 +746,10 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 		return
 	}
 
-	namespace := configData.KubernetesSession.Namespace
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
 	if namespace == "" {
 		namespace = "default"
 	}
