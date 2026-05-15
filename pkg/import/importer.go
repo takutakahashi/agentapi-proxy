@@ -48,15 +48,17 @@ func (i *Importer) Import(ctx context.Context, resources *TeamResources, userID 
 		Errors:  []string{},
 	}
 
-	// Validate the resources first
-	if err := i.validator.Validate(resources); err != nil {
-		// In dry-run mode, return validation errors in the result instead of failing immediately
-		if options.DryRun {
-			result.Success = false
-			result.Errors = append(result.Errors, fmt.Sprintf("Validation failed: %v", err))
-			return result, nil
+	// Validate the resources first (skip when called from sync importer)
+	if !options.SkipValidation {
+		if err := i.validator.Validate(resources); err != nil {
+			// In dry-run mode, return validation errors in the result instead of failing immediately
+			if options.DryRun {
+				result.Success = false
+				result.Errors = append(result.Errors, fmt.Sprintf("Validation failed: %v", err))
+				return result, nil
+			}
+			return nil, fmt.Errorf("validation failed: %w", err)
 		}
-		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Import schedules

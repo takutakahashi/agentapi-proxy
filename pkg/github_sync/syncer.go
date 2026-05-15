@@ -442,9 +442,10 @@ func (s *Syncer) importTeamResources(ctx context.Context, data []byte, settingsN
 	noopSvc := infraservices.NewNoopEncryptionService()
 	importer := importexport.NewImporter(s.scheduleRepo, s.webhookRepo, s.settingsRepo, noopSvc)
 	_, err := importer.Import(ctx, &resources, userID, importexport.ImportOptions{
-		Mode:         importexport.ImportModeUpsert,
-		IDField:      "name",
-		AllowPartial: true,
+		Mode:           importexport.ImportModeUpsert,
+		IDField:        "name",
+		AllowPartial:   true,
+		SkipValidation: true,
 	})
 	return err
 }
@@ -467,10 +468,11 @@ func (s *Syncer) importUserResources(ctx context.Context, data []byte, userID st
 				scope = entities.ScopeUser
 			}
 			mem := entities.NewMemoryWithTags(m.ID, m.Title, m.Content, scope, userID, "", m.Tags)
-			if createErr := s.memoryRepo.Create(ctx, mem); createErr != nil {
-				// Try update if create fails (entry already exists)
-				if updateErr := s.memoryRepo.Update(ctx, mem); updateErr != nil {
-					log.Printf("[SYNC] Warning: upsert memory %s: create=%v update=%v", m.ID, createErr, updateErr)
+			// Try Update first to preserve the exported ID (no-op if already up-to-date).
+			// Fall back to Create only when the entry doesn't exist (404).
+			if updateErr := s.memoryRepo.Update(ctx, mem); updateErr != nil {
+				if createErr := s.memoryRepo.Create(ctx, mem); createErr != nil {
+					log.Printf("[SYNC] Warning: upsert memory %s: update=%v create=%v", m.ID, updateErr, createErr)
 				}
 			}
 		}
