@@ -443,17 +443,11 @@ kubernetesSession:
 
       [[hooks.Stop.hooks]]
       type = "command"
-      command = "agentapi-proxy client send-notification --title=\"Claude Code 完了\" --body=\"セッションが正常に完了しました。お疲れ様でした！\" --notify-session-id \"$AGENTAPI_SESSION_ID\""
+      command = "agentapi-proxy client send-notification --notify-session-id \"$AGENTAPI_SESSION_ID\""
 
       [[hooks.Stop.hooks]]
       type = "command"
       command = "agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1"
-
-      [[hooks.UserPromptSubmit]]
-
-      [[hooks.UserPromptSubmit.hooks]]
-      type = "command"
-      command = "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"⚠️ 作業完了時の必須チェック（該当する場合は必ず実行）:\\n1. PR を作成する\\n2. agentapi-proxy client task create または task update でユーザータスクを作成・更新する\\n3. agentapi-proxy client send-notification で通知を送る\"}}'"
 
   # Slack Integration
   # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar).
