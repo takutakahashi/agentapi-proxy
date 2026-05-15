@@ -209,12 +209,21 @@ func generateEnvFile(envFilePath string, env map[string]string) error {
 	return nil
 }
 
+// managedSettingsPath is the well-known location for organisation-managed Claude Code policy.
+// The same file is read by the Codex hook generator to keep both runtimes in sync.
+const managedSettingsPath = "/etc/claude-code/managed-settings.json"
+
 // generateCodexHooksJSON creates ~/.codex/hooks.json for Codex CLI hook configuration.
 // Only written when hooksJSON is non-empty (i.e., for codex-acp sessions).
+// Hooks from managed-settings.json are merged in so the same organisation-wide policy
+// (UserPromptSubmit, Stop notifications, etc.) applies to Codex sessions too.
 func generateCodexHooksJSON(outputDir string, hooksJSON map[string]interface{}) error {
 	if len(hooksJSON) == 0 {
 		return nil
 	}
+
+	// Merge hooks from the managed-settings policy file (mirrors Claude Code behaviour).
+	hooksJSON = mergeCodexManagedHooks(hooksJSON)
 
 	codexDir := filepath.Join(outputDir, ".codex")
 	if err := os.MkdirAll(codexDir, 0755); err != nil {
@@ -233,6 +242,59 @@ func generateCodexHooksJSON(outputDir string, hooksJSON map[string]interface{}) 
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s", hooksPath)
 	return nil
+}
+
+// mergeCodexManagedHooks reads managed-settings.json and appends its hook entries
+// to each matching event in hooksJSON. Unknown events are added as new entries.
+// Returns the original hooksJSON unchanged if the file is absent or unreadable.
+func mergeCodexManagedHooks(hooksJSON map[string]interface{}) map[string]interface{} {
+	data, err := os.ReadFile(managedSettingsPath)
+	if err != nil {
+		return hooksJSON // file absent — nothing to merge
+	}
+
+	var managed map[string]interface{}
+	if err := json.Unmarshal(data, &managed); err != nil {
+		log.Printf("[COMPILE-SETTINGS] Warning: failed to parse %s: %v", managedSettingsPath, err)
+		return hooksJSON
+	}
+
+	managedHooks, ok := managed["hooks"].(map[string]interface{})
+	if !ok || len(managedHooks) == 0 {
+		return hooksJSON
+	}
+
+	// Work on a shallow copy so we don't mutate the caller's map.
+	merged := make(map[string]interface{}, len(hooksJSON))
+	for k, v := range hooksJSON {
+		merged[k] = v
+	}
+
+	baseHooks, ok := merged["hooks"].(map[string]interface{})
+	if !ok {
+		baseHooks = make(map[string]interface{})
+	}
+	// Clone the inner hooks map too.
+	innerHooks := make(map[string]interface{}, len(baseHooks))
+	for k, v := range baseHooks {
+		innerHooks[k] = v
+	}
+
+	for event, entries := range managedHooks {
+		managedList, ok := entries.([]interface{})
+		if !ok {
+			continue
+		}
+		if existing, ok := innerHooks[event].([]interface{}); ok {
+			innerHooks[event] = append(existing, managedList...)
+		} else {
+			innerHooks[event] = managedList
+		}
+	}
+
+	merged["hooks"] = innerHooks
+	log.Printf("[COMPILE-SETTINGS] Merged %d hook event(s) from %s into codex hooks.json", len(managedHooks), managedSettingsPath)
+	return merged
 }
 
 // generateStartupScript creates executable shell script with the startup command.
