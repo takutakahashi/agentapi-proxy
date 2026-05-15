@@ -294,6 +294,12 @@ type KubernetesSessionConfig struct {
 	// SlackBotTokenSecretKey is the key within the Secret that holds the Slack bot token
 	// Defaults to "bot-token"
 	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
+
+	// CodexRequirementsConfigMapName is the name of a pre-created ConfigMap containing
+	// requirements.toml for /etc/codex/. When set, this ConfigMap is mounted into codex-acp
+	// session pods so that hooks are treated as managed (auto-trusted) by codex_core.
+	// Typically created by the Helm chart. When empty, no managed hooks are mounted.
+	CodexRequirementsConfigMapName string `json:"codex_requirements_configmap_name" mapstructure:"codex_requirements_configmap_name"`
 }
 
 // MemoryConfig represents memory backend configuration
@@ -644,6 +650,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
+	_ = v.BindEnv("kubernetes_session.codex_requirements_configmap_name", "AGENTAPI_K8S_SESSION_CODEX_REQUIREMENTS_CONFIGMAP_NAME")
 
 	// MCP servers configuration
 

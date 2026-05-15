@@ -1849,6 +1849,20 @@ func (m *KubernetesSessionManager) getSessionMetaFromSecret(ctx context.Context,
 	return &settings.Session
 }
 
+// buildCodexHooksJSON converts a Claude Code settings.json hooks map into the
+// equivalent Codex hooks.json structure. The hook entry format is identical between
+// the two runtimes, so we copy the hooks subtree directly.
+func buildCodexHooksJSON(settingsJSON map[string]interface{}) map[string]interface{} {
+	if settingsJSON == nil {
+		return nil
+	}
+	hooksMap, ok := settingsJSON["hooks"].(map[string]interface{})
+	if !ok || len(hooksMap) == 0 {
+		return nil
+	}
+	return map[string]interface{}{"hooks": hooksMap}
+}
+
 // createOneshotSettingsSecret creates a Secret containing settings.json with Stop hook
 // This is used when oneshot is enabled to automatically delete the session after stopping
 func (m *KubernetesSessionManager) createOneshotSettingsSecret(
@@ -1997,6 +2011,23 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
 	})
+
+	// Mount /etc/codex/requirements.toml from a pre-created Helm ConfigMap so that
+	// codex-acp hooks are treated as managed (auto-trusted) by codex_core. Mounted on
+	// all sessions (including stock pre-warmed pods) because the agent type is not known
+	// at stock creation time — Claude Code ignores this path so it is harmless elsewhere.
+	if m.k8sConfig.CodexRequirementsConfigMapName != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "codex-requirements",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.CodexRequirementsConfigMapName,
+					},
+				},
+			},
+		})
+	}
 
 	return volumes
 }
@@ -2916,6 +2947,17 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		MountPath: "/opt/claude-agentapi",
 	})
 
+	// Mount the managed requirements ConfigMap at /etc/codex/ so codex_core reads hooks
+	// as managed (auto-trusted) without user approval. Mounted on all sessions so stock
+	// pods already have it when adopted as codex-acp sessions.
+	if m.k8sConfig.CodexRequirementsConfigMapName != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "codex-requirements",
+			MountPath: "/etc/codex",
+			ReadOnly:  true,
+		})
+	}
+
 	return volumeMounts
 }
 
@@ -3627,13 +3669,22 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] Injected cycle Stop hook for session %s (max-count=%d)", session.id, req.CycleMaxCount)
 	}
 
+	// For codex-acp sessions, inject the same Stop hooks into ~/.codex/hooks.json
+	// so that cycle and oneshot behavior works under the Codex CLI hook system.
+	var codexHooksJSON map[string]interface{}
+	if req.AgentType == "codex-acp" {
+		codexHooksJSON = buildCodexHooksJSON(settingsJSON)
+		log.Printf("[K8S_SESSION] Injected Codex hooks for codex-acp session %s", session.id)
+	}
+
 	settings.Claude = sessionsettings.ClaudeConfig{
 		ClaudeJSON: map[string]interface{}{
 			"hasCompletedOnboarding":        true,
 			"bypassPermissionsModeAccepted": true,
 		},
-		SettingsJSON: settingsJSON,
-		MCPServers:   materialized.MCPServers,
+		SettingsJSON:   settingsJSON,
+		MCPServers:     materialized.MCPServers,
+		CodexHooksJSON: codexHooksJSON,
 	}
 
 	// Repository info

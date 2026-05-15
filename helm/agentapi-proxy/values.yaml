@@ -430,6 +430,28 @@ kubernetesSession:
   #       }
   settingsBaseSecret: "agentapi-settings-base"
 
+  # Codex requirements ConfigMap for codex-acp sessions.
+  # When enabled, a ConfigMap is created containing /etc/codex/requirements.toml
+  # whose hooks are auto-trusted by codex_core (HookTrustStatus::Managed).
+  # This solves the trust gate that prevents user-layer ~/.codex/hooks.json from executing.
+  codexRequirements:
+    enabled: true
+    # TOML content for /etc/codex/requirements.toml.
+    # Mirrors the managed-settings.json hooks (Notification excluded — Codex does not support it).
+    tomlContent: |
+      [hooks]
+      managed_dir = "/etc/codex"
+
+      [[hooks.Stop]]
+
+      [[hooks.Stop.hooks]]
+      type = "command"
+      command = "agentapi-proxy client send-notification --endpoint http://$AGENTAPI_PROXY_SERVICE_HOST:$AGENTAPI_PROXY_SERVICE_PORT --title \"codex-acp セッションが完了しました\" --body \"セッション $AGENTAPI_SESSION_ID が終了しました\" --notify-user-id \"$AGENTAPI_USER_ID\" >> /tmp/notification.log 2>&1"
+
+      [[hooks.Stop.hooks]]
+      type = "command"
+      command = "agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1"
+
   # Slack Integration
   # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar).
   # Requires agent_type=claude-agentapi to produce the history file.
