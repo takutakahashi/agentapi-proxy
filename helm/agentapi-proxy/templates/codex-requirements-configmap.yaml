@@ -7,5 +7,5 @@ metadata:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 data:
   requirements.toml: |
-    {{- .Values.kubernetesSession.codexRequirements.tomlContent | nindent 4 }}
+    {{- .Values.kubernetesSession.codexRequirements.tomlContent | default "" | nindent 4 }}
 {{- end }}
