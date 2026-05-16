@@ -24,7 +24,7 @@ import (
 //
 //	<rootPath>/<settingsName>/schedules/<id>.yaml
 //	<rootPath>/<settingsName>/webhooks/<id>.yaml
-//	<rootPath>/<settingsName>/settings.yaml   (team only)
+//	<rootPath>/<settingsName>/settings.yaml
 //	<rootPath>/<settingsName>/files/<id>.yaml (personal only)
 //	<rootPath>/<settingsName>/slackbots/<id>.yaml
 //	<rootPath>/<settingsName>/.sync-meta.yaml
@@ -153,6 +153,9 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		}
 		if err := s.exportUserSlackbots(ctx, userID, dek, rootPath, files); err != nil {
 			log.Printf("[SYNC] user slackbot export warning for %s: %v", settingsName, err)
+		}
+		if err := s.exportPersonalSettings(ctx, userID, dek, rootPath, files); err != nil {
+			log.Printf("[SYNC] personal settings export warning for %s: %v", settingsName, err)
 		}
 	} else {
 		if err := s.exportTeamSchedules(ctx, settingsName, userID, dek, rootPath, files); err != nil {
@@ -306,10 +309,7 @@ func (s *Syncer) importFileByPath(ctx context.Context, filePath string, content 
 		}
 		return s.importWebhookFile(ctx, content, settingsName, userID, dek)
 	case rel == "settings.yaml":
-		if !personal {
-			return s.importSettingsFile(ctx, content, settingsName, userID, dek)
-		}
-		return nil
+		return s.importSettingsFile(ctx, content, settingsName, userID, dek)
 	case strings.HasPrefix(rel, "files/"):
 		if personal {
 			return s.importUserFileRecord(ctx, content, userID, dek)
@@ -519,6 +519,14 @@ func (s *Syncer) exportTeamSettings(ctx context.Context, settingsName, userID st
 	}
 	files[rootPath+settingsName+"/settings.yaml"] = data
 	return nil
+}
+
+// exportPersonalSettings exports personal settings (identified by userID) to
+// {rootPath}/{userID}/settings.yaml. GitSync configuration is excluded from the
+// export by the underlying exporter, so re-importing on another instance will
+// not overwrite the target's sync configuration.
+func (s *Syncer) exportPersonalSettings(ctx context.Context, userID string, dek []byte, rootPath string, files map[string][]byte) error {
+	return s.exportTeamSettings(ctx, userID, userID, dek, rootPath, files)
 }
 
 // --- User resource export ---
