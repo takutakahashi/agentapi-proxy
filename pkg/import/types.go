@@ -123,11 +123,12 @@ const (
 
 // ImportOptions contains options for import operations
 type ImportOptions struct {
-	DryRun        bool       // Only validate, don't create
-	Mode          ImportMode // Import mode
-	IDField       string     // Field to use for matching: "name" or "id"
-	AllowPartial  bool       // Allow partial success
-	RegenerateAll bool       // Regenerate all secrets
+	DryRun         bool       // Only validate, don't create
+	Mode           ImportMode // Import mode
+	IDField        string     // Field to use for matching: "name" or "id"
+	AllowPartial   bool       // Allow partial success
+	RegenerateAll  bool       // Regenerate all secrets
+	SkipValidation bool       // Skip metadata/schema validation (used by sync importer)
 }
 
 // ImportResult contains the results of an import operation

@@ -16,7 +16,9 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	githubsync "github.com/takutakahashi/agentapi-proxy/pkg/github_sync"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionmanager"
@@ -104,6 +106,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register import/export handlers (requires Kubernetes mode)
 	registerImportExportHandlers(configData, proxyServer)
+
+	// Register GitHub sync handlers (requires Kubernetes mode)
+	registerGitHubSyncHandlers(configData, proxyServer)
 
 	// Register SlackBot handlers (requires Kubernetes mode)
 	registerSlackBotHandlers(configData, proxyServer)
@@ -723,6 +728,97 @@ func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.
 	handlers := sessionmanager.NewHandlers(sessionManager, configData.SessionManager.HMACSecret)
 	proxyServer.AddCustomHandler(handlers)
 	log.Printf("[SESSION_MANAGER] Session manager handler registered")
+}
+
+// registerGitHubSyncHandlers registers GitHub bidirectional sync REST API handlers.
+func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Server) {
+	log.Printf("[GITHUB_SYNC] Registering GitHub sync handlers...")
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[GITHUB_SYNC] Kubernetes config not available, skipping GitHub sync handlers: %v", err)
+		return
+	}
+
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[GITHUB_SYNC] Failed to create Kubernetes client, skipping GitHub sync handlers: %v", err)
+		return
+	}
+
+	namespace := configData.ScheduleWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	scheduleManager := schedule.NewKubernetesManager(client, namespace)
+	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
+	settingsRepo := proxyServer.GetSettingsRepository()
+	memoryRepo := proxyServer.GetMemoryRepository()
+	taskRepo := proxyServer.GetTaskRepository()
+	taskGroupRepo := proxyServer.GetTaskGroupRepository()
+
+	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(client, namespace))
+	slackbotRepo := portrepos.SlackBotRepository(repositories.NewKubernetesSlackBotRepository(client, namespace))
+
+	syncHandlers := githubsync.NewHandlers(
+		settingsRepo,
+		scheduleManager,
+		webhookRepo,
+		memoryRepo,
+		taskRepo,
+		taskGroupRepo,
+		userFileRepo,
+		slackbotRepo,
+		configData.GitSync.Encryption.KMSKeyARN,
+		configData.GitSync.Encryption.AWSRegion,
+		configData.GitSync.GitHubApp.InstallationID,
+	)
+	proxyServer.AddCustomHandler(syncHandlers)
+
+	if interval := configData.GitSync.SyncInterval; interval != "" && interval != "0" {
+		d, err := time.ParseDuration(interval)
+		if err != nil {
+			log.Printf("[GITHUB_SYNC] Invalid sync_interval %q: %v — periodic sync disabled", interval, err)
+		} else {
+			syncNamespace := configData.GitSync.Namespace
+			if syncNamespace == "" {
+				syncNamespace = namespace
+			}
+			leaseDuration := 15 * time.Second
+			renewDeadline := 10 * time.Second
+			retryPeriod := 2 * time.Second
+			if v := configData.GitSync.LeaseDuration; v != "" {
+				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
+					leaseDuration = parsed
+				}
+			}
+			if v := configData.GitSync.RenewDeadline; v != "" {
+				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
+					renewDeadline = parsed
+				}
+			}
+			if v := configData.GitSync.RetryPeriod; v != "" {
+				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
+					retryPeriod = parsed
+				}
+			}
+			electionConfig := schedule.LeaderElectionConfig{
+				LeaseDuration: leaseDuration,
+				RenewDeadline: renewDeadline,
+				RetryPeriod:   retryPeriod,
+				Namespace:     syncNamespace,
+			}
+			leaderWorker := githubsync.NewLeaderWorker(syncHandlers.Syncer(), settingsRepo, d, client, electionConfig)
+			go leaderWorker.Run(context.Background())
+			log.Printf("[GITHUB_SYNC] Periodic sync worker started with leader election (interval=%s)", interval)
+		}
+	}
+
+	log.Printf("[GITHUB_SYNC] GitHub sync handlers registered successfully")
 }
 
 // registerMCPHandler registers MCP HTTP handler

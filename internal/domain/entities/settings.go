@@ -102,6 +102,26 @@ type ExternalSessionManagerEntry struct {
 	Default bool `json:"default,omitempty"`
 }
 
+// SyncEncryptionConfig holds AWS KMS configuration for GitHub sync encryption
+type SyncEncryptionConfig struct {
+	KMSKeyARN    string `json:"kms_key_arn"`
+	AWSRegion    string `json:"aws_region"`
+	EncryptedDEK string `json:"encrypted_dek,omitempty"` // base64(KMS.Encrypt(DEK)), empty until first push
+	DEKVersion   int    `json:"dek_version,omitempty"`
+}
+
+// GitSyncConfig holds configuration for GitHub bidirectional sync
+type GitSyncConfig struct {
+	Enabled      bool                 `json:"enabled"`
+	RepoFullName string               `json:"repo_full_name"` // "owner/repo"
+	Branch       string               `json:"branch"`
+	RootPath     string               `json:"root_path"` // e.g. "agentapi-config/" (trailing slash)
+	AutoPush     bool                 `json:"auto_push"`
+	GitHubToken  string               `json:"github_token,omitempty"` // PAT for sync (stored encrypted in K8s Secret)
+	Encryption   SyncEncryptionConfig `json:"encryption"`
+	LastPushedAt time.Time            `json:"last_pushed_at,omitempty"` // time of last successful push
+}
+
 // Settings represents user or team settings
 type Settings struct {
 	name                    string
@@ -116,6 +136,7 @@ type Settings struct {
 	slackUserID             string            // Slack DM notification user ID
 	notificationChannels    []string          // Active notification channels (e.g. "web", "slack")
 	externalSessionManagers []ExternalSessionManagerEntry
+	gitSync                 *GitSyncConfig
 	createdAt               time.Time
 	updatedAt               time.Time
 }
@@ -336,4 +357,15 @@ func (s *Settings) Validate() error {
 	}
 
 	return nil
+}
+
+// GitSync returns the GitHub sync configuration
+func (s *Settings) GitSync() *GitSyncConfig {
+	return s.gitSync
+}
+
+// SetGitSync sets the GitHub sync configuration
+func (s *Settings) SetGitSync(g *GitSyncConfig) {
+	s.gitSync = g
+	s.updatedAt = time.Now()
 }

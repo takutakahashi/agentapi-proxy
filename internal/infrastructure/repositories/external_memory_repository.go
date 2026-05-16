@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -458,6 +459,8 @@ func (r *ExternalMemoryRepository) filterUserIDs(filter portrepos.MemoryFilter) 
 }
 
 // listAllMemories fetches all memories for a user by paginating through the list endpoint.
+// If a paginated request fails (e.g. memory-server 500 on page N>1), it logs a warning
+// and returns the memories collected so far rather than failing completely.
 func (r *ExternalMemoryRepository) listAllMemories(ctx context.Context, token, userID string) ([]*msMemory, error) {
 	var all []*msMemory
 	var nextToken *string
@@ -470,22 +473,39 @@ func (r *ExternalMemoryRepository) listAllMemories(ctx context.Context, token, u
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
+			if nextToken != nil {
+				// Partial result is still useful.
+				log.Printf("[MEMORY] Warning: list page failed for user %q: %v — returning %d collected so far", userID, err, len(all))
+				return all, nil
+			}
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		resp, err := r.httpClient.Do(req)
 		if err != nil {
+			if nextToken != nil {
+				log.Printf("[MEMORY] Warning: list page failed for user %q: %v — returning %d collected so far", userID, err, len(all))
+				return all, nil
+			}
 			return nil, err
 		}
 		defer resp.Body.Close() //nolint:errcheck
 
 		if resp.StatusCode != http.StatusOK {
+			if nextToken != nil {
+				log.Printf("[MEMORY] Warning: list page returned HTTP %d for user %q — returning %d collected so far", resp.StatusCode, userID, len(all))
+				return all, nil
+			}
 			return nil, fmt.Errorf("list memories: HTTP %d", resp.StatusCode)
 		}
 
 		var result msListResult
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			if nextToken != nil {
+				log.Printf("[MEMORY] Warning: decode list page failed for user %q: %v — returning %d collected so far", userID, err, len(all))
+				return all, nil
+			}
 			return nil, err
 		}
 

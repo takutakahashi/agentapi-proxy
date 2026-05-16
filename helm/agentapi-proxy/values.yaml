@@ -446,7 +446,7 @@ kubernetesSession:
 
       [[hooks.Stop.hooks]]
       type = "command"
-      command = "agentapi-proxy client send-notification --endpoint http://$AGENTAPI_PROXY_SERVICE_HOST:$AGENTAPI_PROXY_SERVICE_PORT --title \"codex-acp セッションが完了しました\" --body \"セッション $AGENTAPI_SESSION_ID が終了しました\" --notify-user-id \"$AGENTAPI_USER_ID\" >> /tmp/notification.log 2>&1"
+      command = "agentapi-proxy client send-notification --title \"Session completed\" --body \"$AGENTAPI_SESSION_ID\" --notify-user-id \"$AGENTAPI_USER_ID\" > /tmp/notify.log 2>&1"
 
       [[hooks.Stop.hooks]]
       type = "command"

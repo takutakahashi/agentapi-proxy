@@ -392,6 +392,47 @@ type Config struct {
 	// Redis holds optional Redis configuration for cross-pod status synchronisation.
 	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
 	Redis RedisConfig `json:"redis" mapstructure:"redis"`
+	// GitSync holds proxy-level GitHub sync settings (e.g. KMS encryption key).
+	GitSync GitSyncProxyConfig `json:"git_sync" mapstructure:"git_sync"`
+}
+
+// GitSyncEncryptionProxyConfig holds proxy-level AWS KMS settings for GitHub sync.
+// These are set by the operator and are NOT configurable by individual users.
+type GitSyncEncryptionProxyConfig struct {
+	// KMSKeyARN is the ARN of the AWS KMS key used to encrypt sync DEKs.
+	KMSKeyARN string `json:"kms_key_arn" mapstructure:"kms_key_arn"`
+	// AWSRegion is the AWS region where the KMS key resides.
+	AWSRegion string `json:"aws_region" mapstructure:"aws_region"`
+}
+
+// GitSyncGitHubAppConfig holds GitHub App fallback settings for sync token generation.
+// When a user has no personal GitHub token configured, the proxy uses these credentials
+// to generate an installation access token on their behalf.
+// App ID and PEM are read from GITHUB_APP_ID and GITHUB_APP_PEM / GITHUB_APP_PEM_PATH env vars.
+type GitSyncGitHubAppConfig struct {
+	// InstallationID is the GitHub App installation ID to use as a token fallback.
+	// If empty, the GitHub App fallback is disabled.
+	InstallationID string `json:"installation_id" mapstructure:"installation_id"`
+}
+
+// GitSyncProxyConfig holds proxy-level GitHub sync settings.
+type GitSyncProxyConfig struct {
+	// Encryption is the KMS encryption configuration used for all user sync operations.
+	Encryption GitSyncEncryptionProxyConfig `json:"encryption" mapstructure:"encryption"`
+	// GitHubApp is the optional GitHub App fallback for token generation.
+	GitHubApp GitSyncGitHubAppConfig `json:"github_app" mapstructure:"github_app"`
+	// SyncInterval is how often the periodic sync worker runs (e.g. "5m", "1h").
+	// An empty value or "0" disables the periodic worker.
+	SyncInterval string `json:"sync_interval" mapstructure:"sync_interval"`
+	// Namespace overrides the Kubernetes namespace for the leader election lease.
+	// Falls back to schedule_worker.namespace or kubernetes_session.namespace if empty.
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership.
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up.
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions.
+	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -739,6 +780,16 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("redis.dial_timeout", "AGENTAPI_REDIS_DIAL_TIMEOUT")
 	_ = v.BindEnv("redis.read_timeout", "AGENTAPI_REDIS_READ_TIMEOUT")
 	_ = v.BindEnv("redis.write_timeout", "AGENTAPI_REDIS_WRITE_TIMEOUT")
+
+	// GitHub sync proxy configuration
+	_ = v.BindEnv("git_sync.sync_interval", "AGENTAPI_GIT_SYNC_SYNC_INTERVAL")
+	_ = v.BindEnv("git_sync.encryption.kms_key_arn", "AGENTAPI_GIT_SYNC_ENCRYPTION_KMS_KEY_ARN")
+	_ = v.BindEnv("git_sync.encryption.aws_region", "AGENTAPI_GIT_SYNC_ENCRYPTION_AWS_REGION")
+	_ = v.BindEnv("git_sync.github_app.installation_id", "AGENTAPI_GIT_SYNC_GITHUB_APP_INSTALLATION_ID")
+	_ = v.BindEnv("git_sync.namespace", "AGENTAPI_GIT_SYNC_NAMESPACE")
+	_ = v.BindEnv("git_sync.lease_duration", "AGENTAPI_GIT_SYNC_LEASE_DURATION")
+	_ = v.BindEnv("git_sync.renew_deadline", "AGENTAPI_GIT_SYNC_RENEW_DEADLINE")
+	_ = v.BindEnv("git_sync.retry_period", "AGENTAPI_GIT_SYNC_RETRY_PERIOD")
 }
 
 // setDefaults sets default values for viper configuration
@@ -836,6 +887,11 @@ func setDefaults(v *viper.Viper) {
 
 	// Slack defaults
 	v.SetDefault("slack.dry_run", false)
+
+	// GitHub sync worker leader election defaults
+	v.SetDefault("git_sync.lease_duration", "15s")
+	v.SetDefault("git_sync.renew_deadline", "10s")
+	v.SetDefault("git_sync.retry_period", "2s")
 
 	// Redis defaults (empty addr = disabled)
 	v.SetDefault("redis.addr", "")

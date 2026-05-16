@@ -3724,10 +3724,267 @@
           }
         }
       }
+    },
+    "/sync/config/{name}": {
+      "get": {
+        "summary": "Get GitHub sync configuration",
+        "description": "Returns the GitHub sync configuration for the specified user or team settings (token redacted).",
+        "tags": ["GitHubSync"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Settings name (user ID or team name)"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Sync configuration" },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "404": { "description": "Not found" }
+        },
+        "security": [{ "bearerAuth": [] }]
+      },
+      "put": {
+        "summary": "Update GitHub sync configuration",
+        "description": "Creates or updates the GitHub sync configuration for the specified settings. If a DEK already exists it is preserved.",
+        "tags": ["GitHubSync"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateSyncConfigRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated configuration" },
+          "400": { "description": "Bad request" },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "404": { "description": "Not found" },
+          "500": { "description": "Internal server error" }
+        },
+        "security": [{ "bearerAuth": [] }]
+      },
+      "delete": {
+        "summary": "Delete GitHub sync configuration",
+        "description": "Removes the GitHub sync configuration from the specified settings.",
+        "tags": ["GitHubSync"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Deleted successfully" },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "404": { "description": "Not found" },
+          "500": { "description": "Internal server error" }
+        },
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/sync/push/{name}": {
+      "post": {
+        "summary": "Push resources to GitHub",
+        "description": "Exports all resources (memories, tasks, schedules, webhooks, settings, etc.) and commits them to the configured GitHub repository. Sensitive fields are encrypted with AES-256-GCM using an AWS KMS-managed DEK.",
+        "tags": ["GitHubSync"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "commit_message": { "type": "string", "description": "Override the default commit message" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Push succeeded",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PushResponse" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "500": { "description": "Internal server error" }
+        },
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/sync/pull/{name}": {
+      "post": {
+        "summary": "Pull resources from GitHub",
+        "description": "Downloads resources from the configured GitHub repository and imports them into the local store. Encrypted fields are decrypted using the stored DEK.",
+        "tags": ["GitHubSync"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "delete_orphans": { "type": "boolean", "description": "Remove local resources that no longer exist in GitHub" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pull succeeded",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PullResponse" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "500": { "description": "Internal server error" }
+        },
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/sync/rotate-key/{name}": {
+      "post": {
+        "summary": "Rotate the sync encryption key",
+        "description": "Generates a new DEK via AWS KMS, re-encrypts all values in the GitHub repository with the new DEK, and commits atomically. The old encryptedDEK is replaced in Settings.",
+        "tags": ["GitHubSync"],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key rotated successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RotateKeyResponse" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "500": { "description": "Internal server error" }
+        },
+        "security": [{ "bearerAuth": [] }]
+      }
     }
   },
   "components": {
     "schemas": {
+      "SyncConfigResponse": {
+        "type": "object",
+        "description": "Public view of GitHub sync configuration (token redacted)",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "repo_full_name": { "type": "string", "example": "owner/repo" },
+          "branch": { "type": "string", "example": "main" },
+          "root_path": { "type": "string", "example": "agentapi-config/" },
+          "auto_push": { "type": "boolean" },
+          "encryption": { "$ref": "#/components/schemas/SyncEncryptionResponse" }
+        }
+      },
+      "SyncEncryptionResponse": {
+        "type": "object",
+        "description": "Public encryption info (no secrets)",
+        "properties": {
+          "kms_key_arn": { "type": "string" },
+          "aws_region": { "type": "string" },
+          "dek_version": { "type": "integer" },
+          "dek_ready": { "type": "boolean", "description": "true when a DEK has been generated and stored" }
+        }
+      },
+      "UpdateSyncConfigRequest": {
+        "type": "object",
+        "required": ["repo_full_name", "encryption"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "repo_full_name": { "type": "string", "example": "owner/repo" },
+          "branch": { "type": "string", "example": "main" },
+          "root_path": { "type": "string", "example": "agentapi-config/" },
+          "auto_push": { "type": "boolean" },
+          "github_token": { "type": "string", "description": "GitHub PAT (write-only, not returned)" },
+          "encryption": {
+            "type": "object",
+            "required": ["kms_key_arn", "aws_region"],
+            "properties": {
+              "kms_key_arn": { "type": "string" },
+              "aws_region": { "type": "string" }
+            }
+          }
+        }
+      },
+      "PushResponse": {
+        "type": "object",
+        "properties": {
+          "commit_sha": { "type": "string" },
+          "pushed_at": { "type": "string", "format": "date-time" },
+          "summary": { "$ref": "#/components/schemas/SyncSummary" }
+        }
+      },
+      "PullResponse": {
+        "type": "object",
+        "properties": {
+          "pulled_at": { "type": "string", "format": "date-time" },
+          "summary": { "$ref": "#/components/schemas/SyncSummary" }
+        }
+      },
+      "RotateKeyResponse": {
+        "type": "object",
+        "properties": {
+          "commit_sha": { "type": "string" },
+          "rotated_at": { "type": "string", "format": "date-time" },
+          "dek_version": { "type": "integer" }
+        }
+      },
+      "SyncSummary": {
+        "type": "object",
+        "properties": {
+          "files_written": { "type": "integer" },
+          "files_deleted": { "type": "integer" }
+        }
+      },
       "Memory": {
         "type": "object",
         "description": "A memory entry belonging to a user or team",
@@ -6161,6 +6418,10 @@
     {
       "name": "Files",
       "description": "User-managed files to be placed inside agent sessions"
+    },
+    {
+      "name": "GitHubSync",
+      "description": "Bidirectional GitHub sync for all resources. Secrets are encrypted with AWS KMS envelope encryption (AES-256-GCM, deterministic nonce) before committing to the repository."
     }
   ]
 }
