@@ -596,6 +596,22 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		log.Printf("[CONFIG] Initialized AWS auth config from environment variables")
 	}
 
+	// Override GitSync fields from env vars (viper Unmarshal may miss deeply nested env-only keys)
+	kmsKeyARN := v.GetString("git_sync.encryption.kms_key_arn")
+	awsRegion := v.GetString("git_sync.encryption.aws_region")
+	if kmsKeyARN != "" {
+		config.GitSync.Encryption.KMSKeyARN = kmsKeyARN
+	}
+	if awsRegion != "" {
+		config.GitSync.Encryption.AWSRegion = awsRegion
+	}
+	if installationID := v.GetString("git_sync.github_app.installation_id"); installationID != "" {
+		config.GitSync.GitHubApp.InstallationID = installationID
+	}
+	if syncInterval := v.GetString("git_sync.sync_interval"); syncInterval != "" {
+		config.GitSync.SyncInterval = syncInterval
+	}
+
 	// Override fields if environment variables are set (even if structures already exist)
 	if config.Auth.Static != nil {
 		if v.IsSet("auth.static.keys_file") {
