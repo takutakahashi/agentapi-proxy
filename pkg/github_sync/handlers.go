@@ -100,6 +100,7 @@ func (h *Handlers) UpdateConfig(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
 	}
 
+	log.Printf("[SYNC] UpdateConfig: kmsKeyARN=%q awsRegion=%q", h.kmsKeyARN, h.awsRegion)
 	if h.kmsKeyARN == "" || h.awsRegion == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub sync encryption is not configured on this proxy")
 	}
