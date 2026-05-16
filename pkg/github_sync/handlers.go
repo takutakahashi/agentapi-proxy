@@ -17,9 +17,12 @@ import (
 type Handlers struct {
 	syncer       *Syncer
 	settingsRepo portrepos.SettingsRepository
+	kmsKeyARN    string
+	awsRegion    string
 }
 
 // NewHandlers creates a Handlers instance registering all required repositories.
+// kmsKeyARN and awsRegion come from proxy-level config; users cannot override them.
 func NewHandlers(
 	settingsRepo portrepos.SettingsRepository,
 	scheduleRepo schedule.Manager,
@@ -29,10 +32,13 @@ func NewHandlers(
 	taskGroupRepo portrepos.TaskGroupRepository,
 	userFileRepo portrepos.UserFileRepository,
 	slackbotRepo portrepos.SlackBotRepository,
+	kmsKeyARN, awsRegion string,
 ) *Handlers {
 	return &Handlers{
 		syncer:       NewSyncer(settingsRepo, scheduleRepo, webhookRepo, memoryRepo, taskRepo, taskGroupRepo, userFileRepo, slackbotRepo),
 		settingsRepo: settingsRepo,
+		kmsKeyARN:    kmsKeyARN,
+		awsRegion:    awsRegion,
 	}
 }
 
@@ -88,15 +94,13 @@ func (h *Handlers) UpdateConfig(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
 	}
 
+	if h.kmsKeyARN == "" || h.awsRegion == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub sync encryption is not configured on this proxy")
+	}
+
 	var req UpdateSyncConfigRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-	}
-	if req.Encryption.KMSKeyARN == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "encryption.kms_key_arn is required")
-	}
-	if req.Encryption.AWSRegion == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "encryption.aws_region is required")
 	}
 	if req.RepoFullName == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "repo_full_name is required")
@@ -131,8 +135,8 @@ func (h *Handlers) UpdateConfig(c echo.Context) error {
 		AutoPush:     req.AutoPush,
 		GitHubToken:  token,
 		Encryption: entities.SyncEncryptionConfig{
-			KMSKeyARN:    req.Encryption.KMSKeyARN,
-			AWSRegion:    req.Encryption.AWSRegion,
+			KMSKeyARN:    h.kmsKeyARN,
+			AWSRegion:    h.awsRegion,
 			EncryptedDEK: encDEK,
 			DEKVersion:   dekVersion,
 		},
@@ -262,7 +266,7 @@ func (h *Handlers) canModifySettings(user *entities.User, name string) bool {
 	return h.canAccessSettings(user, name)
 }
 
-// toConfigResponse converts GitSyncConfig to the public response (token redacted).
+// toConfigResponse converts GitSyncConfig to the public response (token and KMS details redacted).
 func toConfigResponse(gs *entities.GitSyncConfig) *SyncConfigResponse {
 	return &SyncConfigResponse{
 		Enabled:        gs.Enabled,
@@ -272,8 +276,6 @@ func toConfigResponse(gs *entities.GitSyncConfig) *SyncConfigResponse {
 		AutoPush:       gs.AutoPush,
 		HasGitHubToken: gs.GitHubToken != "",
 		Encryption: SyncEncryptionResponse{
-			KMSKeyARN:  gs.Encryption.KMSKeyARN,
-			AWSRegion:  gs.Encryption.AWSRegion,
 			DEKVersion: gs.Encryption.DEKVersion,
 			DEKReady:   gs.Encryption.EncryptedDEK != "",
 		},

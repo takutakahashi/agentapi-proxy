@@ -41,8 +41,8 @@ func NewSyncer(
 	settingsRepo portrepos.SettingsRepository,
 	scheduleRepo schedule.Manager,
 	webhookRepo portrepos.WebhookRepository,
-	_ portrepos.MemoryRepository,   // unused — kept for call-site compatibility
-	_ portrepos.TaskRepository,     // unused
+	_ portrepos.MemoryRepository, // unused — kept for call-site compatibility
+	_ portrepos.TaskRepository, // unused
 	_ portrepos.TaskGroupRepository, // unused
 	userFileRepo portrepos.UserFileRepository,
 	slackbotRepo portrepos.SlackBotRepository,

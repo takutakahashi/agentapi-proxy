@@ -392,6 +392,23 @@ type Config struct {
 	// Redis holds optional Redis configuration for cross-pod status synchronisation.
 	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
 	Redis RedisConfig `json:"redis" mapstructure:"redis"`
+	// GitSync holds proxy-level GitHub sync settings (e.g. KMS encryption key).
+	GitSync GitSyncProxyConfig `json:"git_sync" mapstructure:"git_sync"`
+}
+
+// GitSyncEncryptionProxyConfig holds proxy-level AWS KMS settings for GitHub sync.
+// These are set by the operator and are NOT configurable by individual users.
+type GitSyncEncryptionProxyConfig struct {
+	// KMSKeyARN is the ARN of the AWS KMS key used to encrypt sync DEKs.
+	KMSKeyARN string `json:"kms_key_arn" mapstructure:"kms_key_arn"`
+	// AWSRegion is the AWS region where the KMS key resides.
+	AWSRegion string `json:"aws_region" mapstructure:"aws_region"`
+}
+
+// GitSyncProxyConfig holds proxy-level GitHub sync settings.
+type GitSyncProxyConfig struct {
+	// Encryption is the KMS encryption configuration used for all user sync operations.
+	Encryption GitSyncEncryptionProxyConfig `json:"encryption" mapstructure:"encryption"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
