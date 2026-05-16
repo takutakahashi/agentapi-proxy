@@ -2,6 +2,7 @@ package githubsync
 
 import (
 	"context"
+	"hash/fnv"
 	"log"
 	"strings"
 	"sync"
@@ -14,20 +15,26 @@ import (
 )
 
 // Worker runs periodic bidirectional sync for all enabled git_sync configs.
+//
+// Each settings is synced on a per-tenant schedule: the first sync time is
+// offset by hash(settingsName) % interval so tenants don't hit GitHub simultaneously.
+// Subsequent syncs happen at lastSyncedAt + interval.
+//
 // Direction is determined by comparing the remote .sync-meta.yaml syncedAt
 // timestamp against the locally stored LastPushedAt:
 //
-//	remoteSyncedAt > LastPushedAt  →  Pull  (GitHub is newer — someone pushed externally)
+//	remoteSyncedAt > LastPushedAt  →  Pull  (GitHub is newer)
 //	otherwise                      →  Push  (local is newer or equal)
 type Worker struct {
 	syncer       *Syncer
 	settingsRepo portrepos.SettingsRepository
 	interval     time.Duration
 
-	mu      sync.Mutex
-	running bool
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
+	mu         sync.Mutex
+	running    bool
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
+	nextSyncAt map[string]time.Time // per-settings next sync time
 }
 
 // NewWorker creates a Worker. interval must be > 0.
@@ -36,6 +43,7 @@ func NewWorker(syncer *Syncer, settingsRepo portrepos.SettingsRepository, interv
 		syncer:       syncer,
 		settingsRepo: settingsRepo,
 		interval:     interval,
+		nextSyncAt:   make(map[string]time.Time),
 	}
 }
 
@@ -72,7 +80,12 @@ func (w *Worker) Stop() {
 
 func (w *Worker) run(ctx context.Context) {
 	defer w.wg.Done()
-	ticker := time.NewTicker(w.interval)
+	// Check at finer granularity than the sync interval so per-tenant offsets work.
+	checkInterval := 30 * time.Second
+	if w.interval < checkInterval {
+		checkInterval = w.interval
+	}
+	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -92,16 +105,46 @@ func (w *Worker) runOnce(ctx context.Context) {
 		log.Printf("[SYNC_WORKER] Failed to list settings: %v", err)
 		return
 	}
+	now := time.Now()
 	for _, s := range allSettings {
 		cfg := s.GitSync()
 		if cfg == nil || !cfg.Enabled {
 			continue
 		}
 		name := s.Name()
+
+		w.mu.Lock()
+		next, known := w.nextSyncAt[name]
+		if !known {
+			// First encounter: stagger based on deterministic hash of settings name.
+			next = now.Add(tenantOffset(name, w.interval))
+			w.nextSyncAt[name] = next
+		}
+		w.mu.Unlock()
+
+		if now.Before(next) {
+			continue
+		}
+
 		if err := w.syncOne(ctx, name); err != nil {
 			log.Printf("[SYNC_WORKER] Sync failed for %s: %v", name, err)
 		}
+
+		w.mu.Lock()
+		w.nextSyncAt[name] = time.Now().Add(w.interval)
+		w.mu.Unlock()
 	}
+}
+
+// tenantOffset returns a deterministic time offset in [0, interval) for a settings name.
+func tenantOffset(name string, interval time.Duration) time.Duration {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	ms := uint64(interval.Milliseconds())
+	if ms == 0 {
+		return 0
+	}
+	return time.Duration(uint64(h.Sum32())%ms) * time.Millisecond
 }
 
 func (w *Worker) syncOne(ctx context.Context, settingsName string) error {
@@ -119,15 +162,17 @@ func (w *Worker) syncOne(ctx context.Context, settingsName string) error {
 		return err
 	}
 
-	// Fetch remote sync-meta to determine direction.
+	// Fetch per-settings .sync-meta.yaml to determine direction.
 	rootPath := strings.TrimRight(cfg.RootPath, "/") + "/"
+	metaPath := rootPath + settingsName + "/.sync-meta.yaml"
+
 	ghClient, err := NewGitHubSyncClient(ctx, token, cfg.RepoFullName)
 	if err != nil {
 		return err
 	}
 
 	remoteSyncedAt := time.Time{}
-	if metaBytes, metaErr := ghClient.GetFile(ctx, cfg.Branch, rootPath+".sync-meta.yaml"); metaErr == nil {
+	if metaBytes, metaErr := ghClient.GetFile(ctx, cfg.Branch, metaPath); metaErr == nil {
 		var meta SyncMeta
 		if parseErr := yaml.Unmarshal(metaBytes, &meta); parseErr == nil {
 			remoteSyncedAt = meta.SyncedAt

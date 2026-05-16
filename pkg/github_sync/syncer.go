@@ -22,14 +22,16 @@ import (
 //
 // File layout in GitHub:
 //
-//	<rootPath>/teams/<settingsName>/schedules/<id>.yaml
-//	<rootPath>/teams/<settingsName>/webhooks/<id>.yaml
-//	<rootPath>/teams/<settingsName>/settings.yaml
-//	<rootPath>/users/<userID>/files/<id>.yaml
-//	<rootPath>/.sync-meta.yaml
+//	<rootPath>/<settingsName>/schedules/<id>.yaml
+//	<rootPath>/<settingsName>/webhooks/<id>.yaml
+//	<rootPath>/<settingsName>/settings.yaml   (team only)
+//	<rootPath>/<settingsName>/files/<id>.yaml (personal only)
+//	<rootPath>/<settingsName>/slackbots/<id>.yaml
+//	<rootPath>/<settingsName>/.sync-meta.yaml
 //
-// A push from a personal settings (settingsName == userID) exports only
-// user resources; a push from a team settings exports only team resources.
+// For personal sync settingsName == userID; for team sync settingsName is the team name.
+// Each settings has its own subdirectory under rootPath so multiple settings can share
+// the same repository without conflicting.
 type Syncer struct {
 	settingsRepo       portrepos.SettingsRepository
 	scheduleRepo       schedule.Manager
@@ -179,7 +181,7 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		},
 	}
 	if metaBytes, merr := yaml.Marshal(meta); merr == nil {
-		files[rootPath+".sync-meta.yaml"] = metaBytes
+		files[rootPath+settingsName+"/.sync-meta.yaml"] = metaBytes
 	}
 
 	if len(files) == 0 {
@@ -247,39 +249,22 @@ func (s *Syncer) Pull(ctx context.Context, settingsName, userID string, deleteOr
 	}
 
 	rootPath := strings.TrimRight(cfg.RootPath, "/") + "/"
+	settingsPrefix := rootPath + settingsName + "/"
 
 	ghClient, err := NewGitHubSyncClient(ctx, token, cfg.RepoFullName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 
-	paths, err := ghClient.ListFiles(ctx, cfg.Branch, rootPath)
+	paths, err := ghClient.ListFiles(ctx, cfg.Branch, settingsPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list GitHub files: %w", err)
 	}
 
 	personal := isPersonalSync(settingsName, userID)
-	teamPrefix := rootPath + "teams/" + settingsName + "/"
-	userPrefix := rootPath + "users/" + userID + "/"
 
 	filesWritten := 0
 	for _, filePath := range paths {
-		rel := strings.TrimPrefix(filePath, rootPath)
-		if strings.HasSuffix(rel, ".sync-meta.yaml") {
-			continue
-		}
-
-		// Route by scope: personal sync only imports user files; team sync imports team resources.
-		var relevant bool
-		if personal {
-			relevant = strings.HasPrefix(filePath, userPrefix)
-		} else {
-			relevant = strings.HasPrefix(filePath, teamPrefix)
-		}
-		if !relevant {
-			continue
-		}
-
 		content, err := ghClient.GetFile(ctx, cfg.Branch, filePath)
 		if err != nil {
 			log.Printf("[SYNC] Warning: failed to get %s: %v", filePath, err)
@@ -287,7 +272,7 @@ func (s *Syncer) Pull(ctx context.Context, settingsName, userID string, deleteOr
 		}
 
 		if err := s.importFileByPath(ctx, filePath, content, settingsName, userID, dek,
-			teamPrefix, userPrefix); err != nil {
+			settingsPrefix, personal); err != nil {
 			log.Printf("[SYNC] Warning: failed to import %s: %v", filePath, err)
 			continue
 		}
@@ -301,28 +286,43 @@ func (s *Syncer) Pull(ctx context.Context, settingsName, userID string, deleteOr
 }
 
 // importFileByPath routes a single GitHub file to the right import handler.
+// settingsPrefix is "{rootPath}/{settingsName}/"; personal distinguishes user vs team sync.
 func (s *Syncer) importFileByPath(ctx context.Context, filePath string, content []byte,
-	settingsName, userID string, dek []byte, teamPrefix, userPrefix string) error {
+	settingsName, userID string, dek []byte, settingsPrefix string, personal bool) error {
+
+	rel := strings.TrimPrefix(filePath, settingsPrefix)
 
 	switch {
-	// Team sync paths
-	case strings.HasPrefix(filePath, teamPrefix+"schedules/"):
+	case rel == ".sync-meta.yaml":
+		return nil
+	case strings.HasPrefix(rel, "schedules/"):
+		if personal {
+			return s.importUserScheduleFile(ctx, content, userID, dek)
+		}
 		return s.importScheduleFile(ctx, content, settingsName, userID, dek)
-	case strings.HasPrefix(filePath, teamPrefix+"webhooks/"):
+	case strings.HasPrefix(rel, "webhooks/"):
+		if personal {
+			return s.importUserWebhookFile(ctx, content, userID, dek)
+		}
 		return s.importWebhookFile(ctx, content, settingsName, userID, dek)
-	case filePath == teamPrefix+"settings.yaml":
-		return s.importSettingsFile(ctx, content, settingsName, userID, dek)
-	case strings.HasPrefix(filePath, teamPrefix+"slackbots/"):
-		return s.importSlackbotFile(ctx, content, entities.ScopeTeam, userID, settingsName, dek)
-	// Personal sync paths
-	case strings.HasPrefix(filePath, userPrefix+"files/"):
-		return s.importUserFileRecord(ctx, content, userID, dek)
-	case strings.HasPrefix(filePath, userPrefix+"schedules/"):
-		return s.importUserScheduleFile(ctx, content, userID, dek)
-	case strings.HasPrefix(filePath, userPrefix+"webhooks/"):
-		return s.importUserWebhookFile(ctx, content, userID, dek)
-	case strings.HasPrefix(filePath, userPrefix+"slackbots/"):
-		return s.importSlackbotFile(ctx, content, entities.ScopeUser, userID, "", dek)
+	case rel == "settings.yaml":
+		if !personal {
+			return s.importSettingsFile(ctx, content, settingsName, userID, dek)
+		}
+		return nil
+	case strings.HasPrefix(rel, "files/"):
+		if personal {
+			return s.importUserFileRecord(ctx, content, userID, dek)
+		}
+		return nil
+	case strings.HasPrefix(rel, "slackbots/"):
+		scope := entities.ScopeTeam
+		teamID := settingsName
+		if personal {
+			scope = entities.ScopeUser
+			teamID = ""
+		}
+		return s.importSlackbotFile(ctx, content, scope, userID, teamID, dek)
 	default:
 		return nil
 	}
@@ -360,13 +360,14 @@ func (s *Syncer) RotateKey(ctx context.Context, settingsName, userID string) (*R
 	}
 
 	rootPath := strings.TrimRight(cfg.RootPath, "/") + "/"
+	settingsPath := rootPath + settingsName + "/"
 
 	ghClient, err := NewGitHubSyncClient(ctx, rotateToken, cfg.RepoFullName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 
-	paths, err := ghClient.ListFiles(ctx, cfg.Branch, rootPath)
+	paths, err := ghClient.ListFiles(ctx, cfg.Branch, settingsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
@@ -426,7 +427,7 @@ func (s *Syncer) exportTeamSchedules(ctx context.Context, settingsName, userID s
 		return fmt.Errorf("export: %w", err)
 	}
 
-	dir := rootPath + "teams/" + settingsName + "/schedules/"
+	dir := rootPath + settingsName + "/schedules/"
 	for _, sc := range resources.Schedules {
 		id := sc.ID
 		if id == "" {
@@ -464,7 +465,7 @@ func (s *Syncer) exportTeamWebhooks(ctx context.Context, settingsName, userID st
 		return fmt.Errorf("export: %w", err)
 	}
 
-	dir := rootPath + "teams/" + settingsName + "/webhooks/"
+	dir := rootPath + settingsName + "/webhooks/"
 	for _, wh := range resources.Webhooks {
 		id := wh.ID
 		if id == "" {
@@ -516,7 +517,7 @@ func (s *Syncer) exportTeamSettings(ctx context.Context, settingsName, userID st
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
-	files[rootPath+"teams/"+settingsName+"/settings.yaml"] = data
+	files[rootPath+settingsName+"/settings.yaml"] = data
 	return nil
 }
 
@@ -531,7 +532,7 @@ func (s *Syncer) exportUserFiles(ctx context.Context, userID string, dek []byte,
 		return fmt.Errorf("list user files: %w", err)
 	}
 
-	dir := rootPath + "users/" + userID + "/files/"
+	dir := rootPath + userID + "/files/"
 	for _, f := range ufiles {
 		encContent, encErr := EncryptField(dek, f.Content())
 		if encErr != nil {
@@ -572,7 +573,7 @@ func (s *Syncer) exportUserSchedules(ctx context.Context, userID string, dek []b
 	if err != nil {
 		return fmt.Errorf("list user schedules: %w", err)
 	}
-	dir := rootPath + "users/" + userID + "/schedules/"
+	dir := rootPath + userID + "/schedules/"
 	for _, sc := range schedules {
 		si := scheduleToImport(sc)
 		wrapper := &importexport.TeamResources{
@@ -604,7 +605,7 @@ func (s *Syncer) exportUserWebhooks(ctx context.Context, userID string, dek []by
 	if err != nil {
 		return fmt.Errorf("list user webhooks: %w", err)
 	}
-	dir := rootPath + "users/" + userID + "/webhooks/"
+	dir := rootPath + userID + "/webhooks/"
 	for _, wh := range webhooks {
 		wi := webhookToImport(wh)
 		wrapper := &importexport.TeamResources{
@@ -636,7 +637,7 @@ func (s *Syncer) exportUserSlackbots(ctx context.Context, userID string, dek []b
 	if err != nil {
 		return fmt.Errorf("list user slackbots: %w", err)
 	}
-	dir := rootPath + "users/" + userID + "/slackbots/"
+	dir := rootPath + userID + "/slackbots/"
 	for _, bot := range bots {
 		rec := slackbotToRecord(bot, dek)
 		data, err := yaml.Marshal(rec)
@@ -660,7 +661,7 @@ func (s *Syncer) exportTeamSlackbots(ctx context.Context, settingsName string, d
 	if err != nil {
 		return fmt.Errorf("list team slackbots: %w", err)
 	}
-	dir := rootPath + "teams/" + settingsName + "/slackbots/"
+	dir := rootPath + settingsName + "/slackbots/"
 	for _, bot := range bots {
 		rec := slackbotToRecord(bot, dek)
 		data, err := yaml.Marshal(rec)
