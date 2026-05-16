@@ -421,6 +421,9 @@ type GitSyncProxyConfig struct {
 	Encryption GitSyncEncryptionProxyConfig `json:"encryption" mapstructure:"encryption"`
 	// GitHubApp is the optional GitHub App fallback for token generation.
 	GitHubApp GitSyncGitHubAppConfig `json:"github_app" mapstructure:"github_app"`
+	// SyncInterval is how often the periodic sync worker runs (e.g. "5m", "1h").
+	// An empty value or "0" disables the periodic worker.
+	SyncInterval string `json:"sync_interval" mapstructure:"sync_interval"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration

@@ -200,9 +200,18 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		return nil, fmt.Errorf("failed to push to GitHub: %w", err)
 	}
 
+	pushedAt := time.Now()
+
+	// Persist last push time so the periodic worker can determine sync direction.
+	cfg.LastPushedAt = pushedAt
+	settings.SetGitSync(cfg)
+	if saveErr := s.settingsRepo.Save(ctx, settings); saveErr != nil {
+		log.Printf("[SYNC] Warning: failed to save LastPushedAt for %s: %v", settingsName, saveErr)
+	}
+
 	return &PushResponse{
 		CommitSHA: sha,
-		PushedAt:  time.Now(),
+		PushedAt:  pushedAt,
 		Summary:   SyncSummary{FilesWritten: len(files)},
 	}, nil
 }

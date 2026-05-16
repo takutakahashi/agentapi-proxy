@@ -88,6 +88,7 @@ type gitSyncJSON struct {
 	AutoPush     bool                     `json:"auto_push"`
 	GitHubToken  string                   `json:"github_token,omitempty"`
 	Encryption   syncEncryptionConfigJSON `json:"encryption"`
+	LastPushedAt *time.Time               `json:"last_pushed_at,omitempty"`
 }
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
@@ -303,7 +304,7 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 	}
 
 	if gitSync := settings.GitSync(); gitSync != nil {
-		sj.GitSync = &gitSyncJSON{
+		j := &gitSyncJSON{
 			Enabled:      gitSync.Enabled,
 			RepoFullName: gitSync.RepoFullName,
 			Branch:       gitSync.Branch,
@@ -317,6 +318,10 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 				DEKVersion:   gitSync.Encryption.DEKVersion,
 			},
 		}
+		if !gitSync.LastPushedAt.IsZero() {
+			j.LastPushedAt = &gitSync.LastPushedAt
+		}
+		sj.GitSync = j
 	}
 
 	return json.Marshal(sj)
@@ -446,6 +451,9 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 				EncryptedDEK: sj.GitSync.Encryption.EncryptedDEK,
 				DEKVersion:   sj.GitSync.Encryption.DEKVersion,
 			},
+		}
+		if sj.GitSync.LastPushedAt != nil {
+			gs.LastPushedAt = *sj.GitSync.LastPushedAt
 		}
 		settings.SetGitSync(gs)
 		settings.SetUpdatedAt(sj.UpdatedAt)

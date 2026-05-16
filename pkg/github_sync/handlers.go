@@ -48,6 +48,9 @@ func NewHandlers(
 // GetName implements app.CustomHandler.
 func (h *Handlers) GetName() string { return "GitHubSyncHandlers" }
 
+// Syncer returns the underlying Syncer for use by the periodic worker.
+func (h *Handlers) Syncer() *Syncer { return h.syncer }
+
 // RegisterRoutes implements app.CustomHandler.
 func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
 	e.GET("/sync/config/:name", h.GetConfig)

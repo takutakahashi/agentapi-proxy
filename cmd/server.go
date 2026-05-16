@@ -779,6 +779,17 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 	)
 	proxyServer.AddCustomHandler(syncHandlers)
 
+	if interval := configData.GitSync.SyncInterval; interval != "" && interval != "0" {
+		d, err := time.ParseDuration(interval)
+		if err != nil {
+			log.Printf("[GITHUB_SYNC] Invalid sync_interval %q: %v — periodic sync disabled", interval, err)
+		} else {
+			worker := githubsync.NewWorker(syncHandlers.Syncer(), settingsRepo, d)
+			go worker.Start(context.Background())
+			log.Printf("[GITHUB_SYNC] Periodic sync worker started (interval=%s)", interval)
+		}
+	}
+
 	log.Printf("[GITHUB_SYNC] GitHub sync handlers registered successfully")
 }
 

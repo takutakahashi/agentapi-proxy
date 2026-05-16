@@ -119,6 +119,7 @@ type GitSyncConfig struct {
 	AutoPush     bool                 `json:"auto_push"`
 	GitHubToken  string               `json:"github_token,omitempty"` // PAT for sync (stored encrypted in K8s Secret)
 	Encryption   SyncEncryptionConfig `json:"encryption"`
+	LastPushedAt time.Time            `json:"last_pushed_at,omitempty"` // time of last successful push
 }
 
 // Settings represents user or team settings
