@@ -424,6 +424,15 @@ type GitSyncProxyConfig struct {
 	// SyncInterval is how often the periodic sync worker runs (e.g. "5m", "1h").
 	// An empty value or "0" disables the periodic worker.
 	SyncInterval string `json:"sync_interval" mapstructure:"sync_interval"`
+	// Namespace overrides the Kubernetes namespace for the leader election lease.
+	// Falls back to schedule_worker.namespace or kubernetes_session.namespace if empty.
+	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership.
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	// RenewDeadline is the duration that the acting master will retry refreshing leadership before giving up.
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions.
+	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -777,6 +786,10 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("git_sync.encryption.kms_key_arn", "AGENTAPI_GIT_SYNC_ENCRYPTION_KMS_KEY_ARN")
 	_ = v.BindEnv("git_sync.encryption.aws_region", "AGENTAPI_GIT_SYNC_ENCRYPTION_AWS_REGION")
 	_ = v.BindEnv("git_sync.github_app.installation_id", "AGENTAPI_GIT_SYNC_GITHUB_APP_INSTALLATION_ID")
+	_ = v.BindEnv("git_sync.namespace", "AGENTAPI_GIT_SYNC_NAMESPACE")
+	_ = v.BindEnv("git_sync.lease_duration", "AGENTAPI_GIT_SYNC_LEASE_DURATION")
+	_ = v.BindEnv("git_sync.renew_deadline", "AGENTAPI_GIT_SYNC_RENEW_DEADLINE")
+	_ = v.BindEnv("git_sync.retry_period", "AGENTAPI_GIT_SYNC_RETRY_PERIOD")
 }
 
 // setDefaults sets default values for viper configuration
@@ -874,6 +887,11 @@ func setDefaults(v *viper.Viper) {
 
 	// Slack defaults
 	v.SetDefault("slack.dry_run", false)
+
+	// GitHub sync worker leader election defaults
+	v.SetDefault("git_sync.lease_duration", "15s")
+	v.SetDefault("git_sync.renew_deadline", "10s")
+	v.SetDefault("git_sync.retry_period", "2s")
 
 	// Redis defaults (empty addr = disabled)
 	v.SetDefault("redis.addr", "")

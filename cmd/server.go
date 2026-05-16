@@ -784,9 +784,37 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 		if err != nil {
 			log.Printf("[GITHUB_SYNC] Invalid sync_interval %q: %v — periodic sync disabled", interval, err)
 		} else {
-			worker := githubsync.NewWorker(syncHandlers.Syncer(), settingsRepo, d)
-			go worker.Start(context.Background())
-			log.Printf("[GITHUB_SYNC] Periodic sync worker started (interval=%s)", interval)
+			syncNamespace := configData.GitSync.Namespace
+			if syncNamespace == "" {
+				syncNamespace = namespace
+			}
+			leaseDuration := 15 * time.Second
+			renewDeadline := 10 * time.Second
+			retryPeriod := 2 * time.Second
+			if v := configData.GitSync.LeaseDuration; v != "" {
+				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
+					leaseDuration = parsed
+				}
+			}
+			if v := configData.GitSync.RenewDeadline; v != "" {
+				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
+					renewDeadline = parsed
+				}
+			}
+			if v := configData.GitSync.RetryPeriod; v != "" {
+				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
+					retryPeriod = parsed
+				}
+			}
+			electionConfig := schedule.LeaderElectionConfig{
+				LeaseDuration: leaseDuration,
+				RenewDeadline: renewDeadline,
+				RetryPeriod:   retryPeriod,
+				Namespace:     syncNamespace,
+			}
+			leaderWorker := githubsync.NewLeaderWorker(syncHandlers.Syncer(), settingsRepo, d, client, electionConfig)
+			go leaderWorker.Run(context.Background())
+			log.Printf("[GITHUB_SYNC] Periodic sync worker started with leader election (interval=%s)", interval)
 		}
 	}
 

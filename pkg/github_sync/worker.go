@@ -4,10 +4,13 @@ import (
 	"context"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/kubernetes"
 )
 
 // Worker runs periodic bidirectional sync for all enabled git_sync configs.
@@ -20,6 +23,11 @@ type Worker struct {
 	syncer       *Syncer
 	settingsRepo portrepos.SettingsRepository
 	interval     time.Duration
+
+	mu      sync.Mutex
+	running bool
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
 }
 
 // NewWorker creates a Worker. interval must be > 0.
@@ -31,15 +39,46 @@ func NewWorker(syncer *Syncer, settingsRepo portrepos.SettingsRepository, interv
 	}
 }
 
-// Start runs the periodic sync loop until ctx is cancelled.
-func (w *Worker) Start(ctx context.Context) {
+// Start begins the periodic sync loop. It returns immediately; the loop runs in the background.
+func (w *Worker) Start(ctx context.Context) error {
+	w.mu.Lock()
+	if w.running {
+		w.mu.Unlock()
+		return nil
+	}
+	w.running = true
+	w.stopCh = make(chan struct{})
+	w.mu.Unlock()
+
+	w.wg.Add(1)
+	go w.run(ctx)
 	log.Printf("[SYNC_WORKER] Starting periodic sync worker (interval=%s)", w.interval)
+	return nil
+}
+
+// Stop signals the sync loop to stop and waits for it to exit.
+func (w *Worker) Stop() {
+	w.mu.Lock()
+	if !w.running {
+		w.mu.Unlock()
+		return
+	}
+	w.running = false
+	close(w.stopCh)
+	w.mu.Unlock()
+	w.wg.Wait()
+	log.Printf("[SYNC_WORKER] Stopped periodic sync worker")
+}
+
+func (w *Worker) run(ctx context.Context) {
+	defer w.wg.Done()
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[SYNC_WORKER] Stopping periodic sync worker")
+			return
+		case <-w.stopCh:
 			return
 		case <-ticker.C:
 			w.runOnce(ctx)
@@ -105,4 +144,42 @@ func (w *Worker) syncOne(ctx context.Context, settingsName string) error {
 		_, err = w.syncer.Push(ctx, settingsName, settingsName, "")
 	}
 	return err
+}
+
+// LeaderWorker wraps Worker with Kubernetes leader election so only one
+// replica in the cluster runs the periodic sync at a time.
+type LeaderWorker struct {
+	worker  *Worker
+	elector *schedule.LeaderElector
+}
+
+// NewLeaderWorker creates a LeaderWorker.
+func NewLeaderWorker(
+	syncer *Syncer,
+	settingsRepo portrepos.SettingsRepository,
+	interval time.Duration,
+	client kubernetes.Interface,
+	electionConfig schedule.LeaderElectionConfig,
+) *LeaderWorker {
+	electionConfig.LeaseName = "agentapi-github-sync-worker"
+	return &LeaderWorker{
+		worker:  NewWorker(syncer, settingsRepo, interval),
+		elector: schedule.NewLeaderElector(client, electionConfig),
+	}
+}
+
+// Run starts the leader election loop. Only the elected leader runs the sync worker.
+func (lw *LeaderWorker) Run(ctx context.Context) {
+	lw.elector.Run(ctx,
+		func(leaderCtx context.Context) {
+			log.Printf("[SYNC_WORKER] Became leader, starting periodic sync worker")
+			if err := lw.worker.Start(leaderCtx); err != nil {
+				log.Printf("[SYNC_WORKER] Failed to start worker: %v", err)
+			}
+		},
+		func() {
+			log.Printf("[SYNC_WORKER] Lost leadership, stopping periodic sync worker")
+			lw.worker.Stop()
+		},
+	)
 }
