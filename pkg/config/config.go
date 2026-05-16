@@ -771,6 +771,12 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("redis.dial_timeout", "AGENTAPI_REDIS_DIAL_TIMEOUT")
 	_ = v.BindEnv("redis.read_timeout", "AGENTAPI_REDIS_READ_TIMEOUT")
 	_ = v.BindEnv("redis.write_timeout", "AGENTAPI_REDIS_WRITE_TIMEOUT")
+
+	// GitHub sync proxy configuration
+	_ = v.BindEnv("git_sync.sync_interval", "AGENTAPI_GIT_SYNC_SYNC_INTERVAL")
+	_ = v.BindEnv("git_sync.encryption.kms_key_arn", "AGENTAPI_GIT_SYNC_ENCRYPTION_KMS_KEY_ARN")
+	_ = v.BindEnv("git_sync.encryption.aws_region", "AGENTAPI_GIT_SYNC_ENCRYPTION_AWS_REGION")
+	_ = v.BindEnv("git_sync.github_app.installation_id", "AGENTAPI_GIT_SYNC_GITHUB_APP_INSTALLATION_ID")
 }
 
 // setDefaults sets default values for viper configuration

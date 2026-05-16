@@ -31,12 +31,12 @@ import (
 // A push from a personal settings (settingsName == userID) exports only
 // user resources; a push from a team settings exports only team resources.
 type Syncer struct {
-	settingsRepo           portrepos.SettingsRepository
-	scheduleRepo           schedule.Manager
-	webhookRepo            portrepos.WebhookRepository
-	slackbotRepo           portrepos.SlackBotRepository
-	userFileRepo           portrepos.UserFileRepository
-	githubAppInstallID     string // fallback installation ID when no personal token
+	settingsRepo       portrepos.SettingsRepository
+	scheduleRepo       schedule.Manager
+	webhookRepo        portrepos.WebhookRepository
+	slackbotRepo       portrepos.SlackBotRepository
+	userFileRepo       portrepos.UserFileRepository
+	githubAppInstallID string // fallback installation ID when no personal token
 }
 
 // NewSyncer creates a Syncer. Non-nil repos are synced.
