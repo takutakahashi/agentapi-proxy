@@ -110,9 +110,17 @@ func (h *Handlers) UpdateConfig(c echo.Context) error {
 	existing := settings.GitSync()
 	encDEK := ""
 	dekVersion := 0
+	existingToken := ""
 	if existing != nil {
 		encDEK = existing.Encryption.EncryptedDEK
 		dekVersion = existing.Encryption.DEKVersion
+		existingToken = existing.GitHubToken
+	}
+
+	// Preserve existing token if the request doesn't supply a new one.
+	token := req.GitHubToken
+	if token == "" {
+		token = existingToken
 	}
 
 	gs := &entities.GitSyncConfig{
@@ -121,7 +129,7 @@ func (h *Handlers) UpdateConfig(c echo.Context) error {
 		Branch:       req.Branch,
 		RootPath:     req.RootPath,
 		AutoPush:     req.AutoPush,
-		GitHubToken:  req.GitHubToken,
+		GitHubToken:  token,
 		Encryption: entities.SyncEncryptionConfig{
 			KMSKeyARN:    req.Encryption.KMSKeyARN,
 			AWSRegion:    req.Encryption.AWSRegion,
@@ -257,11 +265,12 @@ func (h *Handlers) canModifySettings(user *entities.User, name string) bool {
 // toConfigResponse converts GitSyncConfig to the public response (token redacted).
 func toConfigResponse(gs *entities.GitSyncConfig) *SyncConfigResponse {
 	return &SyncConfigResponse{
-		Enabled:      gs.Enabled,
-		RepoFullName: gs.RepoFullName,
-		Branch:       gs.Branch,
-		RootPath:     gs.RootPath,
-		AutoPush:     gs.AutoPush,
+		Enabled:        gs.Enabled,
+		RepoFullName:   gs.RepoFullName,
+		Branch:         gs.Branch,
+		RootPath:       gs.RootPath,
+		AutoPush:       gs.AutoPush,
+		HasGitHubToken: gs.GitHubToken != "",
 		Encryption: SyncEncryptionResponse{
 			KMSKeyARN:  gs.Encryption.KMSKeyARN,
 			AWSRegion:  gs.Encryption.AWSRegion,

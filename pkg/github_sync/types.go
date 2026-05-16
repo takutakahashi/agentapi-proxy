@@ -75,12 +75,13 @@ type SyncEventRecord struct {
 
 // SyncConfigResponse is returned by GET /sync/config (github_token redacted).
 type SyncConfigResponse struct {
-	Enabled      bool                   `json:"enabled"`
-	RepoFullName string                 `json:"repo_full_name"`
-	Branch       string                 `json:"branch"`
-	RootPath     string                 `json:"root_path"`
-	AutoPush     bool                   `json:"auto_push"`
-	Encryption   SyncEncryptionResponse `json:"encryption"`
+	Enabled         bool                   `json:"enabled"`
+	RepoFullName    string                 `json:"repo_full_name"`
+	Branch          string                 `json:"branch"`
+	RootPath        string                 `json:"root_path"`
+	AutoPush        bool                   `json:"auto_push"`
+	HasGitHubToken  bool                   `json:"has_github_token"`
+	Encryption      SyncEncryptionResponse `json:"encryption"`
 }
 
 // SyncEncryptionResponse is the public view of SyncEncryptionConfig (no secrets).
