@@ -597,10 +597,13 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	}
 
 	// Override GitSync fields from env vars (viper Unmarshal may miss deeply nested env-only keys)
-	if kmsKeyARN := v.GetString("git_sync.encryption.kms_key_arn"); kmsKeyARN != "" {
+	kmsKeyARN := v.GetString("git_sync.encryption.kms_key_arn")
+	awsRegion := v.GetString("git_sync.encryption.aws_region")
+	log.Printf("[CONFIG] GitSync KMS key ARN from viper: %q (pre-unmarshal: %q)", kmsKeyARN, config.GitSync.Encryption.KMSKeyARN)
+	if kmsKeyARN != "" {
 		config.GitSync.Encryption.KMSKeyARN = kmsKeyARN
 	}
-	if awsRegion := v.GetString("git_sync.encryption.aws_region"); awsRegion != "" {
+	if awsRegion != "" {
 		config.GitSync.Encryption.AWSRegion = awsRegion
 	}
 	if installationID := v.GetString("git_sync.github_app.installation_id"); installationID != "" {
