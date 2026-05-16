@@ -405,10 +405,22 @@ type GitSyncEncryptionProxyConfig struct {
 	AWSRegion string `json:"aws_region" mapstructure:"aws_region"`
 }
 
+// GitSyncGitHubAppConfig holds GitHub App fallback settings for sync token generation.
+// When a user has no personal GitHub token configured, the proxy uses these credentials
+// to generate an installation access token on their behalf.
+// App ID and PEM are read from GITHUB_APP_ID and GITHUB_APP_PEM / GITHUB_APP_PEM_PATH env vars.
+type GitSyncGitHubAppConfig struct {
+	// InstallationID is the GitHub App installation ID to use as a token fallback.
+	// If empty, the GitHub App fallback is disabled.
+	InstallationID string `json:"installation_id" mapstructure:"installation_id"`
+}
+
 // GitSyncProxyConfig holds proxy-level GitHub sync settings.
 type GitSyncProxyConfig struct {
 	// Encryption is the KMS encryption configuration used for all user sync operations.
 	Encryption GitSyncEncryptionProxyConfig `json:"encryption" mapstructure:"encryption"`
+	// GitHubApp is the optional GitHub App fallback for token generation.
+	GitHubApp GitSyncGitHubAppConfig `json:"github_app" mapstructure:"github_app"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration

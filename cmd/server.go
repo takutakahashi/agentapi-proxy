@@ -775,6 +775,7 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 		slackbotRepo,
 		configData.GitSync.Encryption.KMSKeyARN,
 		configData.GitSync.Encryption.AWSRegion,
+		configData.GitSync.GitHubApp.InstallationID,
 	)
 	proxyServer.AddCustomHandler(syncHandlers)
 

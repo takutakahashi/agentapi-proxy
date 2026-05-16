@@ -23,6 +23,8 @@ type Handlers struct {
 
 // NewHandlers creates a Handlers instance registering all required repositories.
 // kmsKeyARN and awsRegion come from proxy-level config; users cannot override them.
+// githubAppInstallID is optional — when set, it enables GitHub App token fallback for users
+// who have not configured a personal GitHub token.
 func NewHandlers(
 	settingsRepo portrepos.SettingsRepository,
 	scheduleRepo schedule.Manager,
@@ -33,9 +35,10 @@ func NewHandlers(
 	userFileRepo portrepos.UserFileRepository,
 	slackbotRepo portrepos.SlackBotRepository,
 	kmsKeyARN, awsRegion string,
+	githubAppInstallID string,
 ) *Handlers {
 	return &Handlers{
-		syncer:       NewSyncer(settingsRepo, scheduleRepo, webhookRepo, memoryRepo, taskRepo, taskGroupRepo, userFileRepo, slackbotRepo),
+		syncer:       NewSyncer(settingsRepo, scheduleRepo, webhookRepo, memoryRepo, taskRepo, taskGroupRepo, userFileRepo, slackbotRepo, githubAppInstallID),
 		settingsRepo: settingsRepo,
 		kmsKeyARN:    kmsKeyARN,
 		awsRegion:    awsRegion,

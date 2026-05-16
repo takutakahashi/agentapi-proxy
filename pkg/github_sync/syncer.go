@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,14 +31,17 @@ import (
 // A push from a personal settings (settingsName == userID) exports only
 // user resources; a push from a team settings exports only team resources.
 type Syncer struct {
-	settingsRepo portrepos.SettingsRepository
-	scheduleRepo schedule.Manager
-	webhookRepo  portrepos.WebhookRepository
-	slackbotRepo portrepos.SlackBotRepository
-	userFileRepo portrepos.UserFileRepository
+	settingsRepo           portrepos.SettingsRepository
+	scheduleRepo           schedule.Manager
+	webhookRepo            portrepos.WebhookRepository
+	slackbotRepo           portrepos.SlackBotRepository
+	userFileRepo           portrepos.UserFileRepository
+	githubAppInstallID     string // fallback installation ID when no personal token
 }
 
 // NewSyncer creates a Syncer. Non-nil repos are synced.
+// githubAppInstallID is used to generate a GitHub App installation token when
+// a user has no personal GitHub token configured (empty string disables fallback).
 func NewSyncer(
 	settingsRepo portrepos.SettingsRepository,
 	scheduleRepo schedule.Manager,
@@ -46,13 +51,15 @@ func NewSyncer(
 	_ portrepos.TaskGroupRepository, // unused
 	userFileRepo portrepos.UserFileRepository,
 	slackbotRepo portrepos.SlackBotRepository,
+	githubAppInstallID string,
 ) *Syncer {
 	return &Syncer{
-		settingsRepo: settingsRepo,
-		scheduleRepo: scheduleRepo,
-		webhookRepo:  webhookRepo,
-		slackbotRepo: slackbotRepo,
-		userFileRepo: userFileRepo,
+		settingsRepo:       settingsRepo,
+		scheduleRepo:       scheduleRepo,
+		webhookRepo:        webhookRepo,
+		slackbotRepo:       slackbotRepo,
+		userFileRepo:       userFileRepo,
+		githubAppInstallID: githubAppInstallID,
 	}
 }
 
@@ -60,6 +67,30 @@ func NewSyncer(
 // personal settings (as opposed to a team/shared settings name).
 func isPersonalSync(settingsName, userID string) bool {
 	return settingsName == userID
+}
+
+// resolveToken returns the GitHub token to use for sync operations.
+// If personalToken is non-empty it is returned directly.
+// Otherwise a short-lived GitHub App installation token is generated using
+// GITHUB_APP_ID / GITHUB_APP_PEM env vars and the proxy-configured installation ID.
+func (s *Syncer) resolveToken(personalToken string) (string, error) {
+	if personalToken != "" {
+		return personalToken, nil
+	}
+	if s.githubAppInstallID == "" {
+		return "", fmt.Errorf("github_token is not configured and no GitHub App fallback is set (git_sync.github_app.installation_id)")
+	}
+	appID := os.Getenv("GITHUB_APP_ID")
+	if appID == "" {
+		return "", fmt.Errorf("github_token is not configured and GITHUB_APP_ID env var is not set")
+	}
+	pemPath := os.Getenv("GITHUB_APP_PEM_PATH")
+	token, err := startup.GenerateGitHubAppToken(appID, s.githubAppInstallID, pemPath)
+	if err != nil {
+		return "", fmt.Errorf("github_token is not configured; GitHub App token generation failed: %w", err)
+	}
+	log.Printf("[SYNC] Using GitHub App installation token (installation_id=%s)", s.githubAppInstallID)
+	return token, nil
 }
 
 // Push exports all resources for settingsName and commits them to GitHub.
@@ -74,9 +105,9 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		return nil, fmt.Errorf("GitHub sync is not enabled for %q", settingsName)
 	}
 
-	token := cfg.GitHubToken
-	if token == "" {
-		return nil, fmt.Errorf("github_token is required in git_sync config for %q", settingsName)
+	token, err := s.resolveToken(cfg.GitHubToken)
+	if err != nil {
+		return nil, fmt.Errorf("no GitHub token for %q: %w", settingsName, err)
 	}
 
 	enc, err := NewSyncEncryptor(ctx, cfg.Encryption.KMSKeyARN, cfg.Encryption.AWSRegion)
@@ -188,9 +219,9 @@ func (s *Syncer) Pull(ctx context.Context, settingsName, userID string, deleteOr
 		return nil, fmt.Errorf("GitHub sync is not enabled for %q", settingsName)
 	}
 
-	token := cfg.GitHubToken
-	if token == "" {
-		return nil, fmt.Errorf("github_token is required in git_sync config for %q", settingsName)
+	token, err := s.resolveToken(cfg.GitHubToken)
+	if err != nil {
+		return nil, fmt.Errorf("no GitHub token for %q: %w", settingsName, err)
 	}
 
 	if cfg.Encryption.EncryptedDEK == "" {
@@ -314,9 +345,14 @@ func (s *Syncer) RotateKey(ctx context.Context, settingsName, userID string) (*R
 		return nil, fmt.Errorf("failed to decrypt old DEK: %w", err)
 	}
 
+	rotateToken, err := s.resolveToken(cfg.GitHubToken)
+	if err != nil {
+		return nil, fmt.Errorf("no GitHub token for %q: %w", settingsName, err)
+	}
+
 	rootPath := strings.TrimRight(cfg.RootPath, "/") + "/"
 
-	ghClient, err := NewGitHubSyncClient(ctx, cfg.GitHubToken, cfg.RepoFullName)
+	ghClient, err := NewGitHubSyncClient(ctx, rotateToken, cfg.RepoFullName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GitHub client: %w", err)
 	}
