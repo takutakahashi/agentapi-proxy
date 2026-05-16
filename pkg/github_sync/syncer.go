@@ -797,26 +797,132 @@ func (s *Syncer) importUserScheduleFile(ctx context.Context, data []byte, userID
 }
 
 func (s *Syncer) importUserWebhookFile(ctx context.Context, data []byte, userID string, dek []byte) error {
+	if s.webhookRepo == nil {
+		return nil
+	}
 	var wi importexport.WebhookImport
 	if err := yaml.Unmarshal(data, &wi); err != nil {
 		return fmt.Errorf("unmarshal webhook: %w", err)
 	}
-	wrapper := &importexport.TeamResources{
-		Metadata: importexport.ResourceMetadata{TeamID: userID},
-		Webhooks: []importexport.WebhookImport{wi},
+	// Decrypt secret field inline (ScopeUser — cannot use generic Importer which hardcodes ScopeTeam).
+	if IsEncrypted(wi.Secret) {
+		plain, err := DecryptField(dek, wi.Secret)
+		if err != nil {
+			return fmt.Errorf("decrypt webhook secret: %w", err)
+		}
+		wi.Secret = plain
 	}
-	if err := decryptTeamResourcesFields(wrapper, dek); err != nil {
-		return fmt.Errorf("decrypt webhook: %w", err)
-	}
-	noopSvc := infraservices.NewNoopEncryptionService()
-	importer := importexport.NewImporter(s.scheduleRepo, s.webhookRepo, s.settingsRepo, noopSvc)
-	_, err := importer.Import(ctx, wrapper, userID, importexport.ImportOptions{
-		Mode:           importexport.ImportModeUpsert,
-		IDField:        "name",
-		AllowPartial:   true,
-		SkipValidation: true,
+	return s.upsertUserWebhook(ctx, wi, userID)
+}
+
+// upsertUserWebhook creates or updates a personal (ScopeUser) webhook from a WebhookImport.
+// It avoids the generic Importer which hardcodes ScopeTeam.
+func (s *Syncer) upsertUserWebhook(ctx context.Context, wi importexport.WebhookImport, userID string) error {
+	existing, _ := s.webhookRepo.List(ctx, portrepos.WebhookFilter{
+		Scope:  entities.ScopeUser,
+		UserID: userID,
 	})
-	return err
+
+	// Match by ID first, then by name.
+	var found *entities.Webhook
+	for _, w := range existing {
+		if wi.ID != "" && w.ID() == wi.ID {
+			found = w
+			break
+		}
+	}
+	if found == nil {
+		for _, w := range existing {
+			if w.Name() == wi.Name {
+				found = w
+				break
+			}
+		}
+	}
+
+	var wh *entities.Webhook
+	if found != nil {
+		wh = found
+	} else {
+		id := wi.ID
+		if id == "" {
+			id = uuid.New().String()
+		}
+		wh = entities.NewWebhook(id, wi.Name, userID, entities.WebhookType(wi.WebhookType))
+	}
+
+	wh.SetScope(entities.ScopeUser)
+	wh.SetName(wi.Name)
+	if wi.Status != "" {
+		wh.SetStatus(entities.WebhookStatus(wi.Status))
+	}
+	if wi.Secret != "" {
+		wh.SetSecret(wi.Secret)
+	}
+	if wi.SignatureHeader != "" {
+		wh.SetSignatureHeader(wi.SignatureHeader)
+	}
+	if wi.SignatureType != "" {
+		wh.SetSignatureType(entities.WebhookSignatureType(wi.SignatureType))
+	}
+	if wi.SignaturePrefix != "" {
+		wh.SetSignaturePrefix(wi.SignaturePrefix)
+	}
+	if wi.MaxSessions > 0 {
+		wh.SetMaxSessions(wi.MaxSessions)
+	}
+	if wi.GitHub != nil {
+		gh := entities.NewWebhookGitHubConfig()
+		gh.SetEnterpriseURL(wi.GitHub.EnterpriseURL)
+		gh.SetAllowedEvents(wi.GitHub.AllowedEvents)
+		gh.SetAllowedRepositories(wi.GitHub.AllowedRepositories)
+		wh.SetGitHub(gh)
+	}
+	if wi.SessionConfig != nil {
+		sc := entities.NewWebhookSessionConfig()
+		sc.SetEnvironment(wi.SessionConfig.Environment)
+		sc.SetTags(wi.SessionConfig.Tags)
+		wh.SetSessionConfig(sc)
+	}
+
+	triggers := make([]entities.WebhookTrigger, 0, len(wi.Triggers))
+	for _, ti := range wi.Triggers {
+		t := entities.NewWebhookTrigger(uuid.New().String(), ti.Name)
+		t.SetPriority(ti.Priority)
+		t.SetEnabled(ti.Enabled)
+		t.SetStopOnMatch(ti.StopOnMatch)
+		var cond entities.WebhookTriggerConditions
+		if ti.Conditions.GitHub != nil {
+			ghCond := entities.NewWebhookGitHubConditions()
+			ghCond.SetEvents(ti.Conditions.GitHub.Events)
+			ghCond.SetActions(ti.Conditions.GitHub.Actions)
+			ghCond.SetBranches(ti.Conditions.GitHub.Branches)
+			ghCond.SetRepositories(ti.Conditions.GitHub.Repositories)
+			ghCond.SetLabels(ti.Conditions.GitHub.Labels)
+			ghCond.SetPaths(ti.Conditions.GitHub.Paths)
+			ghCond.SetBaseBranches(ti.Conditions.GitHub.BaseBranches)
+			ghCond.SetDraft(ti.Conditions.GitHub.Draft)
+			ghCond.SetSender(ti.Conditions.GitHub.Sender)
+			cond.SetGitHub(ghCond)
+		}
+		if ti.Conditions.GoTemplate != "" {
+			cond.SetGoTemplate(ti.Conditions.GoTemplate)
+		}
+		t.SetConditions(cond)
+		if ti.SessionConfig != nil {
+			tsc := entities.NewWebhookSessionConfig()
+			tsc.SetEnvironment(ti.SessionConfig.Environment)
+			tsc.SetTags(ti.SessionConfig.Tags)
+			t.SetSessionConfig(tsc)
+		}
+		triggers = append(triggers, t)
+	}
+	wh.SetTriggers(triggers)
+
+	if found != nil {
+		return s.webhookRepo.Update(ctx, wh)
+	}
+	return s.webhookRepo.Create(ctx, wh)
 }
 
 func (s *Syncer) importSlackbotFile(ctx context.Context, data []byte, scope entities.ResourceScope, userID, teamID string, dek []byte) error {
