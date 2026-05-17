@@ -59,6 +59,7 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
 	e.POST("/sync/push/:name", h.Push)
 	e.POST("/sync/pull/:name", h.Pull)
 	e.POST("/sync/rotate-key/:name", h.RotateKey)
+	e.POST("/sync/all", h.SyncAll)
 	log.Printf("[SYNC] Registered GitHub sync endpoints (/sync/*)")
 	return nil
 }
@@ -230,6 +231,29 @@ func (h *Handlers) Pull(c echo.Context) error {
 	if err != nil {
 		log.Printf("[SYNC] pull error for %s: %v", name, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("pull failed: %v", err))
+	}
+
+	return c.JSON(http.StatusOK, resp)
+}
+
+// SyncAll handles POST /sync/all (admin only).
+// It pushes and/or pulls all settings that have GitHub sync enabled.
+func (h *Handlers) SyncAll(c echo.Context) error {
+	user := auth.GetUserFromContext(c)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	if !user.IsAdmin() {
+		return echo.NewHTTPError(http.StatusForbidden, "admin permission required")
+	}
+
+	var req SyncAllRequest
+	_ = c.Bind(&req)
+
+	resp, err := h.syncer.SyncAll(c.Request().Context(), req.Direction, req.DeleteOrphans, req.CommitMessage)
+	if err != nil {
+		log.Printf("[SYNC] sync-all error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("sync-all failed: %v", err))
 	}
 
 	return c.JSON(http.StatusOK, resp)

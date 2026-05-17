@@ -328,6 +328,59 @@ func (s *Syncer) importFileByPath(ctx context.Context, filePath string, content 
 	}
 }
 
+// SyncAll pushes and/or pulls all settings that have GitHub sync enabled.
+// direction must be "push", "pull", or "both" (empty defaults to "both").
+// Each tenant is synced independently; errors are captured per-result without aborting others.
+func (s *Syncer) SyncAll(ctx context.Context, direction string, deleteOrphans bool, commitMessage string) (*SyncAllResponse, error) {
+	if direction == "" {
+		direction = "both"
+	}
+
+	allSettings, err := s.settingsRepo.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list settings: %w", err)
+	}
+
+	resp := &SyncAllResponse{SyncedAt: time.Now()}
+	for _, settings := range allSettings {
+		cfg := settings.GitSync()
+		if cfg == nil || !cfg.Enabled {
+			continue
+		}
+		name := settings.Name()
+		result := SyncAllResult{SettingsName: name}
+
+		if direction == "push" || direction == "both" {
+			pushResp, pushErr := s.Push(ctx, name, name, commitMessage)
+			if pushErr != nil {
+				result.Error = "push: " + pushErr.Error()
+				resp.Results = append(resp.Results, result)
+				log.Printf("[SYNC] SyncAll push error for %s: %v", name, pushErr)
+				continue
+			}
+			result.Push = pushResp
+		}
+
+		if direction == "pull" || direction == "both" {
+			pullResp, pullErr := s.Pull(ctx, name, name, deleteOrphans)
+			if pullErr != nil {
+				msg := "pull: " + pullErr.Error()
+				if result.Error != "" {
+					result.Error += "; " + msg
+				} else {
+					result.Error = msg
+				}
+				log.Printf("[SYNC] SyncAll pull error for %s: %v", name, pullErr)
+			} else {
+				result.Pull = pullResp
+			}
+		}
+
+		resp.Results = append(resp.Results, result)
+	}
+	return resp, nil
+}
+
 // RotateKey generates a fresh DEK, re-encrypts all GitHub files, and updates Settings.
 func (s *Syncer) RotateKey(ctx context.Context, settingsName, userID string) (*RotateKeyResponse, error) {
 	settings, err := s.settingsRepo.FindByName(ctx, settingsName)

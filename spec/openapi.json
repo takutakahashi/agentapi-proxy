@@ -3909,6 +3909,52 @@
         },
         "security": [{ "bearerAuth": [] }]
       }
+    },
+    "/sync/all": {
+      "post": {
+        "summary": "Sync all tenants",
+        "description": "Pushes and/or pulls GitHub sync for every settings tenant that has sync enabled. Only accessible by admin users. Push is idempotent: no commit is created when file contents are unchanged.",
+        "tags": ["GitHubSync"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "direction": {
+                    "type": "string",
+                    "enum": ["push", "pull", "both"],
+                    "default": "both",
+                    "description": "Which sync operations to perform: push (local→GitHub), pull (GitHub→local), or both (default)"
+                  },
+                  "delete_orphans": {
+                    "type": "boolean",
+                    "description": "Remove local resources that no longer exist in GitHub (applies to pull operations)"
+                  },
+                  "commit_message": {
+                    "type": "string",
+                    "description": "Override the default commit message for push operations"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync completed (individual tenant errors are captured in results[].error)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SyncAllResponse" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden — admin permission required" },
+          "500": { "description": "Internal server error" }
+        },
+        "security": [{ "bearerAuth": [] }]
+      }
     }
   },
   "components": {
@@ -3983,6 +4029,25 @@
         "properties": {
           "files_written": { "type": "integer" },
           "files_deleted": { "type": "integer" }
+        }
+      },
+      "SyncAllResult": {
+        "type": "object",
+        "properties": {
+          "settings_name": { "type": "string", "description": "Settings name (user ID or team name)" },
+          "push": { "$ref": "#/components/schemas/PushResponse" },
+          "pull": { "$ref": "#/components/schemas/PullResponse" },
+          "error": { "type": "string", "description": "Error message if sync failed for this tenant" }
+        }
+      },
+      "SyncAllResponse": {
+        "type": "object",
+        "properties": {
+          "synced_at": { "type": "string", "format": "date-time" },
+          "results": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SyncAllResult" }
+          }
         }
       },
       "Memory": {

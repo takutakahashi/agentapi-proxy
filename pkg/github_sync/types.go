@@ -90,6 +90,28 @@ type SyncEncryptionResponse struct {
 	DEKReady   bool `json:"dek_ready"` // true when encryptedDEK is non-empty
 }
 
+// SyncAllRequest is the HTTP request body for POST /sync/all.
+type SyncAllRequest struct {
+	// Direction controls which sync operations are performed: "push", "pull", or "both" (default).
+	Direction     string `json:"direction,omitempty"`
+	DeleteOrphans bool   `json:"delete_orphans,omitempty"`
+	CommitMessage string `json:"commit_message,omitempty"`
+}
+
+// SyncAllResponse summarises the result of syncing all tenants.
+type SyncAllResponse struct {
+	SyncedAt time.Time       `json:"synced_at"`
+	Results  []SyncAllResult `json:"results"`
+}
+
+// SyncAllResult holds the push/pull result for a single settings tenant.
+type SyncAllResult struct {
+	SettingsName string        `json:"settings_name"`
+	Push         *PushResponse `json:"push,omitempty"`
+	Pull         *PullResponse `json:"pull,omitempty"`
+	Error        string        `json:"error,omitempty"`
+}
+
 // UpdateSyncConfigRequest is the HTTP request body for PUT /sync/config.
 // Encryption settings (KMS key ARN, AWS region) are set at the proxy level and cannot be provided by the user.
 type UpdateSyncConfigRequest struct {
