@@ -90,6 +90,11 @@ func (c *GitHubSyncClient) PushFiles(ctx context.Context, branch, commitMessage 
 		return "", fmt.Errorf("create tree: %w", err)
 	}
 
+	// Idempotency check: if the tree didn't change, skip creating a commit.
+	if newTree.GetSHA() == baseTreeSHA {
+		return headSHA, nil
+	}
+
 	// 5. Create commit
 	newCommit, _, err := c.client.Git.CreateCommit(ctx, c.owner, c.repo, &github.Commit{
 		Message: github.String(commitMessage),

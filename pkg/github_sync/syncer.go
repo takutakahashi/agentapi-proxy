@@ -328,6 +328,89 @@ func (s *Syncer) importFileByPath(ctx context.Context, filePath string, content 
 	}
 }
 
+// resolveSyncDirection determines whether to push or pull for a tenant by comparing
+// the remote .sync-meta.yaml syncedAt timestamp with the local LastPushedAt.
+// Returns "pull" when GitHub is newer, "push" otherwise.
+func (s *Syncer) resolveSyncDirection(ctx context.Context, cfg *entities.GitSyncConfig, settingsName string) (string, error) {
+	token, err := s.resolveToken(cfg.GitHubToken)
+	if err != nil {
+		return "", err
+	}
+	ghClient, err := NewGitHubSyncClient(ctx, token, cfg.RepoFullName)
+	if err != nil {
+		return "", err
+	}
+	rootPath := strings.TrimRight(cfg.RootPath, "/") + "/"
+	metaPath := rootPath + settingsName + "/.sync-meta.yaml"
+
+	var remoteSyncedAt time.Time
+	if metaBytes, metaErr := ghClient.GetFile(ctx, cfg.Branch, metaPath); metaErr == nil {
+		var meta SyncMeta
+		if parseErr := yaml.Unmarshal(metaBytes, &meta); parseErr == nil {
+			remoteSyncedAt = meta.SyncedAt
+		}
+	}
+
+	if !remoteSyncedAt.IsZero() && remoteSyncedAt.After(cfg.LastPushedAt) {
+		return "pull", nil
+	}
+	return "push", nil
+}
+
+// SyncAll syncs all settings that have GitHub sync enabled.
+// The direction (push/pull) is determined automatically per tenant by comparing
+// the remote .sync-meta.yaml syncedAt against the local LastPushedAt:
+// if GitHub is newer → pull; otherwise → push.
+// Each tenant is processed independently; errors are captured in results without aborting others.
+func (s *Syncer) SyncAll(ctx context.Context, deleteOrphans bool, commitMessage string) (*SyncAllResponse, error) {
+	allSettings, err := s.settingsRepo.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list settings: %w", err)
+	}
+
+	resp := &SyncAllResponse{SyncedAt: time.Now()}
+	for _, settings := range allSettings {
+		cfg := settings.GitSync()
+		if cfg == nil || !cfg.Enabled {
+			continue
+		}
+		name := settings.Name()
+		result := SyncAllResult{SettingsName: name}
+
+		direction, dirErr := s.resolveSyncDirection(ctx, cfg, name)
+		if dirErr != nil {
+			result.Error = "direction check: " + dirErr.Error()
+			result.Direction = "unknown"
+			log.Printf("[SYNC] SyncAll direction error for %s: %v", name, dirErr)
+			resp.Results = append(resp.Results, result)
+			continue
+		}
+		result.Direction = direction
+
+		switch direction {
+		case "pull":
+			pullResp, pullErr := s.Pull(ctx, name, name, deleteOrphans)
+			if pullErr != nil {
+				result.Error = "pull: " + pullErr.Error()
+				log.Printf("[SYNC] SyncAll pull error for %s: %v", name, pullErr)
+			} else {
+				result.Pull = pullResp
+			}
+		default:
+			pushResp, pushErr := s.Push(ctx, name, name, commitMessage)
+			if pushErr != nil {
+				result.Error = "push: " + pushErr.Error()
+				log.Printf("[SYNC] SyncAll push error for %s: %v", name, pushErr)
+			} else {
+				result.Push = pushResp
+			}
+		}
+
+		resp.Results = append(resp.Results, result)
+	}
+	return resp, nil
+}
+
 // RotateKey generates a fresh DEK, re-encrypts all GitHub files, and updates Settings.
 func (s *Syncer) RotateKey(ctx context.Context, settingsName, userID string) (*RotateKeyResponse, error) {
 	settings, err := s.settingsRepo.FindByName(ctx, settingsName)

@@ -3909,6 +3909,46 @@
         },
         "security": [{ "bearerAuth": [] }]
       }
+    },
+    "/sync/all": {
+      "post": {
+        "summary": "Sync all tenants",
+        "description": "Syncs GitHub for every settings tenant that has sync enabled. Only accessible by admin users. The direction (push/pull) is determined automatically per tenant by comparing the remote .sync-meta.yaml syncedAt timestamp against the local LastPushedAt: if GitHub is newer the tenant is pulled, otherwise pushed. Push is idempotent: no commit is created when file contents are unchanged.",
+        "tags": ["GitHubSync"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "delete_orphans": {
+                    "type": "boolean",
+                    "description": "Remove local resources that no longer exist in GitHub (applies when pull is selected for a tenant)"
+                  },
+                  "commit_message": {
+                    "type": "string",
+                    "description": "Override the default commit message when push is selected for a tenant"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync completed (individual tenant errors are captured in results[].error)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SyncAllResponse" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden — admin permission required" },
+          "500": { "description": "Internal server error" }
+        },
+        "security": [{ "bearerAuth": [] }]
+      }
     }
   },
   "components": {
@@ -3983,6 +4023,26 @@
         "properties": {
           "files_written": { "type": "integer" },
           "files_deleted": { "type": "integer" }
+        }
+      },
+      "SyncAllResult": {
+        "type": "object",
+        "properties": {
+          "settings_name": { "type": "string", "description": "Settings name (user ID or team name)" },
+          "direction": { "type": "string", "enum": ["push", "pull", "unknown"], "description": "Automatically determined sync direction" },
+          "push": { "$ref": "#/components/schemas/PushResponse" },
+          "pull": { "$ref": "#/components/schemas/PullResponse" },
+          "error": { "type": "string", "description": "Error message if sync failed for this tenant" }
+        }
+      },
+      "SyncAllResponse": {
+        "type": "object",
+        "properties": {
+          "synced_at": { "type": "string", "format": "date-time" },
+          "results": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SyncAllResult" }
+          }
         }
       },
       "Memory": {
