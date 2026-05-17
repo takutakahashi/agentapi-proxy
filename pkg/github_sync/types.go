@@ -92,8 +92,6 @@ type SyncEncryptionResponse struct {
 
 // SyncAllRequest is the HTTP request body for POST /sync/all.
 type SyncAllRequest struct {
-	// Direction controls which sync operations are performed: "push", "pull", or "both" (default).
-	Direction     string `json:"direction,omitempty"`
 	DeleteOrphans bool   `json:"delete_orphans,omitempty"`
 	CommitMessage string `json:"commit_message,omitempty"`
 }
@@ -104,9 +102,12 @@ type SyncAllResponse struct {
 	Results  []SyncAllResult `json:"results"`
 }
 
-// SyncAllResult holds the push/pull result for a single settings tenant.
+// SyncAllResult holds the result for a single settings tenant.
+// Direction is "push" or "pull", determined automatically by comparing
+// the remote .sync-meta.yaml syncedAt against the local LastPushedAt.
 type SyncAllResult struct {
 	SettingsName string        `json:"settings_name"`
+	Direction    string        `json:"direction"`
 	Push         *PushResponse `json:"push,omitempty"`
 	Pull         *PullResponse `json:"pull,omitempty"`
 	Error        string        `json:"error,omitempty"`

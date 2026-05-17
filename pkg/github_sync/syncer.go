@@ -328,14 +328,41 @@ func (s *Syncer) importFileByPath(ctx context.Context, filePath string, content 
 	}
 }
 
-// SyncAll pushes and/or pulls all settings that have GitHub sync enabled.
-// direction must be "push", "pull", or "both" (empty defaults to "both").
-// Each tenant is synced independently; errors are captured per-result without aborting others.
-func (s *Syncer) SyncAll(ctx context.Context, direction string, deleteOrphans bool, commitMessage string) (*SyncAllResponse, error) {
-	if direction == "" {
-		direction = "both"
+// resolveSyncDirection determines whether to push or pull for a tenant by comparing
+// the remote .sync-meta.yaml syncedAt timestamp with the local LastPushedAt.
+// Returns "pull" when GitHub is newer, "push" otherwise.
+func (s *Syncer) resolveSyncDirection(ctx context.Context, cfg *entities.GitSyncConfig, settingsName string) (string, error) {
+	token, err := s.resolveToken(cfg.GitHubToken)
+	if err != nil {
+		return "", err
+	}
+	ghClient, err := NewGitHubSyncClient(ctx, token, cfg.RepoFullName)
+	if err != nil {
+		return "", err
+	}
+	rootPath := strings.TrimRight(cfg.RootPath, "/") + "/"
+	metaPath := rootPath + settingsName + "/.sync-meta.yaml"
+
+	var remoteSyncedAt time.Time
+	if metaBytes, metaErr := ghClient.GetFile(ctx, cfg.Branch, metaPath); metaErr == nil {
+		var meta SyncMeta
+		if parseErr := yaml.Unmarshal(metaBytes, &meta); parseErr == nil {
+			remoteSyncedAt = meta.SyncedAt
+		}
 	}
 
+	if !remoteSyncedAt.IsZero() && remoteSyncedAt.After(cfg.LastPushedAt) {
+		return "pull", nil
+	}
+	return "push", nil
+}
+
+// SyncAll syncs all settings that have GitHub sync enabled.
+// The direction (push/pull) is determined automatically per tenant by comparing
+// the remote .sync-meta.yaml syncedAt against the local LastPushedAt:
+// if GitHub is newer → pull; otherwise → push.
+// Each tenant is processed independently; errors are captured in results without aborting others.
+func (s *Syncer) SyncAll(ctx context.Context, deleteOrphans bool, commitMessage string) (*SyncAllResponse, error) {
 	allSettings, err := s.settingsRepo.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list settings: %w", err)
@@ -350,29 +377,32 @@ func (s *Syncer) SyncAll(ctx context.Context, direction string, deleteOrphans bo
 		name := settings.Name()
 		result := SyncAllResult{SettingsName: name}
 
-		if direction == "push" || direction == "both" {
-			pushResp, pushErr := s.Push(ctx, name, name, commitMessage)
-			if pushErr != nil {
-				result.Error = "push: " + pushErr.Error()
-				resp.Results = append(resp.Results, result)
-				log.Printf("[SYNC] SyncAll push error for %s: %v", name, pushErr)
-				continue
-			}
-			result.Push = pushResp
+		direction, dirErr := s.resolveSyncDirection(ctx, cfg, name)
+		if dirErr != nil {
+			result.Error = "direction check: " + dirErr.Error()
+			result.Direction = "unknown"
+			log.Printf("[SYNC] SyncAll direction error for %s: %v", name, dirErr)
+			resp.Results = append(resp.Results, result)
+			continue
 		}
+		result.Direction = direction
 
-		if direction == "pull" || direction == "both" {
+		switch direction {
+		case "pull":
 			pullResp, pullErr := s.Pull(ctx, name, name, deleteOrphans)
 			if pullErr != nil {
-				msg := "pull: " + pullErr.Error()
-				if result.Error != "" {
-					result.Error += "; " + msg
-				} else {
-					result.Error = msg
-				}
+				result.Error = "pull: " + pullErr.Error()
 				log.Printf("[SYNC] SyncAll pull error for %s: %v", name, pullErr)
 			} else {
 				result.Pull = pullResp
+			}
+		default:
+			pushResp, pushErr := s.Push(ctx, name, name, commitMessage)
+			if pushErr != nil {
+				result.Error = "push: " + pushErr.Error()
+				log.Printf("[SYNC] SyncAll push error for %s: %v", name, pushErr)
+			} else {
+				result.Push = pushResp
 			}
 		}
 

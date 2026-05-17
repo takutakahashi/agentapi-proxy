@@ -3913,7 +3913,7 @@
     "/sync/all": {
       "post": {
         "summary": "Sync all tenants",
-        "description": "Pushes and/or pulls GitHub sync for every settings tenant that has sync enabled. Only accessible by admin users. Push is idempotent: no commit is created when file contents are unchanged.",
+        "description": "Syncs GitHub for every settings tenant that has sync enabled. Only accessible by admin users. The direction (push/pull) is determined automatically per tenant by comparing the remote .sync-meta.yaml syncedAt timestamp against the local LastPushedAt: if GitHub is newer the tenant is pulled, otherwise pushed. Push is idempotent: no commit is created when file contents are unchanged.",
         "tags": ["GitHubSync"],
         "requestBody": {
           "content": {
@@ -3921,19 +3921,13 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "direction": {
-                    "type": "string",
-                    "enum": ["push", "pull", "both"],
-                    "default": "both",
-                    "description": "Which sync operations to perform: push (local→GitHub), pull (GitHub→local), or both (default)"
-                  },
                   "delete_orphans": {
                     "type": "boolean",
-                    "description": "Remove local resources that no longer exist in GitHub (applies to pull operations)"
+                    "description": "Remove local resources that no longer exist in GitHub (applies when pull is selected for a tenant)"
                   },
                   "commit_message": {
                     "type": "string",
-                    "description": "Override the default commit message for push operations"
+                    "description": "Override the default commit message when push is selected for a tenant"
                   }
                 }
               }
@@ -4035,6 +4029,7 @@
         "type": "object",
         "properties": {
           "settings_name": { "type": "string", "description": "Settings name (user ID or team name)" },
+          "direction": { "type": "string", "enum": ["push", "pull", "unknown"], "description": "Automatically determined sync direction" },
           "push": { "$ref": "#/components/schemas/PushResponse" },
           "pull": { "$ref": "#/components/schemas/PullResponse" },
           "error": { "type": "string", "description": "Error message if sync failed for this tenant" }

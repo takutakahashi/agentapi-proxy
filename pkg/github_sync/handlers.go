@@ -250,7 +250,7 @@ func (h *Handlers) SyncAll(c echo.Context) error {
 	var req SyncAllRequest
 	_ = c.Bind(&req)
 
-	resp, err := h.syncer.SyncAll(c.Request().Context(), req.Direction, req.DeleteOrphans, req.CommitMessage)
+	resp, err := h.syncer.SyncAll(c.Request().Context(), req.DeleteOrphans, req.CommitMessage)
 	if err != nil {
 		log.Printf("[SYNC] sync-all error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("sync-all failed: %v", err))
