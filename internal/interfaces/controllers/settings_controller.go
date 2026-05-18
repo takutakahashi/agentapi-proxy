@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
+	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 )
 
 // BaseSettingsName is the reserved name for global base settings (admin-only)
@@ -243,7 +244,7 @@ func (c *SettingsController) GetSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	name := ctx.Param("name")
+	name := urlutil.DecodeSlashParam(ctx.Param("name"))
 	if name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Name is required")
 	}
@@ -271,7 +272,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	name := ctx.Param("name")
+	name := urlutil.DecodeSlashParam(ctx.Param("name"))
 	if name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Name is required")
 	}
@@ -565,7 +566,7 @@ func (c *SettingsController) DeleteGitSync(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	name := ctx.Param("name")
+	name := urlutil.DecodeSlashParam(ctx.Param("name"))
 	if name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Name is required")
 	}
@@ -597,7 +598,7 @@ func (c *SettingsController) DeleteSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	name := ctx.Param("name")
+	name := urlutil.DecodeSlashParam(ctx.Param("name"))
 	if name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Name is required")
 	}
