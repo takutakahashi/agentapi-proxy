@@ -894,6 +894,37 @@ func (i *Importer) convertSettingsImport(ctx context.Context, settingsImport Set
 		settingsEntity.SetEnabledPlugins(settingsImport.EnabledPlugins)
 	}
 
+	// Decrypt EnvVars
+	if len(settingsImport.EnvVars) > 0 {
+		envVars := make(map[string]string)
+		for k, v := range settingsImport.EnvVars {
+			if settingsImport.EnvVarsEncrypted != nil && settingsImport.EnvVarsEncrypted[k] != nil {
+				if i.encryptionService == nil {
+					return nil, fmt.Errorf("encrypted env var %s found but encryption service not configured", k)
+				}
+				encrypted := &services.EncryptedData{
+					EncryptedValue: v,
+					Metadata: services.EncryptionMetadata{
+						Algorithm:   settingsImport.EnvVarsEncrypted[k].Algorithm,
+						KeyID:       settingsImport.EnvVarsEncrypted[k].KeyID,
+						EncryptedAt: settingsImport.EnvVarsEncrypted[k].EncryptedAt,
+						Version:     settingsImport.EnvVarsEncrypted[k].Version,
+					},
+				}
+				plaintext, err := i.encryptionService.Decrypt(ctx, encrypted)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt env var %s: %w", k, err)
+				}
+				envVars[k] = plaintext
+			} else if v != "" {
+				envVars[k] = v
+			}
+		}
+		if len(envVars) > 0 {
+			settingsEntity.SetEnvVars(envVars)
+		}
+	}
+
 	return settingsEntity, nil
 }
 

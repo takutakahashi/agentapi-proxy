@@ -1137,7 +1137,7 @@ func (s *Syncer) importSlackbotFile(ctx context.Context, data []byte, scope enti
 func encryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error {
 	encryptMapValues := func(m map[string]string, context string) error {
 		for k, v := range m {
-			if IsSensitiveKey(k) && !IsEncrypted(v) {
+			if !IsEncrypted(v) {
 				enc, err := EncryptField(dek, v)
 				if err != nil {
 					return fmt.Errorf("encrypt %s %s: %w", context, k, err)
@@ -1215,6 +1215,11 @@ func encryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 			}
 			mcp.HeadersEncrypted = nil
 		}
+
+		if err := encryptMapValues(s.EnvVars, "settings env_vars"); err != nil {
+			return err
+		}
+		s.EnvVarsEncrypted = nil
 	}
 
 	return nil
@@ -1288,6 +1293,10 @@ func decryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 			if err := decryptMapValues(mcp.Headers, "MCP header"); err != nil {
 				return err
 			}
+		}
+
+		if err := decryptMapValues(s.EnvVars, "settings env_vars"); err != nil {
+			return err
 		}
 	}
 

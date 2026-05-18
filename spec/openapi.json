@@ -3725,61 +3725,10 @@
         }
       }
     },
-    "/sync/config/{name}": {
-      "get": {
-        "summary": "Get GitHub sync configuration",
-        "description": "Returns the GitHub sync configuration for the specified user or team settings (token redacted).",
-        "tags": ["GitHubSync"],
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Settings name (user ID or team name)"
-          }
-        ],
-        "responses": {
-          "200": { "description": "Sync configuration" },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" },
-          "404": { "description": "Not found" }
-        },
-        "security": [{ "bearerAuth": [] }]
-      },
-      "put": {
-        "summary": "Update GitHub sync configuration",
-        "description": "Creates or updates the GitHub sync configuration for the specified settings. If a DEK already exists it is preserved.",
-        "tags": ["GitHubSync"],
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/UpdateSyncConfigRequest" }
-            }
-          }
-        },
-        "responses": {
-          "200": { "description": "Updated configuration" },
-          "400": { "description": "Bad request" },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" },
-          "404": { "description": "Not found" },
-          "500": { "description": "Internal server error" }
-        },
-        "security": [{ "bearerAuth": [] }]
-      },
+    "/settings/{name}/sync": {
       "delete": {
         "summary": "Delete GitHub sync configuration",
-        "description": "Removes the GitHub sync configuration from the specified settings.",
+        "description": "Removes the GitHub sync configuration from the specified settings. The sync config can also be set via PUT /settings/{name} with a git_sync field.",
         "tags": ["GitHubSync"],
         "parameters": [
           {
@@ -3799,7 +3748,7 @@
         "security": [{ "bearerAuth": [] }]
       }
     },
-    "/sync/push/{name}": {
+    "/settings/{name}/sync/push": {
       "post": {
         "summary": "Push resources to GitHub",
         "description": "Exports all resources (memories, tasks, schedules, webhooks, settings, etc.) and commits them to the configured GitHub repository. Sensitive fields are encrypted with AES-256-GCM using an AWS KMS-managed DEK.",
@@ -3840,7 +3789,7 @@
         "security": [{ "bearerAuth": [] }]
       }
     },
-    "/sync/pull/{name}": {
+    "/settings/{name}/sync/pull": {
       "post": {
         "summary": "Pull resources from GitHub",
         "description": "Downloads resources from the configured GitHub repository and imports them into the local store. Encrypted fields are decrypted using the stored DEK.",
@@ -3881,7 +3830,7 @@
         "security": [{ "bearerAuth": [] }]
       }
     },
-    "/sync/rotate-key/{name}": {
+    "/settings/{name}/sync/rotate-key": {
       "post": {
         "summary": "Rotate the sync encryption key",
         "description": "Generates a new DEK via AWS KMS, re-encrypts all values in the GitHub repository with the new DEK, and commits atomically. The old encryptedDEK is replaced in Settings.",
@@ -3910,7 +3859,7 @@
         "security": [{ "bearerAuth": [] }]
       }
     },
-    "/sync/all": {
+    "/settings/sync/all": {
       "post": {
         "summary": "Sync all tenants",
         "description": "Syncs GitHub for every settings tenant that has sync enabled. Only accessible by admin users. The direction (push/pull) is determined automatically per tenant by comparing the remote .sync-meta.yaml syncedAt timestamp against the local LastPushedAt: if GitHub is newer the tenant is pulled, otherwise pushed. Push is idempotent: no commit is created when file contents are unchanged.",
@@ -3953,7 +3902,7 @@
   },
   "components": {
     "schemas": {
-      "SyncConfigResponse": {
+      "GitSyncConfigResponse": {
         "type": "object",
         "description": "Public view of GitHub sync configuration (token redacted)",
         "properties": {
@@ -3962,37 +3911,29 @@
           "branch": { "type": "string", "example": "main" },
           "root_path": { "type": "string", "example": "agentapi-config/" },
           "auto_push": { "type": "boolean" },
+          "has_github_token": { "type": "boolean", "description": "true when a GitHub token is configured" },
           "encryption": { "$ref": "#/components/schemas/SyncEncryptionResponse" }
+        }
+      },
+      "GitSyncConfigRequest": {
+        "type": "object",
+        "description": "GitHub sync configuration. Encryption settings (KMS key ARN, AWS region) are set at the proxy level.",
+        "required": ["repo_full_name"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "repo_full_name": { "type": "string", "example": "owner/repo" },
+          "branch": { "type": "string", "example": "main", "description": "Defaults to 'main' if omitted" },
+          "root_path": { "type": "string", "example": "agentapi-config/", "description": "Defaults to 'agentapi-config/' if omitted" },
+          "auto_push": { "type": "boolean" },
+          "github_token": { "type": "string", "description": "GitHub PAT (write-only, not returned). Existing token is preserved if omitted." }
         }
       },
       "SyncEncryptionResponse": {
         "type": "object",
         "description": "Public encryption info (no secrets)",
         "properties": {
-          "kms_key_arn": { "type": "string" },
-          "aws_region": { "type": "string" },
           "dek_version": { "type": "integer" },
           "dek_ready": { "type": "boolean", "description": "true when a DEK has been generated and stored" }
-        }
-      },
-      "UpdateSyncConfigRequest": {
-        "type": "object",
-        "required": ["repo_full_name", "encryption"],
-        "properties": {
-          "enabled": { "type": "boolean" },
-          "repo_full_name": { "type": "string", "example": "owner/repo" },
-          "branch": { "type": "string", "example": "main" },
-          "root_path": { "type": "string", "example": "agentapi-config/" },
-          "auto_push": { "type": "boolean" },
-          "github_token": { "type": "string", "description": "GitHub PAT (write-only, not returned)" },
-          "encryption": {
-            "type": "object",
-            "required": ["kms_key_arn", "aws_region"],
-            "properties": {
-              "kms_key_arn": { "type": "string" },
-              "aws_region": { "type": "string" }
-            }
-          }
         }
       },
       "PushResponse": {
@@ -5461,6 +5402,10 @@
           "slack_user_id": {
             "type": "string",
             "description": "Slack user ID for DM notifications. Set to empty string to remove."
+          },
+          "git_sync": {
+            "$ref": "#/components/schemas/GitSyncConfigRequest",
+            "description": "GitHub sync configuration. If omitted, the existing sync configuration is preserved."
           }
         }
       },
@@ -5632,6 +5577,10 @@
           "slack_user_id": {
             "type": "string",
             "description": "Slack user ID for DM notifications."
+          },
+          "git_sync": {
+            "$ref": "#/components/schemas/GitSyncConfigResponse",
+            "description": "GitHub sync configuration (token redacted). Null if not configured."
           },
           "created_at": {
             "type": "string",

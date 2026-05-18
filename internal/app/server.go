@@ -196,6 +196,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	settingsRepo = repositories.NewKubernetesSettingsRepository(
 		k8sSessionManager.GetClient(),
 		k8sSessionManager.GetNamespace(),
+		encryptionRegistry,
 	)
 	// Set settings repository in session manager for Bedrock integration
 	k8sSessionManager.SetSettingsRepository(settingsRepo)

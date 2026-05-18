@@ -195,14 +195,16 @@ type EncryptedSecretData struct {
 
 // SettingsImport represents settings for import/export
 type SettingsImport struct {
-	Name                          string                        `yaml:"name" toml:"name" json:"name"`
-	Bedrock                       *BedrockSettingsImport        `yaml:"bedrock,omitempty" toml:"bedrock,omitempty" json:"bedrock,omitempty"`
-	MCPServers                    map[string]*MCPServerImport   `yaml:"mcp_servers,omitempty" toml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
-	Marketplaces                  map[string]*MarketplaceImport `yaml:"marketplaces,omitempty" toml:"marketplaces,omitempty" json:"marketplaces,omitempty"`
-	ClaudeCodeOAuthToken          string                        `yaml:"claude_code_oauth_token,omitempty" toml:"claude_code_oauth_token,omitempty" json:"claude_code_oauth_token,omitempty"`
-	ClaudeCodeOAuthTokenEncrypted *EncryptedSecretData          `yaml:"claude_code_oauth_token_encrypted,omitempty" toml:"claude_code_oauth_token_encrypted,omitempty" json:"claude_code_oauth_token_encrypted,omitempty"`
-	AuthMode                      string                        `yaml:"auth_mode,omitempty" toml:"auth_mode,omitempty" json:"auth_mode,omitempty"`
-	EnabledPlugins                []string                      `yaml:"enabled_plugins,omitempty" toml:"enabled_plugins,omitempty" json:"enabled_plugins,omitempty"`
+	Name                          string                          `yaml:"name" toml:"name" json:"name"`
+	Bedrock                       *BedrockSettingsImport          `yaml:"bedrock,omitempty" toml:"bedrock,omitempty" json:"bedrock,omitempty"`
+	MCPServers                    map[string]*MCPServerImport     `yaml:"mcp_servers,omitempty" toml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+	Marketplaces                  map[string]*MarketplaceImport   `yaml:"marketplaces,omitempty" toml:"marketplaces,omitempty" json:"marketplaces,omitempty"`
+	ClaudeCodeOAuthToken          string                          `yaml:"claude_code_oauth_token,omitempty" toml:"claude_code_oauth_token,omitempty" json:"claude_code_oauth_token,omitempty"`
+	ClaudeCodeOAuthTokenEncrypted *EncryptedSecretData            `yaml:"claude_code_oauth_token_encrypted,omitempty" toml:"claude_code_oauth_token_encrypted,omitempty" json:"claude_code_oauth_token_encrypted,omitempty"`
+	AuthMode                      string                          `yaml:"auth_mode,omitempty" toml:"auth_mode,omitempty" json:"auth_mode,omitempty"`
+	EnabledPlugins                []string                        `yaml:"enabled_plugins,omitempty" toml:"enabled_plugins,omitempty" json:"enabled_plugins,omitempty"`
+	EnvVars                       map[string]string               `yaml:"env_vars,omitempty" toml:"env_vars,omitempty" json:"env_vars,omitempty"`
+	EnvVarsEncrypted              map[string]*EncryptedSecretData `yaml:"env_vars_encrypted,omitempty" toml:"env_vars_encrypted,omitempty" json:"env_vars_encrypted,omitempty"`
 }
 
 // BedrockSettingsImport represents Bedrock settings for import/export

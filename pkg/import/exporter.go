@@ -414,6 +414,24 @@ func (e *Exporter) convertSettingsToImport(ctx context.Context, s *entities.Sett
 		}
 	}
 
+	// Encrypt EnvVars
+	if envVars := s.EnvVars(); len(envVars) > 0 {
+		settingsImport.EnvVars = make(map[string]string)
+		if e.shouldEncrypt() {
+			settingsImport.EnvVarsEncrypted = make(map[string]*EncryptedSecretData)
+			for k, v := range envVars {
+				encrypted, err := e.encryptionService.Encrypt(ctx, v)
+				if err != nil {
+					return nil, fmt.Errorf("failed to encrypt env var %s: %w", k, err)
+				}
+				settingsImport.EnvVars[k] = encrypted.EncryptedValue
+				settingsImport.EnvVarsEncrypted[k] = e.toEncryptedSecretData(encrypted)
+			}
+		} else if e.isNoopEncryption() {
+			settingsImport.EnvVars = envVars
+		}
+	}
+
 	return settingsImport, nil
 }
 
