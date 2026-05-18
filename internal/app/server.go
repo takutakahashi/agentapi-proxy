@@ -58,6 +58,8 @@ type Server struct {
 	taskGroupRepo    portrepos.TaskGroupRepository    // Task group repository
 	sessionRouteRepo portrepos.SessionRouteRepository // Session route repository for proxy B routing
 	userFileRepo     portrepos.UserFileRepository     // User-managed files repository
+	webhookRepo      portrepos.WebhookRepository      // Webhook repository
+	slackBotRepo     portrepos.SlackBotRepository     // SlackBot repository
 	router           *Router                          // Router for custom handler registration
 }
 
@@ -1048,6 +1050,26 @@ func (s *Server) GetTaskRepository() portrepos.TaskRepository {
 // GetTaskGroupRepository returns the task group repository
 func (s *Server) GetTaskGroupRepository() portrepos.TaskGroupRepository {
 	return s.taskGroupRepo
+}
+
+// GetWebhookRepository returns the webhook repository
+func (s *Server) GetWebhookRepository() portrepos.WebhookRepository {
+	return s.webhookRepo
+}
+
+// SetWebhookRepository sets the webhook repository
+func (s *Server) SetWebhookRepository(repo portrepos.WebhookRepository) {
+	s.webhookRepo = repo
+}
+
+// GetSlackBotRepository returns the SlackBot repository
+func (s *Server) GetSlackBotRepository() portrepos.SlackBotRepository {
+	return s.slackBotRepo
+}
+
+// SetSlackBotRepository sets the SlackBot repository
+func (s *Server) SetSlackBotRepository(repo portrepos.SlackBotRepository) {
+	s.slackBotRepo = repo
 }
 
 // ExtractRepositoryInfo extracts repository information from tags.
