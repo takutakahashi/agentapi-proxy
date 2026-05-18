@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	domainservices "github.com/takutakahashi/agentapi-proxy/internal/domain/services"
+	infraservices "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 const (
@@ -27,6 +30,16 @@ const (
 	SettingsSecretPrefix = "agentapi-settings-"
 )
 
+// encryptedEnvVarJSON is the JSON representation of a single encrypted env var value.
+// It embeds the encryption metadata needed to select the correct decryptor.
+type encryptedEnvVarJSON struct {
+	EncryptedValue string    `json:"v"`
+	Algorithm      string    `json:"alg"`
+	KeyID          string    `json:"kid"`
+	EncryptedAt    time.Time `json:"at"`
+	Version        string    `json:"ver,omitempty"`
+}
+
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
 	Name                    string                                 `json:"name"`
@@ -36,7 +49,8 @@ type settingsJSON struct {
 	ClaudeCodeOAuthToken    string                                 `json:"claude_code_oauth_token,omitempty"`
 	AuthMode                string                                 `json:"auth_mode,omitempty"`
 	EnabledPlugins          []string                               `json:"enabled_plugins,omitempty"`           // plugin@marketplace format
-	EnvVars                 map[string]string                      `json:"env_vars,omitempty"`                  // Custom environment variables
+	EnvVars                 map[string]string                      `json:"env_vars,omitempty"`                  // plain env vars (legacy / noop)
+	EncryptedEnvVars        map[string]encryptedEnvVarJSON         `json:"encrypted_env_vars,omitempty"`        // encrypted env vars
 	PreferredTeamID         string                                 `json:"preferred_team_id,omitempty"`         // "org/team-slug" format
 	SlackUserID             string                                 `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
 	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
@@ -93,15 +107,24 @@ type gitSyncJSON struct {
 
 // KubernetesSettingsRepository implements SettingsRepository using Kubernetes Secrets
 type KubernetesSettingsRepository struct {
-	client    kubernetes.Interface
-	namespace string
+	client             kubernetes.Interface
+	namespace          string
+	encryptionRegistry *infraservices.EncryptionServiceRegistry // optional; nil = store env_vars as plain text
 }
 
-// NewKubernetesSettingsRepository creates a new KubernetesSettingsRepository
-func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string) *KubernetesSettingsRepository {
+// NewKubernetesSettingsRepository creates a new KubernetesSettingsRepository.
+// An optional EncryptionServiceRegistry may be passed to enable at-rest encryption of
+// env_vars.  If nil (or if the primary algorithm is "noop"), env_vars are stored as
+// plain text in the legacy env_vars field.
+func NewKubernetesSettingsRepository(client kubernetes.Interface, namespace string, registry ...*infraservices.EncryptionServiceRegistry) *KubernetesSettingsRepository {
+	var reg *infraservices.EncryptionServiceRegistry
+	if len(registry) > 0 {
+		reg = registry[0]
+	}
 	return &KubernetesSettingsRepository{
-		client:    client,
-		namespace: namespace,
+		client:             client,
+		namespace:          namespace,
+		encryptionRegistry: reg,
 	}
 }
 
@@ -114,8 +137,7 @@ func (r *KubernetesSettingsRepository) Save(ctx context.Context, settings *entit
 	secretName := r.secretName(settings.Name())
 	labelValue := sanitizeLabelValue(settings.Name())
 
-	// Convert to JSON (without encryption)
-	data, err := r.toJSON(settings)
+	data, err := r.toJSON(ctx, settings)
 	if err != nil {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
@@ -164,7 +186,7 @@ func (r *KubernetesSettingsRepository) FindByName(ctx context.Context, name stri
 		return nil, fmt.Errorf("failed to get settings secret: %w", err)
 	}
 
-	settings, err := r.fromSecret(secret)
+	settings, err := r.fromSecret(ctx, secret)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +241,7 @@ func (r *KubernetesSettingsRepository) List(ctx context.Context) ([]*entities.Se
 
 	var settingsList []*entities.Settings
 	for _, secret := range secrets.Items {
-		settings, err := r.fromSecret(&secret)
+		settings, err := r.fromSecret(ctx, &secret)
 		if err != nil {
 			// Skip invalid settings
 			continue
@@ -235,8 +257,25 @@ func (r *KubernetesSettingsRepository) secretName(name string) string {
 	return SettingsSecretPrefix + sanitizeSecretName(name)
 }
 
-// toJSON converts Settings entity to JSON bytes without encryption
-func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]byte, error) {
+// encryptionSvc returns the primary encryption service, or nil if no registry is configured.
+func (r *KubernetesSettingsRepository) encryptionSvc() domainservices.EncryptionService {
+	if r.encryptionRegistry == nil {
+		return nil
+	}
+	return r.encryptionRegistry.GetForEncryption()
+}
+
+// decryptionSvc returns the appropriate decryption service for the given metadata, or nil if no registry is configured.
+func (r *KubernetesSettingsRepository) decryptionSvc(metadata domainservices.EncryptionMetadata) domainservices.EncryptionService {
+	if r.encryptionRegistry == nil {
+		return nil
+	}
+	return r.encryptionRegistry.GetForDecryption(metadata)
+}
+
+// toJSON converts Settings entity to JSON bytes, encrypting env_vars when a non-noop
+// EncryptionServiceRegistry is configured.
+func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *entities.Settings) ([]byte, error) {
 	sj := &settingsJSON{
 		Name:                 settings.Name(),
 		ClaudeCodeOAuthToken: settings.ClaudeCodeOAuthToken(),
@@ -284,7 +323,24 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 	}
 
 	if envVars := settings.EnvVars(); len(envVars) > 0 {
-		sj.EnvVars = envVars
+		if enc := r.encryptionSvc(); enc != nil && enc.Algorithm() != "noop" {
+			sj.EncryptedEnvVars = make(map[string]encryptedEnvVarJSON, len(envVars))
+			for k, v := range envVars {
+				encrypted, err := enc.Encrypt(ctx, v)
+				if err != nil {
+					return nil, fmt.Errorf("failed to encrypt env var %q: %w", k, err)
+				}
+				sj.EncryptedEnvVars[k] = encryptedEnvVarJSON{
+					EncryptedValue: encrypted.EncryptedValue,
+					Algorithm:      encrypted.Metadata.Algorithm,
+					KeyID:          encrypted.Metadata.KeyID,
+					EncryptedAt:    encrypted.Metadata.EncryptedAt,
+					Version:        encrypted.Metadata.Version,
+				}
+			}
+		} else {
+			sj.EnvVars = envVars
+		}
 	}
 
 	if preferredTeamID := settings.PreferredTeamID(); preferredTeamID != "" {
@@ -327,8 +383,8 @@ func (r *KubernetesSettingsRepository) toJSON(settings *entities.Settings) ([]by
 	return json.Marshal(sj)
 }
 
-// fromSecret converts a Kubernetes Secret to Settings entity
-func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entities.Settings, error) {
+// fromSecret converts a Kubernetes Secret to Settings entity, decrypting env_vars as needed.
+func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *corev1.Secret) (*entities.Settings, error) {
 	data, ok := secret.Data[SecretKeySettings]
 	if !ok {
 		return nil, fmt.Errorf("secret missing settings data")
@@ -408,10 +464,49 @@ func (r *KubernetesSettingsRepository) fromSecret(secret *corev1.Secret) (*entit
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
-	if len(sj.EnvVars) > 0 {
-		settings.SetEnvVars(sj.EnvVars)
-		// Reset updatedAt since SetEnvVars updates it
-		settings.SetUpdatedAt(sj.UpdatedAt)
+	// Load env vars: encrypted_env_vars takes precedence; plain env_vars serves as
+	// fallback for legacy data and is merged for keys not present in the encrypted map.
+	{
+		merged := make(map[string]string)
+		// 1. Decrypt encrypted_env_vars
+		if len(sj.EncryptedEnvVars) > 0 {
+			for k, ev := range sj.EncryptedEnvVars {
+				decSvc := r.decryptionSvc(domainservices.EncryptionMetadata{
+					Algorithm:   ev.Algorithm,
+					KeyID:       ev.KeyID,
+					EncryptedAt: ev.EncryptedAt,
+					Version:     ev.Version,
+				})
+				if decSvc == nil {
+					log.Printf("[SETTINGS] No decryption service for env var %q (alg=%s kid=%s), skipping", k, ev.Algorithm, ev.KeyID)
+					continue
+				}
+				plaintext, err := decSvc.Decrypt(ctx, &domainservices.EncryptedData{
+					EncryptedValue: ev.EncryptedValue,
+					Metadata: domainservices.EncryptionMetadata{
+						Algorithm:   ev.Algorithm,
+						KeyID:       ev.KeyID,
+						EncryptedAt: ev.EncryptedAt,
+						Version:     ev.Version,
+					},
+				})
+				if err != nil {
+					log.Printf("[SETTINGS] Failed to decrypt env var %q: %v, skipping", k, err)
+					continue
+				}
+				merged[k] = plaintext
+			}
+		}
+		// 2. Merge plain env_vars (backward compat; don't overwrite already-decrypted keys)
+		for k, v := range sj.EnvVars {
+			if _, exists := merged[k]; !exists {
+				merged[k] = v
+			}
+		}
+		if len(merged) > 0 {
+			settings.SetEnvVars(merged)
+			settings.SetUpdatedAt(sj.UpdatedAt)
+		}
 	}
 
 	if sj.PreferredTeamID != "" {
