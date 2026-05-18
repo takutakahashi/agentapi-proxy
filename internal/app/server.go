@@ -35,6 +35,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -67,6 +68,21 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Disable Echo's default logger and use custom logging
 	e.Logger.SetOutput(io.Discard)
+
+	// Rewrite %2F in URL paths before route matching so that settings names
+	// containing slashes (e.g. "org/team-slug") are routed correctly.
+	e.Pre(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			rawPath := c.Request().URL.RawPath
+			if rawPath != "" {
+				if rewritten, ok := urlutil.RewriteEncodedSlashes(rawPath); ok {
+					c.Request().URL.Path = rewritten
+					c.Request().URL.RawPath = rewritten
+				}
+			}
+			return next(c)
+		}
+	})
 
 	// Add recovery middleware
 	e.Use(middleware.Recover())

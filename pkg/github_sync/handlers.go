@@ -11,6 +11,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
+	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 )
 
 // Handlers implements app.CustomHandler for GitHub sync endpoints.
@@ -63,7 +64,7 @@ func (h *Handlers) Push(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
-	name := c.Param("name")
+	name := urlutil.DecodeSlashParam(c.Param("name"))
 	if !h.canModifySettings(user, name) {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
 	}
@@ -87,7 +88,7 @@ func (h *Handlers) Pull(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
-	name := c.Param("name")
+	name := urlutil.DecodeSlashParam(c.Param("name"))
 	if !h.canModifySettings(user, name) {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
 	}
@@ -134,7 +135,7 @@ func (h *Handlers) RotateKey(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
-	name := c.Param("name")
+	name := urlutil.DecodeSlashParam(c.Param("name"))
 	if !h.canModifySettings(user, name) {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
 	}
