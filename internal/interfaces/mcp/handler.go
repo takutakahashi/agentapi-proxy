@@ -13,6 +13,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 )
 
 // Context key for authenticated user
@@ -22,22 +23,28 @@ const userContextKey contextKey = "mcp_authenticated_user"
 
 // MCPHandler implements the CustomHandler interface for MCP endpoints
 type MCPHandler struct {
-	sessionManager repositories.SessionManager
-	shareRepo      repositories.ShareRepository
-	taskRepo       repositories.TaskRepository
-	taskGroupRepo  repositories.TaskGroupRepository
-	memoryRepo     repositories.MemoryRepository
-	httpHandler    http.Handler
+	sessionManager  repositories.SessionManager
+	shareRepo       repositories.ShareRepository
+	taskRepo        repositories.TaskRepository
+	taskGroupRepo   repositories.TaskGroupRepository
+	memoryRepo      repositories.MemoryRepository
+	webhookRepo     repositories.WebhookRepository
+	slackBotRepo    repositories.SlackBotRepository
+	scheduleManager schedule.Manager
+	httpHandler     http.Handler
 }
 
-// NewMCPHandler creates a new MCP handler for the /mcp endpoint
-func NewMCPHandler(server *app.Server) *MCPHandler {
+// NewMCPHandler creates a new MCP handler for the /mcp endpoint.
+// scheduleManager may be nil if schedule features are not available.
+func NewMCPHandler(server *app.Server, scheduleManager schedule.Manager) *MCPHandler {
 	// Get dependencies from server
 	sessionManager := server.GetSessionManager()
 	shareRepo := server.GetShareRepository()
 	taskRepo := server.GetTaskRepository()
 	taskGroupRepo := server.GetTaskGroupRepository()
 	memoryRepo := server.GetMemoryRepository()
+	webhookRepo := server.GetWebhookRepository()
+	slackBotRepo := server.GetSlackBotRepository()
 
 	// Create HTTP handler using go-sdk's streamable HTTP handler
 	// Use stateless mode for simpler session management
@@ -47,11 +54,14 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 	}
 
 	handler := &MCPHandler{
-		sessionManager: sessionManager,
-		shareRepo:      shareRepo,
-		taskRepo:       taskRepo,
-		taskGroupRepo:  taskGroupRepo,
-		memoryRepo:     memoryRepo,
+		sessionManager:  sessionManager,
+		shareRepo:       shareRepo,
+		taskRepo:        taskRepo,
+		taskGroupRepo:   taskGroupRepo,
+		memoryRepo:      memoryRepo,
+		webhookRepo:     webhookRepo,
+		slackBotRepo:    slackBotRepo,
+		scheduleManager: scheduleManager,
 	}
 
 	// Create factory function that creates a new MCP server per request with authenticated user
@@ -90,7 +100,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		}
 
 		// Create new MCP server instance with authenticated user and repositories
-		mcpServer := NewMCPServer(sessionManager, shareRepo, taskRepo, taskGroupRepo, memoryRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, opts)
+		mcpServer := NewMCPServer(sessionManager, shareRepo, taskRepo, taskGroupRepo, memoryRepo, webhookRepo, slackBotRepo, scheduleManager, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, opts)
 
 		// Register all tools
 		mcpServer.RegisterTools()

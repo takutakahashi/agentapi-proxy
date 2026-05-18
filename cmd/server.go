@@ -99,7 +99,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
-	registerScheduleHandlers(configData, proxyServer)
+	scheduleMgr := registerScheduleHandlers(configData, proxyServer)
 
 	// Register webhook handlers (requires Kubernetes mode)
 	registerWebhookHandlers(configData, proxyServer)
@@ -116,8 +116,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Start Slack Socket Mode manager (requires Kubernetes mode)
 	startSlackSocketManager(configData, proxyServer)
 
-	// Register MCP handler
-	registerMCPHandler(proxyServer, port)
+	// Register MCP handler (pass schedule manager for schedule tools support)
+	registerMCPHandler(proxyServer, port, scheduleMgr)
 
 	// Register session manager handler (small-cluster / forwarding mode)
 	registerSessionManagerHandlers(configData, proxyServer)
@@ -183,21 +183,22 @@ func runProxy(cmd *cobra.Command, args []string) {
 	log.Printf("Server shutdown complete")
 }
 
-// registerScheduleHandlers registers schedule REST API handlers
-func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server) {
+// registerScheduleHandlers registers schedule REST API handlers and returns the schedule manager
+// for use by other handlers (e.g., MCP). Returns nil if Kubernetes is not available.
+func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server) schedule.Manager {
 	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
 
 	// Create Kubernetes client
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
 		log.Printf("[SCHEDULE_HANDLERS] Kubernetes config not available, skipping schedule handlers: %v", err)
-		return
+		return nil
 	}
 
 	client, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		log.Printf("[SCHEDULE_HANDLERS] Failed to create Kubernetes client, skipping schedule handlers: %v", err)
-		return
+		return nil
 	}
 
 	// Determine namespace
@@ -223,6 +224,7 @@ func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server
 	proxyServer.AddCustomHandler(scheduleHandlers)
 
 	log.Printf("[SCHEDULE_HANDLERS] Schedule handlers registered successfully")
+	return scheduleManager
 }
 
 // startScheduleWorker starts the schedule worker with leader election
@@ -509,6 +511,9 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 		log.Printf("[WEBHOOK_HANDLERS] Default GitHub Enterprise host configured: %s", configData.Webhook.GitHubEnterpriseHost)
 	}
 
+	// Store webhook repo on server for MCP access
+	proxyServer.SetWebhookRepository(webhookRepo)
+
 	// Create and register webhook handlers with baseURL from config
 	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetSessionManager(), configData.Webhook.BaseURL, proxyServer.GetMemoryRepository())
 	proxyServer.AddCustomHandler(webhookHandlers)
@@ -605,6 +610,9 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 
 	// Create SlackBot repository
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
+
+	// Store slackbot repo on server for MCP access
+	proxyServer.SetSlackBotRepository(slackbotRepo)
 
 	// Create and register SlackBot management handlers (no event reception - handled by Socket Mode)
 	slackbotHandlers := slackbot.NewHandlers(slackbotRepo)
@@ -822,11 +830,11 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 }
 
 // registerMCPHandler registers MCP HTTP handler
-func registerMCPHandler(proxyServer *app.Server, port string) {
+func registerMCPHandler(proxyServer *app.Server, port string, scheduleManager schedule.Manager) {
 	log.Printf("[MCP_HANDLER] Registering MCP handler...")
 
 	// Create and register MCP handler with server dependencies
-	mcpHandler := mcpiface.NewMCPHandler(proxyServer)
+	mcpHandler := mcpiface.NewMCPHandler(proxyServer, scheduleManager)
 	proxyServer.AddCustomHandler(mcpHandler)
 
 	log.Printf("[MCP_HANDLER] MCP handler registered successfully at /mcp")

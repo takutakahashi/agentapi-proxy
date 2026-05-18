@@ -6,6 +6,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	mcpusecases "github.com/takutakahashi/agentapi-proxy/internal/usecases/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 )
 
 // MCPServer wraps the MCP server and use cases
@@ -14,6 +15,9 @@ type MCPServer struct {
 	useCase                  *mcpusecases.MCPSessionToolsUseCase
 	taskUseCase              *mcpusecases.MCPTaskToolsUseCase
 	memoryUseCase            *mcpusecases.MCPMemoryToolsUseCase
+	scheduleUseCase          *mcpusecases.MCPScheduleToolsUseCase
+	webhookUseCase           *mcpusecases.MCPWebhookToolsUseCase
+	slackBotUseCase          *mcpusecases.MCPSlackBotToolsUseCase
 	authenticatedUserID      string
 	authenticatedTeams       []string // GitHub team slugs (e.g., ["org/team-a"])
 	authenticatedGithubToken string   // GitHub token from Authorization header
@@ -21,7 +25,7 @@ type MCPServer struct {
 }
 
 // NewMCPServer creates a new MCP server instance
-func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, taskRepo repositories.TaskRepository, taskGroupRepo repositories.TaskGroupRepository, memoryRepo repositories.MemoryRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, sessionID string, opts *mcp.ServerOptions) *MCPServer {
+func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, taskRepo repositories.TaskRepository, taskGroupRepo repositories.TaskGroupRepository, memoryRepo repositories.MemoryRepository, webhookRepo repositories.WebhookRepository, slackBotRepo repositories.SlackBotRepository, scheduleManager schedule.Manager, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, sessionID string, opts *mcp.ServerOptions) *MCPServer {
 	// Create session use case with actual dependencies
 	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, shareRepo, taskRepo)
 
@@ -37,6 +41,24 @@ func NewMCPServer(sessionManager repositories.SessionManager, shareRepo reposito
 		memoryUseCase = mcpusecases.NewMCPMemoryToolsUseCase(memoryRepo)
 	}
 
+	// Create schedule use case (may be nil if manager is not configured)
+	var scheduleUseCase *mcpusecases.MCPScheduleToolsUseCase
+	if scheduleManager != nil {
+		scheduleUseCase = mcpusecases.NewMCPScheduleToolsUseCase(scheduleManager)
+	}
+
+	// Create webhook use case (may be nil if repo is not configured)
+	var webhookUseCase *mcpusecases.MCPWebhookToolsUseCase
+	if webhookRepo != nil {
+		webhookUseCase = mcpusecases.NewMCPWebhookToolsUseCase(webhookRepo)
+	}
+
+	// Create slackbot use case (may be nil if repo is not configured)
+	var slackBotUseCase *mcpusecases.MCPSlackBotToolsUseCase
+	if slackBotRepo != nil {
+		slackBotUseCase = mcpusecases.NewMCPSlackBotToolsUseCase(slackBotRepo)
+	}
+
 	// Create MCP server
 	impl := &mcp.Implementation{
 		Name:    "agentapi-proxy-mcp",
@@ -50,6 +72,9 @@ func NewMCPServer(sessionManager repositories.SessionManager, shareRepo reposito
 		useCase:                  useCase,
 		taskUseCase:              taskUseCase,
 		memoryUseCase:            memoryUseCase,
+		scheduleUseCase:          scheduleUseCase,
+		webhookUseCase:           webhookUseCase,
+		slackBotUseCase:          slackBotUseCase,
 		authenticatedUserID:      authenticatedUserID,
 		authenticatedTeams:       authenticatedTeams,
 		authenticatedGithubToken: authenticatedGithubToken,
@@ -70,6 +95,21 @@ func (s *MCPServer) RegisterTools() {
 	// Register memory tools if available
 	if s.memoryUseCase != nil {
 		s.registerMemoryTools()
+	}
+
+	// Register schedule tools if available
+	if s.scheduleUseCase != nil {
+		s.registerScheduleTools()
+	}
+
+	// Register webhook tools if available
+	if s.webhookUseCase != nil {
+		s.registerWebhookTools()
+	}
+
+	// Register slackbot tools if available
+	if s.slackBotUseCase != nil {
+		s.registerSlackBotTools()
 	}
 }
 
@@ -219,6 +259,36 @@ func (s *MCPServer) registerMemoryTools() {
 	mcp.AddTool(s.server, deleteMemoryTool, s.handleDeleteMemory)
 
 	slog.Info("[MCP] Registered 5 memory tools: list_memories, get_memory, create_memory, update_memory, delete_memory")
+}
+
+// registerScheduleTools registers schedule management MCP tools
+func (s *MCPServer) registerScheduleTools() {
+	mcp.AddTool(s.server, &mcp.Tool{Name: "list_schedules", Description: "List schedules with optional filters (scope, team_id, status)"}, s.handleListSchedules)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "get_schedule", Description: "Get details of a specific schedule by ID"}, s.handleGetSchedule)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "create_schedule", Description: "Create a new schedule. Requires either cron_expr (recurring) or scheduled_at (one-time). scope must be 'user' or 'team'."}, s.handleCreateSchedule)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "update_schedule", Description: "Update an existing schedule. Only provided fields are updated."}, s.handleUpdateSchedule)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "delete_schedule", Description: "Delete a schedule by ID"}, s.handleDeleteSchedule)
+	slog.Info("[MCP] Registered 5 schedule tools: list_schedules, get_schedule, create_schedule, update_schedule, delete_schedule")
+}
+
+// registerWebhookTools registers webhook management MCP tools
+func (s *MCPServer) registerWebhookTools() {
+	mcp.AddTool(s.server, &mcp.Tool{Name: "list_webhooks", Description: "List webhooks with optional filters (scope, team_id, status, type)"}, s.handleListWebhooks)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "get_webhook", Description: "Get details of a specific webhook by ID"}, s.handleGetWebhook)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "create_webhook", Description: "Create a new webhook. type must be 'github' or 'custom'. At least one trigger is required."}, s.handleCreateWebhook)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "update_webhook", Description: "Update an existing webhook. Only provided fields are updated."}, s.handleUpdateWebhook)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "delete_webhook", Description: "Delete a webhook by ID"}, s.handleDeleteWebhook)
+	slog.Info("[MCP] Registered 5 webhook tools: list_webhooks, get_webhook, create_webhook, update_webhook, delete_webhook")
+}
+
+// registerSlackBotTools registers SlackBot management MCP tools
+func (s *MCPServer) registerSlackBotTools() {
+	mcp.AddTool(s.server, &mcp.Tool{Name: "list_slackbots", Description: "List SlackBots with optional filters (scope, team_id, status)"}, s.handleListSlackBots)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "get_slackbot", Description: "Get details of a specific SlackBot by ID"}, s.handleGetSlackBot)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "create_slackbot", Description: "Create a new SlackBot configuration. scope must be 'user' or 'team'."}, s.handleCreateSlackBot)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "update_slackbot", Description: "Update an existing SlackBot. Only provided fields are updated."}, s.handleUpdateSlackBot)
+	mcp.AddTool(s.server, &mcp.Tool{Name: "delete_slackbot", Description: "Delete a SlackBot by ID"}, s.handleDeleteSlackBot)
+	slog.Info("[MCP] Registered 5 slackbot tools: list_slackbots, get_slackbot, create_slackbot, update_slackbot, delete_slackbot")
 }
 
 // GetServer returns the underlying MCP server
