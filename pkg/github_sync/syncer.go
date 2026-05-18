@@ -74,24 +74,33 @@ func isPersonalSync(settingsName, userID string) bool {
 // resolveToken returns the GitHub token to use for sync operations.
 // If personalToken is non-empty it is returned directly.
 // Otherwise a short-lived GitHub App installation token is generated using
-// GITHUB_APP_ID / GITHUB_APP_PEM env vars and the proxy-configured installation ID.
+// GITHUB_APP_ID / GITHUB_APP_PEM env vars and the installation ID resolved as follows:
+//  1. The proxy-level git_sync.github_app.installation_id config value
+//  2. The GITHUB_INSTALLATION_ID environment variable (set by Helm from github.app.installationId)
 func (s *Syncer) resolveToken(personalToken string) (string, error) {
 	if personalToken != "" {
 		return personalToken, nil
 	}
-	if s.githubAppInstallID == "" {
-		return "", fmt.Errorf("github_token is not configured and no GitHub App fallback is set (git_sync.github_app.installation_id)")
+
+	// Resolve installation ID: explicit config → GITHUB_INSTALLATION_ID env var (Helm-injected)
+	installID := s.githubAppInstallID
+	if installID == "" {
+		installID = os.Getenv("GITHUB_INSTALLATION_ID")
 	}
+	if installID == "" {
+		return "", fmt.Errorf("github_token is not configured and no GitHub App fallback is set (git_sync.github_app.installation_id or GITHUB_INSTALLATION_ID)")
+	}
+
 	appID := os.Getenv("GITHUB_APP_ID")
 	if appID == "" {
 		return "", fmt.Errorf("github_token is not configured and GITHUB_APP_ID env var is not set")
 	}
 	pemPath := os.Getenv("GITHUB_APP_PEM_PATH")
-	token, err := startup.GenerateGitHubAppToken(appID, s.githubAppInstallID, pemPath)
+	token, err := startup.GenerateGitHubAppToken(appID, installID, pemPath)
 	if err != nil {
 		return "", fmt.Errorf("github_token is not configured; GitHub App token generation failed: %w", err)
 	}
-	log.Printf("[SYNC] Using GitHub App installation token (installation_id=%s)", s.githubAppInstallID)
+	log.Printf("[SYNC] Using GitHub App installation token (installation_id=%s)", installID)
 	return token, nil
 }
 
