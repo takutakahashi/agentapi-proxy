@@ -48,7 +48,12 @@ type CustomHandler interface {
 // NewRouter creates a new Router instance
 func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create settings controller
-	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc)
+	var gitSyncKMSKeyARN, gitSyncAWSRegion string
+	if cfg := server.GetConfig(); cfg != nil {
+		gitSyncKMSKeyARN = cfg.GitSync.Encryption.KMSKeyARN
+		gitSyncAWSRegion = cfg.GitSync.Encryption.AWSRegion
+	}
+	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc, gitSyncKMSKeyARN, gitSyncAWSRegion)
 
 	// Create credentials controller
 	var credentialsController *controllers.CredentialsController
@@ -293,6 +298,7 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/settings/:name", r.handlers.settingsController.GetSettings, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.PUT("/settings/:name", r.handlers.settingsController.UpdateSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.DELETE("/settings/:name", r.handlers.settingsController.DeleteSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/settings/:name/sync", r.handlers.settingsController.DeleteGitSync, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		log.Printf("[ROUTES] Settings endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Settings repository not available, skipping settings routes")
