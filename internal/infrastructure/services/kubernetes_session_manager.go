@@ -3669,6 +3669,23 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] Injected cycle Stop hook for session %s (max-count=%d)", session.id, req.CycleMaxCount)
 	}
 
+	// Merge per-session sandbox config into settingsJSON.
+	// Session-level sandbox settings override user/team settings.
+	// Only applies to Claude-based agent types.
+	if req.Sandbox != nil {
+		sandboxBytes, err := json.Marshal(req.Sandbox)
+		if err == nil {
+			var sandboxMap map[string]interface{}
+			if jsonErr := json.Unmarshal(sandboxBytes, &sandboxMap); jsonErr == nil {
+				if settingsJSON == nil {
+					settingsJSON = make(map[string]interface{})
+				}
+				settingsJSON["sandbox"] = sandboxMap
+				log.Printf("[K8S_SESSION] Applied per-session sandbox config for session %s", session.id)
+			}
+		}
+	}
+
 	// For codex-acp sessions, inject the same Stop hooks into ~/.codex/hooks.json
 	// so that cycle and oneshot behavior works under the Codex CLI hook system.
 	var codexHooksJSON map[string]interface{}

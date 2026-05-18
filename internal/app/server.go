@@ -606,6 +606,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		cycleMaxCount = startReq.Params.CycleMaxCount
 	}
 
+	// Determine sandbox config from Params.Sandbox
+	var sandbox *entities.ClaudeSandboxConfig
+	if startReq.Params != nil {
+		sandbox = startReq.Params.Sandbox
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:                   userID,
@@ -624,6 +630,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		MemoryKey:                startReq.MemoryKey,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,
+		Sandbox:                  sandbox,
 	}
 
 	// Delegate to session manager
@@ -647,10 +654,12 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	var initialMessage string
 	var agentType string
 	var oneshot bool
+	var remoteSandbox *entities.ClaudeSandboxConfig
 	if startReq.Params != nil {
 		initialMessage = startReq.Params.Message
 		agentType = startReq.Params.AgentType
 		oneshot = startReq.Params.Oneshot
+		remoteSandbox = startReq.Params.Sandbox
 	}
 	runReq := &entities.RunServerRequest{
 		UserID:         userID,
@@ -664,6 +673,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		MemoryKey:      startReq.MemoryKey,
 		InitialMessage: initialMessage,
 		RepoInfo:       s.extractRepositoryInfo(sessionID, startReq.Tags),
+		Sandbox:        remoteSandbox,
 	}
 
 	// Try to build fully-resolved settings (env vars, Bedrock, MCP servers, OAuth token, etc.)

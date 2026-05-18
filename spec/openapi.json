@@ -4568,6 +4568,113 @@
             "description": "Maximum number of cycles to run. 0 means unlimited. Requires cycle_message to be set. The current count is tracked in /tmp/check/CYCLE_COUNT inside the session.",
             "default": 10,
             "example": 10
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/ClaudeSandboxConfig"
+          }
+        }
+      },
+      "ClaudeSandboxFilesystemConfig": {
+        "type": "object",
+        "description": "Filesystem access restrictions for Claude Code's sandbox. See https://code.claude.com/docs/en/settings#sandbox-settings",
+        "properties": {
+          "allowWrite": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Paths where sandboxed commands can write (e.g. [\"/tmp/build\", \"~/.kube\"])"
+          },
+          "denyWrite": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Paths where sandboxed commands cannot write"
+          },
+          "denyRead": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Paths where sandboxed commands cannot read"
+          },
+          "allowRead": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Paths to re-allow reading within a denyRead region"
+          }
+        }
+      },
+      "ClaudeSandboxNetworkConfig": {
+        "type": "object",
+        "description": "Network access restrictions for Claude Code's sandbox.",
+        "properties": {
+          "allowedDomains": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Domains allowed for outbound traffic (supports wildcards, e.g. [\"github.com\", \"*.npmjs.org\"])"
+          },
+          "deniedDomains": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Domains to block (takes precedence over allowedDomains)"
+          },
+          "allowLocalBinding": {
+            "type": "boolean",
+            "description": "Allow localhost port binding (macOS only)"
+          },
+          "allowAllUnixSockets": {
+            "type": "boolean",
+            "description": "Allow all Unix sockets (Linux/WSL2)"
+          },
+          "httpProxyPort": {
+            "type": "integer",
+            "description": "Custom HTTP proxy port"
+          },
+          "socksProxyPort": {
+            "type": "integer",
+            "description": "Custom SOCKS proxy port"
+          }
+        }
+      },
+      "ClaudeSandboxConfig": {
+        "type": "object",
+        "description": "Claude Code sandbox settings merged into ~/.claude/settings.json[\"sandbox\"] at session startup. Only applies to Claude-based agent types (claude, claude-agentapi, claude-acp). See https://code.claude.com/docs/en/settings#sandbox-settings",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable bash sandboxing (macOS, Linux, WSL2). Default: false"
+          },
+          "failIfUnavailable": {
+            "type": "boolean",
+            "description": "Exit with error if sandbox is unavailable when enabled. Default: false"
+          },
+          "autoAllowBashIfSandboxed": {
+            "type": "boolean",
+            "description": "Auto-approve bash commands when sandboxed. Default: true"
+          },
+          "excludedCommands": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Commands that run outside the sandbox (e.g. [\"docker *\"])"
+          },
+          "allowUnsandboxedCommands": {
+            "type": "boolean",
+            "description": "Allow the dangerouslyDisableSandbox escape hatch. Default: true"
+          },
+          "filesystem": {
+            "$ref": "#/components/schemas/ClaudeSandboxFilesystemConfig"
+          },
+          "network": {
+            "$ref": "#/components/schemas/ClaudeSandboxNetworkConfig"
+          }
+        },
+        "example": {
+          "enabled": true,
+          "autoAllowBashIfSandboxed": true,
+          "excludedCommands": ["docker *"],
+          "filesystem": {
+            "allowWrite": ["/tmp/build", "~/.kube"],
+            "denyRead": ["~/.aws"]
+          },
+          "network": {
+            "allowedDomains": ["github.com", "*.npmjs.org"],
+            "deniedDomains": ["internal.corp.example.com"]
           }
         }
       },

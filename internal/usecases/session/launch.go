@@ -55,6 +55,9 @@ type LaunchRequest struct {
 	// matching LimitMatchTags already equals or exceeds MaxSessions.
 	MaxSessions    int
 	LimitMatchTags map[string]string
+
+	// Sandbox overrides Claude Code's sandbox settings for this session.
+	Sandbox *entities.ClaudeSandboxConfig
 }
 
 // LaunchResult is returned by LaunchUseCase.Launch.
@@ -161,6 +164,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		RepoInfo:                 req.RepoInfo,
 		InitialMessageWaitSecond: req.InitialMessageWaitSecond,
 		MemoryKey:                req.MemoryKey,
+		Sandbox:                  req.Sandbox,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)

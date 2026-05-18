@@ -30,6 +30,55 @@ type SlackParams struct {
 	BotTokenSecretKey string `json:"bot_token_secret_key,omitempty"`
 }
 
+// ClaudeSandboxFilesystemConfig mirrors Claude Code's sandbox.filesystem settings.
+// See: https://code.claude.com/docs/en/settings#sandbox-settings
+type ClaudeSandboxFilesystemConfig struct {
+	// AllowWrite grants sandboxed commands write access to these paths.
+	AllowWrite []string `json:"allowWrite,omitempty"`
+	// DenyWrite blocks write access to these paths.
+	DenyWrite []string `json:"denyWrite,omitempty"`
+	// DenyRead blocks read access to these paths.
+	DenyRead []string `json:"denyRead,omitempty"`
+	// AllowRead re-allows reading specific paths within a denyRead region.
+	AllowRead []string `json:"allowRead,omitempty"`
+}
+
+// ClaudeSandboxNetworkConfig mirrors Claude Code's sandbox.network settings.
+type ClaudeSandboxNetworkConfig struct {
+	// AllowedDomains lists domains allowed for outbound traffic (supports wildcards).
+	AllowedDomains []string `json:"allowedDomains,omitempty"`
+	// DeniedDomains lists domains to block (takes precedence over AllowedDomains).
+	DeniedDomains []string `json:"deniedDomains,omitempty"`
+	// AllowLocalBinding allows localhost port binding (macOS only).
+	AllowLocalBinding *bool `json:"allowLocalBinding,omitempty"`
+	// AllowAllUnixSockets allows all Unix sockets (Linux/WSL2).
+	AllowAllUnixSockets *bool `json:"allowAllUnixSockets,omitempty"`
+	// HTTPProxyPort sets a custom HTTP proxy port.
+	HTTPProxyPort *int `json:"httpProxyPort,omitempty"`
+	// SOCKSProxyPort sets a custom SOCKS proxy port.
+	SOCKSProxyPort *int `json:"socksProxyPort,omitempty"`
+}
+
+// ClaudeSandboxConfig mirrors Claude Code's sandbox settings in settings.json.
+// When set on a session, these values are merged into ~/.claude/settings.json["sandbox"].
+// See: https://code.claude.com/docs/en/settings#sandbox-settings
+type ClaudeSandboxConfig struct {
+	// Enabled enables bash sandboxing (macOS, Linux, WSL2).
+	Enabled *bool `json:"enabled,omitempty"`
+	// FailIfUnavailable exits with error if sandbox is unavailable when enabled.
+	FailIfUnavailable *bool `json:"failIfUnavailable,omitempty"`
+	// AutoAllowBashIfSandboxed auto-approves bash commands when sandboxed. Default: true.
+	AutoAllowBashIfSandboxed *bool `json:"autoAllowBashIfSandboxed,omitempty"`
+	// ExcludedCommands lists commands that run outside the sandbox.
+	ExcludedCommands []string `json:"excludedCommands,omitempty"`
+	// AllowUnsandboxedCommands allows the dangerouslyDisableSandbox escape hatch. Default: true.
+	AllowUnsandboxedCommands *bool `json:"allowUnsandboxedCommands,omitempty"`
+	// Filesystem controls filesystem access restrictions.
+	Filesystem *ClaudeSandboxFilesystemConfig `json:"filesystem,omitempty"`
+	// Network controls network access restrictions.
+	Network *ClaudeSandboxNetworkConfig `json:"network,omitempty"`
+}
+
 // SessionParams represents session parameters for agentapi server
 type SessionParams struct {
 	// Message is the initial message to send to the agent after session starts
@@ -62,6 +111,10 @@ type SessionParams struct {
 	// environment so the repository is cloned at session startup.
 	// For SlackBot sessions, this takes priority over any repository auto-detected from the message text.
 	RepoFullName string `json:"repo_full_name,omitempty"`
+	// Sandbox overrides Claude Code's sandbox settings for this session.
+	// Merged into ~/.claude/settings.json["sandbox"] at session startup.
+	// Only applies to Claude-based agent types (claude, claude-agentapi, claude-acp).
+	Sandbox *ClaudeSandboxConfig `json:"sandbox,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -104,6 +157,9 @@ type RunServerRequest struct {
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
 	CycleMessage             string            // Message to send to session after each Claude stop event (injects Stop hook)
 	CycleMaxCount            int               // Maximum number of cycles (0 = unlimited); requires CycleMessage
+	// Sandbox overrides Claude Code's sandbox settings for this session.
+	// Merged into ~/.claude/settings.json["sandbox"] at session startup.
+	Sandbox *ClaudeSandboxConfig
 	// ProvisionSettings, when non-nil, is used directly as the provision payload
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).
