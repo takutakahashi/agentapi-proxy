@@ -1137,7 +1137,7 @@ func (s *Syncer) importSlackbotFile(ctx context.Context, data []byte, scope enti
 func encryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error {
 	encryptMapValues := func(m map[string]string, context string) error {
 		for k, v := range m {
-			if IsSensitiveKey(k) && !IsEncrypted(v) {
+			if !IsEncrypted(v) {
 				enc, err := EncryptField(dek, v)
 				if err != nil {
 					return fmt.Errorf("encrypt %s %s: %w", context, k, err)
