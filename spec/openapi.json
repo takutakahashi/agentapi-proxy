@@ -3725,7 +3725,7 @@
         }
       }
     },
-    "/sync/config/{name}": {
+    "/settings/{name}/sync": {
       "get": {
         "summary": "Get GitHub sync configuration",
         "description": "Returns the GitHub sync configuration for the specified user or team settings (token redacted).",
@@ -3799,7 +3799,7 @@
         "security": [{ "bearerAuth": [] }]
       }
     },
-    "/sync/push/{name}": {
+    "/settings/{name}/sync/push": {
       "post": {
         "summary": "Push resources to GitHub",
         "description": "Exports all resources (memories, tasks, schedules, webhooks, settings, etc.) and commits them to the configured GitHub repository. Sensitive fields are encrypted with AES-256-GCM using an AWS KMS-managed DEK.",
@@ -3840,7 +3840,7 @@
         "security": [{ "bearerAuth": [] }]
       }
     },
-    "/sync/pull/{name}": {
+    "/settings/{name}/sync/pull": {
       "post": {
         "summary": "Pull resources from GitHub",
         "description": "Downloads resources from the configured GitHub repository and imports them into the local store. Encrypted fields are decrypted using the stored DEK.",
@@ -3881,7 +3881,7 @@
         "security": [{ "bearerAuth": [] }]
       }
     },
-    "/sync/rotate-key/{name}": {
+    "/settings/{name}/sync/rotate-key": {
       "post": {
         "summary": "Rotate the sync encryption key",
         "description": "Generates a new DEK via AWS KMS, re-encrypts all values in the GitHub repository with the new DEK, and commits atomically. The old encryptedDEK is replaced in Settings.",
@@ -3910,7 +3910,7 @@
         "security": [{ "bearerAuth": [] }]
       }
     },
-    "/sync/all": {
+    "/settings/sync/all": {
       "post": {
         "summary": "Sync all tenants",
         "description": "Syncs GitHub for every settings tenant that has sync enabled. Only accessible by admin users. The direction (push/pull) is determined automatically per tenant by comparing the remote .sync-meta.yaml syncedAt timestamp against the local LastPushedAt: if GitHub is newer the tenant is pulled, otherwise pushed. Push is idempotent: no commit is created when file contents are unchanged.",

@@ -53,14 +53,14 @@ func (h *Handlers) Syncer() *Syncer { return h.syncer }
 
 // RegisterRoutes implements app.CustomHandler.
 func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
-	e.GET("/sync/config/:name", h.GetConfig)
-	e.PUT("/sync/config/:name", h.UpdateConfig)
-	e.DELETE("/sync/config/:name", h.DeleteConfig)
-	e.POST("/sync/push/:name", h.Push)
-	e.POST("/sync/pull/:name", h.Pull)
-	e.POST("/sync/rotate-key/:name", h.RotateKey)
-	e.POST("/sync/all", h.SyncAll)
-	log.Printf("[SYNC] Registered GitHub sync endpoints (/sync/*)")
+	e.GET("/settings/:name/sync", h.GetConfig)
+	e.PUT("/settings/:name/sync", h.UpdateConfig)
+	e.DELETE("/settings/:name/sync", h.DeleteConfig)
+	e.POST("/settings/:name/sync/push", h.Push)
+	e.POST("/settings/:name/sync/pull", h.Pull)
+	e.POST("/settings/:name/sync/rotate-key", h.RotateKey)
+	e.POST("/settings/sync/all", h.SyncAll)
+	log.Printf("[SYNC] Registered GitHub sync endpoints (/settings/:name/sync/*)")
 	return nil
 }
 
