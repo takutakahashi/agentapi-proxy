@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/google/go-github/v57/github"
@@ -19,6 +20,9 @@ type GitHubSyncClient struct {
 
 // NewGitHubSyncClient creates a client authenticated with the given PAT.
 // repoFullName must be "owner/repo".
+// When the GITHUB_API environment variable is set, an Enterprise client is created
+// using that URL so that operators who configure GitHub Enterprise in Helm do not
+// need separate git-sync settings.
 func NewGitHubSyncClient(ctx context.Context, token, repoFullName string) (*GitHubSyncClient, error) {
 	parts := strings.SplitN(repoFullName, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -27,8 +31,23 @@ func NewGitHubSyncClient(ctx context.Context, token, repoFullName string) (*GitH
 
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(ctx, ts)
+
+	var ghClient *github.Client
+	if enterpriseURL := os.Getenv("GITHUB_API"); enterpriseURL != "" {
+		if !strings.HasSuffix(enterpriseURL, "/") {
+			enterpriseURL += "/"
+		}
+		var err error
+		ghClient, err = github.NewClient(tc).WithEnterpriseURLs(enterpriseURL, enterpriseURL)
+		if err != nil {
+			return nil, fmt.Errorf("create enterprise GitHub client for %s: %w", enterpriseURL, err)
+		}
+	} else {
+		ghClient = github.NewClient(tc)
+	}
+
 	return &GitHubSyncClient{
-		client: github.NewClient(tc),
+		client: ghClient,
 		owner:  parts[0],
 		repo:   parts[1],
 	}, nil
