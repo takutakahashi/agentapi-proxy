@@ -300,6 +300,13 @@ type KubernetesSessionConfig struct {
 	// session pods so that hooks are treated as managed (auto-trusted) by codex_core.
 	// Typically created by the Helm chart. When empty, no managed hooks are mounted.
 	CodexRequirementsConfigMapName string `json:"codex_requirements_configmap_name" mapstructure:"codex_requirements_configmap_name"`
+
+	// SessionSandboxCapabilities adds CAP_SYS_ADMIN to session pod containers.
+	// Required for Claude Code's Linux sandbox (user+mount namespace isolation).
+	// When false (default), Claude Code sandbox is unavailable because mount namespace
+	// creation requires CAP_SYS_ADMIN on the container's root filesystem mount.
+	// Paired with allowPrivilegeEscalation: false to limit further privilege escalation.
+	SessionSandboxCapabilities bool `json:"session_sandbox_capabilities" mapstructure:"session_sandbox_capabilities"`
 }
 
 // MemoryConfig represents memory backend configuration
@@ -708,6 +715,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
 	_ = v.BindEnv("kubernetes_session.codex_requirements_configmap_name", "AGENTAPI_K8S_SESSION_CODEX_REQUIREMENTS_CONFIGMAP_NAME")
+	_ = v.BindEnv("kubernetes_session.session_sandbox_capabilities", "AGENTAPI_K8S_SESSION_SANDBOX_CAPABILITIES")
 
 	// MCP servers configuration
 

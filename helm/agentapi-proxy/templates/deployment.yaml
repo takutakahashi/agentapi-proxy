@@ -287,6 +287,11 @@ spec:
             - name: AGENTAPI_K8S_SESSION_CODEX_REQUIREMENTS_CONFIGMAP_NAME
               value: {{ include "agentapi-proxy.fullname" . }}-codex-requirements
             {{- end }}
+            {{- if .Values.kubernetesSession.sessionSandboxCapabilities }}
+            # Enable CAP_SYS_ADMIN for session pods (required for Claude Code Linux sandbox)
+            - name: AGENTAPI_K8S_SESSION_SANDBOX_CAPABILITIES
+              value: "true"
+            {{- end }}
             # Schedule Worker configuration (enabled by default)
             - name: AGENTAPI_SCHEDULE_WORKER_ENABLED
               value: {{ ((.Values.scheduleWorker).enabled) | default true | quote }}

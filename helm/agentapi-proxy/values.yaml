@@ -430,6 +430,14 @@ kubernetesSession:
   #       }
   settingsBaseSecret: "agentapi-settings-base"
 
+  # Enable CAP_SYS_ADMIN for session pod containers.
+  # Required for Claude Code's Linux sandbox (user+mount namespace isolation).
+  # When false (default), Claude Code sandbox is unavailable in Kubernetes because
+  # mount namespace creation requires CAP_SYS_ADMIN on the container root filesystem mount.
+  # Security note: paired with allowPrivilegeEscalation: false to prevent further
+  # privilege escalation via suid executables. Sessions still run as UID 999 (non-root).
+  sessionSandboxCapabilities: false
+
   # Codex requirements ConfigMap for codex-acp sessions.
   # When enabled, a ConfigMap is created containing /etc/codex/requirements.toml
   # whose hooks are auto-trusted by codex_core (HookTrustStatus::Managed).

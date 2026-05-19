@@ -1663,6 +1663,21 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session)
 
+	// Add CAP_SYS_ADMIN when sandbox support is enabled.
+	// Required for Claude Code's Linux sandbox (user+mount namespace isolation):
+	// mount namespace creation needs CAP_SYS_ADMIN on the container's root filesystem
+	// mount, which is owned by the host namespace, not the user namespace.
+	// allowPrivilegeEscalation: false prevents further privilege gain via suid executables.
+	if m.k8sConfig.SessionSandboxCapabilities {
+		privilegeEscalation := false
+		container.SecurityContext = &corev1.SecurityContext{
+			AllowPrivilegeEscalation: &privilegeEscalation,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"SYS_ADMIN"},
+			},
+		}
+	}
+
 	// Build containers list (main container only)
 	// Note: credentials-sync is now handled as a goroutine inside agent-provisioner
 	// (pkg/provisioner/provision.go) after user context is established, so the
