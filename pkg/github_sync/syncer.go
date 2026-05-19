@@ -932,7 +932,8 @@ func (s *Syncer) importUserScheduleFile(ctx context.Context, data []byte, userID
 	}
 	if si.SessionConfig.Params != nil {
 		sc.SessionConfig.Params = &entities.SessionParams{
-			Message: si.SessionConfig.Params.InitialMessage,
+			Message:     si.SessionConfig.Params.InitialMessage,
+			GithubToken: si.SessionConfig.Params.GitHubToken,
 		}
 	}
 
@@ -1382,6 +1383,7 @@ func scheduleToImport(sc *schedule.Schedule) importexport.ScheduleImport {
 	if sc.SessionConfig.Params != nil {
 		si.SessionConfig.Params = &importexport.SessionParamsImport{
 			InitialMessage: sc.SessionConfig.Params.Message,
+			GitHubToken:    sc.SessionConfig.Params.GithubToken,
 		}
 	}
 	return si
@@ -1436,6 +1438,9 @@ func webhookToImport(wh *entities.Webhook) importexport.WebhookImport {
 				Draft:        gh.Draft(),
 				Sender:       gh.Sender(),
 			}
+		}
+		if cond.GoTemplate() != "" {
+			ti.Conditions.GoTemplate = cond.GoTemplate()
 		}
 		if tsc := t.SessionConfig(); tsc != nil {
 			ti.SessionConfig = &importexport.SessionConfigImport{
