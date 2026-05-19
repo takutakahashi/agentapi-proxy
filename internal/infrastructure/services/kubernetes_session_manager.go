@@ -1663,13 +1663,13 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session)
 
-	// Add minimal capabilities for Claude Code's Linux sandbox when enabled.
-	// Claude Code's sandbox requires CAP_SYS_ADMIN to create mount namespaces for
-	// process-level filesystem isolation. K8s cannot grant effective capabilities
-	// to non-root containers (no ambient cap API), so we run as UID 0 (root) while
-	// dropping all other capabilities. This limits the blast radius to just the
-	// single cap needed, while keeping the container from having broader root power.
-	// allowPrivilegeEscalation: false prevents further gain via suid executables.
+	// Add minimal security settings for Claude Code's Linux sandbox when enabled.
+	// Claude Code's sandbox requires CAP_SYS_ADMIN (for mount namespace creation) and
+	// AppArmor Unconfined (the default cri-containerd profile blocks mount(2) even
+	// with SYS_ADMIN). K8s cannot grant effective capabilities to non-root containers
+	// (no ambient cap API), so we use UID 0 with drop ALL + add SYS_ADMIN.
+	// This limits the blast radius to exactly the one cap needed for sandbox namespace
+	// creation while allowPrivilegeEscalation: false prevents further privilege gain.
 	if m.k8sConfig.SessionSandboxCapabilities {
 		root := int64(0)
 		privilegeEscalation := false
@@ -1679,6 +1679,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
 				Add:  []corev1.Capability{"SYS_ADMIN"},
+			},
+			AppArmorProfile: &corev1.AppArmorProfile{
+				Type: corev1.AppArmorProfileTypeUnconfined,
 			},
 		}
 	}
