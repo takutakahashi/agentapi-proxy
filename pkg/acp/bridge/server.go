@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -25,6 +26,7 @@ type Server struct {
 	bridge  *Bridge
 	echo    *echo.Echo
 	verbose bool
+	msgSeq  atomic.Int64 // used to generate unique JSON-RPC IDs for POST /message
 }
 
 // NewServer creates a new HTTP transport server backed by the given Bridge.
@@ -160,7 +162,8 @@ func (s *Server) handleMessage(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "content is required"})
 	}
 	log.Printf("[acp-server] POST /message content=%q (remoteAddr=%s)", payload.Content, c.RealIP())
-	idRaw := json.RawMessage(`0`)
+	id := s.msgSeq.Add(1)
+	idRaw, _ := json.Marshal(id)
 	if err := s.bridge.SendPrompt(idRaw, payload.Content); err != nil {
 		log.Printf("[acp-server] POST /message SendPrompt error: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
