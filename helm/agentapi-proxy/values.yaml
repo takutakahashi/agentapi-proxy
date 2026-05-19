@@ -434,8 +434,9 @@ kubernetesSession:
   # Required for Claude Code's Linux sandbox (user+mount namespace isolation).
   # When false (default), Claude Code sandbox is unavailable in Kubernetes because
   # mount namespace creation requires CAP_SYS_ADMIN on the container root filesystem mount.
-  # Security note: paired with allowPrivilegeEscalation: false to prevent further
-  # privilege escalation via suid executables. Sessions still run as UID 999 (non-root).
+  # Mechanism: the Dockerfile sets cap_sys_admin+ep as a file capability on the claude binary.
+  # The capability is effective only while claude itself runs and is automatically dropped
+  # after execve into sandboxed commands. Sessions continue to run as UID 999 (non-root).
   sessionSandboxCapabilities: false
 
   # Codex requirements ConfigMap for codex-acp sessions.
