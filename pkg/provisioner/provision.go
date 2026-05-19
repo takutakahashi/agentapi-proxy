@@ -121,7 +121,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Loaded %d env vars from session env file", len(envMap))
 
 	// ── Step 4: fetch memory from proxy → inject into CLAUDE.md ──────────────
-	s.fetchAndInjectMemory()
+	s.fetchAndInjectMemory(envMap)
 
 	// ── Step 5: cd into cloned repo ───────────────────────────────────────────
 	if _, err := os.Stat(workdirRepoPath); err == nil {
@@ -1025,21 +1025,29 @@ func countNonEmptyMessages(client *http.Client, agentapiURL string) int {
 
 // fetchAndInjectMemory fetches session memory from the proxy and appends it to
 // CLAUDE.md, replicating the bash memory injection in buildClaudeStartCommand.
-func (s *Server) fetchAndInjectMemory() {
-	memoryKeyFlags := os.Getenv("MEMORY_KEY_FLAGS")
+// getEnv returns the value of key from envMap if present, falling back to os.Getenv.
+func getEnv(envMap map[string]string, key string) string {
+	if v, ok := envMap[key]; ok {
+		return v
+	}
+	return os.Getenv(key)
+}
+
+func (s *Server) fetchAndInjectMemory(envMap map[string]string) {
+	memoryKeyFlags := getEnv(envMap, "MEMORY_KEY_FLAGS")
 	if memoryKeyFlags == "" {
 		return
 	}
 
-	proxyHost := os.Getenv("AGENTAPI_PROXY_SERVICE_HOST")
-	proxyPort := os.Getenv("AGENTAPI_PROXY_SERVICE_PORT_HTTP")
+	proxyHost := getEnv(envMap, "AGENTAPI_PROXY_SERVICE_HOST")
+	proxyPort := getEnv(envMap, "AGENTAPI_PROXY_SERVICE_PORT_HTTP")
 	if proxyHost == "" || proxyPort == "" {
 		log.Printf("[PROVISIONER] AGENTAPI_PROXY_SERVICE_HOST or PORT not set, skipping memory fetch")
 		return
 	}
 	proxyEndpoint := fmt.Sprintf("http://%s:%s", proxyHost, proxyPort)
 
-	scope := os.Getenv("AGENTAPI_SCOPE")
+	scope := getEnv(envMap, "AGENTAPI_SCOPE")
 	if scope == "" {
 		scope = "user"
 	}
@@ -1056,7 +1064,7 @@ func (s *Server) fetchAndInjectMemory() {
 	args = append(args, strings.Fields(memoryKeyFlags)...)
 
 	if scope == "team" {
-		if teamID := os.Getenv("AGENTAPI_TEAM_ID"); teamID != "" {
+		if teamID := getEnv(envMap, "AGENTAPI_TEAM_ID"); teamID != "" {
 			args = append(args, "--team-id", teamID)
 		}
 	}
