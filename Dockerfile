@@ -40,7 +40,9 @@ RUN set -ex && \
 FROM ubuntu:24.04
 
 # Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata && \
+# uidmap provides newuidmap/newgidmap (setuid-root helpers) so that the non-root
+# agentapi user can create user+mount+network namespaces for Claude Code's sandbox.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata uidmap && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
@@ -48,11 +50,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user
+# Create a non-root user and configure subordinate UID/GID ranges so that
+# newuidmap/newgidmap can map UID 0 inside a user namespace to UID 999 on the
+# host.  This allows Claude Code's sandbox to create user+mount+network
+# namespaces without requiring CAP_SYS_ADMIN on the host.
 RUN groupadd -r agentapi && useradd -r -g agentapi -d /home/agentapi -s /bin/bash agentapi && \
     mkdir -p /home/agentapi && \
     chown -R agentapi:agentapi /home/agentapi && \
-    echo 'agentapi ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+    echo 'agentapi ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+    echo 'agentapi:100000:65536' >> /etc/subuid && \
+    echo 'agentapi:100000:65536' >> /etc/subgid
 
 # Set working directory
 WORKDIR /home/agentapi/workdir
