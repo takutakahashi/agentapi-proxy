@@ -101,6 +101,10 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # sessions have no such mount at pod creation time.
 RUN mkdir -p /opt/webhook && chown agentapi:agentapi /opt/webhook
 
+# Pre-create /opt/acp-posts so that the acp-server bridge (running as agentapi)
+# can write the conversation history file for acp-posts Slack integration.
+RUN mkdir -p /opt/acp-posts && chown agentapi:agentapi /opt/acp-posts
+
 # Switch to non-root user
 USER agentapi
 
