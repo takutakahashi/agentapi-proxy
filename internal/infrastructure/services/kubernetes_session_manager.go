@@ -1667,11 +1667,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Required for Claude Code's Linux sandbox (user+mount namespace isolation):
 	// mount namespace creation needs CAP_SYS_ADMIN on the container's root filesystem
 	// mount, which is owned by the host namespace, not the user namespace.
-	// allowPrivilegeEscalation: false prevents further privilege gain via suid executables.
+	// Note: allowPrivilegeEscalation must NOT be set to false here because
+	// no_new_privs blocks ambient capabilities from becoming effective on execve,
+	// which would leave CapEff=0 for the non-root UID 999 process.
 	if m.k8sConfig.SessionSandboxCapabilities {
-		privilegeEscalation := false
 		container.SecurityContext = &corev1.SecurityContext{
-			AllowPrivilegeEscalation: &privilegeEscalation,
 			Capabilities: &corev1.Capabilities{
 				Add: []corev1.Capability{"SYS_ADMIN"},
 			},
