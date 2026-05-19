@@ -170,6 +170,39 @@ func generateSettingsJSON(outputDir string, settingsJSON map[string]interface{})
 	return nil
 }
 
+// patchSettingsJSONSandbox reads the existing ~/.claude/settings.json and
+// re-applies the sandbox key from compiled settings. Claude CLI rewrites
+// settings.json during plugin install and loses nested sandbox configuration
+// like network.deniedDomains. This is the settings.json equivalent of
+// patchClaudeJSON for .claude.json.
+func patchSettingsJSONSandbox(outputDir string, sandbox interface{}) error {
+	settingsPath := filepath.Join(outputDir, ".claude", "settings.json")
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read settings.json: %w", err)
+	}
+
+	var existing map[string]interface{}
+	if err := json.Unmarshal(data, &existing); err != nil {
+		return fmt.Errorf("failed to parse settings.json: %w", err)
+	}
+
+	existing["sandbox"] = sandbox
+
+	data, err = json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings.json: %w", err)
+	}
+
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write settings.json: %w", err)
+	}
+
+	log.Printf("[COMPILE-SETTINGS] Re-patched sandbox config in %s", settingsPath)
+	return nil
+}
+
 // generateEnvFile creates env file with sorted KEY=VALUE lines.
 func generateEnvFile(envFilePath string, env map[string]string) error {
 	// Create parent directory if needed
