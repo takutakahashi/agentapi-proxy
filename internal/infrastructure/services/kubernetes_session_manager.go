@@ -1663,27 +1663,15 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session)
 
-	// Add minimal security settings for Claude Code's Linux sandbox when enabled.
-	// Claude Code's sandbox requires CAP_SYS_ADMIN (for mount namespace creation) and
-	// AppArmor Unconfined (the default cri-containerd profile blocks mount(2) even
-	// with SYS_ADMIN). K8s cannot grant effective capabilities to non-root containers
-	// (no ambient cap API), so we use UID 0 with drop ALL + add SYS_ADMIN.
-	// This limits the blast radius to exactly the one cap needed for sandbox namespace
-	// creation while allowPrivilegeEscalation: false prevents further privilege gain.
+	// Add AppArmor Unconfined for Claude Code's Linux sandbox when enabled.
+	// The default cri-containerd AppArmor profile blocks mount(2) even with CAP_SYS_ADMIN.
+	// With AppArmor Unconfined, Linux user+mount namespace creation works via
+	// unprivileged user namespaces (no CAP_SYS_ADMIN needed), so the container can run
+	// as UID 999 (agentapi) without root. Running as root would cause Claude Code to
+	// refuse bypassPermissions mode (it logs: "bypassPermissions is not available when
+	// running as root"), breaking tool-use auto-approval in sessions.
 	if m.k8sConfig.SessionSandboxCapabilities {
-		root := int64(0)
-		privilegeEscalation := false
 		container.SecurityContext = &corev1.SecurityContext{
-			RunAsUser:                &root,
-			AllowPrivilegeEscalation: &privilegeEscalation,
-			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
-				// SYS_ADMIN: required for mount namespace creation (Claude Code sandbox)
-				// DAC_OVERRIDE: required because the container root filesystem is owned
-				// by UID 999 (agentapi), and without DAC_OVERRIDE even UID 0 gets EPERM
-				// on write when CAP_DAC_OVERRIDE is not in the effective set.
-				Add: []corev1.Capability{"SYS_ADMIN", "DAC_OVERRIDE"},
-			},
 			AppArmorProfile: &corev1.AppArmorProfile{
 				Type: corev1.AppArmorProfileTypeUnconfined,
 			},
