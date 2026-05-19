@@ -1678,7 +1678,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			AllowPrivilegeEscalation: &privilegeEscalation,
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
-				Add:  []corev1.Capability{"SYS_ADMIN"},
+				// SYS_ADMIN: required for mount namespace creation (Claude Code sandbox)
+				// DAC_OVERRIDE: required because the container root filesystem is owned
+				// by UID 999 (agentapi), and without DAC_OVERRIDE even UID 0 gets EPERM
+				// on write when CAP_DAC_OVERRIDE is not in the effective set.
+				Add: []corev1.Capability{"SYS_ADMIN", "DAC_OVERRIDE"},
 			},
 			AppArmorProfile: &corev1.AppArmorProfile{
 				Type: corev1.AppArmorProfileTypeUnconfined,
