@@ -184,9 +184,9 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// ── Step 10: mark ready and supervise ────────────────────────────────────
 	s.setStatus(StatusReady, "")
 
-	// ── Step 11: launch claude-posts subprocess if SlackParams provided ───────
+	// ── Step 11: launch acp-posts subprocess if SlackParams provided ─────────
 	if settings.SlackParams != nil && settings.SlackParams.Channel != "" {
-		go s.runClaudePosts(ctx, settings.SlackParams)
+		go s.runAcpPosts(ctx, settings.SlackParams, settings.Session.AgentType)
 	}
 
 	// ── Step 12: start files sync goroutine ───────────────────────────────────
@@ -205,19 +205,26 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}()
 }
 
-// runClaudePosts starts the claude-posts binary as a subprocess, forwarding
+// runAcpPosts starts the acp-posts binary as a subprocess, forwarding
 // agent output (history.jsonl) to Slack. It waits for the history file to
-// appear before launching, mirroring the sidecar's shell loop.
+// appear before launching. The history file path depends on the agent type:
+//   - claude-acp: /opt/acp-posts/history.jsonl (written by the acp-server bridge)
+//   - others:     /opt/claude-agentapi/history.jsonl (written by claude-agentapi)
+//
 // The subprocess is tied to ctx: when ctx is cancelled the goroutine exits.
-func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.SlackParams) {
-	const historyFile = "/opt/claude-agentapi/history.jsonl"
-	const claudePostsBin = "/usr/local/bin/claude-posts"
+func (s *Server) runAcpPosts(ctx context.Context, params *sessionsettings.SlackParams, agentType string) {
+	const acpPostsBin = "/usr/local/bin/acp-posts"
 
-	log.Printf("[CLAUDE_POSTS] Waiting for history file %s", historyFile)
+	historyFile := "/opt/claude-agentapi/history.jsonl"
+	if agentType == "claude-acp" {
+		historyFile = "/opt/acp-posts/history.jsonl"
+	}
+
+	log.Printf("[ACP_POSTS] Waiting for history file %s", historyFile)
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[CLAUDE_POSTS] Context cancelled while waiting for history file")
+			log.Printf("[ACP_POSTS] Context cancelled while waiting for history file")
 			return
 		case <-time.After(time.Second):
 		}
@@ -225,9 +232,9 @@ func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.Sla
 			break
 		}
 	}
-	log.Printf("[CLAUDE_POSTS] History file found, starting claude-posts")
+	log.Printf("[ACP_POSTS] History file found, starting acp-posts")
 
-	cmd := exec.CommandContext(ctx, claudePostsBin, "--file", historyFile)
+	cmd := exec.CommandContext(ctx, acpPostsBin, "--file", historyFile)
 	cmd.Env = append(os.Environ(),
 		"SLACK_BOT_TOKEN="+params.BotToken,
 		"SLACK_CHANNEL_ID="+params.Channel,
@@ -239,12 +246,12 @@ func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.Sla
 	if err := cmd.Run(); err != nil {
 		// ctx cancellation causes an expected error; don't log it as fatal.
 		if ctx.Err() != nil {
-			log.Printf("[CLAUDE_POSTS] Exited due to context cancellation")
+			log.Printf("[ACP_POSTS] Exited due to context cancellation")
 		} else {
-			log.Printf("[CLAUDE_POSTS] Exited with error: %v", err)
+			log.Printf("[ACP_POSTS] Exited with error: %v", err)
 		}
 	} else {
-		log.Printf("[CLAUDE_POSTS] Exited normally")
+		log.Printf("[ACP_POSTS] Exited normally")
 	}
 }
 
@@ -591,11 +598,13 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	case "claude-acp":
 		// Start the acp-server bridge that wraps claude-agent-acp (ACP agent) via stdio.
 		// The bridge exposes an agentapi-compatible HTTP server on AGENTAPI_PORT.
+		// --output-file writes conversation history in acp-posts JSONL format for Slack integration.
 		// claude-agent-acp is the official ACP adapter for the Claude Agent SDK:
 		// https://github.com/agentclientprotocol/claude-agent-acp
 		return "agentapi-proxy", []string{
 			"acp-server",
 			"--port", agentapiPort,
+			"--output-file", "/opt/acp-posts/history.jsonl",
 			"--",
 			"bunx", "@agentclientprotocol/claude-agent-acp",
 		}
