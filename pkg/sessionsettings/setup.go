@@ -105,12 +105,13 @@ func Setup(opts SetupOptions) error {
 		log.Printf("[SETUP] Warning: failed to re-patch .claude.json: %v", err)
 	}
 
-	// 6. Re-patch sandbox settings in ~/.claude/settings.json.
-	//    Claude CLI (invoked during plugin install) rewrites settings.json and
-	//    drops nested sandbox configuration such as network.deniedDomains.
-	if sandbox, ok := settings.Claude.SettingsJSON["sandbox"]; ok {
-		if err := patchSettingsJSONSandbox(outputDir, sandbox); err != nil {
-			log.Printf("[SETUP] Warning: failed to re-patch settings.json sandbox: %v", err)
+	// 6. Re-patch keys that Claude CLI drops when it rewrites settings.json during
+	//    plugin install (sandbox, permissions, hooks, etc.).
+	for _, key := range []string{"sandbox", "permissions", "hooks"} {
+		if val, ok := settings.Claude.SettingsJSON[key]; ok {
+			if err := patchSettingsJSONKey(outputDir, key, val); err != nil {
+				log.Printf("[SETUP] Warning: failed to re-patch settings.json %q: %v", key, err)
+			}
 		}
 	}
 
