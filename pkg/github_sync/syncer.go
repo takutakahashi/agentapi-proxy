@@ -1164,6 +1164,13 @@ func encryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 			return err
 		}
 		sc.EnvironmentEncrypted = nil
+		if p := sc.Params; p != nil && p.GitHubToken != "" && !IsEncrypted(p.GitHubToken) {
+			enc, err := EncryptField(dek, p.GitHubToken)
+			if err != nil {
+				return fmt.Errorf("encrypt schedule github_token: %w", err)
+			}
+			p.GitHubToken = enc
+		}
 	}
 
 	for i := range r.Webhooks {
@@ -1251,8 +1258,16 @@ func decryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 	}
 
 	for i := range r.Schedules {
-		if err := decryptMapValues(r.Schedules[i].SessionConfig.Environment, "schedule env"); err != nil {
+		sc := &r.Schedules[i].SessionConfig
+		if err := decryptMapValues(sc.Environment, "schedule env"); err != nil {
 			return err
+		}
+		if p := sc.Params; p != nil && IsEncrypted(p.GitHubToken) {
+			plain, err := DecryptField(dek, p.GitHubToken)
+			if err != nil {
+				return fmt.Errorf("decrypt schedule github_token: %w", err)
+			}
+			p.GitHubToken = plain
 		}
 	}
 
