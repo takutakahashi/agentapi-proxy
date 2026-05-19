@@ -1663,18 +1663,22 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session)
 
-	// Expand the capability bounding set when sandbox support is enabled.
-	// CAP_SYS_ADMIN must be in the bounding set for the file capability on the
-	// claude binary (cap_sys_admin+ep set via setcap in the Dockerfile) to become
-	// effective when claude is executed. The capability remains effective only for
-	// the claude process itself and is automatically dropped after any subsequent
-	// execve (e.g., into the sandboxed commands), providing minimal privilege scope.
-	// Note: allowPrivilegeEscalation must NOT be false here because no_new_privs
-	// blocks file capabilities from promoting into the effective set on execve.
+	// Add minimal capabilities for Claude Code's Linux sandbox when enabled.
+	// Claude Code's sandbox requires CAP_SYS_ADMIN to create mount namespaces for
+	// process-level filesystem isolation. K8s cannot grant effective capabilities
+	// to non-root containers (no ambient cap API), so we run as UID 0 (root) while
+	// dropping all other capabilities. This limits the blast radius to just the
+	// single cap needed, while keeping the container from having broader root power.
+	// allowPrivilegeEscalation: false prevents further gain via suid executables.
 	if m.k8sConfig.SessionSandboxCapabilities {
+		root := int64(0)
+		privilegeEscalation := false
 		container.SecurityContext = &corev1.SecurityContext{
+			RunAsUser:                &root,
+			AllowPrivilegeEscalation: &privilegeEscalation,
 			Capabilities: &corev1.Capabilities{
-				Add: []corev1.Capability{"SYS_ADMIN"},
+				Drop: []corev1.Capability{"ALL"},
+				Add:  []corev1.Capability{"SYS_ADMIN"},
 			},
 		}
 	}

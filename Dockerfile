@@ -40,7 +40,7 @@ RUN set -ex && \
 FROM ubuntu:24.04
 
 # Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata libcap2-bin && \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
@@ -126,7 +126,6 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s 2.1.12 && \
     sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
     sudo chown agentapi:agentapi /opt/claude/bin/claude && \
     sudo chmod +x /opt/claude/bin/claude && \
-    sudo setcap cap_sys_admin+ep /opt/claude/bin/claude && \
     rm -rf /home/agentapi/.local/share/claude/versions /home/agentapi/.local/bin/claude 2>/dev/null || true && \
     mkdir -p /home/agentapi/.local/bin && \
     ln -sf /opt/claude/bin/claude /home/agentapi/.local/bin/claude
