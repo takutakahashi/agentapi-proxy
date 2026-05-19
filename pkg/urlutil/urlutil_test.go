@@ -8,9 +8,9 @@ import (
 
 func TestRewriteEncodedSlashes(t *testing.T) {
 	tests := []struct {
-		rawPath  string
-		want     string
-		wantOK   bool
+		rawPath string
+		want    string
+		wantOK  bool
 	}{
 		{"/settings/our%2Fcc-users/sync/push", "/settings/our\x01cc-users/sync/push", true},
 		{"/settings/our%2fcc-users/sync/push", "/settings/our\x01cc-users/sync/push", true},

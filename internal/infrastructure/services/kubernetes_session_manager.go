@@ -1320,54 +1320,97 @@ func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
 	return nil
 }
 
-// SendMessage sends a message to an existing session
+// SendMessage sends a message to an existing session.
+// For ACP sessions (claude-acp, codex-acp) it uses the ACP JSON-RPC 2.0
+// POST /rpc endpoint with session/prompt; for standard agentapi sessions it
+// uses the agentapi-compatible POST /message endpoint.
 func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
-	// Get session
 	session := m.GetSession(id)
 	if session == nil {
 		return fmt.Errorf("session not found: %s", id)
 	}
 
-	// Check session status
 	status := session.Status()
 	if status != "active" && status != "starting" {
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
 
-	// Build service name and endpoint URL
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
-	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/message",
+	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
 		serviceName,
 		m.namespace,
 		m.k8sConfig.BasePort,
 	)
 
-	// Create payload
-	payload := map[string]interface{}{
-		"content": message,
-		"type":    "user",
+	agentType := ""
+	if ks, ok := session.(*KubernetesSession); ok {
+		if req := ks.Request(); req != nil {
+			agentType = req.AgentType
+		}
 	}
 
-	// Marshal JSON
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message payload: %w", err)
+	isACP := agentType == "claude-acp" || agentType == "codex-acp"
+
+	var jsonData []byte
+	var postURL string
+	if isACP {
+		// Fetch the ACP session ID from GET /session.
+		acpSessionID, err := m.getACPSessionIDFromPod(ctx, baseURL)
+		if err != nil {
+			return fmt.Errorf("failed to get ACP session ID: %w", err)
+		}
+		type contentBlock struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		type promptParams struct {
+			SessionId string         `json:"sessionId"`
+			Prompt    []contentBlock `json:"prompt"`
+		}
+		type rpcRequest struct {
+			JSONRPC string       `json:"jsonrpc"`
+			ID      int          `json:"id"`
+			Method  string       `json:"method"`
+			Params  promptParams `json:"params"`
+		}
+		payload := rpcRequest{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "session/prompt",
+			Params: promptParams{
+				SessionId: acpSessionID,
+				Prompt:    []contentBlock{{Type: "text", Text: message}},
+			},
+		}
+		jsonData, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal ACP payload: %w", err)
+		}
+		postURL = baseURL + "/rpc"
+	} else {
+		payload := map[string]interface{}{
+			"content": message,
+			"type":    "user",
+		}
+		var err error
+		jsonData, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal message payload: %w", err)
+		}
+		postURL = baseURL + "/message"
 	}
 
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	// Send request with retry logic
 	var lastErr error
 	for i := 0; i < 3; i++ {
+		req, err := http.NewRequestWithContext(ctx, "POST", postURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create HTTP request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
 		resp, err := http.DefaultClient.Do(req)
-		if err == nil && resp.StatusCode == 200 {
+		if err == nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted) {
 			_ = resp.Body.Close()
-			// Update last-message-at in memory and on the Kubernetes Service annotation.
 			now := time.Now()
 			if ks, ok := session.(*KubernetesSession); ok {
 				ks.SetLastMessageAt(now)
@@ -1376,7 +1419,7 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 			if patchErr := m.patchLastMessageAt(context.Background(), svcName, now); patchErr != nil {
 				log.Printf("[K8S_SESSION] Failed to update last-message-at for session %s: %v", id, patchErr)
 			}
-			log.Printf("[K8S_SESSION] Successfully sent message to session %s", id)
+			log.Printf("[K8S_SESSION] Successfully sent message to session %s (agentType=%q)", id, agentType)
 			return nil
 		}
 		if err != nil {
@@ -1391,6 +1434,30 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 	}
 
 	return fmt.Errorf("failed to send message after 3 retries: %w", lastErr)
+}
+
+// getACPSessionIDFromPod fetches the ACP session ID from the pod's GET /session endpoint.
+func (m *KubernetesSessionManager) getACPSessionIDFromPod(ctx context.Context, baseURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/session", nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body struct {
+		SessionId string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if body.SessionId == "" {
+		return "", fmt.Errorf("empty sessionId from /session")
+	}
+	return body.SessionId, nil
 }
 
 // StopAgent sends a stop_agent action to the running agent in the session via the

@@ -66,17 +66,17 @@ COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 # Copy github-mcp-server binary from official image
 COPY --from=ghcr.io/github/github-mcp-server:v0.26.3 /server/github-mcp-server /usr/local/bin/
 
-# Download claude-posts binary for Slack integration subprocess
-ARG CLAUDE_POSTS_VERSION=v0.4.0
+# Download acp-posts binary for Slack integration subprocess
+ARG ACP_POSTS_VERSION=v0.1.0
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) CLAUDE_POSTS_ARCH="linux-amd64" ;; \
-      arm64) CLAUDE_POSTS_ARCH="linux-arm64" ;; \
+      amd64) ACP_POSTS_ARCH="linux-amd64" ;; \
+      arm64) ACP_POSTS_ARCH="linux-arm64" ;; \
       *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
     esac && \
-    curl -fsSL "https://github.com/takutakahashi/claude-posts/releases/download/${CLAUDE_POSTS_VERSION}/claude-posts-${CLAUDE_POSTS_ARCH}" \
-      -o /usr/local/bin/claude-posts && \
-    chmod +x /usr/local/bin/claude-posts
+    curl -fsSL "https://github.com/takutakahashi/acp-posts/releases/download/${ACP_POSTS_VERSION}/acp-posts-${ACP_POSTS_ARCH}" \
+      -o /usr/local/bin/acp-posts && \
+    chmod +x /usr/local/bin/acp-posts
 
 # Download otelcol-contrib binary for in-process OpenTelemetry Collector support.
 # Used when OtelCollectorInProcess=true (e.g. when stock inventory is enabled) so
@@ -100,6 +100,10 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # this directory is provided by the Kubernetes Secret volume mount, but stock
 # sessions have no such mount at pod creation time.
 RUN mkdir -p /opt/webhook && chown agentapi:agentapi /opt/webhook
+
+# Pre-create /opt/acp-posts so that the acp-server bridge (running as agentapi)
+# can write the conversation history file for acp-posts Slack integration.
+RUN mkdir -p /opt/acp-posts && chown agentapi:agentapi /opt/acp-posts
 
 # Switch to non-root user
 USER agentapi
