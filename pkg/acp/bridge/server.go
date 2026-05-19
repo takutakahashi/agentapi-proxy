@@ -64,6 +64,10 @@ func (s *Server) registerRoutes() {
 	// they missed while disconnected from the SSE stream.
 	s.echo.GET("/messages", s.handleGetMessages)
 	s.echo.POST("/rpc", s.handleRPC)
+	// /message is the agentapi-compatible endpoint used by the proxy and SlackBot
+	// to send follow-up user messages to an active session (multi-turn support).
+	// Accepts {"content": "...", "type": "user"} and forwards the text to the agent.
+	s.echo.POST("/message", s.handleMessage)
 	s.echo.GET("/sse", s.handleSSE)
 	// /events is the agentapi-compatible SSE endpoint consumed by the proxy's
 	// watchAgentAPIStatus goroutine.  It emits status_change events whenever
@@ -136,6 +140,32 @@ func (s *Server) handleGetSession(c echo.Context) error {
 		"sessionId": sessionId,
 		"status":    "ready",
 	})
+}
+
+// POST /message
+//
+// agentapi-compatible endpoint for sending a user message to the active session.
+// Used by the proxy and SlackBot for multi-turn conversations.
+// Accepts {"content": "...", "type": "user"} and forwards the text to the ACP agent.
+func (s *Server) handleMessage(c echo.Context) error {
+	var payload struct {
+		Content string `json:"content"`
+		Type    string `json:"type"`
+	}
+	if err := c.Bind(&payload); err != nil {
+		log.Printf("[acp-server] POST /message parse error (remoteAddr=%s): %v", c.RealIP(), err)
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	if payload.Content == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "content is required"})
+	}
+	log.Printf("[acp-server] POST /message content=%q (remoteAddr=%s)", payload.Content, c.RealIP())
+	idRaw := json.RawMessage(`0`)
+	if err := s.bridge.SendPrompt(idRaw, payload.Content); err != nil {
+		log.Printf("[acp-server] POST /message SendPrompt error: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // rpcEnvelope is the JSON-RPC 2.0 message envelope received on POST /rpc.
