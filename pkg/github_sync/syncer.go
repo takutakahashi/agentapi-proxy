@@ -1219,6 +1219,13 @@ func encryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 				b.SecretAccessKey = enc
 			}
 			b.SecretAccessKeyEncrypted = nil
+			if b.AccessKeyID != "" && !IsEncrypted(b.AccessKeyID) {
+				enc, err := EncryptField(dek, b.AccessKeyID)
+				if err != nil {
+					return fmt.Errorf("encrypt bedrock access_key_id: %w", err)
+				}
+				b.AccessKeyID = enc
+			}
 			b.AccessKeyIDEncrypted = nil
 		}
 
@@ -1309,6 +1316,13 @@ func decryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 					return fmt.Errorf("decrypt bedrock secret key: %w", err)
 				}
 				b.SecretAccessKey = plain
+			}
+			if IsEncrypted(b.AccessKeyID) {
+				plain, err := DecryptField(dek, b.AccessKeyID)
+				if err != nil {
+					return fmt.Errorf("decrypt bedrock access_key_id: %w", err)
+				}
+				b.AccessKeyID = plain
 			}
 		}
 		for _, mcp := range s.MCPServers {
