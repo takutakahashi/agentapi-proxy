@@ -513,7 +513,8 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	tags["schedule_id"] = schedule.ID
 	tags["schedule_name"] = schedule.Name
 
-	var initialMessage, githubToken, agentType string
+	agentType := "claude-acp"
+	var initialMessage, githubToken string
 	var slackParams *entities.SlackParams
 	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
@@ -522,7 +523,9 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		if scheduleScope != entities.ScopeTeam {
 			githubToken = schedule.SessionConfig.Params.GithubToken
 		}
-		agentType = schedule.SessionConfig.Params.AgentType
+		if schedule.SessionConfig.Params.AgentType != "" {
+			agentType = schedule.SessionConfig.Params.AgentType
+		}
 		slackParams = schedule.SessionConfig.Params.Slack
 		oneshot = schedule.SessionConfig.Params.Oneshot
 	}

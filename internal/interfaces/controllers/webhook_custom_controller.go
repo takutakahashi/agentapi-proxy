@@ -271,12 +271,15 @@ Raw payload (first 500 chars):
 Please ensure the webhook payload is valid JSON.
 `, wh.Name(), parseErr.Error(), truncateString(string(rawBody), 500))
 
-	var githubToken, agentType string
+	agentType := "claude-acp"
+	var githubToken string
 	var oneshot bool
 	if sessionConfig != nil && sessionConfig.Params() != nil {
 		params := sessionConfig.Params()
 		githubToken = params.GithubToken
-		agentType = params.AgentType
+		if params.AgentType != "" {
+			agentType = params.AgentType
+		}
 		oneshot = params.Oneshot
 	}
 
