@@ -3799,7 +3799,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--",
 				"bunx", "@agentclientprotocol/claude-agent-acp",
 			},
-			PreScript: "bun install --global @agentclientprotocol/claude-agent-acp@latest",
 		}
 		// Bypass permission prompts for claude-acp sessions so tool calls
 		// proceed without waiting for user approval.
@@ -3820,7 +3819,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--",
 				"npx", "@zed-industries/codex-acp",
 			},
-			PreScript: "npm install --global @zed-industries/codex-acp@latest",
 		}
 	default:
 		settings.Startup = sessionsettings.StartupConfig{
