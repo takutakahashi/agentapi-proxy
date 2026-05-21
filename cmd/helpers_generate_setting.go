@@ -545,16 +545,18 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		// Port is determined at runtime via AGENTAPI_PORT env var.
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- bunx @agentclientprotocol/claude-agent-acp]")
 		return sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
-			Args:    []string{"acp-server", "--", "bunx", "@agentclientprotocol/claude-agent-acp"},
+			Command:   []string{"agentapi-proxy"},
+			Args:      []string{"acp-server", "--", "bunx", "@agentclientprotocol/claude-agent-acp"},
+			PreScript: "bun install --global @agentclientprotocol/claude-agent-acp@latest",
 		}
 	case "codex-acp":
 		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.
 		// https://github.com/zed-industries/codex-acp
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx @zed-industries/codex-acp]")
 		return sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
-			Args:    []string{"acp-server", "--", "npx", "@zed-industries/codex-acp"},
+			Command:   []string{"agentapi-proxy"},
+			Args:      []string{"acp-server", "--", "npx", "@zed-industries/codex-acp"},
+			PreScript: "npm install --global @zed-industries/codex-acp@latest",
 		}
 	default:
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi server --allowed-hosts * --allowed-origins *]")

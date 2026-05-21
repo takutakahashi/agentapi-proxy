@@ -3799,6 +3799,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--",
 				"bunx", "@agentclientprotocol/claude-agent-acp",
 			},
+			PreScript: "bun install --global @agentclientprotocol/claude-agent-acp@latest",
 		}
 		// Bypass permission prompts for claude-acp sessions so tool calls
 		// proceed without waiting for user approval.
@@ -3807,6 +3808,19 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 		settingsJSON["permissions"] = map[string]interface{}{
 			"defaultMode": "bypassPermissions",
+		}
+	case "codex-acp":
+		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.
+		// https://github.com/zed-industries/codex-acp
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--",
+				"npx", "@zed-industries/codex-acp",
+			},
+			PreScript: "npm install --global @zed-industries/codex-acp@latest",
 		}
 	default:
 		settings.Startup = sessionsettings.StartupConfig{
