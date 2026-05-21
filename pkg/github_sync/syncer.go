@@ -951,15 +951,16 @@ func (s *Syncer) importUserWebhookFile(ctx context.Context, data []byte, userID 
 	if err := yaml.Unmarshal(data, &wi); err != nil {
 		return fmt.Errorf("unmarshal webhook: %w", err)
 	}
-	// Decrypt secret field inline (ScopeUser — cannot use generic Importer which hardcodes ScopeTeam).
-	if IsEncrypted(wi.Secret) {
-		plain, err := DecryptField(dek, wi.Secret)
-		if err != nil {
-			return fmt.Errorf("decrypt webhook secret: %w", err)
-		}
-		wi.Secret = plain
+	// Decrypt all sensitive fields (Secret, Environment maps) via the shared helper.
+	// Cannot use the generic Importer here because it hardcodes ScopeTeam.
+	wrapper := &importexport.TeamResources{
+		Metadata: importexport.ResourceMetadata{TeamID: userID},
+		Webhooks: []importexport.WebhookImport{wi},
 	}
-	return s.upsertUserWebhook(ctx, wi, userID)
+	if err := decryptTeamResourcesFields(wrapper, dek); err != nil {
+		return fmt.Errorf("decrypt webhook: %w", err)
+	}
+	return s.upsertUserWebhook(ctx, wrapper.Webhooks[0], userID)
 }
 
 // upsertUserWebhook creates or updates a personal (ScopeUser) webhook from a WebhookImport.
