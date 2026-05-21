@@ -951,15 +951,16 @@ func (s *Syncer) importUserWebhookFile(ctx context.Context, data []byte, userID 
 	if err := yaml.Unmarshal(data, &wi); err != nil {
 		return fmt.Errorf("unmarshal webhook: %w", err)
 	}
-	// Decrypt secret field inline (ScopeUser — cannot use generic Importer which hardcodes ScopeTeam).
-	if IsEncrypted(wi.Secret) {
-		plain, err := DecryptField(dek, wi.Secret)
-		if err != nil {
-			return fmt.Errorf("decrypt webhook secret: %w", err)
-		}
-		wi.Secret = plain
+	// Decrypt all sensitive fields (Secret, Environment maps) via the shared helper.
+	// Cannot use the generic Importer here because it hardcodes ScopeTeam.
+	wrapper := &importexport.TeamResources{
+		Metadata: importexport.ResourceMetadata{TeamID: userID},
+		Webhooks: []importexport.WebhookImport{wi},
 	}
-	return s.upsertUserWebhook(ctx, wi, userID)
+	if err := decryptTeamResourcesFields(wrapper, dek); err != nil {
+		return fmt.Errorf("decrypt webhook: %w", err)
+	}
+	return s.upsertUserWebhook(ctx, wrapper.Webhooks[0], userID)
 }
 
 // upsertUserWebhook creates or updates a personal (ScopeUser) webhook from a WebhookImport.
@@ -1164,6 +1165,13 @@ func encryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 			return err
 		}
 		sc.EnvironmentEncrypted = nil
+		if p := sc.Params; p != nil && p.GitHubToken != "" && !IsEncrypted(p.GitHubToken) {
+			enc, err := EncryptField(dek, p.GitHubToken)
+			if err != nil {
+				return fmt.Errorf("encrypt schedule github_token: %w", err)
+			}
+			p.GitHubToken = enc
+		}
 	}
 
 	for i := range r.Webhooks {
@@ -1212,6 +1220,13 @@ func encryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 				b.SecretAccessKey = enc
 			}
 			b.SecretAccessKeyEncrypted = nil
+			if b.AccessKeyID != "" && !IsEncrypted(b.AccessKeyID) {
+				enc, err := EncryptField(dek, b.AccessKeyID)
+				if err != nil {
+					return fmt.Errorf("encrypt bedrock access_key_id: %w", err)
+				}
+				b.AccessKeyID = enc
+			}
 			b.AccessKeyIDEncrypted = nil
 		}
 
@@ -1251,8 +1266,16 @@ func decryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 	}
 
 	for i := range r.Schedules {
-		if err := decryptMapValues(r.Schedules[i].SessionConfig.Environment, "schedule env"); err != nil {
+		sc := &r.Schedules[i].SessionConfig
+		if err := decryptMapValues(sc.Environment, "schedule env"); err != nil {
 			return err
+		}
+		if p := sc.Params; p != nil && IsEncrypted(p.GitHubToken) {
+			plain, err := DecryptField(dek, p.GitHubToken)
+			if err != nil {
+				return fmt.Errorf("decrypt schedule github_token: %w", err)
+			}
+			p.GitHubToken = plain
 		}
 	}
 
@@ -1294,6 +1317,13 @@ func decryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 					return fmt.Errorf("decrypt bedrock secret key: %w", err)
 				}
 				b.SecretAccessKey = plain
+			}
+			if IsEncrypted(b.AccessKeyID) {
+				plain, err := DecryptField(dek, b.AccessKeyID)
+				if err != nil {
+					return fmt.Errorf("decrypt bedrock access_key_id: %w", err)
+				}
+				b.AccessKeyID = plain
 			}
 		}
 		for _, mcp := range s.MCPServers {
