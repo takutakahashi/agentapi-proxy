@@ -86,14 +86,11 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	}
 
 	// Determine session params fields from rendered params
-	agentType := "claude-acp"
-	var githubToken string
+	var githubToken, agentType string
 	var oneshot bool
 	if renderedParams != nil {
 		githubToken = renderedParams.GithubToken
-		if renderedParams.AgentType != "" {
-			agentType = renderedParams.AgentType
-		}
+		agentType = renderedParams.AgentType
 		oneshot = renderedParams.Oneshot
 	}
 
