@@ -64,7 +64,8 @@ spec:
           echo "[apparmor-node-config] Loaded AppArmor profile: ${PROFILE_NAME}"
       containers:
       - name: pause
-        image: gcr.io/pause:3.9
+        image: busybox:1.36
+        command: ["sh", "-c", "tail -f /dev/null"]
         resources:
           limits:
             memory: 4Mi
