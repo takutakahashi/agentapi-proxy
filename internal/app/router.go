@@ -36,6 +36,7 @@ type HandlerRegistry struct {
 	taskController           *controllers.TaskController
 	taskGroupController      *controllers.TaskGroupController
 	fileController           *controllers.FileController
+	sessionProfileController *controllers.SessionProfileController
 	customHandlers           []CustomHandler
 }
 
@@ -130,6 +131,13 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] File controller initialized")
 	}
 
+	// Create session profile controller if session profile repository is available
+	var sessionProfileController *controllers.SessionProfileController
+	if server.sessionProfileRepo != nil {
+		sessionProfileController = controllers.NewSessionProfileController(server.sessionProfileRepo)
+		log.Printf("[ROUTER] Session profile controller initialized")
+	}
+
 	acpController := controllers.NewACPController(server, server)
 
 	return &Router{
@@ -149,6 +157,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			taskController:           taskController,
 			taskGroupController:      taskGroupController,
 			fileController:           fileController,
+			sessionProfileController: sessionProfileController,
 			customHandlers:           make([]CustomHandler, 0),
 		},
 	}
@@ -375,6 +384,19 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] User file endpoints registered")
 	} else {
 		log.Printf("[ROUTES] User file repository not available, skipping file routes")
+	}
+
+	// Add session profile routes if session profile repository is available (Kubernetes mode only)
+	if r.server.sessionProfileRepo != nil && r.handlers.sessionProfileController != nil {
+		log.Printf("[ROUTES] Registering session profile endpoints...")
+		r.echo.POST("/session-profiles", r.handlers.sessionProfileController.CreateSessionProfile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/session-profiles", r.handlers.sessionProfileController.ListSessionProfiles, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/session-profiles/:id", r.handlers.sessionProfileController.GetSessionProfile, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/session-profiles/:id", r.handlers.sessionProfileController.UpdateSessionProfile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/session-profiles/:id", r.handlers.sessionProfileController.DeleteSessionProfile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Session profile endpoints registered")
+	} else {
+		log.Printf("[ROUTES] Session profile repository not available, skipping session profile routes")
 	}
 
 	return nil

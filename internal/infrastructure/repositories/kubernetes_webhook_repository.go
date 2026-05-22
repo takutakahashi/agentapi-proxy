@@ -108,6 +108,7 @@ type webhookSessionConfigJSON struct {
 	ReuseSession           bool                    `json:"reuse_session,omitempty"`
 	MountPayload           bool                    `json:"mount_payload,omitempty"`
 	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
+	SessionProfileID       string                  `json:"session_profile_id,omitempty"`
 }
 
 type webhookDeliveryRecordJSON struct {
@@ -682,6 +683,9 @@ func (r *KubernetesWebhookRepository) sessionConfigJSONToEntity(scj *webhookSess
 		// Use entities.SessionParams directly from JSON - no need to copy fields
 		sc.SetParams(scj.Params)
 	}
+	if scj.SessionProfileID != "" {
+		sc.SetSessionProfileID(scj.SessionProfileID)
+	}
 	return sc
 }
 
@@ -694,6 +698,7 @@ func (r *KubernetesWebhookRepository) sessionConfigEntityToJSON(sc *entities.Web
 		ReuseSession:           sc.ReuseSession(),
 		MountPayload:           sc.MountPayload(),
 		MemoryKey:              sc.MemoryKey(),
+		SessionProfileID:       sc.SessionProfileID(),
 	}
 	if params := sc.Params(); params != nil {
 		// Use entities.SessionParams directly for JSON - no need to copy fields

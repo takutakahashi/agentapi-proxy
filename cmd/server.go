@@ -777,6 +777,9 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 		configData.GitSync.Encryption.AWSRegion,
 		configData.GitSync.GitHubApp.InstallationID,
 	)
+	if sessionProfileRepo := proxyServer.GetSessionProfileRepository(); sessionProfileRepo != nil {
+		syncHandlers.Syncer().SetSessionProfileRepository(sessionProfileRepo)
+	}
 	proxyServer.AddCustomHandler(syncHandlers)
 
 	if interval := configData.GitSync.SyncInterval; interval != "" && interval != "0" {

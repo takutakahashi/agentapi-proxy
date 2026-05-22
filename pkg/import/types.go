@@ -6,12 +6,13 @@ import (
 
 // TeamResources represents the root structure for team resource import/export
 type TeamResources struct {
-	APIVersion string           `yaml:"apiVersion" toml:"api_version" json:"apiVersion"`
-	Kind       string           `yaml:"kind" toml:"kind" json:"kind"`
-	Metadata   ResourceMetadata `yaml:"metadata" toml:"metadata" json:"metadata"`
-	Schedules  []ScheduleImport `yaml:"schedules,omitempty" toml:"schedules,omitempty" json:"schedules,omitempty"`
-	Webhooks   []WebhookImport  `yaml:"webhooks,omitempty" toml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	Settings   *SettingsImport  `yaml:"settings,omitempty" toml:"settings,omitempty" json:"settings,omitempty"`
+	APIVersion      string                 `yaml:"apiVersion" toml:"api_version" json:"apiVersion"`
+	Kind            string                 `yaml:"kind" toml:"kind" json:"kind"`
+	Metadata        ResourceMetadata       `yaml:"metadata" toml:"metadata" json:"metadata"`
+	Schedules       []ScheduleImport       `yaml:"schedules,omitempty" toml:"schedules,omitempty" json:"schedules,omitempty"`
+	Webhooks        []WebhookImport        `yaml:"webhooks,omitempty" toml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	Settings        *SettingsImport        `yaml:"settings,omitempty" toml:"settings,omitempty" json:"settings,omitempty"`
+	SessionProfiles []SessionProfileImport `yaml:"session_profiles,omitempty" toml:"session_profiles,omitempty" json:"session_profiles,omitempty"`
 }
 
 // ResourceMetadata contains metadata about the team resources
@@ -234,4 +235,25 @@ type MCPServerImport struct {
 // MarketplaceImport represents a marketplace for import/export
 type MarketplaceImport struct {
 	URL string `yaml:"url" toml:"url" json:"url"`
+}
+
+// SessionProfileImport represents a session profile for import/export
+type SessionProfileImport struct {
+	ID          string                     `yaml:"id" toml:"id" json:"id"`
+	Name        string                     `yaml:"name" toml:"name" json:"name"`
+	Description string                     `yaml:"description,omitempty" toml:"description,omitempty" json:"description,omitempty"`
+	IsDefault   bool                       `yaml:"is_default,omitempty" toml:"is_default,omitempty" json:"is_default,omitempty"`
+	Config      SessionProfileConfigImport `yaml:"config" toml:"config" json:"config"`
+}
+
+// SessionProfileConfigImport represents session profile config for import/export
+type SessionProfileConfigImport struct {
+	Environment            map[string]string               `yaml:"environment,omitempty" toml:"environment,omitempty" json:"environment,omitempty"`
+	EnvironmentEncrypted   map[string]*EncryptedSecretData `yaml:"environment_encrypted,omitempty" toml:"environment_encrypted,omitempty" json:"environment_encrypted,omitempty"`
+	Tags                   map[string]string               `yaml:"tags,omitempty" toml:"tags,omitempty" json:"tags,omitempty"`
+	InitialMessageTemplate string                          `yaml:"initial_message_template,omitempty" toml:"initial_message_template,omitempty" json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                          `yaml:"reuse_message_template,omitempty" toml:"reuse_message_template,omitempty" json:"reuse_message_template,omitempty"`
+	Params                 *SessionParamsImport            `yaml:"params,omitempty" toml:"params,omitempty" json:"params,omitempty"`
+	ReuseSession           bool                            `yaml:"reuse_session,omitempty" toml:"reuse_session,omitempty" json:"reuse_session,omitempty"`
+	MemoryKey              map[string]string               `yaml:"memory_key,omitempty" toml:"memory_key,omitempty" json:"memory_key,omitempty"`
 }

@@ -1914,6 +1914,216 @@
         }
       }
     },
+    "/session-profiles": {
+      "post": {
+        "summary": "Create a new session profile",
+        "description": "Creates a new named, reusable session profile for the tenant.",
+        "operationId": "createSessionProfile",
+        "tags": [
+          "SessionProfiles"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session profile created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "summary": "List session profiles",
+        "description": "Returns a list of session profiles accessible to the current user.",
+        "operationId": "listSessionProfiles",
+        "tags": [
+          "SessionProfiles"
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Filter by resource scope",
+            "schema": {
+              "$ref": "#/components/schemas/ResourceScope"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "description": "Filter by team ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of session profiles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_profiles": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionProfileResponse"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/session-profiles/{id}": {
+      "get": {
+        "summary": "Get a session profile",
+        "description": "Returns a specific session profile by ID.",
+        "operationId": "getSessionProfile",
+        "tags": [
+          "SessionProfiles"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Session profile ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session profile details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionProfileResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session profile not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a session profile",
+        "description": "Updates an existing session profile.",
+        "operationId": "updateSessionProfile",
+        "tags": [
+          "SessionProfiles"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Session profile ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSessionProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session profile updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionProfileResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session profile not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a session profile",
+        "description": "Deletes a session profile by ID.",
+        "operationId": "deleteSessionProfile",
+        "tags": [
+          "SessionProfiles"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Session profile ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session profile deleted successfully"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session profile not found"
+          }
+        }
+      }
+    },
     "/hooks/slack/{id}": {
       "post": {
         "summary": "Receive Slack event",
@@ -6349,6 +6559,140 @@
         }
       }
     },
+    "SessionProfileConfig": {
+      "type": "object",
+      "properties": {
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables to inject into the session"
+        },
+        "tags": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Tags to attach to the session"
+        },
+        "initial_message_template": {
+          "type": "string",
+          "description": "Go template for the initial message"
+        },
+        "reuse_message_template": {
+          "type": "string",
+          "description": "Go template for the reuse message when reusing a session"
+        },
+        "reuse_session": {
+          "type": "boolean",
+          "description": "Whether to reuse an existing session instead of creating a new one"
+        },
+        "memory_key": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Memory key mapping for session context"
+        },
+        "params": {
+          "$ref": "#/components/schemas/SessionParams"
+        }
+      }
+    },
+    "CreateSessionProfileRequest": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Profile name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description"
+        },
+        "scope": {
+          "$ref": "#/components/schemas/ResourceScope"
+        },
+        "team_id": {
+          "type": "string",
+          "description": "Team ID when scope is 'team'"
+        },
+        "is_default": {
+          "type": "boolean",
+          "description": "Whether this is the default profile for the tenant"
+        },
+        "config": {
+          "$ref": "#/components/schemas/SessionProfileConfig"
+        }
+      }
+    },
+    "UpdateSessionProfileRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Profile name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description"
+        },
+        "is_default": {
+          "type": "boolean",
+          "description": "Whether this is the default profile for the tenant"
+        },
+        "config": {
+          "$ref": "#/components/schemas/SessionProfileConfig"
+        }
+      }
+    },
+    "SessionProfileResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Session profile ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Profile name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "scope": {
+          "$ref": "#/components/schemas/ResourceScope"
+        },
+        "team_id": {
+          "type": "string",
+          "description": "Team ID when scope is 'team'"
+        },
+        "is_default": {
+          "type": "boolean",
+          "description": "Whether this is the default profile for the tenant"
+        },
+        "config": {
+          "$ref": "#/components/schemas/SessionProfileConfig"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "securitySchemes": {
       "bearerAuth": {
         "type": "http",
@@ -6431,6 +6775,10 @@
     {
       "name": "GitHubSync",
       "description": "Bidirectional GitHub sync for all resources. Secrets are encrypted with AWS KMS envelope encryption (AES-256-GCM, deterministic nonce) before committing to the repository."
+    },
+    {
+      "name": "SessionProfiles",
+      "description": "Session profile management. Named, reusable collections of session configuration that can be referenced by sessions, webhooks, schedules, and slackbots."
     }
   ]
 }

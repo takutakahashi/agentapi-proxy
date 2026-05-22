@@ -27,6 +27,7 @@ import (
 //	<rootPath>/<settingsName>/settings.yaml
 //	<rootPath>/<settingsName>/files/<id>.yaml (personal only)
 //	<rootPath>/<settingsName>/slackbots/<id>.yaml
+//	<rootPath>/<settingsName>/session-profiles/<id>.yaml
 //	<rootPath>/<settingsName>/.sync-meta.yaml
 //
 // For personal sync settingsName == userID; for team sync settingsName is the team name.
@@ -38,6 +39,7 @@ type Syncer struct {
 	webhookRepo        portrepos.WebhookRepository
 	slackbotRepo       portrepos.SlackBotRepository
 	userFileRepo       portrepos.UserFileRepository
+	sessionProfileRepo portrepos.SessionProfileRepository
 	githubAppInstallID string // fallback installation ID when no personal token
 }
 
@@ -63,6 +65,11 @@ func NewSyncer(
 		userFileRepo:       userFileRepo,
 		githubAppInstallID: githubAppInstallID,
 	}
+}
+
+// SetSessionProfileRepository sets the session profile repository for sync
+func (s *Syncer) SetSessionProfileRepository(repo portrepos.SessionProfileRepository) {
+	s.sessionProfileRepo = repo
 }
 
 // isPersonalSync returns true when settingsName refers to the caller's own
@@ -166,6 +173,9 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		if err := s.exportPersonalSettings(ctx, userID, dek, rootPath, files); err != nil {
 			log.Printf("[SYNC] personal settings export warning for %s: %v", settingsName, err)
 		}
+		if err := s.exportUserSessionProfiles(ctx, userID, dek, rootPath, files); err != nil {
+			log.Printf("[SYNC] user session profile export warning for %s: %v", settingsName, err)
+		}
 	} else {
 		if err := s.exportTeamSchedules(ctx, settingsName, userID, dek, rootPath, files); err != nil {
 			log.Printf("[SYNC] schedule export warning for %s: %v", settingsName, err)
@@ -178,6 +188,9 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		}
 		if err := s.exportTeamSlackbots(ctx, settingsName, dek, rootPath, files); err != nil {
 			log.Printf("[SYNC] slackbot export warning for %s: %v", settingsName, err)
+		}
+		if err := s.exportTeamSessionProfiles(ctx, settingsName, dek, rootPath, files); err != nil {
+			log.Printf("[SYNC] team session profile export warning for %s: %v", settingsName, err)
 		}
 	}
 
@@ -332,6 +345,14 @@ func (s *Syncer) importFileByPath(ctx context.Context, filePath string, content 
 			teamID = ""
 		}
 		return s.importSlackbotFile(ctx, content, scope, userID, teamID, dek)
+	case strings.HasPrefix(rel, "session-profiles/"):
+		scope := entities.ScopeTeam
+		teamID := settingsName
+		if personal {
+			scope = entities.ScopeUser
+			teamID = ""
+		}
+		return s.importSessionProfileFile(ctx, content, scope, userID, teamID, dek)
 	default:
 		return nil
 	}
@@ -1247,6 +1268,21 @@ func encryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 		s.EnvVarsEncrypted = nil
 	}
 
+	for i := range r.SessionProfiles {
+		sp := &r.SessionProfiles[i]
+		if err := encryptMapValues(sp.Config.Environment, "session profile env"); err != nil {
+			return err
+		}
+		sp.Config.EnvironmentEncrypted = nil
+		if p := sp.Config.Params; p != nil && p.GitHubToken != "" && !IsEncrypted(p.GitHubToken) {
+			enc, err := EncryptField(dek, p.GitHubToken)
+			if err != nil {
+				return fmt.Errorf("encrypt session profile github_token: %w", err)
+			}
+			p.GitHubToken = enc
+		}
+	}
+
 	return nil
 }
 
@@ -1337,6 +1373,20 @@ func decryptTeamResourcesFields(r *importexport.TeamResources, dek []byte) error
 
 		if err := decryptMapValues(s.EnvVars, "settings env_vars"); err != nil {
 			return err
+		}
+	}
+
+	for i := range r.SessionProfiles {
+		sp := &r.SessionProfiles[i]
+		if err := decryptMapValues(sp.Config.Environment, "session profile env"); err != nil {
+			return err
+		}
+		if p := sp.Config.Params; p != nil && IsEncrypted(p.GitHubToken) {
+			plain, err := DecryptField(dek, p.GitHubToken)
+			if err != nil {
+				return fmt.Errorf("decrypt session profile github_token: %w", err)
+			}
+			p.GitHubToken = plain
 		}
 	}
 
@@ -1567,4 +1617,192 @@ func sanitizeFilename(name string) string {
 		"|", "_",
 	)
 	return replacer.Replace(name)
+}
+
+// sessionProfileRecord is the YAML on-disk representation of a SessionProfile.
+type sessionProfileRecord struct {
+	ID                     string            `yaml:"id"`
+	Name                   string            `yaml:"name"`
+	Description            string            `yaml:"description,omitempty"`
+	UserID                 string            `yaml:"user_id"`
+	Scope                  string            `yaml:"scope"`
+	TeamID                 string            `yaml:"team_id,omitempty"`
+	IsDefault              bool              `yaml:"is_default,omitempty"`
+	Environment            map[string]string `yaml:"environment,omitempty"`
+	Tags                   map[string]string `yaml:"tags,omitempty"`
+	InitialMessageTemplate string            `yaml:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string            `yaml:"reuse_message_template,omitempty"`
+	ReuseSession           bool              `yaml:"reuse_session,omitempty"`
+	MemoryKey              map[string]string `yaml:"memory_key,omitempty"`
+	GitHubToken            string            `yaml:"github_token,omitempty"`
+	InitialMessage         string            `yaml:"initial_message,omitempty"`
+	CreatedAt              string            `yaml:"created_at,omitempty"`
+	UpdatedAt              string            `yaml:"updated_at,omitempty"`
+}
+
+func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) sessionProfileRecord {
+	cfg := p.Config()
+	env := make(map[string]string, len(cfg.Environment()))
+	for k, v := range cfg.Environment() {
+		if IsSensitiveKey(k) && !IsEncrypted(v) {
+			if enc, err := EncryptField(dek, v); err == nil {
+				env[k] = enc
+				continue
+			}
+		}
+		env[k] = v
+	}
+	rec := sessionProfileRecord{
+		ID:                     p.ID(),
+		Name:                   p.Name(),
+		Description:            p.Description(),
+		UserID:                 p.UserID(),
+		Scope:                  string(p.Scope()),
+		TeamID:                 p.TeamID(),
+		IsDefault:              p.IsDefault(),
+		Environment:            env,
+		Tags:                   cfg.Tags(),
+		InitialMessageTemplate: cfg.InitialMessageTemplate(),
+		ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
+		ReuseSession:           cfg.ReuseSession(),
+		MemoryKey:              cfg.MemoryKey(),
+		CreatedAt:              p.CreatedAt().Format(time.RFC3339),
+		UpdatedAt:              p.UpdatedAt().Format(time.RFC3339),
+	}
+	if params := cfg.Params(); params != nil {
+		rec.GitHubToken = params.GithubToken
+		rec.InitialMessage = params.Message
+	}
+	return rec
+}
+
+func (s *Syncer) exportUserSessionProfiles(ctx context.Context, userID string, dek []byte, rootPath string, files map[string][]byte) error {
+	if s.sessionProfileRepo == nil {
+		return nil
+	}
+	profiles, err := s.sessionProfileRepo.List(ctx, portrepos.SessionProfileFilter{
+		Scope:  entities.ScopeUser,
+		UserID: userID,
+	})
+	if err != nil {
+		return fmt.Errorf("list user session profiles: %w", err)
+	}
+	dir := rootPath + userID + "/session-profiles/"
+	for _, p := range profiles {
+		rec := sessionProfileToRecord(p, dek)
+		data, err := yaml.Marshal(rec)
+		if err != nil {
+			log.Printf("[SYNC] Warning: marshal user session profile %s: %v", p.ID(), err)
+			continue
+		}
+		files[dir+p.ID()+".yaml"] = data
+	}
+	return nil
+}
+
+func (s *Syncer) exportTeamSessionProfiles(ctx context.Context, settingsName string, dek []byte, rootPath string, files map[string][]byte) error {
+	if s.sessionProfileRepo == nil {
+		return nil
+	}
+	profiles, err := s.sessionProfileRepo.List(ctx, portrepos.SessionProfileFilter{
+		Scope:  entities.ScopeTeam,
+		TeamID: settingsName,
+	})
+	if err != nil {
+		return fmt.Errorf("list team session profiles: %w", err)
+	}
+	dir := rootPath + settingsName + "/session-profiles/"
+	for _, p := range profiles {
+		rec := sessionProfileToRecord(p, dek)
+		data, err := yaml.Marshal(rec)
+		if err != nil {
+			log.Printf("[SYNC] Warning: marshal team session profile %s: %v", p.ID(), err)
+			continue
+		}
+		files[dir+p.ID()+".yaml"] = data
+	}
+	return nil
+}
+
+func (s *Syncer) importSessionProfileFile(ctx context.Context, data []byte, scope entities.ResourceScope, userID, teamID string, dek []byte) error {
+	if s.sessionProfileRepo == nil {
+		return nil
+	}
+	var rec sessionProfileRecord
+	if err := yaml.Unmarshal(data, &rec); err != nil {
+		return fmt.Errorf("unmarshal session profile: %w", err)
+	}
+
+	// Decrypt environment values
+	env := make(map[string]string, len(rec.Environment))
+	for k, v := range rec.Environment {
+		if IsEncrypted(v) {
+			plain, err := DecryptField(dek, v)
+			if err != nil {
+				return fmt.Errorf("decrypt session profile env %s: %w", k, err)
+			}
+			env[k] = plain
+		} else {
+			env[k] = v
+		}
+	}
+
+	// Decrypt GitHub token if encrypted
+	githubToken := rec.GitHubToken
+	if IsEncrypted(githubToken) {
+		plain, err := DecryptField(dek, githubToken)
+		if err != nil {
+			return fmt.Errorf("decrypt session profile github_token: %w", err)
+		}
+		githubToken = plain
+	}
+
+	id := rec.ID
+	if id == "" {
+		id = uuid.New().String()
+	}
+	existing, _ := s.sessionProfileRepo.Get(ctx, id)
+
+	ownerID := userID
+	if rec.UserID != "" {
+		ownerID = rec.UserID
+	}
+
+	var p *entities.SessionProfile
+	if existing != nil {
+		p = existing
+	} else {
+		p = entities.NewSessionProfile(id, rec.Name, ownerID)
+	}
+	p.SetName(rec.Name)
+	p.SetDescription(rec.Description)
+	p.SetScope(scope)
+	p.SetTeamID(teamID)
+	p.SetIsDefault(rec.IsDefault)
+
+	cfg := entities.NewSessionProfileConfig()
+	if len(env) > 0 {
+		cfg.SetEnvironment(env)
+	}
+	if len(rec.Tags) > 0 {
+		cfg.SetTags(rec.Tags)
+	}
+	cfg.SetInitialMessageTemplate(rec.InitialMessageTemplate)
+	cfg.SetReuseMessageTemplate(rec.ReuseMessageTemplate)
+	cfg.SetReuseSession(rec.ReuseSession)
+	if len(rec.MemoryKey) > 0 {
+		cfg.SetMemoryKey(rec.MemoryKey)
+	}
+	if rec.InitialMessage != "" || githubToken != "" {
+		cfg.SetParams(&entities.SessionParams{
+			Message:     rec.InitialMessage,
+			GithubToken: githubToken,
+		})
+	}
+	p.SetConfig(cfg)
+
+	if existing != nil {
+		return s.sessionProfileRepo.Update(ctx, p)
+	}
+	return s.sessionProfileRepo.Create(ctx, p)
 }

@@ -41,25 +41,26 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	config           *config.Config
-	echo             *echo.Echo
-	verbose          bool
-	logger           *logger.Logger
-	oauthProvider    *auth.GitHubOAuthProvider
-	oauthSessions    sync.Map // sessionID -> OAuthSession
-	notificationSvc  *notification.Service
-	container        *di.Container                    // Internal DI container
-	sessionManager   portrepos.SessionManager         // Session lifecycle manager
-	settingsRepo     portrepos.SettingsRepository     // Settings repository
-	credentialsRepo  portrepos.CredentialsRepository  // Credentials repository
-	shareRepo        portrepos.ShareRepository        // Share repository for session sharing
-	teamConfigRepo   portrepos.TeamConfigRepository   // Team configuration repository
-	memoryRepo       portrepos.MemoryRepository       // Memory repository
-	taskRepo         portrepos.TaskRepository         // Task repository
-	taskGroupRepo    portrepos.TaskGroupRepository    // Task group repository
-	sessionRouteRepo portrepos.SessionRouteRepository // Session route repository for proxy B routing
-	userFileRepo     portrepos.UserFileRepository     // User-managed files repository
-	router           *Router                          // Router for custom handler registration
+	config             *config.Config
+	echo               *echo.Echo
+	verbose            bool
+	logger             *logger.Logger
+	oauthProvider      *auth.GitHubOAuthProvider
+	oauthSessions      sync.Map // sessionID -> OAuthSession
+	notificationSvc    *notification.Service
+	container          *di.Container                      // Internal DI container
+	sessionManager     portrepos.SessionManager           // Session lifecycle manager
+	settingsRepo       portrepos.SettingsRepository       // Settings repository
+	credentialsRepo    portrepos.CredentialsRepository    // Credentials repository
+	shareRepo          portrepos.ShareRepository          // Share repository for session sharing
+	teamConfigRepo     portrepos.TeamConfigRepository     // Team configuration repository
+	memoryRepo         portrepos.MemoryRepository         // Memory repository
+	taskRepo           portrepos.TaskRepository           // Task repository
+	taskGroupRepo      portrepos.TaskGroupRepository      // Task group repository
+	sessionRouteRepo   portrepos.SessionRouteRepository   // Session route repository for proxy B routing
+	userFileRepo       portrepos.UserFileRepository       // User-managed files repository
+	sessionProfileRepo portrepos.SessionProfileRepository // Session profile repository
+	router             *Router                            // Router for custom handler registration
 }
 
 // NewServer creates a new server instance
@@ -113,7 +114,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles"
 			}
 			return false
 		},
@@ -305,22 +306,30 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	))
 	log.Printf("[SERVER] User file repository initialized")
 
+	// Initialize session profile repository (Kubernetes Secret-backed)
+	sessionProfileRepo := portrepos.SessionProfileRepository(repositories.NewKubernetesSessionProfileRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	))
+	log.Printf("[SERVER] Session profile repository initialized")
+
 	s := &Server{
-		config:           cfg,
-		echo:             e,
-		verbose:          verbose,
-		logger:           lgr,
-		container:        container,
-		sessionManager:   sessionManager,
-		settingsRepo:     settingsRepo,
-		credentialsRepo:  credentialsRepo,
-		shareRepo:        shareRepo,
-		teamConfigRepo:   teamConfigRepo,
-		memoryRepo:       memoryRepo,
-		taskRepo:         taskRepo,
-		taskGroupRepo:    taskGroupRepo,
-		sessionRouteRepo: sessionRouteRepo,
-		userFileRepo:     userFileRepo,
+		config:             cfg,
+		echo:               e,
+		verbose:            verbose,
+		logger:             lgr,
+		container:          container,
+		sessionManager:     sessionManager,
+		settingsRepo:       settingsRepo,
+		credentialsRepo:    credentialsRepo,
+		shareRepo:          shareRepo,
+		teamConfigRepo:     teamConfigRepo,
+		memoryRepo:         memoryRepo,
+		taskRepo:           taskRepo,
+		taskGroupRepo:      taskGroupRepo,
+		sessionRouteRepo:   sessionRouteRepo,
+		userFileRepo:       userFileRepo,
+		sessionProfileRepo: sessionProfileRepo,
 	}
 
 	// Add logging middleware if verbose
@@ -1065,6 +1074,11 @@ func (s *Server) GetTaskRepository() portrepos.TaskRepository {
 // GetTaskGroupRepository returns the task group repository
 func (s *Server) GetTaskGroupRepository() portrepos.TaskGroupRepository {
 	return s.taskGroupRepo
+}
+
+// GetSessionProfileRepository returns the session profile repository
+func (s *Server) GetSessionProfileRepository() portrepos.SessionProfileRepository {
+	return s.sessionProfileRepo
 }
 
 // ExtractRepositoryInfo extracts repository information from tags.
