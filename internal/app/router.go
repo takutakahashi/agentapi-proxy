@@ -72,6 +72,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		server, // Server implements SessionCreator interface
 		controllers.WithSessionRouteRepository(server.GetSessionRouteRepository()),
 		controllers.WithSettingsRepository(server.settingsRepo),
+		controllers.WithSessionProfileRepository(server.sessionProfileRepo),
 	)
 
 	// Create share controller if share repository is available

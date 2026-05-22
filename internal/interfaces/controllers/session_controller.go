@@ -43,6 +43,7 @@ type SessionController struct {
 	validateTeamUC         *sessionuc.ValidateTeamAccessUseCase
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
+	sessionProfileRepo     repositories.SessionProfileRepository
 }
 
 // NewSessionController creates a new SessionController instance
@@ -76,6 +77,13 @@ func WithSessionRouteRepository(repo repositories.SessionRouteRepository) Sessio
 func WithSettingsRepository(repo repositories.SettingsRepository) SessionControllerOption {
 	return func(c *SessionController) {
 		c.settingsRepo = repo
+	}
+}
+
+// WithSessionProfileRepository sets the session profile repository on the controller
+func WithSessionProfileRepository(repo repositories.SessionProfileRepository) SessionControllerOption {
+	return func(c *SessionController) {
+		c.sessionProfileRepo = repo
 	}
 }
 
@@ -161,6 +169,28 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		// Personal scope - check if user can create personal resources
 		if !authzCtx.PersonalScope.CanCreate {
 			return echo.NewHTTPError(http.StatusForbidden, "user does not have permission to create sessions")
+		}
+	}
+
+	// Resolve session profile: merge profile config into startReq fields if profile ID is specified
+	if c.sessionProfileRepo != nil && startReq.SessionProfileID != "" {
+		profile, profileErr := c.sessionProfileRepo.Get(ctx.Request().Context(), startReq.SessionProfileID)
+		if profileErr == nil {
+			cfg := profile.Config()
+			if len(cfg.Environment()) > 0 && len(startReq.Environment) == 0 {
+				startReq.Environment = cfg.Environment()
+			}
+			if len(cfg.Tags()) > 0 && len(startReq.Tags) == 0 {
+				startReq.Tags = cfg.Tags()
+			}
+			if startReq.Params == nil && cfg.Params() != nil {
+				startReq.Params = cfg.Params()
+			}
+			if len(cfg.MemoryKey()) > 0 && len(startReq.MemoryKey) == 0 {
+				startReq.MemoryKey = cfg.MemoryKey()
+			}
+		} else {
+			log.Printf("[SESSION] Warning: could not resolve session_profile_id %q: %v", startReq.SessionProfileID, profileErr)
 		}
 	}
 
