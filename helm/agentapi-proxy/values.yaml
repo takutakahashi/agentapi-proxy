@@ -188,6 +188,14 @@ config:
     # 設定しない場合は暗号化なし (Noop) になります
     key: ""
 
+  # Git Sync 設定
+  gitSync:
+    githubApp:
+      # git sync 専用の GitHub App Installation ID
+      # github.app.installationId と異なる installation ID を git sync に使いたい場合に設定する
+      # 設定しない場合は github.app.installationId (GITHUB_INSTALLATION_ID) にフォールバック
+      installationId: ""
+
 # Environment variables
 env: []
 # - name: GITHUB_TOKEN

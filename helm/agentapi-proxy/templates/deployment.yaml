@@ -156,6 +156,10 @@ spec:
             - name: GITHUB_INSTALLATION_ID
               value: {{ .Values.github.app.installationId | quote }}
             {{- end }}
+            {{- if .Values.config.gitSync.githubApp.installationId }}
+            - name: AGENTAPI_GIT_SYNC_GITHUB_APP_INSTALLATION_ID
+              value: {{ .Values.config.gitSync.githubApp.installationId | quote }}
+            {{- end }}
             {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
             - name: GITHUB_APP_PEM
               valueFrom:
