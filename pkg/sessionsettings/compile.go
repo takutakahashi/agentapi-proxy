@@ -201,10 +201,6 @@ func patchSettingsJSONKey(outputDir, key string, value interface{}) error {
 	return nil
 }
 
-// patchSettingsJSONSandbox re-applies the sandbox key. Kept for backward compatibility.
-func patchSettingsJSONSandbox(outputDir string, sandbox interface{}) error {
-	return patchSettingsJSONKey(outputDir, "sandbox", sandbox)
-}
 
 // generateEnvFile creates env file with sorted KEY=VALUE lines.
 func generateEnvFile(envFilePath string, env map[string]string) error {
