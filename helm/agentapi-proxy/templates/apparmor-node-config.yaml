@@ -1,0 +1,74 @@
+{{- if .Values.kubernetesSession.sessionSandboxCapabilities }}
+# DaemonSet to install the custom AppArmor profile on each node.
+# Ubuntu 24.04 (kernel 6.8+) sets apparmor_restrict_unprivileged_userns=1 by default,
+# which auto-transitions unprivileged user namespace children from "unconfined" to the
+# "unprivileged_userns (enforce)" profile, blocking uid_map writes needed for network
+# namespace isolation. A named AppArmor profile that explicitly grants "userns" permission
+# bypasses this auto-transition, allowing Claude Code's sandbox to create user+network
+# namespaces and enforce deniedDomains.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-apparmor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: apparmor-node-config
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "agentapi-proxy.fullname" . }}-apparmor
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: {{ include "agentapi-proxy.fullname" . }}-apparmor
+        {{- include "agentapi-proxy.labels" . | nindent 8 }}
+    spec:
+      hostPID: true
+      tolerations:
+      - operator: Exists
+      initContainers:
+      - name: install-apparmor-profile
+        image: ubuntu:24.04
+        securityContext:
+          privileged: true
+        command:
+        - nsenter
+        - --target
+        - "1"
+        - --mount
+        - --
+        - bash
+        - -c
+        - |
+          set -e
+          PROFILE_NAME="agentapi-session-userns"
+          PROFILE_PATH="/etc/apparmor.d/${PROFILE_NAME}"
+
+          cat > "${PROFILE_PATH}" << 'APPARMOR_EOF'
+          #include <tunables/global>
+
+          profile agentapi-session-userns flags=(unconfined) {
+            # Explicitly grant user namespace creation.
+            # This bypasses the auto-transition to "unprivileged_userns (enforce)"
+            # that Ubuntu 24.04 applies when apparmor_restrict_unprivileged_userns=1.
+            # With this rule, Claude Code's sandbox can create user+network namespaces
+            # and write uid_map / gid_map to enable network isolation (deniedDomains).
+            userns,
+          }
+          APPARMOR_EOF
+
+          apparmor_parser -r "${PROFILE_PATH}"
+          echo "[apparmor-node-config] Loaded AppArmor profile: ${PROFILE_NAME}"
+      containers:
+      - name: pause
+        image: gcr.io/pause:3.9
+        resources:
+          limits:
+            memory: 4Mi
+          requests:
+            cpu: 1m
+            memory: 2Mi
+{{- end }}

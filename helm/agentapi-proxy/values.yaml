@@ -430,13 +430,14 @@ kubernetesSession:
   #       }
   settingsBaseSecret: "agentapi-settings-base"
 
-  # Enable CAP_SYS_ADMIN for session pod containers.
-  # Required for Claude Code's Linux sandbox (user+mount namespace isolation).
-  # When false (default), Claude Code sandbox is unavailable in Kubernetes because
-  # mount namespace creation requires CAP_SYS_ADMIN on the container root filesystem mount.
-  # When true: container runs as UID 0 (root) with capabilities.drop: ALL + add: SYS_ADMIN
-  # and allowPrivilegeEscalation: false. This limits the container to exactly one cap
-  # (SYS_ADMIN) needed for sandbox namespace creation.
+  # Enable Claude Code's Linux sandbox for session pods (user+network namespace isolation).
+  # When true: installs the "agentapi-session-userns" AppArmor profile on each node via
+  # the agentapi-proxy-apparmor DaemonSet, and applies it to session pod containers.
+  # This profile explicitly grants "userns" permission, bypassing Ubuntu 24.04's
+  # apparmor_restrict_unprivileged_userns=1 which would otherwise block uid_map writes
+  # inside user namespaces. Claude Code's sandbox uses user+network namespaces to enforce
+  # network.deniedDomains. The container still runs as UID 999 (non-root) with no extra
+  # capabilities — root would break Claude Code's bypassPermissions mode.
   sessionSandboxCapabilities: false
 
   # Codex requirements ConfigMap for codex-acp sessions.

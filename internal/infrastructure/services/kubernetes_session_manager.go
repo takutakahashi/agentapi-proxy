@@ -1730,17 +1730,20 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session)
 
-	// Add AppArmor Unconfined for Claude Code's Linux sandbox when enabled.
-	// The default cri-containerd AppArmor profile blocks mount(2) even with CAP_SYS_ADMIN.
-	// With AppArmor Unconfined, Linux user+mount namespace creation works via
-	// unprivileged user namespaces (no CAP_SYS_ADMIN needed), so the container can run
-	// as UID 999 (agentapi) without root. Running as root would cause Claude Code to
-	// refuse bypassPermissions mode (it logs: "bypassPermissions is not available when
-	// running as root"), breaking tool-use auto-approval in sessions.
+	// Apply a named AppArmor profile for Claude Code's Linux sandbox when enabled.
+	// Ubuntu 24.04 (kernel 6.8+) sets apparmor_restrict_unprivileged_userns=1 which
+	// auto-transitions "unconfined" processes to "unprivileged_userns (enforce)" when
+	// they create user namespaces, blocking uid_map writes needed for network isolation.
+	// Using a named profile ("agentapi-session-userns") that explicitly grants "userns"
+	// bypasses this auto-transition. The profile is installed on each node by the
+	// agentapi-proxy-apparmor DaemonSet (helm/templates/apparmor-node-config.yaml).
+	// The container still runs as UID 999 (agentapi) — root would cause Claude Code to
+	// refuse bypassPermissions mode, breaking tool-use auto-approval in sessions.
 	if m.k8sConfig.SessionSandboxCapabilities {
 		container.SecurityContext = &corev1.SecurityContext{
 			AppArmorProfile: &corev1.AppArmorProfile{
-				Type: corev1.AppArmorProfileTypeUnconfined,
+				Type:             corev1.AppArmorProfileTypeLocalhost,
+				LocalhostProfile: func() *string { s := "agentapi-session-userns"; return &s }(),
 			},
 		}
 	}
