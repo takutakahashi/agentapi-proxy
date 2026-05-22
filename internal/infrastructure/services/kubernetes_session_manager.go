@@ -3808,6 +3808,18 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		settingsJSON["permissions"] = map[string]interface{}{
 			"defaultMode": "bypassPermissions",
 		}
+	case "codex-acp":
+		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.
+		// https://github.com/zed-industries/codex-acp
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--",
+				"npx", "@zed-industries/codex-acp",
+			},
+		}
 	default:
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi", "server"},

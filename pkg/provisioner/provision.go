@@ -131,6 +131,19 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		}
 	}
 
+	// ── Step 5.5: run pre-script ─────────────────────────────────────────────
+	// Executes the optional shell pre-script before starting the agent.
+	// Pre-scripts are used for setup tasks such as pre-fetching npm/bun packages.
+	// Failure is non-fatal: a warning is logged and provisioning continues.
+	if settings.Startup.PreScript != "" {
+		log.Printf("[PROVISIONER] Running pre-script")
+		if err := s.runPreScript(ctx, settings.Startup.PreScript, envMap); err != nil {
+			log.Printf("[PROVISIONER] Warning: pre-script failed (continuing): %v", err)
+		} else {
+			log.Printf("[PROVISIONER] Pre-script complete")
+		}
+	}
+
 	// ── Step 6: start otelcol subprocess if in-process mode ──────────────────
 	// Must be started before agentapi so metrics scraping begins as soon as
 	// Claude Code starts emitting metrics on its prometheus port.
@@ -203,6 +216,16 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+// runPreScript executes the pre-script shell snippet before the agent process starts.
+// It inherits the session environment and streams stdout/stderr to the provisioner log.
+func (s *Server) runPreScript(ctx context.Context, script string, envMap map[string]string) error {
+	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+	cmd.Env = mergeEnv(os.Environ(), envMap)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // runAcpPosts starts the acp-posts binary as a subprocess, forwarding
