@@ -121,13 +121,26 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Loaded %d env vars from session env file", len(envMap))
 
 	// ── Step 4: fetch memory from proxy → inject into CLAUDE.md ──────────────
-	s.fetchAndInjectMemory()
+	s.fetchAndInjectMemory(envMap)
 
 	// ── Step 5: cd into cloned repo ───────────────────────────────────────────
 	if _, err := os.Stat(workdirRepoPath); err == nil {
 		log.Printf("[PROVISIONER] Changing to repo directory %s", workdirRepoPath)
 		if err := os.Chdir(workdirRepoPath); err != nil {
 			log.Printf("[PROVISIONER] Warning: failed to chdir to %s: %v", workdirRepoPath, err)
+		}
+	}
+
+	// ── Step 5.5: run pre-script ─────────────────────────────────────────────
+	// Executes the optional shell pre-script before starting the agent.
+	// Pre-scripts are used for setup tasks such as pre-fetching npm/bun packages.
+	// Failure is non-fatal: a warning is logged and provisioning continues.
+	if settings.Startup.PreScript != "" {
+		log.Printf("[PROVISIONER] Running pre-script")
+		if err := s.runPreScript(ctx, settings.Startup.PreScript, envMap); err != nil {
+			log.Printf("[PROVISIONER] Warning: pre-script failed (continuing): %v", err)
+		} else {
+			log.Printf("[PROVISIONER] Pre-script complete")
 		}
 	}
 
@@ -184,9 +197,9 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// ── Step 10: mark ready and supervise ────────────────────────────────────
 	s.setStatus(StatusReady, "")
 
-	// ── Step 11: launch claude-posts subprocess if SlackParams provided ───────
+	// ── Step 11: launch acp-posts subprocess if SlackParams provided ─────────
 	if settings.SlackParams != nil && settings.SlackParams.Channel != "" {
-		go s.runClaudePosts(ctx, settings.SlackParams)
+		go s.runAcpPosts(ctx, settings.SlackParams, settings.Session.AgentType)
 	}
 
 	// ── Step 12: start files sync goroutine ───────────────────────────────────
@@ -205,19 +218,36 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}()
 }
 
-// runClaudePosts starts the claude-posts binary as a subprocess, forwarding
-// agent output (history.jsonl) to Slack. It waits for the history file to
-// appear before launching, mirroring the sidecar's shell loop.
-// The subprocess is tied to ctx: when ctx is cancelled the goroutine exits.
-func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.SlackParams) {
-	const historyFile = "/opt/claude-agentapi/history.jsonl"
-	const claudePostsBin = "/usr/local/bin/claude-posts"
+// runPreScript executes the pre-script shell snippet before the agent process starts.
+// It inherits the session environment and streams stdout/stderr to the provisioner log.
+func (s *Server) runPreScript(ctx context.Context, script string, envMap map[string]string) error {
+	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+	cmd.Env = mergeEnv(os.Environ(), envMap)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
 
-	log.Printf("[CLAUDE_POSTS] Waiting for history file %s", historyFile)
+// runAcpPosts starts the acp-posts binary as a subprocess, forwarding
+// agent output (history.jsonl) to Slack. It waits for the history file to
+// appear before launching. The history file path depends on the agent type:
+//   - claude-acp: /opt/acp-posts/history.jsonl (written by the acp-server bridge)
+//   - others:     /opt/claude-agentapi/history.jsonl (written by claude-agentapi)
+//
+// The subprocess is tied to ctx: when ctx is cancelled the goroutine exits.
+func (s *Server) runAcpPosts(ctx context.Context, params *sessionsettings.SlackParams, agentType string) {
+	const acpPostsBin = "/usr/local/bin/acp-posts"
+
+	historyFile := "/opt/claude-agentapi/history.jsonl"
+	if agentType == "claude-acp" {
+		historyFile = "/opt/acp-posts/history.jsonl"
+	}
+
+	log.Printf("[ACP_POSTS] Waiting for history file %s", historyFile)
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[CLAUDE_POSTS] Context cancelled while waiting for history file")
+			log.Printf("[ACP_POSTS] Context cancelled while waiting for history file")
 			return
 		case <-time.After(time.Second):
 		}
@@ -225,9 +255,9 @@ func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.Sla
 			break
 		}
 	}
-	log.Printf("[CLAUDE_POSTS] History file found, starting claude-posts")
+	log.Printf("[ACP_POSTS] History file found, starting acp-posts")
 
-	cmd := exec.CommandContext(ctx, claudePostsBin, "--file", historyFile)
+	cmd := exec.CommandContext(ctx, acpPostsBin, "--file", historyFile)
 	cmd.Env = append(os.Environ(),
 		"SLACK_BOT_TOKEN="+params.BotToken,
 		"SLACK_CHANNEL_ID="+params.Channel,
@@ -239,12 +269,12 @@ func (s *Server) runClaudePosts(ctx context.Context, params *sessionsettings.Sla
 	if err := cmd.Run(); err != nil {
 		// ctx cancellation causes an expected error; don't log it as fatal.
 		if ctx.Err() != nil {
-			log.Printf("[CLAUDE_POSTS] Exited due to context cancellation")
+			log.Printf("[ACP_POSTS] Exited due to context cancellation")
 		} else {
-			log.Printf("[CLAUDE_POSTS] Exited with error: %v", err)
+			log.Printf("[ACP_POSTS] Exited with error: %v", err)
 		}
 	} else {
-		log.Printf("[CLAUDE_POSTS] Exited normally")
+		log.Printf("[ACP_POSTS] Exited normally")
 	}
 }
 
@@ -591,11 +621,13 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	case "claude-acp":
 		// Start the acp-server bridge that wraps claude-agent-acp (ACP agent) via stdio.
 		// The bridge exposes an agentapi-compatible HTTP server on AGENTAPI_PORT.
+		// --output-file writes conversation history in acp-posts JSONL format for Slack integration.
 		// claude-agent-acp is the official ACP adapter for the Claude Agent SDK:
 		// https://github.com/agentclientprotocol/claude-agent-acp
 		return "agentapi-proxy", []string{
 			"acp-server",
 			"--port", agentapiPort,
+			"--output-file", "/opt/acp-posts/history.jsonl",
 			"--",
 			"bunx", "@agentclientprotocol/claude-agent-acp",
 		}
@@ -1016,21 +1048,29 @@ func countNonEmptyMessages(client *http.Client, agentapiURL string) int {
 
 // fetchAndInjectMemory fetches session memory from the proxy and appends it to
 // CLAUDE.md, replicating the bash memory injection in buildClaudeStartCommand.
-func (s *Server) fetchAndInjectMemory() {
-	memoryKeyFlags := os.Getenv("MEMORY_KEY_FLAGS")
+// getEnv returns the value of key from envMap if present, falling back to os.Getenv.
+func getEnv(envMap map[string]string, key string) string {
+	if v, ok := envMap[key]; ok {
+		return v
+	}
+	return os.Getenv(key)
+}
+
+func (s *Server) fetchAndInjectMemory(envMap map[string]string) {
+	memoryKeyFlags := getEnv(envMap, "MEMORY_KEY_FLAGS")
 	if memoryKeyFlags == "" {
 		return
 	}
 
-	proxyHost := os.Getenv("AGENTAPI_PROXY_SERVICE_HOST")
-	proxyPort := os.Getenv("AGENTAPI_PROXY_SERVICE_PORT_HTTP")
+	proxyHost := getEnv(envMap, "AGENTAPI_PROXY_SERVICE_HOST")
+	proxyPort := getEnv(envMap, "AGENTAPI_PROXY_SERVICE_PORT_HTTP")
 	if proxyHost == "" || proxyPort == "" {
 		log.Printf("[PROVISIONER] AGENTAPI_PROXY_SERVICE_HOST or PORT not set, skipping memory fetch")
 		return
 	}
 	proxyEndpoint := fmt.Sprintf("http://%s:%s", proxyHost, proxyPort)
 
-	scope := os.Getenv("AGENTAPI_SCOPE")
+	scope := getEnv(envMap, "AGENTAPI_SCOPE")
 	if scope == "" {
 		scope = "user"
 	}
@@ -1047,7 +1087,7 @@ func (s *Server) fetchAndInjectMemory() {
 	args = append(args, strings.Fields(memoryKeyFlags)...)
 
 	if scope == "team" {
-		if teamID := os.Getenv("AGENTAPI_TEAM_ID"); teamID != "" {
+		if teamID := getEnv(envMap, "AGENTAPI_TEAM_ID"); teamID != "" {
 			args = append(args, "--team-id", teamID)
 		}
 	}

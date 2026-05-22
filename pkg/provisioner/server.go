@@ -11,10 +11,19 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+// defaultStartupScript is run on every Pod start regardless of agent type.
+// It pre-fetches the latest ACP package binaries so that agent startup does
+// not incur a network download when /provision arrives.
+// Override with the PROVISIONER_PRE_SCRIPT environment variable.
+const defaultStartupScript = `bun install --global @agentclientprotocol/claude-agent-acp@latest
+npm install --global @zed-industries/codex-acp@latest
+`
 
 // Status represents the provisioning lifecycle state.
 type Status string
@@ -70,6 +79,11 @@ func (s *Server) Start(ctx context.Context) error {
 	// Store the server-level context so that provisioning goroutines survive
 	// beyond the HTTP request that triggered them.
 	s.serverCtx = ctx
+
+	// Run the common startup pre-script immediately in the background.
+	// This pre-fetches ACP packages while the Pod is idle (stock inventory or
+	// Pod restart), so /provision does not have to wait for network downloads.
+	go s.runStartupScript(ctx)
 
 	// Auto-provision from Secret volume if available (Pod restart case).
 	if s.settingsFile != "" {
@@ -201,4 +215,23 @@ func (s *Server) GetStatus() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.status
+}
+
+// runStartupScript executes the common startup pre-script as soon as the Pod
+// starts. It uses PROVISIONER_PRE_SCRIPT if set, otherwise defaultStartupScript.
+// Failure is non-fatal: a warning is logged and the server continues normally.
+func (s *Server) runStartupScript(ctx context.Context) {
+	script := os.Getenv("PROVISIONER_PRE_SCRIPT")
+	if script == "" {
+		script = defaultStartupScript
+	}
+	log.Printf("[PROVISIONER] Running startup pre-script")
+	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		log.Printf("[PROVISIONER] Warning: startup pre-script failed (continuing): %v", err)
+	} else {
+		log.Printf("[PROVISIONER] Startup pre-script complete")
+	}
 }

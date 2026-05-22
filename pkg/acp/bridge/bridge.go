@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,10 +60,11 @@ type subscriber struct {
 // It does not translate ACP semantics – it reconstructs JSON-RPC envelopes from
 // the parsed events that acp.Client exposes and broadcasts them to subscribers.
 type Bridge struct {
-	acp       *acp.Client
-	sessionId string
-	verbose   bool
-	serverCtx context.Context
+	acp        *acp.Client
+	sessionId  string
+	verbose    bool
+	serverCtx  context.Context
+	outputFile string // path to append conversation history in acp-posts format
 
 	subsMu sync.Mutex
 	subs   []*subscriber
@@ -99,13 +102,64 @@ type statusSubscriber struct {
 
 // New creates a Bridge backed by the given ACP client.
 // sessionId must be the id returned by acp.Client.SessionID() after session/new.
-func New(client *acp.Client, sessionId string, verbose bool) *Bridge {
+// outputFile, when non-empty, is a path where completed agent messages are appended
+// in acp-posts JSONL format for consumption by the acp-posts Slack integration.
+func New(client *acp.Client, sessionId string, verbose bool, outputFile string) *Bridge {
 	return &Bridge{
 		acp:            client,
 		sessionId:      sessionId,
 		verbose:        verbose,
+		outputFile:     outputFile,
 		pendingReplies: make(map[int64]chan json.RawMessage),
 		currentStatus:  "stable",
+	}
+}
+
+// acpPostsEnvelope is the JSONL envelope written to the output file for acp-posts.
+type acpPostsEnvelope struct {
+	Type      string          `json:"type"`
+	Message   acpPostsMessage `json:"message"`
+	SessionID string          `json:"sessionId"`
+}
+
+type acpPostsMessage struct {
+	Content []acpPostsContent `json:"content"`
+}
+
+type acpPostsContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// appendToOutputFile writes a completed agent message to b.outputFile in acp-posts format.
+func (b *Bridge) appendToOutputFile(text string) {
+	if b.outputFile == "" || text == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(b.outputFile), 0o755); err != nil {
+		log.Printf("[bridge] failed to create output dir for %s: %v", b.outputFile, err)
+		return
+	}
+	envelope := acpPostsEnvelope{
+		Type: "assistant",
+		Message: acpPostsMessage{
+			Content: []acpPostsContent{{Type: "text", Text: text}},
+		},
+		SessionID: b.sessionId,
+	}
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		log.Printf("[bridge] failed to marshal acp-posts envelope: %v", err)
+		return
+	}
+	f, err := os.OpenFile(b.outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Printf("[bridge] failed to open output file %s: %v", b.outputFile, err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := fmt.Fprintf(f, "%s\n", data); err != nil {
+		log.Printf("[bridge] failed to write to output file %s: %v", b.outputFile, err)
 	}
 }
 
@@ -280,6 +334,10 @@ func (b *Bridge) flushChunkBufferLocked() {
 	// broadcast without holding chunkMu to avoid lock-order inversion.
 	b.chunkMu.Unlock()
 	b.broadcast(msg)
+	// Persist completed agent messages to the output file for acp-posts consumption.
+	if kind == acp.SessionUpdateKindAgentMessageChunk {
+		b.appendToOutputFile(text)
+	}
 	b.chunkMu.Lock()
 }
 
