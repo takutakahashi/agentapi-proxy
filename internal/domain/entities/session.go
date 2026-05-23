@@ -34,8 +34,11 @@ type SlackParams struct {
 type SandboxParams struct {
 	// Enabled activates the network filter sidecar (iptables redirect + transparent proxy).
 	Enabled bool `json:"enabled,omitempty"`
-	// DeniedDomains is the list of hostnames whose traffic should be blocked.
-	// HTTP connections are matched by Host header; HTTPS by SNI.
+	// AllowedDomains is the list of hostnames whose traffic is permitted (allowlist mode).
+	// When non-empty, all other domains are blocked. Takes precedence over DeniedDomains.
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	// DeniedDomains is the list of hostnames whose traffic should be blocked (denylist mode).
+	// Used only when AllowedDomains is empty.
 	DeniedDomains []string `json:"denied_domains,omitempty"`
 }
 
