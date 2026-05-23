@@ -2006,9 +2006,15 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 // The sidecar runs as UID 0 (root) so that iptables rules can skip its traffic
 // via the "--uid-owner 0" match, preventing redirect loops.
 func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServerRequest) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
-	deniedDomains := ""
-	if req.Sandbox != nil && len(req.Sandbox.DeniedDomains) > 0 {
-		deniedDomains = strings.Join(req.Sandbox.DeniedDomains, ",")
+	var filterEnvVars []corev1.EnvVar
+	if req.Sandbox != nil && len(req.Sandbox.AllowedDomains) > 0 {
+		filterEnvVars = []corev1.EnvVar{
+			{Name: "NETWORK_FILTER_ALLOWED_DOMAINS", Value: strings.Join(req.Sandbox.AllowedDomains, ",")},
+		}
+	} else if req.Sandbox != nil && len(req.Sandbox.DeniedDomains) > 0 {
+		filterEnvVars = []corev1.EnvVar{
+			{Name: "NETWORK_FILTER_DENIED_DOMAINS", Value: strings.Join(req.Sandbox.DeniedDomains, ",")},
+		}
 	}
 
 	rootUID := int64(0)
@@ -2035,9 +2041,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 		Image:           m.k8sConfig.Image,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Command:         []string{"agentapi-proxy", "network-filter", "proxy"},
-		Env: []corev1.EnvVar{
-			{Name: "NETWORK_FILTER_DENIED_DOMAINS", Value: deniedDomains},
-		},
+		Env:             filterEnvVars,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:                &rootUID,
 			RunAsNonRoot:             &falseVal,
@@ -4052,10 +4056,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Embed sandbox configuration when enabled.
 	if req.Sandbox != nil && req.Sandbox.Enabled {
 		settings.Sandbox = &sessionsettings.SandboxConfig{
-			Enabled:       true,
-			DeniedDomains: req.Sandbox.DeniedDomains,
+			Enabled:        true,
+			AllowedDomains: req.Sandbox.AllowedDomains,
+			DeniedDomains:  req.Sandbox.DeniedDomains,
 		}
-		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (denied domains: %v)", session.id, req.Sandbox.DeniedDomains)
+		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (allowed: %v, denied: %v)", session.id, req.Sandbox.AllowedDomains, req.Sandbox.DeniedDomains)
 	}
 
 	return settings

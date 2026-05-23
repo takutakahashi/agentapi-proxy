@@ -4,36 +4,58 @@ import (
 	"strings"
 )
 
-// Filter decides whether a given host should be blocked based on the denied domain list.
+// Filter decides whether a given host should be blocked.
+// When allowedDomains is non-empty, only those domains pass (allowlist mode).
+// Otherwise, deniedDomains are blocked (denylist mode).
 type Filter struct {
-	deniedDomains []string
+	deniedDomains  []string
+	allowedDomains []string
 }
 
-// NewFilter creates a new Filter with the given list of denied domains.
-// Each entry may be an exact hostname or a wildcard prefix (e.g. "*.example.com").
-func NewFilter(deniedDomains []string) *Filter {
-	normalized := make([]string, 0, len(deniedDomains))
-	for _, d := range deniedDomains {
+func normalize(domains []string) []string {
+	out := make([]string, 0, len(domains))
+	for _, d := range domains {
 		d = strings.ToLower(strings.TrimSpace(d))
 		if d != "" {
-			normalized = append(normalized, d)
+			out = append(out, d)
 		}
 	}
-	return &Filter{deniedDomains: normalized}
+	return out
 }
 
-// IsDenied returns true when host matches a denied domain.
+// NewFilter creates a denylist filter.
+func NewFilter(deniedDomains []string) *Filter {
+	return &Filter{deniedDomains: normalize(deniedDomains)}
+}
+
+// NewAllowlistFilter creates an allowlist filter: only listed domains are permitted.
+func NewAllowlistFilter(allowedDomains []string) *Filter {
+	return &Filter{allowedDomains: normalize(allowedDomains)}
+}
+
+// IsDenied returns true when host should be blocked.
 // host may include a port suffix (host:port); it is stripped before matching.
 func (f *Filter) IsDenied(host string) bool {
 	h := strings.ToLower(host)
 	// Strip port if present.
 	if idx := strings.LastIndex(h, ":"); idx != -1 {
-		// Make sure it's not an IPv6 bracket address without port.
 		if strings.Contains(h[idx:], ":") || !strings.Contains(h, "[") {
 			h = h[:idx]
 		}
 	}
 	h = strings.TrimSuffix(h, ".")
+
+	// Allowlist mode: deny everything NOT in the allowed list.
+	if len(f.allowedDomains) > 0 {
+		for _, allowed := range f.allowedDomains {
+			if matchDomain(h, allowed) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Denylist mode: deny only matched domains.
 	for _, denied := range f.deniedDomains {
 		if matchDomain(h, denied) {
 			return true

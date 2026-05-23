@@ -115,10 +115,12 @@ func parseFileSecretKey(k string) (int, bool) {
 
 // SandboxConfig holds network sandbox configuration for a session Pod.
 // When Enabled is true, an init container sets up iptables rules and a sidecar
-// acts as a transparent HTTP/HTTPS proxy that enforces DeniedDomains.
+// acts as a transparent HTTP/HTTPS proxy.
+// AllowedDomains (allowlist) takes precedence over DeniedDomains (denylist).
 type SandboxConfig struct {
-	Enabled       bool     `yaml:"enabled"                  json:"enabled"`
-	DeniedDomains []string `yaml:"denied_domains,omitempty" json:"denied_domains,omitempty"`
+	Enabled        bool     `yaml:"enabled"                   json:"enabled"`
+	AllowedDomains []string `yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
+	DeniedDomains  []string `yaml:"denied_domains,omitempty"  json:"denied_domains,omitempty"`
 }
 
 // SessionSettings is the top-level unified settings YAML structure.
