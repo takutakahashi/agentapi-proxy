@@ -247,6 +247,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 
 	var initialMessage, githubToken, agentType string
 	var slackParams *entities.SlackParams
+	var sandbox *entities.SandboxParams
 	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
 		initialMessage = schedule.SessionConfig.Params.Message
@@ -256,6 +257,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		}
 		agentType = schedule.SessionConfig.Params.AgentType
 		slackParams = schedule.SessionConfig.Params.Slack
+		sandbox = schedule.SessionConfig.Params.Sandbox
 		oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
@@ -289,6 +291,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		GithubToken:      githubToken,
 		AgentType:        agentType,
 		SlackParams:      slackParams,
+		Sandbox:          sandbox,
 		Oneshot:          oneshot,
 		MemoryKey:        memoryKey,
 		RepoInfo:         app.ExtractRepositoryInfo(tags, sessionID),

@@ -34,6 +34,7 @@ type LaunchRequest struct {
 	Oneshot                  bool
 	RepoInfo                 *entities.RepositoryInfo
 	InitialMessageWaitSecond *int
+	Sandbox                  *entities.SandboxParams
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -185,6 +186,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		RepoInfo:                 req.RepoInfo,
 		InitialMessageWaitSecond: req.InitialMessageWaitSecond,
 		MemoryKey:                req.MemoryKey,
+		Sandbox:                  req.Sandbox,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)
@@ -327,6 +329,9 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		}
 		if req.InitialMessage == "" && cfg.Params().Message != "" {
 			req.InitialMessage = cfg.Params().Message
+		}
+		if req.Sandbox == nil && cfg.Params().Sandbox != nil {
+			req.Sandbox = cfg.Params().Sandbox
 		}
 	}
 }

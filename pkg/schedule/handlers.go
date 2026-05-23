@@ -519,6 +519,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 	var initialMessage, githubToken, agentType string
 	var slackParams *entities.SlackParams
+	var sandbox *entities.SandboxParams
 	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
 		initialMessage = schedule.SessionConfig.Params.Message
@@ -528,6 +529,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		}
 		agentType = schedule.SessionConfig.Params.AgentType
 		slackParams = schedule.SessionConfig.Params.Slack
+		sandbox = schedule.SessionConfig.Params.Sandbox
 		oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
@@ -542,6 +544,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		GithubToken:      githubToken,
 		AgentType:        agentType,
 		SlackParams:      slackParams,
+		Sandbox:          sandbox,
 		Oneshot:          oneshot,
 		MemoryKey:        schedule.SessionConfig.MemoryKey,
 		RepoInfo:         app.ExtractRepositoryInfo(tags, sessionID),

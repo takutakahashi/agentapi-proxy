@@ -96,6 +96,12 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		oneshot = renderedParams.Oneshot
 	}
 
+	// Sandbox is not a template field — read directly from the merged session config params.
+	var sandbox *entities.SandboxParams
+	if sessionConfig != nil && sessionConfig.Params() != nil {
+		sandbox = sessionConfig.Params().Sandbox
+	}
+
 	// Build repository info from tags
 	sessionID := uuid.New().String()
 	var repoInfo *entities.RepositoryInfo
@@ -140,6 +146,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		GithubToken:      githubToken,
 		AgentType:        agentType,
 		Oneshot:          oneshot,
+		Sandbox:          sandbox,
 		RepoInfo:         repoInfo,
 		WebhookPayload:   webhookPayload,
 		SessionProfileID: sessionProfileID,

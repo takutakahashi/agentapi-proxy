@@ -417,6 +417,12 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		if bot != nil && bot.SessionConfig() != nil {
 			slackSessionProfileID = bot.SessionConfig().SessionProfileID()
 		}
+
+		var slackSandbox *entities.SandboxParams
+		if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
+			slackSandbox = bot.SessionConfig().Params().Sandbox
+		}
+
 		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
 			UserID:           userID,
 			Scope:            scope,
@@ -428,6 +434,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			AgentType:        agentType,
 			MemoryKey:        memoryKey,
 			RepoInfo:         repoInfo,
+			Sandbox:          slackSandbox,
 			SessionProfileID: slackSessionProfileID,
 			SlackParams: func() *entities.SlackParams {
 				sp := &entities.SlackParams{
