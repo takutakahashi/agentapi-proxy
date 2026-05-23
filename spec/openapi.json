@@ -4778,8 +4778,32 @@
             "description": "Maximum number of cycles to run. 0 means unlimited. Requires cycle_message to be set. The current count is tracked in /tmp/check/CYCLE_COUNT inside the session.",
             "default": 10,
             "example": 10
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/SandboxConfig"
           }
         }
+      },
+      "SandboxConfig": {
+        "type": "object",
+        "required": ["enabled"],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether sandbox network restrictions are active for the session"
+          },
+          "allowed_domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of domains allowed when sandbox is enabled (allowlist mode)"
+          },
+          "denied_domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of domains blocked when sandbox is enabled (denylist mode)"
+          }
+        },
+        "description": "Network sandbox configuration for restricting outbound access from the session"
       },
       "SlackParams": {
         "type": "object",

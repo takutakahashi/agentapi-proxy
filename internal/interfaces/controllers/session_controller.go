@@ -183,8 +183,13 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			if len(cfg.Tags()) > 0 && len(startReq.Tags) == 0 {
 				startReq.Tags = cfg.Tags()
 			}
-			if startReq.Params == nil && cfg.Params() != nil {
-				startReq.Params = cfg.Params()
+			if cfg.Params() != nil {
+				if startReq.Params == nil {
+					startReq.Params = cfg.Params()
+				} else if startReq.Params.Sandbox == nil && cfg.Params().Sandbox != nil {
+					// Merge sandbox from profile when the request does not specify one
+					startReq.Params.Sandbox = cfg.Params().Sandbox
+				}
 			}
 			if len(cfg.MemoryKey()) > 0 && len(startReq.MemoryKey) == 0 {
 				startReq.MemoryKey = cfg.MemoryKey()

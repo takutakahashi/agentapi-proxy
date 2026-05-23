@@ -113,6 +113,13 @@ func parseFileSecretKey(k string) (int, bool) {
 	return idx, true
 }
 
+// SandboxConfig represents network sandbox configuration for a session.
+type SandboxConfig struct {
+	Enabled        bool     `yaml:"enabled"                   json:"enabled"`
+	AllowedDomains []string `yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
+	DeniedDomains  []string `yaml:"denied_domains,omitempty"  json:"denied_domains,omitempty"`
+}
+
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
@@ -135,6 +142,9 @@ type SessionSettings struct {
 	// Kept for backward compatibility with sessions provisioned before the Files field
 	// was introduced.  The provisioner falls back to this field when Files is empty.
 	Credentials string `yaml:"credentials,omitempty" json:"credentials,omitempty"`
+	// Sandbox holds network sandbox configuration. When set, the provisioner
+	// enforces domain-level network restrictions for the session.
+	Sandbox *SandboxConfig `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 }
 
 // OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.

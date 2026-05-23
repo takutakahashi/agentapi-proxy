@@ -3969,6 +3969,16 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] Injected CYCLE_ENABLED file (with message) for session %s", session.id)
 	}
 
+	// Sandbox network restrictions
+	if req.Sandbox != nil && req.Sandbox.Enabled {
+		settings.Sandbox = &sessionsettings.SandboxConfig{
+			Enabled:        req.Sandbox.Enabled,
+			AllowedDomains: req.Sandbox.AllowedDomains,
+			DeniedDomains:  req.Sandbox.DeniedDomains,
+		}
+		log.Printf("[K8S_SESSION] Sandbox network restrictions enabled for session %s", session.id)
+	}
+
 	return settings
 }
 

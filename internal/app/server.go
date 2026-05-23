@@ -631,6 +631,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		cycleMaxCount = startReq.Params.CycleMaxCount
 	}
 
+	// Determine sandbox from Params.Sandbox
+	var sandbox *entities.SandboxConfig
+	if startReq.Params != nil && startReq.Params.Sandbox != nil {
+		sandbox = startReq.Params.Sandbox
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:                   userID,
@@ -649,6 +655,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		MemoryKey:                startReq.MemoryKey,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,
+		Sandbox:                  sandbox,
 	}
 
 	// Delegate to session manager

@@ -16,6 +16,16 @@ const (
 	ScopeTeam ResourceScope = "team"
 )
 
+// SandboxConfig represents network sandbox configuration for a session
+type SandboxConfig struct {
+	// Enabled indicates whether the sandbox network restriction is active
+	Enabled bool `json:"enabled"`
+	// AllowedDomains is the list of domains allowed when sandbox is in allowlist mode
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	// DeniedDomains is the list of domains blocked when sandbox is in denylist mode
+	DeniedDomains []string `json:"denied_domains,omitempty"`
+}
+
 // SlackParams represents Slack integration parameters
 type SlackParams struct {
 	// Channel is the Slack channel ID (e.g., "C1234567890")
@@ -62,6 +72,8 @@ type SessionParams struct {
 	// environment so the repository is cloned at session startup.
 	// For SlackBot sessions, this takes priority over any repository auto-detected from the message text.
 	RepoFullName string `json:"repo_full_name,omitempty"`
+	// Sandbox defines network sandbox restrictions for the session.
+	Sandbox *SandboxConfig `json:"sandbox,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -107,6 +119,7 @@ type RunServerRequest struct {
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
 	CycleMessage             string            // Message to send to session after each Claude stop event (injects Stop hook)
 	CycleMaxCount            int               // Maximum number of cycles (0 = unlimited); requires CycleMessage
+	Sandbox                  *SandboxConfig    // Network sandbox restrictions for the session
 	// ProvisionSettings, when non-nil, is used directly as the provision payload
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).
