@@ -44,9 +44,29 @@ func NewAllowlistFilter(allowedDomains []string) *Filter {
 	return &Filter{allowedDomains: normalize(allowedDomains)}
 }
 
-// IsDenied returns true when host should be blocked.
+// FilterResult describes the outcome of a filter check.
+type FilterResult int
+
+const (
+	FilterResultAllowed  FilterResult = iota // passed allowlist/denylist check
+	FilterResultBypassed                     // always-allow bypass domain
+	FilterResultBlocked                      // denied by allowlist or denylist
+)
+
+func (r FilterResult) String() string {
+	switch r {
+	case FilterResultBypassed:
+		return "bypassed"
+	case FilterResultBlocked:
+		return "blocked"
+	default:
+		return "allowed"
+	}
+}
+
+// Check returns the FilterResult for the given host.
 // host may include a port suffix (host:port); it is stripped before matching.
-func (f *Filter) IsDenied(host string) bool {
+func (f *Filter) Check(host string) FilterResult {
 	h := strings.ToLower(host)
 	// Strip port if present.
 	if idx := strings.LastIndex(h, ":"); idx != -1 {
@@ -59,7 +79,7 @@ func (f *Filter) IsDenied(host string) bool {
 	// Bypass check: always allow regardless of mode.
 	for _, bypass := range bypassDomains {
 		if matchDomain(h, bypass) {
-			return false
+			return FilterResultBypassed
 		}
 	}
 
@@ -67,19 +87,24 @@ func (f *Filter) IsDenied(host string) bool {
 	if len(f.allowedDomains) > 0 {
 		for _, allowed := range f.allowedDomains {
 			if matchDomain(h, allowed) {
-				return false
+				return FilterResultAllowed
 			}
 		}
-		return true
+		return FilterResultBlocked
 	}
 
 	// Denylist mode: deny only matched domains.
 	for _, denied := range f.deniedDomains {
 		if matchDomain(h, denied) {
-			return true
+			return FilterResultBlocked
 		}
 	}
-	return false
+	return FilterResultAllowed
+}
+
+// IsDenied returns true when host should be blocked.
+func (f *Filter) IsDenied(host string) bool {
+	return f.Check(host) == FilterResultBlocked
 }
 
 // matchDomain checks whether host matches the pattern.

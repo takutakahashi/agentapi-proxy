@@ -89,12 +89,13 @@ func (p *Proxy) handle(conn net.Conn) {
 func (p *Proxy) handleCONNECT(conn net.Conn, req *http.Request) {
 	host, _, err := net.SplitHostPort(req.Host)
 	if err != nil {
-		// No port in CONNECT target — use as-is for domain matching.
 		host = req.Host
 	}
 
-	if p.filter.IsDenied(host) {
-		log.Printf("[network-filter] CONNECT blocked: %s", req.Host)
+	result := p.filter.Check(host)
+	log.Printf("[network-filter] CONNECT %s: %s", result, req.Host)
+
+	if result == FilterResultBlocked {
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 403 Forbidden\r\n\r\nblocked by network filter\n")
 		return
 	}
@@ -118,8 +119,11 @@ func (p *Proxy) handleHTTP(conn net.Conn, br *bufio.Reader, req *http.Request) {
 	if host == "" {
 		host = req.URL.Host
 	}
-	if p.filter.IsDenied(host) {
-		log.Printf("[network-filter] HTTP blocked: %s", host)
+
+	result := p.filter.Check(host)
+	log.Printf("[network-filter] HTTP %s: %s", result, host)
+
+	if result == FilterResultBlocked {
 		resp := &http.Response{
 			Status:     "403 Forbidden",
 			StatusCode: http.StatusForbidden,
@@ -178,8 +182,10 @@ func (p *Proxy) handleTransparentTLS(conn net.Conn, br *bufio.Reader) {
 		return
 	}
 
-	if p.filter.IsDenied(sni) {
-		log.Printf("[network-filter] TLS blocked: %s", sni)
+	result := p.filter.Check(sni)
+	log.Printf("[network-filter] TLS %s: %s", result, sni)
+
+	if result == FilterResultBlocked {
 		return
 	}
 
