@@ -209,7 +209,7 @@ func pipe(a, b interface{ Read([]byte) (int, error) }, extras ...io.Writer) {
 		go func() { _, _ = io.Copy(b.(io.Writer), a.(io.Reader)); done <- struct{}{} }()
 		go func() {
 			if len(extras) > 0 {
-				_, _ = io.Copy(io.MultiWriter(append(extras, a.(io.Writer))...), b.(io.Reader))
+				_, _ = io.Copy(io.MultiWriter(extras...), b.(io.Reader))
 			} else {
 				_, _ = io.Copy(a.(io.Writer), b.(io.Reader))
 			}
