@@ -32,14 +32,16 @@ var networkFilterSetupCmd = &cobra.Command{
 
 var networkFilterProxyCmd = &cobra.Command{
 	Use:   "proxy",
-	Short: "Run the transparent HTTP/HTTPS proxy sidecar",
-	Long: `Runs the transparent proxy sidecar that enforces the denied-domains list.
+	Short: "Run the forward proxy sidecar",
+	Long: `Runs the forward proxy sidecar that enforces the denied-domains list.
 
 Denied domains are read from the NETWORK_FILTER_DENIED_DOMAINS environment
 variable (comma-separated hostnames) or from the --denied-domains flag.
 
-HTTP traffic (port 3128): filtered by Host header.
-HTTPS traffic (port 3129): filtered by TLS SNI (no decryption).`,
+A single listener on port 3128 handles three types of connections:
+  - HTTP CONNECT tunnels (proxy-aware HTTPS clients via HTTP_PROXY/HTTPS_PROXY env vars)
+  - HTTP forward proxy requests (proxy-aware HTTP clients)
+  - Transparent TLS (iptables-redirected port-443 traffic, SNI-filtered)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deniedDomainsFlag, _ := cmd.Flags().GetStringSlice("denied-domains")
 
@@ -56,25 +58,14 @@ HTTPS traffic (port 3129): filtered by TLS SNI (no decryption).`,
 		filter := networkfilter.NewFilter(allDomains)
 		proxy := networkfilter.NewProxy(filter)
 
-		httpAddr := fmt.Sprintf("0.0.0.0:%d", networkfilter.HTTPProxyPort)
-		httpsAddr := fmt.Sprintf("0.0.0.0:%d", networkfilter.HTTPSProxyPort)
-
-		httpLis, err := net.Listen("tcp", httpAddr)
+		addr := fmt.Sprintf("0.0.0.0:%d", networkfilter.ProxyPort)
+		lis, err := net.Listen("tcp", addr)
 		if err != nil {
-			return fmt.Errorf("listen HTTP %s: %w", httpAddr, err)
-		}
-		httpsLis, err := net.Listen("tcp", httpsAddr)
-		if err != nil {
-			return fmt.Errorf("listen HTTPS %s: %w", httpsAddr, err)
+			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 
-		log.Printf("[network-filter] Starting proxy (denied domains: %v)", allDomains)
-
-		errCh := make(chan error, 2)
-		go func() { errCh <- proxy.RunHTTP(httpLis) }()
-		go func() { errCh <- proxy.RunHTTPS(httpsLis) }()
-
-		return <-errCh
+		log.Printf("[network-filter] Starting proxy on %s (denied domains: %v)", addr, allDomains)
+		return proxy.Run(lis)
 	},
 }
 

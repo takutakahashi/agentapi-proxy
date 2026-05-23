@@ -34,6 +34,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/networkfilter"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
@@ -1613,8 +1614,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	sandboxEnabled := req.Sandbox != nil && req.Sandbox.Enabled
 	var initContainers []corev1.Container
 	var sandboxSidecar *corev1.Container
+	var sandboxEnvVars []corev1.EnvVar
 	if sandboxEnabled {
-		initContainers, sandboxSidecar = m.buildSandboxContainers(req)
+		initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(req)
 	}
 
 	// Determine working directory
@@ -1691,7 +1693,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		Env:     envVars,
+		Env:     append(envVars, sandboxEnvVars...),
 		EnvFrom: envFrom,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -1998,7 +2000,7 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 // (network-filter proxy) needed for session network sandboxing.
 // The sidecar runs as UID 0 (root) so that iptables rules can skip its traffic
 // via the "--uid-owner 0" match, preventing redirect loops.
-func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServerRequest) ([]corev1.Container, *corev1.Container) {
+func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServerRequest) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
 	deniedDomains := ""
 	if req.Sandbox != nil && len(req.Sandbox.DeniedDomains) > 0 {
 		deniedDomains = strings.Join(req.Sandbox.DeniedDomains, ",")
@@ -2021,6 +2023,8 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 		},
 	}
 
+	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", networkfilter.ProxyPort)
+
 	sidecar := corev1.Container{
 		Name:            "network-filter",
 		Image:           m.k8sConfig.Image,
@@ -2035,12 +2039,24 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 			AllowPrivilegeEscalation: &falseVal,
 		},
 		Ports: []corev1.ContainerPort{
-			{Name: "http-proxy", ContainerPort: 3128, Protocol: corev1.ProtocolTCP},
-			{Name: "https-proxy", ContainerPort: 3129, Protocol: corev1.ProtocolTCP},
+			{Name: "proxy", ContainerPort: int32(networkfilter.ProxyPort), Protocol: corev1.ProtocolTCP},
 		},
 	}
 
-	return []corev1.Container{initContainer}, &sidecar
+	// Inject HTTP_PROXY / HTTPS_PROXY env vars into the main container so that
+	// proxy-aware clients (curl, Go's http.Client, pip, npm, etc.) route all
+	// HTTP and HTTPS traffic through the sidecar via CONNECT tunnels.
+	// This covers non-standard ports and avoids SNI-peeking for HTTPS.
+	proxyEnvVars := []corev1.EnvVar{
+		{Name: "HTTP_PROXY", Value: proxyAddr},
+		{Name: "HTTPS_PROXY", Value: proxyAddr},
+		{Name: "http_proxy", Value: proxyAddr},
+		{Name: "https_proxy", Value: proxyAddr},
+		{Name: "NO_PROXY", Value: "127.0.0.1,localhost"},
+		{Name: "no_proxy", Value: "127.0.0.1,localhost"},
+	}
+
+	return []corev1.Container{initContainer}, &sidecar, proxyEnvVars
 }
 
 // buildVolumes builds the volume configuration for the session pod
