@@ -21,15 +21,15 @@ type Handlers struct {
 }
 
 // NewHandlers creates a new Handlers instance
-func NewHandlers(repo repositories.WebhookRepository, sessionManager repositories.SessionManager, baseURL string, memoryRepo repositories.MemoryRepository) *Handlers {
+func NewHandlers(repo repositories.WebhookRepository, sessionManager repositories.SessionManager, baseURL string, memoryRepo repositories.MemoryRepository, sessionProfileRepo repositories.SessionProfileRepository) *Handlers {
 	controller := controllers.NewWebhookController(repo)
 	if baseURL != "" {
 		controller.SetBaseURL(baseURL)
 	}
 	return &Handlers{
 		controller:       controller,
-		githubController: controllers.NewWebhookGitHubController(repo, sessionManager, memoryRepo),
-		customController: controllers.NewWebhookCustomController(repo, sessionManager, memoryRepo),
+		githubController: controllers.NewWebhookGitHubController(repo, sessionManager, memoryRepo, sessionProfileRepo),
+		customController: controllers.NewWebhookCustomController(repo, sessionManager, memoryRepo, sessionProfileRepo),
 	}
 }
 

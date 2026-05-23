@@ -34,6 +34,7 @@ type LaunchRequest struct {
 	Oneshot                  bool
 	RepoInfo                 *entities.RepositoryInfo
 	InitialMessageWaitSecond *int
+	Sandbox                  *entities.SandboxParams
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -55,6 +56,10 @@ type LaunchRequest struct {
 	// matching LimitMatchTags already equals or exceeds MaxSessions.
 	MaxSessions    int
 	LimitMatchTags map[string]string
+
+	// SessionProfileID is an optional reference to a SessionProfile.
+	// When set, the profile's config is merged as a base; explicit request fields override it.
+	SessionProfileID string
 }
 
 // LaunchResult is returned by LaunchUseCase.Launch.
@@ -81,13 +86,15 @@ func ResolveTeams(scope entities.ResourceScope, teamID string, userTeams []strin
 
 // LaunchUseCase creates sessions from external triggers.
 // It centralises the concerns shared by all trigger sources:
+//   - session profile resolution
 //   - session-reuse check
 //   - session-limit enforcement
 //   - RunServerRequest construction (Teams is always set via the caller's ResolveTeams call)
 //   - auto-creation of missing memories when MemoryKey is set (requires memoryRepo)
 type LaunchUseCase struct {
-	sessionManager repositories.SessionManager
-	memoryRepo     repositories.MemoryRepository // optional; if set, auto-creates missing memories
+	sessionManager     repositories.SessionManager
+	memoryRepo         repositories.MemoryRepository         // optional; if set, auto-creates missing memories
+	sessionProfileRepo repositories.SessionProfileRepository // optional; if set, resolves profile configs
 }
 
 // NewLaunchUseCase creates a new LaunchUseCase.
@@ -103,13 +110,31 @@ func (uc *LaunchUseCase) WithMemoryRepository(repo repositories.MemoryRepository
 	return uc
 }
 
+// WithSessionProfileRepository configures the session profile repository used to resolve
+// profile configs when a SessionProfileID is present in the LaunchRequest.
+// Calling this is optional; if not called, profile resolution is disabled.
+func (uc *LaunchUseCase) WithSessionProfileRepository(repo repositories.SessionProfileRepository) *LaunchUseCase {
+	uc.sessionProfileRepo = repo
+	return uc
+}
+
 // Launch creates or reuses a session according to the LaunchRequest.
 //
 // Execution order:
+//  0. Resolve session profile config (explicit ID, or default profile when ID is empty).
 //  1. Try to reuse an existing active session (when ReuseSession is true).
 //  2. Check the session limit (when MaxSessions > 0).
 //  3. Create a new session.
 func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req LaunchRequest) (LaunchResult, error) {
+	// 0. Resolve session profile: merge profile config as base; explicit request fields override.
+	// When SessionProfileID is empty, fall back to the default profile for the user/team.
+	if uc.sessionProfileRepo != nil {
+		profile := uc.resolveSessionProfile(ctx, req)
+		if profile != nil {
+			applyProfileToLaunchRequest(profile.Config(), &req)
+		}
+	}
+
 	// 1. Try session reuse
 	if req.ReuseSession && len(req.ReuseMatchTags) > 0 {
 		filter := entities.SessionFilter{
@@ -161,6 +186,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		RepoInfo:                 req.RepoInfo,
 		InitialMessageWaitSecond: req.InitialMessageWaitSecond,
 		MemoryKey:                req.MemoryKey,
+		Sandbox:                  req.Sandbox,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)
@@ -216,4 +242,96 @@ func (uc *LaunchUseCase) ensureMemoryExists(ctx context.Context, req LaunchReque
 	}
 	log.Printf("[LAUNCH] Auto-created memory %s (title=%q) with tags %v for user %s", memoryID, title, req.MemoryKey, req.UserID)
 	return nil
+}
+
+// resolveSessionProfile returns the session profile to apply for the given request.
+// If SessionProfileID is set, it fetches that profile directly.
+// Otherwise it searches for the default profile scoped to the user or team.
+func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRequest) *entities.SessionProfile {
+	if req.SessionProfileID != "" {
+		profile, err := uc.sessionProfileRepo.Get(ctx, req.SessionProfileID)
+		if err != nil {
+			log.Printf("[LAUNCH] Warning: could not resolve session_profile_id %q: %v", req.SessionProfileID, err)
+			return nil
+		}
+		return profile
+	}
+
+	// No explicit ID — look for the default profile for this user/team scope.
+	scope := req.Scope
+	if scope == "" {
+		scope = entities.ScopeUser
+	}
+	filter := repositories.SessionProfileFilter{
+		UserID: req.UserID,
+		Scope:  scope,
+	}
+	if scope == entities.ScopeTeam {
+		filter.TeamID = req.TeamID
+	}
+	profiles, err := uc.sessionProfileRepo.List(ctx, filter)
+	if err != nil {
+		log.Printf("[LAUNCH] Warning: could not list session profiles for default lookup: %v", err)
+		return nil
+	}
+	for _, p := range profiles {
+		if p.IsDefault() {
+			log.Printf("[LAUNCH] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), req.UserID)
+			return p
+		}
+	}
+	return nil
+}
+
+// applyProfileToLaunchRequest merges a SessionProfileConfig into a LaunchRequest.
+// The profile provides the base; explicit request fields override.
+func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchRequest) {
+	// Environment: profile is base, request overrides key-by-key
+	if len(cfg.Environment()) > 0 {
+		merged := make(map[string]string, len(cfg.Environment()))
+		for k, v := range cfg.Environment() {
+			merged[k] = v
+		}
+		for k, v := range req.Environment {
+			merged[k] = v
+		}
+		req.Environment = merged
+	}
+	// Tags: profile is base, request overrides key-by-key
+	if len(cfg.Tags()) > 0 {
+		merged := make(map[string]string, len(cfg.Tags()))
+		for k, v := range cfg.Tags() {
+			merged[k] = v
+		}
+		for k, v := range req.Tags {
+			merged[k] = v
+		}
+		req.Tags = merged
+	}
+	// MemoryKey: profile is base, request overrides key-by-key
+	if len(cfg.MemoryKey()) > 0 {
+		merged := make(map[string]string, len(cfg.MemoryKey()))
+		for k, v := range cfg.MemoryKey() {
+			merged[k] = v
+		}
+		for k, v := range req.MemoryKey {
+			merged[k] = v
+		}
+		req.MemoryKey = merged
+	}
+	// Params: profile fills in empty request fields
+	if cfg.Params() != nil {
+		if req.AgentType == "" {
+			req.AgentType = cfg.Params().AgentType
+		}
+		if req.GithubToken == "" {
+			req.GithubToken = cfg.Params().GithubToken
+		}
+		if req.InitialMessage == "" && cfg.Params().Message != "" {
+			req.InitialMessage = cfg.Params().Message
+		}
+		if req.Sandbox == nil && cfg.Params().Sandbox != nil {
+			req.Sandbox = cfg.Params().Sandbox
+		}
+	}
 }

@@ -92,6 +92,9 @@ type StartRequest struct {
 	// If non-empty, memories matching these tags are fetched and injected into CLAUDE.md at startup.
 	// If empty, memory integration is disabled.
 	MemoryKey map[string]string `json:"memory_key,omitempty"`
+	// SessionProfileID is an optional reference to a SessionProfile.
+	// When set, the profile's config is used as a base; explicit fields override it.
+	SessionProfileID string `json:"session_profile_id,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags

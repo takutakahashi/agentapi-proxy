@@ -56,6 +56,7 @@ type settingsJSON struct {
 	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
 	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
 	GitSync                 *gitSyncJSON                           `json:"git_sync,omitempty"`
+	DefaultSessionProfileID string                                 `json:"default_session_profile_id,omitempty"`
 	CreatedAt               time.Time                              `json:"created_at"`
 	UpdatedAt               time.Time                              `json:"updated_at"`
 }
@@ -380,6 +381,10 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 		sj.GitSync = j
 	}
 
+	if id := settings.DefaultSessionProfileID(); id != "" {
+		sj.DefaultSessionProfileID = id
+	}
+
 	return json.Marshal(sj)
 }
 
@@ -552,6 +557,10 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 		}
 		settings.SetGitSync(gs)
 		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+
+	if sj.DefaultSessionProfileID != "" {
+		settings.SetDefaultSessionProfileID(sj.DefaultSessionProfileID)
 	}
 
 	return settings, nil

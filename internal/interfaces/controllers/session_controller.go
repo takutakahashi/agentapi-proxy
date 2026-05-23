@@ -43,6 +43,7 @@ type SessionController struct {
 	validateTeamUC         *sessionuc.ValidateTeamAccessUseCase
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
+	sessionProfileRepo     repositories.SessionProfileRepository
 }
 
 // NewSessionController creates a new SessionController instance
@@ -76,6 +77,13 @@ func WithSessionRouteRepository(repo repositories.SessionRouteRepository) Sessio
 func WithSettingsRepository(repo repositories.SettingsRepository) SessionControllerOption {
 	return func(c *SessionController) {
 		c.settingsRepo = repo
+	}
+}
+
+// WithSessionProfileRepository sets the session profile repository on the controller
+func WithSessionProfileRepository(repo repositories.SessionProfileRepository) SessionControllerOption {
+	return func(c *SessionController) {
+		c.sessionProfileRepo = repo
 	}
 }
 
@@ -161,6 +169,61 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		// Personal scope - check if user can create personal resources
 		if !authzCtx.PersonalScope.CanCreate {
 			return echo.NewHTTPError(http.StatusForbidden, "user does not have permission to create sessions")
+		}
+	}
+
+	// Resolve session profile: merge profile config into startReq fields.
+	// When SessionProfileID is set, use that profile. Otherwise fall back to the
+	// user/team's default profile. The profile is the base; explicit request fields override.
+	if c.sessionProfileRepo != nil {
+		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID)
+		if profile != nil {
+			cfg := profile.Config()
+
+			// Environment: profile is base, request keys override
+			if len(cfg.Environment()) > 0 {
+				merged := make(map[string]string, len(cfg.Environment()))
+				for k, v := range cfg.Environment() {
+					merged[k] = v
+				}
+				for k, v := range startReq.Environment {
+					merged[k] = v
+				}
+				startReq.Environment = merged
+			}
+
+			// Tags: profile is base, request keys override
+			if len(cfg.Tags()) > 0 {
+				merged := make(map[string]string, len(cfg.Tags()))
+				for k, v := range cfg.Tags() {
+					merged[k] = v
+				}
+				for k, v := range startReq.Tags {
+					merged[k] = v
+				}
+				startReq.Tags = merged
+			}
+
+			// Params: profile is base, request fields override per-field
+			if cfg.Params() != nil {
+				if startReq.Params == nil {
+					startReq.Params = cfg.Params()
+				} else {
+					startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
+				}
+			}
+
+			// MemoryKey: profile is base, request keys override
+			if len(cfg.MemoryKey()) > 0 {
+				merged := make(map[string]string, len(cfg.MemoryKey()))
+				for k, v := range cfg.MemoryKey() {
+					merged[k] = v
+				}
+				for k, v := range startReq.MemoryKey {
+					merged[k] = v
+				}
+				startReq.MemoryKey = merged
+			}
 		}
 	}
 
@@ -889,4 +952,79 @@ func (c *SessionController) setCORSHeaders(ctx echo.Context) {
 	ctx.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
 	ctx.Response().Header().Set("Access-Control-Allow-Credentials", "true")
 	ctx.Response().Header().Set("Access-Control-Max-Age", "86400")
+}
+
+// mergeSessionParams merges base (profile) params with override (request) params.
+// For each field: if the override field is the zero value, the base value is used.
+func mergeSessionParams(base, override *entities.SessionParams) *entities.SessionParams {
+	merged := *base // start from profile defaults
+	if override.Message != "" {
+		merged.Message = override.Message
+	}
+	if override.GithubToken != "" {
+		merged.GithubToken = override.GithubToken
+	}
+	if override.AgentType != "" {
+		merged.AgentType = override.AgentType
+	}
+	if override.Slack != nil {
+		merged.Slack = override.Slack
+	}
+	if override.Oneshot {
+		merged.Oneshot = override.Oneshot
+	}
+	if override.InitialMessageWaitSecond != nil {
+		merged.InitialMessageWaitSecond = override.InitialMessageWaitSecond
+	}
+	if override.ManagerID != "" {
+		merged.ManagerID = override.ManagerID
+	}
+	if override.CycleMessage != "" {
+		merged.CycleMessage = override.CycleMessage
+	}
+	if override.CycleMaxCount != 0 {
+		merged.CycleMaxCount = override.CycleMaxCount
+	}
+	if override.RepoFullName != "" {
+		merged.RepoFullName = override.RepoFullName
+	}
+	if override.Sandbox != nil {
+		merged.Sandbox = override.Sandbox
+	}
+	return &merged
+}
+
+// resolveSessionProfile returns the session profile to apply for a session creation request.
+// If profileID is set, it fetches that profile directly.
+// Otherwise it searches for the default profile scoped to the user or team.
+func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID, userID string, scope entities.ResourceScope, teamID string) *entities.SessionProfile {
+	if profileID != "" {
+		profile, err := c.sessionProfileRepo.Get(ctx, profileID)
+		if err != nil {
+			log.Printf("[SESSION] Warning: could not resolve session_profile_id %q: %v", profileID, err)
+			return nil
+		}
+		return profile
+	}
+
+	// No explicit ID — look for the default profile for this user/team scope.
+	filter := repositories.SessionProfileFilter{
+		UserID: userID,
+		Scope:  scope,
+	}
+	if scope == entities.ScopeTeam {
+		filter.TeamID = teamID
+	}
+	profiles, err := c.sessionProfileRepo.List(ctx, filter)
+	if err != nil {
+		log.Printf("[SESSION] Warning: could not list session profiles for default lookup: %v", err)
+		return nil
+	}
+	for _, p := range profiles {
+		if p.IsDefault() {
+			log.Printf("[SESSION] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), userID)
+			return p
+		}
+	}
+	return nil
 }

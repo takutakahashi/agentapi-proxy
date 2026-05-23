@@ -88,6 +88,9 @@ type SessionConfig struct {
 	// ReuseMessage is the message sent to the reused session when ReuseSession is true.
 	// Falls back to Params.Message when empty.
 	ReuseMessage string `json:"reuse_message,omitempty"`
+	// SessionProfileID is an optional reference to a SessionProfile.
+	// When set, the profile's config is used as a base; explicit fields override it.
+	SessionProfileID string `json:"session_profile_id,omitempty"`
 }
 
 // ExecutionRecord represents a single execution attempt

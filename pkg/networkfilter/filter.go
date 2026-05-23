@@ -139,7 +139,7 @@ func matchDomain(host, pattern string) bool {
 	}
 	// Middle wildcard: e.g. "bedrock.*.amazonaws.com"
 	if idx := strings.Index(pattern, "*."); idx > 0 {
-		prefix := pattern[:idx]  // "bedrock."
+		prefix := pattern[:idx]   // "bedrock."
 		suffix := pattern[idx+1:] // ".amazonaws.com"
 		return strings.HasPrefix(host, prefix) && strings.HasSuffix(host, suffix)
 	}

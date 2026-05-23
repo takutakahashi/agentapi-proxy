@@ -137,6 +137,7 @@ type Settings struct {
 	notificationChannels    []string          // Active notification channels (e.g. "web", "slack")
 	externalSessionManagers []ExternalSessionManagerEntry
 	gitSync                 *GitSyncConfig
+	defaultSessionProfileID string // ID of the default session profile for this tenant
 	createdAt               time.Time
 	updatedAt               time.Time
 }
@@ -367,5 +368,16 @@ func (s *Settings) GitSync() *GitSyncConfig {
 // SetGitSync sets the GitHub sync configuration
 func (s *Settings) SetGitSync(g *GitSyncConfig) {
 	s.gitSync = g
+	s.updatedAt = time.Now()
+}
+
+// DefaultSessionProfileID returns the default session profile ID for this tenant
+func (s *Settings) DefaultSessionProfileID() string {
+	return s.defaultSessionProfileID
+}
+
+// SetDefaultSessionProfileID sets the default session profile ID for this tenant
+func (s *Settings) SetDefaultSessionProfileID(id string) {
+	s.defaultSessionProfileID = id
 	s.updatedAt = time.Now()
 }

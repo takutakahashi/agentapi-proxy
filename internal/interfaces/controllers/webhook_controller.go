@@ -100,6 +100,7 @@ type SessionConfigRequest struct {
 	Params                 *entities.SessionParams `json:"params,omitempty"`
 	ReuseSession           bool                    `json:"reuse_session,omitempty"`
 	MountPayload           bool                    `json:"mount_payload,omitempty"`
+	SessionProfileID       string                  `json:"session_profile_id,omitempty"`
 }
 
 // UpdateWebhookRequest represents the request body for updating a webhook
@@ -186,6 +187,7 @@ type SessionConfigResponse struct {
 	Params                 *SessionParamsResponse `json:"params,omitempty"`
 	ReuseSession           bool                   `json:"reuse_session,omitempty"`
 	MountPayload           bool                   `json:"mount_payload,omitempty"`
+	SessionProfileID       string                 `json:"session_profile_id,omitempty"`
 }
 
 // SessionParamsResponse represents session params in responses
@@ -658,6 +660,7 @@ func (c *WebhookController) requestToSessionConfig(req *SessionConfigRequest) *e
 	config.SetReuseMessageTemplate(req.ReuseMessageTemplate)
 	config.SetReuseSession(req.ReuseSession)
 	config.SetMountPayload(req.MountPayload)
+	config.SetSessionProfileID(req.SessionProfileID)
 	if req.Params != nil {
 		config.SetParams(req.Params)
 	}
@@ -761,6 +764,7 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 		ReuseMessageTemplate:   sc.ReuseMessageTemplate(),
 		ReuseSession:           sc.ReuseSession(),
 		MountPayload:           sc.MountPayload(),
+		SessionProfileID:       sc.SessionProfileID(),
 	}
 	// Exclude GithubToken from response since it is sensitive
 	if params := sc.Params(); params != nil {

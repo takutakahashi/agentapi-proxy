@@ -48,14 +48,16 @@ type Worker struct {
 }
 
 // NewWorker creates a new schedule worker
-func NewWorker(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, config WorkerConfig) *Worker {
+func NewWorker(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, config WorkerConfig, sessionProfileRepo portrepos.SessionProfileRepository) *Worker {
 	return &Worker{
 		manager:        manager,
 		sessionManager: sessionManager,
-		launcher:       sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
-		config:         config,
-		logger:         log.Default(),
-		stopCh:         make(chan struct{}),
+		launcher: sessionuc.NewLaunchUseCase(sessionManager).
+			WithMemoryRepository(memoryRepo).
+			WithSessionProfileRepository(sessionProfileRepo),
+		config: config,
+		logger: log.Default(),
+		stopCh: make(chan struct{}),
 	}
 }
 
@@ -245,6 +247,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 
 	var initialMessage, githubToken, agentType string
 	var slackParams *entities.SlackParams
+	var sandbox *entities.SandboxParams
 	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
 		initialMessage = schedule.SessionConfig.Params.Message
@@ -254,6 +257,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		}
 		agentType = schedule.SessionConfig.Params.AgentType
 		slackParams = schedule.SessionConfig.Params.Slack
+		sandbox = schedule.SessionConfig.Params.Sandbox
 		oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
@@ -280,16 +284,18 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		TeamID: schedule.TeamID,
 		// ResolveTeams centralises the scope-based teams logic so that it cannot
 		// accidentally diverge between the worker and the manual-trigger handler.
-		Teams:          sessionuc.ResolveTeams(scheduleScope, schedule.TeamID, schedule.UserTeams),
-		Environment:    schedule.SessionConfig.Environment,
-		Tags:           tags,
-		InitialMessage: initialMessage,
-		GithubToken:    githubToken,
-		AgentType:      agentType,
-		SlackParams:    slackParams,
-		Oneshot:        oneshot,
-		MemoryKey:      memoryKey,
-		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
+		Teams:            sessionuc.ResolveTeams(scheduleScope, schedule.TeamID, schedule.UserTeams),
+		Environment:      schedule.SessionConfig.Environment,
+		Tags:             tags,
+		InitialMessage:   initialMessage,
+		GithubToken:      githubToken,
+		AgentType:        agentType,
+		SlackParams:      slackParams,
+		Sandbox:          sandbox,
+		Oneshot:          oneshot,
+		MemoryKey:        memoryKey,
+		RepoInfo:         app.ExtractRepositoryInfo(tags, sessionID),
+		SessionProfileID: schedule.SessionConfig.SessionProfileID,
 		// Session reuse: when enabled, an existing active session matching schedule_id
 		// tag receives the message instead of a new session being created.
 		ReuseSession:   schedule.SessionConfig.ReuseSession,
