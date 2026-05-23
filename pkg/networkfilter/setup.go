@@ -48,6 +48,12 @@ func SetupIPTables() error {
 		// Allow established / related packets (responses from sidecar's upstream connections).
 		{"-t", "filter", "-A", "OUTPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
 
+		// Allow cluster-internal RFC1918 addresses (Kubernetes API, in-cluster services).
+		// These are excluded from NAT redirect above and must also pass the filter chain.
+		{"-t", "filter", "-A", "OUTPUT", "-p", "tcp", "-d", "10.0.0.0/8", "-j", "ACCEPT"},
+		{"-t", "filter", "-A", "OUTPUT", "-p", "tcp", "-d", "172.16.0.0/12", "-j", "ACCEPT"},
+		{"-t", "filter", "-A", "OUTPUT", "-p", "tcp", "-d", "192.168.0.0/16", "-j", "ACCEPT"},
+
 		// REJECT all other outbound TCP with a TCP RST (fast fail for the client).
 		{"-t", "filter", "-A", "OUTPUT", "-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"},
 
@@ -61,6 +67,11 @@ func SetupIPTables() error {
 		{"-t", "nat", "-A", "OUTPUT", "-p", "tcp", "-d", "127.0.0.1", "-j", "RETURN"},
 		// Skip sidecar traffic in NAT to avoid loops.
 		{"-t", "nat", "-A", "OUTPUT", "-p", "tcp", "-m", "owner", "--uid-owner", sidecarUID, "-j", "RETURN"},
+		// Skip cluster-internal RFC1918 addresses so the Kubernetes API server
+		// and other in-cluster services are reachable without SNI interception.
+		{"-t", "nat", "-A", "OUTPUT", "-p", "tcp", "-d", "10.0.0.0/8", "-j", "RETURN"},
+		{"-t", "nat", "-A", "OUTPUT", "-p", "tcp", "-d", "172.16.0.0/12", "-j", "RETURN"},
+		{"-t", "nat", "-A", "OUTPUT", "-p", "tcp", "-d", "192.168.0.0/16", "-j", "RETURN"},
 		// Redirect HTTP.
 		{"-t", "nat", "-A", "OUTPUT", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", proxyPort},
 		// Redirect HTTPS.

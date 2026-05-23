@@ -13,6 +13,8 @@ import (
 // - sentry.io: error reporting
 // - npmjs.org: npm package registry (tool installation)
 // - docker.io / docker.com: Docker Hub image pulls
+// - openai.com: codex-acp OpenAI backend
+// - bedrock.*.amazonaws.com: AWS Bedrock (region-scoped endpoints)
 var bypassDomains = normalize([]string{
 	"*.anthropic.com",
 	"anthropic.com",
@@ -26,6 +28,11 @@ var bypassDomains = normalize([]string{
 	"registry.npmjs.org",
 	"*.docker.io",
 	"*.docker.com",
+	"api.openai.com",
+	"bedrock.*.amazonaws.com",
+	"bedrock-runtime.*.amazonaws.com",
+	"bedrock-agent.*.amazonaws.com",
+	"bedrock-agent-runtime.*.amazonaws.com",
 })
 
 // Filter decides whether a given host should be blocked.
@@ -122,11 +129,19 @@ func (f *Filter) IsDenied(host string) bool {
 }
 
 // matchDomain checks whether host matches the pattern.
-// pattern may start with "*." for wildcard subdomain matching.
+// Supported wildcard forms:
+//   - "*.example.com" — any subdomain of example.com (leading wildcard)
+//   - "prefix.*.example.com" — prefix + any single label + suffix (middle wildcard)
 func matchDomain(host, pattern string) bool {
 	if strings.HasPrefix(pattern, "*.") {
 		suffix := pattern[1:] // ".example.com"
 		return host == pattern[2:] || strings.HasSuffix(host, suffix)
+	}
+	// Middle wildcard: e.g. "bedrock.*.amazonaws.com"
+	if idx := strings.Index(pattern, "*."); idx > 0 {
+		prefix := pattern[:idx]  // "bedrock."
+		suffix := pattern[idx+1:] // ".amazonaws.com"
+		return strings.HasPrefix(host, prefix) && strings.HasSuffix(host, suffix)
 	}
 	return host == pattern
 }

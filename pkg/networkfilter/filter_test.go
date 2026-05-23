@@ -26,3 +26,42 @@ func TestFilterIsDenied(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchDomainMiddleWildcard(t *testing.T) {
+	cases := []struct {
+		host    string
+		pattern string
+		want    bool
+	}{
+		{"bedrock.us-east-1.amazonaws.com", "bedrock.*.amazonaws.com", true},
+		{"bedrock.ap-northeast-1.amazonaws.com", "bedrock.*.amazonaws.com", true},
+		{"bedrock-runtime.us-east-1.amazonaws.com", "bedrock-runtime.*.amazonaws.com", true},
+		{"bedrock-agent.eu-west-1.amazonaws.com", "bedrock-agent.*.amazonaws.com", true},
+		{"s3.us-east-1.amazonaws.com", "bedrock.*.amazonaws.com", false},
+		{"notbedrock.us-east-1.amazonaws.com", "bedrock.*.amazonaws.com", false},
+	}
+	for _, c := range cases {
+		got := matchDomain(c.host, c.pattern)
+		if got != c.want {
+			t.Errorf("matchDomain(%q, %q) = %v, want %v", c.host, c.pattern, got, c.want)
+		}
+	}
+}
+
+func TestBypassDomains(t *testing.T) {
+	f := NewAllowlistFilter([]string{"example.com"})
+	bypassed := []string{
+		"api.anthropic.com",
+		"api.openai.com",
+		"bedrock.us-east-1.amazonaws.com",
+		"bedrock-runtime.ap-northeast-1.amazonaws.com",
+		"api.github.com",
+		"raw.githubusercontent.com",
+		"registry.npmjs.org",
+	}
+	for _, host := range bypassed {
+		if r := f.Check(host); r != FilterResultBypassed {
+			t.Errorf("Check(%q) = %v, want bypassed", host, r)
+		}
+	}
+}
