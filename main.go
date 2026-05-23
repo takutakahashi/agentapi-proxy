@@ -22,6 +22,7 @@ func init() {
 	rootCmd.AddCommand(cmd.AgentProvisionerCmd)
 	rootCmd.AddCommand(cmd.OneshotCmd)
 	rootCmd.AddCommand(cmd.AcpServerCmd)
+	rootCmd.AddCommand(cmd.NetworkFilterCmd)
 }
 
 func main() {

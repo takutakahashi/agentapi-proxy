@@ -113,7 +113,10 @@ func parseFileSecretKey(k string) (int, bool) {
 	return idx, true
 }
 
-// SandboxConfig represents network sandbox configuration for a session.
+// SandboxConfig holds network sandbox configuration for a session Pod.
+// When Enabled is true, an init container sets up iptables rules and a sidecar
+// acts as a transparent HTTP/HTTPS proxy.
+// AllowedDomains (allowlist) takes precedence over DeniedDomains (denylist).
 type SandboxConfig struct {
 	Enabled        bool     `yaml:"enabled"                   json:"enabled"`
 	AllowedDomains []string `yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
@@ -133,6 +136,7 @@ type SessionSettings struct {
 	Github         *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
 	SlackParams    *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
 	OtelCollector  *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
+	Sandbox        *SandboxConfig       `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
 	// Files holds the managed files to be restored at session startup.
 	// They are read from the agentapi-agent-files-{userID} Secret at session creation
 	// time and written to their respective paths by the provisioner.
@@ -142,9 +146,6 @@ type SessionSettings struct {
 	// Kept for backward compatibility with sessions provisioned before the Files field
 	// was introduced.  The provisioner falls back to this field when Files is empty.
 	Credentials string `yaml:"credentials,omitempty" json:"credentials,omitempty"`
-	// Sandbox holds network sandbox configuration. When set, the provisioner
-	// enforces domain-level network restrictions for the session.
-	Sandbox *SandboxConfig `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 }
 
 // OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.

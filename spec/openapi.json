@@ -4780,30 +4780,32 @@
             "example": 10
           },
           "sandbox": {
-            "$ref": "#/components/schemas/SandboxConfig"
+            "$ref": "#/components/schemas/SandboxParams"
           }
         }
       },
-      "SandboxConfig": {
+      "SandboxParams": {
         "type": "object",
-        "required": ["enabled"],
+        "description": "Network sandbox configuration for the session. When enabled, outbound HTTP/HTTPS traffic is routed through a transparent proxy sidecar. allowed_domains (allowlist) takes precedence over denied_domains (denylist).",
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Whether sandbox network restrictions are active for the session"
+            "description": "When true, the network-filter init container and sidecar are injected into the session Pod. The init container configures iptables to redirect HTTP/HTTPS traffic through the sidecar.",
+            "default": false
           },
           "allowed_domains": {
             "type": "array",
-            "items": {"type": "string"},
-            "description": "List of domains allowed when sandbox is enabled (allowlist mode)"
+            "items": { "type": "string" },
+            "description": "Allowlist mode: only listed domains are permitted; all others are blocked. Supports wildcard prefixes (e.g. '*.example.com'). Takes precedence over denied_domains when set.",
+            "example": ["api.example.com", "*.trusted.com"]
           },
           "denied_domains": {
             "type": "array",
-            "items": {"type": "string"},
-            "description": "List of domains blocked when sandbox is enabled (denylist mode)"
+            "items": { "type": "string" },
+            "description": "Denylist mode: listed domains are blocked, all others are allowed. Used only when allowed_domains is empty. Supports wildcard prefixes (e.g. '*.example.com').",
+            "example": ["example.com", "*.evil.com"]
           }
-        },
-        "description": "Network sandbox configuration for restricting outbound access from the session"
+        }
       },
       "SlackParams": {
         "type": "object",
