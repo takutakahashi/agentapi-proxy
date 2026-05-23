@@ -30,6 +30,15 @@ type SlackParams struct {
 	BotTokenSecretKey string `json:"bot_token_secret_key,omitempty"`
 }
 
+// SandboxParams holds network sandbox configuration requested at session creation.
+type SandboxParams struct {
+	// Enabled activates the network filter sidecar (iptables redirect + transparent proxy).
+	Enabled bool `json:"enabled,omitempty"`
+	// DeniedDomains is the list of hostnames whose traffic should be blocked.
+	// HTTP connections are matched by Host header; HTTPS by SNI.
+	DeniedDomains []string `json:"denied_domains,omitempty"`
+}
+
 // SessionParams represents session parameters for agentapi server
 type SessionParams struct {
 	// Message is the initial message to send to the agent after session starts
@@ -62,6 +71,8 @@ type SessionParams struct {
 	// environment so the repository is cloned at session startup.
 	// For SlackBot sessions, this takes priority over any repository auto-detected from the message text.
 	RepoFullName string `json:"repo_full_name,omitempty"`
+	// Sandbox configures network isolation for the session via a sidecar transparent proxy.
+	Sandbox *SandboxParams `json:"sandbox,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -104,6 +115,8 @@ type RunServerRequest struct {
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
 	CycleMessage             string            // Message to send to session after each Claude stop event (injects Stop hook)
 	CycleMaxCount            int               // Maximum number of cycles (0 = unlimited); requires CycleMessage
+	// Sandbox configures network isolation for the session.
+	Sandbox *SandboxParams
 	// ProvisionSettings, when non-nil, is used directly as the provision payload
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).
