@@ -311,15 +311,20 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 // If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	// Attempt to adopt a stock session before creating a new one.
-	if stockSvc, err := m.findStockSession(ctx); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
-	} else if stockSvc != nil {
-		claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
-		if claimErr != nil {
-			log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
-		} else {
-			log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
-			return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
+	// Skip stock adoption when sandbox is enabled: stock pods lack the init container
+	// and network-filter sidecar, so they cannot enforce network isolation.
+	sandboxRequested := req.Sandbox != nil && req.Sandbox.Enabled
+	if !sandboxRequested {
+		if stockSvc, err := m.findStockSession(ctx); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
+		} else if stockSvc != nil {
+			claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
+			if claimErr != nil {
+				log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
+			} else {
+				log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
+				return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
+			}
 		}
 	}
 
