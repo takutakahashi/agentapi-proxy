@@ -172,27 +172,57 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		}
 	}
 
-	// Resolve session profile: merge profile config into startReq fields if profile ID is specified
+	// Resolve session profile: merge profile config into startReq fields if profile ID is specified.
+	// The profile provides the base configuration; explicit request fields take precedence (override).
+	// Maps (environment, tags, memory_key) are merged key-by-key; params are merged field-by-field.
 	if c.sessionProfileRepo != nil && startReq.SessionProfileID != "" {
 		profile, profileErr := c.sessionProfileRepo.Get(ctx.Request().Context(), startReq.SessionProfileID)
 		if profileErr == nil {
 			cfg := profile.Config()
-			if len(cfg.Environment()) > 0 && len(startReq.Environment) == 0 {
-				startReq.Environment = cfg.Environment()
+
+			// Environment: profile is base, request keys override
+			if len(cfg.Environment()) > 0 {
+				merged := make(map[string]string, len(cfg.Environment()))
+				for k, v := range cfg.Environment() {
+					merged[k] = v
+				}
+				for k, v := range startReq.Environment {
+					merged[k] = v
+				}
+				startReq.Environment = merged
 			}
-			if len(cfg.Tags()) > 0 && len(startReq.Tags) == 0 {
-				startReq.Tags = cfg.Tags()
+
+			// Tags: profile is base, request keys override
+			if len(cfg.Tags()) > 0 {
+				merged := make(map[string]string, len(cfg.Tags()))
+				for k, v := range cfg.Tags() {
+					merged[k] = v
+				}
+				for k, v := range startReq.Tags {
+					merged[k] = v
+				}
+				startReq.Tags = merged
 			}
+
+			// Params: profile is base, request fields override per-field
 			if cfg.Params() != nil {
 				if startReq.Params == nil {
 					startReq.Params = cfg.Params()
-				} else if startReq.Params.Sandbox == nil && cfg.Params().Sandbox != nil {
-					// Merge sandbox from profile when the request does not specify one
-					startReq.Params.Sandbox = cfg.Params().Sandbox
+				} else {
+					startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
 				}
 			}
-			if len(cfg.MemoryKey()) > 0 && len(startReq.MemoryKey) == 0 {
-				startReq.MemoryKey = cfg.MemoryKey()
+
+			// MemoryKey: profile is base, request keys override
+			if len(cfg.MemoryKey()) > 0 {
+				merged := make(map[string]string, len(cfg.MemoryKey()))
+				for k, v := range cfg.MemoryKey() {
+					merged[k] = v
+				}
+				for k, v := range startReq.MemoryKey {
+					merged[k] = v
+				}
+				startReq.MemoryKey = merged
 			}
 		} else {
 			log.Printf("[SESSION] Warning: could not resolve session_profile_id %q: %v", startReq.SessionProfileID, profileErr)
@@ -924,4 +954,44 @@ func (c *SessionController) setCORSHeaders(ctx echo.Context) {
 	ctx.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
 	ctx.Response().Header().Set("Access-Control-Allow-Credentials", "true")
 	ctx.Response().Header().Set("Access-Control-Max-Age", "86400")
+}
+
+// mergeSessionParams merges base (profile) params with override (request) params.
+// For each field: if the override field is the zero value, the base value is used.
+func mergeSessionParams(base, override *entities.SessionParams) *entities.SessionParams {
+	merged := *base // start from profile defaults
+	if override.Message != "" {
+		merged.Message = override.Message
+	}
+	if override.GithubToken != "" {
+		merged.GithubToken = override.GithubToken
+	}
+	if override.AgentType != "" {
+		merged.AgentType = override.AgentType
+	}
+	if override.Slack != nil {
+		merged.Slack = override.Slack
+	}
+	if override.Oneshot {
+		merged.Oneshot = override.Oneshot
+	}
+	if override.InitialMessageWaitSecond != nil {
+		merged.InitialMessageWaitSecond = override.InitialMessageWaitSecond
+	}
+	if override.ManagerID != "" {
+		merged.ManagerID = override.ManagerID
+	}
+	if override.CycleMessage != "" {
+		merged.CycleMessage = override.CycleMessage
+	}
+	if override.CycleMaxCount != 0 {
+		merged.CycleMaxCount = override.CycleMaxCount
+	}
+	if override.RepoFullName != "" {
+		merged.RepoFullName = override.RepoFullName
+	}
+	if override.Sandbox != nil {
+		merged.Sandbox = override.Sandbox
+	}
+	return &merged
 }
