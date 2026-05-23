@@ -4,9 +4,20 @@ import (
 	"strings"
 )
 
+// bypassDomains are always allowed regardless of allowlist/denylist mode.
+// These are required for Claude Code sessions to function correctly:
+// - anthropic.com / api.anthropic.com: Claude API (required for Claude Code to operate)
+// - svc.cluster.local: Kubernetes internal services (stop hooks, health checks)
+var bypassDomains = normalize([]string{
+	"*.anthropic.com",
+	"anthropic.com",
+	"*.svc.cluster.local",
+})
+
 // Filter decides whether a given host should be blocked.
 // When allowedDomains is non-empty, only those domains pass (allowlist mode).
 // Otherwise, deniedDomains are blocked (denylist mode).
+// bypassDomains are always allowed regardless of mode.
 type Filter struct {
 	deniedDomains  []string
 	allowedDomains []string
@@ -44,6 +55,13 @@ func (f *Filter) IsDenied(host string) bool {
 		}
 	}
 	h = strings.TrimSuffix(h, ".")
+
+	// Bypass check: always allow regardless of mode.
+	for _, bypass := range bypassDomains {
+		if matchDomain(h, bypass) {
+			return false
+		}
+	}
 
 	// Allowlist mode: deny everything NOT in the allowed list.
 	if len(f.allowedDomains) > 0 {
