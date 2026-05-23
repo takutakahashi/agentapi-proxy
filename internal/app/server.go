@@ -542,14 +542,19 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
 
-	// If no ManagerID is specified, check for a default external session manager
-	if defaultESM, err := s.findDefaultESM(context.Background(), userID, teams); err == nil && defaultESM != nil {
-		log.Printf("[SESSION] Using default external session manager %s (%s) for session %s", defaultESM.Name, defaultESM.ID, sessionID)
-		if startReq.Params == nil {
-			startReq.Params = &entities.SessionParams{}
+	// If no ManagerID is specified, check for a default external session manager.
+	// Skip ESM forwarding when sandbox is requested: the remote proxy may not support
+	// sandbox, and sandbox requires local Kubernetes deployment to add init containers.
+	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
+	if !sandboxRequested {
+		if defaultESM, err := s.findDefaultESM(context.Background(), userID, teams); err == nil && defaultESM != nil {
+			log.Printf("[SESSION] Using default external session manager %s (%s) for session %s", defaultESM.Name, defaultESM.ID, sessionID)
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
+			}
+			startReq.Params.ManagerID = defaultESM.ID
+			return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 		}
-		startReq.Params.ManagerID = defaultESM.ID
-		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
 
 	// Get auth team env file from user context if available
