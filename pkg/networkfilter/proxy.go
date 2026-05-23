@@ -52,7 +52,7 @@ func (p *Proxy) Run(lis net.Listener) error {
 
 // handle dispatches an incoming connection by inspecting the first bytes.
 func (p *Proxy) handle(conn net.Conn) {
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 
 	br := bufio.NewReaderSize(conn, 4096)
 
@@ -105,7 +105,7 @@ func (p *Proxy) handleCONNECT(conn net.Conn, req *http.Request) {
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\n%v\n", err)
 		return
 	}
-	defer upConn.Close()
+	defer upConn.Close() //nolint:errcheck
 
 	_, _ = fmt.Fprint(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
 	pipe(conn, upConn)
@@ -155,7 +155,7 @@ func (p *Proxy) handleHTTP(conn net.Conn, br *bufio.Reader, req *http.Request) {
 		_ = resp.Write(conn)
 		return
 	}
-	defer upConn.Close()
+	defer upConn.Close() //nolint:errcheck
 
 	// Re-write the request in origin server format (strip absolute URL).
 	req.RequestURI = req.URL.RequestURI()
@@ -189,7 +189,7 @@ func (p *Proxy) handleTransparentTLS(conn net.Conn, br *bufio.Reader) {
 		log.Printf("[network-filter] TLS dial error %s: %v", upstream, err)
 		return
 	}
-	defer upConn.Close()
+	defer upConn.Close() //nolint:errcheck
 
 	// Replay the already-peeked bytes before piping.
 	if _, err := upConn.Write(raw); err != nil {
