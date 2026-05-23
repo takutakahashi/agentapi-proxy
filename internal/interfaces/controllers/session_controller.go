@@ -172,12 +172,12 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		}
 	}
 
-	// Resolve session profile: merge profile config into startReq fields if profile ID is specified.
-	// The profile provides the base configuration; explicit request fields take precedence (override).
-	// Maps (environment, tags, memory_key) are merged key-by-key; params are merged field-by-field.
-	if c.sessionProfileRepo != nil && startReq.SessionProfileID != "" {
-		profile, profileErr := c.sessionProfileRepo.Get(ctx.Request().Context(), startReq.SessionProfileID)
-		if profileErr == nil {
+	// Resolve session profile: merge profile config into startReq fields.
+	// When SessionProfileID is set, use that profile. Otherwise fall back to the
+	// user/team's default profile. The profile is the base; explicit request fields override.
+	if c.sessionProfileRepo != nil {
+		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID)
+		if profile != nil {
 			cfg := profile.Config()
 
 			// Environment: profile is base, request keys override
@@ -224,8 +224,6 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 				}
 				startReq.MemoryKey = merged
 			}
-		} else {
-			log.Printf("[SESSION] Warning: could not resolve session_profile_id %q: %v", startReq.SessionProfileID, profileErr)
 		}
 	}
 
@@ -994,4 +992,39 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 		merged.Sandbox = override.Sandbox
 	}
 	return &merged
+}
+
+// resolveSessionProfile returns the session profile to apply for a session creation request.
+// If profileID is set, it fetches that profile directly.
+// Otherwise it searches for the default profile scoped to the user or team.
+func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID, userID string, scope entities.ResourceScope, teamID string) *entities.SessionProfile {
+	if profileID != "" {
+		profile, err := c.sessionProfileRepo.Get(ctx, profileID)
+		if err != nil {
+			log.Printf("[SESSION] Warning: could not resolve session_profile_id %q: %v", profileID, err)
+			return nil
+		}
+		return profile
+	}
+
+	// No explicit ID — look for the default profile for this user/team scope.
+	filter := repositories.SessionProfileFilter{
+		UserID: userID,
+		Scope:  scope,
+	}
+	if scope == entities.ScopeTeam {
+		filter.TeamID = teamID
+	}
+	profiles, err := c.sessionProfileRepo.List(ctx, filter)
+	if err != nil {
+		log.Printf("[SESSION] Warning: could not list session profiles for default lookup: %v", err)
+		return nil
+	}
+	for _, p := range profiles {
+		if p.IsDefault() {
+			log.Printf("[SESSION] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), userID)
+			return p
+		}
+	}
+	return nil
 }
