@@ -2056,13 +2056,16 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 	// proxy-aware clients (curl, Go's http.Client, pip, npm, etc.) route all
 	// HTTP and HTTPS traffic through the sidecar via CONNECT tunnels.
 	// This covers non-standard ports and avoids SNI-peeking for HTTPS.
+	// K8s cluster-internal addresses (.svc.cluster.local, 10.x.x.x) bypass the proxy
+	// so that stop hooks, health checks, and internal service calls always succeed.
+	noProxy := "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 	proxyEnvVars := []corev1.EnvVar{
 		{Name: "HTTP_PROXY", Value: proxyAddr},
 		{Name: "HTTPS_PROXY", Value: proxyAddr},
 		{Name: "http_proxy", Value: proxyAddr},
 		{Name: "https_proxy", Value: proxyAddr},
-		{Name: "NO_PROXY", Value: "127.0.0.1,localhost"},
-		{Name: "no_proxy", Value: "127.0.0.1,localhost"},
+		{Name: "NO_PROXY", Value: noProxy},
+		{Name: "no_proxy", Value: noProxy},
 	}
 
 	return []corev1.Container{initContainer}, &sidecar, proxyEnvVars
