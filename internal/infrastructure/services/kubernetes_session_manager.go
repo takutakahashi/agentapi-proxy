@@ -34,6 +34,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/networkfilter"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
@@ -310,15 +311,20 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 // If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	// Attempt to adopt a stock session before creating a new one.
-	if stockSvc, err := m.findStockSession(ctx); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
-	} else if stockSvc != nil {
-		claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
-		if claimErr != nil {
-			log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
-		} else {
-			log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
-			return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
+	// Skip stock adoption when sandbox is enabled: stock pods lack the init container
+	// and network-filter sidecar, so they cannot enforce network isolation.
+	sandboxRequested := req.Sandbox != nil && req.Sandbox.Enabled
+	if !sandboxRequested {
+		if stockSvc, err := m.findStockSession(ctx); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
+		} else if stockSvc != nil {
+			claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
+			if claimErr != nil {
+				log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
+			} else {
+				log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
+				return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
+			}
 		}
 	}
 
@@ -1609,7 +1615,14 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	memoryRequest := resource.MustParse(m.k8sConfig.MemoryRequest)
 	memoryLimit := resource.MustParse(m.k8sConfig.MemoryLimit)
 
-	// No init containers — setup is performed by the main container on startup
+	// Build init containers and sandbox sidecar if network sandbox is enabled.
+	sandboxEnabled := req.Sandbox != nil && req.Sandbox.Enabled
+	var initContainers []corev1.Container
+	var sandboxSidecar *corev1.Container
+	var sandboxEnvVars []corev1.EnvVar
+	if sandboxEnabled {
+		initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(req)
+	}
 
 	// Determine working directory
 	// Always use /home/agentapi/workdir as base; clone-repo will create /home/agentapi/workdir/repo
@@ -1685,7 +1698,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		Env:     envVars,
+		Env:     append(envVars, sandboxEnvVars...),
 		EnvFrom: envFrom,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -1730,11 +1743,14 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	// Build volumes
 	volumes := m.buildVolumes(session)
 
-	// Build containers list (main container only)
+	// Build containers list.
 	// Note: credentials-sync is now handled as a goroutine inside agent-provisioner
 	// (pkg/provisioner/provision.go) after user context is established, so the
 	// UserID is always set correctly even for stock pool pods.
 	containers := []corev1.Container{container}
+	if sandboxSidecar != nil {
+		containers = append(containers, *sandboxSidecar)
+	}
 
 	// Note: Initial message is now sent by agent-provisioner internally after agentapi
 	// becomes ready. The initial-message-sender sidecar has been removed.
@@ -1803,10 +1819,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 						RunAsUser:  int64Ptr(999),
 						RunAsGroup: int64Ptr(999),
 					},
-					Containers:   containers,
-					Volumes:      volumes,
-					NodeSelector: m.k8sConfig.NodeSelector,
-					Tolerations:  tolerations,
+					InitContainers: initContainers,
+					Containers:     containers,
+					Volumes:        volumes,
+					NodeSelector:   m.k8sConfig.NodeSelector,
+					Tolerations:    tolerations,
 				},
 			},
 		},
@@ -1982,6 +1999,69 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 
 	log.Printf("[K8S_SESSION] Created oneshot settings Secret %s for session %s", secretName, session.id)
 	return nil
+}
+
+// buildSandboxContainers returns the init container (iptables setup) and sidecar
+// (network-filter proxy) needed for session network sandboxing.
+// The sidecar runs as UID 0 (root) so that iptables rules can skip its traffic
+// via the "--uid-owner 0" match, preventing redirect loops.
+func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServerRequest) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
+	deniedDomains := ""
+	if req.Sandbox != nil && len(req.Sandbox.DeniedDomains) > 0 {
+		deniedDomains = strings.Join(req.Sandbox.DeniedDomains, ",")
+	}
+
+	rootUID := int64(0)
+	falseVal := false
+
+	initContainer := corev1.Container{
+		Name:            "network-filter-setup",
+		Image:           m.k8sConfig.Image,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"agentapi-proxy", "network-filter", "setup"},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    &rootUID,
+			RunAsNonRoot: &falseVal,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN"},
+			},
+		},
+	}
+
+	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", networkfilter.ProxyPort)
+
+	sidecar := corev1.Container{
+		Name:            "network-filter",
+		Image:           m.k8sConfig.Image,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"agentapi-proxy", "network-filter", "proxy"},
+		Env: []corev1.EnvVar{
+			{Name: "NETWORK_FILTER_DENIED_DOMAINS", Value: deniedDomains},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:                &rootUID,
+			RunAsNonRoot:             &falseVal,
+			AllowPrivilegeEscalation: &falseVal,
+		},
+		Ports: []corev1.ContainerPort{
+			{Name: "proxy", ContainerPort: int32(networkfilter.ProxyPort), Protocol: corev1.ProtocolTCP},
+		},
+	}
+
+	// Inject HTTP_PROXY / HTTPS_PROXY env vars into the main container so that
+	// proxy-aware clients (curl, Go's http.Client, pip, npm, etc.) route all
+	// HTTP and HTTPS traffic through the sidecar via CONNECT tunnels.
+	// This covers non-standard ports and avoids SNI-peeking for HTTPS.
+	proxyEnvVars := []corev1.EnvVar{
+		{Name: "HTTP_PROXY", Value: proxyAddr},
+		{Name: "HTTPS_PROXY", Value: proxyAddr},
+		{Name: "http_proxy", Value: proxyAddr},
+		{Name: "https_proxy", Value: proxyAddr},
+		{Name: "NO_PROXY", Value: "127.0.0.1,localhost"},
+		{Name: "no_proxy", Value: "127.0.0.1,localhost"},
+	}
+
+	return []corev1.Container{initContainer}, &sidecar, proxyEnvVars
 }
 
 // buildVolumes builds the volume configuration for the session pod
@@ -3967,6 +4047,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			Content: req.CycleMessage,
 		})
 		log.Printf("[K8S_SESSION] Injected CYCLE_ENABLED file (with message) for session %s", session.id)
+	}
+
+	// Embed sandbox configuration when enabled.
+	if req.Sandbox != nil && req.Sandbox.Enabled {
+		settings.Sandbox = &sessionsettings.SandboxConfig{
+			Enabled:       true,
+			DeniedDomains: req.Sandbox.DeniedDomains,
+		}
+		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (denied domains: %v)", session.id, req.Sandbox.DeniedDomains)
 	}
 
 	return settings

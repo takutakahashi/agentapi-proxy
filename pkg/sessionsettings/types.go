@@ -113,6 +113,14 @@ func parseFileSecretKey(k string) (int, bool) {
 	return idx, true
 }
 
+// SandboxConfig holds network sandbox configuration for a session Pod.
+// When Enabled is true, an init container sets up iptables rules and a sidecar
+// acts as a transparent HTTP/HTTPS proxy that enforces DeniedDomains.
+type SandboxConfig struct {
+	Enabled       bool     `yaml:"enabled"                  json:"enabled"`
+	DeniedDomains []string `yaml:"denied_domains,omitempty" json:"denied_domains,omitempty"`
+}
+
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
@@ -126,6 +134,7 @@ type SessionSettings struct {
 	Github         *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
 	SlackParams    *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
 	OtelCollector  *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
+	Sandbox        *SandboxConfig       `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
 	// Files holds the managed files to be restored at session startup.
 	// They are read from the agentapi-agent-files-{userID} Secret at session creation
 	// time and written to their respective paths by the provisioner.

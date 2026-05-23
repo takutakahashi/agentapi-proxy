@@ -4568,6 +4568,26 @@
             "description": "Maximum number of cycles to run. 0 means unlimited. Requires cycle_message to be set. The current count is tracked in /tmp/check/CYCLE_COUNT inside the session.",
             "default": 10,
             "example": 10
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/SandboxParams"
+          }
+        }
+      },
+      "SandboxParams": {
+        "type": "object",
+        "description": "Network sandbox configuration for the session. When enabled, outbound HTTP/HTTPS traffic is routed through a transparent proxy sidecar that enforces the denied-domains list.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "When true, the network-filter init container and sidecar are injected into the session Pod. The init container configures iptables to redirect HTTP/HTTPS traffic through the sidecar.",
+            "default": false
+          },
+          "denied_domains": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "List of hostnames to block. HTTP traffic is matched by Host header; HTTPS by TLS SNI (no decryption). Supports wildcard prefixes (e.g. '*.example.com').",
+            "example": ["example.com", "*.evil.com"]
           }
         }
       },
