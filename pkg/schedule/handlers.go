@@ -24,21 +24,25 @@ type Handlers struct {
 }
 
 // NewHandlers creates a new Handlers instance
-func NewHandlers(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository) *Handlers {
+func NewHandlers(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, sessionProfileRepo portrepos.SessionProfileRepository) *Handlers {
 	return &Handlers{
-		manager:         manager,
-		sessionManager:  sessionManager,
-		launcher:        sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
+		manager:        manager,
+		sessionManager: sessionManager,
+		launcher: sessionuc.NewLaunchUseCase(sessionManager).
+			WithMemoryRepository(memoryRepo).
+			WithSessionProfileRepository(sessionProfileRepo),
 		defaultTimezone: "Asia/Tokyo",
 	}
 }
 
 // NewHandlersWithTimezone creates a new Handlers instance with a custom default timezone
-func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, defaultTimezone string) *Handlers {
+func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, sessionProfileRepo portrepos.SessionProfileRepository, defaultTimezone string) *Handlers {
 	return &Handlers{
-		manager:         manager,
-		sessionManager:  sessionManager,
-		launcher:        sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
+		manager:        manager,
+		sessionManager: sessionManager,
+		launcher: sessionuc.NewLaunchUseCase(sessionManager).
+			WithMemoryRepository(memoryRepo).
+			WithSessionProfileRepository(sessionProfileRepo),
 		defaultTimezone: defaultTimezone,
 	}
 }
@@ -528,19 +532,20 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	}
 
 	result, err := h.launcher.Launch(c.Request().Context(), sessionID, sessionuc.LaunchRequest{
-		UserID:         schedule.UserID,
-		Scope:          scheduleScope,
-		TeamID:         schedule.TeamID,
-		Teams:          teams,
-		Environment:    schedule.SessionConfig.Environment,
-		Tags:           tags,
-		InitialMessage: initialMessage,
-		GithubToken:    githubToken,
-		AgentType:      agentType,
-		SlackParams:    slackParams,
-		Oneshot:        oneshot,
-		MemoryKey:      schedule.SessionConfig.MemoryKey,
-		RepoInfo:       app.ExtractRepositoryInfo(tags, sessionID),
+		UserID:           schedule.UserID,
+		Scope:            scheduleScope,
+		TeamID:           schedule.TeamID,
+		Teams:            teams,
+		Environment:      schedule.SessionConfig.Environment,
+		Tags:             tags,
+		InitialMessage:   initialMessage,
+		GithubToken:      githubToken,
+		AgentType:        agentType,
+		SlackParams:      slackParams,
+		Oneshot:          oneshot,
+		MemoryKey:        schedule.SessionConfig.MemoryKey,
+		RepoInfo:         app.ExtractRepositoryInfo(tags, sessionID),
+		SessionProfileID: schedule.SessionConfig.SessionProfileID,
 		// Session reuse: when enabled, an existing active session matching schedule_id
 		// tag receives the message instead of a new session being created.
 		ReuseSession:   schedule.SessionConfig.ReuseSession,

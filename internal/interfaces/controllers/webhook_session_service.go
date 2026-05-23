@@ -25,11 +25,13 @@ type WebhookSessionService struct {
 }
 
 // NewWebhookSessionService creates a new WebhookSessionService.
-func NewWebhookSessionService(repo repositories.WebhookRepository, sessionManager repositories.SessionManager, memoryRepo repositories.MemoryRepository) *WebhookSessionService {
+func NewWebhookSessionService(repo repositories.WebhookRepository, sessionManager repositories.SessionManager, memoryRepo repositories.MemoryRepository, sessionProfileRepo repositories.SessionProfileRepository) *WebhookSessionService {
 	return &WebhookSessionService{
 		repo:           repo,
 		sessionManager: sessionManager,
-		launcher:       sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
+		launcher: sessionuc.NewLaunchUseCase(sessionManager).
+			WithMemoryRepository(memoryRepo).
+			WithSessionProfileRepository(sessionProfileRepo),
 	}
 }
 
@@ -123,24 +125,29 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	// Delegate reuse, limit-check, and session creation to LaunchUseCase.
 	// Teams is resolved here so it is never accidentally omitted (fixes the bug where
 	// webhook-triggered sessions were created without team-level settings injection).
+	var sessionProfileID string
+	if sessionConfig != nil {
+		sessionProfileID = sessionConfig.SessionProfileID()
+	}
 	result, err := s.launcher.Launch(ctx, sessionID, sessionuc.LaunchRequest{
-		UserID:         webhook.UserID(),
-		Scope:          webhook.Scope(),
-		TeamID:         webhook.TeamID(),
-		Teams:          sessionuc.ResolveTeams(webhook.Scope(), webhook.TeamID(), webhook.UserTeams()),
-		Environment:    env,
-		Tags:           tags,
-		InitialMessage: initialMessage,
-		GithubToken:    githubToken,
-		AgentType:      agentType,
-		Oneshot:        oneshot,
-		RepoInfo:       repoInfo,
-		WebhookPayload: webhookPayload,
-		ReuseSession:   sessionConfig != nil && sessionConfig.ReuseSession(),
-		ReuseMatchTags: tags,
-		ReuseMessage:   reuseMessage,
-		MaxSessions:    webhook.MaxSessions(),
-		LimitMatchTags: map[string]string{"webhook_id": webhook.ID()},
+		UserID:           webhook.UserID(),
+		Scope:            webhook.Scope(),
+		TeamID:           webhook.TeamID(),
+		Teams:            sessionuc.ResolveTeams(webhook.Scope(), webhook.TeamID(), webhook.UserTeams()),
+		Environment:      env,
+		Tags:             tags,
+		InitialMessage:   initialMessage,
+		GithubToken:      githubToken,
+		AgentType:        agentType,
+		Oneshot:          oneshot,
+		RepoInfo:         repoInfo,
+		WebhookPayload:   webhookPayload,
+		SessionProfileID: sessionProfileID,
+		ReuseSession:     sessionConfig != nil && sessionConfig.ReuseSession(),
+		ReuseMatchTags:   tags,
+		ReuseMessage:     reuseMessage,
+		MaxSessions:      webhook.MaxSessions(),
+		LimitMatchTags:   map[string]string{"webhook_id": webhook.ID()},
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create session: %w", err)
@@ -198,6 +205,7 @@ func MergeSessionConfigs(base, override *entities.WebhookSessionConfig) *entitie
 	// Override scalar fields
 	result.SetInitialMessageTemplate(firstNonEmpty(override.InitialMessageTemplate(), base.InitialMessageTemplate()))
 	result.SetReuseMessageTemplate(firstNonEmpty(override.ReuseMessageTemplate(), base.ReuseMessageTemplate()))
+	result.SetSessionProfileID(firstNonEmpty(override.SessionProfileID(), base.SessionProfileID()))
 
 	if override.Params() != nil {
 		result.SetParams(override.Params())

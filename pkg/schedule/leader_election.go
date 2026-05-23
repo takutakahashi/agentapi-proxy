@@ -120,8 +120,9 @@ func NewLeaderWorker(
 	workerConfig WorkerConfig,
 	electionConfig LeaderElectionConfig,
 	memoryRepo portrepos.MemoryRepository,
+	sessionProfileRepo portrepos.SessionProfileRepository,
 ) *LeaderWorker {
-	worker := NewWorker(manager, sessionManager, memoryRepo, workerConfig)
+	worker := NewWorker(manager, sessionManager, memoryRepo, workerConfig, sessionProfileRepo)
 	elector := NewLeaderElector(client, electionConfig)
 
 	return &LeaderWorker{

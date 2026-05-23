@@ -219,7 +219,7 @@ func TestResolveBotByChannel_Success(t *testing.T) {
 	// BotTokenSecretName = "" → uses default
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	resolved := handler.resolveBotByChannel(context.Background(), channelID)
 	require.NotNil(t, resolved, "should resolve bot by channel name")
@@ -250,7 +250,7 @@ func TestResolveBotByChannel_NoMatch(t *testing.T) {
 	bot.SetAllowedChannelNames([]string{"dev"})
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	resolved := handler.resolveBotByChannel(context.Background(), channelID)
 	assert.Nil(t, resolved, "should not match any bot when channel name doesn't match AllowedChannelNames")
@@ -281,7 +281,7 @@ func TestResolveBotByChannel_BotWithCustomToken_Skipped(t *testing.T) {
 	bot.SetBotTokenSecretName("custom-k8s-secret") // has custom bot token → must be skipped
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	resolved := handler.resolveBotByChannel(context.Background(), channelID)
 	assert.Nil(t, resolved, "bot with custom bot token must not be matched via default endpoint")
@@ -290,7 +290,7 @@ func TestResolveBotByChannel_BotWithCustomToken_Skipped(t *testing.T) {
 func TestResolveBotByChannel_NilResolver_ReturnsNil(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	// channelResolver = nil → early return
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "secret-name", "bot-token", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "secret-name", "bot-token", nil, "", false, nil, nil)
 
 	resolved := handler.resolveBotByChannel(context.Background(), "C-some-channel")
 	assert.Nil(t, resolved, "should return nil when channelResolver is nil")
@@ -301,7 +301,7 @@ func TestResolveBotByChannel_EmptyDefaultTokenSecret_ReturnsNil(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	resolver := services.NewSlackChannelResolver(fakeClient, "test-ns")
 	// defaultBotTokenSecretName = "" → early return
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, "", "bot-token", resolver, "", false, nil, nil)
 
 	resolved := handler.resolveBotByChannel(context.Background(), "C-some-channel")
 	assert.Nil(t, resolved, "should return nil when defaultBotTokenSecretName is empty")
@@ -331,7 +331,7 @@ func TestResolveBotByChannel_EmptyAllowedChannelNames_Skipped(t *testing.T) {
 	// AllowedChannelNames is empty → not identifiable via channel filter
 	repo.bots["bot-uuid-1"] = bot
 
-	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	resolved := handler.resolveBotByChannel(context.Background(), channelID)
 	assert.Nil(t, resolved, "bot with empty AllowedChannelNames cannot be identified via default endpoint")
@@ -343,7 +343,7 @@ func TestResolveBotByChannel_EmptyAllowedChannelNames_Skipped(t *testing.T) {
 func TestProcessEvent_NonEventCallbackIgnored(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := SlackPayload{Type: "url_verification", Event: nil}
 	err := handler.ProcessEvent(context.Background(), "default", payload)
@@ -364,7 +364,7 @@ func TestProcessEvent_BasicEvent_CreatesSession(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := buildEventPayload(channelID, "hello bot")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
@@ -390,7 +390,7 @@ func TestProcessEvent_PausedBot_Skipped(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := buildEventPayload("C-paused", "hello")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
@@ -411,7 +411,7 @@ func TestProcessEvent_EventTypeNotAllowed(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := buildEventPayload("C-filter", "hello")
 	// payload.Event.Type is "message", which is not in allowed list
@@ -437,7 +437,7 @@ func TestProcessEvent_RegisteredBotTaggedCorrectly(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := buildEventPayload(channelID, "hello")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
@@ -484,7 +484,7 @@ func TestProcessEvent_DefaultID_ResolveBotByChannel_UsesCorrectBotID(t *testing.
 	repo.bots["registered-bot-uuid"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	payload := buildEventPayload(channelID, "hello bot")
 	err := handler.ProcessEvent(context.Background(), "default", payload)
@@ -528,7 +528,7 @@ func TestProcessEvent_DefaultID_NoBotMatch_DropsEvent(t *testing.T) {
 	repo.bots["dev-bot-uuid"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	payload := buildEventPayload(channelID, "hello")
 	err := handler.ProcessEvent(context.Background(), "default", payload)
@@ -553,7 +553,7 @@ func TestProcessEvent_ThreadTs_UsedAsThreadKey(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := SlackPayload{
 		Type:   "event_callback",
@@ -598,7 +598,7 @@ func TestProcessEvent_SessionLimit_Reached(t *testing.T) {
 		&mockSession{id: "s2", tags: map[string]string{"slackbot_id": botID}},
 	}
 	sessionMgr := &mockSessionManager{existingSessions: existingSessions}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := buildEventPayload("C-limited", "hello")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
@@ -611,7 +611,7 @@ func TestProcessEvent_SessionLimit_Reached(t *testing.T) {
 func TestProcessEvent_BotMessage_BotID_Ignored(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 	payload := SlackPayload{
 		Type:   "event_callback",
 		TeamID: "T1",
@@ -636,7 +636,7 @@ func TestProcessEvent_BotMessage_BotID_Ignored(t *testing.T) {
 func TestProcessEvent_BotMessage_Subtype_Ignored(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 	payload := SlackPayload{
 		Type:   "event_callback",
 		TeamID: "T1",
@@ -668,7 +668,7 @@ func TestProcessEvent_PausedBot_NeverResponds(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	// Test 1: bot message (allow_bot_messages=true, but paused → must NOT respond)
 	payload := SlackPayload{
@@ -716,7 +716,7 @@ func TestProcessEvent_BotMessage_AllowBotMessages_BotID(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := SlackPayload{
 		Type:   "event_callback",
@@ -748,7 +748,7 @@ func TestProcessEvent_BotMessage_AllowBotMessages_Subtype(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := SlackPayload{
 		Type:   "event_callback",
@@ -794,7 +794,7 @@ func TestProcessEvent_ReuseSession_RoutesToExistingSession(t *testing.T) {
 		},
 	}
 	sessionMgr := &mockSessionManager{existingSessions: existingSessions}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 	payload := SlackPayload{
 		Type:   "event_callback",
 		TeamID: "T1",
@@ -833,7 +833,7 @@ func TestProcessEvent_ReuseSession_NewSessionWhenNoActive(t *testing.T) {
 
 	// No pre-seeded sessions → should always create a new session
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 	payload := buildEventPayload(channelID, "first message")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
 	require.NoError(t, err)
@@ -875,7 +875,7 @@ func TestProcessEvent_ChannelNameResolveError_ReturnsError(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	payload := buildEventPayload(channelID, "hello bot")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
@@ -907,7 +907,7 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 	// goroutine reaches LoadOrStore. Without the delay the mock CreateSession completes
 	// instantly, the key gets deleted, and the second event slips through the dedup guard.
 	sessionMgr := &mockSessionManager{createDelay: 50 * time.Millisecond}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 	makePayload := func(eventType string) SlackPayload {
 		return SlackPayload{
 			Type:   "event_callback",
@@ -1007,7 +1007,7 @@ func TestProcessEvent_StopCommand_StopsExistingSession(t *testing.T) {
 		},
 	}
 	sessionMgr := &mockSessionManager{existingSessions: existingSessions}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := SlackPayload{
 		Type:   "event_callback",
@@ -1062,7 +1062,7 @@ func TestProcessEvent_StopCommand_WithMention(t *testing.T) {
 		},
 	}
 	sessionMgr := &mockSessionManager{existingSessions: existingSessions}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := SlackPayload{
 		Type:   "event_callback",
@@ -1101,7 +1101,7 @@ func TestProcessEvent_StopCommand_NoActiveSession(t *testing.T) {
 
 	// No existing sessions
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := buildEventPayload(channelID, "/stop")
 
@@ -1189,7 +1189,7 @@ func TestProcessEvent_ThreadContext_PrependedWhenNoTemplate(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	// Triggering message is a reply in an existing thread
 	triggerTs := "1700000002.000001"
@@ -1244,7 +1244,7 @@ func TestProcessEvent_ThreadContext_NoResolver_DoesNotCrash(t *testing.T) {
 
 	sessionMgr := &mockSessionManager{}
 	// No channel resolver → fetchAndFormatThreadContext returns "" immediately
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := SlackPayload{
 		Type:   "event_callback",
@@ -1304,7 +1304,7 @@ func TestFetchAndFormatThreadContext_FiltersMessagesAfterUntilTs(t *testing.T) {
 	repo.bots["bot-id"] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "", false, nil, nil)
 
 	result := handler.fetchAndFormatThreadContext(context.Background(), bot, channelID, threadTS, untilTS)
 
@@ -1357,7 +1357,7 @@ func TestPostSessionURLToSlack_RepositoryInMessage(t *testing.T) {
 
 	sessionMgr := &mockSessionManager{}
 	baseURL := "https://example.com"
-	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, baseURL, false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, baseURL, false, nil, nil)
 
 	handler.postSessionURLToSlack(context.Background(), channelID, threadTS, sessionID, "myorg/myrepo", bot)
 
@@ -1408,7 +1408,7 @@ func TestPostSessionURLToSlack_NoRepositoryDefaultMessage(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "https://example.com", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, secretName, "bot-token", resolver, "https://example.com", false, nil, nil)
 
 	handler.postSessionURLToSlack(context.Background(), channelID, threadTS, sessionID, "", bot)
 
@@ -1431,7 +1431,7 @@ func TestProcessEvent_RepositoryTag_MultiLine(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	// First line is "org/repo", rest is the task description.
 	payload := buildEventPayload(channelID, "myorg/myrepo\nPlease fix the bug in the authentication module.")
@@ -1464,7 +1464,7 @@ func TestProcessEvent_RepositoryTag_SingleLine(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := buildEventPayload(channelID, "myorg/myrepo")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
@@ -1493,7 +1493,7 @@ func TestProcessEvent_RepositoryTag_WithMention(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	// Slack app_mention events include the mention token in the text.
 	payload := buildEventPayload(channelID, "<@UBOTID> myorg/myrepo\nPlease fix the login bug.")
@@ -1523,7 +1523,7 @@ func TestProcessEvent_RepositoryTag_NotSet(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	payload := buildEventPayload(channelID, "こんにちは！バグを直してほしいんですが")
 	err := handler.ProcessEvent(context.Background(), botID, payload)
@@ -1594,7 +1594,7 @@ func TestProcessEvent_ConfiguredRepo_UsedWhenNoMessageRepo(t *testing.T) {
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	// Message does NOT contain an org/repo identifier.
 	payload := buildEventPayload(channelID, "バグを修正してください")
@@ -1635,7 +1635,7 @@ func TestProcessEvent_ConfiguredRepo_TakesPriorityOverMessageRepo(t *testing.T) 
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	// Message contains a DIFFERENT org/repo identifier.
 	payload := buildEventPayload(channelID, "other-org/other-repo\nPlease fix this.")
@@ -1674,7 +1674,7 @@ func TestProcessEvent_NoConfiguredRepo_FallsBackToMessageDetection(t *testing.T)
 	repo.bots[botID] = bot
 
 	sessionMgr := &mockSessionManager{}
-	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil)
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
 
 	// Message contains an org/repo identifier.
 	payload := buildEventPayload(channelID, "myorg/detected-repo\nPlease fix this.")

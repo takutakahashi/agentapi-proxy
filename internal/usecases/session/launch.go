@@ -55,6 +55,10 @@ type LaunchRequest struct {
 	// matching LimitMatchTags already equals or exceeds MaxSessions.
 	MaxSessions    int
 	LimitMatchTags map[string]string
+
+	// SessionProfileID is an optional reference to a SessionProfile.
+	// When set, the profile's config is merged as a base; explicit request fields override it.
+	SessionProfileID string
 }
 
 // LaunchResult is returned by LaunchUseCase.Launch.
@@ -81,13 +85,15 @@ func ResolveTeams(scope entities.ResourceScope, teamID string, userTeams []strin
 
 // LaunchUseCase creates sessions from external triggers.
 // It centralises the concerns shared by all trigger sources:
+//   - session profile resolution
 //   - session-reuse check
 //   - session-limit enforcement
 //   - RunServerRequest construction (Teams is always set via the caller's ResolveTeams call)
 //   - auto-creation of missing memories when MemoryKey is set (requires memoryRepo)
 type LaunchUseCase struct {
-	sessionManager repositories.SessionManager
-	memoryRepo     repositories.MemoryRepository // optional; if set, auto-creates missing memories
+	sessionManager     repositories.SessionManager
+	memoryRepo         repositories.MemoryRepository         // optional; if set, auto-creates missing memories
+	sessionProfileRepo repositories.SessionProfileRepository // optional; if set, resolves profile configs
 }
 
 // NewLaunchUseCase creates a new LaunchUseCase.
@@ -103,13 +109,77 @@ func (uc *LaunchUseCase) WithMemoryRepository(repo repositories.MemoryRepository
 	return uc
 }
 
+// WithSessionProfileRepository configures the session profile repository used to resolve
+// profile configs when a SessionProfileID is present in the LaunchRequest.
+// Calling this is optional; if not called, profile resolution is disabled.
+func (uc *LaunchUseCase) WithSessionProfileRepository(repo repositories.SessionProfileRepository) *LaunchUseCase {
+	uc.sessionProfileRepo = repo
+	return uc
+}
+
 // Launch creates or reuses a session according to the LaunchRequest.
 //
 // Execution order:
+//  0. Resolve session profile config (when SessionProfileID is set).
 //  1. Try to reuse an existing active session (when ReuseSession is true).
 //  2. Check the session limit (when MaxSessions > 0).
 //  3. Create a new session.
 func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req LaunchRequest) (LaunchResult, error) {
+	// 0. Resolve session profile: merge profile config as base; explicit request fields override.
+	if uc.sessionProfileRepo != nil && req.SessionProfileID != "" {
+		profile, profileErr := uc.sessionProfileRepo.Get(ctx, req.SessionProfileID)
+		if profileErr == nil {
+			cfg := profile.Config()
+			// Environment: profile is base, request overrides key-by-key
+			if len(cfg.Environment()) > 0 {
+				merged := make(map[string]string, len(cfg.Environment()))
+				for k, v := range cfg.Environment() {
+					merged[k] = v
+				}
+				for k, v := range req.Environment {
+					merged[k] = v
+				}
+				req.Environment = merged
+			}
+			// Tags: profile is base, request overrides key-by-key
+			if len(cfg.Tags()) > 0 {
+				merged := make(map[string]string, len(cfg.Tags()))
+				for k, v := range cfg.Tags() {
+					merged[k] = v
+				}
+				for k, v := range req.Tags {
+					merged[k] = v
+				}
+				req.Tags = merged
+			}
+			// MemoryKey: profile is base, request overrides key-by-key
+			if len(cfg.MemoryKey()) > 0 {
+				merged := make(map[string]string, len(cfg.MemoryKey()))
+				for k, v := range cfg.MemoryKey() {
+					merged[k] = v
+				}
+				for k, v := range req.MemoryKey {
+					merged[k] = v
+				}
+				req.MemoryKey = merged
+			}
+			// Params: profile fills in empty request fields
+			if cfg.Params() != nil {
+				if req.AgentType == "" {
+					req.AgentType = cfg.Params().AgentType
+				}
+				if req.GithubToken == "" {
+					req.GithubToken = cfg.Params().GithubToken
+				}
+				if req.InitialMessage == "" && cfg.Params().Message != "" {
+					req.InitialMessage = cfg.Params().Message
+				}
+			}
+		} else {
+			log.Printf("[LAUNCH] Warning: could not resolve session_profile_id %q: %v", req.SessionProfileID, profileErr)
+		}
+	}
+
 	// 1. Try session reuse
 	if req.ReuseSession && len(req.ReuseMatchTags) > 0 {
 		filter := entities.SessionFilter{

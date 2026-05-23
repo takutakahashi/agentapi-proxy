@@ -61,11 +61,14 @@ func NewSlackBotEventHandler(
 	baseURL string,
 	dryRun bool,
 	memoryRepo repositories.MemoryRepository,
+	sessionProfileRepo repositories.SessionProfileRepository,
 ) *SlackBotEventHandler {
 	return &SlackBotEventHandler{
-		repo:                      repo,
-		sessionManager:            sessionManager,
-		launcher:                  sessionuc.NewLaunchUseCase(sessionManager).WithMemoryRepository(memoryRepo),
+		repo:           repo,
+		sessionManager: sessionManager,
+		launcher: sessionuc.NewLaunchUseCase(sessionManager).
+			WithMemoryRepository(memoryRepo).
+			WithSessionProfileRepository(sessionProfileRepo),
 		channelResolver:           channelResolver,
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
@@ -410,17 +413,22 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			}
 		}
 
+		var slackSessionProfileID string
+		if bot != nil && bot.SessionConfig() != nil {
+			slackSessionProfileID = bot.SessionConfig().SessionProfileID()
+		}
 		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
-			UserID:         userID,
-			Scope:          scope,
-			TeamID:         teamID,
-			Teams:          teams,
-			Environment:    env,
-			Tags:           tags,
-			InitialMessage: initialMessage,
-			AgentType:      agentType,
-			MemoryKey:      memoryKey,
-			RepoInfo:       repoInfo,
+			UserID:           userID,
+			Scope:            scope,
+			TeamID:           teamID,
+			Teams:            teams,
+			Environment:      env,
+			Tags:             tags,
+			InitialMessage:   initialMessage,
+			AgentType:        agentType,
+			MemoryKey:        memoryKey,
+			RepoInfo:         repoInfo,
+			SessionProfileID: slackSessionProfileID,
 			SlackParams: func() *entities.SlackParams {
 				sp := &entities.SlackParams{
 					Channel:  channel,
