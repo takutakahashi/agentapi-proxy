@@ -33,29 +33,46 @@ var networkFilterSetupCmd = &cobra.Command{
 var networkFilterProxyCmd = &cobra.Command{
 	Use:   "proxy",
 	Short: "Run the forward proxy sidecar",
-	Long: `Runs the forward proxy sidecar that enforces the denied-domains list.
+	Long: `Runs the forward proxy sidecar that enforces domain filtering.
 
-Denied domains are read from the NETWORK_FILTER_DENIED_DOMAINS environment
-variable (comma-separated hostnames) or from the --denied-domains flag.
+Allowed domains (allowlist mode) are read from NETWORK_FILTER_ALLOWED_DOMAINS env var
+or --allowed-domains flag. When set, only listed domains are permitted; all others blocked.
+
+Denied domains (denylist mode) are read from NETWORK_FILTER_DENIED_DOMAINS env var
+or --denied-domains flag. When set, only listed domains are blocked.
+
+Allowlist takes precedence when both are specified.
 
 A single listener on port 3128 handles three types of connections:
   - HTTP CONNECT tunnels (proxy-aware HTTPS clients via HTTP_PROXY/HTTPS_PROXY env vars)
   - HTTP forward proxy requests (proxy-aware HTTP clients)
   - Transparent TLS (iptables-redirected port-443 traffic, SNI-filtered)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		allowedDomainsFlag, _ := cmd.Flags().GetStringSlice("allowed-domains")
 		deniedDomainsFlag, _ := cmd.Flags().GetStringSlice("denied-domains")
 
-		// Merge flag values with the environment variable.
-		envVal := os.Getenv("NETWORK_FILTER_DENIED_DOMAINS")
-		var allDomains []string
-		if envVal != "" {
-			for _, d := range strings.Split(envVal, ",") {
-				allDomains = append(allDomains, strings.TrimSpace(d))
+		parseDomains := func(envKey string, flagVals []string) []string {
+			var out []string
+			if v := os.Getenv(envKey); v != "" {
+				for _, d := range strings.Split(v, ",") {
+					out = append(out, strings.TrimSpace(d))
+				}
 			}
+			return append(out, flagVals...)
 		}
-		allDomains = append(allDomains, deniedDomainsFlag...)
 
-		filter := networkfilter.NewFilter(allDomains)
+		allowedDomains := parseDomains("NETWORK_FILTER_ALLOWED_DOMAINS", allowedDomainsFlag)
+		deniedDomains := parseDomains("NETWORK_FILTER_DENIED_DOMAINS", deniedDomainsFlag)
+
+		var filter *networkfilter.Filter
+		if len(allowedDomains) > 0 {
+			log.Printf("[network-filter] Starting proxy on 0.0.0.0:%d (allowlist: %v)", networkfilter.ProxyPort, allowedDomains)
+			filter = networkfilter.NewAllowlistFilter(allowedDomains)
+		} else {
+			log.Printf("[network-filter] Starting proxy on 0.0.0.0:%d (denylist: %v)", networkfilter.ProxyPort, deniedDomains)
+			filter = networkfilter.NewFilter(deniedDomains)
+		}
+
 		proxy := networkfilter.NewProxy(filter)
 
 		addr := fmt.Sprintf("0.0.0.0:%d", networkfilter.ProxyPort)
@@ -64,14 +81,15 @@ A single listener on port 3128 handles three types of connections:
 			return fmt.Errorf("listen %s: %w", addr, err)
 		}
 
-		log.Printf("[network-filter] Starting proxy on %s (denied domains: %v)", addr, allDomains)
 		return proxy.Run(lis)
 	},
 }
 
 func init() {
+	networkFilterProxyCmd.Flags().StringSlice("allowed-domains", nil,
+		"Domains to allow (allowlist mode). All others blocked. Overrides denied-domains when set. Also via NETWORK_FILTER_ALLOWED_DOMAINS.")
 	networkFilterProxyCmd.Flags().StringSlice("denied-domains", nil,
-		"Comma-separated list of domains to block (can also be set via NETWORK_FILTER_DENIED_DOMAINS env var)")
+		"Domains to block (denylist mode). Also via NETWORK_FILTER_DENIED_DOMAINS.")
 
 	NetworkFilterCmd.AddCommand(networkFilterSetupCmd)
 	NetworkFilterCmd.AddCommand(networkFilterProxyCmd)
