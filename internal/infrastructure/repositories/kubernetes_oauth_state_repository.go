@@ -35,11 +35,11 @@ func NewKubernetesOAuthStateRepository(client kubernetes.Interface, namespace st
 }
 
 func (r *KubernetesOAuthStateRepository) cmName(state string) string {
-	// SHA256 hex digest: always 64 lowercase hex chars regardless of input length.
-	// Total name = len("agentapi-oauth-state-") + 64 = 85 chars < 253 (K8s limit).
-	// Characters are [0-9a-f] only, satisfying the DNS subdomain naming rules.
+	// Use the first 8 bytes (16 hex chars) of SHA256.
+	// Total name = len("agentapi-oauth-state-") + 16 = 37 chars < 63 (DNS label limit).
+	// Collision probability is negligible for the small number of concurrent OAuth flows.
 	h := sha256.Sum256([]byte(state))
-	return oauthStateConfigMapPrefix + hex.EncodeToString(h[:])
+	return oauthStateConfigMapPrefix + hex.EncodeToString(h[:8])
 }
 
 func (r *KubernetesOAuthStateRepository) Store(ctx context.Context, state string, entry *auth.OAuthState) error {
