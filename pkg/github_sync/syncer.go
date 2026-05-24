@@ -1644,7 +1644,7 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) sessionProfi
 	cfg := p.Config()
 	env := make(map[string]string, len(cfg.Environment()))
 	for k, v := range cfg.Environment() {
-		if IsSensitiveKey(k) && !IsEncrypted(v) {
+		if len(dek) > 0 && !IsEncrypted(v) {
 			if enc, err := EncryptField(dek, v); err == nil {
 				env[k] = enc
 				continue
