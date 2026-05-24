@@ -1,15 +1,15 @@
-{{- if .Values.ingress.enabled -}}
-{{- $ingressClassName := .Values.ingress.className }}
-{{- if .Values.global }}
-  {{- if .Values.global.ingress }}
-    {{- $ingressClassName = .Values.global.ingress.className | default $ingressClassName }}
-  {{- end }}
-{{- end }}
 {{- $apiHostname := "" }}
 {{- if .Values.global }}
   {{- $apiHostname = .Values.global.apiHostname | default .Values.config.hostname }}
 {{- else }}
   {{- $apiHostname = .Values.config.hostname }}
+{{- end }}
+{{- if or .Values.ingress.enabled $apiHostname -}}
+{{- $ingressClassName := .Values.ingress.className }}
+{{- if .Values.global }}
+  {{- if .Values.global.ingress }}
+    {{- $ingressClassName = .Values.global.ingress.className | default $ingressClassName }}
+  {{- end }}
 {{- end }}
 {{- $tlsEnabled := false }}
 {{- if .Values.ingress.tls }}
