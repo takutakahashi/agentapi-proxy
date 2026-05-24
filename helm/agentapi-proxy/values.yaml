@@ -86,6 +86,18 @@ ingress:
       hosts:
         - agentapi.example.com
 
+# OAuth専用Ingress (Sticky Session付き)
+# /oauth/authorize と /oauth/callback にのみ affinity cookie を設定する。
+# メインの ingress とホスト名・TLS設定は共有し、annotations だけ上書きする。
+oauthIngress:
+  enabled: false
+  # className を省略するとメインの ingress.className を継承する
+  className: ""
+  # 追加 annotations (affinity cookie の設定はテンプレートで自動付与)
+  annotations: {}
+  # tls を省略するとメインの ingress.tls を継承する
+  tls: []
+
 resources:
   requests:
     memory: "512Mi"
