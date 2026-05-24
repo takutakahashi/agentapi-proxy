@@ -1,5 +1,5 @@
-{{- if .Values.oauthIngress.enabled -}}
-{{- $ingressClassName := .Values.oauthIngress.className | default .Values.ingress.className }}
+{{- if .Values.ingress.enabled -}}
+{{- $ingressClassName := .Values.ingress.className }}
 {{- if .Values.global }}
   {{- if .Values.global.ingress }}
     {{- $ingressClassName = .Values.global.ingress.className | default $ingressClassName }}
@@ -12,7 +12,7 @@
   {{- $apiHostname = .Values.config.hostname }}
 {{- end }}
 {{- $tlsEnabled := false }}
-{{- if .Values.oauthIngress.tls }}
+{{- if .Values.ingress.tls }}
   {{- $tlsEnabled = true }}
 {{- else if .Values.global }}
   {{- if .Values.global.ingress }}
@@ -20,8 +20,6 @@
       {{- $tlsEnabled = .Values.global.ingress.tls.enabled | default false }}
     {{- end }}
   {{- end }}
-{{- else if .Values.ingress.tls }}
-  {{- $tlsEnabled = true }}
 {{- end }}
 {{- $tlsSecretName := printf "%s-tls" (include "agentapi-proxy.fullname" .) }}
 {{- if .Values.ingress.tls }}
@@ -42,23 +40,11 @@ metadata:
     nginx.ingress.kubernetes.io/session-cookie-name: "agentapi-oauth-affinity"
     nginx.ingress.kubernetes.io/session-cookie-path: "/oauth"
     nginx.ingress.kubernetes.io/session-cookie-max-age: "900"
-    {{- with .Values.oauthIngress.annotations }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
 spec:
   {{- if and $ingressClassName (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
   ingressClassName: {{ $ingressClassName }}
   {{- end }}
-  {{- if .Values.oauthIngress.tls }}
-  tls:
-    {{- range .Values.oauthIngress.tls }}
-    - hosts:
-        {{- range .hosts }}
-        - {{ . | quote }}
-        {{- end }}
-      secretName: {{ .secretName }}
-    {{- end }}
-  {{- else if and $tlsEnabled $apiHostname }}
+  {{- if and $tlsEnabled $apiHostname }}
   tls:
     - hosts:
         - {{ $apiHostname | quote }}
