@@ -52,6 +52,26 @@ func TestMatchDomainMiddleWildcard(t *testing.T) {
 	}
 }
 
+func TestAllowlistFilterEmptyDeniesAll(t *testing.T) {
+	f := NewAllowlistFilter(nil)
+	cases := []string{"example.com", "good.com", "anything.io", "sub.example.com"}
+	for _, host := range cases {
+		if r := f.Check(host); r != FilterResultBlocked {
+			t.Errorf("NewAllowlistFilter(nil).Check(%q) = %v, want blocked", host, r)
+		}
+	}
+}
+
+func TestDenylistFilterEmptyAllowsAll(t *testing.T) {
+	f := NewFilter(nil)
+	cases := []string{"example.com", "anything.io", "sub.example.com"}
+	for _, host := range cases {
+		if r := f.Check(host); r != FilterResultAllowed {
+			t.Errorf("NewFilter(nil).Check(%q) = %v, want allowed", host, r)
+		}
+	}
+}
+
 func TestBypassDomains(t *testing.T) {
 	f := NewAllowlistFilter([]string{"example.com"})
 	bypassed := []string{

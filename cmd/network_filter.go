@@ -68,9 +68,12 @@ A single listener on port 3128 handles three types of connections:
 		if len(allowedDomains) > 0 {
 			log.Printf("[network-filter] Starting proxy on 0.0.0.0:%d (allowlist: %v)", networkfilter.ProxyPort, allowedDomains)
 			filter = networkfilter.NewAllowlistFilter(allowedDomains)
-		} else {
+		} else if len(deniedDomains) > 0 {
 			log.Printf("[network-filter] Starting proxy on 0.0.0.0:%d (denylist: %v)", networkfilter.ProxyPort, deniedDomains)
 			filter = networkfilter.NewFilter(deniedDomains)
+		} else {
+			log.Printf("[network-filter] Starting proxy on 0.0.0.0:%d (deny-all: no domains specified)", networkfilter.ProxyPort)
+			filter = networkfilter.NewAllowlistFilter(nil)
 		}
 
 		proxy := networkfilter.NewProxy(filter)
