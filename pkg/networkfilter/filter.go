@@ -14,7 +14,8 @@ import (
 // - npmjs.org: npm package registry (tool installation)
 // - docker.io / docker.com: Docker Hub image pulls
 // - openai.com: codex-acp OpenAI backend
-// - bedrock.*.amazonaws.com: AWS Bedrock (region-scoped endpoints)
+// - bedrock.*.amazonaws.com: AWS Bedrock legacy InvokeModel/Converse API (region-scoped endpoints)
+// - bedrock-mantle.*.api.aws: AWS Bedrock new Messages API (Anthropic-compatible SSE endpoint)
 var bypassDomains = normalize([]string{
 	"*.anthropic.com",
 	"anthropic.com",
@@ -33,6 +34,7 @@ var bypassDomains = normalize([]string{
 	"bedrock-runtime.*.amazonaws.com",
 	"bedrock-agent.*.amazonaws.com",
 	"bedrock-agent-runtime.*.amazonaws.com",
+	"bedrock-mantle.*.api.aws",
 })
 
 // Filter decides whether a given host should be blocked.
