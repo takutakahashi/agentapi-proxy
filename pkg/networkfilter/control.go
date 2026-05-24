@@ -26,7 +26,7 @@ func (c *ControlServer) Run(lis net.Listener) error {
 	mux.HandleFunc("POST /enable-policy", func(w http.ResponseWriter, _ *http.Request) {
 		c.proxy.EnablePolicy()
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "policy enabled")
+		_, _ = fmt.Fprintln(w, "policy enabled")
 	})
 	srv := &http.Server{Handler: mux}
 	log.Printf("[network-filter] control server listening on %s", lis.Addr())

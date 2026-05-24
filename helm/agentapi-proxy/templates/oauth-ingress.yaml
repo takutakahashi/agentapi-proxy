@@ -1,0 +1,85 @@
+{{- $apiHostname := "" }}
+{{- if .Values.global }}
+  {{- $apiHostname = .Values.global.apiHostname | default .Values.config.hostname }}
+{{- else }}
+  {{- $apiHostname = .Values.config.hostname }}
+{{- end }}
+{{- if or .Values.ingress.enabled $apiHostname -}}
+{{- $ingressClassName := .Values.ingress.className }}
+{{- if .Values.global }}
+  {{- if .Values.global.ingress }}
+    {{- $ingressClassName = .Values.global.ingress.className | default $ingressClassName }}
+  {{- end }}
+{{- end }}
+{{- $tlsEnabled := false }}
+{{- if .Values.ingress.tls }}
+  {{- $tlsEnabled = true }}
+{{- else if .Values.global }}
+  {{- if .Values.global.ingress }}
+    {{- if .Values.global.ingress.tls }}
+      {{- $tlsEnabled = .Values.global.ingress.tls.enabled | default false }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $tlsSecretName := printf "%s-tls" (include "agentapi-proxy.fullname" .) }}
+{{- if .Values.ingress.tls }}
+  {{- $firstTLS := index .Values.ingress.tls 0 }}
+  {{- $tlsSecretName = $firstTLS.secretName | default $tlsSecretName }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-oauth
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "agentapi-oauth-affinity"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/oauth"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "900"
+spec:
+  {{- if and $ingressClassName (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
+  ingressClassName: {{ $ingressClassName }}
+  {{- end }}
+  {{- if and $tlsEnabled $apiHostname }}
+  tls:
+    - hosts:
+        - {{ $apiHostname | quote }}
+      secretName: {{ $tlsSecretName }}
+  {{- end }}
+  rules:
+    - host: {{ $apiHostname | quote }}
+      http:
+        paths:
+          - path: /oauth/authorize
+            {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+            pathType: Exact
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.fullname" . }}
+              servicePort: {{ .Values.service.port }}
+              {{- end }}
+          - path: /oauth/callback
+            {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+            pathType: Exact
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.fullname" . }}
+              servicePort: {{ .Values.service.port }}
+              {{- end }}
+{{- end }}

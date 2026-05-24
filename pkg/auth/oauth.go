@@ -50,7 +50,7 @@ type OAuthTokenResponse struct {
 type GitHubOAuthProvider struct {
 	config         *config.GitHubOAuthConfig
 	client         *http.Client
-	stateStore     *sync.Map // Thread-safe map for concurrent access
+	stateStore     OAuthStateStore
 	githubProvider *GitHubAuthProvider
 }
 
@@ -62,13 +62,51 @@ func NewGitHubOAuthProvider(cfg *config.GitHubOAuthConfig, provider *GitHubAuthP
 	return &GitHubOAuthProvider{
 		config:         cfg,
 		client:         utils.NewDefaultHTTPClient(),
-		stateStore:     &sync.Map{},
+		stateStore:     &memoryOAuthStateStore{},
 		githubProvider: provider,
 	}
 }
 
+// SetStateStore replaces the default in-memory state store with a shared implementation
+// (e.g. ConfigMap-backed) to support multi-pod deployments.
+func (p *GitHubOAuthProvider) SetStateStore(store OAuthStateStore) {
+	p.stateStore = store
+}
+
+// memoryOAuthStateStore is the default in-memory OAuthStateStore backed by sync.Map.
+type memoryOAuthStateStore struct {
+	m sync.Map
+}
+
+func (s *memoryOAuthStateStore) Store(_ context.Context, state string, entry *OAuthState) error {
+	s.m.Store(state, entry)
+	return nil
+}
+
+func (s *memoryOAuthStateStore) Load(_ context.Context, state string) (*OAuthState, bool, error) {
+	v, ok := s.m.Load(state)
+	if !ok {
+		return nil, false, nil
+	}
+	return v.(*OAuthState), true, nil
+}
+
+func (s *memoryOAuthStateStore) Delete(_ context.Context, state string) error {
+	s.m.Delete(state)
+	return nil
+}
+
+func (s *memoryOAuthStateStore) Range(_ context.Context, fn func(string, *OAuthState) bool) error {
+	s.m.Range(func(k, v interface{}) bool {
+		return fn(k.(string), v.(*OAuthState))
+	})
+	return nil
+}
+
 // GenerateAuthURL generates the GitHub OAuth authorization URL
 func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, string, error) {
+	ctx := context.Background()
+
 	// Generate secure random state
 	state, err := p.generateState()
 	if err != nil {
@@ -76,14 +114,16 @@ func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, strin
 	}
 
 	// Store state with expiration (15 minutes)
-	p.stateStore.Store(state, &OAuthState{
+	if err := p.stateStore.Store(ctx, state, &OAuthState{
 		State:       state,
 		RedirectURI: redirectURI,
 		CreatedAt:   time.Now(),
-	})
+	}); err != nil {
+		return "", "", fmt.Errorf("failed to store OAuth state: %w", err)
+	}
 
 	// Clean up expired states
-	p.cleanupExpiredStates()
+	p.cleanupExpiredStates(ctx)
 
 	// Build authorization URL
 	params := url.Values{
@@ -106,20 +146,22 @@ func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, strin
 // ExchangeCode exchanges the authorization code for an access token
 func (p *GitHubOAuthProvider) ExchangeCode(ctx context.Context, code, state string) (*UserContext, error) {
 	// Verify state
-	stateValue, exists := p.stateStore.Load(state)
+	oauthState, exists, err := p.stateStore.Load(ctx, state)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load OAuth state: %w", err)
+	}
 	if !exists {
 		return nil, fmt.Errorf("invalid state parameter")
 	}
-	oauthState := stateValue.(*OAuthState)
 
 	// Check if state is expired (15 minutes)
 	if time.Since(oauthState.CreatedAt) > 15*time.Minute {
-		p.stateStore.Delete(state)
+		_ = p.stateStore.Delete(ctx, state)
 		return nil, fmt.Errorf("state expired")
 	}
 
 	// Remove state after use
-	p.stateStore.Delete(state)
+	_ = p.stateStore.Delete(ctx, state)
 
 	// Exchange code for token
 	token, err := p.exchangeCodeForToken(ctx, code, oauthState.RedirectURI)
@@ -196,13 +238,11 @@ func (p *GitHubOAuthProvider) generateState() (string, error) {
 }
 
 // cleanupExpiredStates removes expired states from the store
-func (p *GitHubOAuthProvider) cleanupExpiredStates() {
+func (p *GitHubOAuthProvider) cleanupExpiredStates(ctx context.Context) {
 	now := time.Now()
 	var toDelete []string
 
-	p.stateStore.Range(func(key, value interface{}) bool {
-		state := key.(string)
-		oauthState := value.(*OAuthState)
+	_ = p.stateStore.Range(ctx, func(state string, oauthState *OAuthState) bool {
 		if now.Sub(oauthState.CreatedAt) > 15*time.Minute {
 			toDelete = append(toDelete, state)
 		}
@@ -210,7 +250,7 @@ func (p *GitHubOAuthProvider) cleanupExpiredStates() {
 	})
 
 	for _, state := range toDelete {
-		p.stateStore.Delete(state)
+		_ = p.stateStore.Delete(ctx, state)
 	}
 }
 

@@ -372,6 +372,16 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		cfg.Auth.GitHub.OAuth.ClientID != "" && cfg.Auth.GitHub.OAuth.ClientSecret != "" {
 		log.Printf("[OAUTH_INIT] Initializing GitHub OAuth provider...")
 		s.oauthProvider = auth.NewGitHubOAuthProvider(cfg.Auth.GitHub.OAuth, githubAuthProvider)
+		// Inject ConfigMap-backed state store for multi-pod deployments.
+		// Falls back to the default in-memory store when Kubernetes is unavailable.
+		if k8sSessionManager.GetClient() != nil {
+			oauthStateRepo := repositories.NewKubernetesOAuthStateRepository(
+				k8sSessionManager.GetClient(),
+				k8sSessionManager.GetNamespace(),
+			)
+			s.oauthProvider.SetStateStore(oauthStateRepo)
+			log.Printf("[OAUTH_INIT] ConfigMap-backed OAuth state store injected (namespace: %s)", k8sSessionManager.GetNamespace())
+		}
 		log.Printf("[OAUTH_INIT] OAuth provider initialized successfully")
 		// Start cleanup goroutine for expired OAuth sessions
 		go s.cleanupExpiredOAuthSessions()
