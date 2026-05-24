@@ -181,6 +181,11 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	log.Printf("[PROVISIONER] agentapi is ready")
 
+	// Enable the network-filter policy now that the agent is fully started.
+	// This is a best-effort call; if there is no sandbox sidecar the request
+	// simply fails and is ignored.
+	enableNetworkFilterPolicy()
+
 	// ── Step 9: send initial message ─────────────────────────────────────────
 	if settings.InitialMessage != "" {
 		log.Printf("[PROVISIONER] Sending initial message")
@@ -1203,3 +1208,18 @@ func mergeEnv(base []string, overlay map[string]string) []string {
 	sort.Strings(result)
 	return result
 }
+
+// enableNetworkFilterPolicy calls POST /enable-policy on the network-filter
+// control server (localhost:3129) so that the sandbox policy takes effect after
+// the agent has fully started. The call is best-effort: if there is no sandbox
+// sidecar the connection is refused and the error is silently ignored.
+func enableNetworkFilterPolicy() {
+	resp, err := http.Post("http://127.0.0.1:3129/enable-policy", "", nil)
+	if err != nil {
+		log.Printf("[PROVISIONER] network-filter enable-policy: %v (no sandbox sidecar?)", err)
+		return
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	log.Printf("[PROVISIONER] network-filter policy enabled (status %s)", resp.Status)
+}
+
