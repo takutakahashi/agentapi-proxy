@@ -1670,7 +1670,13 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) sessionProfi
 		UpdatedAt:              p.UpdatedAt().Format(time.RFC3339),
 	}
 	if params := cfg.Params(); params != nil {
-		rec.GitHubToken = params.GithubToken
+		token := params.GithubToken
+		if token != "" && len(dek) > 0 && !IsEncrypted(token) {
+			if enc, err := EncryptField(dek, token); err == nil {
+				token = enc
+			}
+		}
+		rec.GitHubToken = token
 		rec.InitialMessage = params.Message
 	}
 	return rec
