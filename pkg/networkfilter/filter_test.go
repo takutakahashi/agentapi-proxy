@@ -81,13 +81,27 @@ func TestBypassDomains(t *testing.T) {
 		"bedrock-runtime.ap-northeast-1.amazonaws.com",
 		"bedrock-mantle.us-east-1.api.aws",
 		"bedrock-mantle.ap-northeast-1.api.aws",
-		"api.github.com",
-		"raw.githubusercontent.com",
-		"registry.npmjs.org",
 	}
 	for _, host := range bypassed {
 		if r := f.Check(host); r != FilterResultBypassed {
 			t.Errorf("Check(%q) = %v, want bypassed", host, r)
+		}
+	}
+}
+
+func TestFormerBypassDomainsNowBlocked(t *testing.T) {
+	f := NewAllowlistFilter([]string{"example.com"})
+	blocked := []string{
+		"github.com",
+		"api.github.com",
+		"raw.githubusercontent.com",
+		"registry.npmjs.org",
+		"registry-1.docker.io",
+		"hub.docker.com",
+	}
+	for _, host := range blocked {
+		if r := f.Check(host); r == FilterResultBypassed {
+			t.Errorf("Check(%q) = bypassed, want blocked or allowed-by-policy", host)
 		}
 	}
 }

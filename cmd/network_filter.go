@@ -46,10 +46,15 @@ Allowlist takes precedence when both are specified.
 A single listener on port 3128 handles three types of connections:
   - HTTP CONNECT tunnels (proxy-aware HTTPS clients via HTTP_PROXY/HTTPS_PROXY env vars)
   - HTTP forward proxy requests (proxy-aware HTTP clients)
-  - Transparent TLS (iptables-redirected port-443 traffic, SNI-filtered)`,
+  - Transparent TLS (iptables-redirected port-443 traffic, SNI-filtered)
+
+When --deferred-policy is set, the proxy starts in passthrough mode (all traffic allowed)
+and the configured policy is activated only after sending POST /enable-policy to the
+control server on port 3129 (localhost only).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		allowedDomainsFlag, _ := cmd.Flags().GetStringSlice("allowed-domains")
 		deniedDomainsFlag, _ := cmd.Flags().GetStringSlice("denied-domains")
+		deferredPolicy, _ := cmd.Flags().GetBool("deferred-policy")
 
 		parseDomains := func(envKey string, flagVals []string) []string {
 			var out []string
@@ -76,7 +81,22 @@ A single listener on port 3128 handles three types of connections:
 			filter = networkfilter.NewAllowlistFilter(nil)
 		}
 
-		proxy := networkfilter.NewProxy(filter)
+		if deferredPolicy {
+			log.Printf("[network-filter] deferred-policy mode: policy inactive until POST /enable-policy on port %d", networkfilter.ControlPort)
+		}
+
+		proxy := networkfilter.NewProxy(filter, !deferredPolicy)
+
+		controlAddr := fmt.Sprintf("127.0.0.1:%d", networkfilter.ControlPort)
+		controlLis, err := net.Listen("tcp", controlAddr)
+		if err != nil {
+			return fmt.Errorf("listen %s: %w", controlAddr, err)
+		}
+		go func() {
+			if err := networkfilter.NewControlServer(proxy).Run(controlLis); err != nil {
+				log.Printf("[network-filter] control server error: %v", err)
+			}
+		}()
 
 		addr := fmt.Sprintf("0.0.0.0:%d", networkfilter.ProxyPort)
 		lis, err := net.Listen("tcp", addr)
@@ -93,6 +113,8 @@ func init() {
 		"Domains to allow (allowlist mode). All others blocked. Overrides denied-domains when set. Also via NETWORK_FILTER_ALLOWED_DOMAINS.")
 	networkFilterProxyCmd.Flags().StringSlice("denied-domains", nil,
 		"Domains to block (denylist mode). Also via NETWORK_FILTER_DENIED_DOMAINS.")
+	networkFilterProxyCmd.Flags().Bool("deferred-policy", false,
+		"Start in passthrough mode (all traffic allowed). Activate the policy later via POST /enable-policy on the control server (port 3129).")
 
 	NetworkFilterCmd.AddCommand(networkFilterSetupCmd)
 	NetworkFilterCmd.AddCommand(networkFilterProxyCmd)

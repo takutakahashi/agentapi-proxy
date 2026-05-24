@@ -8,11 +8,8 @@ import (
 // These are required for Claude Code sessions to function correctly:
 // - anthropic.com: Claude API
 // - svc.cluster.local: Kubernetes internal services (stop hooks, health checks)
-// - github.com / githubusercontent.com: GitHub auth, raw content, API
 // - storage.googleapis.com: tool downloads via GCS
 // - sentry.io: error reporting
-// - npmjs.org: npm package registry (tool installation)
-// - docker.io / docker.com: Docker Hub image pulls
 // - openai.com: codex-acp OpenAI backend
 // - bedrock.*.amazonaws.com: AWS Bedrock legacy InvokeModel/Converse API (region-scoped endpoints)
 // - bedrock-mantle.*.api.aws: AWS Bedrock new Messages API (Anthropic-compatible SSE endpoint)
@@ -20,15 +17,9 @@ var bypassDomains = normalize([]string{
 	"*.anthropic.com",
 	"anthropic.com",
 	"*.svc.cluster.local",
-	"github.com",
-	"*.github.com",
-	"*.githubusercontent.com",
 	"storage.googleapis.com",
 	"sentry.io",
 	"*.sentry.io",
-	"registry.npmjs.org",
-	"*.docker.io",
-	"*.docker.com",
 	"api.openai.com",
 	"bedrock.*.amazonaws.com",
 	"bedrock-runtime.*.amazonaws.com",

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,8 +18,15 @@ const (
 	// Transparent iptables-redirected connections (port 80/443) are also accepted here.
 	ProxyPort = 3128
 
+	// ControlPort is the port the control server listens on (localhost only).
+	// Used to enable the policy after startup via POST /enable-policy.
+	ControlPort = 3129
+
 	dialTimeout = 10 * time.Second
 )
+
+// passthroughFilter allows all traffic (empty denylist, no allowlist).
+var passthroughFilter = &Filter{}
 
 // Proxy is a forward proxy that enforces a domain deny-list.
 // It handles three types of incoming connections on a single port:
@@ -28,13 +36,39 @@ const (
 //  3. Transparent TCP        — redirected by iptables from port 80/443
 //     - port 80:  parsed as an HTTP request (Host header)
 //     - port 443: TLS ClientHello SNI peek
+//
+// When created with active=false (deferred mode), all traffic is allowed until
+// EnablePolicy is called.
 type Proxy struct {
-	filter *Filter
+	configuredFilter *Filter
+	activeFilter     atomic.Pointer[Filter]
 }
 
-// NewProxy creates a Proxy with the given deny-list filter.
-func NewProxy(filter *Filter) *Proxy {
-	return &Proxy{filter: filter}
+// NewProxy creates a Proxy with the given filter.
+// When active is true, the policy is enforced immediately.
+// When active is false, all traffic is allowed until EnablePolicy is called.
+func NewProxy(filter *Filter, active bool) *Proxy {
+	p := &Proxy{configuredFilter: filter}
+	if active {
+		p.activeFilter.Store(filter)
+	}
+	return p
+}
+
+// EnablePolicy activates the configured filter. After this call, all connections
+// are subject to domain filtering. Safe to call concurrently.
+func (p *Proxy) EnablePolicy() {
+	p.activeFilter.Store(p.configuredFilter)
+	log.Printf("[network-filter] policy enabled")
+}
+
+// effectiveFilter returns the active filter, or the passthrough filter if the policy
+// has not yet been enabled.
+func (p *Proxy) effectiveFilter() *Filter {
+	if f := p.activeFilter.Load(); f != nil {
+		return f
+	}
+	return passthroughFilter
 }
 
 // Run starts the proxy on the given listener.
@@ -92,7 +126,7 @@ func (p *Proxy) handleCONNECT(conn net.Conn, req *http.Request) {
 		host = req.Host
 	}
 
-	result := p.filter.Check(host)
+	result := p.effectiveFilter().Check(host)
 	log.Printf("[network-filter] CONNECT %s: %s", result, req.Host)
 
 	if result == FilterResultBlocked {
@@ -120,7 +154,7 @@ func (p *Proxy) handleHTTP(conn net.Conn, br *bufio.Reader, req *http.Request) {
 		host = req.URL.Host
 	}
 
-	result := p.filter.Check(host)
+	result := p.effectiveFilter().Check(host)
 	log.Printf("[network-filter] HTTP %s: %s", result, host)
 
 	if result == FilterResultBlocked {
@@ -182,7 +216,7 @@ func (p *Proxy) handleTransparentTLS(conn net.Conn, br *bufio.Reader) {
 		return
 	}
 
-	result := p.filter.Check(sni)
+	result := p.effectiveFilter().Check(sni)
 	log.Printf("[network-filter] TLS %s: %s", result, sni)
 
 	if result == FilterResultBlocked {
