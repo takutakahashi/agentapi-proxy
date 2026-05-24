@@ -39,6 +39,10 @@ func TestMatchDomainMiddleWildcard(t *testing.T) {
 		{"bedrock-agent.eu-west-1.amazonaws.com", "bedrock-agent.*.amazonaws.com", true},
 		{"s3.us-east-1.amazonaws.com", "bedrock.*.amazonaws.com", false},
 		{"notbedrock.us-east-1.amazonaws.com", "bedrock.*.amazonaws.com", false},
+		{"bedrock-mantle.us-east-1.api.aws", "bedrock-mantle.*.api.aws", true},
+		{"bedrock-mantle.ap-northeast-1.api.aws", "bedrock-mantle.*.api.aws", true},
+		{"bedrock-mantle.eu-west-1.api.aws", "bedrock-mantle.*.api.aws", true},
+		{"other.us-east-1.api.aws", "bedrock-mantle.*.api.aws", false},
 	}
 	for _, c := range cases {
 		got := matchDomain(c.host, c.pattern)
@@ -55,6 +59,8 @@ func TestBypassDomains(t *testing.T) {
 		"api.openai.com",
 		"bedrock.us-east-1.amazonaws.com",
 		"bedrock-runtime.ap-northeast-1.amazonaws.com",
+		"bedrock-mantle.us-east-1.api.aws",
+		"bedrock-mantle.ap-northeast-1.api.aws",
 		"api.github.com",
 		"raw.githubusercontent.com",
 		"registry.npmjs.org",
