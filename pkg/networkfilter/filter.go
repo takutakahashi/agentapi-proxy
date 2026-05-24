@@ -38,12 +38,15 @@ var bypassDomains = normalize([]string{
 })
 
 // Filter decides whether a given host should be blocked.
-// When allowedDomains is non-empty, only those domains pass (allowlist mode).
-// Otherwise, deniedDomains are blocked (denylist mode).
+// In allowlist mode (created via NewAllowlistFilter), only listed domains pass;
+// an empty allowlist blocks everything.
+// In denylist mode (created via NewFilter), listed domains are blocked;
+// an empty denylist allows everything.
 // bypassDomains are always allowed regardless of mode.
 type Filter struct {
 	deniedDomains  []string
 	allowedDomains []string
+	allowlistMode  bool
 }
 
 func normalize(domains []string) []string {
@@ -63,8 +66,9 @@ func NewFilter(deniedDomains []string) *Filter {
 }
 
 // NewAllowlistFilter creates an allowlist filter: only listed domains are permitted.
+// An empty allowedDomains list blocks all traffic (nothing is allowed).
 func NewAllowlistFilter(allowedDomains []string) *Filter {
-	return &Filter{allowedDomains: normalize(allowedDomains)}
+	return &Filter{allowedDomains: normalize(allowedDomains), allowlistMode: true}
 }
 
 // FilterResult describes the outcome of a filter check.
@@ -107,7 +111,8 @@ func (f *Filter) Check(host string) FilterResult {
 	}
 
 	// Allowlist mode: deny everything NOT in the allowed list.
-	if len(f.allowedDomains) > 0 {
+	// An empty allowlist blocks all traffic.
+	if f.allowlistMode {
 		for _, allowed := range f.allowedDomains {
 			if matchDomain(h, allowed) {
 				return FilterResultAllowed
@@ -117,6 +122,7 @@ func (f *Filter) Check(host string) FilterResult {
 	}
 
 	// Denylist mode: deny only matched domains.
+	// An empty denylist allows all traffic.
 	for _, denied := range f.deniedDomains {
 		if matchDomain(h, denied) {
 			return FilterResultBlocked
