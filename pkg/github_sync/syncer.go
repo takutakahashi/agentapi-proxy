@@ -1644,7 +1644,7 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) sessionProfi
 	cfg := p.Config()
 	env := make(map[string]string, len(cfg.Environment()))
 	for k, v := range cfg.Environment() {
-		if IsSensitiveKey(k) && !IsEncrypted(v) {
+		if len(dek) > 0 && !IsEncrypted(v) {
 			if enc, err := EncryptField(dek, v); err == nil {
 				env[k] = enc
 				continue
@@ -1670,7 +1670,13 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) sessionProfi
 		UpdatedAt:              p.UpdatedAt().Format(time.RFC3339),
 	}
 	if params := cfg.Params(); params != nil {
-		rec.GitHubToken = params.GithubToken
+		token := params.GithubToken
+		if token != "" && len(dek) > 0 && !IsEncrypted(token) {
+			if enc, err := EncryptField(dek, token); err == nil {
+				token = enc
+			}
+		}
+		rec.GitHubToken = token
 		rec.InitialMessage = params.Message
 	}
 	return rec
