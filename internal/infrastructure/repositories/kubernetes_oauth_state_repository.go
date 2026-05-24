@@ -2,6 +2,8 @@ package repositories
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -33,25 +35,11 @@ func NewKubernetesOAuthStateRepository(client kubernetes.Interface, namespace st
 }
 
 func (r *KubernetesOAuthStateRepository) cmName(state string) string {
-	// state is a 44-char base64url string; safe to embed directly in a name.
-	// Kubernetes names are limited to 253 chars and must be lowercase alphanumeric/-/.
-	// base64url uses A-Z a-z 0-9 - _ = — replace _ and = to make it DNS-safe.
-	safe := ""
-	for _, c := range state {
-		switch {
-		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
-			safe += string(c)
-		case c >= 'A' && c <= 'Z':
-			safe += string(c + 32) // toLower
-		case c == '_':
-			safe += "0"
-		case c == '=':
-			// strip padding
-		default:
-			safe += "x"
-		}
-	}
-	return oauthStateConfigMapPrefix + safe
+	// SHA256 hex digest: always 64 lowercase hex chars regardless of input length.
+	// Total name = len("agentapi-oauth-state-") + 64 = 85 chars < 253 (K8s limit).
+	// Characters are [0-9a-f] only, satisfying the DNS subdomain naming rules.
+	h := sha256.Sum256([]byte(state))
+	return oauthStateConfigMapPrefix + hex.EncodeToString(h[:])
 }
 
 func (r *KubernetesOAuthStateRepository) Store(ctx context.Context, state string, entry *auth.OAuthState) error {
