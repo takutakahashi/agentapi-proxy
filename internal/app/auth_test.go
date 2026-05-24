@@ -40,6 +40,12 @@ func setupTestServerWithOAuth(t *testing.T) (*Server, *httptest.Server) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[{"login":"test-org","id":789}]`))
+		case "/applications/test-client-id/token":
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusNoContent)
+			} else {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

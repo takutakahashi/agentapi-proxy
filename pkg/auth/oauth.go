@@ -277,11 +277,31 @@ func (p *GitHubOAuthProvider) getOAuthHost() string {
 	return baseURL
 }
 
+// getAPIHost returns the GitHub REST API base URL for API calls (e.g. token revocation).
+// Unlike getOAuthHost (which returns github.com for OAuth flows), this returns the API
+// host (api.github.com or the GHE /api/v3 base).
+func (p *GitHubOAuthProvider) getAPIHost() string {
+	// Prefer the GitHub auth provider's base URL — it is already the API URL.
+	if p.githubProvider != nil && p.githubProvider.config != nil && p.githubProvider.config.BaseURL != "" {
+		return strings.TrimSuffix(p.githubProvider.config.BaseURL, "/")
+	}
+
+	baseURL := p.config.BaseURL
+	if baseURL == "" || baseURL == "https://github.com" {
+		return "https://api.github.com"
+	}
+	if strings.Contains(baseURL, "api.github.com") {
+		return "https://api.github.com"
+	}
+	// GitHub Enterprise or custom host — use as-is
+	return strings.TrimSuffix(baseURL, "/")
+}
+
 // RevokeToken revokes a GitHub access token
 func (p *GitHubOAuthProvider) RevokeToken(ctx context.Context, token string) error {
-	oauthHost := p.getOAuthHost()
+	apiHost := p.getAPIHost()
 	revokeURL := fmt.Sprintf("%s/applications/%s/token",
-		strings.TrimSuffix(oauthHost, "/"),
+		strings.TrimSuffix(apiHost, "/"),
 		p.config.ClientID)
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", revokeURL, nil)
