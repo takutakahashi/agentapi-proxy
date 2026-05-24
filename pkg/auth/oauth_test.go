@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,6 +67,12 @@ func TestGitHubOAuthProvider_ExchangeCode(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[{"login":"test-org","id":789}]`))
+		case "/applications/test-client-id/token":
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusNoContent)
+			} else {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -206,4 +214,74 @@ func TestGitHubOAuthProvider_cleanupExpiredStates(t *testing.T) {
 	_, expiredExists, _ := provider.stateStore.Load(ctx, expiredState)
 	assert.True(t, validExists)
 	assert.False(t, expiredExists)
+}
+
+func TestGitHubOAuthProvider_RevokeToken(t *testing.T) {
+	var capturedMethod, capturedPath, capturedToken string
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		capturedPath = r.URL.Path
+		if r.Method == http.MethodDelete {
+			body, _ := io.ReadAll(r.Body)
+			var payload map[string]string
+			_ = json.Unmarshal(body, &payload)
+			capturedToken = payload["access_token"]
+			w.WriteHeader(http.StatusNoContent)
+		} else {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer mockServer.Close()
+
+	cfg := &config.GitHubOAuthConfig{
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		BaseURL:      "https://github.com",
+	}
+	githubCfg := &config.GitHubAuthConfig{
+		Enabled:     true,
+		BaseURL:     mockServer.URL,
+		TokenHeader: "Authorization",
+	}
+
+	provider := NewGitHubOAuthProvider(cfg, NewGitHubAuthProvider(githubCfg))
+
+	err := provider.RevokeToken(context.Background(), "gho_test_token")
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.MethodDelete, capturedMethod)
+	assert.Equal(t, "/applications/test-client-id/token", capturedPath)
+	assert.Equal(t, "gho_test_token", capturedToken)
+}
+
+func TestGitHubOAuthProvider_RevokeToken_APIURLUsed(t *testing.T) {
+	// Verify that RevokeToken uses the API host (api.github.com), not the OAuth host (github.com).
+	// With GitHubOAuthConfig.BaseURL="https://github.com" and GitHubAuthConfig.BaseURL="https://api.github.com",
+	// the revoke request must go to api.github.com.
+	var capturedHost string
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHost = r.Host
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer mockServer.Close()
+
+	cfg := &config.GitHubOAuthConfig{
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		BaseURL:      "https://github.com",
+	}
+	githubCfg := &config.GitHubAuthConfig{
+		Enabled:     true,
+		BaseURL:     mockServer.URL,
+		TokenHeader: "Authorization",
+	}
+
+	provider := NewGitHubOAuthProvider(cfg, NewGitHubAuthProvider(githubCfg))
+	err := provider.RevokeToken(context.Background(), "gho_token")
+
+	assert.NoError(t, err)
+	// The request must have gone to the mock server (the API host), not to github.com
+	assert.NotEmpty(t, capturedHost)
 }
