@@ -2040,7 +2040,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 		Name:            "network-filter",
 		Image:           m.k8sConfig.Image,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"agentapi-proxy", "network-filter", "proxy"},
+		Command:         []string{"agentapi-proxy", "network-filter", "proxy", "--deferred-policy"},
 		Env:             filterEnvVars,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:                &rootUID,
