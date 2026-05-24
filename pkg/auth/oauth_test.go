@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -151,13 +150,13 @@ func TestGitHubOAuthProvider_ExchangeCode_ExpiredState(t *testing.T) {
 
 	// Manually create an expired state
 	state := "expired-state"
-	provider.stateStore.Store(state, &OAuthState{
+	ctx := context.Background()
+	_ = provider.stateStore.Store(ctx, state, &OAuthState{
 		State:       state,
 		RedirectURI: "http://localhost:3000/callback",
 		CreatedAt:   time.Now().Add(-20 * time.Minute), // 20 minutes ago
 	})
 
-	ctx := context.Background()
 	_, err := provider.ExchangeCode(ctx, "test-code", state)
 
 	assert.Error(t, err)
@@ -178,13 +177,14 @@ func TestGitHubOAuthProvider_generateState(t *testing.T) {
 }
 
 func TestGitHubOAuthProvider_cleanupExpiredStates(t *testing.T) {
+	ctx := context.Background()
 	provider := &GitHubOAuthProvider{
-		stateStore: &sync.Map{},
+		stateStore: &memoryOAuthStateStore{},
 	}
 
 	// Add valid state
 	validState := "valid-state"
-	provider.stateStore.Store(validState, &OAuthState{
+	_ = provider.stateStore.Store(ctx, validState, &OAuthState{
 		State:       validState,
 		RedirectURI: "http://localhost:3000/callback",
 		CreatedAt:   time.Now(),
@@ -192,18 +192,18 @@ func TestGitHubOAuthProvider_cleanupExpiredStates(t *testing.T) {
 
 	// Add expired state
 	expiredState := "expired-state"
-	provider.stateStore.Store(expiredState, &OAuthState{
+	_ = provider.stateStore.Store(ctx, expiredState, &OAuthState{
 		State:       expiredState,
 		RedirectURI: "http://localhost:3000/callback",
 		CreatedAt:   time.Now().Add(-20 * time.Minute),
 	})
 
 	// Clean up
-	provider.cleanupExpiredStates()
+	provider.cleanupExpiredStates(ctx)
 
 	// Check results
-	_, validExists := provider.stateStore.Load(validState)
-	_, expiredExists := provider.stateStore.Load(expiredState)
+	_, validExists, _ := provider.stateStore.Load(ctx, validState)
+	_, expiredExists, _ := provider.stateStore.Load(ctx, expiredState)
 	assert.True(t, validExists)
 	assert.False(t, expiredExists)
 }
