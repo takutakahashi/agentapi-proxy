@@ -2050,6 +2050,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 				Add: []corev1.Capability{"NET_ADMIN"},
 			},
 		},
+		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterInitCPURequest, m.k8sConfig.NetworkFilterInitCPULimit, m.k8sConfig.NetworkFilterInitMemoryRequest, m.k8sConfig.NetworkFilterInitMemoryLimit),
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      "sandbox-iptables",
@@ -2072,6 +2073,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 			RunAsNonRoot:             &falseVal,
 			AllowPrivilegeEscalation: &falseVal,
 		},
+		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterCPURequest, m.k8sConfig.NetworkFilterCPULimit, m.k8sConfig.NetworkFilterMemoryRequest, m.k8sConfig.NetworkFilterMemoryLimit),
 		Ports: []corev1.ContainerPort{
 			{Name: "proxy", ContainerPort: int32(networkfilter.ProxyPort), Protocol: corev1.ProtocolTCP},
 		},
@@ -2094,6 +2096,26 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 	}
 
 	return []corev1.Container{initContainer}, &sidecar, proxyEnvVars
+}
+
+// buildResourceRequirements constructs a corev1.ResourceRequirements from string quantities.
+// Any empty string is silently omitted, allowing partial specification.
+func buildResourceRequirements(cpuReq, cpuLim, memReq, memLim string) corev1.ResourceRequirements {
+	requests := corev1.ResourceList{}
+	limits := corev1.ResourceList{}
+	if cpuReq != "" {
+		requests[corev1.ResourceCPU] = resource.MustParse(cpuReq)
+	}
+	if memReq != "" {
+		requests[corev1.ResourceMemory] = resource.MustParse(memReq)
+	}
+	if cpuLim != "" {
+		limits[corev1.ResourceCPU] = resource.MustParse(cpuLim)
+	}
+	if memLim != "" {
+		limits[corev1.ResourceMemory] = resource.MustParse(memLim)
+	}
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
 }
 
 // buildVolumes builds the volume configuration for the session pod

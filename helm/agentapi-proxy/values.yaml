@@ -343,6 +343,25 @@ kubernetesSession:
   # If empty, falls back to the session image (image field above, or proxy image).
   sandboxInitImage: "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a"
 
+  # Resource configuration for the network-filter sidecar and initContainer (sandbox feature)
+  networkFilter:
+    # Resources for the network-filter forward proxy sidecar container
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+    # Resources for the network-filter-setup init container
+    initResources:
+      requests:
+        cpu: "50m"
+        memory: "32Mi"
+      limits:
+        cpu: "100m"
+        memory: "64Mi"
+
   # Image pull policy for session pods
   imagePullPolicy: "IfNotPresent"
 
