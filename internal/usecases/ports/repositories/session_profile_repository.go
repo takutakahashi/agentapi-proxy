@@ -16,6 +16,8 @@ type SessionProfileFilter struct {
 	TeamID string
 	// TeamIDs filters by multiple team IDs
 	TeamIDs []string
+	// ManagedOnly when true returns only managed (is_managed=true) profiles
+	ManagedOnly bool
 }
 
 // SessionProfileRepository defines the interface for session profile data persistence

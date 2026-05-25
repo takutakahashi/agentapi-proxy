@@ -24,6 +24,8 @@ const (
 	LabelSessionProfileUserID = "agentapi.proxy/session-profile-user-id"
 	// LabelSessionProfileTeamIDHash is the label key for hashed team ID
 	LabelSessionProfileTeamIDHash = "agentapi.proxy/session-profile-team-id-hash"
+	// LabelSessionProfileManaged marks a profile as system-managed (admin-only)
+	LabelSessionProfileManaged = "agentapi.proxy/session-profile-managed"
 	// AnnotationSessionProfileTeamID stores the original (unescaped) team ID
 	AnnotationSessionProfileTeamID = "agentapi.proxy/session-profile-team-id"
 	// SecretKeySessionProfile is the key in the Secret data for session profile JSON
@@ -41,6 +43,7 @@ type sessionProfileJSON struct {
 	Scope       entities.ResourceScope   `json:"scope,omitempty"`
 	TeamID      string                   `json:"team_id,omitempty"`
 	IsDefault   bool                     `json:"is_default,omitempty"`
+	IsManaged   bool                     `json:"is_managed,omitempty"`
 	Config      sessionProfileConfigJSON `json:"config"`
 	CreatedAt   time.Time                `json:"created_at"`
 	UpdatedAt   time.Time                `json:"updated_at"`
@@ -116,6 +119,9 @@ func (r *KubernetesSessionProfileRepository) List(ctx context.Context, filter po
 
 	var result []*entities.SessionProfile
 	for _, p := range profiles {
+		if filter.ManagedOnly && !p.IsManaged() {
+			continue
+		}
 		if filter.UserID != "" && p.UserID() != filter.UserID {
 			continue
 		}
@@ -255,6 +261,9 @@ func (r *KubernetesSessionProfileRepository) saveProfile(ctx context.Context, pr
 		LabelSessionProfileScope:  string(profile.Scope()),
 		LabelSessionProfileUserID: profile.UserID(),
 	}
+	if profile.IsManaged() {
+		labels[LabelSessionProfileManaged] = "true"
+	}
 	annotations := make(map[string]string)
 	if profile.TeamID() != "" {
 		labels[LabelSessionProfileTeamIDHash] = services.HashTeamID(profile.TeamID())
@@ -304,6 +313,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	profile.SetScope(pj.Scope)
 	profile.SetTeamID(pj.TeamID)
 	profile.SetIsDefault(pj.IsDefault)
+	profile.SetIsManaged(pj.IsManaged)
 	profile.SetCreatedAt(pj.CreatedAt)
 	profile.SetUpdatedAt(pj.UpdatedAt)
 
@@ -330,6 +340,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 		Scope:       profile.Scope(),
 		TeamID:      profile.TeamID(),
 		IsDefault:   profile.IsDefault(),
+		IsManaged:   profile.IsManaged(),
 		Config: sessionProfileConfigJSON{
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),

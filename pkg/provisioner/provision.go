@@ -1222,4 +1222,3 @@ func enableNetworkFilterPolicy() {
 	defer resp.Body.Close() //nolint:errcheck
 	log.Printf("[PROVISIONER] network-filter policy enabled (status %s)", resp.Status)
 }
-

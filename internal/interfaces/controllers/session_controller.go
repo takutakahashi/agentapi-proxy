@@ -1039,8 +1039,8 @@ func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID
 	return nil
 }
 
-// resolveNetworkFilterImports recursively expands "import" rules in sandbox by fetching
-// the referenced profiles and inlining their rules. The result contains only allow/deny rules.
+// resolveNetworkFilterImports recursively expands import rules in sandbox by fetching the
+// referenced profiles and inlining their rules. The result contains only allow/deny rules.
 // depth guards against circular imports (max 5 levels).
 func (c *SessionController) resolveNetworkFilterImports(ctx context.Context, sandbox *entities.SandboxParams, depth int) (*entities.SandboxParams, error) {
 	if depth > 5 {
@@ -1059,31 +1059,82 @@ func (c *SessionController) resolveNetworkFilterImports(ctx context.Context, san
 
 	var resolved []entities.NetworkFilterRule
 	for _, rule := range sorted {
-		if rule.Action != entities.NetworkFilterRuleActionImport {
+		switch rule.Action {
+		case entities.NetworkFilterRuleActionAllow, entities.NetworkFilterRuleActionDeny:
 			resolved = append(resolved, rule)
-			continue
+
+		case entities.NetworkFilterRuleActionImport:
+			if rule.ImportProfileID == "" {
+				continue
+			}
+			imported, err := c.expandProfileImport(ctx, rule.ImportProfileID, depth)
+			if err != nil {
+				return nil, fmt.Errorf("import profile %q: %w", rule.ImportProfileID, err)
+			}
+			resolved = append(resolved, imported...)
+
+		case entities.NetworkFilterRuleActionManagedImport:
+			if rule.ImportManagedName == "" {
+				continue
+			}
+			profiles, err := c.sessionProfileRepo.List(ctx, repositories.SessionProfileFilter{ManagedOnly: true})
+			if err != nil {
+				return nil, fmt.Errorf("list managed profiles: %w", err)
+			}
+			var target *entities.SessionProfile
+			for _, p := range profiles {
+				if p.Name() == rule.ImportManagedName {
+					target = p
+					break
+				}
+			}
+			if target == nil {
+				return nil, fmt.Errorf("managed profile %q not found", rule.ImportManagedName)
+			}
+			imported, err := c.expandProfileImport(ctx, target.ID(), depth)
+			if err != nil {
+				return nil, fmt.Errorf("managed_import profile %q: %w", rule.ImportManagedName, err)
+			}
+			resolved = append(resolved, imported...)
+
+		case entities.NetworkFilterRuleActionManagedImportAll:
+			profiles, err := c.sessionProfileRepo.List(ctx, repositories.SessionProfileFilter{ManagedOnly: true})
+			if err != nil {
+				return nil, fmt.Errorf("list managed profiles: %w", err)
+			}
+			// Sort by name for deterministic ordering.
+			sort.Slice(profiles, func(i, j int) bool {
+				return profiles[i].Name() < profiles[j].Name()
+			})
+			for _, p := range profiles {
+				imported, err := c.expandProfileImport(ctx, p.ID(), depth)
+				if err != nil {
+					return nil, fmt.Errorf("managed_import_all profile %q: %w", p.Name(), err)
+				}
+				resolved = append(resolved, imported...)
+			}
 		}
-		if rule.ImportProfileID == "" {
-			continue
-		}
-		profile, err := c.sessionProfileRepo.Get(ctx, rule.ImportProfileID)
-		if err != nil {
-			return nil, fmt.Errorf("import profile %q: %w", rule.ImportProfileID, err)
-		}
-		cfg := profile.Config()
-		if cfg.Params() == nil || cfg.Params().Sandbox == nil {
-			continue
-		}
-		importedSandbox := cfg.Params().Sandbox
-		resolvedImport, err := c.resolveNetworkFilterImports(ctx, importedSandbox, depth+1)
-		if err != nil {
-			return nil, err
-		}
-		resolved = append(resolved, resolvedImport.Rules...)
 	}
 
 	return &entities.SandboxParams{
 		Enabled: sandbox.Enabled,
 		Rules:   resolved,
 	}, nil
+}
+
+// expandProfileImport fetches a profile by ID and recursively resolves its sandbox rules.
+func (c *SessionController) expandProfileImport(ctx context.Context, profileID string, depth int) ([]entities.NetworkFilterRule, error) {
+	profile, err := c.sessionProfileRepo.Get(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	cfg := profile.Config()
+	if cfg.Params() == nil || cfg.Params().Sandbox == nil {
+		return nil, nil
+	}
+	resolvedImport, err := c.resolveNetworkFilterImports(ctx, cfg.Params().Sandbox, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	return resolvedImport.Rules, nil
 }

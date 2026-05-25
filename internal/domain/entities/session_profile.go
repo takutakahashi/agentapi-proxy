@@ -13,6 +13,7 @@ type SessionProfile struct {
 	scope       ResourceScope
 	teamID      string
 	isDefault   bool
+	isManaged   bool // only admin can create/modify managed profiles
 	config      SessionProfileConfig
 	createdAt   time.Time
 	updatedAt   time.Time
@@ -95,6 +96,15 @@ func (p *SessionProfile) IsDefault() bool { return p.isDefault }
 // SetIsDefault sets whether this profile is the tenant's default
 func (p *SessionProfile) SetIsDefault(isDefault bool) {
 	p.isDefault = isDefault
+	p.updatedAt = time.Now()
+}
+
+// IsManaged returns whether this profile is a system-managed profile (admin-only create/modify).
+func (p *SessionProfile) IsManaged() bool { return p.isManaged }
+
+// SetIsManaged sets the managed flag. Only admin users should call this.
+func (p *SessionProfile) SetIsManaged(isManaged bool) {
+	p.isManaged = isManaged
 	p.updatedAt = time.Now()
 }
 

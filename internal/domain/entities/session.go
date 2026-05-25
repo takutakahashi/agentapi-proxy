@@ -41,6 +41,12 @@ const (
 	// NetworkFilterRuleActionImport expands another profile's sandbox rules inline.
 	// ImportProfileID must be set; Domains is ignored.
 	NetworkFilterRuleActionImport NetworkFilterRuleAction = "import"
+	// NetworkFilterRuleActionManagedImport expands a specific managed profile's sandbox rules inline.
+	// ImportManagedName must be set to the managed profile's name.
+	NetworkFilterRuleActionManagedImport NetworkFilterRuleAction = "managed_import"
+	// NetworkFilterRuleActionManagedImportAll expands ALL managed profiles' sandbox rules inline.
+	// No additional fields are required.
+	NetworkFilterRuleActionManagedImportAll NetworkFilterRuleAction = "managed_import_all"
 )
 
 // NetworkFilterRule is a single entry in an ordered network filter rule chain.
@@ -57,6 +63,10 @@ type NetworkFilterRule struct {
 	// ImportProfileID is the ID of the SessionProfile whose sandbox rules are imported inline.
 	// Used only when Action is "import". Import rules are expanded recursively (max depth 5).
 	ImportProfileID string `json:"import_profile_id,omitempty"`
+	// ImportManagedName is the name of a managed SessionProfile to import.
+	// Used only when Action is "managed_import".
+	// The profile must have IsManaged=true; it is looked up by name.
+	ImportManagedName string `json:"import_managed_name,omitempty"`
 }
 
 // SandboxParams holds network sandbox configuration requested at session creation.

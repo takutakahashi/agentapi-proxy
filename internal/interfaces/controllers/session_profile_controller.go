@@ -47,6 +47,7 @@ type CreateSessionProfileRequest struct {
 	Scope       entities.ResourceScope      `json:"scope,omitempty"`
 	TeamID      string                      `json:"team_id,omitempty"`
 	IsDefault   bool                        `json:"is_default,omitempty"`
+	IsManaged   bool                        `json:"is_managed,omitempty"`
 	Config      SessionProfileConfigRequest `json:"config"`
 }
 
@@ -55,6 +56,7 @@ type UpdateSessionProfileRequest struct {
 	Name        *string                      `json:"name,omitempty"`
 	Description *string                      `json:"description,omitempty"`
 	IsDefault   *bool                        `json:"is_default,omitempty"`
+	IsManaged   *bool                        `json:"is_managed,omitempty"`
 	Config      *SessionProfileConfigRequest `json:"config,omitempty"`
 }
 
@@ -67,6 +69,7 @@ type SessionProfileResponse struct {
 	Scope       entities.ResourceScope       `json:"scope,omitempty"`
 	TeamID      string                       `json:"team_id,omitempty"`
 	IsDefault   bool                         `json:"is_default,omitempty"`
+	IsManaged   bool                         `json:"is_managed,omitempty"`
 	Config      SessionProfileConfigResponse `json:"config"`
 	CreatedAt   string                       `json:"created_at"`
 	UpdatedAt   string                       `json:"updated_at"`
@@ -116,11 +119,17 @@ func (c *SessionProfileController) CreateSessionProfile(ctx echo.Context) error 
 		}
 	}
 
+	// is_managed can only be set by admin users
+	if req.IsManaged && !user.IsAdmin() {
+		return echo.NewHTTPError(http.StatusForbidden, "only admin users can create managed profiles")
+	}
+
 	profile := entities.NewSessionProfile(uuid.New().String(), req.Name, userID)
 	profile.SetDescription(req.Description)
 	profile.SetScope(req.Scope)
 	profile.SetTeamID(req.TeamID)
 	profile.SetIsDefault(req.IsDefault)
+	profile.SetIsManaged(req.IsManaged)
 	profile.SetConfig(c.requestToConfig(req.Config))
 
 	if err := c.repo.Create(ctx.Request().Context(), profile); err != nil {
@@ -238,6 +247,12 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 	if req.IsDefault != nil {
 		profile.SetIsDefault(*req.IsDefault)
 	}
+	if req.IsManaged != nil {
+		if *req.IsManaged && !user.IsAdmin() {
+			return echo.NewHTTPError(http.StatusForbidden, "only admin users can mark profiles as managed")
+		}
+		profile.SetIsManaged(*req.IsManaged)
+	}
 	if req.Config != nil {
 		profile.SetConfig(c.requestToConfig(*req.Config))
 	}
@@ -295,6 +310,10 @@ func (c *SessionProfileController) canAccess(ctx echo.Context, user *entities.Us
 }
 
 func (c *SessionProfileController) canModify(ctx echo.Context, user *entities.User, profile *entities.SessionProfile) bool {
+	// Managed profiles can only be modified by admin users
+	if profile.IsManaged() && !user.IsAdmin() {
+		return false
+	}
 	return c.canAccess(ctx, user, profile)
 }
 
@@ -328,6 +347,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		Scope:       p.Scope(),
 		TeamID:      p.TeamID(),
 		IsDefault:   p.IsDefault(),
+		IsManaged:   p.IsManaged(),
 		Config: SessionProfileConfigResponse{
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
@@ -340,4 +360,31 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt: p.UpdatedAt().Format(time.RFC3339),
 	}
+}
+
+// ListManagedProfiles handles GET /session-profiles/managed
+// Returns all managed (is_managed=true) profiles. Any authenticated user can read managed
+// profiles so they can reference them in sandbox import rules. Only admins can create/modify them.
+func (c *SessionProfileController) ListManagedProfiles(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+
+	profiles, err := c.repo.List(ctx.Request().Context(), repositories.SessionProfileFilter{
+		ManagedOnly: true,
+	})
+	if err != nil {
+		log.Printf("Failed to list managed session profiles: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list managed profiles")
+	}
+
+	responses := make([]SessionProfileResponse, 0, len(profiles))
+	for _, p := range profiles {
+		responses = append(responses, c.toResponse(p))
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"session_profiles": responses,
+	})
 }

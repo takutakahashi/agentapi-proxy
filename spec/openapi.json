@@ -2008,6 +2008,32 @@
         }
       }
     },
+    "/session-profiles/managed": {
+      "get": {
+        "summary": "List managed session profiles",
+        "description": "Returns all managed (is_managed=true) session profiles. Any authenticated user can read managed profiles to reference them in sandbox import rules. Only admin users can create or modify managed profiles.",
+        "tags": ["Session Profiles"],
+        "security": [{"bearerAuth": []}, {"apiKey": []}],
+        "responses": {
+          "200": {
+            "description": "List of managed session profiles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_profiles": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/SessionProfileResponse" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/session-profiles/{id}": {
       "get": {
         "summary": "Get a session profile",
@@ -4795,8 +4821,8 @@
           },
           "action": {
             "type": "string",
-            "enum": ["allow", "deny", "import"],
-            "description": "allow: permit matching traffic. deny: block matching traffic. import: expand another profile's sandbox rules inline at this position."
+            "enum": ["allow", "deny", "import", "managed_import", "managed_import_all"],
+            "description": "allow: permit matching traffic. deny: block matching traffic. import: expand a specific profile's rules (import_profile_id required). managed_import: expand a specific managed profile by name (import_managed_name required). managed_import_all: expand ALL managed profiles' rules at this position."
           },
           "domains": {
             "type": "array",
@@ -4807,6 +4833,10 @@
           "import_profile_id": {
             "type": "string",
             "description": "ID of the SessionProfile whose sandbox rules are imported inline. Used only when action is 'import'. Imports are resolved recursively (max depth 5)."
+          },
+          "import_managed_name": {
+            "type": "string",
+            "description": "Name of a managed SessionProfile (is_managed=true) whose sandbox rules are imported inline. Used only when action is 'managed_import'. The profile is looked up by name among managed profiles."
           }
         }
       },
@@ -6741,6 +6771,10 @@
         "is_default": {
           "type": "boolean",
           "description": "Whether this is the default profile for the tenant"
+        },
+        "is_managed": {
+          "type": "boolean",
+          "description": "Whether this is a system-managed profile. Managed profiles can only be created or modified by admin users, but any authenticated user can read and reference them in sandbox import rules."
         },
         "config": {
           "$ref": "#/components/schemas/SessionProfileConfig"
