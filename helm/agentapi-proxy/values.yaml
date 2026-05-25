@@ -337,6 +337,12 @@ kubernetesSession:
   # If empty, uses the same image as the proxy
   image: ""
 
+  # Container image for the network-filter-setup init container (sandbox feature).
+  # This init container only needs sh and iptables, so a small image can be used
+  # instead of the full session image — useful in environments with image allowlists.
+  # If empty, falls back to the session image (image field above, or proxy image).
+  sandboxInitImage: "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a"
+
   # Image pull policy for session pods
   imagePullPolicy: "IfNotPresent"
 

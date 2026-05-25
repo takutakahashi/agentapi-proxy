@@ -300,6 +300,13 @@ type KubernetesSessionConfig struct {
 	// session pods so that hooks are treated as managed (auto-trusted) by codex_core.
 	// Typically created by the Helm chart. When empty, no managed hooks are mounted.
 	CodexRequirementsConfigMapName string `json:"codex_requirements_configmap_name" mapstructure:"codex_requirements_configmap_name"`
+
+	// SandboxInitImage is the container image used for the network-filter-setup init container
+	// that configures iptables rules for session network sandboxing.
+	// If empty, falls back to Image (the session pod image).
+	// Use a small iptables-capable image (e.g. alpine with iptables) to avoid pulling
+	// the full session image just for init container use in restricted environments.
+	SandboxInitImage string `json:"sandbox_init_image" mapstructure:"sandbox_init_image"`
 }
 
 // MemoryConfig represents memory backend configuration

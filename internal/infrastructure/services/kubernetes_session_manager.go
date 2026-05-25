@@ -2020,11 +2020,35 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 	rootUID := int64(0)
 	falseVal := false
 
+	sandboxInitImage := m.k8sConfig.SandboxInitImage
+	if sandboxInitImage == "" {
+		sandboxInitImage = m.k8sConfig.Image
+	}
+
+	iptablesScript := fmt.Sprintf(`set -e
+iptables -t filter -A OUTPUT -o lo -j ACCEPT
+iptables -t filter -A OUTPUT -m owner --uid-owner %d -j ACCEPT
+iptables -t filter -A OUTPUT -p tcp -d 127.0.0.1 --dport %d -j ACCEPT
+iptables -t filter -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -t filter -A OUTPUT -p tcp -d 10.0.0.0/8 -j ACCEPT
+iptables -t filter -A OUTPUT -p tcp -d 172.16.0.0/12 -j ACCEPT
+iptables -t filter -A OUTPUT -p tcp -d 192.168.0.0/16 -j ACCEPT
+iptables -t filter -A OUTPUT -p tcp -j REJECT --reject-with tcp-reset
+iptables -t nat -A OUTPUT -p tcp -d 127.0.0.1 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner %d -j RETURN
+iptables -t nat -A OUTPUT -p tcp -d 10.0.0.0/8 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -d 172.16.0.0/12 -j RETURN
+iptables -t nat -A OUTPUT -p tcp -d 192.168.0.0/16 -j RETURN
+iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port %d
+iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port %d
+`, networkfilter.SidecarUID, networkfilter.ProxyPort, networkfilter.SidecarUID, networkfilter.ProxyPort, networkfilter.ProxyPort)
+
 	initContainer := corev1.Container{
 		Name:            "network-filter-setup",
-		Image:           m.k8sConfig.Image,
+		Image:           sandboxInitImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"agentapi-proxy", "network-filter", "setup"},
+		Command:         []string{"sh", "-c"},
+		Args:            []string{iptablesScript},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    &rootUID,
 			RunAsNonRoot: &falseVal,
