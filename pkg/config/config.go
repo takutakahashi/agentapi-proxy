@@ -312,6 +312,18 @@ type KubernetesSessionConfig struct {
 	// The ConfigMap is mounted at /etc/iptables/ inside the init container.
 	// Defaults to "{release-name}-sandbox-iptables" (created by the Helm chart).
 	SandboxIptablesConfigMapName string `json:"sandbox_iptables_configmap_name" mapstructure:"sandbox_iptables_configmap_name"`
+
+	// Network filter sidecar resource configuration
+	NetworkFilterCPURequest    string `json:"network_filter_cpu_request" mapstructure:"network_filter_cpu_request"`
+	NetworkFilterCPULimit      string `json:"network_filter_cpu_limit" mapstructure:"network_filter_cpu_limit"`
+	NetworkFilterMemoryRequest string `json:"network_filter_memory_request" mapstructure:"network_filter_memory_request"`
+	NetworkFilterMemoryLimit   string `json:"network_filter_memory_limit" mapstructure:"network_filter_memory_limit"`
+
+	// Network filter init container resource configuration
+	NetworkFilterInitCPURequest    string `json:"network_filter_init_cpu_request" mapstructure:"network_filter_init_cpu_request"`
+	NetworkFilterInitCPULimit      string `json:"network_filter_init_cpu_limit" mapstructure:"network_filter_init_cpu_limit"`
+	NetworkFilterInitMemoryRequest string `json:"network_filter_init_memory_request" mapstructure:"network_filter_init_memory_request"`
+	NetworkFilterInitMemoryLimit   string `json:"network_filter_init_memory_limit" mapstructure:"network_filter_init_memory_limit"`
 }
 
 // MemoryConfig represents memory backend configuration
@@ -718,6 +730,14 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.sandbox_init_image", "AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE")
 	_ = v.BindEnv("kubernetes_session.sandbox_iptables_configmap_name", "AGENTAPI_K8S_SESSION_SANDBOX_IPTABLES_CONFIGMAP_NAME")
+	_ = v.BindEnv("kubernetes_session.network_filter_cpu_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.network_filter_cpu_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.network_filter_memory_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.network_filter_memory_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_LIMIT")
+	_ = v.BindEnv("kubernetes_session.network_filter_init_cpu_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.network_filter_init_cpu_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.network_filter_init_memory_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.network_filter_init_memory_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_LIMIT")
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
