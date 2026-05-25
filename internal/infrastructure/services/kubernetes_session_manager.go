@@ -1742,6 +1742,18 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	// Build volumes
 	volumes := m.buildVolumes(session)
+	if sandboxEnabled && m.k8sConfig.SandboxIptablesConfigMapName != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "sandbox-iptables",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.SandboxIptablesConfigMapName,
+					},
+				},
+			},
+		})
+	}
 
 	// Build containers list.
 	// Note: credentials-sync is now handled as a goroutine inside agent-provisioner
@@ -2020,16 +2032,29 @@ func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServe
 	rootUID := int64(0)
 	falseVal := false
 
+	sandboxInitImage := m.k8sConfig.SandboxInitImage
+	if sandboxInitImage == "" {
+		sandboxInitImage = m.k8sConfig.Image
+	}
+
 	initContainer := corev1.Container{
 		Name:            "network-filter-setup",
-		Image:           m.k8sConfig.Image,
+		Image:           sandboxInitImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"agentapi-proxy", "network-filter", "setup"},
+		Command:         []string{"iptables-restore"},
+		Args:            []string{"/etc/iptables/rules.v4"},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    &rootUID,
 			RunAsNonRoot: &falseVal,
 			Capabilities: &corev1.Capabilities{
 				Add: []corev1.Capability{"NET_ADMIN"},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "sandbox-iptables",
+				MountPath: "/etc/iptables",
+				ReadOnly:  true,
 			},
 		},
 	}

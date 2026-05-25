@@ -300,6 +300,18 @@ type KubernetesSessionConfig struct {
 	// session pods so that hooks are treated as managed (auto-trusted) by codex_core.
 	// Typically created by the Helm chart. When empty, no managed hooks are mounted.
 	CodexRequirementsConfigMapName string `json:"codex_requirements_configmap_name" mapstructure:"codex_requirements_configmap_name"`
+
+	// SandboxInitImage is the container image used for the network-filter-setup init container
+	// that configures iptables rules for session network sandboxing.
+	// If empty, falls back to Image (the session pod image).
+	// The image must provide iptables-restore. A shell is not required.
+	SandboxInitImage string `json:"sandbox_init_image" mapstructure:"sandbox_init_image"`
+
+	// SandboxIptablesConfigMapName is the name of the ConfigMap containing iptables-restore
+	// rules (key: rules.v4) for the network-filter-setup init container.
+	// The ConfigMap is mounted at /etc/iptables/ inside the init container.
+	// Defaults to "{release-name}-sandbox-iptables" (created by the Helm chart).
+	SandboxIptablesConfigMapName string `json:"sandbox_iptables_configmap_name" mapstructure:"sandbox_iptables_configmap_name"`
 }
 
 // MemoryConfig represents memory backend configuration
@@ -704,6 +716,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.pod_stop_timeout", "AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.claude_config_user_configmap_prefix", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_USER_CONFIGMAP_PREFIX")
 	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
+	_ = v.BindEnv("kubernetes_session.sandbox_init_image", "AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE")
+	_ = v.BindEnv("kubernetes_session.sandbox_iptables_configmap_name", "AGENTAPI_K8S_SESSION_SANDBOX_IPTABLES_CONFIGMAP_NAME")
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
@@ -850,6 +864,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
 	v.SetDefault("kubernetes_session.claude_config_user_configmap_prefix", "claude-config")
 	v.SetDefault("kubernetes_session.init_container_image", "")
+	v.SetDefault("kubernetes_session.sandbox_init_image", "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a")
+	v.SetDefault("kubernetes_session.sandbox_iptables_configmap_name", "")
 	v.SetDefault("kubernetes_session.github_secret_name", "")
 
 	// Settings base secret default (single base Secret shared by all sessions,
