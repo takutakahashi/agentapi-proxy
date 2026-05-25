@@ -4784,25 +4784,61 @@
           }
         }
       },
+      "NetworkFilterRule": {
+        "type": "object",
+        "description": "A single rule in an ordered network filter rule chain. Rules are evaluated in ascending index order; the last matching rule wins. Unmatched traffic is blocked (default-deny).",
+        "required": ["index", "action"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Evaluation order. Lower indices are evaluated first. The last matching rule wins."
+          },
+          "action": {
+            "type": "string",
+            "enum": ["allow", "deny", "import"],
+            "description": "allow: permit matching traffic. deny: block matching traffic. import: expand another profile's sandbox rules inline at this position."
+          },
+          "domains": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Domain patterns this rule matches. Supports wildcard prefixes (*.example.com) and middle wildcards (prefix.*.example.com). Used only for allow and deny actions.",
+            "example": ["api.example.com", "*.trusted.com"]
+          },
+          "import_profile_id": {
+            "type": "string",
+            "description": "ID of the SessionProfile whose sandbox rules are imported inline. Used only when action is 'import'. Imports are resolved recursively (max depth 5)."
+          }
+        }
+      },
       "SandboxParams": {
         "type": "object",
-        "description": "Network sandbox configuration for the session. When enabled, outbound HTTP/HTTPS traffic is routed through a transparent proxy sidecar. allowed_domains (allowlist) takes precedence over denied_domains (denylist).",
+        "description": "Network sandbox configuration for the session. When enabled, outbound HTTP/HTTPS traffic is routed through a transparent proxy sidecar. Use 'rules' for layered allow/deny/import control; allowed_domains/denied_domains are kept for backward compatibility.",
         "properties": {
           "enabled": {
             "type": "boolean",
             "description": "When true, the network-filter init container and sidecar are injected into the session Pod. The init container configures iptables to redirect HTTP/HTTPS traffic through the sidecar.",
             "default": false
           },
+          "rules": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/NetworkFilterRule" },
+            "description": "Ordered list of network filter rules. Rules are evaluated in ascending index order; the last matching rule wins. Import rules are expanded at session-creation time. When rules is non-empty, allowed_domains and denied_domains are ignored.",
+            "example": [
+              { "index": 0, "action": "deny", "domains": ["*"] },
+              { "index": 10, "action": "import", "import_profile_id": "profile-id-with-allowed-domains" },
+              { "index": 20, "action": "deny", "domains": ["bad.example.com"] }
+            ]
+          },
           "allowed_domains": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Allowlist mode: only listed domains are permitted; all others are blocked. Supports wildcard prefixes (e.g. '*.example.com'). Takes precedence over denied_domains when set.",
+            "description": "Deprecated: use rules instead. Allowlist mode: only listed domains are permitted; all others are blocked. Supports wildcard prefixes (e.g. '*.example.com'). Takes precedence over denied_domains when set.",
             "example": ["api.example.com", "*.trusted.com"]
           },
           "denied_domains": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Denylist mode: listed domains are blocked, all others are allowed. Used only when allowed_domains is empty. Supports wildcard prefixes (e.g. '*.example.com').",
+            "description": "Deprecated: use rules instead. Denylist mode: listed domains are blocked, all others are allowed. Used only when allowed_domains is empty. Supports wildcard prefixes (e.g. '*.example.com').",
             "example": ["example.com", "*.evil.com"]
           }
         }

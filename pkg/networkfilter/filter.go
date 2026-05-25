@@ -28,16 +28,26 @@ var bypassDomains = normalize([]string{
 	"bedrock-mantle.*.api.aws",
 })
 
+// FilterRule is a single allow/deny rule in an ordered rule chain.
+// Rules must be pre-sorted (import rules pre-expanded) before passing to NewRulesFilter.
+type FilterRule struct {
+	Action  string   // "allow" or "deny"
+	Domains []string // normalized domain patterns
+}
+
 // Filter decides whether a given host should be blocked.
 // In allowlist mode (created via NewAllowlistFilter), only listed domains pass;
 // an empty allowlist blocks everything.
 // In denylist mode (created via NewFilter), listed domains are blocked;
 // an empty denylist allows everything.
+// In rules mode (created via NewRulesFilter), rules are evaluated in order;
+// the last matching rule wins; unmatched hosts are blocked (default-deny).
 // bypassDomains are always allowed regardless of mode.
 type Filter struct {
 	deniedDomains  []string
 	allowedDomains []string
 	allowlistMode  bool
+	orderedRules   []FilterRule // non-nil when using rules-based evaluation
 }
 
 func normalize(domains []string) []string {
@@ -60,6 +70,19 @@ func NewFilter(deniedDomains []string) *Filter {
 // An empty allowedDomains list blocks all traffic (nothing is allowed).
 func NewAllowlistFilter(allowedDomains []string) *Filter {
 	return &Filter{allowedDomains: normalize(allowedDomains), allowlistMode: true}
+}
+
+// NewRulesFilter creates a filter from an ordered list of allow/deny rules.
+// Rules are evaluated in order; the last matching rule wins.
+// Hosts that match no rule are blocked (default-deny).
+// The caller is responsible for sorting rules by index and expanding import rules
+// before passing them here.
+func NewRulesFilter(rules []FilterRule) *Filter {
+	normalized := make([]FilterRule, len(rules))
+	for i, r := range rules {
+		normalized[i] = FilterRule{Action: r.Action, Domains: normalize(r.Domains)}
+	}
+	return &Filter{orderedRules: normalized}
 }
 
 // FilterResult describes the outcome of a filter check.
@@ -99,6 +122,25 @@ func (f *Filter) Check(host string) FilterResult {
 		if matchDomain(h, bypass) {
 			return FilterResultBypassed
 		}
+	}
+
+	// Rules-based evaluation: evaluate in order, last matching rule wins.
+	// Unmatched hosts are blocked (default-deny).
+	if f.orderedRules != nil {
+		result := FilterResultBlocked // default-deny
+		for _, rule := range f.orderedRules {
+			for _, domain := range rule.Domains {
+				if matchDomain(h, domain) {
+					if rule.Action == "allow" {
+						result = FilterResultAllowed
+					} else {
+						result = FilterResultBlocked
+					}
+					break
+				}
+			}
+		}
+		return result
 	}
 
 	// Allowlist mode: deny everything NOT in the allowed list.

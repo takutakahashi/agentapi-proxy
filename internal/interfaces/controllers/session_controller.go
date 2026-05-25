@@ -227,6 +227,16 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		}
 	}
 
+	// Resolve network filter import rules before session creation.
+	if c.sessionProfileRepo != nil && startReq.Params != nil && startReq.Params.Sandbox != nil {
+		resolved, err := c.resolveNetworkFilterImports(ctx.Request().Context(), startReq.Params.Sandbox, 0)
+		if err != nil {
+			log.Printf("Failed to resolve network filter imports: %v", err)
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("network filter import error: %v", err))
+		}
+		startReq.Params.Sandbox = resolved
+	}
+
 	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
 	if err != nil {
 		log.Printf("Failed to create session: %v", err)
@@ -1027,4 +1037,53 @@ func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID
 		}
 	}
 	return nil
+}
+
+// resolveNetworkFilterImports recursively expands "import" rules in sandbox by fetching
+// the referenced profiles and inlining their rules. The result contains only allow/deny rules.
+// depth guards against circular imports (max 5 levels).
+func (c *SessionController) resolveNetworkFilterImports(ctx context.Context, sandbox *entities.SandboxParams, depth int) (*entities.SandboxParams, error) {
+	if depth > 5 {
+		return nil, fmt.Errorf("network filter import depth limit exceeded (circular import?)")
+	}
+	if sandbox == nil || len(sandbox.Rules) == 0 {
+		return sandbox, nil
+	}
+
+	// Sort rules by index for deterministic expansion order.
+	sorted := make([]entities.NetworkFilterRule, len(sandbox.Rules))
+	copy(sorted, sandbox.Rules)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Index < sorted[j].Index
+	})
+
+	var resolved []entities.NetworkFilterRule
+	for _, rule := range sorted {
+		if rule.Action != entities.NetworkFilterRuleActionImport {
+			resolved = append(resolved, rule)
+			continue
+		}
+		if rule.ImportProfileID == "" {
+			continue
+		}
+		profile, err := c.sessionProfileRepo.Get(ctx, rule.ImportProfileID)
+		if err != nil {
+			return nil, fmt.Errorf("import profile %q: %w", rule.ImportProfileID, err)
+		}
+		cfg := profile.Config()
+		if cfg.Params() == nil || cfg.Params().Sandbox == nil {
+			continue
+		}
+		importedSandbox := cfg.Params().Sandbox
+		resolvedImport, err := c.resolveNetworkFilterImports(ctx, importedSandbox, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		resolved = append(resolved, resolvedImport.Rules...)
+	}
+
+	return &entities.SandboxParams{
+		Enabled: sandbox.Enabled,
+		Rules:   resolved,
+	}, nil
 }

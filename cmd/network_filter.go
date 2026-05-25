@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -70,7 +71,22 @@ control server on port 3129 (localhost only).`,
 		deniedDomains := parseDomains("NETWORK_FILTER_DENIED_DOMAINS", deniedDomainsFlag)
 
 		var filter *networkfilter.Filter
-		if len(allowedDomains) > 0 {
+		if v := os.Getenv("NETWORK_FILTER_RULES"); v != "" {
+			// Rules-based mode: ordered allow/deny rules, last match wins, default-deny.
+			var raw []struct {
+				Action  string   `json:"action"`
+				Domains []string `json:"domains"`
+			}
+			if err := json.Unmarshal([]byte(v), &raw); err != nil {
+				return fmt.Errorf("parse NETWORK_FILTER_RULES: %w", err)
+			}
+			rules := make([]networkfilter.FilterRule, len(raw))
+			for i, r := range raw {
+				rules[i] = networkfilter.FilterRule{Action: r.Action, Domains: r.Domains}
+			}
+			log.Printf("[network-filter] Starting proxy on 0.0.0.0:%d (rules-mode: %d rules)", networkfilter.ProxyPort, len(rules))
+			filter = networkfilter.NewRulesFilter(rules)
+		} else if len(allowedDomains) > 0 {
 			log.Printf("[network-filter] Starting proxy on 0.0.0.0:%d (allowlist: %v)", networkfilter.ProxyPort, allowedDomains)
 			filter = networkfilter.NewAllowlistFilter(allowedDomains)
 		} else if len(deniedDomains) > 0 {

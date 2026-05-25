@@ -2019,7 +2019,24 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 // via the "--uid-owner 0" match, preventing redirect loops.
 func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServerRequest) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
 	var filterEnvVars []corev1.EnvVar
-	if req.Sandbox != nil && len(req.Sandbox.AllowedDomains) > 0 {
+	if req.Sandbox != nil && len(req.Sandbox.Rules) > 0 {
+		// Rules-based mode: serialize ordered allow/deny rules as JSON.
+		// Import rules must already be expanded before reaching here.
+		type ruleJSON struct {
+			Action  string   `json:"action"`
+			Domains []string `json:"domains"`
+		}
+		ruleList := make([]ruleJSON, 0, len(req.Sandbox.Rules))
+		for _, r := range req.Sandbox.Rules {
+			if string(r.Action) == "allow" || string(r.Action) == "deny" {
+				ruleList = append(ruleList, ruleJSON{Action: string(r.Action), Domains: r.Domains})
+			}
+		}
+		rulesJSON, _ := json.Marshal(ruleList)
+		filterEnvVars = []corev1.EnvVar{
+			{Name: "NETWORK_FILTER_RULES", Value: string(rulesJSON)},
+		}
+	} else if req.Sandbox != nil && len(req.Sandbox.AllowedDomains) > 0 {
 		filterEnvVars = []corev1.EnvVar{
 			{Name: "NETWORK_FILTER_ALLOWED_DOMAINS", Value: strings.Join(req.Sandbox.AllowedDomains, ",")},
 		}

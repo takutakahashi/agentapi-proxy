@@ -30,15 +30,49 @@ type SlackParams struct {
 	BotTokenSecretKey string `json:"bot_token_secret_key,omitempty"`
 }
 
+// NetworkFilterRuleAction defines the action for a network filter rule.
+type NetworkFilterRuleAction string
+
+const (
+	// NetworkFilterRuleActionAllow permits matching traffic.
+	NetworkFilterRuleActionAllow NetworkFilterRuleAction = "allow"
+	// NetworkFilterRuleActionDeny blocks matching traffic.
+	NetworkFilterRuleActionDeny NetworkFilterRuleAction = "deny"
+	// NetworkFilterRuleActionImport expands another profile's sandbox rules inline.
+	// ImportProfileID must be set; Domains is ignored.
+	NetworkFilterRuleActionImport NetworkFilterRuleAction = "import"
+)
+
+// NetworkFilterRule is a single entry in an ordered network filter rule chain.
+// Rules are evaluated in ascending Index order; the last matching rule wins.
+type NetworkFilterRule struct {
+	// Index controls evaluation order. Lower indices are evaluated first.
+	Index int `json:"index"`
+	// Action is "allow", "deny", or "import".
+	Action NetworkFilterRuleAction `json:"action"`
+	// Domains is the list of hostnames this rule matches.
+	// Supports wildcard prefixes (*.example.com) and middle wildcards (prefix.*.example.com).
+	// Used only for allow and deny actions.
+	Domains []string `json:"domains,omitempty"`
+	// ImportProfileID is the ID of the SessionProfile whose sandbox rules are imported inline.
+	// Used only when Action is "import". Import rules are expanded recursively (max depth 5).
+	ImportProfileID string `json:"import_profile_id,omitempty"`
+}
+
 // SandboxParams holds network sandbox configuration requested at session creation.
 type SandboxParams struct {
 	// Enabled activates the network filter sidecar (iptables redirect + transparent proxy).
 	Enabled bool `json:"enabled,omitempty"`
+	// Rules is an ordered list of network filter rules evaluated in ascending Index order.
+	// The last matching rule wins; unmatched traffic is blocked (default-deny).
+	// Import rules are expanded at session-creation time before the sidecar starts.
+	// When Rules is non-empty, AllowedDomains and DeniedDomains are ignored.
+	Rules []NetworkFilterRule `json:"rules,omitempty"`
 	// AllowedDomains is the list of hostnames whose traffic is permitted (allowlist mode).
-	// When non-empty, all other domains are blocked. Takes precedence over DeniedDomains.
+	// Deprecated: use Rules with allow/deny actions instead. Kept for backward compatibility.
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
 	// DeniedDomains is the list of hostnames whose traffic should be blocked (denylist mode).
-	// Used only when AllowedDomains is empty.
+	// Deprecated: use Rules with allow/deny actions instead. Kept for backward compatibility.
 	DeniedDomains []string `json:"denied_domains,omitempty"`
 }
 

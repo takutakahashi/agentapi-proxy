@@ -89,6 +89,49 @@ func TestBypassDomains(t *testing.T) {
 	}
 }
 
+func TestRulesFilter(t *testing.T) {
+	// Scenario: deny all → allow api.github.com → deny specific.bad.com
+	rules := []FilterRule{
+		{Action: "deny", Domains: []string{"*"}},
+		{Action: "allow", Domains: []string{"api.github.com", "*.npm.com"}},
+		{Action: "deny", Domains: []string{"specific.bad.com"}},
+	}
+	f := NewRulesFilter(rules)
+
+	cases := []struct {
+		host string
+		want FilterResult
+	}{
+		// matched by deny * first, then allow overrides
+		{"api.github.com", FilterResultAllowed},
+		{"pkg.npm.com", FilterResultAllowed},
+		// deny * matches, no allow overrides
+		{"example.com", FilterResultBlocked},
+		// allow matches, but then deny specific.bad.com overrides
+		{"specific.bad.com", FilterResultBlocked},
+		// bypass domains always pass
+		{"api.anthropic.com", FilterResultBypassed},
+		// no-match domain → default deny
+		{"unknown.io", FilterResultBlocked},
+	}
+	for _, c := range cases {
+		got := f.Check(c.host)
+		if got != c.want {
+			t.Errorf("RulesFilter.Check(%q) = %v, want %v", c.host, got, c.want)
+		}
+	}
+}
+
+func TestRulesFilterDefaultDeny(t *testing.T) {
+	// Empty rules: everything blocked (default deny)
+	f := NewRulesFilter(nil)
+	for _, host := range []string{"example.com", "good.com", "api.github.com"} {
+		if r := f.Check(host); r != FilterResultBlocked {
+			t.Errorf("NewRulesFilter(nil).Check(%q) = %v, want blocked", host, r)
+		}
+	}
+}
+
 func TestFormerBypassDomainsNowBlocked(t *testing.T) {
 	f := NewAllowlistFilter([]string{"example.com"})
 	blocked := []string{
