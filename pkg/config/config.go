@@ -711,6 +711,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.pod_stop_timeout", "AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.claude_config_user_configmap_prefix", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_USER_CONFIGMAP_PREFIX")
 	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
+	_ = v.BindEnv("kubernetes_session.sandbox_init_image", "AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE")
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
@@ -857,6 +858,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
 	v.SetDefault("kubernetes_session.claude_config_user_configmap_prefix", "claude-config")
 	v.SetDefault("kubernetes_session.init_container_image", "")
+	v.SetDefault("kubernetes_session.sandbox_init_image", "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a")
 	v.SetDefault("kubernetes_session.github_secret_name", "")
 
 	// Settings base secret default (single base Secret shared by all sessions,
