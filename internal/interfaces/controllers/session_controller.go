@@ -227,12 +227,20 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		}
 	}
 
-	// Resolve network filter import rules before session creation.
-	if c.sessionProfileRepo != nil && startReq.Params != nil && startReq.Params.Sandbox != nil {
+	// Resolve network filter import rules, then prepend managed base rules.
+	if c.sessionProfileRepo != nil && startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled {
 		resolved, err := c.resolveNetworkFilterImports(ctx.Request().Context(), startReq.Params.Sandbox, 0)
 		if err != nil {
 			log.Printf("Failed to resolve network filter imports: %v", err)
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("network filter import error: %v", err))
+		}
+		// Always prepend managed profile rules as the base policy layer (at negative indexes).
+		managedBase, err := c.buildManagedBaseRules(ctx.Request().Context())
+		if err != nil {
+			log.Printf("Warning: failed to load managed profiles, proceeding without them: %v", err)
+		}
+		if len(managedBase) > 0 {
+			resolved.Rules = append(managedBase, resolved.Rules...)
 		}
 		startReq.Params.Sandbox = resolved
 	}
@@ -1073,46 +1081,10 @@ func (c *SessionController) resolveNetworkFilterImports(ctx context.Context, san
 			}
 			resolved = append(resolved, imported...)
 
-		case entities.NetworkFilterRuleActionManagedImport:
-			if rule.ImportManagedName == "" {
-				continue
-			}
-			profiles, err := c.sessionProfileRepo.List(ctx, repositories.SessionProfileFilter{ManagedOnly: true})
-			if err != nil {
-				return nil, fmt.Errorf("list managed profiles: %w", err)
-			}
-			var target *entities.SessionProfile
-			for _, p := range profiles {
-				if p.Name() == rule.ImportManagedName {
-					target = p
-					break
-				}
-			}
-			if target == nil {
-				return nil, fmt.Errorf("managed profile %q not found", rule.ImportManagedName)
-			}
-			imported, err := c.expandProfileImport(ctx, target.ID(), depth)
-			if err != nil {
-				return nil, fmt.Errorf("managed_import profile %q: %w", rule.ImportManagedName, err)
-			}
-			resolved = append(resolved, imported...)
-
-		case entities.NetworkFilterRuleActionManagedImportAll:
-			profiles, err := c.sessionProfileRepo.List(ctx, repositories.SessionProfileFilter{ManagedOnly: true})
-			if err != nil {
-				return nil, fmt.Errorf("list managed profiles: %w", err)
-			}
-			// Sort by name for deterministic ordering.
-			sort.Slice(profiles, func(i, j int) bool {
-				return profiles[i].Name() < profiles[j].Name()
-			})
-			for _, p := range profiles {
-				imported, err := c.expandProfileImport(ctx, p.ID(), depth)
-				if err != nil {
-					return nil, fmt.Errorf("managed_import_all profile %q: %w", p.Name(), err)
-				}
-				resolved = append(resolved, imported...)
-			}
+		case entities.NetworkFilterRuleActionManagedImport, entities.NetworkFilterRuleActionManagedImportAll:
+			// Managed rules are now always prepended as the base policy layer by buildManagedBaseRules.
+			// Explicit managed_import / managed_import_all rules are ignored (treated as no-ops).
+			continue
 		}
 	}
 
@@ -1137,4 +1109,50 @@ func (c *SessionController) expandProfileImport(ctx context.Context, profileID s
 		return nil, err
 	}
 	return resolvedImport.Rules, nil
+}
+
+// buildManagedBaseRules fetches all managed profiles and returns their allow/deny rules
+// re-indexed at negative values so they are evaluated before any user rules (0+).
+// Profiles are sorted by name for deterministic ordering.
+func (c *SessionController) buildManagedBaseRules(ctx context.Context) ([]entities.NetworkFilterRule, error) {
+	profiles, err := c.sessionProfileRepo.List(ctx, repositories.SessionProfileFilter{ManagedOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("list managed profiles: %w", err)
+	}
+	if len(profiles) == 0 {
+		return nil, nil
+	}
+
+	sort.Slice(profiles, func(i, j int) bool {
+		return profiles[i].Name() < profiles[j].Name()
+	})
+
+	var allRules []entities.NetworkFilterRule
+	for _, p := range profiles {
+		cfg := p.Config()
+		if cfg.Params() == nil || cfg.Params().Sandbox == nil || !cfg.Params().Sandbox.Enabled {
+			continue
+		}
+		for _, r := range cfg.Params().Sandbox.Rules {
+			if r.Action == entities.NetworkFilterRuleActionAllow || r.Action == entities.NetworkFilterRuleActionDeny {
+				allRules = append(allRules, r)
+			}
+		}
+	}
+	if len(allRules) == 0 {
+		return nil, nil
+	}
+
+	sort.Slice(allRules, func(i, j int) bool {
+		return allRules[i].Index < allRules[j].Index
+	})
+
+	// Re-index at -N..-1 so they precede all user rules (which use 0+).
+	n := len(allRules)
+	result := make([]entities.NetworkFilterRule, n)
+	for i, r := range allRules {
+		r.Index = i - n
+		result[i] = r
+	}
+	return result, nil
 }
