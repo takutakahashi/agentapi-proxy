@@ -476,7 +476,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 				AgentType: "codex-acp",
 			},
 			Codex: CodexConfig{
-				ConfigTOML: "approval-mode = \"full-auto\"\n",
+				ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
 			},
 		}
 
@@ -502,7 +502,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 
 		data, err := os.ReadFile(configPath)
 		require.NoError(t, err)
-		assert.Equal(t, "approval-mode = \"full-auto\"\n", string(data))
+		assert.Equal(t, "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n", string(data))
 	})
 
 	t.Run("skips config.toml when CodexConfigTOML is empty", func(t *testing.T) {

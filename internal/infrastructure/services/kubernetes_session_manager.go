@@ -3883,10 +3883,12 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	if req.AgentType == "codex-acp" {
 		settings.Codex = sessionsettings.CodexConfig{
 			HooksJSON: buildCodexHooksJSON(settingsJSON),
-			// Bypass permission prompts so tool calls proceed without waiting for user approval.
-			ConfigTOML: "approval-mode = \"full-auto\"\n",
+			// Bypass permission prompts and disable Codex's own sandbox.
+			// agentapi-proxy provides its own sandbox, so Codex's bubblewrap-based
+			// sandbox is redundant and causes spurious permission requests.
+			ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
 		}
-		log.Printf("[K8S_SESSION] Injected Codex hooks and set approval-mode=full-auto for session %s", session.id)
+		log.Printf("[K8S_SESSION] Injected Codex hooks and set approval-mode=full-auto, sandbox_mode=danger-full-access for session %s", session.id)
 	}
 
 	// Repository info
