@@ -141,6 +141,7 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 
 	session := &authSession{cmd: cmd, tmpHome: tmpHome, status: "pending"}
 	c.sessions.Store(userID, session)
+	log.Printf("[CODEX_AUTH] Session tmpHome for user=%s: %s", userID, tmpHome)
 
 	// exitErrCh receives the process exit status once.
 	exitErrCh := make(chan error, 1)
@@ -163,6 +164,7 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 		scanner := bufio.NewScanner(pr)
 		for scanner.Scan() {
 			line := ansiRegex.ReplaceAllString(scanner.Text(), "")
+			log.Printf("[CODEX_AUTH] stdout: %s", line)
 			if verifyURI == "" {
 				if m := urlRegex.FindString(line); m != "" {
 					verifyURI = strings.TrimSpace(m)
@@ -175,8 +177,9 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 			}
 			if userCode != "" && verifyURI != "" {
 				parseCh <- parseResult{userCode: userCode, verifyURI: verifyURI}
-				// Drain remaining output so the process isn't blocked.
+				// Log remaining output so we can see codex's completion/error messages.
 				for scanner.Scan() {
+					log.Printf("[CODEX_AUTH] stdout(post): %s", ansiRegex.ReplaceAllString(scanner.Text(), ""))
 				}
 				return
 			}
@@ -255,13 +258,20 @@ func (c *CodexDeviceAuthController) watchCompletion(userID string, session *auth
 		return
 	}
 
+	log.Printf("[CODEX_AUTH] Process exited successfully for user=%s, scanning tmpHome=%s", userID, session.tmpHome)
+	// Log directory tree for debugging.
+	if entries, walkErr := listDir(session.tmpHome); walkErr == nil {
+		log.Printf("[CODEX_AUTH] Files in tmpHome: %v", entries)
+	}
+
 	authJSONPath := filepath.Join(session.tmpHome, ".codex", "auth.json")
 	data, err := os.ReadFile(authJSONPath)
 	if err != nil {
-		log.Printf("[CODEX_AUTH] Failed to read auth.json for user=%s: %v", userID, err)
+		log.Printf("[CODEX_AUTH] Failed to read auth.json at %s for user=%s: %v", authJSONPath, userID, err)
 		session.status = "denied"
 		return
 	}
+	log.Printf("[CODEX_AUTH] auth.json found (%d bytes) for user=%s", len(data), userID)
 
 	creds := entities.NewCredentials(userID, json.RawMessage(data))
 	creds.SetFileType(sessionsettings.FileTypeCodexAuth)
@@ -274,6 +284,20 @@ func (c *CodexDeviceAuthController) watchCompletion(userID string, session *auth
 
 	session.status = "authorized"
 	log.Printf("[CODEX_AUTH] Auth completed and credentials saved for user=%s", userID)
+}
+
+// listDir returns relative paths of all files under root (best-effort).
+func listDir(root string) ([]string, error) {
+	var paths []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		paths = append(paths, rel)
+		return nil
+	})
+	return paths, err
 }
 
 // cancelSession kills any running auth subprocess for the given user.
