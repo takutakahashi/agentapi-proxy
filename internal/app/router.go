@@ -11,6 +11,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
 
@@ -23,21 +24,22 @@ type Router struct {
 
 // HandlerRegistry contains all handlers
 type HandlerRegistry struct {
-	notificationHandlers     *controllers.NotificationHandlers
-	healthController         *controllers.HealthController
-	sessionController        *controllers.SessionController
-	acpController            *controllers.ACPController
-	settingsController       *controllers.SettingsController
-	credentialsController    *controllers.CredentialsController
-	userController           *controllers.UserController
-	shareController          *controllers.ShareController
-	personalAPIKeyController *controllers.PersonalAPIKeyController
-	memoryController         *controllers.MemoryController
-	taskController           *controllers.TaskController
-	taskGroupController      *controllers.TaskGroupController
-	fileController           *controllers.FileController
-	sessionProfileController *controllers.SessionProfileController
-	customHandlers           []CustomHandler
+	notificationHandlers      *controllers.NotificationHandlers
+	healthController          *controllers.HealthController
+	sessionController         *controllers.SessionController
+	acpController             *controllers.ACPController
+	settingsController        *controllers.SettingsController
+	credentialsController     *controllers.CredentialsController
+	codexDeviceAuthController *controllers.CodexDeviceAuthController
+	userController            *controllers.UserController
+	shareController           *controllers.ShareController
+	personalAPIKeyController  *controllers.PersonalAPIKeyController
+	memoryController          *controllers.MemoryController
+	taskController            *controllers.TaskController
+	taskGroupController       *controllers.TaskGroupController
+	fileController            *controllers.FileController
+	sessionProfileController  *controllers.SessionProfileController
+	customHandlers            []CustomHandler
 }
 
 // CustomHandler interface for adding custom routes
@@ -61,6 +63,18 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	if server.credentialsRepo != nil {
 		credentialsController = controllers.NewCredentialsController(server.credentialsRepo)
 		log.Printf("[ROUTER] Credentials controller initialized")
+	}
+
+	// Create Codex device auth controller (requires credentials repo + config)
+	var codexDeviceAuthController *controllers.CodexDeviceAuthController
+	if server.credentialsRepo != nil {
+		cfg := server.GetConfig()
+		var codexCfg *config.CodexAuthConfig
+		if cfg != nil {
+			codexCfg = &cfg.CodexAuth
+		}
+		codexDeviceAuthController = controllers.NewCodexDeviceAuthController(codexCfg, server.credentialsRepo)
+		log.Printf("[ROUTER] Codex device auth controller initialized")
 	}
 
 	// Create session controller with proper dependencies
@@ -145,21 +159,22 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		echo:   e,
 		server: server,
 		handlers: &HandlerRegistry{
-			notificationHandlers:     controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
-			healthController:         controllers.NewHealthController(),
-			sessionController:        sessionController,
-			acpController:            acpController,
-			settingsController:       settingsController,
-			credentialsController:    credentialsController,
-			userController:           controllers.NewUserController(),
-			shareController:          shareController,
-			personalAPIKeyController: personalAPIKeyController,
-			memoryController:         memoryController,
-			taskController:           taskController,
-			taskGroupController:      taskGroupController,
-			fileController:           fileController,
-			sessionProfileController: sessionProfileController,
-			customHandlers:           make([]CustomHandler, 0),
+			notificationHandlers:      controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
+			healthController:          controllers.NewHealthController(),
+			sessionController:         sessionController,
+			acpController:             acpController,
+			settingsController:        settingsController,
+			credentialsController:     credentialsController,
+			codexDeviceAuthController: codexDeviceAuthController,
+			userController:            controllers.NewUserController(),
+			shareController:           shareController,
+			personalAPIKeyController:  personalAPIKeyController,
+			memoryController:          memoryController,
+			taskController:            taskController,
+			taskGroupController:       taskGroupController,
+			fileController:            fileController,
+			sessionProfileController:  sessionProfileController,
+			customHandlers:            make([]CustomHandler, 0),
 		},
 	}
 }
@@ -323,6 +338,15 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Credentials endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Credentials repository not available, skipping credentials routes")
+	}
+
+	// Add Codex device auth routes (requires credentials repo)
+	if r.handlers.codexDeviceAuthController != nil {
+		log.Printf("[ROUTES] Registering Codex device auth endpoints...")
+		r.echo.GET("/codex/device-auth/config", r.handlers.codexDeviceAuthController.GetConfig, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/codex/device-auth", r.handlers.codexDeviceAuthController.StartDeviceAuth, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/codex/device-auth/token", r.handlers.codexDeviceAuthController.PollDeviceAuth, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Codex device auth endpoints registered")
 	}
 
 	// Add personal API key routes if controller is available (Kubernetes mode only)
