@@ -446,6 +446,9 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 				if err := services.BootstrapPersonalAPIKeys(ctx, simpleAuth, personalAPIKeyRepo); err != nil {
 					log.Printf("[SERVER] Warning: failed to bootstrap personal API keys: %v", err)
 				}
+				// Wire up the auth service as the personal API key loader so keys
+				// created on-the-fly (for new users) are immediately authenticatable.
+				k8sSessionManager.SetPersonalAPIKeyLoader(simpleAuth)
 			}
 		}
 	}

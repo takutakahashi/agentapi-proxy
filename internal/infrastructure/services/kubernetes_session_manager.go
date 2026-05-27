@@ -55,6 +55,13 @@ type ServiceAccountEnsurer interface {
 	EnsureServiceAccount(ctx context.Context, teamID string) error
 }
 
+// PersonalAPIKeyLoader registers a newly-created personal API key in the
+// authentication layer so it can be used immediately without a proxy restart.
+// Implementations must be safe to call concurrently.
+type PersonalAPIKeyLoader interface {
+	LoadPersonalAPIKey(ctx context.Context, apiKey *entities.PersonalAPIKey) error
+}
+
 // SessionStatusEvent represents a proxy-level status change event for any session.
 // It is emitted by KubernetesSessionManager whenever a session's status changes,
 // and is delivered to all active SSE/long-poll subscribers.
@@ -91,6 +98,7 @@ type KubernetesSessionManager struct {
 	settingsRepo          portrepos.SettingsRepository
 	teamConfigRepo        portrepos.TeamConfigRepository
 	personalAPIKeyRepo    portrepos.PersonalAPIKeyRepository
+	personalAPIKeyLoader  PersonalAPIKeyLoader
 	serviceAccountEnsurer ServiceAccountEnsurer
 	// onSessionDeletedHandlers holds callbacks registered via AddSessionDeletedHandler.
 	// Protected by handlersMutex.
@@ -2791,6 +2799,13 @@ func (m *KubernetesSessionManager) SetServiceAccountEnsurer(ensurer ServiceAccou
 	m.serviceAccountEnsurer = ensurer
 }
 
+// SetPersonalAPIKeyLoader wires in the auth-layer loader so that personal API
+// keys created on-the-fly in buildSessionSettings are immediately available for
+// authentication (without requiring a proxy restart to re-run bootstrap).
+func (m *KubernetesSessionManager) SetPersonalAPIKeyLoader(loader PersonalAPIKeyLoader) {
+	m.personalAPIKeyLoader = loader
+}
+
 // AddSessionDeletedHandler registers a handler that is invoked when a session is deleted,
 // before its Kubernetes resources are removed. Multiple handlers can be registered and
 // they are called in registration order.
@@ -3760,6 +3775,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				if saveErr := m.personalAPIKeyRepo.Save(ctx, apiKey); saveErr != nil {
 					log.Printf("[K8S_SESSION] Warning: failed to save personal API key for user %s: %v", req.UserID, saveErr)
 					apiKey = nil
+				} else if m.personalAPIKeyLoader != nil {
+					// Register the new key in the auth service immediately so that
+					// it is valid without waiting for a proxy restart + bootstrap.
+					// This is critical for oneshot sessions: the Stop hook calls
+					// delete-session using this key, which would fail with 401 if
+					// the key is only persisted to K8s but not loaded in-memory.
+					if loadErr := m.personalAPIKeyLoader.LoadPersonalAPIKey(ctx, apiKey); loadErr != nil {
+						log.Printf("[K8S_SESSION] Warning: failed to register personal API key for user %s: %v", req.UserID, loadErr)
+					}
 				}
 			}
 		}
