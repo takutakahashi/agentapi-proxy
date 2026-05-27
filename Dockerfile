@@ -157,13 +157,12 @@ ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/h
 # install claude-agentapi
 RUN bun install -g @takutakahashi/claude-agentapi
 
-# Install codex CLI
-RUN /home/agentapi/.bun/bin/bun install -g @openai/codex
-
-# Create a codex wrapper in /opt/claude/bin (first in PATH) that uses the real bun binary.
-# The installed codex script has "#!/usr/bin/env node" as shebang, but /usr/local/bin/node
-# is a claude wrapper. This explicit wrapper bypasses that and runs codex with the real bun.
-RUN printf '#!/bin/bash\nexec /home/agentapi/.bun/bin/bun /home/agentapi/.bun/bin/codex "$@"\n' | \
+# Install codex CLI and place a wrapper in /opt/claude/bin (first in PATH).
+# The bun-installed codex script uses "#!/usr/bin/env node", but /usr/local/bin/node is a
+# claude wrapper. The wrapper here explicitly invokes bun so codex works reliably in the proxy.
+# Uses the absolute path to the codex script so it works even when HOME is overridden.
+RUN bun install -g @openai/codex && \
+    printf '#!/bin/bash\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
     sudo tee /opt/claude/bin/codex > /dev/null && \
     sudo chmod +x /opt/claude/bin/codex
 
