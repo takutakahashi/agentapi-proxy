@@ -23,6 +23,7 @@ var (
 	acpSessionFile string
 	acpOutputFile  string
 	acpVerbose     bool
+	acpAutoApprove bool
 )
 
 // AcpServerCmd starts an ACP agent over stdio and exposes it as an
@@ -57,6 +58,7 @@ func init() {
 	AcpServerCmd.Flags().StringVar(&acpSessionFile, "session-file", "", "File to persist ACP session ID for reuse across restarts (defaults to {cwd}/.acp-session-id)")
 	AcpServerCmd.Flags().StringVar(&acpOutputFile, "output-file", "", "File to append conversation history in acp-posts JSONL format (for Slack integration)")
 	AcpServerCmd.Flags().BoolVarP(&acpVerbose, "verbose", "v", false, "Enable verbose logging")
+	AcpServerCmd.Flags().BoolVar(&acpAutoApprove, "auto-approve", false, "Automatically approve all permission requests without showing a UI modal")
 }
 
 func runAcpServer(cmd *cobra.Command, args []string) error {
@@ -158,7 +160,7 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 	log.Printf("[acp-server] ACP session ready (session=%s)", acpClient.SessionID())
 
 	// Create the bridge and start its event loop.
-	b := bridge.New(acpClient, acpClient.SessionID(), acpVerbose, acpOutputFile)
+	b := bridge.New(acpClient, acpClient.SessionID(), acpVerbose, acpOutputFile, acpAutoApprove)
 	go b.Run(ctx)
 
 	// Start the HTTP server.

@@ -3946,11 +3946,13 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	case "codex-acp":
 		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.
 		// https://github.com/zed-industries/codex-acp
+		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi-proxy"},
 			Args: []string{
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--auto-approve",
 				"--",
 				"npx", "@zed-industries/codex-acp",
 			},
