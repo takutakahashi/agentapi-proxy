@@ -158,7 +158,14 @@ ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/h
 RUN bun install -g @takutakahashi/claude-agentapi
 
 # Install codex CLI
-RUN bun install -g @openai/codex
+RUN /home/agentapi/.bun/bin/bun install -g @openai/codex
+
+# Create a codex wrapper in /opt/claude/bin (first in PATH) that uses the real bun binary.
+# The installed codex script has "#!/usr/bin/env node" as shebang, but /usr/local/bin/node
+# is a claude wrapper. This explicit wrapper bypasses that and runs codex with the real bun.
+RUN printf '#!/bin/bash\nexec /home/agentapi/.bun/bin/bun /home/agentapi/.bun/bin/codex "$@"\n' | \
+    sudo tee /opt/claude/bin/codex > /dev/null && \
+    sudo chmod +x /opt/claude/bin/codex
 
 # Install claude-agent-sdk CLI and create arch-agnostic symlink
 RUN bun install -g @anthropic-ai/claude-agent-sdk && \

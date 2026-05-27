@@ -26,7 +26,8 @@ import (
 var (
 	ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 	urlRegex  = regexp.MustCompile(`https://[^\s]+`)
-	codeRegex = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
+	// codex device codes are formatted as XXXX-XXXXX (4 chars, dash, 4–8 chars).
+	codeRegex = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4,8}\b`)
 )
 
 // authSession tracks an in-progress codex login --device-auth subprocess.
@@ -100,8 +101,17 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 	// Cancel any existing session for this user before starting a new one.
 	c.cancelSession(userID)
 
-	// Use a temporary HOME so each user's auth.json is isolated.
-	tmpHome, err := os.MkdirTemp("", "codex-auth-*")
+	// Use a per-session HOME under the proxy user's home dir (not /tmp) so that
+	// codex does not warn about "refusing to create helper binaries under /tmp".
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		homeDir = "/home/agentapi"
+	}
+	tmpBase := filepath.Join(homeDir, ".codex-sessions")
+	if err := os.MkdirAll(tmpBase, 0700); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create temp directory")
+	}
+	tmpHome, err := os.MkdirTemp(tmpBase, "")
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create temp directory")
 	}
