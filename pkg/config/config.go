@@ -418,8 +418,6 @@ type Config struct {
 	Redis RedisConfig `json:"redis" mapstructure:"redis"`
 	// GitSync holds proxy-level GitHub sync settings (e.g. KMS encryption key).
 	GitSync GitSyncProxyConfig `json:"git_sync" mapstructure:"git_sync"`
-	// CodexAuth holds configuration for Codex OAuth device authentication.
-	CodexAuth CodexAuthConfig `json:"codex_auth" mapstructure:"codex_auth"`
 }
 
 // GitSyncEncryptionProxyConfig holds proxy-level AWS KMS settings for GitHub sync.
@@ -459,23 +457,6 @@ type GitSyncProxyConfig struct {
 	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
 	// RetryPeriod is the duration the LeaderElector clients should wait between tries of actions.
 	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
-}
-
-// CodexAuthConfig holds configuration for Codex OAuth device authentication.
-// When DeviceAuthURL and TokenURL are configured, users can initiate the OAuth
-// device authorization flow from the UI settings page.
-type CodexAuthConfig struct {
-	// DeviceAuthURL is the OAuth 2.0 device authorization endpoint URL.
-	// Example: https://auth0.openai.com/oauth/device/code
-	DeviceAuthURL string `json:"device_auth_url" mapstructure:"device_auth_url"`
-	// TokenURL is the OAuth 2.0 token endpoint URL.
-	// Example: https://auth0.openai.com/oauth/token
-	TokenURL string `json:"token_url" mapstructure:"token_url"`
-	// ClientID is the OAuth 2.0 client ID for the Codex application.
-	ClientID string `json:"client_id" mapstructure:"client_id"`
-	// Scope is the OAuth 2.0 scope string.
-	// Default: "openid email profile offline_access"
-	Scope string `json:"scope" mapstructure:"scope"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -860,11 +841,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("git_sync.renew_deadline", "AGENTAPI_GIT_SYNC_RENEW_DEADLINE")
 	_ = v.BindEnv("git_sync.retry_period", "AGENTAPI_GIT_SYNC_RETRY_PERIOD")
 
-	// Codex device auth configuration
-	_ = v.BindEnv("codex_auth.device_auth_url", "AGENTAPI_CODEX_AUTH_DEVICE_AUTH_URL")
-	_ = v.BindEnv("codex_auth.token_url", "AGENTAPI_CODEX_AUTH_TOKEN_URL")
-	_ = v.BindEnv("codex_auth.client_id", "AGENTAPI_CODEX_AUTH_CLIENT_ID")
-	_ = v.BindEnv("codex_auth.scope", "AGENTAPI_CODEX_AUTH_SCOPE")
 }
 
 // setDefaults sets default values for viper configuration

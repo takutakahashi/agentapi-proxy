@@ -1,31 +1,52 @@
 package controllers
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
-// CodexDeviceAuthController handles Codex OAuth device authorization flow.
+var (
+	ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	urlRegex  = regexp.MustCompile(`https://[^\s]+`)
+	codeRegex = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
+)
+
+// authSession tracks an in-progress codex login --device-auth subprocess.
+type authSession struct {
+	cmd     *exec.Cmd
+	tmpHome string
+	mu      sync.Mutex
+	status  string // "pending", "authorized", "denied"
+}
+
+// CodexDeviceAuthController runs `codex login --device-auth` and proxies
+// the result to the credentials store. No OAuth app registration required.
 type CodexDeviceAuthController struct {
-	cfg  *config.CodexAuthConfig
-	repo repositories.CredentialsRepository
+	repo     repositories.CredentialsRepository
+	sessions sync.Map // userID -> *authSession
 }
 
 // NewCodexDeviceAuthController creates a new CodexDeviceAuthController.
-func NewCodexDeviceAuthController(cfg *config.CodexAuthConfig, repo repositories.CredentialsRepository) *CodexDeviceAuthController {
-	return &CodexDeviceAuthController{cfg: cfg, repo: repo}
+func NewCodexDeviceAuthController(repo repositories.CredentialsRepository) *CodexDeviceAuthController {
+	return &CodexDeviceAuthController{repo: repo}
 }
 
 // GetName returns the controller name for logging.
@@ -33,173 +54,228 @@ func (c *CodexDeviceAuthController) GetName() string {
 	return "CodexDeviceAuthController"
 }
 
-// StartDeviceAuthResponse is returned when the device auth flow is initiated.
+// StartDeviceAuthResponse is returned by POST /codex/device-auth.
 type StartDeviceAuthResponse struct {
-	DeviceCode              string `json:"device_code"`
-	UserCode                string `json:"user_code"`
-	VerificationURI         string `json:"verification_uri"`
-	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
-	ExpiresIn               int    `json:"expires_in"`
-	Interval                int    `json:"interval"`
+	UserCode        string `json:"user_code"`
+	VerificationURI string `json:"verification_uri"`
 }
 
-// PollDeviceAuthRequest is the request body for polling the device auth token.
-type PollDeviceAuthRequest struct {
-	DeviceCode string `json:"device_code"`
-}
-
-// PollDeviceAuthResponse is returned when polling for the device auth token.
+// PollDeviceAuthResponse is returned by POST /codex/device-auth/token.
 type PollDeviceAuthResponse struct {
-	// Status is one of "pending", "authorized", "expired", "denied".
+	// Status is one of "pending", "authorized", "denied".
 	Status string `json:"status"`
 }
 
-// CodexAuthConfigResponse is returned by the GET /codex/device-auth/config endpoint.
+// CodexAuthConfigResponse is returned by GET /codex/device-auth/config.
 type CodexAuthConfigResponse struct {
 	Configured bool `json:"configured"`
 }
 
-// GetConfig handles GET /codex/device-auth/config
-// Returns whether device auth is configured on this proxy instance.
+// GetConfig handles GET /codex/device-auth/config.
+// Returns whether the codex CLI is available for device auth.
 func (c *CodexDeviceAuthController) GetConfig(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
-	configured := c.cfg != nil && c.cfg.DeviceAuthURL != "" && c.cfg.TokenURL != "" && c.cfg.ClientID != ""
-	return ctx.JSON(http.StatusOK, CodexAuthConfigResponse{Configured: configured})
+	_, err := exec.LookPath("codex")
+	return ctx.JSON(http.StatusOK, CodexAuthConfigResponse{Configured: err == nil})
 }
 
-// StartDeviceAuth handles POST /codex/device-auth
-// Initiates the OAuth 2.0 device authorization flow by calling the configured
-// device authorization endpoint and returning the user code / verification URI.
+// StartDeviceAuth handles POST /codex/device-auth.
+// Runs `codex login --device-auth` and returns the user_code and verification_uri.
 func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	if c.cfg == nil || c.cfg.DeviceAuthURL == "" || c.cfg.ClientID == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "Codex device auth not configured: set AGENTAPI_CODEX_AUTH_DEVICE_AUTH_URL, AGENTAPI_CODEX_AUTH_TOKEN_URL, and AGENTAPI_CODEX_AUTH_CLIENT_ID")
-	}
+	userID := string(user.ID())
 
-	scope := c.cfg.Scope
-	if scope == "" {
-		scope = "openid email profile offline_access"
-	}
-
-	params := url.Values{}
-	params.Set("client_id", c.cfg.ClientID)
-	params.Set("scope", scope)
-
-	resp, err := http.PostForm(c.cfg.DeviceAuthURL, params)
+	codexPath, err := exec.LookPath("codex")
 	if err != nil {
-		log.Printf("[CODEX_AUTH] Device auth request failed: %v", err)
-		return echo.NewHTTPError(http.StatusBadGateway, fmt.Sprintf("Device auth request failed: %v", err))
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "codex CLI not found in PATH")
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Cancel any existing session for this user before starting a new one.
+	c.cancelSession(userID)
+
+	// Use a temporary HOME so each user's auth.json is isolated.
+	tmpHome, err := os.MkdirTemp("", "codex-auth-*")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadGateway, "Failed to read device auth response")
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create temp directory")
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[CODEX_AUTH] Device auth endpoint returned %d: %s", resp.StatusCode, string(body))
-		return echo.NewHTTPError(http.StatusBadGateway, fmt.Sprintf("Device auth endpoint returned %d", resp.StatusCode))
+	// Inherit env but override HOME.
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "HOME=") {
+			env = append(env, e)
+		}
+	}
+	env = append(env, "HOME="+tmpHome)
+
+	// Merge stdout+stderr into a single pipe for parsing.
+	pr, pw := io.Pipe()
+	cmd := exec.Command(codexPath, "login", "--device-auth")
+	cmd.Env = env
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+
+	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		_ = pr.Close()
+		_ = os.RemoveAll(tmpHome)
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to start codex: %v", err))
 	}
 
-	var result StartDeviceAuthResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("[CODEX_AUTH] Failed to parse device auth response: %v", err)
-		return echo.NewHTTPError(http.StatusBadGateway, "Failed to parse device auth response")
-	}
+	session := &authSession{cmd: cmd, tmpHome: tmpHome, status: "pending"}
+	c.sessions.Store(userID, session)
 
-	log.Printf("[CODEX_AUTH] Device auth started for user=%s, user_code=%s", user.ID(), result.UserCode)
-	return ctx.JSON(http.StatusOK, result)
+	// exitErrCh receives the process exit status once.
+	exitErrCh := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		_ = pw.Close()
+		exitErrCh <- err
+	}()
+
+	// parseCh receives the URL+code pair extracted from stdout.
+	type parseResult struct {
+		userCode  string
+		verifyURI string
+		err       error
+	}
+	parseCh := make(chan parseResult, 1)
+
+	go func() {
+		var userCode, verifyURI string
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			line := ansiRegex.ReplaceAllString(scanner.Text(), "")
+			if verifyURI == "" {
+				if m := urlRegex.FindString(line); m != "" {
+					verifyURI = strings.TrimSpace(m)
+				}
+			}
+			if userCode == "" {
+				if m := codeRegex.FindString(line); m != "" {
+					userCode = m
+				}
+			}
+			if userCode != "" && verifyURI != "" {
+				parseCh <- parseResult{userCode: userCode, verifyURI: verifyURI}
+				// Drain remaining output so the process isn't blocked.
+				for scanner.Scan() {
+				}
+				return
+			}
+		}
+		parseCh <- parseResult{err: fmt.Errorf("auth flow ended before providing user code")}
+	}()
+
+	// Wait for URL+code to appear, or timeout.
+	select {
+	case r := <-parseCh:
+		if r.err != nil {
+			c.cancelSession(userID)
+			return echo.NewHTTPError(http.StatusInternalServerError, r.err.Error())
+		}
+		log.Printf("[CODEX_AUTH] Device auth started for user=%s code=%s", userID, r.userCode)
+		go c.watchCompletion(userID, session, exitErrCh)
+		return ctx.JSON(http.StatusOK, StartDeviceAuthResponse{
+			UserCode:        r.userCode,
+			VerificationURI: r.verifyURI,
+		})
+
+	case exitErr := <-exitErrCh:
+		c.cancelSession(userID)
+		msg := "codex auth process exited unexpectedly"
+		if exitErr != nil {
+			msg = fmt.Sprintf("codex auth failed: %v", exitErr)
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, msg)
+
+	case <-time.After(30 * time.Second):
+		c.cancelSession(userID)
+		return echo.NewHTTPError(http.StatusGatewayTimeout, "Timeout waiting for auth flow to start")
+	}
 }
 
-// PollDeviceAuth handles POST /codex/device-auth/token
-// Polls the OAuth 2.0 token endpoint for the device auth result.
-// On success, the token is persisted to the user's Codex credentials.
+// PollDeviceAuth handles POST /codex/device-auth/token.
+// Returns the current status for the calling user's in-progress auth session.
 func (c *CodexDeviceAuthController) PollDeviceAuth(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
-	if c.cfg == nil || c.cfg.TokenURL == "" || c.cfg.ClientID == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "Codex device auth not configured")
+	userID := string(user.ID())
+	val, ok := c.sessions.Load(userID)
+	if !ok {
+		return ctx.JSON(http.StatusOK, PollDeviceAuthResponse{Status: "pending"})
 	}
 
-	var req PollDeviceAuthRequest
-	if err := ctx.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
-	}
-	if req.DeviceCode == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "device_code is required")
+	s := val.(*authSession)
+	s.mu.Lock()
+	status := s.status
+	s.mu.Unlock()
+
+	return ctx.JSON(http.StatusOK, PollDeviceAuthResponse{Status: status})
+}
+
+// watchCompletion waits for the auth subprocess to exit, then reads the generated
+// auth.json and persists it to the credentials repository.
+func (c *CodexDeviceAuthController) watchCompletion(userID string, session *authSession, exitErrCh <-chan error) {
+	exitErr := <-exitErrCh
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	defer func() {
+		go func() {
+			time.Sleep(10 * time.Second)
+			_ = os.RemoveAll(session.tmpHome)
+		}()
+	}()
+
+	if exitErr != nil {
+		log.Printf("[CODEX_AUTH] Auth process failed for user=%s: %v", userID, exitErr)
+		session.status = "denied"
+		return
 	}
 
-	params := url.Values{}
-	params.Set("client_id", c.cfg.ClientID)
-	params.Set("device_code", req.DeviceCode)
-	params.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-
-	resp, err := http.PostForm(c.cfg.TokenURL, params)
+	authJSONPath := filepath.Join(session.tmpHome, ".codex", "auth.json")
+	data, err := os.ReadFile(authJSONPath)
 	if err != nil {
-		log.Printf("[CODEX_AUTH] Token poll request failed: %v", err)
-		return echo.NewHTTPError(http.StatusBadGateway, fmt.Sprintf("Token request failed: %v", err))
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadGateway, "Failed to read token response")
+		log.Printf("[CODEX_AUTH] Failed to read auth.json for user=%s: %v", userID, err)
+		session.status = "denied"
+		return
 	}
 
-	var tokenResp map[string]interface{}
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		log.Printf("[CODEX_AUTH] Failed to parse token response: %v", err)
-		return echo.NewHTTPError(http.StatusBadGateway, "Failed to parse token response")
-	}
-
-	// Handle OAuth error responses
-	if errCode, ok := tokenResp["error"].(string); ok {
-		switch errCode {
-		case "authorization_pending", "slow_down":
-			return ctx.JSON(http.StatusOK, PollDeviceAuthResponse{Status: "pending"})
-		case "expired_token":
-			log.Printf("[CODEX_AUTH] Device code expired for user=%s", user.ID())
-			return ctx.JSON(http.StatusOK, PollDeviceAuthResponse{Status: "expired"})
-		case "access_denied", "authorization_declined":
-			log.Printf("[CODEX_AUTH] Device auth denied for user=%s", user.ID())
-			return ctx.JSON(http.StatusOK, PollDeviceAuthResponse{Status: "denied"})
-		default:
-			log.Printf("[CODEX_AUTH] Token endpoint error=%s for user=%s", errCode, user.ID())
-			return ctx.JSON(http.StatusOK, PollDeviceAuthResponse{Status: "denied"})
-		}
-	}
-
-	// Token received — convert expires_in to absolute expires_at and persist
-	if expiresIn, ok := tokenResp["expires_in"].(float64); ok {
-		tokenResp["expires_at"] = time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
-		delete(tokenResp, "expires_in")
-	}
-
-	tokenJSON, err := json.Marshal(tokenResp)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to serialize token")
-	}
-
-	userName := string(user.ID())
-	creds := entities.NewCredentials(userName, json.RawMessage(tokenJSON))
+	creds := entities.NewCredentials(userID, json.RawMessage(data))
 	creds.SetFileType(sessionsettings.FileTypeCodexAuth)
 
-	if err := c.repo.Save(ctx.Request().Context(), creds); err != nil {
-		log.Printf("[CODEX_AUTH] Failed to save credentials for user=%s: %v", user.ID(), err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save credentials")
+	if err := c.repo.Save(context.Background(), creds); err != nil {
+		log.Printf("[CODEX_AUTH] Failed to save credentials for user=%s: %v", userID, err)
+		session.status = "denied"
+		return
 	}
 
-	log.Printf("[CODEX_AUTH] Device auth completed and credentials saved for user=%s", user.ID())
-	return ctx.JSON(http.StatusOK, PollDeviceAuthResponse{Status: "authorized"})
+	session.status = "authorized"
+	log.Printf("[CODEX_AUTH] Auth completed and credentials saved for user=%s", userID)
+}
+
+// cancelSession kills any running auth subprocess for the given user.
+func (c *CodexDeviceAuthController) cancelSession(userID string) {
+	if val, ok := c.sessions.LoadAndDelete(userID); ok {
+		s := val.(*authSession)
+		if s.cmd != nil && s.cmd.Process != nil {
+			_ = s.cmd.Process.Kill()
+		}
+		go func() {
+			time.Sleep(time.Second)
+			_ = os.RemoveAll(s.tmpHome)
+		}()
+	}
 }

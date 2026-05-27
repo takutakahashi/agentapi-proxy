@@ -11,7 +11,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
 
@@ -65,15 +64,10 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Credentials controller initialized")
 	}
 
-	// Create Codex device auth controller (requires credentials repo + config)
+	// Create Codex device auth controller (requires credentials repo)
 	var codexDeviceAuthController *controllers.CodexDeviceAuthController
 	if server.credentialsRepo != nil {
-		cfg := server.GetConfig()
-		var codexCfg *config.CodexAuthConfig
-		if cfg != nil {
-			codexCfg = &cfg.CodexAuth
-		}
-		codexDeviceAuthController = controllers.NewCodexDeviceAuthController(codexCfg, server.credentialsRepo)
+		codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo)
 		log.Printf("[ROUTER] Codex device auth controller initialized")
 	}
 

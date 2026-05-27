@@ -4252,7 +4252,7 @@
     "/codex/device-auth": {
       "post": {
         "summary": "Start Codex device authorization flow",
-        "description": "Initiates the OAuth 2.0 Device Authorization Grant flow for Codex authentication. Returns a user code and verification URI that the user must visit to complete authentication.",
+        "description": "Runs `codex login --device-auth` and returns the user code and verification URI for the user to complete authentication in their browser.",
         "operationId": "startCodexDeviceAuth",
         "tags": [
           "Codex"
@@ -4273,10 +4273,6 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "device_code": {
-                      "type": "string",
-                      "description": "Device code for polling"
-                    },
                     "user_code": {
                       "type": "string",
                       "description": "Code the user must enter at the verification URI"
@@ -4284,26 +4280,11 @@
                     "verification_uri": {
                       "type": "string",
                       "description": "URL the user must visit to authenticate"
-                    },
-                    "verification_uri_complete": {
-                      "type": "string",
-                      "description": "Verification URI with user code pre-filled"
-                    },
-                    "expires_in": {
-                      "type": "integer",
-                      "description": "Seconds until the device code expires"
-                    },
-                    "interval": {
-                      "type": "integer",
-                      "description": "Minimum polling interval in seconds"
                     }
                   },
                   "required": [
-                    "device_code",
                     "user_code",
-                    "verification_uri",
-                    "expires_in",
-                    "interval"
+                    "verification_uri"
                   ]
                 }
               }
@@ -4313,15 +4294,15 @@
             "description": "Unauthorized"
           },
           "503": {
-            "description": "Device auth not configured"
+            "description": "codex CLI not found in PATH"
           }
         }
       }
     },
     "/codex/device-auth/token": {
       "post": {
-        "summary": "Poll Codex device auth token",
-        "description": "Polls the OAuth 2.0 token endpoint to check if the user has completed authentication. On success, the token is saved as Codex credentials.",
+        "summary": "Poll Codex device auth status",
+        "description": "Returns the current status of the caller's in-progress device auth session. The session is identified by the caller's authentication token.",
         "operationId": "pollCodexDeviceAuth",
         "tags": [
           "Codex"
@@ -4334,25 +4315,6 @@
             "ApiKeyAuth": []
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "device_code": {
-                    "type": "string",
-                    "description": "Device code received from startCodexDeviceAuth"
-                  }
-                },
-                "required": [
-                  "device_code"
-                ]
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Poll result",
@@ -4366,7 +4328,6 @@
                       "enum": [
                         "pending",
                         "authorized",
-                        "expired",
                         "denied"
                       ],
                       "description": "Current authorization status"
@@ -4379,14 +4340,8 @@
               }
             }
           },
-          "400": {
-            "description": "Missing device_code"
-          },
           "401": {
             "description": "Unauthorized"
-          },
-          "503": {
-            "description": "Device auth not configured"
           }
         }
       }
