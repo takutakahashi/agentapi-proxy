@@ -189,10 +189,13 @@ type SessionMeta struct {
 
 // ClaudeConfig holds Claude-related configuration data.
 type ClaudeConfig struct {
-	ClaudeJSON     map[string]interface{} `yaml:"claude_json,omitempty"      json:"claude_json,omitempty"`
-	SettingsJSON   map[string]interface{} `yaml:"settings_json,omitempty"    json:"settings_json,omitempty"`
-	MCPServers     map[string]interface{} `yaml:"mcp_servers,omitempty"      json:"mcp_servers,omitempty"`
-	CodexHooksJSON map[string]interface{} `yaml:"codex_hooks_json,omitempty" json:"codex_hooks_json,omitempty"`
+	ClaudeJSON     map[string]interface{} `yaml:"claude_json,omitempty"       json:"claude_json,omitempty"`
+	SettingsJSON   map[string]interface{} `yaml:"settings_json,omitempty"     json:"settings_json,omitempty"`
+	MCPServers     map[string]interface{} `yaml:"mcp_servers,omitempty"       json:"mcp_servers,omitempty"`
+	CodexHooksJSON map[string]interface{} `yaml:"codex_hooks_json,omitempty"  json:"codex_hooks_json,omitempty"`
+	// CodexConfigTOML is written to ~/.codex/config.toml (codex-acp sessions only).
+	// Use it to set approval-mode and other Codex CLI settings that bypass permission prompts.
+	CodexConfigTOML string `yaml:"codex_config_toml,omitempty" json:"codex_config_toml,omitempty"`
 }
 
 // RepositoryConfig holds repository information.

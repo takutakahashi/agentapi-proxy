@@ -3873,9 +3873,13 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// For codex-acp sessions, inject the same Stop hooks into ~/.codex/hooks.json
 	// so that cycle and oneshot behavior works under the Codex CLI hook system.
 	var codexHooksJSON map[string]interface{}
+	var codexConfigTOML string
 	if req.AgentType == "codex-acp" {
 		codexHooksJSON = buildCodexHooksJSON(settingsJSON)
 		log.Printf("[K8S_SESSION] Injected Codex hooks for codex-acp session %s", session.id)
+		// Bypass permission prompts so tool calls proceed without waiting for user approval.
+		codexConfigTOML = "approval-mode = \"full-auto\"\n"
+		log.Printf("[K8S_SESSION] Set Codex approval-mode=full-auto for session %s", session.id)
 	}
 
 	settings.Claude = sessionsettings.ClaudeConfig{
@@ -3883,9 +3887,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			"hasCompletedOnboarding":        true,
 			"bypassPermissionsModeAccepted": true,
 		},
-		SettingsJSON:   settingsJSON,
-		MCPServers:     materialized.MCPServers,
-		CodexHooksJSON: codexHooksJSON,
+		SettingsJSON:    settingsJSON,
+		MCPServers:      materialized.MCPServers,
+		CodexHooksJSON:  codexHooksJSON,
+		CodexConfigTOML: codexConfigTOML,
 	}
 
 	// Repository info
