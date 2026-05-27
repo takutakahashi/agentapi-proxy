@@ -58,8 +58,13 @@ func Compile(opts CompileOptions) error {
 	}
 
 	// 3b. Generate ~/.codex/hooks.json (codex-acp sessions only)
-	if err := generateCodexHooksJSON(opts.OutputDir, settings.Claude.CodexHooksJSON); err != nil {
+	if err := generateCodexHooksJSON(opts.OutputDir, settings.Codex.HooksJSON); err != nil {
 		return fmt.Errorf("failed to generate codex hooks.json: %w", err)
+	}
+
+	// 3c. Generate ~/.codex/config.toml (codex-acp sessions only)
+	if err := generateCodexConfigTOML(opts.OutputDir, settings.Codex.ConfigTOML); err != nil {
+		return fmt.Errorf("failed to generate codex config.toml: %w", err)
 	}
 
 	// 4. Generate env file
@@ -301,6 +306,27 @@ func mergeCodexManagedHooks(hooksJSON map[string]interface{}) map[string]interfa
 	merged["hooks"] = innerHooks
 	log.Printf("[COMPILE-SETTINGS] Merged %d hook event(s) from %s into codex hooks.json", len(managedHooks), managedSettingsPath)
 	return merged
+}
+
+// generateCodexConfigTOML creates ~/.codex/config.toml for Codex CLI configuration.
+// Only written when configTOML is non-empty (i.e., for codex-acp sessions).
+func generateCodexConfigTOML(outputDir string, configTOML string) error {
+	if configTOML == "" {
+		return nil
+	}
+
+	codexDir := filepath.Join(outputDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+
+	configPath := filepath.Join(codexDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configTOML), 0644); err != nil {
+		return fmt.Errorf("failed to write codex config.toml: %w", err)
+	}
+
+	log.Printf("[COMPILE-SETTINGS] Generated %s", configPath)
+	return nil
 }
 
 // generateStartupScript creates executable shell script with the startup command.

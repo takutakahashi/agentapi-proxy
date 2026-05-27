@@ -60,11 +60,12 @@ type subscriber struct {
 // It does not translate ACP semantics – it reconstructs JSON-RPC envelopes from
 // the parsed events that acp.Client exposes and broadcasts them to subscribers.
 type Bridge struct {
-	acp        *acp.Client
-	sessionId  string
-	verbose    bool
-	serverCtx  context.Context
-	outputFile string // path to append conversation history in acp-posts format
+	acp         *acp.Client
+	sessionId   string
+	verbose     bool
+	autoApprove bool // when true, permission requests are auto-approved without broadcasting to the UI
+	serverCtx   context.Context
+	outputFile  string // path to append conversation history in acp-posts format
 
 	subsMu sync.Mutex
 	subs   []*subscriber
@@ -104,11 +105,14 @@ type statusSubscriber struct {
 // sessionId must be the id returned by acp.Client.SessionID() after session/new.
 // outputFile, when non-empty, is a path where completed agent messages are appended
 // in acp-posts JSONL format for consumption by the acp-posts Slack integration.
-func New(client *acp.Client, sessionId string, verbose bool, outputFile string) *Bridge {
+// autoApprove, when true, automatically approves all permission requests without
+// broadcasting them to the UI (equivalent to always selecting the first option).
+func New(client *acp.Client, sessionId string, verbose bool, outputFile string, autoApprove bool) *Bridge {
 	return &Bridge{
 		acp:            client,
 		sessionId:      sessionId,
 		verbose:        verbose,
+		autoApprove:    autoApprove,
 		outputFile:     outputFile,
 		pendingReplies: make(map[int64]chan json.RawMessage),
 		currentStatus:  "stable",
@@ -343,7 +347,19 @@ func (b *Bridge) flushChunkBufferLocked() {
 
 // handlePermissionRequest emits a session/request_permission request via SSE
 // and waits for the HTTP client to reply via POST /rpc.
+// When autoApprove is set, the first available option is selected immediately
+// without broadcasting to the UI.
 func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
+	if b.autoApprove {
+		if len(req.Params.Options) > 0 {
+			log.Printf("[bridge] auto-approving permission request (option=%s)", req.Params.Options[0].OptionId)
+			_ = req.Reply(req.Params.Options[0].OptionId)
+		} else {
+			_ = req.Reply("")
+		}
+		return
+	}
+
 	id := b.agentReqSeq.Add(1)
 	idRaw, _ := json.Marshal(id)
 	idRawMsg := json.RawMessage(idRaw)

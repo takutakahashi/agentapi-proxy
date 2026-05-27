@@ -3870,22 +3870,25 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] Injected cycle Stop hook for session %s (max-count=%d)", session.id, req.CycleMaxCount)
 	}
 
-	// For codex-acp sessions, inject the same Stop hooks into ~/.codex/hooks.json
-	// so that cycle and oneshot behavior works under the Codex CLI hook system.
-	var codexHooksJSON map[string]interface{}
-	if req.AgentType == "codex-acp" {
-		codexHooksJSON = buildCodexHooksJSON(settingsJSON)
-		log.Printf("[K8S_SESSION] Injected Codex hooks for codex-acp session %s", session.id)
-	}
-
 	settings.Claude = sessionsettings.ClaudeConfig{
 		ClaudeJSON: map[string]interface{}{
 			"hasCompletedOnboarding":        true,
 			"bypassPermissionsModeAccepted": true,
 		},
-		SettingsJSON:   settingsJSON,
-		MCPServers:     materialized.MCPServers,
-		CodexHooksJSON: codexHooksJSON,
+		SettingsJSON: settingsJSON,
+		MCPServers:   materialized.MCPServers,
+	}
+
+	// For codex-acp sessions, populate Codex-specific config.
+	if req.AgentType == "codex-acp" {
+		settings.Codex = sessionsettings.CodexConfig{
+			HooksJSON: buildCodexHooksJSON(settingsJSON),
+			// Bypass permission prompts and disable Codex's own sandbox.
+			// agentapi-proxy provides its own sandbox, so Codex's bubblewrap-based
+			// sandbox is redundant and causes spurious permission requests.
+			ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
+		}
+		log.Printf("[K8S_SESSION] Injected Codex hooks and set approval-mode=full-auto, sandbox_mode=danger-full-access for session %s", session.id)
 	}
 
 	// Repository info
@@ -3945,11 +3948,13 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	case "codex-acp":
 		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.
 		// https://github.com/zed-industries/codex-acp
+		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{"agentapi-proxy"},
 			Args: []string{
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--auto-approve",
 				"--",
 				"npx", "@zed-industries/codex-acp",
 			},

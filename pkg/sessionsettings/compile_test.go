@@ -462,6 +462,83 @@ func TestCompile_AutoUpdatesChannelStable(t *testing.T) {
 	})
 }
 
+func TestCompile_CodexConfigTOML(t *testing.T) {
+	t.Run("writes config.toml when CodexConfigTOML is set", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-config-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex",
+				UserID:    "user-codex",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Codex: CodexConfig{
+				ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		assert.FileExists(t, configPath)
+
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		assert.Equal(t, "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n", string(data))
+	})
+
+	t.Run("skips config.toml when CodexConfigTOML is empty", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-config-empty-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:     "test-no-codex",
+				UserID: "user-no-codex",
+				Scope:  "user",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		assert.NoFileExists(t, filepath.Join(outputDir, ".codex/config.toml"))
+	})
+}
+
 func TestCompile_MissingInput(t *testing.T) {
 	opts := CompileOptions{
 		InputPath:   "/nonexistent/settings.yaml",

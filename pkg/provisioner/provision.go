@@ -640,9 +640,11 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	case "codex-acp":
 		// Start the acp-server bridge that wraps codex-acp (ACP adapter for OpenAI Codex) via stdio.
 		// https://github.com/zed-industries/codex-acp
+		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
 		return "agentapi-proxy", []string{
 			"acp-server",
 			"--port", agentapiPort,
+			"--auto-approve",
 			"--",
 			"npx", "@zed-industries/codex-acp",
 		}
