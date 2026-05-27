@@ -328,7 +328,9 @@
                           "maxItems": 0
                         }
                       },
-                      "required": ["events"]
+                      "required": [
+                        "events"
+                      ]
                     }
                   ]
                 }
@@ -395,7 +397,9 @@
                       "properties": {
                         "updated": {
                           "type": "boolean",
-                          "enum": [true]
+                          "enum": [
+                            true
+                          ]
                         },
                         "session_id": {
                           "type": "string"
@@ -405,7 +409,11 @@
                           "format": "date-time"
                         }
                       },
-                      "required": ["updated", "session_id", "timestamp"]
+                      "required": [
+                        "updated",
+                        "session_id",
+                        "timestamp"
+                      ]
                     },
                     {
                       "type": "object",
@@ -413,10 +421,14 @@
                       "properties": {
                         "updated": {
                           "type": "boolean",
-                          "enum": [false]
+                          "enum": [
+                            false
+                          ]
                         }
                       },
-                      "required": ["updated"]
+                      "required": [
+                        "updated"
+                      ]
                     }
                   ]
                 }
@@ -3939,36 +3951,58 @@
       "delete": {
         "summary": "Delete GitHub sync configuration",
         "description": "Removes the GitHub sync configuration from the specified settings. The sync config can also be set via PUT /settings/{name} with a git_sync field.",
-        "tags": ["GitHubSync"],
+        "tags": [
+          "GitHubSync"
+        ],
         "parameters": [
           {
             "name": "name",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
-          "200": { "description": "Deleted successfully" },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" },
-          "404": { "description": "Not found" },
-          "500": { "description": "Internal server error" }
+          "200": {
+            "description": "Deleted successfully"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
         },
-        "security": [{ "bearerAuth": [] }]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/settings/{name}/sync/push": {
       "post": {
         "summary": "Push resources to GitHub",
         "description": "Exports all resources (memories, tasks, schedules, webhooks, settings, etc.) and commits them to the configured GitHub repository. Sensitive fields are encrypted with AES-256-GCM using an AWS KMS-managed DEK.",
-        "tags": ["GitHubSync"],
+        "tags": [
+          "GitHubSync"
+        ],
         "parameters": [
           {
             "name": "name",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -3977,7 +4011,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "commit_message": { "type": "string", "description": "Override the default commit message" }
+                  "commit_message": {
+                    "type": "string",
+                    "description": "Override the default commit message"
+                  }
                 }
               }
             }
@@ -3988,28 +4025,44 @@
             "description": "Push succeeded",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/PushResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/PushResponse"
+                }
               }
             }
           },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" },
-          "500": { "description": "Internal server error" }
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
         },
-        "security": [{ "bearerAuth": [] }]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/settings/{name}/sync/pull": {
       "post": {
         "summary": "Pull resources from GitHub",
         "description": "Downloads resources from the configured GitHub repository and imports them into the local store. Encrypted fields are decrypted using the stored DEK.",
-        "tags": ["GitHubSync"],
+        "tags": [
+          "GitHubSync"
+        ],
         "parameters": [
           {
             "name": "name",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -4018,7 +4071,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "delete_orphans": { "type": "boolean", "description": "Remove local resources that no longer exist in GitHub" }
+                  "delete_orphans": {
+                    "type": "boolean",
+                    "description": "Remove local resources that no longer exist in GitHub"
+                  }
                 }
               }
             }
@@ -4029,28 +4085,44 @@
             "description": "Pull succeeded",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/PullResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/PullResponse"
+                }
               }
             }
           },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" },
-          "500": { "description": "Internal server error" }
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
         },
-        "security": [{ "bearerAuth": [] }]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/settings/{name}/sync/rotate-key": {
       "post": {
         "summary": "Rotate the sync encryption key",
         "description": "Generates a new DEK via AWS KMS, re-encrypts all values in the GitHub repository with the new DEK, and commits atomically. The old encryptedDEK is replaced in Settings.",
-        "tags": ["GitHubSync"],
+        "tags": [
+          "GitHubSync"
+        ],
         "parameters": [
           {
             "name": "name",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4058,22 +4130,36 @@
             "description": "Key rotated successfully",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/RotateKeyResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/RotateKeyResponse"
+                }
               }
             }
           },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" },
-          "500": { "description": "Internal server error" }
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
         },
-        "security": [{ "bearerAuth": [] }]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/settings/sync/all": {
       "post": {
         "summary": "Sync all tenants",
         "description": "Syncs GitHub for every settings tenant that has sync enabled. Only accessible by admin users. The direction (push/pull) is determined automatically per tenant by comparing the remote .sync-meta.yaml syncedAt timestamp against the local LastPushedAt: if GitHub is newer the tenant is pulled, otherwise pushed. Push is idempotent: no commit is created when file contents are unchanged.",
-        "tags": ["GitHubSync"],
+        "tags": [
+          "GitHubSync"
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4098,15 +4184,166 @@
             "description": "Sync completed (individual tenant errors are captured in results[].error)",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/SyncAllResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/SyncAllResponse"
+                }
               }
             }
           },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden — admin permission required" },
-          "500": { "description": "Internal server error" }
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden — admin permission required"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
         },
-        "security": [{ "bearerAuth": [] }]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/codex/device-auth/config": {
+      "get": {
+        "summary": "Get Codex device auth configuration status",
+        "description": "Returns whether Codex device authentication is configured on this proxy instance.",
+        "operationId": "getCodexDeviceAuthConfig",
+        "tags": [
+          "Codex"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Configuration status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "configured": {
+                      "type": "boolean",
+                      "description": "Whether device auth is configured"
+                    }
+                  },
+                  "required": [
+                    "configured"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/codex/device-auth": {
+      "post": {
+        "summary": "Start Codex device authorization flow",
+        "description": "Runs `codex login --device-auth` and returns the user code and verification URI for the user to complete authentication in their browser.",
+        "operationId": "startCodexDeviceAuth",
+        "tags": [
+          "Codex"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device authorization started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_code": {
+                      "type": "string",
+                      "description": "Code the user must enter at the verification URI"
+                    },
+                    "verification_uri": {
+                      "type": "string",
+                      "description": "URL the user must visit to authenticate"
+                    }
+                  },
+                  "required": [
+                    "user_code",
+                    "verification_uri"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "503": {
+            "description": "codex CLI not found in PATH"
+          }
+        }
+      }
+    },
+    "/codex/device-auth/token": {
+      "post": {
+        "summary": "Poll Codex device auth status",
+        "description": "Returns the current status of the caller's in-progress device auth session. The session is identified by the caller's authentication token.",
+        "operationId": "pollCodexDeviceAuth",
+        "tags": [
+          "Codex"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Poll result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "authorized",
+                        "denied"
+                      ],
+                      "description": "Current authorization status"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
       }
     }
   },
@@ -4116,83 +4353,172 @@
         "type": "object",
         "description": "Public view of GitHub sync configuration (token redacted)",
         "properties": {
-          "enabled": { "type": "boolean" },
-          "repo_full_name": { "type": "string", "example": "owner/repo" },
-          "branch": { "type": "string", "example": "main" },
-          "root_path": { "type": "string", "example": "agentapi-config/" },
-          "auto_push": { "type": "boolean" },
-          "has_github_token": { "type": "boolean", "description": "true when a GitHub token is configured" },
-          "encryption": { "$ref": "#/components/schemas/SyncEncryptionResponse" }
+          "enabled": {
+            "type": "boolean"
+          },
+          "repo_full_name": {
+            "type": "string",
+            "example": "owner/repo"
+          },
+          "branch": {
+            "type": "string",
+            "example": "main"
+          },
+          "root_path": {
+            "type": "string",
+            "example": "agentapi-config/"
+          },
+          "auto_push": {
+            "type": "boolean"
+          },
+          "has_github_token": {
+            "type": "boolean",
+            "description": "true when a GitHub token is configured"
+          },
+          "encryption": {
+            "$ref": "#/components/schemas/SyncEncryptionResponse"
+          }
         }
       },
       "GitSyncConfigRequest": {
         "type": "object",
         "description": "GitHub sync configuration. Encryption settings (KMS key ARN, AWS region) are set at the proxy level.",
-        "required": ["repo_full_name"],
+        "required": [
+          "repo_full_name"
+        ],
         "properties": {
-          "enabled": { "type": "boolean" },
-          "repo_full_name": { "type": "string", "example": "owner/repo" },
-          "branch": { "type": "string", "example": "main", "description": "Defaults to 'main' if omitted" },
-          "root_path": { "type": "string", "example": "agentapi-config/", "description": "Defaults to 'agentapi-config/' if omitted" },
-          "auto_push": { "type": "boolean" },
-          "github_token": { "type": "string", "description": "GitHub PAT (write-only, not returned). Existing token is preserved if omitted." }
+          "enabled": {
+            "type": "boolean"
+          },
+          "repo_full_name": {
+            "type": "string",
+            "example": "owner/repo"
+          },
+          "branch": {
+            "type": "string",
+            "example": "main",
+            "description": "Defaults to 'main' if omitted"
+          },
+          "root_path": {
+            "type": "string",
+            "example": "agentapi-config/",
+            "description": "Defaults to 'agentapi-config/' if omitted"
+          },
+          "auto_push": {
+            "type": "boolean"
+          },
+          "github_token": {
+            "type": "string",
+            "description": "GitHub PAT (write-only, not returned). Existing token is preserved if omitted."
+          }
         }
       },
       "SyncEncryptionResponse": {
         "type": "object",
         "description": "Public encryption info (no secrets)",
         "properties": {
-          "dek_version": { "type": "integer" },
-          "dek_ready": { "type": "boolean", "description": "true when a DEK has been generated and stored" }
+          "dek_version": {
+            "type": "integer"
+          },
+          "dek_ready": {
+            "type": "boolean",
+            "description": "true when a DEK has been generated and stored"
+          }
         }
       },
       "PushResponse": {
         "type": "object",
         "properties": {
-          "commit_sha": { "type": "string" },
-          "pushed_at": { "type": "string", "format": "date-time" },
-          "summary": { "$ref": "#/components/schemas/SyncSummary" }
+          "commit_sha": {
+            "type": "string"
+          },
+          "pushed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/SyncSummary"
+          }
         }
       },
       "PullResponse": {
         "type": "object",
         "properties": {
-          "pulled_at": { "type": "string", "format": "date-time" },
-          "summary": { "$ref": "#/components/schemas/SyncSummary" }
+          "pulled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/SyncSummary"
+          }
         }
       },
       "RotateKeyResponse": {
         "type": "object",
         "properties": {
-          "commit_sha": { "type": "string" },
-          "rotated_at": { "type": "string", "format": "date-time" },
-          "dek_version": { "type": "integer" }
+          "commit_sha": {
+            "type": "string"
+          },
+          "rotated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dek_version": {
+            "type": "integer"
+          }
         }
       },
       "SyncSummary": {
         "type": "object",
         "properties": {
-          "files_written": { "type": "integer" },
-          "files_deleted": { "type": "integer" }
+          "files_written": {
+            "type": "integer"
+          },
+          "files_deleted": {
+            "type": "integer"
+          }
         }
       },
       "SyncAllResult": {
         "type": "object",
         "properties": {
-          "settings_name": { "type": "string", "description": "Settings name (user ID or team name)" },
-          "direction": { "type": "string", "enum": ["push", "pull", "unknown"], "description": "Automatically determined sync direction" },
-          "push": { "$ref": "#/components/schemas/PushResponse" },
-          "pull": { "$ref": "#/components/schemas/PullResponse" },
-          "error": { "type": "string", "description": "Error message if sync failed for this tenant" }
+          "settings_name": {
+            "type": "string",
+            "description": "Settings name (user ID or team name)"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "push",
+              "pull",
+              "unknown"
+            ],
+            "description": "Automatically determined sync direction"
+          },
+          "push": {
+            "$ref": "#/components/schemas/PushResponse"
+          },
+          "pull": {
+            "$ref": "#/components/schemas/PullResponse"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message if sync failed for this tenant"
+          }
         }
       },
       "SyncAllResponse": {
         "type": "object",
         "properties": {
-          "synced_at": { "type": "string", "format": "date-time" },
+          "synced_at": {
+            "type": "string",
+            "format": "date-time"
+          },
           "results": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/SyncAllResult" }
+            "items": {
+              "$ref": "#/components/schemas/SyncAllResult"
+            }
           }
         }
       },
@@ -4795,15 +5121,25 @@
           },
           "allowed_domains": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Allowlist mode: only listed domains are permitted; all others are blocked. Supports wildcard prefixes (e.g. '*.example.com'). Takes precedence over denied_domains when set.",
-            "example": ["api.example.com", "*.trusted.com"]
+            "example": [
+              "api.example.com",
+              "*.trusted.com"
+            ]
           },
           "denied_domains": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Denylist mode: listed domains are blocked, all others are allowed. Used only when allowed_domains is empty. Supports wildcard prefixes (e.g. '*.example.com').",
-            "example": ["example.com", "*.evil.com"]
+            "example": [
+              "example.com",
+              "*.evil.com"
+            ]
           }
         }
       },
@@ -4913,7 +5249,11 @@
             "description": "When the status change was detected by the proxy"
           }
         },
-        "required": ["session_id", "status", "timestamp"]
+        "required": [
+          "session_id",
+          "status",
+          "timestamp"
+        ]
       },
       "CreateScheduleRequest": {
         "type": "object",

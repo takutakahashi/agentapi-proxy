@@ -840,6 +840,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("git_sync.lease_duration", "AGENTAPI_GIT_SYNC_LEASE_DURATION")
 	_ = v.BindEnv("git_sync.renew_deadline", "AGENTAPI_GIT_SYNC_RENEW_DEADLINE")
 	_ = v.BindEnv("git_sync.retry_period", "AGENTAPI_GIT_SYNC_RETRY_PERIOD")
+
 }
 
 // setDefaults sets default values for viper configuration
