@@ -434,6 +434,20 @@ func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 	}
 }
 
+func TestLoadConfigNetworkFilterResourceDefaults(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	assert.Equal(t, "250m", loadedConfig.KubernetesSession.NetworkFilterCPURequest)
+	assert.Equal(t, "1000m", loadedConfig.KubernetesSession.NetworkFilterCPULimit)
+	assert.Equal(t, "256Mi", loadedConfig.KubernetesSession.NetworkFilterMemoryRequest)
+	assert.Equal(t, "512Mi", loadedConfig.KubernetesSession.NetworkFilterMemoryLimit)
+}
+
 func TestInitializeConfigStructsFromEnv_StaticAuth(t *testing.T) {
 	// Set up test environment variables for static auth
 	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")

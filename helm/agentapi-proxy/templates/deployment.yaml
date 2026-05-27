@@ -207,13 +207,13 @@ spec:
             - name: AGENTAPI_K8S_SESSION_SANDBOX_IPTABLES_CONFIGMAP_NAME
               value: {{ printf "%s-sandbox-iptables" (include "agentapi-proxy.fullname" .) | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST
-              value: {{ dig "networkFilter" "resources" "requests" "cpu" "100m" .Values.kubernetesSession | quote }}
+              value: {{ dig "networkFilter" "resources" "requests" "cpu" "250m" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT
-              value: {{ dig "networkFilter" "resources" "limits" "cpu" "500m" .Values.kubernetesSession | quote }}
+              value: {{ dig "networkFilter" "resources" "limits" "cpu" "1000m" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_REQUEST
-              value: {{ dig "networkFilter" "resources" "requests" "memory" "64Mi" .Values.kubernetesSession | quote }}
+              value: {{ dig "networkFilter" "resources" "requests" "memory" "256Mi" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_MEMORY_LIMIT
-              value: {{ dig "networkFilter" "resources" "limits" "memory" "256Mi" .Values.kubernetesSession | quote }}
+              value: {{ dig "networkFilter" "resources" "limits" "memory" "512Mi" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_REQUEST
               value: {{ dig "networkFilter" "initResources" "requests" "cpu" "50m" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_CPU_LIMIT

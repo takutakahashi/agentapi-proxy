@@ -348,11 +348,11 @@ kubernetesSession:
     # Resources for the network-filter forward proxy sidecar container
     resources:
       requests:
-        cpu: "100m"
-        memory: "64Mi"
-      limits:
-        cpu: "500m"
+        cpu: "250m"
         memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "512Mi"
     # Resources for the network-filter-setup init container
     initResources:
       requests:
@@ -627,4 +627,3 @@ externalRedis:
   dialTimeout: "5s"
   readTimeout: "3s"
   writeTimeout: "3s"
-
