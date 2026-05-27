@@ -475,8 +475,8 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 				Scope:     "user",
 				AgentType: "codex-acp",
 			},
-			Claude: ClaudeConfig{
-				CodexConfigTOML: "approval-mode = \"full-auto\"\n",
+			Codex: CodexConfig{
+				ConfigTOML: "approval-mode = \"full-auto\"\n",
 			},
 		}
 

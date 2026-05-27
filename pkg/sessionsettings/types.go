@@ -129,6 +129,7 @@ type SessionSettings struct {
 	Session        SessionMeta          `yaml:"session"                   json:"session"`
 	Env            map[string]string    `yaml:"env,omitempty"             json:"env,omitempty"`
 	Claude         ClaudeConfig         `yaml:"claude,omitempty"          json:"claude,omitempty"`
+	Codex          CodexConfig          `yaml:"codex,omitempty"           json:"codex,omitempty"`
 	Repository     *RepositoryConfig    `yaml:"repository,omitempty"      json:"repository,omitempty"`
 	InitialMessage string               `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
 	WebhookPayload string               `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
@@ -189,13 +190,18 @@ type SessionMeta struct {
 
 // ClaudeConfig holds Claude-related configuration data.
 type ClaudeConfig struct {
-	ClaudeJSON     map[string]interface{} `yaml:"claude_json,omitempty"       json:"claude_json,omitempty"`
-	SettingsJSON   map[string]interface{} `yaml:"settings_json,omitempty"     json:"settings_json,omitempty"`
-	MCPServers     map[string]interface{} `yaml:"mcp_servers,omitempty"       json:"mcp_servers,omitempty"`
-	CodexHooksJSON map[string]interface{} `yaml:"codex_hooks_json,omitempty"  json:"codex_hooks_json,omitempty"`
-	// CodexConfigTOML is written to ~/.codex/config.toml (codex-acp sessions only).
+	ClaudeJSON   map[string]interface{} `yaml:"claude_json,omitempty"    json:"claude_json,omitempty"`
+	SettingsJSON map[string]interface{} `yaml:"settings_json,omitempty"  json:"settings_json,omitempty"`
+	MCPServers   map[string]interface{} `yaml:"mcp_servers,omitempty"    json:"mcp_servers,omitempty"`
+}
+
+// CodexConfig holds Codex CLI-specific configuration data.
+type CodexConfig struct {
+	// HooksJSON is written to ~/.codex/hooks.json (codex-acp sessions only).
+	HooksJSON map[string]interface{} `yaml:"hooks_json,omitempty"  json:"hooks_json,omitempty"`
+	// ConfigTOML is written to ~/.codex/config.toml (codex-acp sessions only).
 	// Use it to set approval-mode and other Codex CLI settings that bypass permission prompts.
-	CodexConfigTOML string `yaml:"codex_config_toml,omitempty" json:"codex_config_toml,omitempty"`
+	ConfigTOML string `yaml:"config_toml,omitempty" json:"config_toml,omitempty"`
 }
 
 // RepositoryConfig holds repository information.
