@@ -1621,34 +1621,64 @@ func sanitizeFilename(name string) string {
 
 // sessionProfileRecord is the YAML on-disk representation of a SessionProfile.
 type sessionProfileRecord struct {
-	ID                     string            `yaml:"id"`
-	Name                   string            `yaml:"name"`
-	Description            string            `yaml:"description,omitempty"`
-	UserID                 string            `yaml:"user_id"`
-	Scope                  string            `yaml:"scope"`
-	TeamID                 string            `yaml:"team_id,omitempty"`
-	IsDefault              bool              `yaml:"is_default,omitempty"`
-	Environment            map[string]string `yaml:"environment,omitempty"`
-	Tags                   map[string]string `yaml:"tags,omitempty"`
-	InitialMessageTemplate string            `yaml:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string            `yaml:"reuse_message_template,omitempty"`
-	ReuseSession           bool              `yaml:"reuse_session,omitempty"`
-	MemoryKey              map[string]string `yaml:"memory_key,omitempty"`
-	GitHubToken            string            `yaml:"github_token,omitempty"`
-	InitialMessage         string            `yaml:"initial_message,omitempty"`
-	CreatedAt              string            `yaml:"created_at,omitempty"`
-	UpdatedAt              string            `yaml:"updated_at,omitempty"`
+	ID                     string                      `yaml:"id"`
+	Name                   string                      `yaml:"name"`
+	Description            string                      `yaml:"description,omitempty"`
+	UserID                 string                      `yaml:"user_id"`
+	Scope                  string                      `yaml:"scope"`
+	TeamID                 string                      `yaml:"team_id,omitempty"`
+	IsDefault              bool                        `yaml:"is_default,omitempty"`
+	Environment            map[string]string           `yaml:"environment,omitempty"`
+	Tags                   map[string]string           `yaml:"tags,omitempty"`
+	InitialMessageTemplate string                      `yaml:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                      `yaml:"reuse_message_template,omitempty"`
+	ReuseSession           bool                        `yaml:"reuse_session,omitempty"`
+	MemoryKey              map[string]string           `yaml:"memory_key,omitempty"`
+	Params                 *sessionProfileParamsRecord `yaml:"params,omitempty"`
+	GitHubToken            string                      `yaml:"github_token,omitempty"`
+	InitialMessage         string                      `yaml:"initial_message,omitempty"`
+	CreatedAt              string                      `yaml:"created_at,omitempty"`
+	UpdatedAt              string                      `yaml:"updated_at,omitempty"`
 }
 
-func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) sessionProfileRecord {
+type sessionProfileParamsRecord struct {
+	Message                  string                             `yaml:"message,omitempty"`
+	GitHubToken              string                             `yaml:"github_token,omitempty"`
+	AgentType                string                             `yaml:"agent_type,omitempty"`
+	Slack                    *sessionProfileSlackParamsRecord   `yaml:"slack,omitempty"`
+	Oneshot                  bool                               `yaml:"oneshot,omitempty"`
+	InitialMessageWaitSecond *int                               `yaml:"initial_message_wait_second,omitempty"`
+	ManagerID                string                             `yaml:"manager_id,omitempty"`
+	CycleMessage             string                             `yaml:"cycle_message,omitempty"`
+	CycleMaxCount            int                                `yaml:"cycle_max_count,omitempty"`
+	RepoFullName             string                             `yaml:"repo_full_name,omitempty"`
+	Sandbox                  *sessionProfileSandboxParamsRecord `yaml:"sandbox,omitempty"`
+}
+
+type sessionProfileSlackParamsRecord struct {
+	Channel            string `yaml:"channel,omitempty"`
+	ThreadTS           string `yaml:"thread_ts,omitempty"`
+	BotTokenSecretName string `yaml:"bot_token_secret_name,omitempty"`
+	BotTokenSecretKey  string `yaml:"bot_token_secret_key,omitempty"`
+}
+
+type sessionProfileSandboxParamsRecord struct {
+	Enabled        bool     `yaml:"enabled,omitempty"`
+	AllowedDomains []string `yaml:"allowed_domains,omitempty"`
+	DeniedDomains  []string `yaml:"denied_domains,omitempty"`
+}
+
+func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) (sessionProfileRecord, error) {
 	cfg := p.Config()
 	env := make(map[string]string, len(cfg.Environment()))
 	for k, v := range cfg.Environment() {
-		if len(dek) > 0 && !IsEncrypted(v) {
-			if enc, err := EncryptField(dek, v); err == nil {
-				env[k] = enc
-				continue
+		if !IsEncrypted(v) {
+			enc, err := EncryptField(dek, v)
+			if err != nil {
+				return sessionProfileRecord{}, fmt.Errorf("encrypt session profile env %s: %w", k, err)
 			}
+			env[k] = enc
+			continue
 		}
 		env[k] = v
 	}
@@ -1670,16 +1700,83 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) sessionProfi
 		UpdatedAt:              p.UpdatedAt().Format(time.RFC3339),
 	}
 	if params := cfg.Params(); params != nil {
-		token := params.GithubToken
-		if token != "" && len(dek) > 0 && !IsEncrypted(token) {
-			if enc, err := EncryptField(dek, token); err == nil {
-				token = enc
+		paramsRec := sessionParamsToRecord(params)
+		if paramsRec.GitHubToken != "" && !IsEncrypted(paramsRec.GitHubToken) {
+			enc, err := EncryptField(dek, paramsRec.GitHubToken)
+			if err != nil {
+				return sessionProfileRecord{}, fmt.Errorf("encrypt session profile github_token: %w", err)
 			}
+			paramsRec.GitHubToken = enc
 		}
-		rec.GitHubToken = token
-		rec.InitialMessage = params.Message
+		rec.Params = paramsRec
+	}
+	return rec, nil
+}
+
+func sessionParamsToRecord(p *entities.SessionParams) *sessionProfileParamsRecord {
+	if p == nil {
+		return nil
+	}
+	rec := &sessionProfileParamsRecord{
+		Message:                  p.Message,
+		GitHubToken:              p.GithubToken,
+		AgentType:                p.AgentType,
+		Oneshot:                  p.Oneshot,
+		InitialMessageWaitSecond: p.InitialMessageWaitSecond,
+		ManagerID:                p.ManagerID,
+		CycleMessage:             p.CycleMessage,
+		CycleMaxCount:            p.CycleMaxCount,
+		RepoFullName:             p.RepoFullName,
+	}
+	if p.Slack != nil {
+		rec.Slack = &sessionProfileSlackParamsRecord{
+			Channel:            p.Slack.Channel,
+			ThreadTS:           p.Slack.ThreadTS,
+			BotTokenSecretName: p.Slack.BotTokenSecretName,
+			BotTokenSecretKey:  p.Slack.BotTokenSecretKey,
+		}
+	}
+	if p.Sandbox != nil {
+		rec.Sandbox = &sessionProfileSandboxParamsRecord{
+			Enabled:        p.Sandbox.Enabled,
+			AllowedDomains: p.Sandbox.AllowedDomains,
+			DeniedDomains:  p.Sandbox.DeniedDomains,
+		}
 	}
 	return rec
+}
+
+func sessionParamsFromRecord(rec *sessionProfileParamsRecord) *entities.SessionParams {
+	if rec == nil {
+		return nil
+	}
+	params := &entities.SessionParams{
+		Message:                  rec.Message,
+		GithubToken:              rec.GitHubToken,
+		AgentType:                rec.AgentType,
+		Oneshot:                  rec.Oneshot,
+		InitialMessageWaitSecond: rec.InitialMessageWaitSecond,
+		ManagerID:                rec.ManagerID,
+		CycleMessage:             rec.CycleMessage,
+		CycleMaxCount:            rec.CycleMaxCount,
+		RepoFullName:             rec.RepoFullName,
+	}
+	if rec.Slack != nil {
+		params.Slack = &entities.SlackParams{
+			Channel:            rec.Slack.Channel,
+			ThreadTS:           rec.Slack.ThreadTS,
+			BotTokenSecretName: rec.Slack.BotTokenSecretName,
+			BotTokenSecretKey:  rec.Slack.BotTokenSecretKey,
+		}
+	}
+	if rec.Sandbox != nil {
+		params.Sandbox = &entities.SandboxParams{
+			Enabled:        rec.Sandbox.Enabled,
+			AllowedDomains: rec.Sandbox.AllowedDomains,
+			DeniedDomains:  rec.Sandbox.DeniedDomains,
+		}
+	}
+	return params
 }
 
 func (s *Syncer) exportUserSessionProfiles(ctx context.Context, userID string, dek []byte, rootPath string, files map[string][]byte) error {
@@ -1695,7 +1792,10 @@ func (s *Syncer) exportUserSessionProfiles(ctx context.Context, userID string, d
 	}
 	dir := rootPath + userID + "/session-profiles/"
 	for _, p := range profiles {
-		rec := sessionProfileToRecord(p, dek)
+		rec, err := sessionProfileToRecord(p, dek)
+		if err != nil {
+			return fmt.Errorf("encrypt user session profile %s: %w", p.ID(), err)
+		}
 		data, err := yaml.Marshal(rec)
 		if err != nil {
 			log.Printf("[SYNC] Warning: marshal user session profile %s: %v", p.ID(), err)
@@ -1719,7 +1819,10 @@ func (s *Syncer) exportTeamSessionProfiles(ctx context.Context, settingsName str
 	}
 	dir := rootPath + settingsName + "/session-profiles/"
 	for _, p := range profiles {
-		rec := sessionProfileToRecord(p, dek)
+		rec, err := sessionProfileToRecord(p, dek)
+		if err != nil {
+			return fmt.Errorf("encrypt team session profile %s: %w", p.ID(), err)
+		}
 		data, err := yaml.Marshal(rec)
 		if err != nil {
 			log.Printf("[SYNC] Warning: marshal team session profile %s: %v", p.ID(), err)
@@ -1754,13 +1857,29 @@ func (s *Syncer) importSessionProfileFile(ctx context.Context, data []byte, scop
 	}
 
 	// Decrypt GitHub token if encrypted
-	githubToken := rec.GitHubToken
-	if IsEncrypted(githubToken) {
-		plain, err := DecryptField(dek, githubToken)
+	params := rec.Params
+	if params != nil && IsEncrypted(params.GitHubToken) {
+		paramsCopy := *params
+		plain, err := DecryptField(dek, paramsCopy.GitHubToken)
 		if err != nil {
 			return fmt.Errorf("decrypt session profile github_token: %w", err)
 		}
-		githubToken = plain
+		paramsCopy.GitHubToken = plain
+		params = &paramsCopy
+	}
+	if params == nil && (rec.InitialMessage != "" || rec.GitHubToken != "") {
+		githubToken := rec.GitHubToken
+		if IsEncrypted(githubToken) {
+			plain, err := DecryptField(dek, githubToken)
+			if err != nil {
+				return fmt.Errorf("decrypt session profile github_token: %w", err)
+			}
+			githubToken = plain
+		}
+		params = &sessionProfileParamsRecord{
+			Message:     rec.InitialMessage,
+			GitHubToken: githubToken,
+		}
 	}
 
 	id := rec.ID
@@ -1799,11 +1918,8 @@ func (s *Syncer) importSessionProfileFile(ctx context.Context, data []byte, scop
 	if len(rec.MemoryKey) > 0 {
 		cfg.SetMemoryKey(rec.MemoryKey)
 	}
-	if rec.InitialMessage != "" || githubToken != "" {
-		cfg.SetParams(&entities.SessionParams{
-			Message:     rec.InitialMessage,
-			GithubToken: githubToken,
-		})
+	if params != nil {
+		cfg.SetParams(sessionParamsFromRecord(params))
 	}
 	p.SetConfig(cfg)
 
