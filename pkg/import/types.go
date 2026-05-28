@@ -39,8 +39,8 @@ type WebhookImport struct {
 	Name            string                 `yaml:"name" toml:"name" json:"name"`
 	Status          string                 `yaml:"status,omitempty" toml:"status,omitempty" json:"status,omitempty"`
 	WebhookType     string                 `yaml:"webhook_type" toml:"webhook_type" json:"webhook_type"`
-	Secret          string                 `yaml:"secret,omitempty" toml:"secret,omitempty" json:"secret,omitempty"`
-	SecretEncrypted *EncryptedSecretData   `yaml:"secret_encrypted,omitempty" toml:"secret_encrypted,omitempty" json:"secret_encrypted,omitempty"`
+	Secret          string                 `yaml:"secret,omitempty" toml:"secret,omitempty" json:"secret,omitempty" gitsync:"encrypt"`
+	SecretEncrypted *EncryptedSecretData   `yaml:"secret_encrypted,omitempty" toml:"secret_encrypted,omitempty" json:"secret_encrypted,omitempty" gitsync:"companion"`
 	SignatureHeader string                 `yaml:"signature_header,omitempty" toml:"signature_header,omitempty" json:"signature_header,omitempty"`
 	SignatureType   string                 `yaml:"signature_type,omitempty" toml:"signature_type,omitempty" json:"signature_type,omitempty"`
 	SignaturePrefix string                 `yaml:"signature_prefix,omitempty" toml:"signature_prefix,omitempty" json:"signature_prefix,omitempty"`
@@ -52,8 +52,8 @@ type WebhookImport struct {
 
 // SessionConfigImport represents session configuration for import/export
 type SessionConfigImport struct {
-	Environment          map[string]string               `yaml:"environment,omitempty" toml:"environment,omitempty" json:"environment,omitempty"`
-	EnvironmentEncrypted map[string]*EncryptedSecretData `yaml:"environment_encrypted,omitempty" toml:"environment_encrypted,omitempty" json:"environment_encrypted,omitempty"`
+	Environment          map[string]string               `yaml:"environment,omitempty" toml:"environment,omitempty" json:"environment,omitempty" gitsync:"encrypt-values"`
+	EnvironmentEncrypted map[string]*EncryptedSecretData `yaml:"environment_encrypted,omitempty" toml:"environment_encrypted,omitempty" json:"environment_encrypted,omitempty" gitsync:"companion"`
 	Tags                 map[string]string               `yaml:"tags,omitempty" toml:"tags,omitempty" json:"tags,omitempty"`
 	Params               *SessionParamsImport            `yaml:"params,omitempty" toml:"params,omitempty" json:"params,omitempty"`
 }
@@ -62,8 +62,8 @@ type SessionConfigImport struct {
 type SessionParamsImport struct {
 	InitialMessage         string               `yaml:"initial_message,omitempty" toml:"initial_message,omitempty" json:"initial_message,omitempty"`
 	InitialMessageTemplate string               `yaml:"initial_message_template,omitempty" toml:"initial_message_template,omitempty" json:"initial_message_template,omitempty"`
-	GitHubToken            string               `yaml:"github_token,omitempty" toml:"github_token,omitempty" json:"github_token,omitempty"`
-	GitHubTokenEncrypted   *EncryptedSecretData `yaml:"github_token_encrypted,omitempty" toml:"github_token_encrypted,omitempty" json:"github_token_encrypted,omitempty"`
+	GitHubToken            string               `yaml:"github_token,omitempty" toml:"github_token,omitempty" json:"github_token,omitempty" gitsync:"encrypt"`
+	GitHubTokenEncrypted   *EncryptedSecretData `yaml:"github_token_encrypted,omitempty" toml:"github_token_encrypted,omitempty" json:"github_token_encrypted,omitempty" gitsync:"companion"`
 }
 
 // GitHubConfigImport represents GitHub-specific webhook configuration for import/export
@@ -200,22 +200,22 @@ type SettingsImport struct {
 	Bedrock                       *BedrockSettingsImport          `yaml:"bedrock,omitempty" toml:"bedrock,omitempty" json:"bedrock,omitempty"`
 	MCPServers                    map[string]*MCPServerImport     `yaml:"mcp_servers,omitempty" toml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 	Marketplaces                  map[string]*MarketplaceImport   `yaml:"marketplaces,omitempty" toml:"marketplaces,omitempty" json:"marketplaces,omitempty"`
-	ClaudeCodeOAuthToken          string                          `yaml:"claude_code_oauth_token,omitempty" toml:"claude_code_oauth_token,omitempty" json:"claude_code_oauth_token,omitempty"`
-	ClaudeCodeOAuthTokenEncrypted *EncryptedSecretData            `yaml:"claude_code_oauth_token_encrypted,omitempty" toml:"claude_code_oauth_token_encrypted,omitempty" json:"claude_code_oauth_token_encrypted,omitempty"`
+	ClaudeCodeOAuthToken          string                          `yaml:"claude_code_oauth_token,omitempty" toml:"claude_code_oauth_token,omitempty" json:"claude_code_oauth_token,omitempty" gitsync:"encrypt"`
+	ClaudeCodeOAuthTokenEncrypted *EncryptedSecretData            `yaml:"claude_code_oauth_token_encrypted,omitempty" toml:"claude_code_oauth_token_encrypted,omitempty" json:"claude_code_oauth_token_encrypted,omitempty" gitsync:"companion"`
 	AuthMode                      string                          `yaml:"auth_mode,omitempty" toml:"auth_mode,omitempty" json:"auth_mode,omitempty"`
 	EnabledPlugins                []string                        `yaml:"enabled_plugins,omitempty" toml:"enabled_plugins,omitempty" json:"enabled_plugins,omitempty"`
-	EnvVars                       map[string]string               `yaml:"env_vars,omitempty" toml:"env_vars,omitempty" json:"env_vars,omitempty"`
-	EnvVarsEncrypted              map[string]*EncryptedSecretData `yaml:"env_vars_encrypted,omitempty" toml:"env_vars_encrypted,omitempty" json:"env_vars_encrypted,omitempty"`
+	EnvVars                       map[string]string               `yaml:"env_vars,omitempty" toml:"env_vars,omitempty" json:"env_vars,omitempty" gitsync:"encrypt-values"`
+	EnvVarsEncrypted              map[string]*EncryptedSecretData `yaml:"env_vars_encrypted,omitempty" toml:"env_vars_encrypted,omitempty" json:"env_vars_encrypted,omitempty" gitsync:"companion"`
 }
 
 // BedrockSettingsImport represents Bedrock settings for import/export
 type BedrockSettingsImport struct {
 	Enabled                  bool                 `yaml:"enabled" toml:"enabled" json:"enabled"`
 	Model                    string               `yaml:"model,omitempty" toml:"model,omitempty" json:"model,omitempty"`
-	AccessKeyID              string               `yaml:"access_key_id,omitempty" toml:"access_key_id,omitempty" json:"access_key_id,omitempty"`
-	AccessKeyIDEncrypted     *EncryptedSecretData `yaml:"access_key_id_encrypted,omitempty" toml:"access_key_id_encrypted,omitempty" json:"access_key_id_encrypted,omitempty"`
-	SecretAccessKey          string               `yaml:"secret_access_key,omitempty" toml:"secret_access_key,omitempty" json:"secret_access_key,omitempty"`
-	SecretAccessKeyEncrypted *EncryptedSecretData `yaml:"secret_access_key_encrypted,omitempty" toml:"secret_access_key_encrypted,omitempty" json:"secret_access_key_encrypted,omitempty"`
+	AccessKeyID              string               `yaml:"access_key_id,omitempty" toml:"access_key_id,omitempty" json:"access_key_id,omitempty" gitsync:"encrypt"`
+	AccessKeyIDEncrypted     *EncryptedSecretData `yaml:"access_key_id_encrypted,omitempty" toml:"access_key_id_encrypted,omitempty" json:"access_key_id_encrypted,omitempty" gitsync:"companion"`
+	SecretAccessKey          string               `yaml:"secret_access_key,omitempty" toml:"secret_access_key,omitempty" json:"secret_access_key,omitempty" gitsync:"encrypt"`
+	SecretAccessKeyEncrypted *EncryptedSecretData `yaml:"secret_access_key_encrypted,omitempty" toml:"secret_access_key_encrypted,omitempty" json:"secret_access_key_encrypted,omitempty" gitsync:"companion"`
 	RoleARN                  string               `yaml:"role_arn,omitempty" toml:"role_arn,omitempty" json:"role_arn,omitempty"`
 	Profile                  string               `yaml:"profile,omitempty" toml:"profile,omitempty" json:"profile,omitempty"`
 }
@@ -226,10 +226,10 @@ type MCPServerImport struct {
 	URL              string                          `yaml:"url,omitempty" toml:"url,omitempty" json:"url,omitempty"`
 	Command          string                          `yaml:"command,omitempty" toml:"command,omitempty" json:"command,omitempty"`
 	Args             []string                        `yaml:"args,omitempty" toml:"args,omitempty" json:"args,omitempty"`
-	Env              map[string]string               `yaml:"env,omitempty" toml:"env,omitempty" json:"env,omitempty"`
-	EnvEncrypted     map[string]*EncryptedSecretData `yaml:"env_encrypted,omitempty" toml:"env_encrypted,omitempty" json:"env_encrypted,omitempty"`
-	Headers          map[string]string               `yaml:"headers,omitempty" toml:"headers,omitempty" json:"headers,omitempty"`
-	HeadersEncrypted map[string]*EncryptedSecretData `yaml:"headers_encrypted,omitempty" toml:"headers_encrypted,omitempty" json:"headers_encrypted,omitempty"`
+	Env              map[string]string               `yaml:"env,omitempty" toml:"env,omitempty" json:"env,omitempty" gitsync:"encrypt-values"`
+	EnvEncrypted     map[string]*EncryptedSecretData `yaml:"env_encrypted,omitempty" toml:"env_encrypted,omitempty" json:"env_encrypted,omitempty" gitsync:"companion"`
+	Headers          map[string]string               `yaml:"headers,omitempty" toml:"headers,omitempty" json:"headers,omitempty" gitsync:"encrypt-values"`
+	HeadersEncrypted map[string]*EncryptedSecretData `yaml:"headers_encrypted,omitempty" toml:"headers_encrypted,omitempty" json:"headers_encrypted,omitempty" gitsync:"companion"`
 }
 
 // MarketplaceImport represents a marketplace for import/export
@@ -248,8 +248,8 @@ type SessionProfileImport struct {
 
 // SessionProfileConfigImport represents session profile config for import/export
 type SessionProfileConfigImport struct {
-	Environment            map[string]string               `yaml:"environment,omitempty" toml:"environment,omitempty" json:"environment,omitempty"`
-	EnvironmentEncrypted   map[string]*EncryptedSecretData `yaml:"environment_encrypted,omitempty" toml:"environment_encrypted,omitempty" json:"environment_encrypted,omitempty"`
+	Environment            map[string]string               `yaml:"environment,omitempty" toml:"environment,omitempty" json:"environment,omitempty" gitsync:"encrypt-values"`
+	EnvironmentEncrypted   map[string]*EncryptedSecretData `yaml:"environment_encrypted,omitempty" toml:"environment_encrypted,omitempty" json:"environment_encrypted,omitempty" gitsync:"companion"`
 	Tags                   map[string]string               `yaml:"tags,omitempty" toml:"tags,omitempty" json:"tags,omitempty"`
 	InitialMessageTemplate string                          `yaml:"initial_message_template,omitempty" toml:"initial_message_template,omitempty" json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                          `yaml:"reuse_message_template,omitempty" toml:"reuse_message_template,omitempty" json:"reuse_message_template,omitempty"`
