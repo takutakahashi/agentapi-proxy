@@ -3078,14 +3078,6 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 				case "stable":
 					session.SetStatus("active")
 					log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
-					if req := session.Request(); req != nil && req.Oneshot {
-						log.Printf("[AGENT_STATUS] Session %s is oneshot — auto-deleting after task completion", session.id)
-						go func(id string) {
-							if err := m.DeleteSession(id); err != nil {
-								log.Printf("[AGENT_STATUS] Warning: failed to auto-delete oneshot session %s: %v", id, err)
-							}
-						}(session.id)
-					}
 				}
 			case "message_update":
 				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
