@@ -107,6 +107,16 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		if err := writeFiles(settings.Files); err != nil {
 			log.Printf("[PROVISIONER] Warning: failed to write managed files: %v", err)
 		}
+		// Re-apply compiled hooks into settings.json in case a managed settings.json
+		// overwrote the hooks that were generated during the compile step above.
+		// This preserves user customisations while ensuring oneshot/cycle/managed
+		// hooks injected by the proxy are always present.
+		if settings.Claude.SettingsJSON != nil {
+			claudeSettingsPath := filepath.Join(compileOpts.OutputDir, ".claude", "settings.json")
+			if err := mergeHooksIntoSettingsFile(claudeSettingsPath, settings.Claude.SettingsJSON); err != nil {
+				log.Printf("[PROVISIONER] Warning: failed to re-apply hooks to settings.json: %v", err)
+			}
+		}
 	} else if settings.Credentials != "" {
 		// Backward compat: old sessions only have Credentials (= ~/.codex/auth.json).
 		if err := writeCredentials(settings.Credentials); err != nil {
@@ -323,6 +333,58 @@ func writeFiles(files []sessionsettings.ManagedFile) error {
 		log.Printf("[PROVISIONER] Restored managed file: %s (mode %s)", f.Path, perm)
 	}
 	return firstErr
+}
+
+// mergeHooksIntoSettingsFile reads the Claude Code settings.json at path, merges
+// any hooks from compiledSettings into it (compiled hooks win per event name),
+// and writes the result back.  This ensures that proxy-injected hooks (oneshot
+// delete-session, cycle, etc.) survive even when a managed settings.json file
+// was restored on top of the compiled one.
+func mergeHooksIntoSettingsFile(path string, compiledSettings map[string]interface{}) error {
+	compiledHooksRaw, ok := compiledSettings["hooks"]
+	if !ok {
+		return nil // no hooks to inject
+	}
+	compiledHooks, ok := compiledHooksRaw.(map[string]interface{})
+	if !ok || len(compiledHooks) == 0 {
+		return nil
+	}
+
+	// Read the current file (may have been overwritten by writeFiles)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+
+	var current map[string]interface{}
+	if err := json.Unmarshal(data, &current); err != nil {
+		return fmt.Errorf("parse: %w", err)
+	}
+
+	// Merge: start with whatever hooks the managed file already has, then
+	// overwrite per-event with the compiled hooks so proxy-injected entries win.
+	merged := make(map[string]interface{})
+	if existingRaw, ok := current["hooks"]; ok {
+		if existing, ok := existingRaw.(map[string]interface{}); ok {
+			for k, v := range existing {
+				merged[k] = v
+			}
+		}
+	}
+	for k, v := range compiledHooks {
+		merged[k] = v
+	}
+	current["hooks"] = merged
+
+	out, err := json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0644); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	log.Printf("[PROVISIONER] Re-applied compiled hooks to %s", path)
+	return nil
 }
 
 // writeCredentials writes the given JSON string to ~/.codex/auth.json (mode 0600).
