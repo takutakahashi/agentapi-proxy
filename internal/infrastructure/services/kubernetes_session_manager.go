@@ -3078,6 +3078,14 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 				case "stable":
 					session.SetStatus("active")
 					log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
+					if req := session.Request(); req != nil && req.Oneshot {
+						log.Printf("[AGENT_STATUS] Session %s is oneshot — auto-deleting after task completion", session.id)
+						go func(id string) {
+							if err := m.DeleteSession(id); err != nil {
+								log.Printf("[AGENT_STATUS] Warning: failed to auto-delete oneshot session %s: %v", id, err)
+							}
+						}(session.id)
+					}
 				}
 			case "message_update":
 				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
@@ -3211,12 +3219,14 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	}
 	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
 
-	// Extract MemoryKey and Teams from session meta if available
+	// Extract MemoryKey, Teams, and Oneshot from session meta if available
 	var memoryKey map[string]string
 	var teams []string
+	var oneshot bool
 	if sessionMeta != nil {
 		memoryKey = sessionMeta.MemoryKey
 		teams = sessionMeta.Teams
+		oneshot = sessionMeta.Oneshot
 	}
 
 	// Parse created-at from annotations
@@ -3265,6 +3275,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 			InitialMessage: initialMessage,
 			MemoryKey:      memoryKey,
 			Teams:          teams,
+			Oneshot:        oneshot,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -3332,12 +3343,14 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 	}
 	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
 
-	// Extract MemoryKey and Teams from session meta if available
+	// Extract MemoryKey, Teams, and Oneshot from session meta if available
 	var memoryKey map[string]string
 	var teams []string
+	var oneshot bool
 	if sessionMeta != nil {
 		memoryKey = sessionMeta.MemoryKey
 		teams = sessionMeta.Teams
+		oneshot = sessionMeta.Oneshot
 	}
 
 	// Parse created-at from annotations
@@ -3386,6 +3399,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 			InitialMessage: initialMessage,
 			MemoryKey:      memoryKey,
 			Teams:          teams,
+			Oneshot:        oneshot,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
