@@ -21,6 +21,7 @@ import (
 type WebhookSessionService struct {
 	repo           repositories.WebhookRepository
 	sessionManager repositories.SessionManager
+	profileRepo    repositories.SessionProfileRepository
 	launcher       *sessionuc.LaunchUseCase
 }
 
@@ -29,6 +30,7 @@ func NewWebhookSessionService(repo repositories.WebhookRepository, sessionManage
 	return &WebhookSessionService{
 		repo:           repo,
 		sessionManager: sessionManager,
+		profileRepo:    sessionProfileRepo,
 		launcher: sessionuc.NewLaunchUseCase(sessionManager).
 			WithMemoryRepository(memoryRepo).
 			WithSessionProfileRepository(sessionProfileRepo),
@@ -56,6 +58,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	trigger := params.Trigger
 
 	sessionConfig := MergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
+	sessionConfig, profileAlreadyApplied := s.applySessionProfileConfig(ctx, webhook, sessionConfig)
 
 	env, err := s.renderConfigMap(sessionConfig, params.Payload, func(sc *entities.WebhookSessionConfig) map[string]string {
 		return sc.Environment()
@@ -69,6 +72,13 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to render tags: %w", err)
+	}
+
+	memoryKey, err := s.renderConfigMap(sessionConfig, params.Payload, func(sc *entities.WebhookSessionConfig) map[string]string {
+		return sc.MemoryKey()
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("failed to render memory key: %w", err)
 	}
 
 	// Merge caller-provided tags (webhook-type-specific metadata)
@@ -132,29 +142,32 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	// Teams is resolved here so it is never accidentally omitted (fixes the bug where
 	// webhook-triggered sessions were created without team-level settings injection).
 	var sessionProfileID string
-	if sessionConfig != nil {
+	if sessionConfig != nil && !profileAlreadyApplied {
 		sessionProfileID = sessionConfig.SessionProfileID()
 	}
 	result, err := s.launcher.Launch(ctx, sessionID, sessionuc.LaunchRequest{
-		UserID:           webhook.UserID(),
-		Scope:            webhook.Scope(),
-		TeamID:           webhook.TeamID(),
-		Teams:            sessionuc.ResolveTeams(webhook.Scope(), webhook.TeamID(), webhook.UserTeams()),
-		Environment:      env,
-		Tags:             tags,
-		InitialMessage:   initialMessage,
-		GithubToken:      githubToken,
-		AgentType:        agentType,
-		Oneshot:          oneshot,
-		Sandbox:          sandbox,
-		RepoInfo:         repoInfo,
-		WebhookPayload:   webhookPayload,
-		SessionProfileID: sessionProfileID,
-		ReuseSession:     sessionConfig != nil && sessionConfig.ReuseSession(),
-		ReuseMatchTags:   tags,
-		ReuseMessage:     reuseMessage,
-		MaxSessions:      webhook.MaxSessions(),
-		LimitMatchTags:   map[string]string{"webhook_id": webhook.ID()},
+		UserID:                       webhook.UserID(),
+		Scope:                        webhook.Scope(),
+		TeamID:                       webhook.TeamID(),
+		Teams:                        sessionuc.ResolveTeams(webhook.Scope(), webhook.TeamID(), webhook.UserTeams()),
+		Environment:                  env,
+		Tags:                         tags,
+		InitialMessage:               initialMessage,
+		GithubToken:                  githubToken,
+		AgentType:                    agentType,
+		Oneshot:                      oneshot,
+		Sandbox:                      sandbox,
+		MemoryKey:                    memoryKey,
+		RepoInfo:                     repoInfo,
+		WebhookPayload:               webhookPayload,
+		TemplatePayload:              params.Payload,
+		SessionProfileID:             sessionProfileID,
+		SkipSessionProfileResolution: profileAlreadyApplied,
+		ReuseSession:                 sessionConfig != nil && sessionConfig.ReuseSession(),
+		ReuseMatchTags:               tags,
+		ReuseMessage:                 reuseMessage,
+		MaxSessions:                  webhook.MaxSessions(),
+		LimitMatchTags:               map[string]string{"webhook_id": webhook.ID()},
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create session: %w", err)
@@ -208,6 +221,7 @@ func MergeSessionConfigs(base, override *entities.WebhookSessionConfig) *entitie
 	// Merge maps (override wins on key conflicts)
 	result.SetEnvironment(mergeMaps(base.Environment(), override.Environment()))
 	result.SetTags(mergeMaps(base.Tags(), override.Tags()))
+	result.SetMemoryKey(mergeMaps(base.MemoryKey(), override.MemoryKey()))
 
 	// Override scalar fields
 	result.SetInitialMessageTemplate(firstNonEmpty(override.InitialMessageTemplate(), base.InitialMessageTemplate()))
@@ -223,6 +237,71 @@ func MergeSessionConfigs(base, override *entities.WebhookSessionConfig) *entitie
 	result.SetReuseSession(base.ReuseSession() || override.ReuseSession())
 	result.SetMountPayload(base.MountPayload() || override.MountPayload())
 
+	return result
+}
+
+func (s *WebhookSessionService) applySessionProfileConfig(ctx context.Context, webhook *entities.Webhook, sessionConfig *entities.WebhookSessionConfig) (*entities.WebhookSessionConfig, bool) {
+	if s.profileRepo == nil {
+		return sessionConfig, false
+	}
+
+	profileID := ""
+	if sessionConfig != nil {
+		profileID = sessionConfig.SessionProfileID()
+	}
+
+	var profile *entities.SessionProfile
+	var err error
+	if profileID != "" {
+		profile, err = s.profileRepo.Get(ctx, profileID)
+		if err != nil {
+			log.Printf("[WEBHOOK] Warning: could not resolve session_profile_id %q: %v", profileID, err)
+			return sessionConfig, false
+		}
+	} else {
+		profile = s.resolveDefaultSessionProfile(ctx, webhook)
+		if profile == nil {
+			return sessionConfig, false
+		}
+	}
+
+	profileConfig := sessionProfileConfigToWebhookConfig(profile.Config())
+	merged := MergeSessionConfigs(profileConfig, sessionConfig)
+	return merged, true
+}
+
+func (s *WebhookSessionService) resolveDefaultSessionProfile(ctx context.Context, webhook *entities.Webhook) *entities.SessionProfile {
+	filter := repositories.SessionProfileFilter{
+		UserID: webhook.UserID(),
+		Scope:  webhook.Scope(),
+	}
+	if webhook.Scope() == entities.ScopeTeam {
+		filter.TeamID = webhook.TeamID()
+	}
+
+	profiles, err := s.profileRepo.List(ctx, filter)
+	if err != nil {
+		log.Printf("[WEBHOOK] Warning: could not list session profiles for default lookup: %v", err)
+		return nil
+	}
+	for _, profile := range profiles {
+		if profile.IsDefault() {
+			log.Printf("[WEBHOOK] Applying default session profile %q (%s) for webhook %s", profile.ID(), profile.Name(), webhook.ID())
+			return profile
+		}
+	}
+	return nil
+}
+
+func sessionProfileConfigToWebhookConfig(cfg entities.SessionProfileConfig) *entities.WebhookSessionConfig {
+	result := entities.NewWebhookSessionConfig()
+	result.SetEnvironment(cfg.Environment())
+	result.SetTags(cfg.Tags())
+	result.SetInitialMessageTemplate(cfg.InitialMessageTemplate())
+	result.SetReuseMessageTemplate(cfg.ReuseMessageTemplate())
+	result.SetParams(cfg.Params())
+	result.SetReuseSession(cfg.ReuseSession())
+	result.SetMemoryKey(cfg.MemoryKey())
 	return result
 }
 

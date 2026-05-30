@@ -1,11 +1,13 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -39,6 +41,9 @@ type LaunchRequest struct {
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
 
+	// TemplatePayload is optional data used to render profile message templates.
+	TemplatePayload map[string]interface{}
+
 	// MemoryKey is an optional tag map used to identify memories for this session.
 	// When non-empty, memories matching these tags are injected into CLAUDE.md at startup.
 	// When empty, memory integration is disabled.
@@ -60,6 +65,9 @@ type LaunchRequest struct {
 	// SessionProfileID is an optional reference to a SessionProfile.
 	// When set, the profile's config is merged as a base; explicit request fields override it.
 	SessionProfileID string
+	// SkipSessionProfileResolution prevents Launch from resolving a profile again when
+	// the caller has already applied it before rendering trigger-specific templates.
+	SkipSessionProfileResolution bool
 }
 
 // LaunchResult is returned by LaunchUseCase.Launch.
@@ -128,7 +136,7 @@ func (uc *LaunchUseCase) WithSessionProfileRepository(repo repositories.SessionP
 func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req LaunchRequest) (LaunchResult, error) {
 	// 0. Resolve session profile: merge profile config as base; explicit request fields override.
 	// When SessionProfileID is empty, fall back to the default profile for the user/team.
-	if uc.sessionProfileRepo != nil {
+	if uc.sessionProfileRepo != nil && !req.SkipSessionProfileResolution {
 		profile := uc.resolveSessionProfile(ctx, req)
 		if profile != nil {
 			applyProfileToLaunchRequest(profile.Config(), &req)
@@ -334,4 +342,55 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 			req.Sandbox = cfg.Params().Sandbox
 		}
 	}
+	if req.InitialMessage == "" && cfg.InitialMessageTemplate() != "" {
+		rendered, err := renderLaunchTemplate(cfg.InitialMessageTemplate(), launchTemplatePayload(req))
+		if err != nil {
+			log.Printf("[LAUNCH] Warning: failed to render profile initial_message_template: %v", err)
+			return
+		}
+		req.InitialMessage = rendered
+	}
+	if req.ReuseMessage == "" && cfg.ReuseMessageTemplate() != "" {
+		rendered, err := renderLaunchTemplate(cfg.ReuseMessageTemplate(), launchTemplatePayload(req))
+		if err != nil {
+			log.Printf("[LAUNCH] Warning: failed to render profile reuse_message_template: %v", err)
+			return
+		}
+		req.ReuseMessage = rendered
+	}
+	if cfg.ReuseSession() {
+		req.ReuseSession = true
+	}
+}
+
+func launchTemplatePayload(req *LaunchRequest) map[string]interface{} {
+	if req.TemplatePayload != nil {
+		return req.TemplatePayload
+	}
+	return map[string]interface{}{
+		"user_id":                     req.UserID,
+		"scope":                       string(req.Scope),
+		"team_id":                     req.TeamID,
+		"teams":                       req.Teams,
+		"environment":                 req.Environment,
+		"tags":                        req.Tags,
+		"memory_key":                  req.MemoryKey,
+		"initial_message":             req.InitialMessage,
+		"github_token":                req.GithubToken,
+		"agent_type":                  req.AgentType,
+		"oneshot":                     req.Oneshot,
+		"initial_message_wait_second": req.InitialMessageWaitSecond,
+	}
+}
+
+func renderLaunchTemplate(tmplStr string, payload map[string]interface{}) (string, error) {
+	tmpl, err := template.New("session_profile").Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, payload); err != nil {
+		return "", fmt.Errorf("failed to execute template: %w", err)
+	}
+	return buf.String(), nil
 }

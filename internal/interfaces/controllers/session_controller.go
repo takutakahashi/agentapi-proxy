@@ -212,7 +212,6 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 					startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
 				}
 			}
-
 			// MemoryKey: profile is base, request keys override
 			if len(cfg.MemoryKey()) > 0 {
 				merged := make(map[string]string, len(cfg.MemoryKey()))
@@ -223,6 +222,17 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 					merged[k] = v
 				}
 				startReq.MemoryKey = merged
+			}
+			if cfg.InitialMessageTemplate() != "" && (startReq.Params == nil || startReq.Params.Message == "") {
+				rendered, err := RenderTemplate(cfg.InitialMessageTemplate(), sessionProfileTemplatePayload(userID, startReq))
+				if err != nil {
+					log.Printf("[SESSION] Warning: failed to render profile initial_message_template: %v", err)
+				} else {
+					if startReq.Params == nil {
+						startReq.Params = &entities.SessionParams{}
+					}
+					startReq.Params.Message = rendered
+				}
 			}
 		}
 	}
@@ -992,6 +1002,32 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 		merged.Sandbox = override.Sandbox
 	}
 	return &merged
+}
+
+func sessionProfileTemplatePayload(userID string, req entities.StartRequest) map[string]interface{} {
+	var params map[string]interface{}
+	if req.Params != nil {
+		params = map[string]interface{}{
+			"message":                     req.Params.Message,
+			"github_token":                req.Params.GithubToken,
+			"agent_type":                  req.Params.AgentType,
+			"oneshot":                     req.Params.Oneshot,
+			"initial_message_wait_second": req.Params.InitialMessageWaitSecond,
+			"manager_id":                  req.Params.ManagerID,
+			"cycle_message":               req.Params.CycleMessage,
+			"cycle_max_count":             req.Params.CycleMaxCount,
+			"repo_full_name":              req.Params.RepoFullName,
+		}
+	}
+	return map[string]interface{}{
+		"user_id":     userID,
+		"scope":       string(req.Scope),
+		"team_id":     req.TeamID,
+		"environment": req.Environment,
+		"tags":        req.Tags,
+		"memory_key":  req.MemoryKey,
+		"params":      params,
+	}
 }
 
 // resolveSessionProfile returns the session profile to apply for a session creation request.

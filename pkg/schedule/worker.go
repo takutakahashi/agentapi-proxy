@@ -264,17 +264,14 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 	// Render memory_key values as Go templates with schedule context.
 	// This allows values like {{ .schedule_id }} to be resolved at runtime.
 	memoryKey := schedule.SessionConfig.MemoryKey
+	schedulePayload := scheduleTemplatePayload(schedule, tags, memoryKey)
 	if len(memoryKey) > 0 {
-		schedulePayload := map[string]interface{}{
-			"schedule_id":   schedule.ID,
-			"schedule_name": schedule.Name,
-			"timezone":      schedule.Timezone,
-		}
 		rendered, err := renderScheduleTemplateMap(memoryKey, schedulePayload)
 		if err != nil {
 			log.Printf("[SCHEDULE_WORKER] Failed to render memory_key templates for schedule %s: %v", schedule.ID, err)
 		} else {
 			memoryKey = rendered
+			schedulePayload = scheduleTemplatePayload(schedule, tags, memoryKey)
 		}
 	}
 
@@ -295,6 +292,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		Oneshot:          oneshot,
 		MemoryKey:        memoryKey,
 		RepoInfo:         app.ExtractRepositoryInfo(tags, sessionID),
+		TemplatePayload:  schedulePayload,
 		SessionProfileID: schedule.SessionConfig.SessionProfileID,
 		// Session reuse: when enabled, an existing active session matching schedule_id
 		// tag receives the message instead of a new session being created.
@@ -360,6 +358,39 @@ func (w *Worker) updateNextExecution(ctx context.Context, schedule *Schedule) {
 				schedule.ID, nextAt)
 		}
 	}
+}
+
+func scheduleTemplatePayload(schedule *Schedule, tags map[string]string, memoryKey map[string]string) map[string]interface{} {
+	payload := map[string]interface{}{
+		"schedule_id":     schedule.ID,
+		"schedule_name":   schedule.Name,
+		"user_id":         schedule.UserID,
+		"scope":           string(schedule.GetScope()),
+		"team_id":         schedule.TeamID,
+		"user_teams":      schedule.UserTeams,
+		"timezone":        schedule.Timezone,
+		"cron_expr":       schedule.CronExpr,
+		"execution_count": schedule.ExecutionCount,
+		"tags":            tags,
+		"environment":     schedule.SessionConfig.Environment,
+		"memory_key":      memoryKey,
+	}
+	if schedule.ScheduledAt != nil {
+		payload["scheduled_at"] = schedule.ScheduledAt.Format(time.RFC3339)
+	}
+	if schedule.NextExecutionAt != nil {
+		payload["next_execution_at"] = schedule.NextExecutionAt.Format(time.RFC3339)
+	}
+	if schedule.LastExecution != nil {
+		payload["last_execution"] = map[string]interface{}{
+			"executed_at":    schedule.LastExecution.ExecutedAt.Format(time.RFC3339),
+			"session_id":     schedule.LastExecution.SessionID,
+			"status":         schedule.LastExecution.Status,
+			"error":          schedule.LastExecution.Error,
+			"session_reused": schedule.LastExecution.SessionReused,
+		}
+	}
+	return payload
 }
 
 // renderScheduleTemplateMap renders all template values in a map using schedule context data.

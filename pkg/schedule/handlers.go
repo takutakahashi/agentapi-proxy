@@ -516,6 +516,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	}
 	tags["schedule_id"] = schedule.ID
 	tags["schedule_name"] = schedule.Name
+	schedulePayload := scheduleTemplatePayload(schedule, tags, schedule.SessionConfig.MemoryKey)
 
 	var initialMessage, githubToken, agentType string
 	var slackParams *entities.SlackParams
@@ -548,6 +549,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		Oneshot:          oneshot,
 		MemoryKey:        schedule.SessionConfig.MemoryKey,
 		RepoInfo:         app.ExtractRepositoryInfo(tags, sessionID),
+		TemplatePayload:  schedulePayload,
 		SessionProfileID: schedule.SessionConfig.SessionProfileID,
 		// Session reuse: when enabled, an existing active session matching schedule_id
 		// tag receives the message instead of a new session being created.
