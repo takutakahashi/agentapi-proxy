@@ -34,6 +34,9 @@ type SlackParams struct {
 type SandboxParams struct {
 	// Enabled activates the network filter sidecar (iptables redirect + transparent proxy).
 	Enabled bool `json:"enabled,omitempty"`
+	// PolicyID references a SandboxPolicy resource whose domain lists are merged into the session.
+	// Session-level AllowedDomains and DeniedDomains are appended on top of the policy.
+	PolicyID string `json:"policy_id,omitempty"`
 	// AllowedDomains is the list of hostnames whose traffic is permitted (allowlist mode).
 	// When non-empty, all other domains are blocked. Takes precedence over DeniedDomains.
 	AllowedDomains []string `json:"allowed_domains,omitempty"`

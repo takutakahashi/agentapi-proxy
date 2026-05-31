@@ -55,6 +55,7 @@ type Server struct {
 	shareRepo          portrepos.ShareRepository          // Share repository for session sharing
 	teamConfigRepo     portrepos.TeamConfigRepository     // Team configuration repository
 	memoryRepo         portrepos.MemoryRepository         // Memory repository
+	sandboxPolicyRepo  portrepos.SandboxPolicyRepository  // Sandbox policy repository
 	taskRepo           portrepos.TaskRepository           // Task repository
 	taskGroupRepo      portrepos.TaskGroupRepository      // Task group repository
 	sessionRouteRepo   portrepos.SessionRouteRepository   // Session route repository for proxy B routing
@@ -114,7 +115,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies"
 			}
 			return false
 		},
@@ -278,6 +279,14 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		log.Printf("[SERVER] Memory repository initialized (backend: kubernetes)")
 	}
 
+	// Initialize sandbox policy repository (Kubernetes ConfigMap-backed)
+	sandboxPolicyRepo := portrepos.SandboxPolicyRepository(repositories.NewKubernetesSandboxPolicyRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	))
+	k8sSessionManager.SetSandboxPolicyRepository(sandboxPolicyRepo)
+	log.Printf("[SERVER] Sandbox policy repository initialized")
+
 	// Initialize task repository (Kubernetes ConfigMap-backed)
 	taskRepo := repositories.NewKubernetesTaskRepository(
 		k8sSessionManager.GetClient(),
@@ -325,6 +334,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		shareRepo:          shareRepo,
 		teamConfigRepo:     teamConfigRepo,
 		memoryRepo:         memoryRepo,
+		sandboxPolicyRepo:  sandboxPolicyRepo,
 		taskRepo:           taskRepo,
 		taskGroupRepo:      taskGroupRepo,
 		sessionRouteRepo:   sessionRouteRepo,

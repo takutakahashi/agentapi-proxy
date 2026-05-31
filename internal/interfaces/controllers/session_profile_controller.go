@@ -38,6 +38,7 @@ type SessionProfileConfigRequest struct {
 	Params                 *entities.SessionParams `json:"params,omitempty"`
 	ReuseSession           bool                    `json:"reuse_session,omitempty"`
 	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
+	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
 }
 
 // CreateSessionProfileRequest is the request body for creating a session profile
@@ -81,6 +82,7 @@ type SessionProfileConfigResponse struct {
 	Params                 *entities.SessionParams `json:"params,omitempty"`
 	ReuseSession           bool                    `json:"reuse_session,omitempty"`
 	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
+	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
 }
 
 // --- Handlers ---
@@ -315,6 +317,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	if req.Params != nil {
 		cfg.SetParams(req.Params)
 	}
+	cfg.SetSandboxPolicyID(req.SandboxPolicyID)
 	return cfg
 }
 
@@ -336,6 +339,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			Params:                 cfg.Params(),
 			ReuseSession:           cfg.ReuseSession(),
 			MemoryKey:              cfg.MemoryKey(),
+			SandboxPolicyID:        cfg.SandboxPolicyID(),
 		},
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt: p.UpdatedAt().Format(time.RFC3339),

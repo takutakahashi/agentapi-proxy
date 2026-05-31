@@ -119,6 +119,7 @@ func parseFileSecretKey(k string) (int, bool) {
 // AllowedDomains (allowlist) takes precedence over DeniedDomains (denylist).
 type SandboxConfig struct {
 	Enabled        bool     `yaml:"enabled"                   json:"enabled"`
+	PolicyID       string   `yaml:"policy_id,omitempty"       json:"policy_id,omitempty"`
 	AllowedDomains []string `yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
 	DeniedDomains  []string `yaml:"denied_domains,omitempty"  json:"denied_domains,omitempty"`
 }

@@ -27,6 +27,9 @@ type SessionProfileConfig struct {
 	params                 *SessionParams
 	reuseSession           bool
 	memoryKey              map[string]string
+	// sandboxPolicyID is a reference to a SandboxPolicy resource.
+	// When set, the sandbox sidecar is enabled automatically with this policy applied.
+	sandboxPolicyID string
 }
 
 // NewSessionProfile creates a new SessionProfile
@@ -184,6 +187,12 @@ func (c *SessionProfileConfig) MemoryKey() map[string]string { return c.memoryKe
 
 // SetMemoryKey sets the memory key map
 func (c *SessionProfileConfig) SetMemoryKey(key map[string]string) { c.memoryKey = key }
+
+// SandboxPolicyID returns the sandbox policy ID
+func (c *SessionProfileConfig) SandboxPolicyID() string { return c.sandboxPolicyID }
+
+// SetSandboxPolicyID sets the sandbox policy ID
+func (c *SessionProfileConfig) SetSandboxPolicyID(id string) { c.sandboxPolicyID = id }
 
 // --- Error types ---
 

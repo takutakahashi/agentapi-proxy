@@ -34,6 +34,7 @@ type HandlerRegistry struct {
 	shareController           *controllers.ShareController
 	personalAPIKeyController  *controllers.PersonalAPIKeyController
 	memoryController          *controllers.MemoryController
+	sandboxPolicyController   *controllers.SandboxPolicyController
 	taskController            *controllers.TaskController
 	taskGroupController       *controllers.TaskGroupController
 	fileController            *controllers.FileController
@@ -119,6 +120,13 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Memory controller initialized")
 	}
 
+	// Create sandbox policy controller if sandbox policy repository is available
+	var sandboxPolicyController *controllers.SandboxPolicyController
+	if server.sandboxPolicyRepo != nil {
+		sandboxPolicyController = controllers.NewSandboxPolicyController(server.sandboxPolicyRepo)
+		log.Printf("[ROUTER] Sandbox policy controller initialized")
+	}
+
 	// Create task controller if task repository is available
 	var taskController *controllers.TaskController
 	if server.taskRepo != nil {
@@ -164,6 +172,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			shareController:           shareController,
 			personalAPIKeyController:  personalAPIKeyController,
 			memoryController:          memoryController,
+			sandboxPolicyController:   sandboxPolicyController,
 			taskController:            taskController,
 			taskGroupController:       taskGroupController,
 			fileController:            fileController,
@@ -364,6 +373,19 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Memory endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Memory repository not available, skipping memory routes")
+	}
+
+	// Add sandbox policy routes if sandbox policy repository is available (Kubernetes mode only)
+	if r.server.sandboxPolicyRepo != nil && r.handlers.sandboxPolicyController != nil {
+		log.Printf("[ROUTES] Registering sandbox policy endpoints...")
+		r.echo.POST("/sandbox-policies", r.handlers.sandboxPolicyController.CreateSandboxPolicy, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/sandbox-policies", r.handlers.sandboxPolicyController.ListSandboxPolicies, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/sandbox-policies/:id", r.handlers.sandboxPolicyController.GetSandboxPolicy, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/sandbox-policies/:id", r.handlers.sandboxPolicyController.UpdateSandboxPolicy, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/sandbox-policies/:id", r.handlers.sandboxPolicyController.DeleteSandboxPolicy, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Sandbox policy endpoints registered")
+	} else {
+		log.Printf("[ROUTES] Sandbox policy repository not available, skipping sandbox policy routes")
 	}
 
 	// Add task routes if task repository is available (Kubernetes mode only)

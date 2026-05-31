@@ -2136,6 +2136,122 @@
         }
       }
     },
+    "/sandbox-policies": {
+      "post": {
+        "summary": "Create a sandbox policy",
+        "description": "Creates a named, reusable set of network filter rules. Sessions can reference this policy by ID at creation time.",
+        "operationId": "createSandboxPolicy",
+        "tags": ["SandboxPolicy"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateSandboxPolicyRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Sandbox policy created",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/SandboxPolicy"}
+              }
+            }
+          },
+          "400": {"description": "Bad request"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"}
+        }
+      },
+      "get": {
+        "summary": "List sandbox policies",
+        "description": "Returns sandbox policies visible to the authenticated user.",
+        "operationId": "listSandboxPolicies",
+        "tags": ["SandboxPolicy"],
+        "parameters": [
+          {"name": "scope", "in": "query", "schema": {"type": "string", "enum": ["user", "team"]}},
+          {"name": "team_id", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "List of sandbox policies",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/SandboxPolicyListResponse"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"}
+        }
+      }
+    },
+    "/sandbox-policies/{id}": {
+      "get": {
+        "summary": "Get a sandbox policy",
+        "operationId": "getSandboxPolicy",
+        "tags": ["SandboxPolicy"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Sandbox policy",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/SandboxPolicy"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Sandbox policy not found"}
+        }
+      },
+      "put": {
+        "summary": "Update a sandbox policy",
+        "operationId": "updateSandboxPolicy",
+        "tags": ["SandboxPolicy"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/UpdateSandboxPolicyRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated sandbox policy",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/SandboxPolicy"}
+              }
+            }
+          },
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Sandbox policy not found"}
+        }
+      },
+      "delete": {
+        "summary": "Delete a sandbox policy",
+        "operationId": "deleteSandboxPolicy",
+        "tags": ["SandboxPolicy"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Deleted successfully"},
+          "401": {"description": "Unauthorized"},
+          "403": {"description": "Forbidden"},
+          "404": {"description": "Sandbox policy not found"}
+        }
+      }
+    },
     "/hooks/slack/{id}": {
       "post": {
         "summary": "Receive Slack event",
@@ -5112,12 +5228,17 @@
       },
       "SandboxParams": {
         "type": "object",
-        "description": "Network sandbox configuration for the session. When enabled, outbound HTTP/HTTPS traffic is routed through a transparent proxy sidecar. allowed_domains (allowlist) takes precedence over denied_domains (denylist).",
+        "description": "Network sandbox configuration for the session. When enabled, outbound HTTP/HTTPS traffic is routed through a transparent proxy sidecar. allowed_domains (allowlist) takes precedence over denied_domains (denylist). A policy_id may reference a SandboxPolicy resource whose domain lists are merged before session-level overrides.",
         "properties": {
           "enabled": {
             "type": "boolean",
             "description": "When true, the network-filter init container and sidecar are injected into the session Pod. The init container configures iptables to redirect HTTP/HTTPS traffic through the sidecar.",
             "default": false
+          },
+          "policy_id": {
+            "type": "string",
+            "description": "ID of a SandboxPolicy resource to use as the base rule set. The policy's allowed_domains and denied_domains are merged with session-level overrides. Session-level domains take precedence.",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
           },
           "allowed_domains": {
             "type": "array",
@@ -5141,6 +5262,105 @@
               "*.evil.com"
             ]
           }
+        }
+      },
+      "SandboxPolicy": {
+        "type": "object",
+        "description": "A named, reusable set of network filter rules. Sessions reference a policy by ID; the policy's domain lists are merged with session-level overrides at creation time.",
+        "required": ["id", "name", "scope", "owner_id", "created_at", "updated_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier (UUID)",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name for the policy",
+            "example": "github-access"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description",
+            "example": "Allows access to GitHub and npm registry"
+          },
+          "allowed_domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Allowlist: only these domains are permitted. Supports wildcard prefixes.",
+            "example": ["github.com", "*.github.com", "registry.npmjs.org"]
+          },
+          "denied_domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Denylist: these domains are blocked. Used only when allowed_domains is empty.",
+            "example": ["raw.githubusercontent.com"]
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["user", "team"],
+            "description": "Resource scope"
+          },
+          "owner_id": {
+            "type": "string",
+            "description": "User ID of the creator"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier (required when scope is 'team')"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateSandboxPolicyRequest": {
+        "type": "object",
+        "required": ["name", "scope"],
+        "properties": {
+          "name": {"type": "string", "example": "github-access"},
+          "description": {"type": "string"},
+          "allowed_domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "example": ["github.com", "*.github.com"]
+          },
+          "denied_domains": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "scope": {"type": "string", "enum": ["user", "team"]},
+          "team_id": {"type": "string"}
+        }
+      },
+      "UpdateSandboxPolicyRequest": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "allowed_domains": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "denied_domains": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      },
+      "SandboxPolicyListResponse": {
+        "type": "object",
+        "properties": {
+          "sandbox_policies": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/SandboxPolicy"}
+          },
+          "total": {"type": "integer"}
         }
       },
       "SlackParams": {

@@ -224,6 +224,19 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 				}
 				startReq.MemoryKey = merged
 			}
+
+			// SandboxPolicyID: apply profile's policy when request does not already specify one.
+			if cfg.SandboxPolicyID() != "" {
+				if startReq.Params == nil {
+					startReq.Params = &entities.SessionParams{}
+				}
+				if startReq.Params.Sandbox == nil {
+					startReq.Params.Sandbox = &entities.SandboxParams{Enabled: true, PolicyID: cfg.SandboxPolicyID()}
+				} else if startReq.Params.Sandbox.PolicyID == "" {
+					startReq.Params.Sandbox.Enabled = true
+					startReq.Params.Sandbox.PolicyID = cfg.SandboxPolicyID()
+				}
+			}
 		}
 	}
 
