@@ -98,6 +98,7 @@ type KubernetesSessionManager struct {
 	settingsRepo          portrepos.SettingsRepository
 	teamConfigRepo        portrepos.TeamConfigRepository
 	personalAPIKeyRepo    portrepos.PersonalAPIKeyRepository
+	sandboxPolicyRepo     portrepos.SandboxPolicyRepository
 	personalAPIKeyLoader  PersonalAPIKeyLoader
 	serviceAccountEnsurer ServiceAccountEnsurer
 	// onSessionDeletedHandlers holds callbacks registered via AddSessionDeletedHandler.
@@ -1629,7 +1630,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	var sandboxSidecar *corev1.Container
 	var sandboxEnvVars []corev1.EnvVar
 	if sandboxEnabled {
-		initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(req)
+		effectiveSandbox := m.resolveSandboxParams(ctx, req)
+		initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
 	}
 
 	// Determine working directory
@@ -2021,19 +2023,44 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 	return nil
 }
 
+// resolveSandboxParams returns effective SandboxParams by merging a referenced SandboxPolicy
+// (if PolicyID is set) with the session-level overrides in req.Sandbox.
+// Policy domains are prepended; session-level domains are appended on top.
+func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req *entities.RunServerRequest) *entities.SandboxParams {
+	if req.Sandbox == nil {
+		return nil
+	}
+	effective := &entities.SandboxParams{
+		Enabled:        req.Sandbox.Enabled,
+		AllowedDomains: req.Sandbox.AllowedDomains,
+		DeniedDomains:  req.Sandbox.DeniedDomains,
+	}
+	if req.Sandbox.PolicyID == "" || m.sandboxPolicyRepo == nil {
+		return effective
+	}
+	policy, err := m.sandboxPolicyRepo.GetByID(ctx, req.Sandbox.PolicyID)
+	if err != nil {
+		log.Printf("[K8S_SESSION] sandbox policy %s not found, ignoring: %v", req.Sandbox.PolicyID, err)
+		return effective
+	}
+	effective.AllowedDomains = append(policy.AllowedDomains(), effective.AllowedDomains...)
+	effective.DeniedDomains = append(policy.DeniedDomains(), effective.DeniedDomains...)
+	return effective
+}
+
 // buildSandboxContainers returns the init container (iptables setup) and sidecar
 // (network-filter proxy) needed for session network sandboxing.
 // The sidecar runs as UID 0 (root) so that iptables rules can skip its traffic
 // via the "--uid-owner 0" match, preventing redirect loops.
-func (m *KubernetesSessionManager) buildSandboxContainers(req *entities.RunServerRequest) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
+func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.SandboxParams) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
 	var filterEnvVars []corev1.EnvVar
-	if req.Sandbox != nil && len(req.Sandbox.AllowedDomains) > 0 {
+	if sandbox != nil && len(sandbox.AllowedDomains) > 0 {
 		filterEnvVars = []corev1.EnvVar{
-			{Name: "NETWORK_FILTER_ALLOWED_DOMAINS", Value: strings.Join(req.Sandbox.AllowedDomains, ",")},
+			{Name: "NETWORK_FILTER_ALLOWED_DOMAINS", Value: strings.Join(sandbox.AllowedDomains, ",")},
 		}
-	} else if req.Sandbox != nil && len(req.Sandbox.DeniedDomains) > 0 {
+	} else if sandbox != nil && len(sandbox.DeniedDomains) > 0 {
 		filterEnvVars = []corev1.EnvVar{
-			{Name: "NETWORK_FILTER_DENIED_DOMAINS", Value: strings.Join(req.Sandbox.DeniedDomains, ",")},
+			{Name: "NETWORK_FILTER_DENIED_DOMAINS", Value: strings.Join(sandbox.DeniedDomains, ",")},
 		}
 	}
 
@@ -2792,6 +2819,11 @@ func (m *KubernetesSessionManager) SetSettingsRepository(repo portrepos.Settings
 // SetTeamConfigRepository sets the team config repository for service account configuration
 func (m *KubernetesSessionManager) SetTeamConfigRepository(repo portrepos.TeamConfigRepository) {
 	m.teamConfigRepo = repo
+}
+
+// SetSandboxPolicyRepository sets the sandbox policy repository for policy resolution at session creation.
+func (m *KubernetesSessionManager) SetSandboxPolicyRepository(repo portrepos.SandboxPolicyRepository) {
+	m.sandboxPolicyRepo = repo
 }
 
 // SetServiceAccountEnsurer sets the service account ensurer for team-scoped session creation
@@ -4142,10 +4174,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	if req.Sandbox != nil && req.Sandbox.Enabled {
 		settings.Sandbox = &sessionsettings.SandboxConfig{
 			Enabled:        true,
+			PolicyID:       req.Sandbox.PolicyID,
 			AllowedDomains: req.Sandbox.AllowedDomains,
 			DeniedDomains:  req.Sandbox.DeniedDomains,
 		}
-		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (allowed: %v, denied: %v)", session.id, req.Sandbox.AllowedDomains, req.Sandbox.DeniedDomains)
+		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (policy: %s, allowed: %v, denied: %v)", session.id, req.Sandbox.PolicyID, req.Sandbox.AllowedDomains, req.Sandbox.DeniedDomains)
 	}
 
 	return settings
