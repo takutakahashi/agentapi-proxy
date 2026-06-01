@@ -242,6 +242,9 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.GET("/sessions/status/wait", r.handlers.sessionController.WaitSessionsStatus)
 	// Per-session message update long-poll endpoint (must be before /:sessionId/* catch-all)
 	r.echo.GET("/sessions/:sessionId/messages/wait", r.handlers.sessionController.WaitSessionMessages)
+	// Sandbox domain viewer (must be before /:sessionId/* catch-all)
+	r.echo.GET("/sessions/:sessionId/sandbox-domains", r.handlers.sessionController.GetSessionSandboxDomains,
+		auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	log.Printf("[ROUTES] Session status/message push endpoints registered (SSE + long-poll)")
 
 	// Session sharing routes
