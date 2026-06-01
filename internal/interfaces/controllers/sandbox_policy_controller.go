@@ -8,17 +8,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
 // SandboxPolicyController handles sandbox policy HTTP requests.
 type SandboxPolicyController struct {
-	repo portrepos.SandboxPolicyRepository
+	repo       portrepos.SandboxPolicyRepository
+	domainRepo *repositories.KubernetesSandboxDomainRepository
 }
 
-func NewSandboxPolicyController(repo portrepos.SandboxPolicyRepository) *SandboxPolicyController {
-	return &SandboxPolicyController{repo: repo}
+func NewSandboxPolicyController(repo portrepos.SandboxPolicyRepository, domainRepo *repositories.KubernetesSandboxDomainRepository) *SandboxPolicyController {
+	return &SandboxPolicyController{repo: repo, domainRepo: domainRepo}
 }
 
 func (c *SandboxPolicyController) GetName() string { return "SandboxPolicyController" }
@@ -284,6 +286,63 @@ func (c *SandboxPolicyController) DeleteSandboxPolicy(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]bool{"success": true})
+}
+
+// SandboxPolicyDomainsResponse is the JSON body returned by GET /sandbox-policies/:id/domains.
+type SandboxPolicyDomainsResponse struct {
+	Allowed   []string `json:"allowed"`
+	Denied    []string `json:"denied"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
+}
+
+// GetSandboxPolicyDomains handles GET /sandbox-policies/:id/domains.
+// Returns the aggregated domain log collected by the background worker.
+func (c *SandboxPolicyController) GetSandboxPolicyDomains(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
+
+	if c.domainRepo == nil {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Domain collection not available")
+	}
+
+	policy, err := c.repo.GetByID(ctx.Request().Context(), ctx.Param("id"))
+	if err != nil {
+		var notFound entities.ErrSandboxPolicyNotFound
+		if errors.As(err, &notFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "Sandbox policy not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get sandbox policy")
+	}
+	if !c.canAccess(user, policy) {
+		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
+	}
+
+	data, err := c.domainRepo.Get(ctx.Request().Context(), policy.ID())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to read domain data")
+	}
+
+	if data == nil {
+		return ctx.JSON(http.StatusOK, SandboxPolicyDomainsResponse{
+			Allowed: []string{},
+			Denied:  []string{},
+		})
+	}
+
+	resp := SandboxPolicyDomainsResponse{
+		Allowed:   data.Allowed,
+		Denied:    data.Denied,
+		UpdatedAt: data.UpdatedAt.Format(time.RFC3339),
+	}
+	if resp.Allowed == nil {
+		resp.Allowed = []string{}
+	}
+	if resp.Denied == nil {
+		resp.Denied = []string{}
+	}
+	return ctx.JSON(http.StatusOK, resp)
 }
 
 // --- Access control ---
