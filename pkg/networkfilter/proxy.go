@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -28,6 +29,45 @@ const (
 // passthroughFilter allows all traffic (empty denylist, no allowlist).
 var passthroughFilter = &Filter{}
 
+// DomainLog tracks which domains were accessed (allowed) or rejected (denied) by the proxy.
+type DomainLog struct {
+	mu      sync.RWMutex
+	allowed map[string]struct{}
+	denied  map[string]struct{}
+}
+
+func newDomainLog() *DomainLog {
+	return &DomainLog{
+		allowed: make(map[string]struct{}),
+		denied:  make(map[string]struct{}),
+	}
+}
+
+func (d *DomainLog) recordAllowed(domain string) {
+	d.mu.Lock()
+	d.allowed[domain] = struct{}{}
+	d.mu.Unlock()
+}
+
+func (d *DomainLog) recordDenied(domain string) {
+	d.mu.Lock()
+	d.denied[domain] = struct{}{}
+	d.mu.Unlock()
+}
+
+// Snapshot returns a copy of the current allowed and denied domain sets.
+func (d *DomainLog) Snapshot() (allowed, denied []string) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for k := range d.allowed {
+		allowed = append(allowed, k)
+	}
+	for k := range d.denied {
+		denied = append(denied, k)
+	}
+	return
+}
+
 // Proxy is a forward proxy that enforces a domain deny-list.
 // It handles three types of incoming connections on a single port:
 //
@@ -42,17 +82,26 @@ var passthroughFilter = &Filter{}
 type Proxy struct {
 	configuredFilter *Filter
 	activeFilter     atomic.Pointer[Filter]
+	domainLog        *DomainLog
 }
 
 // NewProxy creates a Proxy with the given filter.
 // When active is true, the policy is enforced immediately.
 // When active is false, all traffic is allowed until EnablePolicy is called.
 func NewProxy(filter *Filter, active bool) *Proxy {
-	p := &Proxy{configuredFilter: filter}
+	p := &Proxy{
+		configuredFilter: filter,
+		domainLog:        newDomainLog(),
+	}
 	if active {
 		p.activeFilter.Store(filter)
 	}
 	return p
+}
+
+// Domains returns the current snapshot of accessed (allowed) and rejected (denied) domains.
+func (p *Proxy) Domains() (allowed, denied []string) {
+	return p.domainLog.Snapshot()
 }
 
 // EnablePolicy activates the configured filter. After this call, all connections
@@ -130,9 +179,11 @@ func (p *Proxy) handleCONNECT(conn net.Conn, req *http.Request) {
 	log.Printf("[network-filter] CONNECT %s: %s", result, req.Host)
 
 	if result == FilterResultBlocked {
+		p.domainLog.recordDenied(host)
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 403 Forbidden\r\n\r\nblocked by network filter\n")
 		return
 	}
+	p.domainLog.recordAllowed(host)
 
 	upConn, err := net.DialTimeout("tcp", req.Host, dialTimeout)
 	if err != nil {
@@ -158,6 +209,7 @@ func (p *Proxy) handleHTTP(conn net.Conn, br *bufio.Reader, req *http.Request) {
 	log.Printf("[network-filter] HTTP %s: %s", result, host)
 
 	if result == FilterResultBlocked {
+		p.domainLog.recordDenied(host)
 		resp := &http.Response{
 			Status:     "403 Forbidden",
 			StatusCode: http.StatusForbidden,
@@ -170,6 +222,7 @@ func (p *Proxy) handleHTTP(conn net.Conn, br *bufio.Reader, req *http.Request) {
 		_ = resp.Write(conn)
 		return
 	}
+	p.domainLog.recordAllowed(host)
 
 	upstream := req.Host
 	if upstream == "" {
@@ -220,8 +273,10 @@ func (p *Proxy) handleTransparentTLS(conn net.Conn, br *bufio.Reader) {
 	log.Printf("[network-filter] TLS %s: %s", result, sni)
 
 	if result == FilterResultBlocked {
+		p.domainLog.recordDenied(sni)
 		return
 	}
+	p.domainLog.recordAllowed(sni)
 
 	upstream := net.JoinHostPort(sni, "443")
 	upConn, err := net.DialTimeout("tcp", upstream, dialTimeout)

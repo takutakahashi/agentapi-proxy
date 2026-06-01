@@ -458,6 +458,139 @@
         ]
       }
     },
+    "/sandbox-policies/{id}/domains": {
+      "get": {
+        "summary": "Get aggregated domains for a sandbox policy",
+        "description": "Returns the allowed/denied domain lists collected by the background domain collector from all sessions using this policy. Data is refreshed every 60 seconds. Returns empty lists when no data has been collected yet.",
+        "operationId": "getSandboxPolicyDomains",
+        "tags": [
+          "Sandbox"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Sandbox policy ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Aggregated domain lists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Domains allowed through the filter"
+                    },
+                    "denied": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Domains blocked by the filter"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When the data was last collected"
+                    }
+                  },
+                  "required": ["allowed", "denied"]
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "404": { "description": "Sandbox policy not found" },
+          "501": { "description": "Domain collection not available" }
+        },
+        "security": [
+          { "ApiKeyAuth": [] },
+          { "BearerAuth": [] }
+        ]
+      }
+    },
+    "/sessions/{sessionId}/sandbox-domains": {
+      "get": {
+        "summary": "Get domains accessed by a sandboxed session",
+        "description": "Returns the list of domains that the session's network filter proxy has seen, split into allowed (accessed) and denied (blocked) sets. Only available for Kubernetes sessions with a sandbox sidecar. Returns 503 when the network filter is not running.",
+        "operationId": "getSessionSandboxDomains",
+        "tags": [
+          "Sessions",
+          "Sandbox"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Domain lists from the network filter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Domains that were allowed through the filter"
+                    },
+                    "denied": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Domains that were blocked by the filter"
+                    }
+                  },
+                  "required": ["allowed", "denied"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "501": {
+            "description": "Not implemented for this session type"
+          },
+          "503": {
+            "description": "Network filter not available for this session"
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
     "/sessions/{sessionId}/share": {
       "post": {
         "summary": "Create a share URL",
@@ -5436,6 +5569,10 @@
               }
             },
             "description": "Session metadata"
+          },
+          "sandbox_policy_id": {
+            "type": "string",
+            "description": "ID of the sandbox policy applied to this session (Kubernetes sessions only)"
           }
         }
       },

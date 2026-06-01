@@ -362,6 +362,11 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				"description": initialMessage,
 			},
 		}
+		if ks, ok := session.(*services.KubernetesSession); ok {
+			if req := ks.Request(); req != nil && req.Sandbox != nil {
+				sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
+			}
+		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
 
@@ -1005,6 +1010,61 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 		merged.Sandbox = override.Sandbox
 	}
 	return &merged
+}
+
+// SandboxDomainsResponse is the JSON body returned by GET /sessions/:sessionId/sandbox-domains.
+type SandboxDomainsResponse struct {
+	Allowed []string `json:"allowed"`
+	Denied  []string `json:"denied"`
+}
+
+// GetSessionSandboxDomains handles GET /sessions/:sessionId/sandbox-domains.
+// It forwards the request to the session's agent-provisioner /sandbox-domains endpoint,
+// which in turn queries the network filter control server (127.0.0.1:3129/domains).
+// Returns 404 when the session does not exist, 503 when the network filter is unavailable.
+func (c *SessionController) GetSessionSandboxDomains(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+
+	ks, ok := session.(*services.KubernetesSession)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Sandbox domains not available for this session type")
+	}
+
+	provisionerURL := fmt.Sprintf("http://%s:%d/sandbox-domains", ks.ServiceDNS(), services.ProvisionerPort)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(provisionerURL)
+	if err != nil {
+		log.Printf("[SESSION] Failed to fetch sandbox domains for %s: %v", sessionID, err)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Network filter not available")
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Network filter not available for this session")
+	}
+
+	var domainsResp SandboxDomainsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&domainsResp); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to parse domain response")
+	}
+	if domainsResp.Allowed == nil {
+		domainsResp.Allowed = []string{}
+	}
+	if domainsResp.Denied == nil {
+		domainsResp.Denied = []string{}
+	}
+
+	return ctx.JSON(http.StatusOK, domainsResp)
 }
 
 // resolveSessionProfile returns the session profile to apply for a session creation request.

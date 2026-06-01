@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -103,6 +104,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/provision", s.handleProvision)
+	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
@@ -215,6 +217,27 @@ func (s *Server) GetStatus() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.status
+}
+
+// handleSandboxDomains proxies GET /sandbox-domains to the network filter control
+// server (127.0.0.1:3129/domains) and returns the accessed domain list.
+// Returns 503 when the network filter is not running (no sandbox sidecar).
+func (s *Server) handleSandboxDomains(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	resp, err := http.Get("http://127.0.0.1:3129/domains") //nolint:noctx
+	if err != nil {
+		http.Error(w, "network filter not available", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // runStartupScript executes the common startup pre-script as soon as the Pod

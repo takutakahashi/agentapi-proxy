@@ -123,7 +123,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create sandbox policy controller if sandbox policy repository is available
 	var sandboxPolicyController *controllers.SandboxPolicyController
 	if server.sandboxPolicyRepo != nil {
-		sandboxPolicyController = controllers.NewSandboxPolicyController(server.sandboxPolicyRepo)
+		sandboxPolicyController = controllers.NewSandboxPolicyController(server.sandboxPolicyRepo, server.sandboxDomainRepo)
 		log.Printf("[ROUTER] Sandbox policy controller initialized")
 	}
 
@@ -242,6 +242,9 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.GET("/sessions/status/wait", r.handlers.sessionController.WaitSessionsStatus)
 	// Per-session message update long-poll endpoint (must be before /:sessionId/* catch-all)
 	r.echo.GET("/sessions/:sessionId/messages/wait", r.handlers.sessionController.WaitSessionMessages)
+	// Sandbox domain viewer (must be before /:sessionId/* catch-all)
+	r.echo.GET("/sessions/:sessionId/sandbox-domains", r.handlers.sessionController.GetSessionSandboxDomains,
+		auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	log.Printf("[ROUTES] Session status/message push endpoints registered (SSE + long-poll)")
 
 	// Session sharing routes
@@ -381,6 +384,7 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.POST("/sandbox-policies", r.handlers.sandboxPolicyController.CreateSandboxPolicy, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.GET("/sandbox-policies", r.handlers.sandboxPolicyController.ListSandboxPolicies, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/sandbox-policies/:id", r.handlers.sandboxPolicyController.GetSandboxPolicy, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/sandbox-policies/:id/domains", r.handlers.sandboxPolicyController.GetSandboxPolicyDomains, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.PUT("/sandbox-policies/:id", r.handlers.sandboxPolicyController.UpdateSandboxPolicy, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.DELETE("/sandbox-policies/:id", r.handlers.sandboxPolicyController.DeleteSandboxPolicy, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		log.Printf("[ROUTES] Sandbox policy endpoints registered")

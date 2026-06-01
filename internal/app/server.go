@@ -55,7 +55,8 @@ type Server struct {
 	shareRepo          portrepos.ShareRepository          // Share repository for session sharing
 	teamConfigRepo     portrepos.TeamConfigRepository     // Team configuration repository
 	memoryRepo         portrepos.MemoryRepository         // Memory repository
-	sandboxPolicyRepo  portrepos.SandboxPolicyRepository  // Sandbox policy repository
+	sandboxPolicyRepo  portrepos.SandboxPolicyRepository                      // Sandbox policy repository
+	sandboxDomainRepo  *repositories.KubernetesSandboxDomainRepository        // Sandbox domain log repository
 	taskRepo           portrepos.TaskRepository           // Task repository
 	taskGroupRepo      portrepos.TaskGroupRepository      // Task group repository
 	sessionRouteRepo   portrepos.SessionRouteRepository   // Session route repository for proxy B routing
@@ -287,6 +288,13 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	k8sSessionManager.SetSandboxPolicyRepository(sandboxPolicyRepo)
 	log.Printf("[SERVER] Sandbox policy repository initialized")
 
+	// Initialize sandbox domain repository (Kubernetes ConfigMap-backed)
+	sandboxDomainRepo := repositories.NewKubernetesSandboxDomainRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] Sandbox domain repository initialized")
+
 	// Initialize task repository (Kubernetes ConfigMap-backed)
 	taskRepo := repositories.NewKubernetesTaskRepository(
 		k8sSessionManager.GetClient(),
@@ -335,6 +343,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		teamConfigRepo:     teamConfigRepo,
 		memoryRepo:         memoryRepo,
 		sandboxPolicyRepo:  sandboxPolicyRepo,
+		sandboxDomainRepo:  sandboxDomainRepo,
 		taskRepo:           taskRepo,
 		taskGroupRepo:      taskGroupRepo,
 		sessionRouteRepo:   sessionRouteRepo,
@@ -431,6 +440,13 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Start cleanup goroutine for defunct processes
 	go s.cleanupDefunctProcesses()
+
+	// Start sandbox domain collector (Kubernetes mode only)
+	if k8sMgr, ok := s.sessionManager.(*services.KubernetesSessionManager); ok && s.sandboxDomainRepo != nil {
+		collector := newSandboxDomainCollector(k8sMgr, s.sandboxDomainRepo, 60*time.Second)
+		go collector.start(context.Background())
+		log.Printf("[SERVER] Sandbox domain collector started (interval: 60s)")
+	}
 
 	// Start cleanup goroutine for expired shares
 	if s.shareRepo != nil {
