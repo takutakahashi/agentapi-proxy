@@ -200,12 +200,8 @@ spec:
               value: {{ .Values.kubernetesSession.namespace | default .Release.Namespace | quote }}
             - name: AGENTAPI_K8S_SESSION_IMAGE
               value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository .Chart.AppVersion) | quote }}
-            {{- if .Values.kubernetesSession.sandboxInitImage }}
-            - name: AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE
-              value: {{ .Values.kubernetesSession.sandboxInitImage | quote }}
-            {{- end }}
-            - name: AGENTAPI_K8S_SESSION_SANDBOX_IPTABLES_CONFIGMAP_NAME
-              value: {{ printf "%s-sandbox-iptables" (include "agentapi-proxy.fullname" .) | quote }}
+            - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE
+              value: {{ .Values.kubernetesSession.networkFilterImage | default "ghcr.io/takutakahashi/nfa:v0.5.0" | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST
               value: {{ dig "networkFilter" "resources" "requests" "cpu" "250m" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT

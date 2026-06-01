@@ -2067,17 +2067,13 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 	rootUID := int64(0)
 	falseVal := false
 
-	sandboxInitImage := m.k8sConfig.SandboxInitImage
-	if sandboxInitImage == "" {
-		sandboxInitImage = m.k8sConfig.Image
-	}
+	nfaImage := m.k8sConfig.NetworkFilterImage
 
 	initContainer := corev1.Container{
 		Name:            "network-filter-setup",
-		Image:           sandboxInitImage,
+		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"iptables-restore"},
-		Args:            []string{"/etc/iptables/rules.v4"},
+		Command:         []string{"nfa", "setup"},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    &rootUID,
 			RunAsNonRoot: &falseVal,
@@ -2086,22 +2082,15 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 			},
 		},
 		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterInitCPURequest, m.k8sConfig.NetworkFilterInitCPULimit, m.k8sConfig.NetworkFilterInitMemoryRequest, m.k8sConfig.NetworkFilterInitMemoryLimit),
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      "sandbox-iptables",
-				MountPath: "/etc/iptables",
-				ReadOnly:  true,
-			},
-		},
 	}
 
 	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", networkfilter.ProxyPort)
 
 	sidecar := corev1.Container{
 		Name:            "network-filter",
-		Image:           m.k8sConfig.Image,
+		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"agentapi-proxy", "network-filter", "proxy", "--deferred-policy"},
+		Command:         []string{"nfa", "proxy", "--deferred-policy"},
 		Env:             filterEnvVars,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:                &rootUID,
