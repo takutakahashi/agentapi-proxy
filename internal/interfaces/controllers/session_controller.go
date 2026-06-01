@@ -362,6 +362,11 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				"description": initialMessage,
 			},
 		}
+		if ks, ok := session.(*services.KubernetesSession); ok {
+			if req := ks.Request(); req != nil && req.Sandbox != nil {
+				sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
+			}
+		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
 

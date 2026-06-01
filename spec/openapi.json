@@ -5510,6 +5510,10 @@
               }
             },
             "description": "Session metadata"
+          },
+          "sandbox_policy_id": {
+            "type": "string",
+            "description": "ID of the sandbox policy applied to this session (Kubernetes sessions only)"
           }
         }
       },
