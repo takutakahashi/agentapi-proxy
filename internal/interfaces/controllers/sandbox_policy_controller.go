@@ -32,6 +32,7 @@ type CreateSandboxPolicyRequest struct {
 	Description    string   `json:"description,omitempty"`
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
 	DeniedDomains  []string `json:"denied_domains,omitempty"`
+	CountMode      bool     `json:"count_mode,omitempty"`
 	Scope          string   `json:"scope"`
 	TeamID         string   `json:"team_id,omitempty"`
 }
@@ -41,6 +42,7 @@ type UpdateSandboxPolicyRequest struct {
 	Description    *string   `json:"description,omitempty"`
 	AllowedDomains *[]string `json:"allowed_domains,omitempty"`
 	DeniedDomains  *[]string `json:"denied_domains,omitempty"`
+	CountMode      *bool     `json:"count_mode,omitempty"`
 }
 
 type SandboxPolicyResponse struct {
@@ -49,6 +51,7 @@ type SandboxPolicyResponse struct {
 	Description    string   `json:"description,omitempty"`
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
 	DeniedDomains  []string `json:"denied_domains,omitempty"`
+	CountMode      bool     `json:"count_mode,omitempty"`
 	Scope          string   `json:"scope"`
 	OwnerID        string   `json:"owner_id"`
 	TeamID         string   `json:"team_id,omitempty"`
@@ -100,6 +103,9 @@ func (c *SandboxPolicyController) CreateSandboxPolicy(ctx echo.Context) error {
 		string(user.ID()),
 		req.TeamID,
 	)
+	if req.CountMode {
+		policy.SetCountMode(true)
+	}
 
 	if err := c.repo.Create(ctx.Request().Context(), policy); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create sandbox policy")
@@ -244,6 +250,9 @@ func (c *SandboxPolicyController) UpdateSandboxPolicy(ctx echo.Context) error {
 	}
 	if req.DeniedDomains != nil {
 		policy.SetDeniedDomains(*req.DeniedDomains)
+	}
+	if req.CountMode != nil {
+		policy.SetCountMode(*req.CountMode)
 	}
 
 	if err := c.repo.Update(ctx.Request().Context(), policy); err != nil {
@@ -405,6 +414,7 @@ func (c *SandboxPolicyController) toResponse(p *entities.SandboxPolicy) *Sandbox
 		Description:    p.Description(),
 		AllowedDomains: p.AllowedDomains(),
 		DeniedDomains:  p.DeniedDomains(),
+		CountMode:      p.CountMode(),
 		Scope:          string(p.Scope()),
 		OwnerID:        p.OwnerID(),
 		TeamID:         p.TeamID(),

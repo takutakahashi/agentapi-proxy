@@ -5434,6 +5434,11 @@
             "description": "Denylist: these domains are blocked. Used only when allowed_domains is empty.",
             "example": ["raw.githubusercontent.com"]
           },
+          "count_mode": {
+            "type": "boolean",
+            "description": "When true, policy rules are evaluated and blocked domains are recorded, but traffic is not actually blocked. Useful for auditing policies before enforcing them in production. Requires nfa v0.6.0+.",
+            "default": false
+          },
           "scope": {
             "type": "string",
             "enum": ["user", "team"],
@@ -5472,6 +5477,11 @@
             "type": "array",
             "items": {"type": "string"}
           },
+          "count_mode": {
+            "type": "boolean",
+            "description": "When true, enables count mode: policy rules are evaluated and blocked domains are recorded, but traffic is not actually blocked.",
+            "default": false
+          },
           "scope": {"type": "string", "enum": ["user", "team"]},
           "team_id": {"type": "string"}
         }
@@ -5488,6 +5498,11 @@
           "denied_domains": {
             "type": "array",
             "items": {"type": "string"}
+          },
+          "count_mode": {
+            "type": "boolean",
+            "description": "When true, enables count mode: policy rules are evaluated and blocked domains are recorded, but traffic is not actually blocked.",
+            "default": false
           }
         }
       },

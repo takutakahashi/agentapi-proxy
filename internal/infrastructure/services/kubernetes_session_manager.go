@@ -2045,6 +2045,9 @@ func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req
 	}
 	effective.AllowedDomains = append(policy.AllowedDomains(), effective.AllowedDomains...)
 	effective.DeniedDomains = append(policy.DeniedDomains(), effective.DeniedDomains...)
+	if policy.CountMode() {
+		effective.CountMode = true
+	}
 	return effective
 }
 
