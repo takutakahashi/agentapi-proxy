@@ -337,12 +337,6 @@ kubernetesSession:
   # If empty, uses the same image as the proxy
   image: ""
 
-  # Container image for the network-filter sidecar and init container (sandbox feature).
-  # Uses takutakahashi/nfa, a standalone network filter for agents.
-  # The init container runs "nfa setup" to configure iptables rules;
-  # the sidecar runs "nfa proxy --deferred-policy" to enforce domain filtering.
-  networkFilterImage: "ghcr.io/takutakahashi/nfa:v0.6.0"
-
   # Resource configuration for the network-filter sidecar and initContainer (sandbox feature)
   networkFilter:
     # Resources for the network-filter forward proxy sidecar container
