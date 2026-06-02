@@ -107,9 +107,16 @@ func (c *SandboxDomainCollector) collect(ctx context.Context) {
 			denied = append(denied, d)
 		}
 
+		// Preserve the existing ignored list so user dismissals survive re-collection.
+		var ignored []string
+		if existing, err := c.domainRepo.Get(ctx, policyID); err == nil && existing != nil {
+			ignored = existing.Ignored
+		}
+
 		data := &repositories.SandboxDomainData{
 			Allowed:   allowed,
 			Denied:    denied,
+			Ignored:   ignored,
 			UpdatedAt: time.Now(),
 		}
 		if err := c.domainRepo.Upsert(ctx, policyID, data); err != nil {

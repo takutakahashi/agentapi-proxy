@@ -24,6 +24,7 @@ const (
 type SandboxDomainData struct {
 	Allowed   []string  `json:"allowed"`
 	Denied    []string  `json:"denied"`
+	Ignored   []string  `json:"ignored,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
