@@ -49,6 +49,27 @@ type SandboxParams struct {
 	CountMode bool `json:"count_mode,omitempty"`
 }
 
+// DockerParams holds Docker-in-Docker (DinD) configuration for session creation.
+type DockerParams struct {
+	// Enabled activates the DinD sidecar for this session
+	Enabled bool `json:"enabled,omitempty"`
+	// Registries specifies authenticated container registries
+	Registries []DockerRegistry `json:"registries,omitempty"`
+}
+
+// DockerRegistry holds authentication for a container registry.
+type DockerRegistry struct {
+	// Server is the registry server address (e.g., "ghcr.io", "registry.example.com")
+	Server string `json:"server"`
+	// Username is the registry username for inline credentials
+	Username string `json:"username,omitempty"`
+	// Password is the registry password or access token for inline credentials
+	Password string `json:"password,omitempty"`
+	// SecretName is the name of a K8s Secret containing a "config.json" key
+	// with docker config JSON format for registry authentication.
+	SecretName string `json:"secret_name,omitempty"`
+}
+
 // SessionParams represents session parameters for agentapi server
 type SessionParams struct {
 	// Message is the initial message to send to the agent after session starts
@@ -83,6 +104,8 @@ type SessionParams struct {
 	RepoFullName string `json:"repo_full_name,omitempty"`
 	// Sandbox configures network isolation for the session via a sidecar transparent proxy.
 	Sandbox *SandboxParams `json:"sandbox,omitempty"`
+	// Docker configures Docker-in-Docker (DinD) for the session.
+	Docker *DockerParams `json:"docker,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -130,6 +153,8 @@ type RunServerRequest struct {
 	CycleMaxCount            int               // Maximum number of cycles (0 = unlimited); requires CycleMessage
 	// Sandbox configures network isolation for the session.
 	Sandbox *SandboxParams
+	// Docker configures Docker-in-Docker (DinD) for the session.
+	Docker *DockerParams
 	// ProvisionSettings, when non-nil, is used directly as the provision payload
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).

@@ -124,6 +124,28 @@ type SandboxConfig struct {
 	DeniedDomains  []string `yaml:"denied_domains,omitempty"  json:"denied_domains,omitempty"`
 }
 
+// DockerConfig holds Docker-in-Docker (DinD) configuration for a session Pod.
+// When Enabled is true, a DinD sidecar is added to the session Pod and
+// DOCKER_HOST is set so the main container can communicate with the docker daemon.
+type DockerConfig struct {
+	Enabled    bool             `yaml:"enabled"              json:"enabled"`
+	Registries []RegistryConfig `yaml:"registries,omitempty" json:"registries,omitempty"`
+}
+
+// RegistryConfig holds authentication configuration for a container registry.
+type RegistryConfig struct {
+	// Server is the registry server address (e.g., "ghcr.io", "registry.example.com")
+	Server string `yaml:"server"                json:"server"`
+	// Username is the registry username for inline credentials
+	Username string `yaml:"username,omitempty"    json:"username,omitempty"`
+	// Password is the registry password or access token for inline credentials
+	Password string `yaml:"password,omitempty"    json:"password,omitempty"`
+	// SecretName is the name of a K8s Secret containing a "config.json" key
+	// with docker config JSON. When set, Username/Password are ignored for mounting
+	// (inline credentials are still used for docker login by the provisioner).
+	SecretName string `yaml:"secret_name,omitempty" json:"secret_name,omitempty"`
+}
+
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
@@ -139,6 +161,7 @@ type SessionSettings struct {
 	SlackParams    *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
 	OtelCollector  *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
 	Sandbox        *SandboxConfig       `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
+	Docker         *DockerConfig        `yaml:"docker,omitempty"          json:"docker,omitempty"`
 	// Files holds the managed files to be restored at session startup.
 	// They are read from the agentapi-agent-files-{userID} Secret at session creation
 	// time and written to their respective paths by the provisioner.

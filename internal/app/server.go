@@ -681,6 +681,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		sandbox = startReq.Params.Sandbox
 	}
 
+	// Determine docker params from Params.Docker
+	var docker *entities.DockerParams
+	if startReq.Params != nil && startReq.Params.Docker != nil {
+		docker = startReq.Params.Docker
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:                   userID,
@@ -700,6 +706,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,
 		Sandbox:                  sandbox,
+		Docker:                   docker,
 	}
 
 	// Delegate to session manager

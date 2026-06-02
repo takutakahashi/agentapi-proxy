@@ -99,6 +99,11 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
 
+	// ── Step 2.3: docker login for DinD registries ───────────────────────────
+	if settings.Docker != nil && settings.Docker.Enabled {
+		go s.runDockerLogins(ctx, settings.Docker)
+	}
+
 	// ── Step 2.5: restore managed files from provision payload ───────────────
 	// Files are embedded in SessionSettings.Files by the proxy at session creation
 	// time (read from agentapi-agent-files-{userID} Secret).
@@ -231,6 +236,66 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+// runDockerLogins runs in the background after DinD is enabled: waits for the docker daemon
+// to be ready, then runs docker login for each registry with inline credentials.
+// Secret-based registries are already mounted as /root/.docker/config.json in the DinD
+// container, so they need no docker login call here.
+func (s *Server) runDockerLogins(ctx context.Context, docker *sessionsettings.DockerConfig) {
+	if docker == nil || !docker.Enabled {
+		return
+	}
+
+	// Check if there are any inline credentials to log in with.
+	hasInlineCreds := false
+	for _, reg := range docker.Registries {
+		if reg.Username != "" && reg.Password != "" {
+			hasInlineCreds = true
+			break
+		}
+	}
+	if !hasInlineCreds {
+		return
+	}
+
+	// Wait for the DinD daemon to be ready (up to 120 seconds).
+	log.Printf("[PROVISIONER] Waiting for Docker daemon to be ready")
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		cmd := exec.CommandContext(ctx, "docker", "info")
+		if err := cmd.Run(); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			log.Printf("[PROVISIONER] Context cancelled while waiting for Docker daemon")
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+	log.Printf("[PROVISIONER] Docker daemon is ready")
+
+	// Run docker login for each registry with inline credentials.
+	for _, reg := range docker.Registries {
+		if reg.Username == "" || reg.Password == "" {
+			continue
+		}
+		log.Printf("[PROVISIONER] Logging into registry %s as %s", reg.Server, reg.Username)
+		args := []string{"login", "-u", reg.Username, "--password-stdin"}
+		if reg.Server != "" {
+			args = append(args, reg.Server)
+		}
+		cmd := exec.CommandContext(ctx, "docker", args...)
+		cmd.Stdin = strings.NewReader(reg.Password)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Printf("[PROVISIONER] Warning: docker login for %s failed: %v", reg.Server, err)
+		} else {
+			log.Printf("[PROVISIONER] Successfully logged into registry %s", reg.Server)
+		}
+	}
 }
 
 // runPreScript executes the pre-script shell snippet before the agent process starts.

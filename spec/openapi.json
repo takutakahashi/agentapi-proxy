@@ -5440,6 +5440,51 @@
           },
           "sandbox": {
             "$ref": "#/components/schemas/SandboxParams"
+          },
+          "docker": {
+            "$ref": "#/components/schemas/DockerParams"
+          }
+        }
+      },
+      "DockerParams": {
+        "type": "object",
+        "description": "Docker-in-Docker (DinD) configuration for the session. When enabled, a privileged DinD sidecar is injected into the session Pod and DOCKER_HOST is set so the main container can run docker commands.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "When true, a DinD sidecar (docker:dind) is added to the session Pod and DOCKER_HOST=tcp://127.0.0.1:2375 is set in the main container.",
+            "default": false
+          },
+          "registries": {
+            "type": "array",
+            "description": "Authenticated container registries. Supports inline credentials (username/password) or a reference to a Kubernetes Secret containing docker config JSON.",
+            "items": {
+              "$ref": "#/components/schemas/DockerRegistry"
+            }
+          }
+        }
+      },
+      "DockerRegistry": {
+        "type": "object",
+        "description": "Authentication configuration for a container registry.",
+        "properties": {
+          "server": {
+            "type": "string",
+            "description": "Registry server address (e.g. 'ghcr.io', 'registry.example.com'). Leave empty for Docker Hub.",
+            "example": "ghcr.io"
+          },
+          "username": {
+            "type": "string",
+            "description": "Registry username for inline credentials. Used together with password."
+          },
+          "password": {
+            "type": "string",
+            "description": "Registry password or access token for inline credentials."
+          },
+          "secret_name": {
+            "type": "string",
+            "description": "Name of a Kubernetes Secret containing a 'config.json' key with docker config JSON. When set, this secret is mounted into the DinD container for daemon-level auth. Takes priority over cluster-wide dind_registry_secret_name.",
+            "example": "my-registry-secret"
           }
         }
       },
