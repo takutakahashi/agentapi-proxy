@@ -2217,8 +2217,8 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 		},
 	}
 
-	// Resolve registry secret: session-level SecretName takes priority over cluster-wide default.
-	registrySecretName := m.k8sConfig.DinDRegistrySecretName
+	// Resolve registry secret from per-session config.
+	var registrySecretName string
 	if docker != nil {
 		for _, reg := range docker.Registries {
 			if reg.SecretName != "" {
