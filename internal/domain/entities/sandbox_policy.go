@@ -23,6 +23,7 @@ type SandboxPolicy struct {
 	description    string
 	allowedDomains []string
 	deniedDomains  []string
+	countMode      bool
 	scope          ResourceScope
 	ownerID        string
 	teamID         string
@@ -47,16 +48,17 @@ func NewSandboxPolicy(id, name, description string, allowedDomains, deniedDomain
 	}
 }
 
-func (p *SandboxPolicy) ID() string             { return p.id }
-func (p *SandboxPolicy) Name() string           { return p.name }
-func (p *SandboxPolicy) Description() string    { return p.description }
+func (p *SandboxPolicy) ID() string               { return p.id }
+func (p *SandboxPolicy) Name() string             { return p.name }
+func (p *SandboxPolicy) Description() string      { return p.description }
 func (p *SandboxPolicy) AllowedDomains() []string { return copyStringSlice(p.allowedDomains) }
 func (p *SandboxPolicy) DeniedDomains() []string  { return copyStringSlice(p.deniedDomains) }
-func (p *SandboxPolicy) Scope() ResourceScope    { return p.scope }
-func (p *SandboxPolicy) OwnerID() string         { return p.ownerID }
-func (p *SandboxPolicy) TeamID() string          { return p.teamID }
-func (p *SandboxPolicy) CreatedAt() time.Time    { return p.createdAt }
-func (p *SandboxPolicy) UpdatedAt() time.Time    { return p.updatedAt }
+func (p *SandboxPolicy) CountMode() bool          { return p.countMode }
+func (p *SandboxPolicy) Scope() ResourceScope     { return p.scope }
+func (p *SandboxPolicy) OwnerID() string          { return p.ownerID }
+func (p *SandboxPolicy) TeamID() string           { return p.teamID }
+func (p *SandboxPolicy) CreatedAt() time.Time     { return p.createdAt }
+func (p *SandboxPolicy) UpdatedAt() time.Time     { return p.updatedAt }
 
 func (p *SandboxPolicy) SetName(name string) {
 	p.name = name
@@ -75,6 +77,11 @@ func (p *SandboxPolicy) SetAllowedDomains(domains []string) {
 
 func (p *SandboxPolicy) SetDeniedDomains(domains []string) {
 	p.deniedDomains = copyStringSlice(domains)
+	p.updatedAt = time.Now()
+}
+
+func (p *SandboxPolicy) SetCountMode(v bool) {
+	p.countMode = v
 	p.updatedAt = time.Now()
 }
 

@@ -43,6 +43,10 @@ type SandboxParams struct {
 	// DeniedDomains is the list of hostnames whose traffic should be blocked (denylist mode).
 	// Used only when AllowedDomains is empty.
 	DeniedDomains []string `json:"denied_domains,omitempty"`
+	// CountMode enables count mode: policy rules are evaluated and blocked domains are recorded,
+	// but traffic is not actually blocked. Useful for auditing policies before enforcing them.
+	// Requires nfa v0.6.0+.
+	CountMode bool `json:"count_mode,omitempty"`
 }
 
 // SessionParams represents session parameters for agentapi server

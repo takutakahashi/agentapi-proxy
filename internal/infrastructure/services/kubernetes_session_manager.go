@@ -2045,6 +2045,9 @@ func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req
 	}
 	effective.AllowedDomains = append(policy.AllowedDomains(), effective.AllowedDomains...)
 	effective.DeniedDomains = append(policy.DeniedDomains(), effective.DeniedDomains...)
+	if policy.CountMode() {
+		effective.CountMode = true
+	}
 	return effective
 }
 
@@ -2062,6 +2065,9 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 		filterEnvVars = []corev1.EnvVar{
 			{Name: "NETWORK_FILTER_DENIED_DOMAINS", Value: strings.Join(sandbox.DeniedDomains, ",")},
 		}
+	}
+	if sandbox != nil && sandbox.CountMode {
+		filterEnvVars = append(filterEnvVars, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
 	}
 
 	rootUID := int64(0)

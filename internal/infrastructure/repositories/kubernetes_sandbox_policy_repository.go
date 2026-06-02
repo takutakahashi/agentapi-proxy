@@ -26,7 +26,7 @@ const (
 	AnnotationSandboxPolicyOwnerID = "agentapi.proxy/owner-id"
 	AnnotationSandboxPolicyTeamID  = "agentapi.proxy/team-id"
 
-	ConfigMapKeySandboxPolicy  = "sandbox-policy.json"
+	ConfigMapKeySandboxPolicy    = "sandbox-policy.json"
 	SandboxPolicyConfigMapPrefix = "agentapi-sandbox-policy-"
 )
 
@@ -36,6 +36,7 @@ type sandboxPolicyJSON struct {
 	Description    string    `json:"description,omitempty"`
 	AllowedDomains []string  `json:"allowed_domains,omitempty"`
 	DeniedDomains  []string  `json:"denied_domains,omitempty"`
+	CountMode      bool      `json:"count_mode,omitempty"`
 	Scope          string    `json:"scope"`
 	OwnerID        string    `json:"owner_id"`
 	TeamID         string    `json:"team_id,omitempty"`
@@ -228,6 +229,7 @@ func (r *KubernetesSandboxPolicyRepository) toJSONBytes(p *entities.SandboxPolic
 		Description:    p.Description(),
 		AllowedDomains: p.AllowedDomains(),
 		DeniedDomains:  p.DeniedDomains(),
+		CountMode:      p.CountMode(),
 		Scope:          string(p.Scope()),
 		OwnerID:        p.OwnerID(),
 		TeamID:         p.TeamID(),
@@ -265,6 +267,7 @@ func (r *KubernetesSandboxPolicyRepository) loadFromConfigMap(cm *corev1.ConfigM
 		pj.OwnerID,
 		pj.TeamID,
 	)
+	p.SetCountMode(pj.CountMode)
 	p.SetCreatedAt(pj.CreatedAt)
 	p.SetUpdatedAt(pj.UpdatedAt)
 
