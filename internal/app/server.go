@@ -591,10 +591,11 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	}
 
 	// If no ManagerID is specified, check for a default external session manager.
-	// Skip ESM forwarding when sandbox is requested: the remote proxy may not support
-	// sandbox, and sandbox requires local Kubernetes deployment to add init containers.
+	// Skip ESM forwarding when sandbox or DinD is requested: the remote proxy may not support
+	// these features, which require local Kubernetes deployment to add init containers/sidecars.
 	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
-	if !sandboxRequested {
+	dindRequested := startReq.Params != nil && startReq.Params.Docker != nil && startReq.Params.Docker.Enabled
+	if !sandboxRequested && !dindRequested {
 		if defaultESM, err := s.findDefaultESM(context.Background(), userID, teams); err == nil && defaultESM != nil {
 			log.Printf("[SESSION] Using default external session manager %s (%s) for session %s", defaultESM.Name, defaultESM.ID, sessionID)
 			if startReq.Params == nil {
@@ -681,6 +682,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		sandbox = startReq.Params.Sandbox
 	}
 
+	// Determine docker params from Params.Docker
+	var docker *entities.DockerParams
+	if startReq.Params != nil && startReq.Params.Docker != nil {
+		docker = startReq.Params.Docker
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:                   userID,
@@ -700,6 +707,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,
 		Sandbox:                  sandbox,
+		Docker:                   docker,
 	}
 
 	// Delegate to session manager

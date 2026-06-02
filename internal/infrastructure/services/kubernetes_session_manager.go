@@ -320,10 +320,11 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 // If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	// Attempt to adopt a stock session before creating a new one.
-	// Skip stock adoption when sandbox is enabled: stock pods lack the init container
-	// and network-filter sidecar, so they cannot enforce network isolation.
+	// Skip stock adoption when sandbox or DinD is enabled: stock pods lack the required
+	// sidecars and would not function correctly for those features.
 	sandboxRequested := req.Sandbox != nil && req.Sandbox.Enabled
-	if !sandboxRequested {
+	dindRequested := req.Docker != nil && req.Docker.Enabled
+	if !sandboxRequested && !dindRequested {
 		if stockSvc, err := m.findStockSession(ctx); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
 		} else if stockSvc != nil {
@@ -1634,6 +1635,31 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 		initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
 	}
 
+	// Build DinD sidecar if Docker-in-Docker is enabled.
+	dindEnabled := req.Docker != nil && req.Docker.Enabled
+	var dindSidecar *corev1.Container
+	var dindEnvVars []corev1.EnvVar
+	var dindVolumes []corev1.Volume
+	if dindEnabled {
+		var dockerConfig *sessionsettings.DockerConfig
+		if req.Docker != nil {
+			registries := make([]sessionsettings.RegistryConfig, 0, len(req.Docker.Registries))
+			for _, r := range req.Docker.Registries {
+				registries = append(registries, sessionsettings.RegistryConfig{
+					Server:     r.Server,
+					Username:   r.Username,
+					Password:   r.Password,
+					SecretName: r.SecretName,
+				})
+			}
+			dockerConfig = &sessionsettings.DockerConfig{
+				Enabled:    true,
+				Registries: registries,
+			}
+		}
+		dindSidecar, dindEnvVars, dindVolumes = m.buildDinDContainers(dockerConfig)
+	}
+
 	// Determine working directory
 	// Always use /home/agentapi/workdir as base; clone-repo will create /home/agentapi/workdir/repo
 	// Setting workingDir to repo path would cause Kubernetes to pre-create the dir as root
@@ -1708,7 +1734,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		Env:     append(envVars, sandboxEnvVars...),
+		Env:     append(append(envVars, sandboxEnvVars...), dindEnvVars...),
 		EnvFrom: envFrom,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -1764,6 +1790,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 			},
 		})
 	}
+	if dindEnabled {
+		volumes = append(volumes, dindVolumes...)
+	}
 
 	// Build containers list.
 	// Note: credentials-sync is now handled as a goroutine inside agent-provisioner
@@ -1772,6 +1801,9 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	containers := []corev1.Container{container}
 	if sandboxSidecar != nil {
 		containers = append(containers, *sandboxSidecar)
+	}
+	if dindSidecar != nil {
+		containers = append(containers, *dindSidecar)
 	}
 
 	// Note: Initial message is now sent by agent-provisioner internally after agentapi
@@ -2126,6 +2158,90 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 	}
 
 	return []corev1.Container{initContainer}, &sidecar, proxyEnvVars
+}
+
+// buildDinDContainers returns the DinD sidecar container, env vars for the main container,
+// and extra volumes needed for Docker-in-Docker support.
+// The DinD daemon listens on TCP port 2375 (no TLS) so no socket volume sharing is needed.
+// The main container gets DOCKER_HOST=tcp://127.0.0.1:2375 to connect to the daemon.
+func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.DockerConfig) (*corev1.Container, []corev1.EnvVar, []corev1.Volume) {
+	dindImage := m.k8sConfig.DinDImage
+	if dindImage == "" {
+		dindImage = "docker:27-dind"
+	}
+
+	trueVal := true
+	falseVal := false
+	rootUID := int64(0)
+
+	sidecar := corev1.Container{
+		Name:            "docker-dind",
+		Image:           dindImage,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Args:            []string{"dockerd", "--host=tcp://0.0.0.0:2375", "--tls=false"},
+		SecurityContext: &corev1.SecurityContext{
+			Privileged:   &trueVal,
+			RunAsUser:    &rootUID,
+			RunAsNonRoot: &falseVal,
+		},
+		Resources: buildResourceRequirements(
+			m.k8sConfig.DinDCPURequest,
+			m.k8sConfig.DinDCPULimit,
+			m.k8sConfig.DinDMemoryRequest,
+			m.k8sConfig.DinDMemoryLimit,
+		),
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "docker-storage",
+				MountPath: "/var/lib/docker",
+			},
+		},
+	}
+
+	volumes := []corev1.Volume{
+		{
+			Name: "docker-storage",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+
+	// Resolve registry secret: session-level SecretName takes priority over cluster-wide default.
+	registrySecretName := m.k8sConfig.DinDRegistrySecretName
+	if docker != nil {
+		for _, reg := range docker.Registries {
+			if reg.SecretName != "" {
+				registrySecretName = reg.SecretName
+				break
+			}
+		}
+	}
+
+	if registrySecretName != "" {
+		sidecar.VolumeMounts = append(sidecar.VolumeMounts, corev1.VolumeMount{
+			Name:      "docker-registry-config",
+			MountPath: "/root/.docker/config.json",
+			SubPath:   "config.json",
+			ReadOnly:  true,
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: "docker-registry-config",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: registrySecretName,
+					Optional:   boolPtr(true),
+				},
+			},
+		})
+	}
+
+	// Set DOCKER_HOST in the main container so docker CLI commands connect to the DinD daemon.
+	mainEnvVars := []corev1.EnvVar{
+		{Name: "DOCKER_HOST", Value: "tcp://127.0.0.1:2375"},
+	}
+
+	return &sidecar, mainEnvVars, volumes
 }
 
 // buildResourceRequirements constructs a corev1.ResourceRequirements from string quantities.
@@ -4174,6 +4290,24 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			DeniedDomains:  req.Sandbox.DeniedDomains,
 		}
 		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (policy: %s, allowed: %v, denied: %v)", session.id, req.Sandbox.PolicyID, req.Sandbox.AllowedDomains, req.Sandbox.DeniedDomains)
+	}
+
+	// Embed Docker-in-Docker configuration when enabled.
+	if req.Docker != nil && req.Docker.Enabled {
+		registries := make([]sessionsettings.RegistryConfig, 0, len(req.Docker.Registries))
+		for _, r := range req.Docker.Registries {
+			registries = append(registries, sessionsettings.RegistryConfig{
+				Server:     r.Server,
+				Username:   r.Username,
+				Password:   r.Password,
+				SecretName: r.SecretName,
+			})
+		}
+		settings.Docker = &sessionsettings.DockerConfig{
+			Enabled:    true,
+			Registries: registries,
+		}
+		log.Printf("[K8S_SESSION] DinD enabled for session %s (registries: %d)", session.id, len(registries))
 	}
 
 	return settings
