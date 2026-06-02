@@ -68,6 +68,8 @@ type DockerRegistry struct {
 	// SecretName is the name of a K8s Secret containing a "config.json" key
 	// with docker config JSON format for registry authentication.
 	SecretName string `json:"secret_name,omitempty"`
+	// Insecure allows the DinD daemon to communicate with this registry over plain HTTP.
+	Insecure bool `json:"insecure,omitempty"`
 }
 
 // SessionParams represents session parameters for agentapi server

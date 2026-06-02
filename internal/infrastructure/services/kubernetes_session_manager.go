@@ -1650,6 +1650,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 					Username:   r.Username,
 					Password:   r.Password,
 					SecretName: r.SecretName,
+					Insecure:   r.Insecure,
 				})
 			}
 			dockerConfig = &sessionsettings.DockerConfig{
@@ -4310,6 +4311,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				Username:   r.Username,
 				Password:   r.Password,
 				SecretName: r.SecretName,
+				Insecure:   r.Insecure,
 			})
 		}
 		settings.Docker = &sessionsettings.DockerConfig{
