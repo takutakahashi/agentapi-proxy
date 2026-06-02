@@ -344,11 +344,6 @@ type KubernetesSessionConfig struct {
 	DinDCPULimit      string `json:"dind_cpu_limit" mapstructure:"dind_cpu_limit"`
 	DinDMemoryRequest string `json:"dind_memory_request" mapstructure:"dind_memory_request"`
 	DinDMemoryLimit   string `json:"dind_memory_limit" mapstructure:"dind_memory_limit"`
-
-	// DinDRegistrySecretName is the name of a K8s Secret containing a "config.json" key
-	// with docker config JSON format. When set, this secret is mounted into the DinD
-	// container so the daemon can pull from authenticated registries cluster-wide.
-	DinDRegistrySecretName string `json:"dind_registry_secret_name" mapstructure:"dind_registry_secret_name"`
 }
 
 // MemoryConfig represents memory backend configuration

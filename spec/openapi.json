@@ -5485,6 +5485,11 @@
             "type": "string",
             "description": "Name of a Kubernetes Secret containing a 'config.json' key with docker config JSON. When set, this secret is mounted into the DinD container for daemon-level auth. Takes priority over cluster-wide dind_registry_secret_name.",
             "example": "my-registry-secret"
+          },
+          "insecure": {
+            "type": "boolean",
+            "description": "When true, adds --insecure-registry=<server> to the DinD daemon args, allowing plain HTTP communication with this registry.",
+            "example": true
           }
         }
       },

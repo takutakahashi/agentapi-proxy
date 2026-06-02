@@ -1650,6 +1650,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 					Username:   r.Username,
 					Password:   r.Password,
 					SecretName: r.SecretName,
+					Insecure:   r.Insecure,
 				})
 			}
 			dockerConfig = &sessionsettings.DockerConfig{
@@ -2174,11 +2175,20 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 	falseVal := false
 	rootUID := int64(0)
 
+	dindArgs := []string{"dockerd", "--host=tcp://0.0.0.0:2375", "--tls=false"}
+	if docker != nil {
+		for _, reg := range docker.Registries {
+			if reg.Insecure && reg.Server != "" {
+				dindArgs = append(dindArgs, "--insecure-registry="+reg.Server)
+			}
+		}
+	}
+
 	sidecar := corev1.Container{
 		Name:            "docker-dind",
 		Image:           dindImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Args:            []string{"dockerd", "--host=tcp://0.0.0.0:2375", "--tls=false"},
+		Args:            dindArgs,
 		SecurityContext: &corev1.SecurityContext{
 			Privileged:   &trueVal,
 			RunAsUser:    &rootUID,
@@ -2207,8 +2217,8 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 		},
 	}
 
-	// Resolve registry secret: session-level SecretName takes priority over cluster-wide default.
-	registrySecretName := m.k8sConfig.DinDRegistrySecretName
+	// Resolve registry secret from per-session config.
+	var registrySecretName string
 	if docker != nil {
 		for _, reg := range docker.Registries {
 			if reg.SecretName != "" {
@@ -4301,6 +4311,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				Username:   r.Username,
 				Password:   r.Password,
 				SecretName: r.SecretName,
+				Insecure:   r.Insecure,
 			})
 		}
 		settings.Docker = &sessionsettings.DockerConfig{
