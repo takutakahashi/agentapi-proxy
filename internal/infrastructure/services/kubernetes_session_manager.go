@@ -2063,6 +2063,9 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 			{Name: "NETWORK_FILTER_DENIED_DOMAINS", Value: strings.Join(sandbox.DeniedDomains, ",")},
 		}
 	}
+	if sandbox != nil && sandbox.CountMode {
+		filterEnvVars = append(filterEnvVars, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
+	}
 
 	rootUID := int64(0)
 	falseVal := false

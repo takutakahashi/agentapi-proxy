@@ -5394,6 +5394,11 @@
               "example.com",
               "*.evil.com"
             ]
+          },
+          "count_mode": {
+            "type": "boolean",
+            "description": "When true, enables count mode: policy rules are evaluated and blocked domains are recorded, but traffic is not actually blocked. Useful for auditing policies before enforcing them in production. Requires nfa v0.6.0+.",
+            "default": false
           }
         }
       },
