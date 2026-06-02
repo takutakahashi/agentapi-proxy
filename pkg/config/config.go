@@ -768,6 +768,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
 	_ = v.BindEnv("kubernetes_session.codex_requirements_configmap_name", "AGENTAPI_K8S_SESSION_CODEX_REQUIREMENTS_CONFIGMAP_NAME")
+	_ = v.BindEnv("kubernetes_session.dind_registry_secret_name", "AGENTAPI_K8S_SESSION_DIND_REGISTRY_SECRET_NAME")
 
 	// MCP servers configuration
 

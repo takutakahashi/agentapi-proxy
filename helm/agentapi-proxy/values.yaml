@@ -410,6 +410,19 @@ kubernetesSession:
   #     effect: "PreferNoSchedule"
   tolerations: []
 
+  # Docker private registry authentication for DinD (Docker-in-Docker) sessions.
+  # Name of a Kubernetes Secret containing a "config.json" key with Docker config JSON.
+  # When set, the secret is mounted into the DinD sidecar container so the daemon can
+  # pull from authenticated registries for all sessions in the cluster.
+  # Create it with:
+  #   kubectl create secret generic docker-registry-config \
+  #     --from-file=config.json=/path/to/.docker/config.json
+  # or:
+  #   kubectl create secret docker-registry docker-registry-config \
+  #     --docker-server=<registry> --docker-username=<user> --docker-password=<pass>
+  #   (then rename the .dockerconfigjson key to config.json)
+  dindRegistrySecretName: ""
+
   # GitHub authentication for repository cloning in session pods
   # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
   # The Secret will be used by the clone-repo init container
