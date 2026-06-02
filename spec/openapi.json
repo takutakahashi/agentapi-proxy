@@ -461,7 +461,7 @@
     "/sandbox-policies/{id}/domains": {
       "get": {
         "summary": "Get aggregated domains for a sandbox policy",
-        "description": "Returns the allowed/denied domain lists collected by the background domain collector from all sessions using this policy. Data is refreshed every 60 seconds. Returns empty lists when no data has been collected yet.",
+        "description": "Returns the allowed/denied/ignored domain lists collected by the background domain collector from all sessions using this policy. Data is refreshed every 60 seconds. Returns empty lists when no data has been collected yet.",
         "operationId": "getSandboxPolicyDomains",
         "tags": [
           "Sandbox"
@@ -495,17 +495,101 @@
                       "items": { "type": "string" },
                       "description": "Domains blocked by the filter"
                     },
+                    "ignored": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Domains the user has chosen to ignore (not shown as suggestions)"
+                    },
                     "updated_at": {
                       "type": "string",
                       "format": "date-time",
                       "description": "When the data was last collected"
                     }
                   },
-                  "required": ["allowed", "denied"]
+                  "required": ["allowed", "denied", "ignored"]
                 }
               }
             }
           },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "404": { "description": "Sandbox policy not found" },
+          "501": { "description": "Domain collection not available" }
+        },
+        "security": [
+          { "ApiKeyAuth": [] },
+          { "BearerAuth": [] }
+        ]
+      }
+    },
+    "/sandbox-policies/{id}/domains/ignored": {
+      "put": {
+        "summary": "Update the ignored domain list for a sandbox policy",
+        "description": "Replaces the ignored domain list stored in the collected domain data for the given policy. Ignored domains are suppressed from the import suggestion UI so users are not repeatedly prompted to act on them.",
+        "operationId": "updateSandboxPolicyIgnoredDomains",
+        "tags": [
+          "Sandbox"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Sandbox policy ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ignored": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Full list of domains to ignore"
+                  }
+                },
+                "required": ["ignored"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated domain lists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "denied": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "ignored": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": ["allowed", "denied", "ignored"]
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid request body" },
           "401": { "description": "Unauthorized" },
           "403": { "description": "Forbidden" },
           "404": { "description": "Sandbox policy not found" },
