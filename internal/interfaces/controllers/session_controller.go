@@ -1009,6 +1009,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	if override.Sandbox != nil {
 		merged.Sandbox = override.Sandbox
 	}
+	if override.Docker != nil {
+		merged.Docker = override.Docker
+	}
 	return &merged
 }
 
