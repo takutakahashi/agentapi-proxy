@@ -66,6 +66,9 @@ COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
 # Copy github-mcp-server binary from official image
 COPY --from=ghcr.io/github/github-mcp-server:v0.26.3 /server/github-mcp-server /usr/local/bin/
 
+# Copy docker CLI binary only (no daemon)
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+
 # Download acp-posts binary for Slack integration subprocess
 ARG ACP_POSTS_VERSION=v0.1.0
 RUN ARCH=$(dpkg --print-architecture) && \
