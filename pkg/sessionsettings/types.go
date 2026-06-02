@@ -144,6 +144,9 @@ type RegistryConfig struct {
 	// with docker config JSON. When set, Username/Password are ignored for mounting
 	// (inline credentials are still used for docker login by the provisioner).
 	SecretName string `yaml:"secret_name,omitempty" json:"secret_name,omitempty"`
+	// Insecure allows the DinD daemon to communicate with this registry over plain HTTP.
+	// When true, --insecure-registry=<Server> is added to the dockerd args.
+	Insecure bool `yaml:"insecure,omitempty"    json:"insecure,omitempty"`
 }
 
 // SessionSettings is the top-level unified settings YAML structure.

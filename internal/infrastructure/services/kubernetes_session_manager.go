@@ -2174,11 +2174,20 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 	falseVal := false
 	rootUID := int64(0)
 
+	dindArgs := []string{"dockerd", "--host=tcp://0.0.0.0:2375", "--tls=false"}
+	if docker != nil {
+		for _, reg := range docker.Registries {
+			if reg.Insecure && reg.Server != "" {
+				dindArgs = append(dindArgs, "--insecure-registry="+reg.Server)
+			}
+		}
+	}
+
 	sidecar := corev1.Container{
 		Name:            "docker-dind",
 		Image:           dindImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Args:            []string{"dockerd", "--host=tcp://0.0.0.0:2375", "--tls=false"},
+		Args:            dindArgs,
 		SecurityContext: &corev1.SecurityContext{
 			Privileged:   &trueVal,
 			RunAsUser:    &rootUID,
