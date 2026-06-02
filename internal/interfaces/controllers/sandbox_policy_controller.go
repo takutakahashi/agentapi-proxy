@@ -297,11 +297,77 @@ func (c *SandboxPolicyController) DeleteSandboxPolicy(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]bool{"success": true})
 }
 
+// UpdateIgnoredDomains handles PUT /sandbox-policies/:id/domains/ignored.
+// Replaces the ignored domain list for the given policy's collected domain data.
+func (c *SandboxPolicyController) UpdateIgnoredDomains(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
+
+	if c.domainRepo == nil {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Domain collection not available")
+	}
+
+	policy, err := c.repo.GetByID(ctx.Request().Context(), ctx.Param("id"))
+	if err != nil {
+		var notFound entities.ErrSandboxPolicyNotFound
+		if errors.As(err, &notFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "Sandbox policy not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get sandbox policy")
+	}
+	if !c.canModify(user, policy) {
+		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
+	}
+
+	var req UpdateIgnoredDomainsRequest
+	if err := ctx.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+
+	data, err := c.domainRepo.Get(ctx.Request().Context(), policy.ID())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to read domain data")
+	}
+	if data == nil {
+		data = &repositories.SandboxDomainData{}
+	}
+	data.Ignored = req.Ignored
+
+	if err := c.domainRepo.Upsert(ctx.Request().Context(), policy.ID(), data); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update ignored domains")
+	}
+
+	resp := SandboxPolicyDomainsResponse{
+		Allowed:   data.Allowed,
+		Denied:    data.Denied,
+		Ignored:   data.Ignored,
+		UpdatedAt: data.UpdatedAt.Format(time.RFC3339),
+	}
+	if resp.Allowed == nil {
+		resp.Allowed = []string{}
+	}
+	if resp.Denied == nil {
+		resp.Denied = []string{}
+	}
+	if resp.Ignored == nil {
+		resp.Ignored = []string{}
+	}
+	return ctx.JSON(http.StatusOK, resp)
+}
+
 // SandboxPolicyDomainsResponse is the JSON body returned by GET /sandbox-policies/:id/domains.
 type SandboxPolicyDomainsResponse struct {
 	Allowed   []string `json:"allowed"`
 	Denied    []string `json:"denied"`
+	Ignored   []string `json:"ignored"`
 	UpdatedAt string   `json:"updated_at,omitempty"`
+}
+
+// UpdateIgnoredDomainsRequest is the JSON body for PUT /sandbox-policies/:id/domains/ignored.
+type UpdateIgnoredDomainsRequest struct {
+	Ignored []string `json:"ignored"`
 }
 
 // GetSandboxPolicyDomains handles GET /sandbox-policies/:id/domains.
@@ -337,12 +403,14 @@ func (c *SandboxPolicyController) GetSandboxPolicyDomains(ctx echo.Context) erro
 		return ctx.JSON(http.StatusOK, SandboxPolicyDomainsResponse{
 			Allowed: []string{},
 			Denied:  []string{},
+			Ignored: []string{},
 		})
 	}
 
 	resp := SandboxPolicyDomainsResponse{
 		Allowed:   data.Allowed,
 		Denied:    data.Denied,
+		Ignored:   data.Ignored,
 		UpdatedAt: data.UpdatedAt.Format(time.RFC3339),
 	}
 	if resp.Allowed == nil {
@@ -350,6 +418,9 @@ func (c *SandboxPolicyController) GetSandboxPolicyDomains(ctx echo.Context) erro
 	}
 	if resp.Denied == nil {
 		resp.Denied = []string{}
+	}
+	if resp.Ignored == nil {
+		resp.Ignored = []string{}
 	}
 	return ctx.JSON(http.StatusOK, resp)
 }
