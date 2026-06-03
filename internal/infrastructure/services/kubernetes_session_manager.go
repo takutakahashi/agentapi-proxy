@@ -2168,7 +2168,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.DockerConfig) (*corev1.Container, []corev1.EnvVar, []corev1.Volume) {
 	dindImage := m.k8sConfig.DinDImage
 	if dindImage == "" {
-		dindImage = "docker:27-dind"
+		dindImage = "docker:dind"
 	}
 
 	trueVal := true
