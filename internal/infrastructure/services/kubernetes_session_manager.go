@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -2246,12 +2247,70 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 		})
 	}
 
+	// Handle inline credentials: build docker config.json and write it inside the DinD
+	// sidecar at startup so credentials never appear in the agent container.
+	if err := injectInlineRegistryCredentials(docker, &sidecar, dindArgs); err != nil {
+		log.Printf("[SESSION_MANAGER] Warning: failed to inject inline registry credentials into DinD sidecar: %v", err)
+	}
+
 	// Set DOCKER_HOST in the main container so docker CLI commands connect to the DinD daemon.
 	mainEnvVars := []corev1.EnvVar{
 		{Name: "DOCKER_HOST", Value: "tcp://127.0.0.1:2375"},
 	}
 
 	return &sidecar, mainEnvVars, volumes
+}
+
+// injectInlineRegistryCredentials builds a docker config.json from inline registry credentials
+// (Username/Password fields) and configures the DinD sidecar to write it at startup.
+// This keeps credentials inside the DinD container only — they never appear in the agent
+// container's home directory (~/.docker/config.json).
+func injectInlineRegistryCredentials(docker *sessionsettings.DockerConfig, sidecar *corev1.Container, dindArgs []string) error {
+	if docker == nil {
+		return nil
+	}
+
+	type authEntry struct {
+		Auth string `json:"auth"`
+	}
+	type configJSON struct {
+		Auths map[string]authEntry `json:"auths"`
+	}
+
+	cfg := configJSON{Auths: map[string]authEntry{}}
+	for _, reg := range docker.Registries {
+		if reg.Username == "" || reg.Password == "" {
+			continue
+		}
+		server := reg.Server
+		if server == "" {
+			server = "https://index.docker.io/v1/"
+		}
+		encoded := base64.StdEncoding.EncodeToString([]byte(reg.Username + ":" + reg.Password))
+		cfg.Auths[server] = authEntry{Auth: encoded}
+	}
+	if len(cfg.Auths) == 0 {
+		return nil
+	}
+
+	configBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	// Pass config.json content only to the DinD sidecar via env var.
+	sidecar.Env = append(sidecar.Env, corev1.EnvVar{
+		Name:  "DOCKER_CONFIG_JSON",
+		Value: string(configBytes),
+	})
+
+	// Override the sidecar command to write config.json before starting dockerd.
+	// dindArgs = ["dockerd", "--host=...", "--tls=false", ...]
+	script := `mkdir -p /root/.docker && printf '%s' "$DOCKER_CONFIG_JSON" > /root/.docker/config.json && exec dockerd-entrypoint.sh ` +
+		strings.Join(dindArgs, " ")
+	sidecar.Command = []string{"/bin/sh", "-c"}
+	sidecar.Args = []string{script}
+	return nil
 }
 
 // buildResourceRequirements constructs a corev1.ResourceRequirements from string quantities.
