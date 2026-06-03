@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,5 +71,51 @@ func TestKubernetesUserTeamMappingRepository_Get_NotFound(t *testing.T) {
 	}
 	if found {
 		t.Fatal("expected found=false for nonexistent user")
+	}
+}
+
+func TestKubernetesUserTeamMappingRepository_Set_Concurrent(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesUserTeamMappingRepository(client, "default")
+	ctx := context.Background()
+
+	const numGoroutines = 10
+	users := make([]string, numGoroutines)
+	for i := range users {
+		users[i] = "user" + string(rune('a'+i))
+	}
+	teams := []auth.GitHubTeamMembership{{Organization: "org", TeamSlug: "team", TeamName: "team", Role: "pull"}}
+
+	var wg sync.WaitGroup
+	errs := make([]error, numGoroutines)
+	for i, u := range users {
+		wg.Add(1)
+		go func(idx int, username string) {
+			defer wg.Done()
+			errs[idx] = repo.Set(ctx, username, teams)
+		}(i, u)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("Set(%s) failed: %v", users[i], err)
+		}
+	}
+
+	// All users should be readable
+	for _, u := range users {
+		got, found, err := repo.Get(ctx, u)
+		if err != nil {
+			t.Errorf("Get(%s) failed: %v", u, err)
+			continue
+		}
+		if !found {
+			t.Errorf("Get(%s): expected found=true", u)
+			continue
+		}
+		if len(got) != 1 {
+			t.Errorf("Get(%s): expected 1 team, got %d", u, len(got))
+		}
 	}
 }
