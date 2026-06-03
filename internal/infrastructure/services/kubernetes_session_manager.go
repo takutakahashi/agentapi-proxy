@@ -2195,10 +2195,10 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 			RunAsNonRoot: &falseVal,
 		},
 		Resources: buildResourceRequirements(
-			m.k8sConfig.DinDCPURequest,
-			m.k8sConfig.DinDCPULimit,
-			m.k8sConfig.DinDMemoryRequest,
-			m.k8sConfig.DinDMemoryLimit,
+			defaultIfEmpty(m.k8sConfig.DinDCPURequest, "2"),
+			defaultIfEmpty(m.k8sConfig.DinDCPULimit, "2"),
+			defaultIfEmpty(m.k8sConfig.DinDMemoryRequest, "2Gi"),
+			defaultIfEmpty(m.k8sConfig.DinDMemoryLimit, "2Gi"),
 		),
 		VolumeMounts: []corev1.VolumeMount{
 			{
@@ -2252,6 +2252,13 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 	}
 
 	return &sidecar, mainEnvVars, volumes
+}
+
+func defaultIfEmpty(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // buildResourceRequirements constructs a corev1.ResourceRequirements from string quantities.
