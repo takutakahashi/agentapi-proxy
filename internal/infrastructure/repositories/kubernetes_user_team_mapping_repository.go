@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
@@ -84,8 +85,8 @@ func (r *KubernetesUserTeamMappingRepository) Get(ctx context.Context, username 
 }
 
 // Set stores the team memberships for a given username in the ConfigMap.
-// Creates the ConfigMap if it does not exist.
-// Retries up to 3 times on conflict (409) to handle concurrent updates from multiple pods.
+// Uses merge-patch to avoid resourceVersion conflicts under concurrent writes.
+// Falls back to Create when the ConfigMap doesn't yet exist.
 func (r *KubernetesUserTeamMappingRepository) Set(ctx context.Context, username string, teams []auth.GitHubTeamMembership) error {
 	entry := userTeamMappingEntry{
 		Teams:     teams,
@@ -99,9 +100,9 @@ func (r *KubernetesUserTeamMappingRepository) Set(ctx context.Context, username 
 
 	const maxRetries = 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		if err := r.upsert(ctx, username, string(rawJSON)); err != nil {
-			if k8serrors.IsConflict(err) && attempt < maxRetries-1 {
-				// Retry on conflict (concurrent update from another pod)
+		if err := r.patchOrCreate(ctx, username, string(rawJSON)); err != nil {
+			// AlreadyExists means two pods raced to create; retry the patch path.
+			if k8serrors.IsAlreadyExists(err) && attempt < maxRetries-1 {
 				continue
 			}
 			return fmt.Errorf("failed to set team mapping for user %s: %w", username, err)
@@ -112,38 +113,37 @@ func (r *KubernetesUserTeamMappingRepository) Set(ctx context.Context, username 
 	return fmt.Errorf("failed to set team mapping for user %s after %d retries", username, maxRetries)
 }
 
-// upsert creates or updates the ConfigMap with the given user entry.
-func (r *KubernetesUserTeamMappingRepository) upsert(ctx context.Context, username, rawJSON string) error {
-	existing, err := r.client.CoreV1().ConfigMaps(r.namespace).Get(ctx, UserTeamMappingConfigMapName, metav1.GetOptions{})
+// patchOrCreate applies the user entry via merge-patch when the ConfigMap exists,
+// or creates the ConfigMap when it does not. Merge-patch does not require
+// resourceVersion, so concurrent writes to different keys never conflict.
+func (r *KubernetesUserTeamMappingRepository) patchOrCreate(ctx context.Context, username, rawJSON string) error {
+	patch := map[string]interface{}{
+		"data": map[string]string{username: rawJSON},
+	}
+	patchBytes, err := json.Marshal(patch)
 	if err != nil {
-		if !k8serrors.IsNotFound(err) {
-			return fmt.Errorf("failed to get ConfigMap: %w", err)
-		}
+		return fmt.Errorf("failed to marshal patch: %w", err)
+	}
 
-		// ConfigMap does not exist — create it
-		cm := r.buildConfigMap(map[string]string{username: rawJSON})
-		_, err = r.client.CoreV1().ConfigMaps(r.namespace).Create(ctx, cm, metav1.CreateOptions{})
-		if err != nil {
-			// Another pod may have created it concurrently; treat AlreadyExists as conflict
-			if k8serrors.IsAlreadyExists(err) {
-				return &k8serrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonConflict}}
-			}
-			return fmt.Errorf("failed to create ConfigMap: %w", err)
-		}
+	_, err = r.client.CoreV1().ConfigMaps(r.namespace).Patch(
+		ctx,
+		UserTeamMappingConfigMapName,
+		types.MergePatchType,
+		patchBytes,
+		metav1.PatchOptions{},
+	)
+	if err == nil {
 		return nil
 	}
-
-	// ConfigMap exists — update the user's entry
-	if existing.Data == nil {
-		existing.Data = make(map[string]string)
+	if !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("failed to patch ConfigMap: %w", err)
 	}
-	existing.Data[username] = rawJSON
 
-	_, err = r.client.CoreV1().ConfigMaps(r.namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update ConfigMap: %w", err)
-	}
-	return nil
+	// ConfigMap does not exist — create it.
+	cm := r.buildConfigMap(map[string]string{username: rawJSON})
+	_, err = r.client.CoreV1().ConfigMaps(r.namespace).Create(ctx, cm, metav1.CreateOptions{})
+	// Propagate AlreadyExists so the caller can retry the patch path.
+	return err
 }
 
 // buildConfigMap constructs the ConfigMap object with the given data.
