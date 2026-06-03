@@ -48,21 +48,21 @@ type Server struct {
 	oauthProvider      *auth.GitHubOAuthProvider
 	oauthSessions      sync.Map // sessionID -> OAuthSession
 	notificationSvc    *notification.Service
-	container          *di.Container                      // Internal DI container
-	sessionManager     portrepos.SessionManager           // Session lifecycle manager
-	settingsRepo       portrepos.SettingsRepository       // Settings repository
-	credentialsRepo    portrepos.CredentialsRepository    // Credentials repository
-	shareRepo          portrepos.ShareRepository          // Share repository for session sharing
-	teamConfigRepo     portrepos.TeamConfigRepository     // Team configuration repository
-	memoryRepo         portrepos.MemoryRepository         // Memory repository
-	sandboxPolicyRepo  portrepos.SandboxPolicyRepository                      // Sandbox policy repository
-	sandboxDomainRepo  *repositories.KubernetesSandboxDomainRepository        // Sandbox domain log repository
-	taskRepo           portrepos.TaskRepository           // Task repository
-	taskGroupRepo      portrepos.TaskGroupRepository      // Task group repository
-	sessionRouteRepo   portrepos.SessionRouteRepository   // Session route repository for proxy B routing
-	userFileRepo       portrepos.UserFileRepository       // User-managed files repository
-	sessionProfileRepo portrepos.SessionProfileRepository // Session profile repository
-	router             *Router                            // Router for custom handler registration
+	container          *di.Container                                   // Internal DI container
+	sessionManager     portrepos.SessionManager                        // Session lifecycle manager
+	settingsRepo       portrepos.SettingsRepository                    // Settings repository
+	credentialsRepo    portrepos.CredentialsRepository                 // Credentials repository
+	shareRepo          portrepos.ShareRepository                       // Share repository for session sharing
+	teamConfigRepo     portrepos.TeamConfigRepository                  // Team configuration repository
+	memoryRepo         portrepos.MemoryRepository                      // Memory repository
+	sandboxPolicyRepo  portrepos.SandboxPolicyRepository               // Sandbox policy repository
+	sandboxDomainRepo  *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
+	taskRepo           portrepos.TaskRepository                        // Task repository
+	taskGroupRepo      portrepos.TaskGroupRepository                   // Task group repository
+	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for proxy B routing
+	userFileRepo       portrepos.UserFileRepository                    // User-managed files repository
+	sessionProfileRepo portrepos.SessionProfileRepository              // Session profile repository
+	router             *Router                                         // Router for custom handler registration
 }
 
 // NewServer creates a new server instance

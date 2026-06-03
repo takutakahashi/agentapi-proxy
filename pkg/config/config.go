@@ -336,7 +336,7 @@ type KubernetesSessionConfig struct {
 	// and DOCKER_HOST set so the main container can run docker commands.
 
 	// DinDImage is the container image for the DinD sidecar.
-	// Defaults to "docker:27-dind" if not specified.
+	// Defaults to "docker:dind" if not specified.
 	DinDImage string `json:"dind_image" mapstructure:"dind_image"`
 
 	// DinD sidecar resource configuration

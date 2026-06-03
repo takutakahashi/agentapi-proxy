@@ -81,7 +81,7 @@ func (r *KubernetesSandboxDomainRepository) Upsert(ctx context.Context, policyID
 				Name:      name,
 				Namespace: r.namespace,
 				Labels: map[string]string{
-					LabelSandboxDomainType: LabelSandboxDomainTypeValue,
+					LabelSandboxDomainType:     LabelSandboxDomainTypeValue,
 					"agentapi.proxy/policy-id": policyID,
 				},
 			},
