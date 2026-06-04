@@ -754,6 +754,9 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	if req.InitialMessage != "" {
 		annotations["agentapi.proxy/initial-message"] = req.InitialMessage
 	}
+	if req.SessionTTL != "" {
+		annotations["agentapi.proxy/session-ttl"] = req.SessionTTL
+	}
 
 	currentSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, stockSvc.Name, metav1.GetOptions{})
 	if err != nil {
@@ -2418,6 +2421,9 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 	// Record the initial message time as the last message time for all sessions.
 	// This annotation is updated by SendMessage when follow-up messages arrive.
 	annotations["agentapi.proxy/last-message-at"] = session.startedAt.UTC().Format(time.RFC3339)
+	if session.Request().SessionTTL != "" {
+		annotations["agentapi.proxy/session-ttl"] = session.Request().SessionTTL
+	}
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -3420,6 +3426,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Parse session-ttl annotation if present
+	sessionTTL := svc.Annotations["agentapi.proxy/session-ttl"]
+
 	// Create session using constructor
 	session := NewKubernetesSession(
 		sessionID,
@@ -3432,6 +3441,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 			MemoryKey:      memoryKey,
 			Teams:          teams,
 			Oneshot:        oneshot,
+			SessionTTL:     sessionTTL,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -3544,6 +3554,9 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Parse session-ttl annotation if present
+	sessionTTL := svc.Annotations["agentapi.proxy/session-ttl"]
+
 	// Create session using constructor
 	session := NewKubernetesSession(
 		sessionID,
@@ -3556,6 +3569,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 			MemoryKey:      memoryKey,
 			Teams:          teams,
 			Oneshot:        oneshot,
+			SessionTTL:     sessionTTL,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,

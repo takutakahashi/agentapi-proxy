@@ -237,6 +237,16 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 					startReq.Params.Sandbox.PolicyID = cfg.SandboxPolicyID()
 				}
 			}
+
+			// SessionTTL: apply profile's TTL when request does not already specify one.
+			if cfg.SessionTTL() != "" {
+				if startReq.Params == nil {
+					startReq.Params = &entities.SessionParams{}
+				}
+				if startReq.Params.SessionTTL == "" {
+					startReq.Params.SessionTTL = cfg.SessionTTL()
+				}
+			}
 		}
 	}
 
@@ -1011,6 +1021,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	}
 	if override.Docker != nil {
 		merged.Docker = override.Docker
+	}
+	if override.SessionTTL != "" {
+		merged.SessionTTL = override.SessionTTL
 	}
 	return &merged
 }

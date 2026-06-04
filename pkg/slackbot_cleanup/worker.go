@@ -28,6 +28,10 @@ const (
 
 	// sessionIDLabel is the label key holding the session ID on Kubernetes Services.
 	sessionIDLabel = "agentapi.proxy/session-id"
+
+	// sessionTTLAnnotation stores the per-session TTL as a Go duration string (e.g. "48h").
+	// When present, this overrides the global CleanupWorkerConfig.SessionTTL for that session.
+	sessionTTLAnnotation = "agentapi.proxy/session-ttl"
 )
 
 // CleanupWorkerConfig holds configuration for the Slackbot session cleanup worker.
@@ -135,6 +139,7 @@ func (w *CleanupWorker) run(ctx context.Context) {
 
 	// Run immediately on start
 	w.pruneStaleSlackbotSessions(ctx)
+	w.pruneSessionsWithTTL(ctx)
 
 	for {
 		select {
@@ -146,6 +151,7 @@ func (w *CleanupWorker) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			w.pruneStaleSlackbotSessions(ctx)
+			w.pruneSessionsWithTTL(ctx)
 		}
 	}
 }
@@ -153,9 +159,10 @@ func (w *CleanupWorker) run(ctx context.Context) {
 // pruneStaleSlackbotSessions lists all Slackbot sessions and deletes those whose
 // last message time is older than SessionTTL.  When DryRun is enabled the
 // worker only logs which sessions would be deleted without touching them.
+// If a session has the agentapi.proxy/session-ttl annotation, that value overrides
+// the global SessionTTL for that individual session.
 func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 	now := time.Now()
-	threshold := now.Add(-w.config.SessionTTL)
 
 	dryRunPrefix := ""
 	if w.config.DryRun {
@@ -181,14 +188,12 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[SLACKBOT_CLEANUP] %sScanning %d Slackbot session(s) for TTL expiry (threshold: %s)",
-		dryRunPrefix, len(svcList.Items), threshold.Format(time.RFC3339))
+	log.Printf("[SLACKBOT_CLEANUP] %sScanning %d Slackbot session(s) for TTL expiry",
+		dryRunPrefix, len(svcList.Items))
 
 	deleted := 0
 	for _, svc := range svcList.Items {
 		// Defensive check: verify the service actually carries the slackbot label.
-		// The label selector already filters by this key, but we re-check here to
-		// guard against any unexpected label selector behaviour.
 		if svc.Labels[slackbotIDLabelKey] == "" {
 			log.Printf("[SLACKBOT_CLEANUP] %sService %s does not have slackbot label, skipping", dryRunPrefix, svc.Name)
 			continue
@@ -199,6 +204,17 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 			log.Printf("[SLACKBOT_CLEANUP] %sService %s missing session-id label, skipping", dryRunPrefix, svc.Name)
 			continue
 		}
+
+		// Resolve effective TTL: per-session annotation takes priority over global config.
+		effectiveTTL := w.config.SessionTTL
+		if ttlStr, ok := svc.Annotations[sessionTTLAnnotation]; ok && ttlStr != "" {
+			if parsed, err := time.ParseDuration(ttlStr); err == nil {
+				effectiveTTL = parsed
+			} else {
+				log.Printf("[SLACKBOT_CLEANUP] %sSession %s: invalid session-ttl annotation %q, using global TTL", dryRunPrefix, sessionID, ttlStr)
+			}
+		}
+		threshold := now.Add(-effectiveTTL)
 
 		// Determine the reference time for TTL calculation from last-message-at.
 		refTime, err := w.resolveReferenceTime(svc.Annotations)
@@ -213,14 +229,14 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 		}
 
 		if w.config.DryRun {
-			log.Printf("[SLACKBOT_CLEANUP] [DRY-RUN] Would delete session %s (last message at %s, threshold %s)",
-				sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339))
+			log.Printf("[SLACKBOT_CLEANUP] [DRY-RUN] Would delete session %s (last message at %s, threshold %s, ttl %s)",
+				sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339), effectiveTTL)
 			deleted++
 			continue
 		}
 
-		log.Printf("[SLACKBOT_CLEANUP] Deleting session %s (last message at %s, threshold %s)",
-			sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339))
+		log.Printf("[SLACKBOT_CLEANUP] Deleting session %s (last message at %s, threshold %s, ttl %s)",
+			sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339), effectiveTTL)
 
 		if err := w.sessionManager.DeleteSession(sessionID); err != nil {
 			log.Printf("[SLACKBOT_CLEANUP] Failed to delete session %s: %v", sessionID, err)
@@ -235,6 +251,91 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 			log.Printf("[SLACKBOT_CLEANUP] [DRY-RUN] Would delete %d stale Slackbot session(s)", deleted)
 		} else {
 			log.Printf("[SLACKBOT_CLEANUP] Deleted %d stale Slackbot session(s)", deleted)
+		}
+	}
+}
+
+// pruneSessionsWithTTL scans all agentapi-proxy sessions (regardless of Slackbot label)
+// that have the agentapi.proxy/session-ttl annotation set, and deletes those whose
+// last-message-at is older than the annotation value.  Slackbot sessions are skipped
+// here because they are already handled by pruneStaleSlackbotSessions.
+func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
+	now := time.Now()
+
+	dryRunPrefix := ""
+	if w.config.DryRun {
+		dryRunPrefix = "[DRY-RUN] "
+	}
+
+	labelSelector := "app.kubernetes.io/managed-by=agentapi-proxy," +
+		"app.kubernetes.io/name=agentapi-session"
+
+	svcList, err := w.k8sClient.CoreV1().Services(w.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		log.Printf("[SESSION_TTL_CLEANUP] %sFailed to list sessions: %v", dryRunPrefix, err)
+		return
+	}
+
+	deleted := 0
+	for _, svc := range svcList.Items {
+		// Skip Slackbot sessions — they are managed by pruneStaleSlackbotSessions.
+		if svc.Labels[slackbotIDLabelKey] != "" {
+			continue
+		}
+
+		ttlStr, ok := svc.Annotations[sessionTTLAnnotation]
+		if !ok || ttlStr == "" {
+			continue
+		}
+
+		ttl, err := time.ParseDuration(ttlStr)
+		if err != nil {
+			log.Printf("[SESSION_TTL_CLEANUP] %sSession %s: invalid session-ttl %q: %v", dryRunPrefix, svc.Labels[sessionIDLabel], ttlStr, err)
+			continue
+		}
+
+		sessionID := svc.Labels[sessionIDLabel]
+		if sessionID == "" {
+			continue
+		}
+
+		threshold := now.Add(-ttl)
+
+		refTime, err := w.resolveReferenceTime(svc.Annotations)
+		if err != nil {
+			log.Printf("[SESSION_TTL_CLEANUP] %sSession %s: cannot determine reference time (%v), skipping", dryRunPrefix, sessionID, err)
+			continue
+		}
+
+		if refTime.After(threshold) {
+			continue
+		}
+
+		if w.config.DryRun {
+			log.Printf("[SESSION_TTL_CLEANUP] [DRY-RUN] Would delete session %s (last message at %s, threshold %s, ttl %s)",
+				sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339), ttl)
+			deleted++
+			continue
+		}
+
+		log.Printf("[SESSION_TTL_CLEANUP] Deleting session %s (last message at %s, threshold %s, ttl %s)",
+			sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339), ttl)
+
+		if err := w.sessionManager.DeleteSession(sessionID); err != nil {
+			log.Printf("[SESSION_TTL_CLEANUP] Failed to delete session %s: %v", sessionID, err)
+		} else {
+			log.Printf("[SESSION_TTL_CLEANUP] Deleted session %s", sessionID)
+			deleted++
+		}
+	}
+
+	if deleted > 0 {
+		if w.config.DryRun {
+			log.Printf("[SESSION_TTL_CLEANUP] [DRY-RUN] Would delete %d session(s) with TTL annotation", deleted)
+		} else {
+			log.Printf("[SESSION_TTL_CLEANUP] Deleted %d session(s) with TTL annotation", deleted)
 		}
 	}
 }
