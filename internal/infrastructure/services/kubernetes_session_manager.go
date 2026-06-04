@@ -2205,6 +2205,10 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 				Name:      "docker-storage",
 				MountPath: "/var/lib/docker",
 			},
+			{
+				Name:      "workdir",
+				MountPath: "/home/agentapi/workdir",
+			},
 		},
 	}
 
