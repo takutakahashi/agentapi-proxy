@@ -36,9 +36,14 @@ const (
 
 // CleanupWorkerConfig holds configuration for the Slackbot session cleanup worker.
 type CleanupWorkerConfig struct {
-	// CheckInterval is how often the worker scans for stale sessions.
+	// CheckInterval is how often the worker scans for stale Slackbot sessions.
 	// Default: 1h
 	CheckInterval time.Duration
+	// SessionTTLCheckInterval is how often the worker scans for sessions with an explicit
+	// agentapi.proxy/session-ttl annotation. This can be much shorter than CheckInterval
+	// to support short-lived sessions (e.g. 1m TTL).
+	// Default: 1m
+	SessionTTLCheckInterval time.Duration
 	// SessionTTL is the duration after the last message before a session is deleted.
 	// Default: 72h (3 days)
 	SessionTTL time.Duration
@@ -53,10 +58,11 @@ type CleanupWorkerConfig struct {
 // DefaultCleanupWorkerConfig returns the default configuration.
 func DefaultCleanupWorkerConfig() CleanupWorkerConfig {
 	return CleanupWorkerConfig{
-		CheckInterval: 1 * time.Hour,
-		SessionTTL:    72 * time.Hour,
-		Enabled:       true,
-		DryRun:        false,
+		CheckInterval:           1 * time.Hour,
+		SessionTTLCheckInterval: 1 * time.Minute,
+		SessionTTL:              72 * time.Hour,
+		Enabled:                 true,
+		DryRun:                  false,
 	}
 }
 
@@ -110,8 +116,8 @@ func (w *CleanupWorker) Start(ctx context.Context) error {
 	if w.config.DryRun {
 		dryRunNote = " (dry-run mode: no sessions will be deleted)"
 	}
-	log.Printf("[SLACKBOT_CLEANUP] Started with check interval %v, session TTL %v%s",
-		w.config.CheckInterval, w.config.SessionTTL, dryRunNote)
+	log.Printf("[SLACKBOT_CLEANUP] Started with check interval %v, session TTL %v, TTL annotation check interval %v%s",
+		w.config.CheckInterval, w.config.SessionTTL, w.config.SessionTTLCheckInterval, dryRunNote)
 	return nil
 }
 
@@ -134,8 +140,15 @@ func (w *CleanupWorker) Stop() {
 func (w *CleanupWorker) run(ctx context.Context) {
 	defer w.wg.Done()
 
-	ticker := time.NewTicker(w.config.CheckInterval)
-	defer ticker.Stop()
+	slackbotTicker := time.NewTicker(w.config.CheckInterval)
+	defer slackbotTicker.Stop()
+
+	ttlInterval := w.config.SessionTTLCheckInterval
+	if ttlInterval <= 0 {
+		ttlInterval = 1 * time.Minute
+	}
+	ttlTicker := time.NewTicker(ttlInterval)
+	defer ttlTicker.Stop()
 
 	// Run immediately on start
 	w.pruneStaleSlackbotSessions(ctx)
@@ -149,8 +162,9 @@ func (w *CleanupWorker) run(ctx context.Context) {
 		case <-w.stopCh:
 			log.Printf("[SLACKBOT_CLEANUP] Stop signal received")
 			return
-		case <-ticker.C:
+		case <-slackbotTicker.C:
 			w.pruneStaleSlackbotSessions(ctx)
+		case <-ttlTicker.C:
 			w.pruneSessionsWithTTL(ctx)
 		}
 	}

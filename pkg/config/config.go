@@ -167,6 +167,10 @@ type SlackbotCleanupWorkerConfig struct {
 	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
 	// SessionTTL is the duration after the last message before a session is deleted (e.g., "72h")
 	SessionTTL string `json:"session_ttl" mapstructure:"session_ttl"`
+	// SessionTTLCheckInterval is how often to scan for non-Slackbot sessions that have an
+	// explicit agentapi.proxy/session-ttl annotation. This can be much shorter than
+	// CheckInterval to support short-lived sessions. Default: "1m"
+	SessionTTLCheckInterval string `json:"session_ttl_check_interval" mapstructure:"session_ttl_check_interval"`
 	// DryRun disables actual deletion; stale sessions are only logged.
 	// Useful for verifying TTL settings before enabling real cleanup.
 	DryRun bool `json:"dry_run" mapstructure:"dry_run"`
@@ -797,6 +801,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slackbot_cleanup_worker.enabled", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED")
 	_ = v.BindEnv("slackbot_cleanup_worker.check_interval", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL")
 	_ = v.BindEnv("slackbot_cleanup_worker.session_ttl", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL")
+	_ = v.BindEnv("slackbot_cleanup_worker.session_ttl_check_interval", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL_CHECK_INTERVAL")
 	_ = v.BindEnv("slackbot_cleanup_worker.dry_run", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN")
 	_ = v.BindEnv("slackbot_cleanup_worker.lease_duration", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION")
 	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
@@ -931,6 +936,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("slackbot_cleanup_worker.enabled", false)
 	v.SetDefault("slackbot_cleanup_worker.check_interval", "1h")
 	v.SetDefault("slackbot_cleanup_worker.session_ttl", "72h")
+	v.SetDefault("slackbot_cleanup_worker.session_ttl_check_interval", "1m")
 	v.SetDefault("slackbot_cleanup_worker.namespace", "")
 	v.SetDefault("slackbot_cleanup_worker.lease_duration", "15s")
 	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "10s")
