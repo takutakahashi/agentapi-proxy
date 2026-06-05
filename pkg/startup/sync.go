@@ -601,42 +601,28 @@ func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) er
 	return nil
 }
 
-// codexSkillsBeginMarker / codexSkillsEndMarker delimit the auto-generated skills
-// section in ~/.codex/instructions.md.  Using markers allows syncCodexSkills to
-// be called multiple times without duplicating content.
-const codexSkillsBeginMarker = "<!-- BEGIN CODEX SKILLS (auto-generated) -->"
-const codexSkillsEndMarker = "<!-- END CODEX SKILLS -->"
-
-// skillEntry holds the parsed content of a single SKILL.md file.
-type skillEntry struct {
-	name string
-	body string
-}
-
-// syncCodexSkills scans installed marketplace plugin directories for SKILL.md files
-// and aggregates their content into ~/.codex/instructions.md so that the Codex CLI
-// agent benefits from the same skill definitions as Claude Code.
+// syncCodexSkills copies skill directories from installed marketplace plugins into
+// ~/.codex/skills/<skill-name>/ so the Codex CLI discovers them natively.
 //
-// SKILL.md files contain a YAML frontmatter block (name, description, allowed-tools)
-// followed by a markdown body.  Only the name and body are used; the Claude-specific
-// frontmatter fields (description trigger phrases, allowed-tools) are stripped.
+// Codex reads skills from ~/.codex/skills/<skill-name>/SKILL.md (user scope) using
+// the same SKILL.md format as Claude Code marketplace plugins, so no transformation
+// is needed — the directory is copied as-is.
 //
-// The aggregated skills section is delimited by marker comments so the function is
-// idempotent: subsequent calls replace the previous section rather than appending.
+// The function is idempotent: each run overwrites previously synced skill directories.
 //
 // Directory layout expected:
 //
-//	<marketplacesDir>/<marketplace>/plugins/<plugin>/skills/<skill>/SKILL.md
+//	<marketplacesDir>/<marketplace>/plugins/<plugin>/skills/<skill-name>/SKILL.md
 func syncCodexSkills(outputDir, marketplacesDir string) error {
-	var skills []skillEntry
+	codexSkillsDir := filepath.Join(outputDir, ".codex", "skills")
 
 	marketplaceEntries, err := os.ReadDir(marketplacesDir)
 	if err != nil {
-		// marketplacesDir may not exist when no marketplaces were configured.
 		log.Printf("[SYNC] syncCodexSkills: no marketplaces dir at %s, skipping", marketplacesDir)
 		return nil
 	}
 
+	copiedCount := 0
 	for _, mEntry := range marketplaceEntries {
 		if !mEntry.IsDir() || strings.HasPrefix(mEntry.Name(), ".tmp-") {
 			continue
@@ -664,113 +650,51 @@ func syncCodexSkills(outputDir, marketplacesDir string) error {
 					continue
 				}
 
-				skillMDPath := filepath.Join(skillsDir, sEntry.Name(), "SKILL.md")
-				data, err := os.ReadFile(skillMDPath)
-				if err != nil {
-					continue
-				}
+				srcDir := filepath.Join(skillsDir, sEntry.Name())
+				destDir := filepath.Join(codexSkillsDir, sEntry.Name())
 
-				name, body := parseSkillMD(data)
-				if name == "" {
-					name = sEntry.Name()
-				}
-				if body == "" {
+				if err := copySkillDir(srcDir, destDir); err != nil {
+					log.Printf("[SYNC] Warning: failed to copy skill %s to Codex: %v", sEntry.Name(), err)
 					continue
 				}
-				skills = append(skills, skillEntry{name: name, body: body})
-				log.Printf("[SYNC] Found skill for Codex: %s", name)
+				copiedCount++
+				log.Printf("[SYNC] Copied skill %s to %s", sEntry.Name(), destDir)
 			}
 		}
 	}
 
-	if len(skills) == 0 {
-		log.Printf("[SYNC] No SKILL.md files found, skipping Codex skills injection")
+	if copiedCount == 0 {
+		log.Printf("[SYNC] No skills found in marketplaces, skipping Codex skills sync")
 		return nil
 	}
 
-	// Build the skills section.
-	var section strings.Builder
-	section.WriteString(codexSkillsBeginMarker)
-	section.WriteString("\n\n# Available Skills\n\n")
-	section.WriteString("The following skills are available to assist you with specific tasks:\n\n")
-	for _, s := range skills {
-		section.WriteString("## ")
-		section.WriteString(s.name)
-		section.WriteString("\n\n")
-		section.WriteString(strings.TrimSpace(s.body))
-		section.WriteString("\n\n")
-	}
-	section.WriteString(codexSkillsEndMarker)
-	section.WriteString("\n")
-
-	// Read existing instructions.md (may contain base content written by entrypoint).
-	codexDir := filepath.Join(outputDir, ".codex")
-	if err := os.MkdirAll(codexDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .codex directory: %w", err)
-	}
-	instructionsPath := filepath.Join(codexDir, "instructions.md")
-
-	existing := ""
-	if data, err := os.ReadFile(instructionsPath); err == nil {
-		existing = string(data)
-	}
-
-	// Replace the previous skills section if present, otherwise append.
-	beginIdx := strings.Index(existing, codexSkillsBeginMarker)
-	endIdx := strings.Index(existing, codexSkillsEndMarker)
-
-	var updated string
-	if beginIdx >= 0 && endIdx > beginIdx {
-		// Replace in-place.
-		updated = existing[:beginIdx] + section.String() + existing[endIdx+len(codexSkillsEndMarker):]
-		// Trim any trailing newline duplication at the splice point.
-		updated = strings.TrimRight(existing[:beginIdx], "\n") + "\n\n" + section.String()
-	} else {
-		// Append after existing content.
-		base := strings.TrimRight(existing, "\n")
-		if base != "" {
-			updated = base + "\n\n" + section.String()
-		} else {
-			updated = section.String()
-		}
-	}
-
-	if err := os.WriteFile(instructionsPath, []byte(updated), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", instructionsPath, err)
-	}
-
-	log.Printf("[SYNC] Injected %d skill(s) from marketplaces into %s", len(skills), instructionsPath)
+	log.Printf("[SYNC] Synced %d skill(s) from marketplaces to %s", copiedCount, codexSkillsDir)
 	return nil
 }
 
-// parseSkillMD parses a Claude Code SKILL.md file and returns the skill name
-// (from the frontmatter) and the markdown body (everything after the frontmatter).
-// The YAML frontmatter is delimited by leading and trailing "---" lines.
-// If no valid frontmatter is found the entire content is returned as the body.
-func parseSkillMD(data []byte) (name, body string) {
-	content := string(data)
-
-	if !strings.HasPrefix(content, "---\n") {
-		return "", content
+// copySkillDir copies all files from srcDir into destDir, creating destDir if needed.
+// Existing files are overwritten to keep skill definitions up to date on each run.
+func copySkillDir(srcDir, destDir string) error {
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create skill dir %s: %w", destDir, err)
 	}
 
-	// Find the closing "---" of the frontmatter.
-	rest := content[4:] // skip opening "---\n"
-	endIdx := strings.Index(rest, "\n---\n")
-	if endIdx < 0 {
-		return "", content
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return fmt.Errorf("failed to read skill source dir %s: %w", srcDir, err)
 	}
 
-	frontmatter := rest[:endIdx]
-	body = strings.TrimPrefix(rest[endIdx+5:], "\n") // skip "\n---\n"
-
-	// Extract the name field (single-line only; multi-line description is ignored).
-	for _, line := range strings.Split(frontmatter, "\n") {
-		if strings.HasPrefix(line, "name:") {
-			name = strings.TrimSpace(strings.TrimPrefix(line, "name:"))
-			break
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, entry.Name()))
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", entry.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(destDir, entry.Name()), data, 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", entry.Name(), err)
 		}
 	}
-
-	return name, body
+	return nil
 }
