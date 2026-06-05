@@ -55,6 +55,7 @@ type sessionProfileConfigJSON struct {
 	ReuseSession           bool                    `json:"reuse_session,omitempty"`
 	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
 	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
+	SessionTTL             string                  `json:"session_ttl,omitempty"`
 }
 
 // KubernetesSessionProfileRepository implements SessionProfileRepository using Kubernetes Secrets
@@ -317,6 +318,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetReuseSession(pj.Config.ReuseSession)
 	cfg.SetMemoryKey(pj.Config.MemoryKey)
 	cfg.SetSandboxPolicyID(pj.Config.SandboxPolicyID)
+	cfg.SetSessionTTL(pj.Config.SessionTTL)
 	profile.SetConfig(cfg)
 
 	return profile
@@ -341,6 +343,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			ReuseSession:           cfg.ReuseSession(),
 			MemoryKey:              cfg.MemoryKey(),
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
+			SessionTTL:             cfg.SessionTTL(),
 		},
 		CreatedAt: profile.CreatedAt(),
 		UpdatedAt: profile.UpdatedAt(),

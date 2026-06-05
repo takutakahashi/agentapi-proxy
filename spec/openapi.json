@@ -5443,6 +5443,11 @@
           },
           "docker": {
             "$ref": "#/components/schemas/DockerParams"
+          },
+          "session_ttl": {
+            "type": "string",
+            "description": "Duration after the last message before this session is automatically deleted. Accepted format: Go duration string (e.g. '48h', '168h', '7d' is not valid — use hours). Empty string means the global cleanup worker TTL is used for Slackbot sessions; non-Slackbot sessions without this field are not auto-deleted.",
+            "example": "48h"
           }
         }
       },
@@ -7474,6 +7479,15 @@
         },
         "params": {
           "$ref": "#/components/schemas/SessionParams"
+        },
+        "sandbox_policy_id": {
+          "type": "string",
+          "description": "Reference to a SandboxPolicy resource. When set, the sandbox sidecar is enabled automatically with this policy applied."
+        },
+        "session_ttl": {
+          "type": "string",
+          "description": "Default TTL for sessions created with this profile. Overrides the global cleanup worker TTL. Accepted format: Go duration string (e.g. '48h', '168h'). Can be overridden per-session via params.session_ttl.",
+          "example": "72h"
         }
       }
     },

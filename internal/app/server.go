@@ -688,6 +688,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		docker = startReq.Params.Docker
 	}
 
+	// Determine session TTL from Params.SessionTTL
+	var sessionTTL string
+	if startReq.Params != nil && startReq.Params.SessionTTL != "" {
+		sessionTTL = startReq.Params.SessionTTL
+	}
+
 	// Build run server request
 	req := &entities.RunServerRequest{
 		UserID:                   userID,
@@ -708,6 +714,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		CycleMaxCount:            cycleMaxCount,
 		Sandbox:                  sandbox,
 		Docker:                   docker,
+		SessionTTL:               sessionTTL,
 	}
 
 	// Delegate to session manager

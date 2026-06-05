@@ -30,6 +30,10 @@ type SessionProfileConfig struct {
 	// sandboxPolicyID is a reference to a SandboxPolicy resource.
 	// When set, the sandbox sidecar is enabled automatically with this policy applied.
 	sandboxPolicyID string
+	// sessionTTL overrides the global cleanup worker TTL for sessions created with this profile.
+	// Accepted format: Go duration string (e.g. "48h", "168h").
+	// Empty string means the global cleanup worker TTL is used.
+	sessionTTL string
 }
 
 // NewSessionProfile creates a new SessionProfile
@@ -193,6 +197,12 @@ func (c *SessionProfileConfig) SandboxPolicyID() string { return c.sandboxPolicy
 
 // SetSandboxPolicyID sets the sandbox policy ID
 func (c *SessionProfileConfig) SetSandboxPolicyID(id string) { c.sandboxPolicyID = id }
+
+// SessionTTL returns the session TTL override for this profile
+func (c *SessionProfileConfig) SessionTTL() string { return c.sessionTTL }
+
+// SetSessionTTL sets the session TTL override for this profile
+func (c *SessionProfileConfig) SetSessionTTL(ttl string) { c.sessionTTL = ttl }
 
 // --- Error types ---
 

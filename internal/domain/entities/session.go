@@ -108,6 +108,11 @@ type SessionParams struct {
 	Sandbox *SandboxParams `json:"sandbox,omitempty"`
 	// Docker configures Docker-in-Docker (DinD) for the session.
 	Docker *DockerParams `json:"docker,omitempty"`
+	// SessionTTL is the duration after the last message before this session is automatically deleted.
+	// Accepted format: Go duration string (e.g. "48h", "7d" where d=24h, "168h").
+	// Empty string means the global cleanup worker TTL is used for Slackbot sessions;
+	// non-Slackbot sessions without this field are not auto-deleted.
+	SessionTTL string `json:"session_ttl,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server
@@ -161,6 +166,9 @@ type RunServerRequest struct {
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).
 	ProvisionSettings *sessionsettings.SessionSettings
+	// SessionTTL is the duration after the last message before this session is auto-deleted.
+	// Stored as a Go duration string (e.g. "48h"). Empty means use the global cleanup TTL.
+	SessionTTL string
 }
 
 // Session represents a running agentapi session

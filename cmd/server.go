@@ -345,11 +345,21 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 		sessionTTL = 72 * time.Hour
 	}
 
+	sessionTTLCheckInterval := 1 * time.Minute
+	if configData.SlackbotCleanupWorker.SessionTTLCheckInterval != "" {
+		if d, err := time.ParseDuration(configData.SlackbotCleanupWorker.SessionTTLCheckInterval); err == nil && d > 0 {
+			sessionTTLCheckInterval = d
+		} else {
+			log.Printf("[SLACKBOT_CLEANUP] Invalid session_ttl_check_interval, using default 1m: %v", err)
+		}
+	}
+
 	workerConfig := slackbotcleanup.CleanupWorkerConfig{
-		CheckInterval: checkInterval,
-		SessionTTL:    sessionTTL,
-		Enabled:       true,
-		DryRun:        configData.SlackbotCleanupWorker.DryRun,
+		CheckInterval:           checkInterval,
+		SessionTTLCheckInterval: sessionTTLCheckInterval,
+		SessionTTL:              sessionTTL,
+		Enabled:                 true,
+		DryRun:                  configData.SlackbotCleanupWorker.DryRun,
 	}
 
 	leaseDuration, err := time.ParseDuration(configData.SlackbotCleanupWorker.LeaseDuration)
