@@ -14,6 +14,25 @@ if [ ! -f /home/agentapi/.claude/CLAUDE.md ] || [ /tmp/config/CLAUDE.md -nt /hom
     echo "CLAUDE.md copied successfully"
 fi
 
+# Create .codex directory if it doesn't exist
+mkdir -p /home/agentapi/.codex
+
+# Copy AGENTS.md (Codex user-level instructions) if it doesn't exist or if it's older than the source
+if [ ! -f /home/agentapi/.codex/instructions.md ] || [ /tmp/config/AGENTS.md -nt /home/agentapi/.codex/instructions.md ]; then
+    echo "Copying AGENTS.md to .codex/instructions.md..."
+    cp /tmp/config/AGENTS.md /home/agentapi/.codex/instructions.md
+    echo "AGENTS.md copied successfully"
+fi
+
+# Copy codex-config.toml (default Codex CLI config) only if not already present.
+# The provision step may overwrite this with session-specific settings; entrypoint
+# only supplies the image-level default on first run.
+if [ ! -f /home/agentapi/.codex/config.toml ]; then
+    echo "Copying codex-config.toml to .codex/config.toml..."
+    cp /tmp/config/codex-config.toml /home/agentapi/.codex/config.toml
+    echo "codex-config.toml copied successfully"
+fi
+
 
 # Fix permissions for persistent volume directories only if needed
 if [ -d "$HOME/.agentapi-proxy" ]; then

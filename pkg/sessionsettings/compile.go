@@ -67,6 +67,11 @@ func Compile(opts CompileOptions) error {
 		return fmt.Errorf("failed to generate codex config.toml: %w", err)
 	}
 
+	// 3d. Generate ~/.codex/instructions.md (codex sessions only)
+	if err := generateCodexInstructionsMD(opts.OutputDir, settings.Codex.InstructionsMD); err != nil {
+		return fmt.Errorf("failed to generate codex instructions.md: %w", err)
+	}
+
 	// 4. Generate env file
 	if err := generateEnvFile(opts.EnvFilePath, settings.Env); err != nil {
 		return fmt.Errorf("failed to generate env file: %w", err)
@@ -306,6 +311,29 @@ func mergeCodexManagedHooks(hooksJSON map[string]interface{}) map[string]interfa
 	merged["hooks"] = innerHooks
 	log.Printf("[COMPILE-SETTINGS] Merged %d hook event(s) from %s into codex hooks.json", len(managedHooks), managedSettingsPath)
 	return merged
+}
+
+// generateCodexInstructionsMD creates ~/.codex/instructions.md for user-level Codex
+// CLI instructions, equivalent to ~/.claude/CLAUDE.md for Claude Code.
+// Only written when instructionsMD is non-empty; the default baked into the
+// Docker image (copied by entrypoint.sh) remains when this is empty.
+func generateCodexInstructionsMD(outputDir string, instructionsMD string) error {
+	if instructionsMD == "" {
+		return nil
+	}
+
+	codexDir := filepath.Join(outputDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+
+	instructionsPath := filepath.Join(codexDir, "instructions.md")
+	if err := os.WriteFile(instructionsPath, []byte(instructionsMD), 0644); err != nil {
+		return fmt.Errorf("failed to write codex instructions.md: %w", err)
+	}
+
+	log.Printf("[COMPILE-SETTINGS] Generated %s", instructionsPath)
+	return nil
 }
 
 // generateCodexConfigTOML creates ~/.codex/config.toml for Codex CLI configuration.

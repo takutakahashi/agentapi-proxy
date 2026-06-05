@@ -1,0 +1,4 @@
+# Default Codex CLI configuration for agentapi-proxy sessions.
+# approval-mode = "full-auto" bypasses interactive permission prompts,
+# equivalent to bypassPermissionsModeAccepted in Claude Code's .claude.json.
+approval-mode = "full-auto"
