@@ -11,10 +11,8 @@ import (
 )
 
 // AgentProvisionerCmd is the "agent-provisioner" sub-command.
-// It starts an HTTP server (default :9001) that provisions session Pods.
-//
-// The proxy server calls POST /provision with the session settings JSON
-// after the Pod becomes ready.  The provisioner then:
+// It starts a local HTTP server (default :9001) for probes/status and pulls
+// provision requests from the proxy internal API. The provisioner then:
 //
 //  1. Runs the full setup sequence (write-pem, clone-repo, compile, sync-extra)
 //  2. Starts agentapi (or claude-agentapi / codex-agentapi) as a subprocess
@@ -22,21 +20,17 @@ import (
 //  4. Sends the initial message (if any)
 //
 // On Pod restart, if --settings-file already exists (mounted from the K8s
-// Secret), provisioning is triggered automatically without waiting for a
-// /provision call.
+// Secret), provisioning is triggered automatically as Pod restart recovery.
 var AgentProvisionerCmd = &cobra.Command{
 	Use:   "agent-provisioner",
-	Short: "HTTP provisioner server for session Pods",
-	Long: `Starts an HTTP server that provisions a session Pod on demand.
+	Short: "Pull-based provisioner for session Pods",
+	Long: `Starts the session Pod provisioner.
 
 Endpoints:
   GET  /healthz   – liveness/readiness probe (always 200)
   GET  /status    – current provisioning state as JSON
-  POST /provision – accepts SessionSettings JSON; triggers the session
-                    startup sequence asynchronously (returns 202)
 
-On Pod restart the server automatically provisions from --settings-file
-(the K8s Secret volume mount) without waiting for a /provision call.`,
+Provision requests are pulled from the proxy internal provisioner API.`,
 	RunE: runAgentProvisioner,
 }
 
@@ -62,5 +56,28 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	srv := provisioner.New(port, settingsFile)
-	return srv.Start(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start(ctx)
+	}()
+
+	pullErrCh := make(chan error, 1)
+	go func() {
+		pullErrCh <- provisioner.RunPullClient(ctx, srv, provisioner.PullClientConfig{
+			ProxyURL:  os.Getenv("PROVISIONER_PROXY_URL"),
+			Token:     os.Getenv("PROVISIONER_TOKEN"),
+			SessionID: os.Getenv("AGENTAPI_SESSION_ID"),
+			PodName:   os.Getenv("POD_NAME"),
+			Namespace: os.Getenv("POD_NAMESPACE"),
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case err := <-pullErrCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

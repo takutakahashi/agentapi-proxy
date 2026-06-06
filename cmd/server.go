@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
@@ -97,6 +99,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 	if configData.StockInventoryWorker.Enabled {
 		startStockInventoryWorker(configData, proxyServer)
 	}
+
+	// Start the leader-elected session allocator when Kubernetes sessions are active.
+	startSessionAllocator(configData, proxyServer)
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
 	registerScheduleHandlers(configData, proxyServer)
@@ -530,6 +535,111 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 		log.Printf("[WEBHOOK_HANDLERS] Webhook base URL not configured, will auto-detect from request headers")
 	}
 	log.Printf("[WEBHOOK_HANDLERS] Webhook handlers registered successfully")
+}
+
+// startSessionAllocator starts the leader-elected SessionAllocator. API requests
+// can land on any proxy replica, but only the elected leader consumes allocation
+// requests and creates/adopts session Pods.
+func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *services.SessionAllocator {
+	log.Printf("[SESSION_ALLOCATOR] Initializing session allocator...")
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[SESSION_ALLOCATOR] Kubernetes config not available, session allocator disabled: %v", err)
+		return nil
+	}
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[SESSION_ALLOCATOR] Failed to create Kubernetes client, session allocator disabled: %v", err)
+		return nil
+	}
+
+	manager, ok := proxyServer.GetSessionManager().(*services.KubernetesSessionManager)
+	if !ok {
+		log.Printf("[SESSION_ALLOCATOR] Session manager is not KubernetesSessionManager, session allocator disabled")
+		return nil
+	}
+	manager.SetSessionAllocationNotifier(buildSessionAllocationNotifier(configData))
+
+	namespace := configData.StockInventoryWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	leaseDuration, err := time.ParseDuration(configData.StockInventoryWorker.LeaseDuration)
+	if err != nil {
+		leaseDuration = 15 * time.Second
+	}
+	renewDeadline, err := time.ParseDuration(configData.StockInventoryWorker.RenewDeadline)
+	if err != nil {
+		renewDeadline = 10 * time.Second
+	}
+	retryPeriod, err := time.ParseDuration(configData.StockInventoryWorker.RetryPeriod)
+	if err != nil {
+		retryPeriod = 2 * time.Second
+	}
+
+	manager.SetSessionAllocatorEnabled(true)
+	allocator := services.NewSessionAllocator(manager)
+	electorConfig := schedule.LeaderElectionConfig{
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod:   retryPeriod,
+		Namespace:     namespace,
+		LeaseName:     "agentapi-session-allocator",
+	}
+	elector := schedule.NewLeaderElector(client, electorConfig)
+	go elector.Run(context.Background(),
+		func(leaderCtx context.Context) {
+			log.Printf("[SESSION_ALLOCATOR] Became leader")
+			if err := allocator.Start(leaderCtx); err != nil {
+				log.Printf("[SESSION_ALLOCATOR] Failed to start: %v", err)
+			}
+		},
+		func() {
+			log.Printf("[SESSION_ALLOCATOR] Lost leadership")
+			allocator.Stop()
+		},
+	)
+	log.Printf("[SESSION_ALLOCATOR] Session allocator started in namespace: %s", namespace)
+	return allocator
+}
+
+func buildSessionAllocationNotifier(configData *config.Config) services.SessionAllocationNotifier {
+	if configData.Redis.Addr == "" {
+		log.Printf("[SESSION_ALLOCATOR] Redis not configured; using local allocation notifier")
+		return services.NewLocalSessionAllocationNotifier()
+	}
+	opts := &redis.Options{
+		Addr:     configData.Redis.Addr,
+		Password: configData.Redis.Password,
+		DB:       configData.Redis.DB,
+	}
+	if d, err := time.ParseDuration(configData.Redis.DialTimeout); err == nil && d > 0 {
+		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(configData.Redis.ReadTimeout); err == nil && d > 0 {
+		opts.ReadTimeout = d
+	}
+	if d, err := time.ParseDuration(configData.Redis.WriteTimeout); err == nil && d > 0 {
+		opts.WriteTimeout = d
+	}
+	if configData.Redis.TLSEnabled {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Printf("[SESSION_ALLOCATOR] Warning: Redis ping failed (%s); using local allocation notifier: %v", configData.Redis.Addr, err)
+		_ = client.Close()
+		return services.NewLocalSessionAllocationNotifier()
+	}
+	log.Printf("[SESSION_ALLOCATOR] Redis allocation notifier connected: addr=%s", configData.Redis.Addr)
+	return services.NewRedisSessionAllocationNotifier(client)
 }
 
 // registerImportExportHandlers registers import/export REST API handlers

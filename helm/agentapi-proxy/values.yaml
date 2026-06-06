@@ -391,6 +391,10 @@ kubernetesSession:
   podStartTimeout: 120
   podStopTimeout: 30
 
+  # Session Pods poll the proxy internal API for provisioning jobs.
+  provisioner:
+    proxyUrl: ""
+
   # Node selector for session pods
   # Example:
   # nodeSelector:

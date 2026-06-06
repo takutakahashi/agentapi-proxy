@@ -39,6 +39,7 @@ type HandlerRegistry struct {
 	taskGroupController       *controllers.TaskGroupController
 	fileController            *controllers.FileController
 	sessionProfileController  *controllers.SessionProfileController
+	provisionerController     *controllers.ProvisionerController
 	customHandlers            []CustomHandler
 }
 
@@ -155,6 +156,12 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Session profile controller initialized")
 	}
 
+	var provisionerController *controllers.ProvisionerController
+	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
+		provisionerController = controllers.NewProvisionerController(k8sManager)
+		log.Printf("[ROUTER] Provisioner controller initialized")
+	}
+
 	acpController := controllers.NewACPController(server, server)
 
 	return &Router{
@@ -177,6 +184,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			taskGroupController:       taskGroupController,
 			fileController:            fileController,
 			sessionProfileController:  sessionProfileController,
+			provisionerController:     provisionerController,
 			customHandlers:            make([]CustomHandler, 0),
 		},
 	}
@@ -246,6 +254,15 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.GET("/sessions/:sessionId/sandbox-domains", r.handlers.sessionController.GetSessionSandboxDomains,
 		auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	log.Printf("[ROUTES] Session status/message push endpoints registered (SSE + long-poll)")
+
+	if r.handlers.provisionerController != nil {
+		r.echo.POST("/internal/session-provisioners/connect", r.handlers.provisionerController.Connect)
+		r.echo.GET("/internal/session-provisioners/:sessionId/provision-requests", r.handlers.provisionerController.GetProvisionRequest)
+		r.echo.POST("/internal/session-provisioners/:sessionId/provision-requests/:requestId/status", r.handlers.provisionerController.UpdateProvisionRequestStatus)
+		r.echo.GET("/internal/session-allocations/next", r.handlers.provisionerController.GetNextSessionAllocation)
+		r.echo.POST("/internal/session-allocations/:sessionId/result", r.handlers.provisionerController.CompleteSessionAllocation)
+		log.Printf("[ROUTES] Internal provisioner endpoints registered")
+	}
 
 	// Session sharing routes
 	if r.handlers.shareController != nil {
