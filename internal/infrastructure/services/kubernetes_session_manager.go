@@ -198,9 +198,13 @@ func NewKubernetesSessionManagerWithClient(
 		statusSubCancel: subCancel,
 	}
 
-	// Ensure OpenTelemetry Collector ConfigMap exists
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if err := manager.ensureProvisionerToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ensure provisioner token: %w", err)
+	}
+
+	// Ensure OpenTelemetry Collector ConfigMap exists
 	if err := manager.ensureOtelcolConfigMap(ctx); err != nil {
 		log.Printf("[K8S_SESSION] Warning: Failed to ensure otelcol ConfigMap: %v", err)
 		// Don't fail initialization if ConfigMap creation fails

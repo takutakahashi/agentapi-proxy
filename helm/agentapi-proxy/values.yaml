@@ -393,7 +393,6 @@ kubernetesSession:
 
   # Session Pods poll the proxy internal API for provisioning jobs.
   provisioner:
-    token: "agentapi-provisioner"
     proxyUrl: ""
 
   # Node selector for session pods

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,7 +15,11 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
-const provisionerJobType = "provision"
+const (
+	provisionerJobType         = "provision"
+	provisionerTokenSecretName = "agentapi-provisioner-token"
+	provisionerTokenSecretKey  = "token"
+)
 
 // ProvisionerConnectRequest is sent by a session Pod when agent-provisioner starts.
 type ProvisionerConnectRequest struct {
@@ -47,6 +52,73 @@ type ProvisionerJob struct {
 
 func (m *KubernetesSessionManager) ValidateProvisionerToken(token string) bool {
 	return m.k8sConfig != nil && m.k8sConfig.ProvisionerToken != "" && token == m.k8sConfig.ProvisionerToken
+}
+
+func (m *KubernetesSessionManager) ensureProvisionerToken(ctx context.Context) error {
+	if m.k8sConfig.ProvisionerToken != "" {
+		return nil
+	}
+	token, err := m.loadProvisionerToken(ctx)
+	if err == nil {
+		m.k8sConfig.ProvisionerToken = token
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	token, err = generateProvisionerToken()
+	if err != nil {
+		return err
+	}
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      provisionerTokenSecretName,
+			Namespace: m.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by":     "agentapi-proxy",
+				"agentapi.proxy/provisioner-token": "true",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			provisionerTokenSecretKey: []byte(token),
+		},
+	}
+	if _, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, sec, metav1.CreateOptions{}); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			token, err = m.loadProvisionerToken(ctx)
+			if err != nil {
+				return err
+			}
+			m.k8sConfig.ProvisionerToken = token
+			return nil
+		}
+		return err
+	}
+	m.k8sConfig.ProvisionerToken = token
+	log.Printf("[K8S_SESSION] Generated local provisioner token Secret %s/%s", m.namespace, provisionerTokenSecretName)
+	return nil
+}
+
+func (m *KubernetesSessionManager) loadProvisionerToken(ctx context.Context) (string, error) {
+	sec, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, provisionerTokenSecretName, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	token := string(sec.Data[provisionerTokenSecretKey])
+	if token == "" {
+		return "", fmt.Errorf("provisioner token Secret %s/%s has no %q key", m.namespace, provisionerTokenSecretName, provisionerTokenSecretKey)
+	}
+	return token, nil
+}
+
+func generateProvisionerToken() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate provisioner token: %w", err)
+	}
+	return fmt.Sprintf("%x", b[:]), nil
 }
 
 func provisionerJobSecretName(sessionID string) string {
