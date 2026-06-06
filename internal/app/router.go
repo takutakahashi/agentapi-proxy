@@ -259,6 +259,8 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/internal/session-provisioners/connect", r.handlers.provisionerController.Connect)
 		r.echo.GET("/internal/session-provisioners/:sessionId/provision-requests", r.handlers.provisionerController.GetProvisionRequest)
 		r.echo.POST("/internal/session-provisioners/:sessionId/provision-requests/:requestId/status", r.handlers.provisionerController.UpdateProvisionRequestStatus)
+		r.echo.GET("/internal/session-allocations/next", r.handlers.provisionerController.GetNextSessionAllocation)
+		r.echo.POST("/internal/session-allocations/:sessionId/result", r.handlers.provisionerController.CompleteSessionAllocation)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
 	}
 

@@ -80,6 +80,38 @@ func (pc *ProvisionerController) UpdateProvisionRequestStatus(c echo.Context) er
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (pc *ProvisionerController) GetNextSessionAllocation(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	wait := parseWait(c.QueryParam("wait"))
+	req, ok, err := pc.manager.NextSessionAllocation(c.Request().Context(), wait)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if !ok {
+		return c.NoContent(http.StatusNoContent)
+	}
+	return c.JSON(http.StatusOK, req)
+}
+
+func (pc *ProvisionerController) CompleteSessionAllocation(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	var result services.SessionAllocationResult
+	if err := c.Bind(&result); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if result.Status == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status is required"})
+	}
+	if err := pc.manager.CompleteSessionAllocation(c.Request().Context(), c.Param("sessionId"), result); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (pc *ProvisionerController) authorized(c echo.Context) bool {
 	if pc.manager == nil {
 		return false

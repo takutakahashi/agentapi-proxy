@@ -138,6 +138,8 @@ type KubernetesSessionManager struct {
 	// sessionAllocatorEnabled routes CreateSession through the leader-elected
 	// SessionAllocator when the server has started that worker.
 	sessionAllocatorEnabled bool
+
+	sessionAllocationNotifier SessionAllocationNotifier
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -188,18 +190,19 @@ func NewKubernetesSessionManagerWithClient(
 	subCtx, subCancel := context.WithCancel(context.Background())
 
 	manager := &KubernetesSessionManager{
-		config:          cfg,
-		k8sConfig:       k8sConfig,
-		client:          client,
-		verbose:         verbose,
-		logger:          lgr,
-		sessions:        make(map[string]*KubernetesSession),
-		namespace:       namespace,
-		globalSubs:      make(map[uint64]chan SessionStatusEvent),
-		messageSubs:     make(map[string]map[uint64]chan SessionMessageEvent),
-		podID:           podID,
-		statusSubCtx:    subCtx,
-		statusSubCancel: subCancel,
+		config:                    cfg,
+		k8sConfig:                 k8sConfig,
+		client:                    client,
+		verbose:                   verbose,
+		logger:                    lgr,
+		sessions:                  make(map[string]*KubernetesSession),
+		namespace:                 namespace,
+		globalSubs:                make(map[uint64]chan SessionStatusEvent),
+		messageSubs:               make(map[string]map[uint64]chan SessionMessageEvent),
+		podID:                     podID,
+		statusSubCtx:              subCtx,
+		statusSubCancel:           subCancel,
+		sessionAllocationNotifier: NewLocalSessionAllocationNotifier(),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
