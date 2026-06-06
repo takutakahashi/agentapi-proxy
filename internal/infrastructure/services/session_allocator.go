@@ -78,52 +78,7 @@ func (m *KubernetesSessionManager) submitSessionAllocation(ctx context.Context, 
 		log.Printf("[SESSION_ALLOCATOR] Warning: failed to notify allocation request %s: %v", id, err)
 	}
 
-	timeout := time.Duration(m.k8sConfig.PodStartTimeout) * time.Second
-	if timeout <= 0 {
-		timeout = 120 * time.Second
-	}
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-
-	updates, cancel, err := m.subscribeSessionAllocation(ctx)
-	if err != nil {
-		_ = m.deleteSessionAllocation(context.Background(), id)
-		return nil, fmt.Errorf("failed to subscribe session allocation updates: %w", err)
-	}
-	defer cancel()
-	for {
-		current, err := m.getSessionAllocation(ctx, id)
-		if err != nil {
-			_ = m.deleteSessionAllocation(context.Background(), id)
-			return nil, fmt.Errorf("failed to read session allocation: %w", err)
-		}
-		switch current.Status {
-		case "assigned":
-			allocatedID := current.AllocatedSessionID
-			if allocatedID == "" {
-				allocatedID = id
-			}
-			if sess := m.GetSession(allocatedID); sess != nil {
-				_ = m.deleteSessionAllocation(context.Background(), id)
-				return sess, nil
-			}
-		case "error":
-			_ = m.deleteSessionAllocation(context.Background(), id)
-			return nil, fmt.Errorf("session allocation failed: %s", current.Message)
-		default:
-			log.Printf("[SESSION_ALLOCATOR] Waiting for allocation request %s status=%s", id, current.Status)
-		}
-
-		select {
-		case <-ctx.Done():
-			_ = m.deleteSessionAllocation(context.Background(), id)
-			return nil, ctx.Err()
-		case <-deadline.C:
-			_ = m.deleteSessionAllocation(context.Background(), id)
-			return nil, fmt.Errorf("session allocation timed out for %s", id)
-		case <-updates:
-		}
-	}
+	return entities.NewProxySessionWithStatus(id, req.UserID, req.Scope, req.TeamID, req.Tags, allocation.UpdatedAt, "creating"), nil
 }
 
 func (m *KubernetesSessionManager) isSessionAllocatorEnabled() bool {
@@ -303,7 +258,13 @@ func (m *KubernetesSessionManager) CompleteSessionAllocation(ctx context.Context
 	if err := m.saveSessionAllocation(ctx, req); err != nil {
 		return err
 	}
-	return m.notifySessionAllocation(ctx)
+	if err := m.notifySessionAllocation(ctx); err != nil {
+		return err
+	}
+	if err := m.deleteSessionAllocation(context.Background(), sessionID); err != nil {
+		log.Printf("[SESSION_ALLOCATOR] Warning: failed to delete completed allocation %s: %v", sessionID, err)
+	}
+	return nil
 }
 
 func (m *KubernetesSessionManager) notifySessionAllocation(ctx context.Context) error {
