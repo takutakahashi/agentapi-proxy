@@ -421,7 +421,7 @@ kubernetesSession:
   #   - env_vars:       arbitrary environment variables injected into every session
   #   - auth_mode:      "bedrock" or "oauth" (overridden by team/user settings)
   #   - bedrock:        AWS Bedrock credentials/model (auth_mode=bedrock)
-  #   - mcp_servers:    MCP server configurations merged into ~/.claude.json
+  #   - mcp_servers:    MCP server configurations merged into ~/.claude.json (Claude) and ~/.codex/config.toml (Codex)
   #   - marketplaces:   Claude Code marketplace URLs
   #   - enabled_plugins: Claude Code plugins to enable
   #   - hooks:          Claude Code hooks

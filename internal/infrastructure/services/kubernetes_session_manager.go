@@ -4087,16 +4087,22 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		MCPServers:   materialized.MCPServers,
 	}
 
-	// For codex-acp sessions, populate Codex-specific config.
-	if req.AgentType == "codex-acp" {
+	// For codex sessions, populate Codex-specific config.
+	switch req.AgentType {
+	case "codex-acp":
 		settings.Codex = sessionsettings.CodexConfig{
 			HooksJSON: buildCodexHooksJSON(settingsJSON),
 			// Bypass permission prompts and disable Codex's own sandbox.
 			// agentapi-proxy provides its own sandbox, so Codex's bubblewrap-based
 			// sandbox is redundant and causes spurious permission requests.
 			ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
+			MCPServers: materialized.MCPServers,
 		}
 		log.Printf("[K8S_SESSION] Injected Codex hooks and set approval-mode=full-auto, sandbox_mode=danger-full-access for session %s", session.id)
+	case "codex-agentapi":
+		settings.Codex = sessionsettings.CodexConfig{
+			MCPServers: materialized.MCPServers,
+		}
 	}
 
 	// Repository info

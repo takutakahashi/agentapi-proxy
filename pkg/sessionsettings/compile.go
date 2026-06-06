@@ -72,6 +72,11 @@ func Compile(opts CompileOptions) error {
 		return fmt.Errorf("failed to generate codex instructions.md: %w", err)
 	}
 
+	// 3e. Append MCP server entries to ~/.codex/config.toml (codex sessions only)
+	if err := generateCodexMCPServers(opts.OutputDir, settings.Codex.MCPServers); err != nil {
+		return fmt.Errorf("failed to generate codex MCP servers config: %w", err)
+	}
+
 	// 4. Generate env file
 	if err := generateEnvFile(opts.EnvFilePath, settings.Env); err != nil {
 		return fmt.Errorf("failed to generate env file: %w", err)
@@ -354,6 +359,102 @@ func generateCodexConfigTOML(outputDir string, configTOML string) error {
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s", configPath)
+	return nil
+}
+
+// generateCodexMCPServers appends MCP server entries to ~/.codex/config.toml using
+// the [mcp_servers.<name>] nested-table format expected by the Codex CLI.
+// Only appends when mcpServers is non-empty; the file is created if absent.
+// The input map mirrors the ClaudeConfig.MCPServers format (name → config map).
+func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}) error {
+	if len(mcpServers) == 0 {
+		return nil
+	}
+
+	codexDir := filepath.Join(outputDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+
+	configPath := filepath.Join(codexDir, "config.toml")
+
+	// Read existing content so we can append rather than overwrite.
+	var existingContent string
+	if data, err := os.ReadFile(configPath); err == nil {
+		existingContent = string(data)
+	}
+
+	// Sort server names for deterministic output.
+	names := make([]string, 0, len(mcpServers))
+	for name := range mcpServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var sb strings.Builder
+	if existingContent != "" {
+		sb.WriteString(existingContent)
+		if !strings.HasSuffix(existingContent, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	for i, name := range names {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		config, ok := mcpServers[name].(map[string]interface{})
+		if !ok {
+			log.Printf("[COMPILE-SETTINGS] Warning: skipping MCP server %q: value is not a map", name)
+			continue
+		}
+
+		// Use [mcp_servers.<name>] nested-table format (not [[mcp_servers]] array-of-tables).
+		// The Codex CLI expects mcp_servers to be a map keyed by server name.
+		fmt.Fprintf(&sb, "[mcp_servers.%s]\n", name)
+
+		if v, ok := config["type"].(string); ok {
+			fmt.Fprintf(&sb, "type = %q\n", v)
+		}
+		if v, ok := config["url"].(string); ok {
+			fmt.Fprintf(&sb, "url = %q\n", v)
+		}
+		if v, ok := config["command"].(string); ok {
+			fmt.Fprintf(&sb, "command = %q\n", v)
+		}
+		if args, ok := config["args"].([]interface{}); ok && len(args) > 0 {
+			parts := make([]string, 0, len(args))
+			for _, a := range args {
+				if s, ok := a.(string); ok {
+					parts = append(parts, fmt.Sprintf("%q", s))
+				}
+			}
+			fmt.Fprintf(&sb, "args = [%s]\n", strings.Join(parts, ", "))
+		}
+		if env, ok := config["env"].(map[string]interface{}); ok && len(env) > 0 {
+			envKeys := make([]string, 0, len(env))
+			for k := range env {
+				envKeys = append(envKeys, k)
+			}
+			sort.Strings(envKeys)
+			var envParts []string
+			for _, k := range envKeys {
+				if v, ok := env[k].(string); ok {
+					envParts = append(envParts, fmt.Sprintf("%s = %q", k, v))
+				}
+			}
+			if len(envParts) > 0 {
+				fmt.Fprintf(&sb, "env = {%s}\n", strings.Join(envParts, ", "))
+			}
+		}
+	}
+
+	if err := os.WriteFile(configPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write codex config.toml with MCP servers: %w", err)
+	}
+
+	log.Printf("[COMPILE-SETTINGS] Appended %d MCP server(s) to %s", len(mcpServers), configPath)
 	return nil
 }
 

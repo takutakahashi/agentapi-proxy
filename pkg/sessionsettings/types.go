@@ -234,6 +234,11 @@ type CodexConfig struct {
 	// ~/.claude/CLAUDE.md for Claude Code.  When non-empty it overrides the
 	// default instructions baked into the Docker image.
 	InstructionsMD string `yaml:"instructions_md,omitempty" json:"instructions_md,omitempty"`
+	// MCPServers holds MCP server configurations keyed by server name.
+	// Each entry is appended to ~/.codex/config.toml as a [[mcp_servers]] TOML
+	// array-of-tables entry so the Codex CLI can read them natively.
+	// The map format mirrors ClaudeConfig.MCPServers for consistency.
+	MCPServers map[string]interface{} `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 }
 
 // RepositoryConfig holds repository information.
