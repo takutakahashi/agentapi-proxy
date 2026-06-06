@@ -113,7 +113,7 @@ RUN mkdir -p /opt/acp-posts && chown agentapi:agentapi /opt/acp-posts
 # Switch to non-root user
 USER agentapi
 
-# Configure global gitignore for .claude directory and mise.toml
+# Configure global gitignore for .claude, .codex directories and mise.toml
 COPY config/gitignore_global /home/agentapi/.gitignore_global
 RUN git config --global core.excludesfile ~/.gitignore_global
 
@@ -194,6 +194,12 @@ ENV CLAUDE_CODE_EXECUTABLE=/home/agentapi/.bun/install/global/node_modules/@anth
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
 COPY config/CLAUDE.md /etc/claude-code/CLAUDE.md
 COPY config/managed-settings.json /etc/claude-code/managed-settings.json
+
+# Copy Codex configuration files for entrypoint script
+# AGENTS.md is the Codex equivalent of CLAUDE.md (user-level instructions → ~/.codex/instructions.md)
+# codex-config.toml is the Codex equivalent of claude.json (bypasses interactive prompts)
+COPY config/AGENTS.md /tmp/config/AGENTS.md
+COPY config/codex-config.toml /tmp/config/codex-config.toml
 
 # Copy entrypoint script
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh

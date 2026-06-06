@@ -232,6 +232,12 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		}
 	}
 
+	// Aggregate SKILL.md files from installed marketplaces into ~/.codex/instructions.md
+	// so that the Codex CLI agent benefits from the same skill definitions as Claude Code.
+	if err := syncCodexSkills(opts.OutputDir, marketplacesDir); err != nil {
+		log.Printf("[SYNC] Warning: failed to sync Codex skills: %v", err)
+	}
+
 	return nil
 }
 
@@ -592,5 +598,103 @@ func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) er
 	}
 
 	log.Printf("[SYNC] Copied %d notification subscriptions to %s", copiedCount, notificationsDir)
+	return nil
+}
+
+// syncCodexSkills copies skill directories from installed marketplace plugins into
+// ~/.codex/skills/<skill-name>/ so the Codex CLI discovers them natively.
+//
+// Codex reads skills from ~/.codex/skills/<skill-name>/SKILL.md (user scope) using
+// the same SKILL.md format as Claude Code marketplace plugins, so no transformation
+// is needed — the directory is copied as-is.
+//
+// The function is idempotent: each run overwrites previously synced skill directories.
+//
+// Directory layout expected:
+//
+//	<marketplacesDir>/<marketplace>/plugins/<plugin>/skills/<skill-name>/SKILL.md
+func syncCodexSkills(outputDir, marketplacesDir string) error {
+	codexSkillsDir := filepath.Join(outputDir, ".codex", "skills")
+
+	marketplaceEntries, err := os.ReadDir(marketplacesDir)
+	if err != nil {
+		log.Printf("[SYNC] syncCodexSkills: no marketplaces dir at %s, skipping", marketplacesDir)
+		return nil
+	}
+
+	copiedCount := 0
+	for _, mEntry := range marketplaceEntries {
+		if !mEntry.IsDir() || strings.HasPrefix(mEntry.Name(), ".tmp-") {
+			continue
+		}
+
+		pluginsDir := filepath.Join(marketplacesDir, mEntry.Name(), "plugins")
+		pluginEntries, err := os.ReadDir(pluginsDir)
+		if err != nil {
+			continue
+		}
+
+		for _, pEntry := range pluginEntries {
+			if !pEntry.IsDir() {
+				continue
+			}
+
+			skillsDir := filepath.Join(pluginsDir, pEntry.Name(), "skills")
+			skillEntries, err := os.ReadDir(skillsDir)
+			if err != nil {
+				continue
+			}
+
+			for _, sEntry := range skillEntries {
+				if !sEntry.IsDir() {
+					continue
+				}
+
+				srcDir := filepath.Join(skillsDir, sEntry.Name())
+				destDir := filepath.Join(codexSkillsDir, sEntry.Name())
+
+				if err := copySkillDir(srcDir, destDir); err != nil {
+					log.Printf("[SYNC] Warning: failed to copy skill %s to Codex: %v", sEntry.Name(), err)
+					continue
+				}
+				copiedCount++
+				log.Printf("[SYNC] Copied skill %s to %s", sEntry.Name(), destDir)
+			}
+		}
+	}
+
+	if copiedCount == 0 {
+		log.Printf("[SYNC] No skills found in marketplaces, skipping Codex skills sync")
+		return nil
+	}
+
+	log.Printf("[SYNC] Synced %d skill(s) from marketplaces to %s", copiedCount, codexSkillsDir)
+	return nil
+}
+
+// copySkillDir copies all files from srcDir into destDir, creating destDir if needed.
+// Existing files are overwritten to keep skill definitions up to date on each run.
+func copySkillDir(srcDir, destDir string) error {
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create skill dir %s: %w", destDir, err)
+	}
+
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return fmt.Errorf("failed to read skill source dir %s: %w", srcDir, err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, entry.Name()))
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", entry.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(destDir, entry.Name()), data, 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", entry.Name(), err)
+		}
+	}
 	return nil
 }
