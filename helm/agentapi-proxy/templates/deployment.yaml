@@ -242,8 +242,6 @@ spec:
               value: {{ .Values.kubernetesSession.podStartTimeout | quote }}
             - name: AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT
               value: {{ .Values.kubernetesSession.podStopTimeout | quote }}
-            - name: AGENTAPI_K8S_SESSION_PROVISIONER_MODE
-              value: {{ .Values.kubernetesSession.provisionerMode | default "push" | quote }}
             - name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN
               value: {{ dig "provisioner" "token" "" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL

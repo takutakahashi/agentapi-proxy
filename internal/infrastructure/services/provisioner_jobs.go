@@ -14,10 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
-const (
-	provisionerModePull = "pull"
-	provisionerJobType  = "provision"
-)
+const provisionerJobType = "provision"
 
 // ProvisionerConnectRequest is sent by a session Pod when agent-provisioner starts.
 type ProvisionerConnectRequest struct {
@@ -46,10 +43,6 @@ type ProvisionerJob struct {
 	Message   string                           `json:"message,omitempty"`
 	ClaimedBy string                           `json:"claimed_by,omitempty"`
 	UpdatedAt time.Time                        `json:"updated_at"`
-}
-
-func (m *KubernetesSessionManager) IsProvisionerPullMode() bool {
-	return m.k8sConfig != nil && m.k8sConfig.ProvisionerMode == provisionerModePull
 }
 
 func (m *KubernetesSessionManager) ValidateProvisionerToken(token string) bool {

@@ -81,7 +81,7 @@ func (pc *ProvisionerController) UpdateJobStatus(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) authorized(c echo.Context) bool {
-	if pc.manager == nil || !pc.manager.IsProvisionerPullMode() {
+	if pc.manager == nil {
 		return false
 	}
 	h := c.Request().Header.Get("Authorization")

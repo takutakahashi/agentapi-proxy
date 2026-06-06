@@ -1,7 +1,6 @@
-// Package provisioner provides an HTTP server that provisions session Pods.
-// The agent-provisioner starts this server on startup. The proxy server
-// calls POST /provision with session settings JSON to trigger the startup
-// sequence (setup + agentapi launch + initial message sending).
+// Package provisioner provides the session Pod provisioner. The provisioner
+// exposes local health/status endpoints and pulls provisioning jobs from the
+// proxy internal API.
 package provisioner
 
 import (
@@ -20,7 +19,7 @@ import (
 
 // defaultStartupScript is run on every Pod start regardless of agent type.
 // It pre-fetches the latest ACP package binaries so that agent startup does
-// not incur a network download when /provision arrives.
+// not incur a network download when a provision job arrives.
 // Override with the PROVISIONER_PRE_SCRIPT environment variable.
 const defaultStartupScript = `bun install --global @agentclientprotocol/claude-agent-acp@latest
 npm install --global @zed-industries/codex-acp@latest
@@ -84,7 +83,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Run the common startup pre-script immediately in the background.
 	// This pre-fetches ACP packages while the Pod is idle (stock inventory or
-	// Pod restart), so /provision does not have to wait for network downloads.
+	// Pod restart), so provisioning does not have to wait for network downloads.
 	go s.runStartupScript(ctx)
 
 	// Auto-provision from Secret volume if available (Pod restart case).
@@ -104,7 +103,6 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/status", s.handleStatus)
-	mux.HandleFunc("/provision", s.handleProvision)
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
 
 	srv := &http.Server{
@@ -148,55 +146,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		log.Printf("[PROVISIONER] Failed to encode status response: %v", err)
 	}
-}
-
-// handleProvision accepts POST /provision with a SessionSettings JSON body.
-//
-//   - 202 Accepted  – provisioning started in background
-//   - 200 OK        – already ready (idempotent)
-//   - 409 Conflict  – provisioning already in progress
-//   - 400 Bad Request – invalid JSON body
-//   - 405 Method Not Allowed – non-POST request
-func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	s.mu.RLock()
-	current := s.status
-	s.mu.RUnlock()
-
-	switch current {
-	case StatusReady:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusReady})
-		return
-	case StatusProvisioning:
-		http.Error(w, "provisioning already in progress", http.StatusConflict)
-		return
-	}
-
-	// Parse settings from request body.
-	var settings sessionsettings.SessionSettings
-	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
-		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Note: We no longer write to s.settingsFile here. The Proxy server creates
-	// the settings Secret after provisioning succeeds, so the mounted volume
-	// (optional:true) will contain the data on Pod restart automatically.
-
-	s.setStatus(StatusProvisioning, "")
-	// Use the server-level context (not r.Context()) so that provisioning
-	// survives after the HTTP response is written and the connection closes.
-	go s.runProvision(s.serverCtx, &settings)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(StatusResponse{Status: StatusProvisioning})
 }
 
 // setStatus updates the provisioning state thread-safely.

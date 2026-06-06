@@ -40,8 +40,8 @@ import (
 )
 
 // provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
-// The proxy server calls POST http://<sessionDNS>:provisionerPort/provision to trigger
-// the session startup sequence after the Pod becomes ready.
+// It serves local health/status and sandbox-domain endpoints; provisioning work
+// is pulled from the proxy internal API by the session Pod.
 const provisionerPort = 9001
 
 // ProvisionerPort is the exported version of provisionerPort for use by other packages
@@ -408,7 +408,7 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
-	// Build session settings once (used both for the Secret and the /provision payload).
+	// Build session settings once for the provisioner job and restart Secret.
 	// When req.ProvisionSettings is provided (small-cluster / forwarding mode), use it
 	// directly instead of resolving secrets from this cluster.
 	var sessionSettings *sessionsettings.SessionSettings
@@ -418,18 +418,10 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
 	}
 
-	// Serialise to JSON and cache in session for the watchSession /provision call.
-	if provisionJSON, err := json.Marshal(sessionSettings); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to marshal session settings to JSON: %v", err)
-	} else {
-		session.SetProvisionPayload(provisionJSON)
-	}
 	session.SetProvisionSettings(sessionSettings)
-	if m.IsProvisionerPullMode() {
-		if err := m.CreateProvisionerJob(ctx, session); err != nil {
-			m.cleanupSession(id)
-			return nil, fmt.Errorf("failed to create provisioner job: %w", err)
-		}
+	if err := m.CreateProvisionerJob(ctx, session); err != nil {
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create provisioner job: %w", err)
 	}
 
 	// Create Deployment
@@ -483,8 +475,8 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 }
 
 // CreateStockSession creates a pre-warmed stock session (Deployment + Service)
-// without calling /provision. The pod starts the agent-provisioner and waits
-// for adoption via adoptStockSession, which sends the actual /provision call.
+// without creating a provisioner job. The pod starts agent-provisioner and
+// waits for adoption, at which point adoptStockSession creates the job.
 func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context) error {
 	id := uuid.New().String()
 	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
@@ -735,20 +727,13 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		}
 	}
 
-	// Build session settings and cache provision payload.
+	// Build session settings and create a provisioner job for the adopted pod.
 	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
-	if provisionJSON, err := json.Marshal(sessionSettings); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to marshal session settings to JSON: %v", err)
-	} else {
-		session.SetProvisionPayload(provisionJSON)
-	}
 	session.SetProvisionSettings(sessionSettings)
-	if m.IsProvisionerPullMode() {
-		if err := m.CreateProvisionerJob(ctx, session); err != nil {
-			m.cleanupSession(stockID)
-			cancel()
-			return nil, fmt.Errorf("failed to create provisioner job for stock session: %w", err)
-		}
+	if err := m.CreateProvisionerJob(ctx, session); err != nil {
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to create provisioner job for stock session: %w", err)
 	}
 
 	// Update Service labels and annotations to reflect the new owner.
@@ -790,7 +775,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 
 	// Update Deployment metadata labels only (NOT spec.template.labels) to reflect the new owner.
 	// Updating spec.template.labels would trigger a Kubernetes rolling update, restarting the pod
-	// and making the agent-provisioner unavailable during the critical /provision window.
+	// and making the agent-provisioner unavailable while it claims the provisioner job.
 	currentDep, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to get stock deployment for label update: %v", err)
@@ -801,7 +786,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		}
 	}
 
-	// Start background watch — Pod is already running so /provision is sent immediately.
+	// Start background watch. The Pod is already running and will claim the provisioner job.
 	go m.watchStockSession(sessionCtx, session)
 
 	// Log session start.
@@ -830,7 +815,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 
 // watchStockSession monitors a stock-adopted session.
 // Unlike watchSession, it skips the ReadyReplicas wait (Pod is already running)
-// and immediately sends /provision to the agent-provisioner.
+// and waits for the pre-created Pod to claim its provisioner job.
 func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, session *KubernetesSession) {
 	defer func() {
 		log.Printf("[K8S_SESSION] Stock session %s watch ended", session.id)
@@ -838,9 +823,7 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 
 	session.SetStatus("starting")
 
-	provisionerURL := fmt.Sprintf("http://%s:%d", session.ServiceDNS(), provisionerPort)
-
-	// Wait for the pod to be ready before sending /provision.
+	// Wait for the pod to be ready before waiting on its provisioner job.
 	// Although stock sessions are pre-warmed, the pod may not yet be ready if
 	// the session was adopted immediately after creation (e.g. inventory was
 	// just replenished). Reuse the same ready-wait loop used by watchSession.
@@ -869,26 +852,11 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	readyTicker.Stop()
 	log.Printf("[K8S_SESSION] Stock session %s: Pod is ready", session.id)
 
-	if m.IsProvisionerPullMode() {
-		log.Printf("[K8S_SESSION] Waiting for pull provisioner job to become ready for stock session %s", session.id)
-		if err := m.waitForPullProvisioner(ctx, session); err != nil {
-			log.Printf("[K8S_SESSION] Pull provisioner error for stock session %s: %v", session.id, err)
-			session.SetStatus("error")
-			return
-		}
-	} else {
-		log.Printf("[K8S_SESSION] Stock session %s: sending /provision", session.id)
-		if err := m.postProvision(ctx, provisionerURL, session.ProvisionPayload()); err != nil {
-			log.Printf("[K8S_SESSION] Failed to POST /provision for stock session %s: %v", session.id, err)
-			session.SetStatus("error")
-			return
-		}
-		log.Printf("[K8S_SESSION] Waiting for agent-provisioner to become ready for stock session %s", session.id)
-		if err := m.waitForProvisioner(ctx, provisionerURL); err != nil {
-			log.Printf("[K8S_SESSION] Provisioner error for stock session %s: %v", session.id, err)
-			session.SetStatus("error")
-			return
-		}
+	log.Printf("[K8S_SESSION] Waiting for pull provisioner job to become ready for stock session %s", session.id)
+	if err := m.waitForPullProvisioner(ctx, session); err != nil {
+		log.Printf("[K8S_SESSION] Pull provisioner error for stock session %s: %v", session.id, err)
+		session.SetStatus("error")
+		return
 	}
 
 	// Persist settings Secret for automatic re-provisioning on Pod restart.
@@ -1737,8 +1705,8 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 	}
 
 	// Build container spec.
-	// The container runs agent-provisioner, which starts the HTTP server on
-	// provisionerPort and waits for POST /provision from the proxy server.
+	// The container runs agent-provisioner, which serves local health/status
+	// endpoints and pulls provisioning jobs from the proxy internal API.
 	container := corev1.Container{
 		Name:            "agentapi",
 		Image:           m.k8sConfig.Image,
@@ -2488,30 +2456,11 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 				session.SetStatus("starting")
 				log.Printf("[K8S_SESSION] Session %s Pod is ready", session.id)
 
-				provisionerURL := fmt.Sprintf("http://%s:%d", session.ServiceDNS(), provisionerPort)
-
-				if m.IsProvisionerPullMode() {
-					log.Printf("[K8S_SESSION] Waiting for pull provisioner job to become ready for session %s", session.id)
-					if err := m.waitForPullProvisioner(ctx, session); err != nil {
-						log.Printf("[K8S_SESSION] Pull provisioner error for session %s: %v", session.id, err)
-						session.SetStatus("error")
-						return
-					}
-				} else {
-					// POST /provision to agent-provisioner (with retry).
-					if err := m.postProvision(ctx, provisionerURL, session.ProvisionPayload()); err != nil {
-						log.Printf("[K8S_SESSION] Failed to POST /provision for session %s: %v – will retry", session.id, err)
-						// Retry on next ticker tick.
-						continue
-					}
-
-					// Wait for provisioner to complete (agentapi running + initial message sent).
-					log.Printf("[K8S_SESSION] Waiting for agent-provisioner to become ready for session %s", session.id)
-					if err := m.waitForProvisioner(ctx, provisionerURL); err != nil {
-						log.Printf("[K8S_SESSION] Provisioner error for session %s: %v", session.id, err)
-						session.SetStatus("error")
-						return
-					}
+				log.Printf("[K8S_SESSION] Waiting for pull provisioner job to become ready for session %s", session.id)
+				if err := m.waitForPullProvisioner(ctx, session); err != nil {
+					log.Printf("[K8S_SESSION] Pull provisioner error for session %s: %v", session.id, err)
+					session.SetStatus("error")
+					return
 				}
 
 				// Create settings Secret for Pod restart recovery (after successful provisioning).
@@ -2532,96 +2481,6 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 			}
 
 			session.SetStatus("starting")
-		}
-	}
-}
-
-// postProvision POSTs the provision payload to the agent-provisioner's /provision endpoint.
-// It retries up to 10 times with 2-second intervals to handle the race between
-// the Service routing and the provisioner being ready to accept connections.
-func (m *KubernetesSessionManager) postProvision(ctx context.Context, provisionerURL string, payload []byte) error {
-	client := &http.Client{Timeout: 10 * time.Second}
-	url := provisionerURL + "/provision"
-
-	const maxRetries = 10
-	for i := 0; i < maxRetries; i++ {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context cancelled")
-		default:
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-		if err != nil {
-			return fmt.Errorf("failed to build /provision request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			switch resp.StatusCode {
-			case http.StatusAccepted, http.StatusOK:
-				// 202 = provisioning started, 200 = already ready (idempotent)
-				return nil
-			case http.StatusConflict:
-				// 409 = provisioning already in progress – treat as success
-				return nil
-			}
-			log.Printf("[K8S_SESSION] POST /provision returned HTTP %d, retrying (%d/%d)", resp.StatusCode, i+1, maxRetries)
-		} else {
-			log.Printf("[K8S_SESSION] POST /provision error: %v, retrying (%d/%d)", err, i+1, maxRetries)
-		}
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context cancelled")
-		case <-time.After(2 * time.Second):
-		}
-	}
-	return fmt.Errorf("failed to POST /provision after %d retries", maxRetries)
-}
-
-// waitForProvisioner polls the agent-provisioner's /status endpoint until the
-// provisioning state is "ready" or "error", or until ctx is cancelled.
-func (m *KubernetesSessionManager) waitForProvisioner(ctx context.Context, provisionerURL string) error {
-	client := &http.Client{Timeout: 5 * time.Second}
-	statusURL := provisionerURL + "/status"
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context cancelled while waiting for provisioner")
-
-		case <-ticker.C:
-			resp, err := client.Get(statusURL)
-			if err != nil {
-				log.Printf("[K8S_SESSION] GET /status error: %v", err)
-				continue
-			}
-
-			var statusResp struct {
-				Status  string `json:"status"`
-				Message string `json:"message"`
-			}
-			if decodeErr := json.NewDecoder(resp.Body).Decode(&statusResp); decodeErr != nil {
-				_ = resp.Body.Close()
-				log.Printf("[K8S_SESSION] Failed to decode /status response: %v", decodeErr)
-				continue
-			}
-			_ = resp.Body.Close()
-
-			switch statusResp.Status {
-			case "ready":
-				return nil
-			case "error":
-				return fmt.Errorf("provisioner reported error: %s", statusResp.Message)
-			default:
-				log.Printf("[K8S_SESSION] Provisioner status: %s", statusResp.Status)
-			}
 		}
 	}
 }
@@ -2839,29 +2698,26 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		}
 	}
 
-	if m.IsProvisionerPullMode() {
-		proxyURL := m.k8sConfig.ProvisionerProxyURL
-		if proxyURL == "" {
-			proxyURL = fmt.Sprintf("http://agentapi-proxy.%s.svc.cluster.local:8080", m.namespace)
-		}
-		envVars = append(envVars,
-			corev1.EnvVar{Name: "PROVISIONER_MODE", Value: "pull"},
-			corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},
-			corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: m.k8sConfig.ProvisionerToken},
-			corev1.EnvVar{
-				Name: "POD_NAME",
-				ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.name",
-				}},
-			},
-			corev1.EnvVar{
-				Name: "POD_NAMESPACE",
-				ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.namespace",
-				}},
-			},
-		)
+	proxyURL := m.k8sConfig.ProvisionerProxyURL
+	if proxyURL == "" {
+		proxyURL = fmt.Sprintf("http://agentapi-proxy.%s.svc.cluster.local:8080", m.namespace)
 	}
+	envVars = append(envVars,
+		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},
+		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: m.k8sConfig.ProvisionerToken},
+		corev1.EnvVar{
+			Name: "POD_NAME",
+			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
+				FieldPath: "metadata.name",
+			}},
+		},
+		corev1.EnvVar{
+			Name: "POD_NAMESPACE",
+			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
+				FieldPath: "metadata.namespace",
+			}},
+		},
+	)
 
 	// Add CLAUDE_ARGS from request environment or proxy's environment
 	claudeArgs := ""
@@ -3767,7 +3623,7 @@ func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession)
 			Protocol:   corev1.ProtocolTCP,
 		},
 		{
-			// Expose agent-provisioner so the proxy server can call POST /provision.
+			// Expose agent-provisioner for local status and sandbox-domain queries.
 			Name:       "provisioner",
 			Port:       provisionerPort,
 			TargetPort: intstr.FromInt(provisionerPort),
