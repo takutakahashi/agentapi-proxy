@@ -84,6 +84,8 @@ func (m *KubernetesSessionManager) submitSessionAllocation(ctx context.Context, 
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
+	poll := time.NewTicker(time.Second)
+	defer poll.Stop()
 
 	updates, cancel, err := m.subscribeSessionAllocation(ctx)
 	if err != nil {
@@ -121,6 +123,7 @@ func (m *KubernetesSessionManager) submitSessionAllocation(ctx context.Context, 
 		case <-deadline.C:
 			_ = m.deleteSessionAllocation(context.Background(), id)
 			return nil, fmt.Errorf("session allocation timed out for %s", id)
+		case <-poll.C:
 		case <-updates:
 		}
 	}
