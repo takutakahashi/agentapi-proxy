@@ -539,6 +539,161 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 	})
 }
 
+func TestCompile_CodexMCPServers(t *testing.T) {
+	t.Run("appends mcp_servers to config.toml", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-mcp-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-mcp",
+				UserID:    "user-codex-mcp",
+				Scope:     "user",
+				AgentType: "codex-agentapi",
+			},
+			Codex: CodexConfig{
+				MCPServers: map[string]interface{}{
+					"github": map[string]interface{}{
+						"type":    "stdio",
+						"command": "npx",
+						"args":    []interface{}{"-y", "@modelcontextprotocol/server-github"},
+						"env":     map[string]interface{}{"GITHUB_TOKEN": "ghp_xxx"},
+					},
+					"slack": map[string]interface{}{
+						"type": "http",
+						"url":  "https://mcp.example.com/slack",
+					},
+				},
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		assert.FileExists(t, configPath)
+
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		// Both servers should appear as [[mcp_servers]] entries.
+		assert.Contains(t, content, "[[mcp_servers]]")
+		assert.Contains(t, content, `name = "github"`)
+		assert.Contains(t, content, `type = "stdio"`)
+		assert.Contains(t, content, `command = "npx"`)
+		assert.Contains(t, content, `name = "slack"`)
+		assert.Contains(t, content, `type = "http"`)
+		assert.Contains(t, content, `url = "https://mcp.example.com/slack"`)
+		assert.Contains(t, content, "GITHUB_TOKEN")
+	})
+
+	t.Run("appends mcp_servers after existing ConfigTOML", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-mcp-append-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-mcp-append",
+				UserID:    "user-codex-mcp-append",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Codex: CodexConfig{
+				ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
+				MCPServers: map[string]interface{}{
+					"myhub": map[string]interface{}{
+						"type": "http",
+						"url":  "https://myhub.example.com/mcp",
+					},
+				},
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		// Base config should be present.
+		assert.Contains(t, content, "approval-mode")
+		assert.Contains(t, content, "sandbox_mode")
+		// MCP server should be appended after the base config.
+		assert.Contains(t, content, "[[mcp_servers]]")
+		assert.Contains(t, content, `name = "myhub"`)
+		assert.Contains(t, content, `url = "https://myhub.example.com/mcp"`)
+		// The base config should appear BEFORE the mcp_servers section.
+		assert.Less(t, strings.Index(content, "approval-mode"), strings.Index(content, "[[mcp_servers]]"))
+	})
+
+	t.Run("skips when MCPServers is empty", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-mcp-empty-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:     "test-no-mcp",
+				UserID: "user-no-mcp",
+				Scope:  "user",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		// No config.toml should be created when neither ConfigTOML nor MCPServers is set.
+		assert.NoFileExists(t, filepath.Join(outputDir, ".codex/config.toml"))
+	})
+}
+
 func TestCompile_MissingInput(t *testing.T) {
 	opts := CompileOptions{
 		InputPath:   "/nonexistent/settings.yaml",
