@@ -563,6 +563,7 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 					"slack": map[string]interface{}{
 						"type": "http",
 						"url":  "https://mcp.example.com/slack",
+						"env":  map[string]interface{}{"SLACK_TOKEN": "xoxb-token"},
 					},
 				},
 			},
@@ -600,6 +601,59 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		assert.Contains(t, content, `type = "http"`)
 		assert.Contains(t, content, `url = "https://mcp.example.com/slack"`)
 		assert.Contains(t, content, "GITHUB_TOKEN")
+		assert.NotContains(t, content, "SLACK_TOKEN")
+	})
+
+	t.Run("omits env for streamable_http mcp_servers", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-mcp-streamable-http-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-mcp-streamable-http",
+				UserID:    "user-codex-mcp-streamable-http",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Codex: CodexConfig{
+				MCPServers: map[string]interface{}{
+					"github": map[string]interface{}{
+						"type": "streamable_http",
+						"url":  "https://api.githubcopilot.com/mcp",
+						"env":  map[string]interface{}{"GITHUB_TOKEN": "$GITHUB_TOKEN"},
+					},
+				},
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		assert.Contains(t, content, "[mcp_servers.github]")
+		assert.Contains(t, content, `type = "streamable_http"`)
+		assert.Contains(t, content, `url = "https://api.githubcopilot.com/mcp"`)
+		assert.NotContains(t, content, "GITHUB_TOKEN")
+		assert.NotContains(t, content, "env =")
 	})
 
 	t.Run("appends mcp_servers after existing ConfigTOML", func(t *testing.T) {
