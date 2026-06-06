@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -207,5 +208,70 @@ func TestMergeHooksIntoSettingsFile_NoHooksInCompiled(t *testing.T) {
 	got, _ := os.ReadFile(path)
 	if string(got) != original {
 		t.Errorf("expected file unchanged, got %q", string(got))
+	}
+}
+
+func TestBuildCodexRequirementsTOML(t *testing.T) {
+	hooksJSON := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []interface{}{
+				map[string]interface{}{
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1",
+						},
+					},
+				},
+			},
+			"Notification": []interface{}{
+				map[string]interface{}{
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "agentapi-proxy client send-notification",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got, err := buildCodexRequirementsTOML(hooksJSON)
+	if err != nil {
+		t.Fatalf("buildCodexRequirementsTOML: %v", err)
+	}
+
+	mustContain := []string{
+		"[hooks]",
+		"managed_dir = \"/etc/codex\"",
+		"[[hooks.Stop]]",
+		"[[hooks.Stop.hooks]]",
+		"type = \"command\"",
+		"command = \"agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1\"",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected TOML to contain %q, got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Notification") {
+		t.Fatalf("Notification hooks should not be written for Codex, got:\n%s", got)
+	}
+}
+
+func TestWriteCodexRequirementsToPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "etc", "codex", "requirements.toml")
+	content := "[hooks]\nmanaged_dir = \"/etc/codex\"\n"
+
+	if err := writeCodexRequirementsToPath(path, content); err != nil {
+		t.Fatalf("writeCodexRequirementsToPath: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read requirements: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("expected %q, got %q", content, string(got))
 	}
 }

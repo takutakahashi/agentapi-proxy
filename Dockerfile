@@ -110,6 +110,10 @@ RUN mkdir -p /opt/webhook && chown agentapi:agentapi /opt/webhook
 # can write the conversation history file for acp-posts Slack integration.
 RUN mkdir -p /opt/acp-posts && chown agentapi:agentapi /opt/acp-posts
 
+# Pre-create /etc/codex so agent-provisioner can write managed requirements.toml
+# for Codex hooks at provision time.
+RUN mkdir -p /etc/codex && chown agentapi:agentapi /etc/codex
+
 # Switch to non-root user
 USER agentapi
 
