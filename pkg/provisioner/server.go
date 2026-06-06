@@ -55,6 +55,7 @@ type Server struct {
 	status    Status
 	message   string
 	serverCtx context.Context // long-lived context for provisioning goroutines
+	reporter  func(Status, string)
 }
 
 // New creates a new Server.
@@ -201,15 +202,19 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request) {
 // setStatus updates the provisioning state thread-safely.
 func (s *Server) setStatus(st Status, msg string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.status = st
 	s.message = msg
+	reporter := s.reporter
+	s.mu.Unlock()
 	log.Printf("[PROVISIONER] Status changed to %s%s", st, func() string {
 		if msg != "" {
 			return ": " + msg
 		}
 		return ""
 	}())
+	if reporter != nil {
+		reporter(st, msg)
+	}
 }
 
 // GetStatus returns the current status (used by tests).
@@ -217,6 +222,13 @@ func (s *Server) GetStatus() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.status
+}
+
+// SetStatusReporter installs a callback invoked on every status transition.
+func (s *Server) SetStatusReporter(fn func(Status, string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reporter = fn
 }
 
 // handleSandboxDomains proxies GET /sandbox-domains to the network filter control

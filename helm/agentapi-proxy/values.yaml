@@ -391,6 +391,14 @@ kubernetesSession:
   podStartTimeout: 120
   podStopTimeout: 30
 
+  # Provisioner mode:
+  # - push: proxy calls session Pod agent-provisioner /provision (legacy)
+  # - pull: session Pod agent-provisioner polls proxy internal API for jobs
+  provisionerMode: "push"
+  provisioner:
+    token: ""
+    proxyUrl: ""
+
   # Node selector for session pods
   # Example:
   # nodeSelector:

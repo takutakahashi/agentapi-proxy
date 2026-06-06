@@ -62,6 +62,12 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				return next(c)
 			}
 
+			// Skip user auth for session Pod provisioner calls. These endpoints
+			// perform their own internal token check in the provisioner controller.
+			if strings.HasPrefix(path, "/internal/session-provisioners") {
+				return next(c)
+			}
+
 			// Skip auth for HMAC-signed requests from a trusted Proxy A
 			// This enables small-cluster mode where Proxy A proxies session requests to Proxy B
 			if cfg.SessionManager.HMACSecret != "" {

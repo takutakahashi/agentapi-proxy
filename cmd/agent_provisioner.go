@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -62,5 +63,19 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	srv := provisioner.New(port, settingsFile)
+	if os.Getenv("PROVISIONER_MODE") == "pull" {
+		go func() {
+			if err := srv.Start(ctx); err != nil {
+				log.Printf("[PROVISIONER] HTTP server exited: %v", err)
+			}
+		}()
+		return provisioner.RunPullClient(ctx, srv, provisioner.PullClientConfig{
+			ProxyURL:  os.Getenv("PROVISIONER_PROXY_URL"),
+			Token:     os.Getenv("PROVISIONER_TOKEN"),
+			SessionID: os.Getenv("AGENTAPI_SESSION_ID"),
+			PodName:   os.Getenv("POD_NAME"),
+			Namespace: os.Getenv("POD_NAMESPACE"),
+		})
+	}
 	return srv.Start(ctx)
 }
