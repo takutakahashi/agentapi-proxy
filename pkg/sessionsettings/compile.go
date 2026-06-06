@@ -414,7 +414,9 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 		// The Codex CLI expects mcp_servers to be a map keyed by server name.
 		fmt.Fprintf(&sb, "[mcp_servers.%s]\n", name)
 
+		serverType := ""
 		if v, ok := config["type"].(string); ok {
+			serverType = v
 			fmt.Fprintf(&sb, "type = %q\n", v)
 		}
 		if v, ok := config["url"].(string); ok {
@@ -432,7 +434,7 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 			}
 			fmt.Fprintf(&sb, "args = [%s]\n", strings.Join(parts, ", "))
 		}
-		if env, ok := config["env"].(map[string]interface{}); ok && len(env) > 0 {
+		if env, ok := config["env"].(map[string]interface{}); ok && len(env) > 0 && codexMCPServerSupportsEnv(serverType) {
 			envKeys := make([]string, 0, len(env))
 			for k := range env {
 				envKeys = append(envKeys, k)
@@ -456,6 +458,15 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 
 	log.Printf("[COMPILE-SETTINGS] Appended %d MCP server(s) to %s", len(mcpServers), configPath)
 	return nil
+}
+
+func codexMCPServerSupportsEnv(serverType string) bool {
+	switch serverType {
+	case "http", "streamable_http":
+		return false
+	default:
+		return true
+	}
 }
 
 // generateStartupScript creates executable shell script with the startup command.
