@@ -2383,23 +2383,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		},
 	})
 
-	// Mount /etc/codex/requirements.toml from a pre-created Helm ConfigMap so that
-	// codex-acp hooks are treated as managed (auto-trusted) by codex_core. Mounted on
-	// all sessions (including stock pre-warmed pods) because the agent type is not known
-	// at stock creation time — Claude Code ignores this path so it is harmless elsewhere.
-	if m.k8sConfig.CodexRequirementsConfigMapName != "" {
-		volumes = append(volumes, corev1.Volume{
-			Name: "codex-requirements",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.CodexRequirementsConfigMapName,
-					},
-				},
-			},
-		})
-	}
-
 	return volumes
 }
 
@@ -3332,17 +3315,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		Name:      "claude-agentapi-history",
 		MountPath: "/opt/claude-agentapi",
 	})
-
-	// Mount the managed requirements ConfigMap at /etc/codex/ so codex_core reads hooks
-	// as managed (auto-trusted) without user approval. Mounted on all sessions so stock
-	// pods already have it when adopted as codex-acp sessions.
-	if m.k8sConfig.CodexRequirementsConfigMapName != "" {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "codex-requirements",
-			MountPath: "/etc/codex",
-			ReadOnly:  true,
-		})
-	}
 
 	return volumeMounts
 }
