@@ -362,8 +362,8 @@ func generateCodexConfigTOML(outputDir string, configTOML string) error {
 	return nil
 }
 
-// generateCodexMCPServers appends MCP server entries to ~/.codex/config.toml in the
-// [[mcp_servers]] TOML array-of-tables format expected by the Codex CLI.
+// generateCodexMCPServers appends MCP server entries to ~/.codex/config.toml using
+// the [mcp_servers.<name>] nested-table format expected by the Codex CLI.
 // Only appends when mcpServers is non-empty; the file is created if absent.
 // The input map mirrors the ClaudeConfig.MCPServers format (name → config map).
 func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}) error {
@@ -410,8 +410,9 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 			continue
 		}
 
-		sb.WriteString("[[mcp_servers]]\n")
-		fmt.Fprintf(&sb, "name = %q\n", name)
+		// Use [mcp_servers.<name>] nested-table format (not [[mcp_servers]] array-of-tables).
+		// The Codex CLI expects mcp_servers to be a map keyed by server name.
+		fmt.Fprintf(&sb, "[mcp_servers.%s]\n", name)
 
 		if v, ok := config["type"].(string); ok {
 			fmt.Fprintf(&sb, "type = %q\n", v)

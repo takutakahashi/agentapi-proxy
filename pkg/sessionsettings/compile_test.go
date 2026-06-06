@@ -592,12 +592,11 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		require.NoError(t, err)
 		content := string(data)
 
-		// Both servers should appear as [[mcp_servers]] entries.
-		assert.Contains(t, content, "[[mcp_servers]]")
-		assert.Contains(t, content, `name = "github"`)
+		// Both servers should appear as [mcp_servers.<name>] nested-table entries.
+		assert.Contains(t, content, "[mcp_servers.github]")
 		assert.Contains(t, content, `type = "stdio"`)
 		assert.Contains(t, content, `command = "npx"`)
-		assert.Contains(t, content, `name = "slack"`)
+		assert.Contains(t, content, "[mcp_servers.slack]")
 		assert.Contains(t, content, `type = "http"`)
 		assert.Contains(t, content, `url = "https://mcp.example.com/slack"`)
 		assert.Contains(t, content, "GITHUB_TOKEN")
@@ -652,11 +651,10 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		assert.Contains(t, content, "approval-mode")
 		assert.Contains(t, content, "sandbox_mode")
 		// MCP server should be appended after the base config.
-		assert.Contains(t, content, "[[mcp_servers]]")
-		assert.Contains(t, content, `name = "myhub"`)
+		assert.Contains(t, content, "[mcp_servers.myhub]")
 		assert.Contains(t, content, `url = "https://myhub.example.com/mcp"`)
 		// The base config should appear BEFORE the mcp_servers section.
-		assert.Less(t, strings.Index(content, "approval-mode"), strings.Index(content, "[[mcp_servers]]"))
+		assert.Less(t, strings.Index(content, "approval-mode"), strings.Index(content, "[mcp_servers."))
 	})
 
 	t.Run("skips when MCPServers is empty", func(t *testing.T) {
