@@ -257,8 +257,8 @@ func (r *Router) registerCoreRoutes() error {
 
 	if r.handlers.provisionerController != nil {
 		r.echo.POST("/internal/session-provisioners/connect", r.handlers.provisionerController.Connect)
-		r.echo.GET("/internal/session-provisioners/:sessionId/jobs", r.handlers.provisionerController.GetJob)
-		r.echo.POST("/internal/session-provisioners/:sessionId/jobs/:jobId/status", r.handlers.provisionerController.UpdateJobStatus)
+		r.echo.GET("/internal/session-provisioners/:sessionId/provision-requests", r.handlers.provisionerController.GetProvisionRequest)
+		r.echo.POST("/internal/session-provisioners/:sessionId/provision-requests/:requestId/status", r.handlers.provisionerController.UpdateProvisionRequestStatus)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
 	}
 

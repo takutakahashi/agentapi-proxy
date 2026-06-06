@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	provisionerJobType         = "provision"
+	provisionRequestType       = "provision"
 	provisionerTokenSecretName = "agentapi-provisioner-token"
 	provisionerTokenSecretKey  = "token"
 )
@@ -30,17 +30,17 @@ type ProvisionerConnectRequest struct {
 	Capabilities       []string `json:"capabilities,omitempty"`
 }
 
-// ProvisionerStatusRequest is sent by a session Pod as provisioning progresses.
-type ProvisionerStatusRequest struct {
+// ProvisionRequestStatusUpdate is sent by a session Pod as provisioning progresses.
+type ProvisionRequestStatusUpdate struct {
 	Status    string `json:"status"`
 	Message   string `json:"message,omitempty"`
 	Retryable bool   `json:"retryable,omitempty"`
 	PodName   string `json:"pod_name,omitempty"`
 }
 
-// ProvisionerJob is the shared job document persisted in a Kubernetes Secret.
-type ProvisionerJob struct {
-	JobID     string                           `json:"job_id"`
+// ProvisionRequest is the shared provisioning request document persisted in a Kubernetes Secret.
+type ProvisionRequest struct {
+	RequestID string                           `json:"request_id"`
 	SessionID string                           `json:"session_id"`
 	Type      string                           `json:"type"`
 	Settings  *sessionsettings.SessionSettings `json:"settings,omitempty"`
@@ -121,71 +121,71 @@ func generateProvisionerToken() (string, error) {
 	return fmt.Sprintf("%x", b[:]), nil
 }
 
-func provisionerJobSecretName(sessionID string) string {
-	return fmt.Sprintf("agentapi-provision-job-%s", sessionID)
+func provisionRequestSecretName(sessionID string) string {
+	return fmt.Sprintf("agentapi-provision-request-%s", sessionID)
 }
 
-func (m *KubernetesSessionManager) CreateProvisionerJob(ctx context.Context, session *KubernetesSession) error {
+func (m *KubernetesSessionManager) CreateProvisionRequest(ctx context.Context, session *KubernetesSession) error {
 	settings := session.ProvisionSettings()
 	if settings == nil {
 		return fmt.Errorf("session %s has no provision settings", session.id)
 	}
-	job := &ProvisionerJob{
-		JobID:     fmt.Sprintf("%s-provision-1", session.id),
+	req := &ProvisionRequest{
+		RequestID: fmt.Sprintf("%s-provision-1", session.id),
 		SessionID: session.id,
-		Type:      provisionerJobType,
+		Type:      provisionRequestType,
 		Settings:  settings,
 		Status:    "pending",
 		UpdatedAt: time.Now().UTC(),
 	}
-	return m.saveProvisionerJob(ctx, job)
+	return m.saveProvisionRequest(ctx, req)
 }
 
 func (m *KubernetesSessionManager) ConnectProvisioner(ctx context.Context, req ProvisionerConnectRequest) error {
-	job, err := m.getProvisionerJob(ctx, req.SessionID)
+	provisionReq, err := m.getProvisionRequest(ctx, req.SessionID)
 	if err != nil {
 		return err
 	}
-	job.ClaimedBy = req.PodName
-	job.UpdatedAt = time.Now().UTC()
-	return m.saveProvisionerJob(ctx, job)
+	provisionReq.ClaimedBy = req.PodName
+	provisionReq.UpdatedAt = time.Now().UTC()
+	return m.saveProvisionRequest(ctx, provisionReq)
 }
 
-func (m *KubernetesSessionManager) ClaimProvisionerJob(ctx context.Context, sessionID, podName string) (*ProvisionerJob, bool, error) {
-	job, err := m.getProvisionerJob(ctx, sessionID)
+func (m *KubernetesSessionManager) ClaimProvisionRequest(ctx context.Context, sessionID, podName string) (*ProvisionRequest, bool, error) {
+	provisionReq, err := m.getProvisionRequest(ctx, sessionID)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, false, nil
 		}
 		return nil, false, err
 	}
-	if job.Status == "ready" {
+	if provisionReq.Status == "ready" {
 		return nil, false, nil
 	}
-	job.Status = "claimed"
-	job.ClaimedBy = podName
-	job.UpdatedAt = time.Now().UTC()
-	if err := m.saveProvisionerJob(ctx, job); err != nil {
+	provisionReq.Status = "claimed"
+	provisionReq.ClaimedBy = podName
+	provisionReq.UpdatedAt = time.Now().UTC()
+	if err := m.saveProvisionRequest(ctx, provisionReq); err != nil {
 		return nil, false, err
 	}
-	return job, true, nil
+	return provisionReq, true, nil
 }
 
-func (m *KubernetesSessionManager) UpdateProvisionerJobStatus(ctx context.Context, sessionID, jobID string, req ProvisionerStatusRequest) error {
-	job, err := m.getProvisionerJob(ctx, sessionID)
+func (m *KubernetesSessionManager) UpdateProvisionRequestStatus(ctx context.Context, sessionID, requestID string, req ProvisionRequestStatusUpdate) error {
+	provisionReq, err := m.getProvisionRequest(ctx, sessionID)
 	if err != nil {
 		return err
 	}
-	if job.JobID != jobID {
-		return fmt.Errorf("job id mismatch: got %s, want %s", jobID, job.JobID)
+	if provisionReq.RequestID != requestID {
+		return fmt.Errorf("provision request id mismatch: got %s, want %s", requestID, provisionReq.RequestID)
 	}
-	job.Status = req.Status
-	job.Message = req.Message
+	provisionReq.Status = req.Status
+	provisionReq.Message = req.Message
 	if req.PodName != "" {
-		job.ClaimedBy = req.PodName
+		provisionReq.ClaimedBy = req.PodName
 	}
-	job.UpdatedAt = time.Now().UTC()
-	if err := m.saveProvisionerJob(ctx, job); err != nil {
+	provisionReq.UpdatedAt = time.Now().UTC()
+	if err := m.saveProvisionRequest(ctx, provisionReq); err != nil {
 		return err
 	}
 
@@ -215,49 +215,49 @@ func (m *KubernetesSessionManager) waitForPullProvisioner(ctx context.Context, s
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled while waiting for pull provisioner")
 		case <-ticker.C:
-			job, err := m.getProvisionerJob(ctx, session.id)
+			provisionReq, err := m.getProvisionRequest(ctx, session.id)
 			if err != nil {
-				log.Printf("[K8S_SESSION] Failed to read provisioner job for session %s: %v", session.id, err)
+				log.Printf("[K8S_SESSION] Failed to read provision request for session %s: %v", session.id, err)
 				continue
 			}
-			switch job.Status {
+			switch provisionReq.Status {
 			case "ready":
 				return nil
 			case "error":
-				return fmt.Errorf("provisioner reported error: %s", job.Message)
+				return fmt.Errorf("provisioner reported error: %s", provisionReq.Message)
 			default:
-				log.Printf("[K8S_SESSION] Pull provisioner status for session %s: %s", session.id, job.Status)
+				log.Printf("[K8S_SESSION] Pull provisioner status for session %s: %s", session.id, provisionReq.Status)
 			}
 		}
 	}
 }
 
-func (m *KubernetesSessionManager) getProvisionerJob(ctx context.Context, sessionID string) (*ProvisionerJob, error) {
-	sec, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, provisionerJobSecretName(sessionID), metav1.GetOptions{})
+func (m *KubernetesSessionManager) getProvisionRequest(ctx context.Context, sessionID string) (*ProvisionRequest, error) {
+	sec, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, provisionRequestSecretName(sessionID), metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
-	data := sec.Data["job.json"]
+	data := sec.Data["request.json"]
 	if len(data) == 0 {
-		return nil, fmt.Errorf("provisioner job secret %s has no job.json", sec.Name)
+		return nil, fmt.Errorf("provision request secret %s has no request.json", sec.Name)
 	}
-	var job ProvisionerJob
-	if err := json.Unmarshal(data, &job); err != nil {
-		return nil, fmt.Errorf("decode provisioner job: %w", err)
+	var req ProvisionRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, fmt.Errorf("decode provision request: %w", err)
 	}
-	return &job, nil
+	return &req, nil
 }
 
-func (m *KubernetesSessionManager) saveProvisionerJob(ctx context.Context, job *ProvisionerJob) error {
-	data, err := json.Marshal(job)
+func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req *ProvisionRequest) error {
+	data, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("encode provisioner job: %w", err)
+		return fmt.Errorf("encode provision request: %w", err)
 	}
-	name := provisionerJobSecretName(job.SessionID)
+	name := provisionRequestSecretName(req.SessionID)
 	labels := map[string]string{
-		"app.kubernetes.io/managed-by": "agentapi-proxy",
-		"agentapi.proxy/session-id":    job.SessionID,
-		"agentapi.proxy/provision-job": "true",
+		"app.kubernetes.io/managed-by":     "agentapi-proxy",
+		"agentapi.proxy/session-id":        req.SessionID,
+		"agentapi.proxy/provision-request": "true",
 	}
 	sec, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -268,7 +268,7 @@ func (m *KubernetesSessionManager) saveProvisionerJob(ctx context.Context, job *
 				Labels:    labels,
 			},
 			Type: corev1.SecretTypeOpaque,
-			Data: map[string][]byte{"job.json": data},
+			Data: map[string][]byte{"request.json": data},
 		}
 		_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, sec, metav1.CreateOptions{})
 		return err
@@ -280,13 +280,13 @@ func (m *KubernetesSessionManager) saveProvisionerJob(ctx context.Context, job *
 	if sec.Data == nil {
 		sec.Data = make(map[string][]byte)
 	}
-	sec.Data["job.json"] = data
+	sec.Data["request.json"] = data
 	_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, sec, metav1.UpdateOptions{})
 	return err
 }
 
-func (m *KubernetesSessionManager) deleteProvisionerJob(ctx context.Context, sessionID string) error {
-	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, provisionerJobSecretName(sessionID), metav1.DeleteOptions{})
+func (m *KubernetesSessionManager) deleteProvisionRequest(ctx context.Context, sessionID string) error {
+	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, provisionRequestSecretName(sessionID), metav1.DeleteOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}

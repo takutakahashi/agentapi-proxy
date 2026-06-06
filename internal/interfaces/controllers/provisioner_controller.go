@@ -35,7 +35,7 @@ func (pc *ProvisionerController) Connect(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "connected"})
 }
 
-func (pc *ProvisionerController) GetJob(c echo.Context) error {
+func (pc *ProvisionerController) GetProvisionRequest(c echo.Context) error {
 	if !pc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
@@ -45,12 +45,12 @@ func (pc *ProvisionerController) GetJob(c echo.Context) error {
 	deadline := time.Now().Add(wait)
 
 	for {
-		job, ok, err := pc.manager.ClaimProvisionerJob(c.Request().Context(), sessionID, podName)
+		provisionReq, ok, err := pc.manager.ClaimProvisionRequest(c.Request().Context(), sessionID, podName)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		if ok {
-			return c.JSON(http.StatusOK, job)
+			return c.JSON(http.StatusOK, provisionReq)
 		}
 		if wait == 0 || time.Now().After(deadline) {
 			return c.NoContent(http.StatusNoContent)
@@ -63,18 +63,18 @@ func (pc *ProvisionerController) GetJob(c echo.Context) error {
 	}
 }
 
-func (pc *ProvisionerController) UpdateJobStatus(c echo.Context) error {
+func (pc *ProvisionerController) UpdateProvisionRequestStatus(c echo.Context) error {
 	if !pc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
-	var req services.ProvisionerStatusRequest
+	var req services.ProvisionRequestStatusUpdate
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if req.Status == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status is required"})
 	}
-	if err := pc.manager.UpdateProvisionerJobStatus(c.Request().Context(), c.Param("sessionId"), c.Param("jobId"), req); err != nil {
+	if err := pc.manager.UpdateProvisionRequestStatus(c.Request().Context(), c.Param("sessionId"), c.Param("requestId"), req); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})

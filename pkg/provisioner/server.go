@@ -1,5 +1,5 @@
 // Package provisioner provides the session Pod provisioner. The provisioner
-// exposes local health/status endpoints and pulls provisioning jobs from the
+// exposes local health/status endpoints and pulls provision requests from the
 // proxy internal API.
 package provisioner
 
@@ -19,7 +19,7 @@ import (
 
 // defaultStartupScript is run on every Pod start regardless of agent type.
 // It pre-fetches the latest ACP package binaries so that agent startup does
-// not incur a network download when a provision job arrives.
+// not incur a network download when a provision request arrives.
 // Override with the PROVISIONER_PRE_SCRIPT environment variable.
 const defaultStartupScript = `bun install --global @agentclientprotocol/claude-agent-acp@latest
 npm install --global @zed-industries/codex-acp@latest

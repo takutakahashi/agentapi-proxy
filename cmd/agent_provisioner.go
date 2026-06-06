@@ -12,7 +12,7 @@ import (
 
 // AgentProvisionerCmd is the "agent-provisioner" sub-command.
 // It starts a local HTTP server (default :9001) for probes/status and pulls
-// provisioning jobs from the proxy internal API. The provisioner then:
+// provision requests from the proxy internal API. The provisioner then:
 //
 //  1. Runs the full setup sequence (write-pem, clone-repo, compile, sync-extra)
 //  2. Starts agentapi (or claude-agentapi / codex-agentapi) as a subprocess
@@ -30,7 +30,7 @@ Endpoints:
   GET  /healthz   – liveness/readiness probe (always 200)
   GET  /status    – current provisioning state as JSON
 
-Provisioning jobs are pulled from the proxy internal provisioner API.`,
+Provision requests are pulled from the proxy internal provisioner API.`,
 	RunE: runAgentProvisioner,
 }
 

@@ -412,7 +412,7 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 		}
 	}
 
-	// Build session settings once for the provisioner job and restart Secret.
+	// Build session settings once for the provision request and restart Secret.
 	// When req.ProvisionSettings is provided (small-cluster / forwarding mode), use it
 	// directly instead of resolving secrets from this cluster.
 	var sessionSettings *sessionsettings.SessionSettings
@@ -423,9 +423,9 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	}
 
 	session.SetProvisionSettings(sessionSettings)
-	if err := m.CreateProvisionerJob(ctx, session); err != nil {
+	if err := m.CreateProvisionRequest(ctx, session); err != nil {
 		m.cleanupSession(id)
-		return nil, fmt.Errorf("failed to create provisioner job: %w", err)
+		return nil, fmt.Errorf("failed to create provision request: %w", err)
 	}
 
 	// Create Deployment
@@ -479,8 +479,8 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 }
 
 // CreateStockSession creates a pre-warmed stock session (Deployment + Service)
-// without creating a provisioner job. The pod starts agent-provisioner and
-// waits for adoption, at which point adoptStockSession creates the job.
+// without creating a provision request. The pod starts agent-provisioner and
+// waits for adoption, at which point adoptStockSession creates the request.
 func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context) error {
 	id := uuid.New().String()
 	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
@@ -731,13 +731,13 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		}
 	}
 
-	// Build session settings and create a provisioner job for the adopted pod.
+	// Build session settings and create a provision request for the adopted pod.
 	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
 	session.SetProvisionSettings(sessionSettings)
-	if err := m.CreateProvisionerJob(ctx, session); err != nil {
+	if err := m.CreateProvisionRequest(ctx, session); err != nil {
 		m.cleanupSession(stockID)
 		cancel()
-		return nil, fmt.Errorf("failed to create provisioner job for stock session: %w", err)
+		return nil, fmt.Errorf("failed to create provision request for stock session: %w", err)
 	}
 
 	// Update Service labels and annotations to reflect the new owner.
@@ -779,7 +779,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 
 	// Update Deployment metadata labels only (NOT spec.template.labels) to reflect the new owner.
 	// Updating spec.template.labels would trigger a Kubernetes rolling update, restarting the pod
-	// and making the agent-provisioner unavailable while it claims the provisioner job.
+	// and making the agent-provisioner unavailable while it claims the provision request.
 	currentDep, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to get stock deployment for label update: %v", err)
@@ -790,7 +790,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		}
 	}
 
-	// Start background watch. The Pod is already running and will claim the provisioner job.
+	// Start background watch. The Pod is already running and will claim the provision request.
 	go m.watchStockSession(sessionCtx, session)
 
 	// Log session start.
@@ -819,7 +819,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 
 // watchStockSession monitors a stock-adopted session.
 // Unlike watchSession, it skips the ReadyReplicas wait (Pod is already running)
-// and waits for the pre-created Pod to claim its provisioner job.
+// and waits for the pre-created Pod to claim its provision request.
 func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, session *KubernetesSession) {
 	defer func() {
 		log.Printf("[K8S_SESSION] Stock session %s watch ended", session.id)
@@ -827,7 +827,7 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 
 	session.SetStatus("starting")
 
-	// Wait for the pod to be ready before waiting on its provisioner job.
+	// Wait for the pod to be ready before waiting on its provision request.
 	// Although stock sessions are pre-warmed, the pod may not yet be ready if
 	// the session was adopted immediately after creation (e.g. inventory was
 	// just replenished). Reuse the same ready-wait loop used by watchSession.
@@ -856,7 +856,7 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	readyTicker.Stop()
 	log.Printf("[K8S_SESSION] Stock session %s: Pod is ready", session.id)
 
-	log.Printf("[K8S_SESSION] Waiting for pull provisioner job to become ready for stock session %s", session.id)
+	log.Printf("[K8S_SESSION] Waiting for pull provision request to become ready for stock session %s", session.id)
 	if err := m.waitForPullProvisioner(ctx, session); err != nil {
 		log.Printf("[K8S_SESSION] Pull provisioner error for stock session %s: %v", session.id, err)
 		session.SetStatus("error")
@@ -1710,7 +1710,7 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	// Build container spec.
 	// The container runs agent-provisioner, which serves local health/status
-	// endpoints and pulls provisioning jobs from the proxy internal API.
+	// endpoints and pulls provision requests from the proxy internal API.
 	container := corev1.Container{
 		Name:            "agentapi",
 		Image:           m.k8sConfig.Image,
@@ -2460,7 +2460,7 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 				session.SetStatus("starting")
 				log.Printf("[K8S_SESSION] Session %s Pod is ready", session.id)
 
-				log.Printf("[K8S_SESSION] Waiting for pull provisioner job to become ready for session %s", session.id)
+				log.Printf("[K8S_SESSION] Waiting for pull provision request to become ready for session %s", session.id)
 				if err := m.waitForPullProvisioner(ctx, session); err != nil {
 					log.Printf("[K8S_SESSION] Pull provisioner error for session %s: %v", session.id, err)
 					session.SetStatus("error")
@@ -2568,8 +2568,8 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		errs = append(errs, fmt.Sprintf("oneshot-settings-secret: %v", err))
 	}
 
-	if err := m.deleteProvisionerJob(ctx, session.id); err != nil {
-		errs = append(errs, fmt.Sprintf("provisioner-job-secret: %v", err))
+	if err := m.deleteProvisionRequest(ctx, session.id); err != nil {
+		errs = append(errs, fmt.Sprintf("provision-request-secret: %v", err))
 	}
 
 	if len(errs) > 0 {

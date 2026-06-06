@@ -23,13 +23,13 @@ type PullClientConfig struct {
 	Namespace string
 }
 
-type pullJob struct {
-	JobID    string                           `json:"job_id"`
-	Type     string                           `json:"type"`
-	Settings *sessionsettings.SessionSettings `json:"settings"`
+type pullProvisionRequest struct {
+	RequestID string                           `json:"request_id"`
+	Type      string                           `json:"type"`
+	Settings  *sessionsettings.SessionSettings `json:"settings"`
 }
 
-// RunPullClient connects this session Pod to the proxy and claims provisioning jobs.
+// RunPullClient connects this session Pod to the proxy and claims provision requests.
 func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error {
 	cfg.ProxyURL = strings.TrimRight(cfg.ProxyURL, "/")
 	if cfg.PodName == "" {
@@ -54,36 +54,36 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 		default:
 		}
 
-		job, ok, err := pollJob(ctx, client, cfg)
+		provisionReq, ok, err := pollProvisionRequest(ctx, client, cfg)
 		if err != nil {
-			log.Printf("[PROVISIONER] Failed to poll provision job: %v", err)
+			log.Printf("[PROVISIONER] Failed to poll provision request: %v", err)
 			sleepOrDone(ctx, 5*time.Second)
 			continue
 		}
 		if !ok {
 			continue
 		}
-		if job.Settings == nil {
-			_ = reportJobStatus(ctx, client, cfg, job.JobID, StatusError, "job has no settings")
+		if provisionReq.Settings == nil {
+			_ = reportProvisionRequestStatus(ctx, client, cfg, provisionReq.RequestID, StatusError, "provision request has no settings")
 			continue
 		}
 
 		srv.SetStatusReporter(func(st Status, msg string) {
 			go func() {
-				if err := reportJobStatus(context.Background(), client, cfg, job.JobID, st, msg); err != nil {
-					log.Printf("[PROVISIONER] Failed to report status %s for job %s: %v", st, job.JobID, err)
+				if err := reportProvisionRequestStatus(context.Background(), client, cfg, provisionReq.RequestID, st, msg); err != nil {
+					log.Printf("[PROVISIONER] Failed to report status %s for provision request %s: %v", st, provisionReq.RequestID, err)
 				}
 			}()
 		})
 		srv.setStatus(StatusProvisioning, "")
-		srv.runProvision(ctx, job.Settings)
+		srv.runProvision(ctx, provisionReq.Settings)
 		<-ctx.Done()
 		return ctx.Err()
 	}
 }
 
-func pollJob(ctx context.Context, client *http.Client, cfg PullClientConfig) (*pullJob, bool, error) {
-	u, err := url.Parse(cfg.ProxyURL + "/internal/session-provisioners/" + url.PathEscape(cfg.SessionID) + "/jobs")
+func pollProvisionRequest(ctx context.Context, client *http.Client, cfg PullClientConfig) (*pullProvisionRequest, bool, error) {
+	u, err := url.Parse(cfg.ProxyURL + "/internal/session-provisioners/" + url.PathEscape(cfg.SessionID) + "/provision-requests")
 	if err != nil {
 		return nil, false, err
 	}
@@ -106,17 +106,17 @@ func pollJob(ctx context.Context, client *http.Client, cfg PullClientConfig) (*p
 		return nil, false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("poll job returned HTTP %d", resp.StatusCode)
+		return nil, false, fmt.Errorf("poll provision request returned HTTP %d", resp.StatusCode)
 	}
-	var job pullJob
-	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+	var provisionReq pullProvisionRequest
+	if err := json.NewDecoder(resp.Body).Decode(&provisionReq); err != nil {
 		return nil, false, err
 	}
-	return &job, true, nil
+	return &provisionReq, true, nil
 }
 
-func reportJobStatus(ctx context.Context, client *http.Client, cfg PullClientConfig, jobID string, st Status, msg string) error {
-	path := "/internal/session-provisioners/" + url.PathEscape(cfg.SessionID) + "/jobs/" + url.PathEscape(jobID) + "/status"
+func reportProvisionRequestStatus(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg string) error {
+	path := "/internal/session-provisioners/" + url.PathEscape(cfg.SessionID) + "/provision-requests/" + url.PathEscape(requestID) + "/status"
 	return postJSON(ctx, client, cfg, path, map[string]interface{}{
 		"status":   string(st),
 		"message":  msg,
