@@ -134,6 +134,10 @@ type KubernetesSessionManager struct {
 	// When Redis is configured this reduces Kubernetes API calls for frequent
 	// ListSessions requests.
 	sessionListCacheRepo portrepos.SessionListCacheRepository
+
+	// sessionAllocatorEnabled routes CreateSession through the leader-elected
+	// SessionAllocator when the server has started that worker.
+	sessionAllocatorEnabled bool
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -319,26 +323,21 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 	}
 }
 
-// CreateSession creates a new session with a Kubernetes Deployment.
+// allocateSessionDirect creates or adopts Kubernetes resources for a session.
 // It first attempts to use a pre-warmed stock session (labeled agentapi.proxy/stock=true).
 // If no stock is available, a new session is created from scratch.
-func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
-	// Attempt to adopt a stock session before creating a new one.
-	// Skip stock adoption when sandbox or DinD is enabled: stock pods lack the required
-	// sidecars and would not function correctly for those features.
-	sandboxRequested := req.Sandbox != nil && req.Sandbox.Enabled
-	dindRequested := req.Docker != nil && req.Docker.Enabled
-	if !sandboxRequested && !dindRequested {
-		if stockSvc, err := m.findStockSession(ctx); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
-		} else if stockSvc != nil {
-			claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
-			if claimErr != nil {
-				log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
-			} else {
-				log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
-				return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
-			}
+func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	// Attempt to adopt a stock session matching the requested pod capabilities
+	// before creating a new one.
+	if stockSvc, err := m.findStockSession(ctx, sessionRequirements(req)); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
+	} else if stockSvc != nil {
+		claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
+		if claimErr != nil {
+			log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
+		} else {
+			log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
+			return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
 		}
 	}
 
@@ -605,10 +604,13 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 // oldest available one (by CreationTimestamp, ascending). Oldest sessions have been
 // warmed up the longest and are the most ready to serve.
 // Returns (nil, nil) when no stock is available.
-func (m *KubernetesSessionManager) findStockSession(ctx context.Context) (*corev1.Service, error) {
-	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
-	})
+func (m *KubernetesSessionManager) findStockSession(ctx context.Context, requirements SessionRequirements) (*corev1.Service, error) {
+	selector := fmt.Sprintf(
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=%t,agentapi.proxy/capability-dind=%t",
+		requirements.Sandbox,
+		requirements.DinD,
+	)
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list stock services: %w", err)
 	}
@@ -2662,6 +2664,12 @@ func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[s
 
 	if session.isStock {
 		labels["agentapi.proxy/stock"] = "true"
+	}
+	req := session.Request()
+	labels["agentapi.proxy/capability-sandbox"] = fmt.Sprintf("%t", req.Sandbox != nil && req.Sandbox.Enabled)
+	labels["agentapi.proxy/capability-dind"] = fmt.Sprintf("%t", req.Docker != nil && req.Docker.Enabled)
+	if req.AgentType != "" {
+		labels["agentapi.proxy/agent-type"] = sanitizeLabelValue(req.AgentType)
 	}
 
 	return labels

@@ -98,6 +98,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 		startStockInventoryWorker(configData, proxyServer)
 	}
 
+	// Start the leader-elected session allocator when Kubernetes sessions are active.
+	startSessionAllocator(configData, proxyServer)
+
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
 	registerScheduleHandlers(configData, proxyServer)
 
@@ -530,6 +533,76 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 		log.Printf("[WEBHOOK_HANDLERS] Webhook base URL not configured, will auto-detect from request headers")
 	}
 	log.Printf("[WEBHOOK_HANDLERS] Webhook handlers registered successfully")
+}
+
+// startSessionAllocator starts the leader-elected SessionAllocator. API requests
+// can land on any proxy replica, but only the elected leader consumes allocation
+// requests and creates/adopts session Pods.
+func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *services.SessionAllocator {
+	log.Printf("[SESSION_ALLOCATOR] Initializing session allocator...")
+
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		log.Printf("[SESSION_ALLOCATOR] Kubernetes config not available, session allocator disabled: %v", err)
+		return nil
+	}
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		log.Printf("[SESSION_ALLOCATOR] Failed to create Kubernetes client, session allocator disabled: %v", err)
+		return nil
+	}
+
+	manager, ok := proxyServer.GetSessionManager().(*services.KubernetesSessionManager)
+	if !ok {
+		log.Printf("[SESSION_ALLOCATOR] Session manager is not KubernetesSessionManager, session allocator disabled")
+		return nil
+	}
+
+	namespace := configData.StockInventoryWorker.Namespace
+	if namespace == "" {
+		namespace = configData.KubernetesSession.Namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	leaseDuration, err := time.ParseDuration(configData.StockInventoryWorker.LeaseDuration)
+	if err != nil {
+		leaseDuration = 15 * time.Second
+	}
+	renewDeadline, err := time.ParseDuration(configData.StockInventoryWorker.RenewDeadline)
+	if err != nil {
+		renewDeadline = 10 * time.Second
+	}
+	retryPeriod, err := time.ParseDuration(configData.StockInventoryWorker.RetryPeriod)
+	if err != nil {
+		retryPeriod = 2 * time.Second
+	}
+
+	manager.SetSessionAllocatorEnabled(true)
+	allocator := services.NewSessionAllocator(manager)
+	electorConfig := schedule.LeaderElectionConfig{
+		LeaseDuration: leaseDuration,
+		RenewDeadline: renewDeadline,
+		RetryPeriod:   retryPeriod,
+		Namespace:     namespace,
+		LeaseName:     "agentapi-session-allocator",
+	}
+	elector := schedule.NewLeaderElector(client, electorConfig)
+	go elector.Run(context.Background(),
+		func(leaderCtx context.Context) {
+			log.Printf("[SESSION_ALLOCATOR] Became leader")
+			if err := allocator.Start(leaderCtx); err != nil {
+				log.Printf("[SESSION_ALLOCATOR] Failed to start: %v", err)
+			}
+		},
+		func() {
+			log.Printf("[SESSION_ALLOCATOR] Lost leadership")
+			allocator.Stop()
+		},
+	)
+	log.Printf("[SESSION_ALLOCATOR] Session allocator started in namespace: %s", namespace)
+	return allocator
 }
 
 // registerImportExportHandlers registers import/export REST API handlers
