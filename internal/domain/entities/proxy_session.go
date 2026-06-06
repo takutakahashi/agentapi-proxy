@@ -16,8 +16,16 @@ type ProxySession struct {
 
 // NewProxySession creates a new ProxySession
 func NewProxySession(id, userID string, scope ResourceScope, teamID string, tags map[string]string, startedAt time.Time) *ProxySession {
+	return NewProxySessionWithStatus(id, userID, scope, teamID, tags, startedAt, "running")
+}
+
+// NewProxySessionWithStatus creates a new ProxySession with an explicit status.
+func NewProxySessionWithStatus(id, userID string, scope ResourceScope, teamID string, tags map[string]string, startedAt time.Time, status string) *ProxySession {
 	if tags == nil {
 		tags = make(map[string]string)
+	}
+	if status == "" {
+		status = "running"
 	}
 	return &ProxySession{
 		id:        id,
@@ -25,7 +33,7 @@ func NewProxySession(id, userID string, scope ResourceScope, teamID string, tags
 		scope:     scope,
 		teamID:    teamID,
 		tags:      tags,
-		status:    "running",
+		status:    status,
 		startedAt: startedAt,
 	}
 }
