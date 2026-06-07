@@ -201,7 +201,7 @@ spec:
             - name: AGENTAPI_K8S_SESSION_IMAGE
               value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository .Chart.AppVersion) | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE
-              value: "ghcr.io/takutakahashi/nfa:0.6.0"
+              value: {{ .Values.kubernetesSession.networkFilterImage | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST
               value: {{ dig "networkFilter" "resources" "requests" "cpu" "250m" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT

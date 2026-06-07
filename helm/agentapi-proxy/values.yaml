@@ -337,6 +337,9 @@ kubernetesSession:
   # If empty, uses the same image as the proxy
   image: ""
 
+  # Container image for the network-filter sidecar and initContainer (sandbox feature)
+  networkFilterImage: "ghcr.io/takutakahashi/nfa:0.6.0"
+
   # Resource configuration for the network-filter sidecar and initContainer (sandbox feature)
   networkFilter:
     # Resources for the network-filter forward proxy sidecar container
