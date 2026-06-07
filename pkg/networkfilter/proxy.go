@@ -80,25 +80,21 @@ func (d *DomainLog) Snapshot() (allowed, denied []string) {
 // When created with active=false (deferred mode), all traffic is allowed until
 // EnablePolicy is called.
 type Proxy struct {
-	configuredFilter atomic.Pointer[Filter]
+	configuredFilter *Filter
 	activeFilter     atomic.Pointer[Filter]
-	policyActive     atomic.Bool
-	countMode        atomic.Bool
 	domainLog        *DomainLog
 }
 
 // NewProxy creates a Proxy with the given filter.
 // When active is true, the policy is enforced immediately.
 // When active is false, all traffic is allowed until EnablePolicy is called.
-func NewProxy(filter *Filter, active bool, countMode bool) *Proxy {
+func NewProxy(filter *Filter, active bool) *Proxy {
 	p := &Proxy{
-		domainLog: newDomainLog(),
+		configuredFilter: filter,
+		domainLog:        newDomainLog(),
 	}
-	p.configuredFilter.Store(filter)
-	p.countMode.Store(countMode)
 	if active {
 		p.activeFilter.Store(filter)
-		p.policyActive.Store(true)
 	}
 	return p
 }
@@ -111,20 +107,8 @@ func (p *Proxy) Domains() (allowed, denied []string) {
 // EnablePolicy activates the configured filter. After this call, all connections
 // are subject to domain filtering. Safe to call concurrently.
 func (p *Proxy) EnablePolicy() {
-	p.activeFilter.Store(p.configuredFilter.Load())
-	p.policyActive.Store(true)
+	p.activeFilter.Store(p.configuredFilter)
 	log.Printf("[network-filter] policy enabled")
-}
-
-// SetPolicy replaces the configured filter and count-mode behavior. If the
-// policy is already active, the new policy takes effect immediately.
-func (p *Proxy) SetPolicy(filter *Filter, countMode bool) {
-	p.configuredFilter.Store(filter)
-	p.countMode.Store(countMode)
-	if p.policyActive.Load() {
-		p.activeFilter.Store(filter)
-	}
-	log.Printf("[network-filter] policy configured (count_mode=%t)", countMode)
 }
 
 // effectiveFilter returns the active filter, or the passthrough filter if the policy
@@ -134,10 +118,6 @@ func (p *Proxy) effectiveFilter() *Filter {
 		return f
 	}
 	return passthroughFilter
-}
-
-func (p *Proxy) shouldBlock(result FilterResult) bool {
-	return result == FilterResultBlocked && !p.countMode.Load()
 }
 
 // Run starts the proxy on the given listener.
@@ -200,14 +180,10 @@ func (p *Proxy) handleCONNECT(conn net.Conn, req *http.Request) {
 
 	if result == FilterResultBlocked {
 		p.domainLog.recordDenied(host)
-	} else {
-		p.domainLog.recordAllowed(host)
-	}
-
-	if p.shouldBlock(result) {
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 403 Forbidden\r\n\r\nblocked by network filter\n")
 		return
 	}
+	p.domainLog.recordAllowed(host)
 
 	upConn, err := net.DialTimeout("tcp", req.Host, dialTimeout)
 	if err != nil {
@@ -234,11 +210,6 @@ func (p *Proxy) handleHTTP(conn net.Conn, br *bufio.Reader, req *http.Request) {
 
 	if result == FilterResultBlocked {
 		p.domainLog.recordDenied(host)
-	} else {
-		p.domainLog.recordAllowed(host)
-	}
-
-	if p.shouldBlock(result) {
 		resp := &http.Response{
 			Status:     "403 Forbidden",
 			StatusCode: http.StatusForbidden,
@@ -251,6 +222,7 @@ func (p *Proxy) handleHTTP(conn net.Conn, br *bufio.Reader, req *http.Request) {
 		_ = resp.Write(conn)
 		return
 	}
+	p.domainLog.recordAllowed(host)
 
 	upstream := req.Host
 	if upstream == "" {
@@ -302,13 +274,9 @@ func (p *Proxy) handleTransparentTLS(conn net.Conn, br *bufio.Reader) {
 
 	if result == FilterResultBlocked {
 		p.domainLog.recordDenied(sni)
-	} else {
-		p.domainLog.recordAllowed(sni)
-	}
-
-	if p.shouldBlock(result) {
 		return
 	}
+	p.domainLog.recordAllowed(sni)
 
 	upstream := net.JoinHostPort(sni, "443")
 	upConn, err := net.DialTimeout("tcp", upstream, dialTimeout)

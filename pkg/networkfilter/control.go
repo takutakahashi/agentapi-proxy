@@ -27,13 +27,6 @@ type DomainsResponse struct {
 	Denied  []string `json:"denied"`
 }
 
-// PolicyRequest is accepted by POST /policy to update the configured filter.
-type PolicyRequest struct {
-	Allowed   []string `json:"allowed,omitempty"`
-	Denied    []string `json:"denied,omitempty"`
-	CountMode bool     `json:"count_mode,omitempty"`
-}
-
 // Run starts the HTTP control server on lis and blocks until lis is closed.
 func (c *ControlServer) Run(lis net.Listener) error {
 	mux := http.NewServeMux()
@@ -54,24 +47,6 @@ func (c *ControlServer) Run(lis net.Listener) error {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(resp)
-	})
-	mux.HandleFunc("POST /policy", func(w http.ResponseWriter, r *http.Request) {
-		var req PolicyRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, fmt.Sprintf("decode policy: %v", err), http.StatusBadRequest)
-			return
-		}
-		var filter *Filter
-		if len(req.Allowed) > 0 {
-			filter = NewAllowlistFilter(req.Allowed)
-		} else if len(req.Denied) > 0 {
-			filter = NewFilter(req.Denied)
-		} else {
-			filter = NewAllowlistFilter(nil)
-		}
-		c.proxy.SetPolicy(filter, req.CountMode)
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintln(w, "policy configured")
 	})
 	srv := &http.Server{Handler: mux}
 	log.Printf("[network-filter] control server listening on %s", lis.Addr())

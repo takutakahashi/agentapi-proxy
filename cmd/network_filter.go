@@ -55,7 +55,6 @@ control server on port 3129 (localhost only).`,
 		allowedDomainsFlag, _ := cmd.Flags().GetStringSlice("allowed-domains")
 		deniedDomainsFlag, _ := cmd.Flags().GetStringSlice("denied-domains")
 		deferredPolicy, _ := cmd.Flags().GetBool("deferred-policy")
-		countMode := strings.EqualFold(os.Getenv("NETWORK_FILTER_COUNT_MODE"), "true")
 
 		parseDomains := func(envKey string, flagVals []string) []string {
 			var out []string
@@ -86,11 +85,7 @@ control server on port 3129 (localhost only).`,
 			log.Printf("[network-filter] deferred-policy mode: policy inactive until POST /enable-policy on port %d", networkfilter.ControlPort)
 		}
 
-		if countMode {
-			log.Printf("[network-filter] count mode enabled: blocked domains will be recorded but allowed")
-		}
-
-		proxy := networkfilter.NewProxy(filter, !deferredPolicy, countMode)
+		proxy := networkfilter.NewProxy(filter, !deferredPolicy)
 
 		controlAddr := fmt.Sprintf("127.0.0.1:%d", networkfilter.ControlPort)
 		controlLis, err := net.Listen("tcp", controlAddr)
