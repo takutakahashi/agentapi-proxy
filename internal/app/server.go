@@ -1,15 +1,12 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -31,7 +28,6 @@ import (
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
-	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -786,126 +782,43 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		}
 	}
 
-	if esm.URL == "" {
-		k8sManager, ok := s.sessionManager.(*services.KubernetesSessionManager)
-		if !ok {
-			return nil, fmt.Errorf("external session manager allocator requires KubernetesSessionManager")
-		}
-		if err := k8sManager.SubmitExternalSessionAllocation(ctx, managerID, sessionID, settings, runReq); err != nil {
-			return nil, err
-		}
-		startedAt := time.Now()
-		if s.sessionRouteRepo != nil {
-			tags := startReq.Tags
-			if tags == nil {
-				tags = map[string]string{}
-			}
-			route := &portrepos.SessionRoute{
-				SessionID:      sessionID,
-				HMACSecret:     esm.HMACSecret,
-				UserID:         userID,
-				Scope:          string(startReq.Scope),
-				TeamID:         startReq.TeamID,
-				Tags:           tags,
-				StartedAt:      startedAt,
-				InitialMessage: initialMessage,
-			}
-			if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
-				log.Printf("[REMOTE_SESSION] Warning: failed to save pending session route: %v", saveErr)
-			}
-		}
-		log.Printf("[REMOTE_SESSION] Queued external allocation for session %s (manager: %s)", sessionID, managerID)
-		return entities.NewProxySessionWithStatus(
-			sessionID,
-			userID,
-			startReq.Scope,
-			startReq.TeamID,
-			startReq.Tags,
-			startedAt,
-			"creating",
-		), nil
+	k8sManager, ok := s.sessionManager.(*services.KubernetesSessionManager)
+	if !ok {
+		return nil, fmt.Errorf("external session manager allocator requires KubernetesSessionManager")
 	}
-
-	// Marshal to JSON
-	body, err := json.Marshal(settings)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal session settings: %w", err)
+	if err := k8sManager.SubmitExternalSessionAllocation(ctx, managerID, sessionID, settings, runReq); err != nil {
+		return nil, err
 	}
-
-	// POST to Proxy B
-	targetURL := strings.TrimRight(esm.URL, "/") + "/api/v1/sessions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to build request to Proxy B: %w", err)
-	}
-
-	// Compute HMAC signature over METHOD\nPATH?QUERY\nTIMESTAMP\nBODY
-	ts := hmacutil.NowTimestamp()
-	parsedTarget, _ := url.Parse(targetURL)
-	msg := hmacutil.BuildMessage(http.MethodPost, parsedTarget.RequestURI(), ts, body)
-	sig := hmacutil.Sign([]byte(esm.HMACSecret), msg)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Hub-Signature-256", sig)
-	httpReq.Header.Set(hmacutil.TimestampHeader, ts)
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call Proxy B: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("proxy B returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var createResp struct {
-		SessionID string `json:"session_id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&createResp); err != nil {
-		return nil, fmt.Errorf("failed to decode Proxy B response: %w", err)
-	}
-
-	remoteSessionID := createResp.SessionID
-	log.Printf("[REMOTE_SESSION] Created remote session %s on Proxy B (remote ID: %s, manager: %s)",
-		sessionID, remoteSessionID, managerID)
-
 	startedAt := time.Now()
-
-	// Save routing entry with metadata
 	if s.sessionRouteRepo != nil {
 		tags := startReq.Tags
 		if tags == nil {
 			tags = map[string]string{}
 		}
 		route := &portrepos.SessionRoute{
-			SessionID:       sessionID,
-			RemoteSessionID: remoteSessionID,
-			ProxyURL:        esm.URL,
-			HMACSecret:      esm.HMACSecret,
-			UserID:          userID,
-			Scope:           string(startReq.Scope),
-			TeamID:          startReq.TeamID,
-			Tags:            tags,
-			StartedAt:       startedAt,
-			InitialMessage:  initialMessage,
+			SessionID:      sessionID,
+			HMACSecret:     esm.HMACSecret,
+			UserID:         userID,
+			Scope:          string(startReq.Scope),
+			TeamID:         startReq.TeamID,
+			Tags:           tags,
+			StartedAt:      startedAt,
+			InitialMessage: initialMessage,
 		}
 		if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
-			log.Printf("[REMOTE_SESSION] Warning: failed to save session route: %v", saveErr)
+			log.Printf("[REMOTE_SESSION] Warning: failed to save pending session route: %v", saveErr)
 		}
 	}
-
-	// Return a ProxySession entity
-	session := entities.NewProxySession(
+	log.Printf("[REMOTE_SESSION] Queued external allocation for session %s (manager: %s)", sessionID, managerID)
+	return entities.NewProxySessionWithStatus(
 		sessionID,
 		userID,
 		startReq.Scope,
 		startReq.TeamID,
 		startReq.Tags,
 		startedAt,
-	)
-	return session, nil
+		"creating",
+	), nil
 }
 
 // findESMByID searches the user's settings and team settings for an ESM entry with the given ID.

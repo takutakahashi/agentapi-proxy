@@ -115,7 +115,6 @@ type UpdateSettingsRequest struct {
 type ExternalSessionManagerRequest struct {
 	ID         string `json:"id,omitempty"`          // Auto-generated if empty
 	Name       string `json:"name"`                  // Human-readable name
-	URL        string `json:"url,omitempty"`         // Optional legacy Proxy B URL
 	HMACSecret string `json:"hmac_secret,omitempty"` // Connection token; auto-generated if empty, omit to keep existing
 	Default    bool   `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
 }
@@ -168,8 +167,6 @@ type SettingsResponse struct {
 type ExternalSessionManagerResponse struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
-	URL                string `json:"url,omitempty"`
-	HasHMACSecret      bool   `json:"has_hmac_secret"`            // legacy name; true if a connection token is configured
 	HasConnectionToken bool   `json:"has_connection_token"`       // true if a connection token is configured
 	ConnectionToken    string `json:"connection_token,omitempty"` // returned only immediately after generation or rotation
 	Default            bool   `json:"default,omitempty"`          // true if this manager is used when no manager_id is specified
@@ -179,7 +176,6 @@ type ExternalSessionManagerResponse struct {
 type AvailableManagerEntry struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
-	URL        string `json:"url,omitempty"`
 	Default    bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
 	Source     string `json:"source"`            // "user" or "team"
 	SourceName string `json:"source_name"`       // user ID or team ID
@@ -209,7 +205,6 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 			managers = append(managers, AvailableManagerEntry{
 				ID:         m.ID,
 				Name:       m.Name,
-				URL:        m.URL,
 				Default:    m.Default,
 				Source:     "user",
 				SourceName: userID,
@@ -226,7 +221,6 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 					managers = append(managers, AvailableManagerEntry{
 						ID:         m.ID,
 						Name:       m.Name,
-						URL:        m.URL,
 						Default:    m.Default,
 						Source:     "team",
 						SourceName: teamID,
@@ -495,7 +489,6 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			updated = append(updated, entities.ExternalSessionManagerEntry{
 				ID:         m.ID,
 				Name:       m.Name,
-				URL:        m.URL,
 				HMACSecret: m.HMACSecret,
 				Default:    m.Default,
 			})
@@ -861,8 +854,6 @@ func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings
 			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
 				ID:                 m.ID,
 				Name:               m.Name,
-				URL:                m.URL,
-				HasHMACSecret:      m.HMACSecret != "",
 				HasConnectionToken: m.HMACSecret != "",
 				ConnectionToken:    connectionToken,
 				Default:            m.Default,
