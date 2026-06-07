@@ -396,6 +396,10 @@ type SessionManagerConfig struct {
 	// ConnectionToken authenticates this manager to Proxy A's allocator endpoint.
 	// Can also be set via SESSION_MANAGER_CONNECTION_TOKEN.
 	ConnectionToken string `json:"connection_token" mapstructure:"connection_token"`
+	// PublicURL is the URL Proxy A should use to route requests back to this manager.
+	// It is included in allocation completion results. Can also be set via
+	// SESSION_MANAGER_PUBLIC_URL.
+	PublicURL string `json:"public_url" mapstructure:"public_url"`
 }
 
 // RedisConfig holds configuration for the optional Redis backend used for
@@ -842,6 +846,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_manager.hmac_secret", "SESSION_MANAGER_HMAC_SECRET")
 	_ = v.BindEnv("session_manager.upstream_url", "SESSION_MANAGER_UPSTREAM_URL")
 	_ = v.BindEnv("session_manager.connection_token", "SESSION_MANAGER_CONNECTION_TOKEN")
+	_ = v.BindEnv("session_manager.public_url", "SESSION_MANAGER_PUBLIC_URL")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")

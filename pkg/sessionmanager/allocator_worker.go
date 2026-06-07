@@ -15,12 +15,14 @@ import (
 type AllocatorWorker struct {
 	sessionManager repositories.SessionManager
 	client         *services.SessionAllocatorClient
+	publicURL      string
 }
 
-func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL, token string) *AllocatorWorker {
+func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL, token, publicURL string) *AllocatorWorker {
 	return &AllocatorWorker{
 		sessionManager: sessionManager,
 		client:         services.NewSessionAllocatorClient(upstreamURL, token),
+		publicURL:      publicURL,
 	}
 }
 
@@ -73,6 +75,7 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *services.Sess
 	if err := w.client.CompleteExternal(context.Background(), allocation.SessionID, services.SessionAllocationResult{
 		Status:             "assigned",
 		AllocatedSessionID: session.ID(),
+		ProxyURL:           w.publicURL,
 	}); err != nil {
 		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to complete allocation %s: %v", allocation.SessionID, err)
 	}

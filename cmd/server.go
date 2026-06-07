@@ -871,7 +871,7 @@ func startSessionManagerAllocator(ctx context.Context, configData *config.Config
 		return
 	}
 
-	worker := sessionmanager.NewAllocatorWorker(sessionManager, upstreamURL, token)
+	worker := sessionmanager.NewAllocatorWorker(sessionManager, upstreamURL, token, configData.SessionManager.PublicURL)
 	go worker.Start(ctx)
 	log.Printf("[SESSION_MANAGER_ALLOCATOR] Started outbound allocator polling upstream: %s", upstreamURL)
 }
