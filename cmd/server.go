@@ -462,6 +462,10 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 	workerConfig := stock_inventory.WorkerConfig{
 		CheckInterval: checkInterval,
 		TargetCount:   targetCount,
+		Requirements: stock_inventory.StockRequirements{
+			Sandbox: configData.StockInventoryWorker.SandboxEnabled,
+			DinD:    configData.StockInventoryWorker.DockerEnabled,
+		},
 		Enabled:       true,
 	}
 
@@ -490,8 +494,8 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 
 	go leaderWorker.Run(context.Background())
 
-	log.Printf("[STOCK_INVENTORY] Stock inventory worker started in namespace: %s (target: %d)",
-		namespace, targetCount)
+	log.Printf("[STOCK_INVENTORY] Stock inventory worker started in namespace: %s (target: %d, sandbox=%t, dind=%t)",
+		namespace, targetCount, workerConfig.Requirements.Sandbox, workerConfig.Requirements.DinD)
 	return leaderWorker
 }
 

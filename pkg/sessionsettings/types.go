@@ -122,6 +122,7 @@ type SandboxConfig struct {
 	PolicyID       string   `yaml:"policy_id,omitempty"       json:"policy_id,omitempty"`
 	AllowedDomains []string `yaml:"allowed_domains,omitempty" json:"allowed_domains,omitempty"`
 	DeniedDomains  []string `yaml:"denied_domains,omitempty"  json:"denied_domains,omitempty"`
+	CountMode      bool     `yaml:"count_mode,omitempty"      json:"count_mode,omitempty"`
 }
 
 // DockerConfig holds Docker-in-Docker (DinD) configuration for a session Pod.
