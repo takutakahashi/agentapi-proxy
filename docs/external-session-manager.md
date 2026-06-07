@@ -4,20 +4,12 @@ External Session Manager (ESM) lets a main agentapi-proxy instance route session
 workloads to another agentapi-proxy instance. The main proxy is called **Proxy A**.
 The external manager is called **Proxy B**.
 
-Two connection styles are supported:
+Proxy B keeps an outbound polling connection to Proxy A and picks up allocation
+requests. Proxy A does not need to send session creation requests to Proxy B.
+This is useful for development and for environments where Proxy B should
+register itself by token.
 
-- **Allocator mode**: Proxy B keeps an outbound polling connection to Proxy A and
-  picks up allocation requests. Proxy A does not need to send session creation
-  requests to Proxy B.
-- **Legacy URL mode**: Proxy A sends session creation requests directly to
-  Proxy B's `/api/v1/sessions` endpoint.
-
-Allocator mode is the preferred setup for development and for environments
-where Proxy B should register itself by token.
-
-## Allocator Mode
-
-### Data Flow
+## Data Flow
 
 ```text
 user -> Proxy A /start
@@ -33,7 +25,7 @@ Proxy A still needs a routable URL for Proxy B after allocation, because normal
 session traffic such as `/status`, messages, and delete is proxied to the
 remote session. That URL is `SESSION_MANAGER_PUBLIC_URL`.
 
-### Proxy A: Register the Manager
+## Proxy A: Register the Manager
 
 Register an ESM without `url`. Proxy A generates a one-time `connection_token`
 when `hmac_secret` is omitted.
@@ -78,7 +70,7 @@ Store `<generated-token>` securely. It is not returned by later settings reads.
 When updating settings, preserve any existing managers that should remain
 registered. The `external_session_managers` array represents the desired list.
 
-### Proxy B: Required Environment
+## Proxy B: Required Environment
 
 Proxy B runs the same `agentapi-proxy server`, with session manager mode and
 Kubernetes session provisioning enabled.
@@ -103,7 +95,7 @@ Important details:
 - `AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL` should point at Proxy B so
   provisioned session pods call back to the correct manager.
 
-### Kubernetes Example
+## Kubernetes Example
 
 This is the shape used in the `agentapi-ui-dev` development environment.
 
@@ -261,38 +253,6 @@ Expected result:
   "status": "terminated"
 }
 ```
-
-## Legacy URL Mode
-
-Legacy mode registers a manager with a `url`. Proxy A sends session creation
-requests directly to Proxy B.
-
-```bash
-curl -X PUT "$PROXY_A_URL/settings/$USERNAME" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "external_session_managers": [
-      {
-        "id": "legacy-k3s",
-        "name": "Legacy k3s ESM",
-        "url": "https://proxy-b.example.com",
-        "hmac_secret": "<shared-secret>",
-        "default": true
-      }
-    ]
-  }'
-```
-
-Proxy B must use the same secret:
-
-```bash
-export SESSION_MANAGER_ENABLED=true
-export SESSION_MANAGER_HMAC_SECRET="<shared-secret>"
-```
-
-Allocator mode is usually easier to operate because manager registration
-creates the token and Proxy B initiates the allocation polling connection.
 
 ## Troubleshooting
 
