@@ -158,7 +158,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 
 	var provisionerController *controllers.ProvisionerController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
-		provisionerController = controllers.NewProvisionerController(k8sManager)
+		provisionerController = controllers.NewProvisionerController(k8sManager, server.settingsRepo, server.sessionRouteRepo)
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
 
@@ -261,6 +261,8 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/internal/session-provisioners/:sessionId/provision-requests/:requestId/status", r.handlers.provisionerController.UpdateProvisionRequestStatus)
 		r.echo.GET("/internal/session-allocations/next", r.handlers.provisionerController.GetNextSessionAllocation)
 		r.echo.POST("/internal/session-allocations/:sessionId/result", r.handlers.provisionerController.CompleteSessionAllocation)
+		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.provisionerController.GetNextExternalSessionAllocation)
+		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.provisionerController.CompleteExternalSessionAllocation)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
 	}
 

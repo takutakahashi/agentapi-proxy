@@ -786,6 +786,46 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		}
 	}
 
+	if esm.URL == "" {
+		k8sManager, ok := s.sessionManager.(*services.KubernetesSessionManager)
+		if !ok {
+			return nil, fmt.Errorf("external session manager allocator requires KubernetesSessionManager")
+		}
+		if err := k8sManager.SubmitExternalSessionAllocation(ctx, managerID, sessionID, settings, runReq); err != nil {
+			return nil, err
+		}
+		startedAt := time.Now()
+		if s.sessionRouteRepo != nil {
+			tags := startReq.Tags
+			if tags == nil {
+				tags = map[string]string{}
+			}
+			route := &portrepos.SessionRoute{
+				SessionID:      sessionID,
+				HMACSecret:     esm.HMACSecret,
+				UserID:         userID,
+				Scope:          string(startReq.Scope),
+				TeamID:         startReq.TeamID,
+				Tags:           tags,
+				StartedAt:      startedAt,
+				InitialMessage: initialMessage,
+			}
+			if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
+				log.Printf("[REMOTE_SESSION] Warning: failed to save pending session route: %v", saveErr)
+			}
+		}
+		log.Printf("[REMOTE_SESSION] Queued external allocation for session %s (manager: %s)", sessionID, managerID)
+		return entities.NewProxySessionWithStatus(
+			sessionID,
+			userID,
+			startReq.Scope,
+			startReq.TeamID,
+			startReq.Tags,
+			startedAt,
+			"creating",
+		), nil
+	}
+
 	// Marshal to JSON
 	body, err := json.Marshal(settings)
 	if err != nil {

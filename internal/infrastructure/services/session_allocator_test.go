@@ -8,6 +8,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -50,6 +51,48 @@ func TestCreateSessionWithAllocatorReturnsAfterSubmittingAllocation(t *testing.T
 	}
 	if got := sec.Labels["agentapi.proxy/session-allocation-status"]; got != "pending" {
 		t.Fatalf("allocation status label = %q, want pending", got)
+	}
+}
+
+func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+
+	req := &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser}
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{UserID: "test-user", Scope: string(entities.ScopeUser)},
+	}
+	if err := manager.SubmitExternalSessionAllocation(context.Background(), "manager-a", "test-session", settings, req); err != nil {
+		t.Fatalf("SubmitExternalSessionAllocation() error = %v", err)
+	}
+
+	if _, ok, err := manager.NextSessionAllocation(context.Background(), 0); err != nil || ok {
+		t.Fatalf("NextSessionAllocation() = ok=%t err=%v, want ok=false err=nil", ok, err)
+	}
+
+	if _, ok, err := manager.NextExternalSessionAllocation(context.Background(), "manager-b", 0); err != nil || ok {
+		t.Fatalf("NextExternalSessionAllocation(manager-b) = ok=%t err=%v, want ok=false err=nil", ok, err)
+	}
+
+	allocation, ok, err := manager.NextExternalSessionAllocation(context.Background(), "manager-a", 0)
+	if err != nil {
+		t.Fatalf("NextExternalSessionAllocation(manager-a) error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("NextExternalSessionAllocation(manager-a) ok=false, want true")
+	}
+	if allocation.SessionID != "test-session" {
+		t.Fatalf("allocation.SessionID = %q, want test-session", allocation.SessionID)
+	}
+	if allocation.ProvisionSettings == nil {
+		t.Fatalf("allocation.ProvisionSettings is nil")
 	}
 }
 

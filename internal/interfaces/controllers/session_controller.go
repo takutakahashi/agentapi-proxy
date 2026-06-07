@@ -416,12 +416,16 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				if !match {
 					continue
 				}
+				status := "active"
+				if route.RemoteSessionID == "" {
+					status = "creating"
+				}
 				filteredSessions = append(filteredSessions, map[string]interface{}{
 					"session_id":      route.SessionID,
 					"user_id":         route.UserID,
 					"scope":           route.Scope,
 					"team_id":         route.TeamID,
-					"status":          "active",
+					"status":          status,
 					"started_at":      route.StartedAt,
 					"updated_at":      route.StartedAt,
 					"last_message_at": route.StartedAt,
@@ -635,6 +639,9 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 // It signs the request with HMAC-SHA256 before forwarding.
 func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
+	if route.ProxyURL == "" || route.RemoteSessionID == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
+	}
 
 	// Check authorization
 	if ctx.Request().Method != "OPTIONS" {
@@ -726,6 +733,18 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 // deleteRemoteSession deletes a session on Proxy B via the session manager API.
 func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
+	if route.ProxyURL == "" || route.RemoteSessionID == "" {
+		if c.sessionRouteRepo != nil {
+			if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
+				log.Printf("[REMOTE_DELETE] Warning: failed to delete pending route entry for session %s: %v", sessionID, err)
+			}
+		}
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"message":    "Pending external session removed",
+			"session_id": sessionID,
+			"status":     "terminated",
+		})
+	}
 
 	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/api/v1/sessions/" + route.RemoteSessionID
 
@@ -861,6 +880,9 @@ func (c *SessionController) fetchRemoteSessions(ctx context.Context, userID stri
 			return
 		}
 		for _, esm := range settings.ExternalSessionManagers() {
+			if esm.URL == "" {
+				continue
+			}
 			if _, exists := seen[esm.URL]; !exists {
 				seen[esm.URL] = struct{}{}
 				esms = append(esms, esmEntry{url: esm.URL, secret: esm.HMACSecret})

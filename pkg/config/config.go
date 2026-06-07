@@ -390,6 +390,12 @@ type SessionManagerConfig struct {
 	// over the raw request body with this secret.
 	// Can also be set via SESSION_MANAGER_HMAC_SECRET environment variable.
 	HMACSecret string `json:"hmac_secret" mapstructure:"hmac_secret"`
+	// UpstreamURL is the Proxy A URL to poll for external session allocations.
+	// Can also be set via SESSION_MANAGER_UPSTREAM_URL.
+	UpstreamURL string `json:"upstream_url" mapstructure:"upstream_url"`
+	// ConnectionToken authenticates this manager to Proxy A's allocator endpoint.
+	// Can also be set via SESSION_MANAGER_CONNECTION_TOKEN.
+	ConnectionToken string `json:"connection_token" mapstructure:"connection_token"`
 }
 
 // RedisConfig holds configuration for the optional Redis backend used for
@@ -834,6 +840,8 @@ func bindEnvVars(v *viper.Viper) {
 	// Session manager configuration
 	_ = v.BindEnv("session_manager.enabled", "SESSION_MANAGER_ENABLED")
 	_ = v.BindEnv("session_manager.hmac_secret", "SESSION_MANAGER_HMAC_SECRET")
+	_ = v.BindEnv("session_manager.upstream_url", "SESSION_MANAGER_UPSTREAM_URL")
+	_ = v.BindEnv("session_manager.connection_token", "SESSION_MANAGER_CONNECTION_TOKEN")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")

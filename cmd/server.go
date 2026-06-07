@@ -80,6 +80,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	proxyServer := app.NewServer(configData, verbose)
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
@@ -127,6 +128,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Register session manager handler (small-cluster / forwarding mode)
 	registerSessionManagerHandlers(configData, proxyServer)
 
+	// Start outbound session manager allocator when configured.
+	startSessionManagerAllocator(workerCtx, configData, proxyServer)
+
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Starting agentapi-proxy on port %s", port)
@@ -141,6 +145,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	<-quit
 
 	log.Println("Shutdown signal received, shutting down gracefully...")
+	cancelWorkers()
 
 	// Stop schedule worker if running
 	if scheduleWorker != nil {
@@ -850,6 +855,25 @@ func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.
 	handlers := sessionmanager.NewHandlers(sessionManager, configData.SessionManager.HMACSecret)
 	proxyServer.AddCustomHandler(handlers)
 	log.Printf("[SESSION_MANAGER] Session manager handler registered")
+}
+
+func startSessionManagerAllocator(ctx context.Context, configData *config.Config, proxyServer *app.Server) {
+	upstreamURL := configData.SessionManager.UpstreamURL
+	token := configData.SessionManager.ConnectionToken
+	if upstreamURL == "" || token == "" {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Upstream URL or connection token is empty; allocator disabled")
+		return
+	}
+
+	sessionManager := proxyServer.GetSessionManager()
+	if sessionManager == nil {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Warning: session manager is not available, allocator disabled")
+		return
+	}
+
+	worker := sessionmanager.NewAllocatorWorker(sessionManager, upstreamURL, token)
+	go worker.Start(ctx)
+	log.Printf("[SESSION_MANAGER_ALLOCATOR] Started outbound allocator polling upstream: %s", upstreamURL)
 }
 
 // registerGitHubSyncHandlers registers GitHub bidirectional sync REST API handlers.

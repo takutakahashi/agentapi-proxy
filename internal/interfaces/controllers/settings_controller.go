@@ -115,8 +115,8 @@ type UpdateSettingsRequest struct {
 type ExternalSessionManagerRequest struct {
 	ID         string `json:"id,omitempty"`          // Auto-generated if empty
 	Name       string `json:"name"`                  // Human-readable name
-	URL        string `json:"url"`                   // Proxy B URL
-	HMACSecret string `json:"hmac_secret,omitempty"` // Auto-generated if empty; omit to keep existing
+	URL        string `json:"url,omitempty"`         // Optional legacy Proxy B URL
+	HMACSecret string `json:"hmac_secret,omitempty"` // Connection token; auto-generated if empty, omit to keep existing
 	Default    bool   `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
 }
 
@@ -166,18 +166,20 @@ type SettingsResponse struct {
 
 // ExternalSessionManagerResponse represents a single external session manager in responses
 type ExternalSessionManagerResponse struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	URL           string `json:"url"`
-	HasHMACSecret bool   `json:"has_hmac_secret"`   // true if an HMAC secret is configured (secret itself is never returned)
-	Default       bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	URL                string `json:"url,omitempty"`
+	HasHMACSecret      bool   `json:"has_hmac_secret"`            // legacy name; true if a connection token is configured
+	HasConnectionToken bool   `json:"has_connection_token"`       // true if a connection token is configured
+	ConnectionToken    string `json:"connection_token,omitempty"` // returned only immediately after generation or rotation
+	Default            bool   `json:"default,omitempty"`          // true if this manager is used when no manager_id is specified
 }
 
 // AvailableManagerEntry represents a single available ESM entry returned by GET /settings/managers
 type AvailableManagerEntry struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
-	URL        string `json:"url"`
+	URL        string `json:"url,omitempty"`
 	Default    bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
 	Source     string `json:"source"`            // "user" or "team"
 	SourceName string `json:"source_name"`       // user ID or team ID
@@ -451,6 +453,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Update external session managers
 	// For each entry: auto-generate ID if empty, auto-generate HMAC secret if empty.
 	// Existing secrets are preserved when the entry already exists (matched by ID).
+	generatedESMTokens := map[string]string{}
 	if req.ExternalSessionManagers != nil {
 		existing := make(map[string]entities.ExternalSessionManagerEntry)
 		for _, e := range settings.ExternalSessionManagers() {
@@ -483,10 +486,11 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			if m.HMACSecret == "" {
 				secret, err := generateSettingsESMSecret(32)
 				if err != nil {
-					log.Printf("[SETTINGS] Failed to generate HMAC secret for ESM %s: %v", m.Name, err)
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate HMAC secret")
+					log.Printf("[SETTINGS] Failed to generate connection token for ESM %s: %v", m.Name, err)
+					return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate connection token")
 				}
 				m.HMACSecret = secret
+				generatedESMTokens[m.ID] = secret
 			}
 			updated = append(updated, entities.ExternalSessionManagerEntry{
 				ID:         m.ID,
@@ -555,7 +559,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 
-	return ctx.JSON(http.StatusOK, c.toResponse(settings))
+	return ctx.JSON(http.StatusOK, c.toResponseWithESMTokens(settings, generatedESMTokens))
 }
 
 // DeleteGitSync handles DELETE /settings/:name/sync
@@ -774,6 +778,10 @@ func (c *SettingsController) determineAuthMode(settings *entities.Settings, requ
 
 // toResponse converts Settings entity to response
 func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsResponse {
+	return c.toResponseWithESMTokens(settings, nil)
+}
+
+func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings, connectionTokens map[string]string) *SettingsResponse {
 	resp := &SettingsResponse{
 		Name:                    settings.Name(),
 		HasClaudeCodeOAuthToken: settings.HasClaudeCodeOAuthToken(),
@@ -846,12 +854,18 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {
 		resp.ExternalSessionManagers = make([]ExternalSessionManagerResponse, 0, len(managers))
 		for _, m := range managers {
+			connectionToken := ""
+			if connectionTokens != nil {
+				connectionToken = connectionTokens[m.ID]
+			}
 			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
-				ID:            m.ID,
-				Name:          m.Name,
-				URL:           m.URL,
-				HasHMACSecret: m.HMACSecret != "",
-				Default:       m.Default,
+				ID:                 m.ID,
+				Name:               m.Name,
+				URL:                m.URL,
+				HasHMACSecret:      m.HMACSecret != "",
+				HasConnectionToken: m.HMACSecret != "",
+				ConnectionToken:    connectionToken,
+				Default:            m.Default,
 			})
 		}
 	}

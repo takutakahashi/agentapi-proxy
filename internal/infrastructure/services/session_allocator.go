@@ -15,6 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,20 +30,23 @@ const (
 // SessionAllocationRequest is the cluster-visible request consumed by the
 // leader-elected SessionAllocator.
 type SessionAllocationRequest struct {
-	SessionID          string                     `json:"session_id"`
-	Request            *entities.RunServerRequest `json:"request"`
-	WebhookPayload     []byte                     `json:"webhook_payload,omitempty"`
-	Status             string                     `json:"status"`
-	Message            string                     `json:"message,omitempty"`
-	AllocatedSessionID string                     `json:"allocated_session_id,omitempty"`
-	Requirements       SessionRequirements        `json:"requirements"`
-	UpdatedAt          time.Time                  `json:"updated_at"`
+	SessionID          string                           `json:"session_id"`
+	ManagerID          string                           `json:"manager_id,omitempty"`
+	Request            *entities.RunServerRequest       `json:"request"`
+	ProvisionSettings  *sessionsettings.SessionSettings `json:"provision_settings,omitempty"`
+	WebhookPayload     []byte                           `json:"webhook_payload,omitempty"`
+	Status             string                           `json:"status"`
+	Message            string                           `json:"message,omitempty"`
+	AllocatedSessionID string                           `json:"allocated_session_id,omitempty"`
+	Requirements       SessionRequirements              `json:"requirements"`
+	UpdatedAt          time.Time                        `json:"updated_at"`
 }
 
 type SessionAllocationResult struct {
 	Status             string `json:"status"`
 	Message            string `json:"message,omitempty"`
 	AllocatedSessionID string `json:"allocated_session_id,omitempty"`
+	ProxyURL           string `json:"proxy_url,omitempty"`
 }
 
 // SessionRequirements captures pod capabilities used for stock matching.
@@ -149,6 +153,9 @@ func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, re
 		"agentapi.proxy/requirement-dind":          fmt.Sprintf("%t", req.Requirements.DinD),
 		"agentapi.proxy/session-allocation-status": req.Status,
 	}
+	if req.ManagerID != "" {
+		labels["agentapi.proxy/external-session-manager-id"] = "true"
+	}
 	if req.Requirements.AgentType != "" {
 		labels["agentapi.proxy/agent-type"] = req.Requirements.AgentType
 	}
@@ -221,7 +228,7 @@ func (m *KubernetesSessionManager) NextSessionAllocation(ctx context.Context, wa
 
 func (m *KubernetesSessionManager) claimNextSessionAllocation(ctx context.Context) (*SessionAllocationRequest, bool, error) {
 	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating)",
+		LabelSelector: "agentapi.proxy/session-allocation=true,!agentapi.proxy/external-session-manager-id,agentapi.proxy/session-allocation-status in (pending,allocating)",
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("list session allocations: %w", err)
@@ -245,6 +252,111 @@ func (m *KubernetesSessionManager) claimNextSessionAllocation(ctx context.Contex
 		return req, true, nil
 	}
 	return nil, false, nil
+}
+
+func (m *KubernetesSessionManager) SubmitExternalSessionAllocation(ctx context.Context, managerID, sessionID string, settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) error {
+	allocation := &SessionAllocationRequest{
+		SessionID:         sessionID,
+		ManagerID:         managerID,
+		Request:           req,
+		ProvisionSettings: settings,
+		Status:            "pending",
+		Requirements:      sessionRequirements(req),
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := m.saveSessionAllocation(ctx, allocation); err != nil {
+		return fmt.Errorf("failed to submit external session allocation: %w", err)
+	}
+	if err := m.notifySessionAllocation(ctx); err != nil {
+		log.Printf("[EXTERNAL_SESSION_ALLOCATOR] Warning: failed to notify allocation request %s: %v", sessionID, err)
+	}
+	return nil
+}
+
+func (m *KubernetesSessionManager) NextExternalSessionAllocation(ctx context.Context, managerID string, wait time.Duration) (*SessionAllocationRequest, bool, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		req, ok, err := m.claimNextExternalSessionAllocation(ctx, managerID)
+		if err != nil || ok || wait <= 0 || time.Now().After(deadline) {
+			return req, ok, err
+		}
+		updates, cancel, err := m.subscribeSessionAllocation(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			cancel()
+			return nil, false, nil
+		}
+		timer := time.NewTimer(remaining)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			cancel()
+			return nil, false, ctx.Err()
+		case <-timer.C:
+			cancel()
+			return nil, false, nil
+		case <-updates:
+			timer.Stop()
+			cancel()
+		}
+	}
+}
+
+func (m *KubernetesSessionManager) claimNextExternalSessionAllocation(ctx context.Context, managerID string) (*SessionAllocationRequest, bool, error) {
+	if managerID == "" {
+		return nil, false, fmt.Errorf("managerID is required")
+	}
+	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/external-session-manager-id,agentapi.proxy/session-allocation-status in (pending,allocating)",
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("list external session allocations: %w", err)
+	}
+	for i := range secrets.Items {
+		sec := &secrets.Items[i]
+		sessionID := sec.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			continue
+		}
+		req, err := m.getSessionAllocation(ctx, sessionID)
+		if err != nil {
+			log.Printf("[EXTERNAL_SESSION_ALLOCATOR] Failed to read allocation %s: %v", sec.Name, err)
+			continue
+		}
+		if req.ManagerID != managerID {
+			continue
+		}
+		req.Status = "allocating"
+		if err := m.saveSessionAllocation(ctx, req); err != nil {
+			log.Printf("[EXTERNAL_SESSION_ALLOCATOR] Failed to claim allocation %s: %v", req.SessionID, err)
+			continue
+		}
+		return req, true, nil
+	}
+	return nil, false, nil
+}
+
+func (m *KubernetesSessionManager) CompleteExternalSessionAllocation(ctx context.Context, sessionID string, result SessionAllocationResult) (*SessionAllocationRequest, error) {
+	req, err := m.getSessionAllocation(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	req.Status = result.Status
+	req.Message = result.Message
+	req.AllocatedSessionID = result.AllocatedSessionID
+	if err := m.saveSessionAllocation(ctx, req); err != nil {
+		return nil, err
+	}
+	if err := m.notifySessionAllocation(ctx); err != nil {
+		return nil, err
+	}
+	if err := m.deleteSessionAllocation(context.Background(), sessionID); err != nil {
+		log.Printf("[EXTERNAL_SESSION_ALLOCATOR] Warning: failed to delete completed allocation %s: %v", sessionID, err)
+	}
+	return req, nil
 }
 
 func (m *KubernetesSessionManager) CompleteSessionAllocation(ctx context.Context, sessionID string, result SessionAllocationResult) error {
@@ -504,7 +616,15 @@ func NewSessionAllocatorClient(baseURL, token string) *SessionAllocatorClient {
 }
 
 func (c *SessionAllocatorClient) Next(ctx context.Context, wait time.Duration) (*SessionAllocationRequest, bool, error) {
-	u, err := url.Parse(c.baseURL + "/internal/session-allocations/next")
+	return c.next(ctx, "/internal/session-allocations/next", wait)
+}
+
+func (c *SessionAllocatorClient) NextExternal(ctx context.Context, wait time.Duration) (*SessionAllocationRequest, bool, error) {
+	return c.next(ctx, "/internal/external-session-manager/allocations/next", wait)
+}
+
+func (c *SessionAllocatorClient) next(ctx context.Context, path string, wait time.Duration) (*SessionAllocationRequest, bool, error) {
+	u, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return nil, false, err
 	}
@@ -536,11 +656,19 @@ func (c *SessionAllocatorClient) Next(ctx context.Context, wait time.Duration) (
 }
 
 func (c *SessionAllocatorClient) Complete(ctx context.Context, sessionID string, result SessionAllocationResult) error {
+	return c.complete(ctx, "/internal/session-allocations/"+url.PathEscape(sessionID)+"/result", result)
+}
+
+func (c *SessionAllocatorClient) CompleteExternal(ctx context.Context, sessionID string, result SessionAllocationResult) error {
+	return c.complete(ctx, "/internal/external-session-manager/allocations/"+url.PathEscape(sessionID)+"/result", result)
+}
+
+func (c *SessionAllocatorClient) complete(ctx context.Context, path string, result SessionAllocationResult) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/session-allocations/"+url.PathEscape(sessionID)+"/result", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}

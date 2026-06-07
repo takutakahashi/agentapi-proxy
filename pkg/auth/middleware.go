@@ -65,7 +65,8 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			// Skip user auth for session Pod provisioner calls. These endpoints
 			// perform their own internal token check in the provisioner controller.
 			if strings.HasPrefix(path, "/internal/session-provisioners") ||
-				strings.HasPrefix(path, "/internal/session-allocations") {
+				strings.HasPrefix(path, "/internal/session-allocations") ||
+				strings.HasPrefix(path, "/internal/external-session-manager") {
 				return next(c)
 			}
 
