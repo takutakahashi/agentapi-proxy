@@ -208,6 +208,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// Enable the network-filter policy now that the agent is fully started.
 	// This is a best-effort call; if there is no sandbox sidecar the request
 	// simply fails and is ignored.
+	configureNetworkFilterPolicy(settings.Sandbox)
 	enableNetworkFilterPolicy()
 
 	// ── Step 9: send initial message ─────────────────────────────────────────
@@ -1472,6 +1473,33 @@ func mergeEnv(base []string, overlay map[string]string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// configureNetworkFilterPolicy calls POST /policy on the network-filter control
+// server to apply the concrete sandbox policy from SessionSettings. This is
+// important for stock sessions: their sandbox sidecar starts before the user's
+// policy/count-mode settings are known.
+func configureNetworkFilterPolicy(sandbox *sessionsettings.SandboxConfig) {
+	if sandbox == nil || !sandbox.Enabled {
+		return
+	}
+	payload := map[string]interface{}{
+		"allowed":    sandbox.AllowedDomains,
+		"denied":     sandbox.DeniedDomains,
+		"count_mode": sandbox.CountMode,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[PROVISIONER] network-filter configure-policy marshal: %v", err)
+		return
+	}
+	resp, err := http.Post("http://127.0.0.1:3129/policy", "application/json", bytes.NewReader(data))
+	if err != nil {
+		log.Printf("[PROVISIONER] network-filter configure-policy: %v (no sandbox sidecar?)", err)
+		return
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	log.Printf("[PROVISIONER] network-filter policy configured (status %s, count_mode=%t)", resp.Status, sandbox.CountMode)
 }
 
 // enableNetworkFilterPolicy calls POST /enable-policy on the network-filter

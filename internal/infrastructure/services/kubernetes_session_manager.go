@@ -4320,13 +4320,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	// Embed sandbox configuration when enabled.
 	if req.Sandbox != nil && req.Sandbox.Enabled {
+		effectiveSandbox := m.resolveSandboxParams(ctx, req)
 		settings.Sandbox = &sessionsettings.SandboxConfig{
 			Enabled:        true,
 			PolicyID:       req.Sandbox.PolicyID,
-			AllowedDomains: req.Sandbox.AllowedDomains,
-			DeniedDomains:  req.Sandbox.DeniedDomains,
+			AllowedDomains: effectiveSandbox.AllowedDomains,
+			DeniedDomains:  effectiveSandbox.DeniedDomains,
+			CountMode:      effectiveSandbox.CountMode,
 		}
-		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (policy: %s, allowed: %v, denied: %v)", session.id, req.Sandbox.PolicyID, req.Sandbox.AllowedDomains, req.Sandbox.DeniedDomains)
+		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (policy: %s, allowed: %v, denied: %v, count_mode=%t)", session.id, req.Sandbox.PolicyID, effectiveSandbox.AllowedDomains, effectiveSandbox.DeniedDomains, effectiveSandbox.CountMode)
 	}
 
 	// Embed Docker-in-Docker configuration when enabled.
