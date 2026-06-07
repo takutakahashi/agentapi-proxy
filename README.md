@@ -147,6 +147,9 @@ curl http://localhost:8080/550e8400-e29b-41d4-a716-446655440000/api/workspaces
 
 For detailed API documentation, see [docs/api.md](docs/api.md).
 
+For External Session Manager setup, including allocator-mode registration and
+Proxy B configuration, see [docs/external-session-manager.md](docs/external-session-manager.md).
+
 ## Authentication
 
 agentapi-proxy supports flexible authentication mechanisms:
