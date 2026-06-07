@@ -1010,17 +1010,23 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 	if m.sessionListCacheRepo != nil {
 		cacheKey := m.buildSessionListCacheKey(labelSelector)
 		if cached, err := m.sessionListCacheRepo.GetSessionListCache(ctx, cacheKey); err == nil && cached != nil {
-			return m.filterSessionsFromCache(cached, filter)
+			sessions := m.filterSessionsFromCache(cached, filter)
+			return m.withSessionAllocations(ctx, sessions, filter)
 		}
 	}
 
 	// --- cache miss: fetch from Kubernetes ----------------------------------
 	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
+	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
 
 	// Populate the cache with the full result set (before in-memory filters)
 	// so that different filter combinations that share the same labelSelector
 	// can reuse the same cached K8s data.
-	if m.sessionListCacheRepo != nil {
+	// Do not cache a pre-Service snapshot while allocation requests are still
+	// present. Otherwise /search can serve an empty stale cache after the
+	// allocation Secret is deleted and before the next cache miss observes the
+	// newly-created Service.
+	if m.sessionListCacheRepo != nil && len(allocationSessions) == 0 {
 		cacheKey := m.buildSessionListCacheKey(labelSelector)
 		dtos := sessionsToCacheDTOs(allSessions)
 		if err := m.sessionListCacheRepo.SetSessionListCache(ctx, cacheKey, dtos, redisSessionListCacheTTL); err != nil {
@@ -1028,7 +1034,85 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 		}
 	}
 
-	return m.applySessionListFilters(allSessions, filter)
+	return mergeSessionAllocations(m.applySessionListFilters(allSessions, filter), allocationSessions)
+}
+
+func (m *KubernetesSessionManager) withSessionAllocations(ctx context.Context, sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
+	return mergeSessionAllocations(sessions, m.fetchSessionAllocationsFromK8s(ctx, filter))
+}
+
+func mergeSessionAllocations(sessions []entities.Session, allocationSessions []entities.Session) []entities.Session {
+	if len(allocationSessions) == 0 {
+		return sessions
+	}
+	seen := make(map[string]struct{}, len(sessions))
+	for _, session := range sessions {
+		seen[session.ID()] = struct{}{}
+	}
+	for _, session := range allocationSessions {
+		if _, ok := seen[session.ID()]; ok {
+			continue
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions
+}
+
+func (m *KubernetesSessionManager) invalidateSessionListCache(reason string) {
+	if m.sessionListCacheRepo == nil {
+		return
+	}
+	if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after %s: %v", reason, err)
+	}
+}
+
+func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Context, filter entities.SessionFilter) []entities.Session {
+	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating)",
+	})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to list session allocations: %v", err)
+		return nil
+	}
+
+	sessions := make([]entities.Session, 0, len(secrets.Items))
+	for i := range secrets.Items {
+		sec := &secrets.Items[i]
+		if sec.DeletionTimestamp != nil {
+			continue
+		}
+		data := sec.Data[sessionAllocationDataKey]
+		if len(data) == 0 {
+			continue
+		}
+		var allocation SessionAllocationRequest
+		if err := json.Unmarshal(data, &allocation); err != nil {
+			log.Printf("[K8S_SESSION] Failed to decode session allocation %s: %v", sec.Name, err)
+			continue
+		}
+		if allocation.SessionID == "" || allocation.Request == nil {
+			continue
+		}
+		scope := allocation.Request.Scope
+		if scope == "" {
+			scope = entities.ScopeUser
+		}
+		session := entities.NewProxySessionWithStatus(
+			allocation.SessionID,
+			allocation.Request.UserID,
+			scope,
+			allocation.Request.TeamID,
+			allocation.Request.Tags,
+			allocation.UpdatedAt,
+			allocation.Status,
+		)
+		if len(m.applySessionListFilters([]entities.Session{session}, filter)) == 0 {
+			continue
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions
 }
 
 // redisSessionListCacheTTL is the TTL passed to the cache repository.

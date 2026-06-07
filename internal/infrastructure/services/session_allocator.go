@@ -179,6 +179,9 @@ func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, re
 			Data: map[string][]byte{sessionAllocationDataKey: data},
 		}
 		_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, sec, metav1.CreateOptions{})
+		if err == nil {
+			m.invalidateSessionListCache("session allocation save")
+		}
 		return err
 	}
 	if err != nil {
@@ -190,6 +193,9 @@ func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, re
 	}
 	sec.Data[sessionAllocationDataKey] = data
 	_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, sec, metav1.UpdateOptions{})
+	if err == nil {
+		m.invalidateSessionListCache("session allocation save")
+	}
 	return err
 }
 
@@ -197,6 +203,9 @@ func (m *KubernetesSessionManager) deleteSessionAllocation(ctx context.Context, 
 	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, sessionAllocationSecretName(sessionID), metav1.DeleteOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
+	}
+	if err == nil {
+		m.invalidateSessionListCache("session allocation delete")
 	}
 	return err
 }
@@ -211,6 +220,11 @@ func (m *KubernetesSessionManager) NextSessionAllocation(ctx context.Context, wa
 		updates, cancel, err := m.subscribeSessionAllocation(ctx)
 		if err != nil {
 			return nil, false, err
+		}
+		req, ok, err = m.claimNextSessionAllocation(ctx)
+		if err != nil || ok {
+			cancel()
+			return req, ok, err
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -290,6 +304,11 @@ func (m *KubernetesSessionManager) NextExternalSessionAllocation(ctx context.Con
 		updates, cancel, err := m.subscribeSessionAllocation(ctx)
 		if err != nil {
 			return nil, false, err
+		}
+		req, ok, err = m.claimNextExternalSessionAllocation(ctx, managerID)
+		if err != nil || ok {
+			cancel()
+			return req, ok, err
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
