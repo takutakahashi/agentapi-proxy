@@ -1017,11 +1017,16 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 
 	// --- cache miss: fetch from Kubernetes ----------------------------------
 	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
+	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
 
 	// Populate the cache with the full result set (before in-memory filters)
 	// so that different filter combinations that share the same labelSelector
 	// can reuse the same cached K8s data.
-	if m.sessionListCacheRepo != nil {
+	// Do not cache a pre-Service snapshot while allocation requests are still
+	// present. Otherwise /search can serve an empty stale cache after the
+	// allocation Secret is deleted and before the next cache miss observes the
+	// newly-created Service.
+	if m.sessionListCacheRepo != nil && len(allocationSessions) == 0 {
 		cacheKey := m.buildSessionListCacheKey(labelSelector)
 		dtos := sessionsToCacheDTOs(allSessions)
 		if err := m.sessionListCacheRepo.SetSessionListCache(ctx, cacheKey, dtos, redisSessionListCacheTTL); err != nil {
@@ -1029,11 +1034,14 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 		}
 	}
 
-	return m.withSessionAllocations(ctx, m.applySessionListFilters(allSessions, filter), filter)
+	return mergeSessionAllocations(m.applySessionListFilters(allSessions, filter), allocationSessions)
 }
 
 func (m *KubernetesSessionManager) withSessionAllocations(ctx context.Context, sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
-	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
+	return mergeSessionAllocations(sessions, m.fetchSessionAllocationsFromK8s(ctx, filter))
+}
+
+func mergeSessionAllocations(sessions []entities.Session, allocationSessions []entities.Session) []entities.Session {
 	if len(allocationSessions) == 0 {
 		return sessions
 	}
@@ -1048,6 +1056,15 @@ func (m *KubernetesSessionManager) withSessionAllocations(ctx context.Context, s
 		sessions = append(sessions, session)
 	}
 	return sessions
+}
+
+func (m *KubernetesSessionManager) invalidateSessionListCache(reason string) {
+	if m.sessionListCacheRepo == nil {
+		return
+	}
+	if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after %s: %v", reason, err)
+	}
 }
 
 func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Context, filter entities.SessionFilter) []entities.Session {

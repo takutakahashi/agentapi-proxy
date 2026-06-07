@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -167,4 +168,93 @@ func TestListSessionsIncludesAllocatingSessionAllocation(t *testing.T) {
 	if sessions[0].Status() != "allocating" {
 		t.Fatalf("session.Status() = %q, want allocating", sessions[0].Status())
 	}
+}
+
+func TestSessionAllocationInvalidatesSessionListCache(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	cache := &recordingSessionListCacheRepo{}
+	manager.SetSessionListCacheRepository(cache)
+
+	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+		SessionID: "test-session",
+		Request:   &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser},
+		Status:    "pending",
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+	if cache.invalidations != 1 {
+		t.Fatalf("invalidations after save = %d, want 1", cache.invalidations)
+	}
+
+	if err := manager.deleteSessionAllocation(context.Background(), "test-session"); err != nil {
+		t.Fatalf("deleteSessionAllocation() error = %v", err)
+	}
+	if cache.invalidations != 2 {
+		t.Fatalf("invalidations after delete = %d, want 2", cache.invalidations)
+	}
+}
+
+func TestListSessionsDoesNotPopulateCacheWhileAllocationExists(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	cache := &recordingSessionListCacheRepo{}
+	manager.SetSessionListCacheRepository(cache)
+
+	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+		SessionID: "test-session",
+		Request: &entities.RunServerRequest{
+			UserID: "test-user",
+			Scope:  entities.ScopeUser,
+			Tags:   map[string]string{"purpose": "test"},
+		},
+		Status: "pending",
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	sessions := manager.ListSessions(entities.SessionFilter{
+		UserID: "test-user",
+		Tags:   map[string]string{"purpose": "test"},
+		Scope:  entities.ScopeUser,
+	})
+	if len(sessions) != 1 {
+		t.Fatalf("ListSessions() returned %d sessions, want 1", len(sessions))
+	}
+	if cache.setCalls != 0 {
+		t.Fatalf("SetSessionListCache calls = %d, want 0 while allocation exists", cache.setCalls)
+	}
+}
+
+type recordingSessionListCacheRepo struct {
+	setCalls      int
+	invalidations int
+}
+
+func (r *recordingSessionListCacheRepo) SetSessionListCache(context.Context, string, []portrepos.CachedSessionDTO, time.Duration) error {
+	r.setCalls++
+	return nil
+}
+
+func (r *recordingSessionListCacheRepo) GetSessionListCache(context.Context, string) ([]portrepos.CachedSessionDTO, error) {
+	return nil, nil
+}
+
+func (r *recordingSessionListCacheRepo) InvalidateSessionListCache(context.Context, string) error {
+	r.invalidations++
+	return nil
 }
