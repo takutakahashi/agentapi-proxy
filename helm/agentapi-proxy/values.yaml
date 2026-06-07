@@ -338,7 +338,7 @@ kubernetesSession:
   image: ""
 
   # Container image for the network-filter sidecar and initContainer (sandbox feature)
-  networkFilterImage: "ghcr.io/takutakahashi/nfa:0.6.0"
+  networkFilterImage: "ghcr.io/takutakahashi/nfa:0.7.0"
 
   # Resource configuration for the network-filter sidecar and initContainer (sandbox feature)
   networkFilter:
