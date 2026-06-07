@@ -34,7 +34,6 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
-	"github.com/takutakahashi/agentapi-proxy/pkg/networkfilter"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
@@ -47,6 +46,9 @@ const provisionerPort = 9001
 // ProvisionerPort is the exported version of provisionerPort for use by other packages
 // (e.g. the session controller error handler that checks provisioner /status).
 const ProvisionerPort = provisionerPort
+
+// nfaProxyPort is the default forward proxy port exposed by takutakahashi/nfa.
+const nfaProxyPort = 3128
 
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 // ServiceAccountEnsurer ensures a service account exists for a team.
@@ -2219,7 +2221,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterInitCPURequest, m.k8sConfig.NetworkFilterInitCPULimit, m.k8sConfig.NetworkFilterInitMemoryRequest, m.k8sConfig.NetworkFilterInitMemoryLimit),
 	}
 
-	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", networkfilter.ProxyPort)
+	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort)
 
 	sidecar := corev1.Container{
 		Name:            "network-filter",
@@ -2234,7 +2236,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 		},
 		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterCPURequest, m.k8sConfig.NetworkFilterCPULimit, m.k8sConfig.NetworkFilterMemoryRequest, m.k8sConfig.NetworkFilterMemoryLimit),
 		Ports: []corev1.ContainerPort{
-			{Name: "proxy", ContainerPort: int32(networkfilter.ProxyPort), Protocol: corev1.ProtocolTCP},
+			{Name: "proxy", ContainerPort: int32(nfaProxyPort), Protocol: corev1.ProtocolTCP},
 		},
 	}
 
