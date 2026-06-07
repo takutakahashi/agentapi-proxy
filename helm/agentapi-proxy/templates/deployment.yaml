@@ -361,6 +361,10 @@ spec:
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT
               value: {{ .Values.stockInventoryWorker.targetCount | quote }}
             {{- end }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED
+              value: {{ ((.Values.stockInventoryWorker).sandboxEnabled) | default false | quote }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED
+              value: {{ ((.Values.stockInventoryWorker).dockerEnabled) | default false | quote }}
             {{- if ((.Values.stockInventoryWorker).leaderElection).leaseDuration }}
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION
               value: {{ .Values.stockInventoryWorker.leaderElection.leaseDuration | quote }}

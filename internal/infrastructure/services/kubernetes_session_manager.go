@@ -483,7 +483,7 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 // CreateStockSession creates a pre-warmed stock session (Deployment + Service)
 // without creating a provision request. The pod starts agent-provisioner and
 // waits for adoption, at which point adoptStockSession creates the request.
-func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context) error {
+func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, sandbox, dind bool) error {
 	id := uuid.New().String()
 	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
@@ -491,8 +491,14 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context) error
 
 	_, cancel := context.WithCancel(context.Background())
 
-	// Stock sessions have no owner; the minimal request holds defaults only.
+	// Stock sessions have no owner; the minimal request holds pod capabilities only.
 	minimalReq := &entities.RunServerRequest{}
+	if sandbox {
+		minimalReq.Sandbox = &entities.SandboxParams{Enabled: true}
+	}
+	if dind {
+		minimalReq.Docker = &entities.DockerParams{Enabled: true}
+	}
 
 	session := NewKubernetesSession(id, minimalReq, deploymentName, serviceName, pvcName,
 		m.namespace, m.k8sConfig.BasePort, cancel, nil)
@@ -527,14 +533,20 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context) error
 		cancel()
 		return fmt.Errorf("failed to create stock service: %w", err)
 	}
-	log.Printf("[K8S_SESSION] Stock session %s created successfully", id)
+	log.Printf("[K8S_SESSION] Stock session %s created successfully (sandbox=%t, dind=%t)",
+		id, sandbox, dind)
 	return nil
 }
 
 // CountStockSessions returns the number of available (not being deleted) stock sessions.
-func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context) (int, error) {
+func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, sandbox, dind bool) (int, error) {
+	selector := fmt.Sprintf(
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=%t,agentapi.proxy/capability-dind=%t",
+		sandbox,
+		dind,
+	)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to list stock services: %w", err)

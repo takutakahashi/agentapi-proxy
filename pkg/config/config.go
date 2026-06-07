@@ -191,6 +191,10 @@ type StockInventoryWorkerConfig struct {
 	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
 	// TargetCount is the desired number of stock sessions to maintain. Default: 2.
 	TargetCount int `json:"target_count" mapstructure:"target_count"`
+	// SandboxEnabled controls whether stock sessions include the network sandbox sidecar.
+	SandboxEnabled bool `json:"sandbox_enabled" mapstructure:"sandbox_enabled"`
+	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
+	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
 	// Namespace overrides the Kubernetes namespace (falls back to KubernetesSession.Namespace).
 	Namespace string `json:"namespace" mapstructure:"namespace"`
 	// Leader election timings.
@@ -819,6 +823,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("stock_inventory_worker.enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED")
 	_ = v.BindEnv("stock_inventory_worker.check_interval", "AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL")
 	_ = v.BindEnv("stock_inventory_worker.target_count", "AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT")
+	_ = v.BindEnv("stock_inventory_worker.sandbox_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED")
+	_ = v.BindEnv("stock_inventory_worker.docker_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED")
 	_ = v.BindEnv("stock_inventory_worker.namespace", "AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE")
 	_ = v.BindEnv("stock_inventory_worker.lease_duration", "AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION")
 	_ = v.BindEnv("stock_inventory_worker.renew_deadline", "AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE")
@@ -958,6 +964,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stock_inventory_worker.enabled", false)
 	v.SetDefault("stock_inventory_worker.check_interval", "30s")
 	v.SetDefault("stock_inventory_worker.target_count", 2)
+	v.SetDefault("stock_inventory_worker.sandbox_enabled", false)
+	v.SetDefault("stock_inventory_worker.docker_enabled", false)
 	v.SetDefault("stock_inventory_worker.namespace", "")
 	v.SetDefault("stock_inventory_worker.lease_duration", "15s")
 	v.SetDefault("stock_inventory_worker.renew_deadline", "10s")
@@ -1143,12 +1151,14 @@ func DefaultConfig() *Config {
 			},
 		},
 		StockInventoryWorker: StockInventoryWorkerConfig{
-			Enabled:       false,
-			CheckInterval: "30s",
-			TargetCount:   2,
-			LeaseDuration: "15s",
-			RenewDeadline: "10s",
-			RetryPeriod:   "2s",
+			Enabled:        false,
+			CheckInterval:  "30s",
+			TargetCount:    2,
+			SandboxEnabled: false,
+			DockerEnabled:  false,
+			LeaseDuration:  "15s",
+			RenewDeadline:  "10s",
+			RetryPeriod:    "2s",
 		},
 	}
 }

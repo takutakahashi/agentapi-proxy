@@ -12,12 +12,18 @@ import (
 
 // StockRepository manages the creation and counting of stock sessions.
 type StockRepository interface {
-	CreateStockSession(ctx context.Context) error
-	CountStockSessions(ctx context.Context) (int, error)
+	CreateStockSession(ctx context.Context, sandbox, dind bool) error
+	CountStockSessions(ctx context.Context, sandbox, dind bool) (int, error)
 	// PurgeStockSessions deletes all pre-warmed stock sessions. Called on
 	// worker startup so that stale sessions (e.g. built from an old image)
 	// are replaced with fresh ones.
 	PurgeStockSessions(ctx context.Context) error
+}
+
+// StockRequirements captures the pod capabilities a stock session is prepared for.
+type StockRequirements struct {
+	Sandbox   bool
+	DinD      bool
 }
 
 // WorkerConfig contains configuration for the stock inventory worker.
@@ -26,6 +32,8 @@ type WorkerConfig struct {
 	CheckInterval time.Duration
 	// TargetCount is the desired number of available stock sessions.
 	TargetCount int
+	// Requirements is the pod capability template for stock sessions.
+	Requirements StockRequirements
 	// Enabled indicates whether the worker should run.
 	Enabled bool
 }
@@ -126,7 +134,7 @@ func (w *Worker) run(ctx context.Context) {
 
 // replenishStock checks the current stock count and creates sessions to reach TargetCount.
 func (w *Worker) replenishStock(ctx context.Context) {
-	count, err := w.repo.CountStockSessions(ctx)
+	count, err := w.repo.CountStockSessions(ctx, w.config.Requirements.Sandbox, w.config.Requirements.DinD)
 	if err != nil {
 		log.Printf("[STOCK_INVENTORY] Failed to count stock sessions: %v", err)
 		return
@@ -137,11 +145,11 @@ func (w *Worker) replenishStock(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[STOCK_INVENTORY] Replenishing %d stock session(s) (current: %d, target: %d)",
-		needed, count, w.config.TargetCount)
+	log.Printf("[STOCK_INVENTORY] Replenishing %d stock session(s) (current: %d, target: %d, sandbox=%t, dind=%t)",
+		needed, count, w.config.TargetCount, w.config.Requirements.Sandbox, w.config.Requirements.DinD)
 
 	for i := 0; i < needed; i++ {
-		if err := w.repo.CreateStockSession(ctx); err != nil {
+		if err := w.repo.CreateStockSession(ctx, w.config.Requirements.Sandbox, w.config.Requirements.DinD); err != nil {
 			log.Printf("[STOCK_INVENTORY] Failed to create stock session: %v", err)
 		}
 	}

@@ -558,6 +558,32 @@ slackbotCleanupWorker:
     # Retry period (how often non-leaders try to acquire the lock)
     retryPeriod: "2s"
 
+# Stock Inventory Worker Configuration
+# Keeps a pool of pre-warmed session pods for the configured pod capabilities.
+stockInventoryWorker:
+  # Enable stock inventory worker
+  enabled: false
+
+  # How often to check and replenish stock sessions
+  checkInterval: "30s"
+
+  # Desired number of available stock sessions matching the capability template
+  targetCount: 2
+
+  # Capability template for stock sessions. These must match the pod sidecars
+  # expected by sessions the allocator should serve from stock.
+  sandboxEnabled: false
+  dockerEnabled: false
+
+  # Leader election configuration (prevents duplicate stock creation in multi-replica deployments)
+  leaderElection:
+    # Lease duration (how long the leader holds the lock)
+    leaseDuration: "15s"
+    # Renew deadline (how often the leader refreshes the lock)
+    renewDeadline: "10s"
+    # Retry period (how often non-leaders try to acquire the lock)
+    retryPeriod: "2s"
+
 # =============================================================================
 # Redis – 複数Pod間のセッションステータス同期
 # =============================================================================
