@@ -97,6 +97,81 @@ func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
 	}
 }
 
+func TestNextSessionAllocationClaimsRequestCreatedWhileSubscribing(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.SetSessionAllocationNotifier(&subscribeHookNotifier{
+		onSubscribe: func() {
+			if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+				SessionID: "test-session",
+				Request:   &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser},
+				Status:    "pending",
+			}); err != nil {
+				t.Fatalf("saveSessionAllocation() error = %v", err)
+			}
+		},
+	})
+
+	allocation, ok, err := manager.NextSessionAllocation(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatalf("NextSessionAllocation() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("NextSessionAllocation() ok=false, want true")
+	}
+	if allocation.SessionID != "test-session" {
+		t.Fatalf("allocation.SessionID = %q, want test-session", allocation.SessionID)
+	}
+	if allocation.Status != "allocating" {
+		t.Fatalf("allocation.Status = %q, want allocating", allocation.Status)
+	}
+}
+
+func TestNextExternalSessionAllocationClaimsRequestCreatedWhileSubscribing(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.SetSessionAllocationNotifier(&subscribeHookNotifier{
+		onSubscribe: func() {
+			if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+				SessionID: "test-session",
+				ManagerID: "manager-a",
+				Request:   &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser},
+				Status:    "pending",
+			}); err != nil {
+				t.Fatalf("saveSessionAllocation() error = %v", err)
+			}
+		},
+	})
+
+	allocation, ok, err := manager.NextExternalSessionAllocation(context.Background(), "manager-a", 30*time.Second)
+	if err != nil {
+		t.Fatalf("NextExternalSessionAllocation() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("NextExternalSessionAllocation() ok=false, want true")
+	}
+	if allocation.SessionID != "test-session" {
+		t.Fatalf("allocation.SessionID = %q, want test-session", allocation.SessionID)
+	}
+	if allocation.Status != "allocating" {
+		t.Fatalf("allocation.Status = %q, want allocating", allocation.Status)
+	}
+}
+
 func TestCompleteSessionAllocationDeletesAllocationSecret(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 
@@ -257,4 +332,21 @@ func (r *recordingSessionListCacheRepo) GetSessionListCache(context.Context, str
 func (r *recordingSessionListCacheRepo) InvalidateSessionListCache(context.Context, string) error {
 	r.invalidations++
 	return nil
+}
+
+type subscribeHookNotifier struct {
+	onSubscribe func()
+}
+
+func (n *subscribeHookNotifier) Notify(context.Context) error {
+	return nil
+}
+
+func (n *subscribeHookNotifier) Subscribe(context.Context) (<-chan struct{}, func(), error) {
+	if n.onSubscribe != nil {
+		n.onSubscribe()
+		n.onSubscribe = nil
+	}
+	ch := make(chan struct{})
+	return ch, func() { close(ch) }, nil
 }

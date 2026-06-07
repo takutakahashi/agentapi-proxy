@@ -221,6 +221,11 @@ func (m *KubernetesSessionManager) NextSessionAllocation(ctx context.Context, wa
 		if err != nil {
 			return nil, false, err
 		}
+		req, ok, err = m.claimNextSessionAllocation(ctx)
+		if err != nil || ok {
+			cancel()
+			return req, ok, err
+		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			cancel()
@@ -299,6 +304,11 @@ func (m *KubernetesSessionManager) NextExternalSessionAllocation(ctx context.Con
 		updates, cancel, err := m.subscribeSessionAllocation(ctx)
 		if err != nil {
 			return nil, false, err
+		}
+		req, ok, err = m.claimNextExternalSessionAllocation(ctx, managerID)
+		if err != nil || ok {
+			cancel()
+			return req, ok, err
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
