@@ -18,6 +18,10 @@ type AllocatorWorker struct {
 	publicURL      string
 }
 
+type directSessionManager interface {
+	CreateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error)
+}
+
 func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL, token, publicURL string) *AllocatorWorker {
 	return &AllocatorWorker{
 		sessionManager: sessionManager,
@@ -62,7 +66,7 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *services.Sess
 
 	sessionID := uuid.New().String()
 	req := runRequestFromSettings(settings)
-	session, err := w.sessionManager.CreateSession(ctx, sessionID, req, nil)
+	session, err := w.createLocalSession(ctx, sessionID, req)
 	if err != nil {
 		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to create session for allocation %s: %v", allocation.SessionID, err)
 		_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, services.SessionAllocationResult{
@@ -79,6 +83,13 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *services.Sess
 	}); err != nil {
 		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to complete allocation %s: %v", allocation.SessionID, err)
 	}
+}
+
+func (w *AllocatorWorker) createLocalSession(ctx context.Context, sessionID string, req *entities.RunServerRequest) (entities.Session, error) {
+	if manager, ok := w.sessionManager.(directSessionManager); ok {
+		return manager.CreateSessionDirect(ctx, sessionID, req, nil)
+	}
+	return w.sessionManager.CreateSession(ctx, sessionID, req, nil)
 }
 
 func runRequestFromSettings(settings *sessionsettings.SessionSettings) *entities.RunServerRequest {

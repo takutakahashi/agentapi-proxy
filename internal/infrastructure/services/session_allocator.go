@@ -66,6 +66,13 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 	return m.submitSessionAllocation(ctx, id, req, webhookPayload)
 }
 
+// CreateSessionDirect allocates a session on this manager without submitting it
+// to the cluster-wide allocator. External session manager workers use this to
+// ensure the remote session ID they report matches the concrete local session.
+func (m *KubernetesSessionManager) CreateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	return m.allocateSessionDirect(ctx, id, req, webhookPayload)
+}
+
 func (m *KubernetesSessionManager) submitSessionAllocation(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	allocation := &SessionAllocationRequest{
 		SessionID:      id,
