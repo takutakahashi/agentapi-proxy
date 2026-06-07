@@ -838,8 +838,8 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 }
 
 // registerSessionManagerHandlers registers the session manager forwarding endpoint.
-// This enables "small-cluster mode": Proxy B accepts pre-built SessionSettings from
-// an upstream Proxy A and creates sessions without any local secrets.
+// This enables "small-cluster mode": External Session Manager accepts pre-built SessionSettings from
+// an upstream 親プロキシ and creates sessions without any local secrets.
 func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.Server) {
 	if !configData.SessionManager.Enabled {
 		log.Printf("[SESSION_MANAGER] Session manager endpoint is disabled")

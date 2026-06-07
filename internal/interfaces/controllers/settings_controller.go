@@ -107,7 +107,7 @@ type UpdateSettingsRequest struct {
 	PreferredTeamID         *string                          `json:"preferred_team_id,omitempty"`         // "org/team-slug" format; "" to clear
 	SlackUserID             *string                          `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
 	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`     // Active notification channels (e.g. ["web", "slack"])
-	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"` // External session managers (Proxy B registrations)
+	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"` // External session managers (External Session Manager registrations)
 	GitSync                 *GitSyncConfigRequest            `json:"git_sync,omitempty"`                  // GitHub sync configuration
 }
 

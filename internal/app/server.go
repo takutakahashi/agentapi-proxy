@@ -55,7 +55,7 @@ type Server struct {
 	sandboxDomainRepo  *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
 	taskRepo           portrepos.TaskRepository                        // Task repository
 	taskGroupRepo      portrepos.TaskGroupRepository                   // Task group repository
-	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for proxy B routing
+	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	userFileRepo       portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo portrepos.SessionProfileRepository              // Session profile repository
 	router             *Router                                         // Router for custom handler registration
@@ -581,7 +581,7 @@ func (s *Server) GetSessionRouteRepository() portrepos.SessionRouteRepository {
 
 // CreateSession creates a new agent session
 func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
-	// If ManagerID is set, forward session creation to an external session manager (Proxy B)
+	// If ManagerID is set, forward session creation to an external session manager (External Session Manager)
 	if startReq.Params != nil && startReq.Params.ManagerID != "" {
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
@@ -717,7 +717,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	return s.sessionManager.CreateSession(context.Background(), sessionID, req, nil)
 }
 
-// createRemoteSession forwards session creation to an external session manager (Proxy B).
+// createRemoteSession forwards session creation to an external session manager (External Session Manager).
 func (s *Server) createRemoteSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
 	managerID := startReq.Params.ManagerID
 

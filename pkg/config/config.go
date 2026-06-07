@@ -380,8 +380,8 @@ type MemoryS3Config struct {
 }
 
 // SessionManagerConfig holds configuration for the session manager forwarding endpoint.
-// When enabled, Proxy B (small-cluster mode) accepts pre-built SessionSettings from a
-// trusted upstream proxy (Proxy A) and creates sessions without requiring local secrets.
+// When enabled, External Session Manager (small-cluster mode) accepts pre-built SessionSettings from a
+// trusted upstream proxy (親プロキシ) and creates sessions without requiring local secrets.
 type SessionManagerConfig struct {
 	// Enabled enables the /api/v1/sessions forwarding endpoint.
 	Enabled bool `json:"enabled" mapstructure:"enabled"`
@@ -390,13 +390,13 @@ type SessionManagerConfig struct {
 	// over the raw request body with this secret.
 	// Can also be set via SESSION_MANAGER_HMAC_SECRET environment variable.
 	HMACSecret string `json:"hmac_secret" mapstructure:"hmac_secret"`
-	// UpstreamURL is the Proxy A URL to poll for external session allocations.
+	// UpstreamURL is the 親プロキシ URL to poll for external session allocations.
 	// Can also be set via SESSION_MANAGER_UPSTREAM_URL.
 	UpstreamURL string `json:"upstream_url" mapstructure:"upstream_url"`
-	// ConnectionToken authenticates this manager to Proxy A's allocator endpoint.
+	// ConnectionToken authenticates this manager to 親プロキシ's allocator endpoint.
 	// Can also be set via SESSION_MANAGER_CONNECTION_TOKEN.
 	ConnectionToken string `json:"connection_token" mapstructure:"connection_token"`
-	// PublicURL is the URL Proxy A should use to route requests back to this manager.
+	// PublicURL is the URL 親プロキシ should use to route requests back to this manager.
 	// It is included in allocation completion results. Can also be set via
 	// SESSION_MANAGER_PUBLIC_URL.
 	PublicURL string `json:"public_url" mapstructure:"public_url"`

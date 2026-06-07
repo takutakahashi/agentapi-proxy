@@ -503,7 +503,7 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 
 	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
-		// Check if this is a remote session on Proxy B
+		// Check if this is a remote session on External Session Manager
 		if c.sessionRouteRepo != nil {
 			route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
 			if err != nil {
@@ -624,7 +624,7 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	return nil
 }
 
-// routeToRemoteSession proxies a session request to an external session manager (Proxy B).
+// routeToRemoteSession proxies a session request to an external session manager (External Session Manager).
 // It signs the request with HMAC-SHA256 before forwarding.
 func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
@@ -682,23 +682,23 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	upstreamReq.Header.Set("X-Hub-Signature-256", sig)
 	upstreamReq.Header.Set(hmacutil.TimestampHeader, ts)
 
-	// Include original user identity so Proxy B can enforce access control.
-	// X-Forwarded-User is mandatory on Proxy B — always set it when proxying.
+	// Include original user identity so External Session Manager can enforce access control.
+	// X-Forwarded-User is mandatory on External Session Manager — always set it when proxying.
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
 		upstreamReq.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
 	}
-	// For team-scoped sessions, also forward the team ID so Proxy B can build
+	// For team-scoped sessions, also forward the team ID so External Session Manager can build
 	// the correct authorization context (service account tied to that team).
 	if route.TeamID != "" {
 		upstreamReq.Header.Set("X-Forwarded-Team", route.TeamID)
 	}
 
-	// Forward to Proxy B
+	// Forward to External Session Manager
 	httpClient := &http.Client{Timeout: 60 * time.Second}
 	resp, err := httpClient.Do(upstreamReq)
 	if err != nil {
-		log.Printf("[REMOTE_ROUTE] Failed to proxy request to Proxy B for session %s: %v", sessionID, err)
+		log.Printf("[REMOTE_ROUTE] Failed to proxy request to External Session Manager for session %s: %v", sessionID, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -719,7 +719,7 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	return nil
 }
 
-// deleteRemoteSession deletes a session on Proxy B via the session manager API.
+// deleteRemoteSession deletes a session on External Session Manager via the session manager API.
 func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
 	if route.ProxyURL == "" || route.RemoteSessionID == "" {
@@ -762,16 +762,16 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	case http.StatusNoContent, http.StatusOK:
 		// success
 	case http.StatusNotFound:
-		// Session already gone on Proxy B — treat as success so we can
+		// Session already gone on External Session Manager — treat as success so we can
 		// still clean up the local route entry.
-		log.Printf("[REMOTE_DELETE] Remote session %s not found on Proxy B (already deleted), cleaning up local route", route.RemoteSessionID)
+		log.Printf("[REMOTE_DELETE] Remote session %s not found on External Session Manager (already deleted), cleaning up local route", route.RemoteSessionID)
 	default:
 		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("[REMOTE_DELETE] Proxy B returned status %d: %s", resp.StatusCode, string(respBody))
+		log.Printf("[REMOTE_DELETE] External Session Manager returned status %d: %s", resp.StatusCode, string(respBody))
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete remote session")
 	}
 
-	// Clean up local route entry regardless of whether Proxy B had the session.
+	// Clean up local route entry regardless of whether External Session Manager had the session.
 	if c.sessionRouteRepo != nil {
 		if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
 			log.Printf("[REMOTE_DELETE] Warning: failed to delete route entry for session %s: %v", sessionID, err)

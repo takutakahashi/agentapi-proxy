@@ -91,7 +91,7 @@ func (b *BedrockSettings) Validate() error {
 	return nil
 }
 
-// ExternalSessionManagerEntry represents a registered external session manager (Proxy B)
+// ExternalSessionManagerEntry represents a registered external session manager (External Session Manager)
 type ExternalSessionManagerEntry struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
