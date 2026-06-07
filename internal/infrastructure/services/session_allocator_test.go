@@ -127,3 +127,44 @@ func TestCompleteSessionAllocationDeletesAllocationSecret(t *testing.T) {
 		t.Fatalf("allocation Secret should be deleted, got err=%v", err)
 	}
 }
+
+func TestListSessionsIncludesAllocatingSessionAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+
+	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+		SessionID: "test-session",
+		Request: &entities.RunServerRequest{
+			UserID: "test-user",
+			Scope:  entities.ScopeUser,
+			Tags:   map[string]string{"purpose": "test"},
+		},
+		Status: "allocating",
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	sessions := manager.ListSessions(entities.SessionFilter{
+		UserID: "test-user",
+		Status: "allocating",
+		Tags:   map[string]string{"purpose": "test"},
+		Scope:  entities.ScopeUser,
+	})
+
+	if len(sessions) != 1 {
+		t.Fatalf("ListSessions() returned %d sessions, want 1", len(sessions))
+	}
+	if sessions[0].ID() != "test-session" {
+		t.Fatalf("session.ID() = %q, want test-session", sessions[0].ID())
+	}
+	if sessions[0].Status() != "allocating" {
+		t.Fatalf("session.Status() = %q, want allocating", sessions[0].Status())
+	}
+}
