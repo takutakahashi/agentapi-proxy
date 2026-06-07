@@ -416,12 +416,16 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				if !match {
 					continue
 				}
+				status := "active"
+				if route.RemoteSessionID == "" {
+					status = "creating"
+				}
 				filteredSessions = append(filteredSessions, map[string]interface{}{
 					"session_id":      route.SessionID,
 					"user_id":         route.UserID,
 					"scope":           route.Scope,
 					"team_id":         route.TeamID,
-					"status":          "active",
+					"status":          status,
 					"started_at":      route.StartedAt,
 					"updated_at":      route.StartedAt,
 					"last_message_at": route.StartedAt,
@@ -433,17 +437,6 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				})
 			}
 		}
-	}
-
-	// Fetch sessions from remote ESMs and merge
-	// Remote sessions (fetched from ESMs) are excluded by default unless caller explicitly
-	// requests them via tag.remote=true
-	_, remoteExplicitlyRequested := tagFilters["remote"]
-	if c.settingsRepo != nil && remoteExplicitlyRequested {
-		userID := authzCtx.PersonalScope.UserID
-		teams := authzCtx.TeamScope.Teams
-		remoteSessions := c.fetchRemoteSessions(ctx.Request().Context(), userID, teams, filter)
-		filteredSessions = append(filteredSessions, remoteSessions...)
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
@@ -510,7 +503,7 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 
 	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
-		// Check if this is a remote session on Proxy B
+		// Check if this is a remote session on External Session Manager
 		if c.sessionRouteRepo != nil {
 			route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
 			if err != nil {
@@ -631,10 +624,13 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	return nil
 }
 
-// routeToRemoteSession proxies a session request to an external session manager (Proxy B).
+// routeToRemoteSession proxies a session request to an external session manager (External Session Manager).
 // It signs the request with HMAC-SHA256 before forwarding.
 func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
+	if route.ProxyURL == "" || route.RemoteSessionID == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
+	}
 
 	// Check authorization
 	if ctx.Request().Method != "OPTIONS" {
@@ -686,23 +682,23 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	upstreamReq.Header.Set("X-Hub-Signature-256", sig)
 	upstreamReq.Header.Set(hmacutil.TimestampHeader, ts)
 
-	// Include original user identity so Proxy B can enforce access control.
-	// X-Forwarded-User is mandatory on Proxy B — always set it when proxying.
+	// Include original user identity so External Session Manager can enforce access control.
+	// X-Forwarded-User is mandatory on External Session Manager — always set it when proxying.
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
 		upstreamReq.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
 	}
-	// For team-scoped sessions, also forward the team ID so Proxy B can build
+	// For team-scoped sessions, also forward the team ID so External Session Manager can build
 	// the correct authorization context (service account tied to that team).
 	if route.TeamID != "" {
 		upstreamReq.Header.Set("X-Forwarded-Team", route.TeamID)
 	}
 
-	// Forward to Proxy B
+	// Forward to External Session Manager
 	httpClient := &http.Client{Timeout: 60 * time.Second}
 	resp, err := httpClient.Do(upstreamReq)
 	if err != nil {
-		log.Printf("[REMOTE_ROUTE] Failed to proxy request to Proxy B for session %s: %v", sessionID, err)
+		log.Printf("[REMOTE_ROUTE] Failed to proxy request to External Session Manager for session %s: %v", sessionID, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -723,9 +719,21 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	return nil
 }
 
-// deleteRemoteSession deletes a session on Proxy B via the session manager API.
+// deleteRemoteSession deletes a session on External Session Manager via the session manager API.
 func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
+	if route.ProxyURL == "" || route.RemoteSessionID == "" {
+		if c.sessionRouteRepo != nil {
+			if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
+				log.Printf("[REMOTE_DELETE] Warning: failed to delete pending route entry for session %s: %v", sessionID, err)
+			}
+		}
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"message":    "Pending external session removed",
+			"session_id": sessionID,
+			"status":     "terminated",
+		})
+	}
 
 	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/api/v1/sessions/" + route.RemoteSessionID
 
@@ -754,16 +762,16 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	case http.StatusNoContent, http.StatusOK:
 		// success
 	case http.StatusNotFound:
-		// Session already gone on Proxy B — treat as success so we can
+		// Session already gone on External Session Manager — treat as success so we can
 		// still clean up the local route entry.
-		log.Printf("[REMOTE_DELETE] Remote session %s not found on Proxy B (already deleted), cleaning up local route", route.RemoteSessionID)
+		log.Printf("[REMOTE_DELETE] Remote session %s not found on External Session Manager (already deleted), cleaning up local route", route.RemoteSessionID)
 	default:
 		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("[REMOTE_DELETE] Proxy B returned status %d: %s", resp.StatusCode, string(respBody))
+		log.Printf("[REMOTE_DELETE] External Session Manager returned status %d: %s", resp.StatusCode, string(respBody))
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete remote session")
 	}
 
-	// Clean up local route entry regardless of whether Proxy B had the session.
+	// Clean up local route entry regardless of whether External Session Manager had the session.
 	if c.sessionRouteRepo != nil {
 		if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
 			log.Printf("[REMOTE_DELETE] Warning: failed to delete route entry for session %s: %v", sessionID, err)
@@ -836,139 +844,6 @@ func filterHiddenSessions(sessions []entities.Session) []entities.Session {
 		if s.Tags()["hidden"] != "true" {
 			result = append(result, s)
 		}
-	}
-	return result
-}
-
-// fetchRemoteSessions queries all known external session managers (Proxy B instances) and returns
-// their sessions as raw maps suitable for inclusion in the search response.
-func (c *SessionController) fetchRemoteSessions(ctx context.Context, userID string, teams []string, filter entities.SessionFilter) []map[string]interface{} {
-	if c.settingsRepo == nil {
-		return nil
-	}
-
-	// Collect unique ESMs from user settings and team settings
-	seen := make(map[string]struct{}) // deduplicate by ESM URL
-	type esmEntry struct {
-		url    string
-		secret string
-	}
-	var esms []esmEntry
-
-	addESMs := func(settingsName string) {
-		settings, err := c.settingsRepo.FindByName(ctx, settingsName)
-		if err != nil || settings == nil {
-			return
-		}
-		for _, esm := range settings.ExternalSessionManagers() {
-			if _, exists := seen[esm.URL]; !exists {
-				seen[esm.URL] = struct{}{}
-				esms = append(esms, esmEntry{url: esm.URL, secret: esm.HMACSecret})
-			}
-		}
-	}
-
-	addESMs(userID)
-	for _, teamID := range teams {
-		addESMs(teamID)
-	}
-
-	if len(esms) == 0 {
-		return nil
-	}
-
-	var result []map[string]interface{}
-	for _, esm := range esms {
-		sessions := c.fetchSessionsFromESM(ctx, esm.url, esm.secret, userID, filter)
-		result = append(result, sessions...)
-	}
-	return result
-}
-
-// fetchSessionsFromESM calls a single Proxy B's /api/v1/sessions endpoint and returns the sessions
-func (c *SessionController) fetchSessionsFromESM(ctx context.Context, proxyURL, hmacSecret, userID string, filter entities.SessionFilter) []map[string]interface{} {
-	// Build query params
-	params := url.Values{}
-	if filter.UserID != "" {
-		params.Set("user_id", filter.UserID)
-	} else {
-		params.Set("user_id", userID)
-	}
-	if filter.Status != "" {
-		params.Set("status", filter.Status)
-	}
-	if filter.Scope != "" {
-		params.Set("scope", string(filter.Scope))
-	}
-	if filter.TeamID != "" {
-		params.Set("team_id", filter.TeamID)
-	}
-
-	targetURL := strings.TrimRight(proxyURL, "/") + "/api/v1/sessions"
-	if len(params) > 0 {
-		targetURL += "?" + params.Encode()
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	if err != nil {
-		log.Printf("[REMOTE_SEARCH] Failed to build request to %s: %v", proxyURL, err)
-		return nil
-	}
-
-	// Compute HMAC signature over METHOD\nPATH?QUERY\nTIMESTAMP\n(empty body)
-	ts := hmacutil.NowTimestamp()
-	parsedTarget, _ := url.Parse(targetURL)
-	msg := hmacutil.BuildMessage(http.MethodGet, parsedTarget.RequestURI(), ts, nil)
-	sig := hmacutil.Sign([]byte(hmacSecret), msg)
-	req.Header.Set("X-Hub-Signature-256", sig)
-	req.Header.Set(hmacutil.TimestampHeader, ts)
-
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Printf("[REMOTE_SEARCH] Failed to query ESM at %s: %v", proxyURL, err)
-		return nil
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[REMOTE_SEARCH] ESM at %s returned status %d", proxyURL, resp.StatusCode)
-		return nil
-	}
-
-	var listResp struct {
-		Sessions []struct {
-			ID        string    `json:"id"`
-			UserID    string    `json:"user_id"`
-			Status    string    `json:"status"`
-			CreatedAt time.Time `json:"created_at"`
-		} `json:"sessions"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-		log.Printf("[REMOTE_SEARCH] Failed to decode response from %s: %v", proxyURL, err)
-		return nil
-	}
-
-	result := make([]map[string]interface{}, 0, len(listResp.Sessions))
-	for _, s := range listResp.Sessions {
-		result = append(result, map[string]interface{}{
-			"session_id":      s.ID,
-			"user_id":         s.UserID,
-			"scope":           "user",
-			"team_id":         "",
-			"status":          s.Status,
-			"started_at":      s.CreatedAt,
-			"updated_at":      s.CreatedAt,
-			"last_message_at": s.CreatedAt,
-			"addr":            "",
-			"tags": map[string]string{
-				"remote": "true", // mark as a remote (ESM) session
-			},
-			"metadata": map[string]interface{}{
-				"description": "",
-			},
-			"proxy_url": proxyURL, // indicate this is a remote session
-		})
 	}
 	return result
 }

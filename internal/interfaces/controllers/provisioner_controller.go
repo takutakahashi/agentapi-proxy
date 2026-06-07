@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strconv"
 	"strings"
@@ -8,14 +9,17 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 type ProvisionerController struct {
-	manager *services.KubernetesSessionManager
+	manager          *services.KubernetesSessionManager
+	settingsRepo     repositories.SettingsRepository
+	sessionRouteRepo repositories.SessionRouteRepository
 }
 
-func NewProvisionerController(manager *services.KubernetesSessionManager) *ProvisionerController {
-	return &ProvisionerController{manager: manager}
+func NewProvisionerController(manager *services.KubernetesSessionManager, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository) *ProvisionerController {
+	return &ProvisionerController{manager: manager, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
 }
 
 func (pc *ProvisionerController) Connect(c echo.Context) error {
@@ -112,6 +116,78 @@ func (pc *ProvisionerController) CompleteSessionAllocation(c echo.Context) error
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (pc *ProvisionerController) GetNextExternalSessionAllocation(c echo.Context) error {
+	managerID, _, ok := pc.authorizedExternalManager(c)
+	if !ok {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	wait := parseWait(c.QueryParam("wait"))
+	req, found, err := pc.manager.NextExternalSessionAllocation(c.Request().Context(), managerID, wait)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if !found {
+		return c.NoContent(http.StatusNoContent)
+	}
+	return c.JSON(http.StatusOK, req)
+}
+
+func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Context) error {
+	_, managerSecret, ok := pc.authorizedExternalManager(c)
+	if !ok {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	var result services.SessionAllocationResult
+	if err := c.Bind(&result); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if result.Status == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status is required"})
+	}
+	if result.Status == "assigned" && result.AllocatedSessionID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "allocated_session_id is required when status is assigned"})
+	}
+	allocation, err := pc.manager.CompleteExternalSessionAllocation(c.Request().Context(), c.Param("sessionId"), result)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if result.Status != "assigned" {
+		if pc.sessionRouteRepo != nil {
+			_ = pc.sessionRouteRepo.Delete(c.Request().Context(), allocation.SessionID)
+		}
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	}
+	if pc.sessionRouteRepo != nil {
+		route, err := pc.sessionRouteRepo.Get(c.Request().Context(), allocation.SessionID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if route == nil {
+			route = &repositories.SessionRoute{
+				SessionID:  allocation.SessionID,
+				StartedAt:  time.Now(),
+				HMACSecret: managerSecret,
+			}
+		}
+		route.RemoteSessionID = result.AllocatedSessionID
+		route.ProxyURL = result.ProxyURL
+		if route.HMACSecret == "" {
+			route.HMACSecret = managerSecret
+		}
+		if allocation.Request != nil {
+			route.UserID = allocation.Request.UserID
+			route.Scope = string(allocation.Request.Scope)
+			route.TeamID = allocation.Request.TeamID
+			route.Tags = allocation.Request.Tags
+			route.InitialMessage = allocation.Request.InitialMessage
+		}
+		if err := pc.sessionRouteRepo.Save(c.Request().Context(), route); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (pc *ProvisionerController) authorized(c echo.Context) bool {
 	if pc.manager == nil {
 		return false
@@ -119,6 +195,29 @@ func (pc *ProvisionerController) authorized(c echo.Context) bool {
 	h := c.Request().Header.Get("Authorization")
 	token := strings.TrimPrefix(h, "Bearer ")
 	return pc.manager.ValidateProvisionerToken(token)
+}
+
+func (pc *ProvisionerController) authorizedExternalManager(c echo.Context) (string, string, bool) {
+	if pc.manager == nil || pc.settingsRepo == nil {
+		return "", "", false
+	}
+	h := c.Request().Header.Get("Authorization")
+	token := strings.TrimPrefix(h, "Bearer ")
+	if token == "" || token == h {
+		return "", "", false
+	}
+	settingsList, err := pc.settingsRepo.List(c.Request().Context())
+	if err != nil {
+		return "", "", false
+	}
+	for _, settings := range settingsList {
+		for _, manager := range settings.ExternalSessionManagers() {
+			if manager.HMACSecret != "" && subtle.ConstantTimeCompare([]byte(manager.HMACSecret), []byte(token)) == 1 {
+				return manager.ID, manager.HMACSecret, true
+			}
+		}
+	}
+	return "", "", false
 }
 
 func parseWait(raw string) time.Duration {

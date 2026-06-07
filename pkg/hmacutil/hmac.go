@@ -1,5 +1,5 @@
 // Package hmacutil provides shared HMAC-SHA256 signing and verification utilities
-// for Proxy A ↔ Proxy B communication.
+// for 親プロキシ ↔ External Session Manager communication.
 //
 // Signature format:
 //

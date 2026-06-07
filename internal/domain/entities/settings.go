@@ -91,11 +91,10 @@ func (b *BedrockSettings) Validate() error {
 	return nil
 }
 
-// ExternalSessionManagerEntry represents a registered external session manager (Proxy B)
+// ExternalSessionManagerEntry represents a registered external session manager (External Session Manager)
 type ExternalSessionManagerEntry struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
-	URL        string `json:"url"`
 	HMACSecret string `json:"hmac_secret,omitempty"`
 	// Default indicates this manager is used automatically when no manager_id is specified at session creation.
 	// At most one entry should have Default=true.

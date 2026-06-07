@@ -87,8 +87,8 @@ type SessionParams struct {
 	// InitialMessageWaitSecond is the number of seconds to wait before sending the initial message.
 	// Defaults to 2 seconds if not specified.
 	InitialMessageWaitSecond *int `json:"initial_message_wait_second,omitempty"`
-	// ManagerID is the ID of an external session manager (Proxy B) to forward the session to.
-	// When set, Proxy A will proxy this session creation to the specified Proxy B instance.
+	// ManagerID is the ID of an external session manager (External Session Manager) to forward the session to.
+	// When set, 親プロキシ will proxy this session creation to the specified External Session Manager instance.
 	// The ID must match an ExternalSessionManagerEntry registered in the user's or team's settings.
 	ManagerID string `json:"manager_id,omitempty"`
 	// CycleMessage is the message to send to the session after each Claude stop event.

@@ -2,7 +2,7 @@ package entities
 
 import "time"
 
-// ProxySession represents a session that lives on an external session manager (Proxy B).
+// ProxySession represents a session that lives on an external session manager (External Session Manager).
 // It implements the Session interface so it can be used anywhere a Session is expected.
 type ProxySession struct {
 	id        string

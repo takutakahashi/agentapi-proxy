@@ -80,6 +80,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	proxyServer := app.NewServer(configData, verbose)
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
@@ -127,6 +128,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Register session manager handler (small-cluster / forwarding mode)
 	registerSessionManagerHandlers(configData, proxyServer)
 
+	// Start outbound session manager allocator when configured.
+	startSessionManagerAllocator(workerCtx, configData, proxyServer)
+
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Starting agentapi-proxy on port %s", port)
@@ -141,6 +145,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	<-quit
 
 	log.Println("Shutdown signal received, shutting down gracefully...")
+	cancelWorkers()
 
 	// Stop schedule worker if running
 	if scheduleWorker != nil {
@@ -833,8 +838,8 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 }
 
 // registerSessionManagerHandlers registers the session manager forwarding endpoint.
-// This enables "small-cluster mode": Proxy B accepts pre-built SessionSettings from
-// an upstream Proxy A and creates sessions without any local secrets.
+// This enables "small-cluster mode": External Session Manager accepts pre-built SessionSettings from
+// an upstream 親プロキシ and creates sessions without any local secrets.
 func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.Server) {
 	if !configData.SessionManager.Enabled {
 		log.Printf("[SESSION_MANAGER] Session manager endpoint is disabled")
@@ -850,6 +855,25 @@ func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.
 	handlers := sessionmanager.NewHandlers(sessionManager, configData.SessionManager.HMACSecret)
 	proxyServer.AddCustomHandler(handlers)
 	log.Printf("[SESSION_MANAGER] Session manager handler registered")
+}
+
+func startSessionManagerAllocator(ctx context.Context, configData *config.Config, proxyServer *app.Server) {
+	upstreamURL := configData.SessionManager.UpstreamURL
+	token := configData.SessionManager.ConnectionToken
+	if upstreamURL == "" || token == "" {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Upstream URL or connection token is empty; allocator disabled")
+		return
+	}
+
+	sessionManager := proxyServer.GetSessionManager()
+	if sessionManager == nil {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Warning: session manager is not available, allocator disabled")
+		return
+	}
+
+	worker := sessionmanager.NewAllocatorWorker(sessionManager, upstreamURL, token, configData.SessionManager.PublicURL)
+	go worker.Start(ctx)
+	log.Printf("[SESSION_MANAGER_ALLOCATOR] Started outbound allocator polling upstream: %s", upstreamURL)
 }
 
 // registerGitHubSyncHandlers registers GitHub bidirectional sync REST API handlers.

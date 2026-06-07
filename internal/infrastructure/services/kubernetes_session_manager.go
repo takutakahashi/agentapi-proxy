@@ -4426,8 +4426,8 @@ func (m *KubernetesSessionManager) resolvePreferredTeamID(ctx context.Context, r
 }
 
 // BuildRemoteProvisionSettings implements portrepos.RemoteProvisionSettingsBuilder.
-// It builds a fully-resolved SessionSettings for forwarding to an external session manager (Proxy B).
-// All settings layers (base → team → user) are resolved so that Proxy B can create the session
+// It builds a fully-resolved SessionSettings for forwarding to an external session manager (External Session Manager).
+// All settings layers (base → team → user) are resolved so that External Session Manager can create the session
 // without needing to re-resolve secrets from its own cluster.
 func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 	ctx context.Context,

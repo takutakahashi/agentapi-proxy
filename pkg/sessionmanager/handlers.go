@@ -1,7 +1,7 @@
 // Package sessionmanager implements the session manager forwarding endpoint.
 //
-// This package enables "small-cluster mode": a Proxy B instance that accepts
-// pre-built SessionSettings from a trusted upstream Proxy A and creates sessions
+// This package enables "small-cluster mode": a External Session Manager instance that accepts
+// pre-built SessionSettings from a trusted upstream 親プロキシ and creates sessions
 // without needing any local secrets (agentapi-settings-*, GitHub secrets, etc.).
 //
 // All requests to /api/v1/sessions must carry an HMAC-SHA256 signature in the
@@ -144,9 +144,9 @@ type ListSessionsResponse struct {
 
 // CreateSession handles POST /api/v1/sessions.
 //
-// Body: sessionsettings.SessionSettings JSON (pre-built by upstream Proxy A).
+// Body: sessionsettings.SessionSettings JSON (pre-built by upstream 親プロキシ).
 // The settings are used verbatim as the provision payload; no local secrets
-// are resolved on Proxy B.
+// are resolved on External Session Manager.
 func (h *Handlers) CreateSession(c echo.Context) error {
 	var settings sessionsettings.SessionSettings
 	if err := c.Bind(&settings); err != nil {

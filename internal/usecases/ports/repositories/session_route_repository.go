@@ -8,13 +8,13 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
-// SessionRoute holds routing information for proxying session requests to an external session manager (Proxy B).
+// SessionRoute holds routing information for proxying session requests to an external session manager (External Session Manager).
 // It also stores metadata used when listing ESM-created sessions.
 type SessionRoute struct {
-	SessionID       string // Proxy A's session ID (user-facing)
-	RemoteSessionID string // Proxy B's session ID
-	ProxyURL        string // Base URL of Proxy B (e.g. "http://proxy-b:8080")
-	HMACSecret      string // HMAC secret for authenticating requests to Proxy B
+	SessionID       string // 親プロキシ's session ID (user-facing)
+	RemoteSessionID string // External Session Manager's session ID
+	ProxyURL        string // Base URL of External Session Manager (e.g. "http://esm:8080")
+	HMACSecret      string // HMAC secret for authenticating requests to External Session Manager
 	// Metadata for session listing
 	UserID         string
 	Scope          string
@@ -26,8 +26,8 @@ type SessionRoute struct {
 
 // RemoteProvisionSettingsBuilder is an optional interface that SessionManager implementations
 // may provide to build fully-resolved provision settings for forwarding to an external session
-// manager (Proxy B). Proxy A calls this to embed all resolved settings (env vars, Bedrock config,
-// MCP servers, OAuth token, etc.) so that Proxy B can create the session without needing to
+// manager (External Session Manager). 親プロキシ calls this to embed all resolved settings (env vars, Bedrock config,
+// MCP servers, OAuth token, etc.) so that External Session Manager can create the session without needing to
 // re-resolve secrets from its own cluster.
 type RemoteProvisionSettingsBuilder interface {
 	// BuildRemoteProvisionSettings resolves the full session settings (base → team → user layers)

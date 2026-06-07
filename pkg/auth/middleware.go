@@ -65,12 +65,13 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			// Skip user auth for session Pod provisioner calls. These endpoints
 			// perform their own internal token check in the provisioner controller.
 			if strings.HasPrefix(path, "/internal/session-provisioners") ||
-				strings.HasPrefix(path, "/internal/session-allocations") {
+				strings.HasPrefix(path, "/internal/session-allocations") ||
+				strings.HasPrefix(path, "/internal/external-session-manager") {
 				return next(c)
 			}
 
-			// Skip auth for HMAC-signed requests from a trusted Proxy A
-			// This enables small-cluster mode where Proxy A proxies session requests to Proxy B
+			// Skip auth for HMAC-signed requests from a trusted 親プロキシ
+			// This enables small-cluster mode where 親プロキシ proxies session requests to External Session Manager
 			if cfg.SessionManager.HMACSecret != "" {
 				if skipAuthForHMACRequest(c, cfg.SessionManager.HMACSecret) {
 					// X-Forwarded-User is mandatory — reject requests without it to prevent
@@ -402,7 +403,7 @@ func extractAPIKeyFromAuthHeader(header string) string {
 }
 
 // skipAuthForHMACRequest checks if the request carries a valid HMAC-SHA256 signature.
-// Used to allow trusted Proxy A requests to bypass standard authentication on Proxy B.
+// Used to allow trusted 親プロキシ requests to bypass standard authentication on External Session Manager.
 // The signature must cover the canonical message: METHOD\nPATH?QUERY\nTIMESTAMP\nBODY
 func skipAuthForHMACRequest(c echo.Context, hmacSecret string) bool {
 	sig := c.Request().Header.Get("X-Hub-Signature-256")

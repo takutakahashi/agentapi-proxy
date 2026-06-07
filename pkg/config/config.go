@@ -380,8 +380,8 @@ type MemoryS3Config struct {
 }
 
 // SessionManagerConfig holds configuration for the session manager forwarding endpoint.
-// When enabled, Proxy B (small-cluster mode) accepts pre-built SessionSettings from a
-// trusted upstream proxy (Proxy A) and creates sessions without requiring local secrets.
+// When enabled, External Session Manager (small-cluster mode) accepts pre-built SessionSettings from a
+// trusted upstream proxy (親プロキシ) and creates sessions without requiring local secrets.
 type SessionManagerConfig struct {
 	// Enabled enables the /api/v1/sessions forwarding endpoint.
 	Enabled bool `json:"enabled" mapstructure:"enabled"`
@@ -390,6 +390,16 @@ type SessionManagerConfig struct {
 	// over the raw request body with this secret.
 	// Can also be set via SESSION_MANAGER_HMAC_SECRET environment variable.
 	HMACSecret string `json:"hmac_secret" mapstructure:"hmac_secret"`
+	// UpstreamURL is the 親プロキシ URL to poll for external session allocations.
+	// Can also be set via SESSION_MANAGER_UPSTREAM_URL.
+	UpstreamURL string `json:"upstream_url" mapstructure:"upstream_url"`
+	// ConnectionToken authenticates this manager to 親プロキシ's allocator endpoint.
+	// Can also be set via SESSION_MANAGER_CONNECTION_TOKEN.
+	ConnectionToken string `json:"connection_token" mapstructure:"connection_token"`
+	// PublicURL is the URL 親プロキシ should use to route requests back to this manager.
+	// It is included in allocation completion results. Can also be set via
+	// SESSION_MANAGER_PUBLIC_URL.
+	PublicURL string `json:"public_url" mapstructure:"public_url"`
 }
 
 // RedisConfig holds configuration for the optional Redis backend used for
@@ -834,6 +844,9 @@ func bindEnvVars(v *viper.Viper) {
 	// Session manager configuration
 	_ = v.BindEnv("session_manager.enabled", "SESSION_MANAGER_ENABLED")
 	_ = v.BindEnv("session_manager.hmac_secret", "SESSION_MANAGER_HMAC_SECRET")
+	_ = v.BindEnv("session_manager.upstream_url", "SESSION_MANAGER_UPSTREAM_URL")
+	_ = v.BindEnv("session_manager.connection_token", "SESSION_MANAGER_CONNECTION_TOKEN")
+	_ = v.BindEnv("session_manager.public_url", "SESSION_MANAGER_PUBLIC_URL")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
