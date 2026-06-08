@@ -210,6 +210,29 @@ func (m *KubernetesSessionManager) deleteSessionAllocation(ctx context.Context, 
 	return err
 }
 
+func sessionFromAllocation(allocation *SessionAllocationRequest) entities.Session {
+	if allocation == nil || allocation.Request == nil {
+		return nil
+	}
+	scope := allocation.Request.Scope
+	if scope == "" {
+		scope = entities.ScopeUser
+	}
+	status := allocation.Status
+	if status == "" {
+		status = "creating"
+	}
+	return entities.NewProxySessionWithStatus(
+		allocation.SessionID,
+		allocation.Request.UserID,
+		scope,
+		allocation.Request.TeamID,
+		allocation.Request.Tags,
+		allocation.UpdatedAt,
+		status,
+	)
+}
+
 func (m *KubernetesSessionManager) NextSessionAllocation(ctx context.Context, wait time.Duration) (*SessionAllocationRequest, bool, error) {
 	deadline := time.Now().Add(wait)
 	for {

@@ -245,6 +245,73 @@ func TestListSessionsIncludesAllocatingSessionAllocation(t *testing.T) {
 	}
 }
 
+func TestGetSessionReturnsAllocatingSessionAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+
+	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+		SessionID: "test-session",
+		Request: &entities.RunServerRequest{
+			UserID: "test-user",
+			Scope:  entities.ScopeUser,
+			Tags:   map[string]string{"purpose": "test"},
+		},
+		Status: "allocating",
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	session := manager.GetSession("test-session")
+	if session == nil {
+		t.Fatalf("GetSession() = nil, want allocating session")
+	}
+	if session.ID() != "test-session" {
+		t.Fatalf("session.ID() = %q, want test-session", session.ID())
+	}
+	if session.UserID() != "test-user" {
+		t.Fatalf("session.UserID() = %q, want test-user", session.UserID())
+	}
+	if session.Status() != "allocating" {
+		t.Fatalf("session.Status() = %q, want allocating", session.Status())
+	}
+}
+
+func TestDeleteSessionDeletesAllocatingSessionAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+
+	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+		SessionID: "test-session",
+		Request:   &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser},
+		Status:    "allocating",
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	if err := manager.DeleteSession("test-session"); err != nil {
+		t.Fatalf("DeleteSession() error = %v", err)
+	}
+
+	_, err = manager.client.CoreV1().Secrets("test-ns").Get(context.Background(), sessionAllocationSecretName("test-session"), metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("allocation Secret should be deleted, got err=%v", err)
+	}
+}
+
 func TestSessionAllocationInvalidatesSessionListCache(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 

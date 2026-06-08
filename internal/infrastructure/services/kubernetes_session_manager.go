@@ -932,6 +932,15 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 		if exists {
 			return session
 		}
+		if errors.IsNotFound(err) {
+			allocation, allocErr := m.getSessionAllocation(context.Background(), id)
+			if allocErr == nil {
+				return sessionFromAllocation(allocation)
+			}
+			if !errors.IsNotFound(allocErr) {
+				log.Printf("[K8S_SESSION] Failed to get session allocation %s: %v", id, allocErr)
+			}
+		}
 		return nil
 	}
 
@@ -1108,19 +1117,10 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 		if allocation.SessionID == "" || allocation.Request == nil {
 			continue
 		}
-		scope := allocation.Request.Scope
-		if scope == "" {
-			scope = entities.ScopeUser
+		session := sessionFromAllocation(&allocation)
+		if session == nil {
+			continue
 		}
-		session := entities.NewProxySessionWithStatus(
-			allocation.SessionID,
-			allocation.Request.UserID,
-			scope,
-			allocation.Request.TeamID,
-			allocation.Request.Tags,
-			allocation.UpdatedAt,
-			allocation.Status,
-		)
 		if len(m.applySessionListFilters([]entities.Session{session}, filter)) == 0 {
 			continue
 		}
@@ -1356,7 +1356,28 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 	}
 
 	if !exists || session == nil {
-		return fmt.Errorf("session not found: %s", id)
+		allocation, allocErr := m.getSessionAllocation(context.Background(), id)
+		if allocErr != nil {
+			if !errors.IsNotFound(allocErr) {
+				log.Printf("[K8S_SESSION] Failed to get session allocation %s during delete: %v", id, allocErr)
+			}
+			return fmt.Errorf("session not found: %s", id)
+		}
+		if sessionFromAllocation(allocation) == nil {
+			return fmt.Errorf("session not found: %s", id)
+		}
+		if err := m.deleteSessionAllocation(context.Background(), id); err != nil {
+			return fmt.Errorf("failed to delete session allocation %s: %w", id, err)
+		}
+		if m.statusEventRepo != nil {
+			delCtx, delCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer delCancel()
+			if err := m.statusEventRepo.DeleteStatus(delCtx, id); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to delete Redis status for allocating session=%s: %v", id, err)
+			}
+		}
+		log.Printf("[K8S_SESSION] Deleted allocating session %s", id)
+		return nil
 	}
 
 	log.Printf("[K8S_SESSION] Deleting session %s", id)
