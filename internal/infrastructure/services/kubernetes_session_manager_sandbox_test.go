@@ -72,5 +72,6 @@ func TestBuildSandboxContainersGeneratesRulesThenRestoresWithIptablesImage(t *te
 	assert.Equal(t, "network-filter", sidecar.Name)
 	assert.NotEmpty(t, sidecar.Resources.Requests)
 	assert.NotEmpty(t, sidecar.Resources.Limits)
-	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
+	assert.Contains(t, sidecar.Env, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
+	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
 }
