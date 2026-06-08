@@ -608,7 +608,7 @@ redis:
     password: ""
   master:
     persistence:
-      enabled: true
+      enabled: false
       size: 1Gi
     resources:
       requests:

@@ -320,6 +320,7 @@ type KubernetesSessionConfig struct {
 	// Defaults to "{release-name}-sandbox-iptables" (created by the Helm chart).
 	SandboxIptablesConfigMapName string `json:"sandbox_iptables_configmap_name" mapstructure:"sandbox_iptables_configmap_name"`
 
+
 	// NetworkFilterImage is the container image for both the network-filter-setup init
 	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.7.0.
 	// The init container runs "nfa setup" to configure iptables rules; the sidecar runs
