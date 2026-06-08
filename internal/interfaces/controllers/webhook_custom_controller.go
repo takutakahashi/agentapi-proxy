@@ -275,27 +275,47 @@ Please ensure the webhook payload is valid JSON.
 `, wh.Name(), parseErr.Error(), truncateString(string(rawBody), 500))
 
 	var githubToken, agentType string
+	var slackParams *entities.SlackParams
+	var sandbox *entities.SandboxParams
+	var docker *entities.DockerParams
+	var initialMessageWaitSecond *int
+	var cycleMessage, sessionTTL string
+	var cycleMaxCount int
 	var oneshot bool
 	if sessionConfig != nil && sessionConfig.Params() != nil {
 		params := sessionConfig.Params()
 		githubToken = params.GithubToken
 		agentType = params.AgentType
+		slackParams = params.Slack
+		sandbox = params.Sandbox
+		docker = params.Docker
+		initialMessageWaitSecond = params.InitialMessageWaitSecond
+		cycleMessage = params.CycleMessage
+		cycleMaxCount = params.CycleMaxCount
+		sessionTTL = params.SessionTTL
 		oneshot = params.Oneshot
 	}
 
 	result, err := c.launcher.Launch(ctx.Request().Context(), sessionID, sessionuc.LaunchRequest{
-		UserID:         wh.UserID(),
-		Scope:          wh.Scope(),
-		TeamID:         wh.TeamID(),
-		Teams:          sessionuc.ResolveTeams(wh.Scope(), wh.TeamID(), wh.UserTeams()),
-		Environment:    env,
-		Tags:           tags,
-		InitialMessage: initialMessage,
-		GithubToken:    githubToken,
-		AgentType:      agentType,
-		Oneshot:        oneshot,
-		MaxSessions:    wh.MaxSessions(),
-		LimitMatchTags: map[string]string{"webhook_id": wh.ID()},
+		UserID:                   wh.UserID(),
+		Scope:                    wh.Scope(),
+		TeamID:                   wh.TeamID(),
+		Teams:                    sessionuc.ResolveTeams(wh.Scope(), wh.TeamID(), wh.UserTeams()),
+		Environment:              env,
+		Tags:                     tags,
+		InitialMessage:           initialMessage,
+		GithubToken:              githubToken,
+		AgentType:                agentType,
+		SlackParams:              slackParams,
+		Sandbox:                  sandbox,
+		Docker:                   docker,
+		Oneshot:                  oneshot,
+		InitialMessageWaitSecond: initialMessageWaitSecond,
+		CycleMessage:             cycleMessage,
+		CycleMaxCount:            cycleMaxCount,
+		SessionTTL:               sessionTTL,
+		MaxSessions:              wh.MaxSessions(),
+		LimitMatchTags:           map[string]string{"webhook_id": wh.ID()},
 	})
 	if err != nil {
 		log.Printf("[WEBHOOK_CUSTOM] Failed to create error session: %v", err)

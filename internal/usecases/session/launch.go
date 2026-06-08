@@ -35,6 +35,10 @@ type LaunchRequest struct {
 	RepoInfo                 *entities.RepositoryInfo
 	InitialMessageWaitSecond *int
 	Sandbox                  *entities.SandboxParams
+	Docker                   *entities.DockerParams
+	CycleMessage             string
+	CycleMaxCount            int
+	SessionTTL               string
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -186,7 +190,11 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		RepoInfo:                 req.RepoInfo,
 		InitialMessageWaitSecond: req.InitialMessageWaitSecond,
 		MemoryKey:                req.MemoryKey,
+		CycleMessage:             req.CycleMessage,
+		CycleMaxCount:            req.CycleMaxCount,
 		Sandbox:                  req.Sandbox,
+		Docker:                   req.Docker,
+		SessionTTL:               req.SessionTTL,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)
@@ -333,5 +341,23 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		if req.Sandbox == nil && cfg.Params().Sandbox != nil {
 			req.Sandbox = cfg.Params().Sandbox
 		}
+		if req.Docker == nil && cfg.Params().Docker != nil {
+			req.Docker = cfg.Params().Docker
+		}
+		if req.InitialMessageWaitSecond == nil && cfg.Params().InitialMessageWaitSecond != nil {
+			req.InitialMessageWaitSecond = cfg.Params().InitialMessageWaitSecond
+		}
+		if req.CycleMessage == "" {
+			req.CycleMessage = cfg.Params().CycleMessage
+		}
+		if req.CycleMaxCount == 0 {
+			req.CycleMaxCount = cfg.Params().CycleMaxCount
+		}
+		if req.SessionTTL == "" {
+			req.SessionTTL = cfg.Params().SessionTTL
+		}
+	}
+	if cfg.SessionTTL() != "" && req.SessionTTL == "" {
+		req.SessionTTL = cfg.SessionTTL()
 	}
 }

@@ -248,6 +248,10 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 	var initialMessage, githubToken, agentType string
 	var slackParams *entities.SlackParams
 	var sandbox *entities.SandboxParams
+	var docker *entities.DockerParams
+	var initialMessageWaitSecond *int
+	var cycleMessage, sessionTTL string
+	var cycleMaxCount int
 	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
 		initialMessage = schedule.SessionConfig.Params.Message
@@ -258,6 +262,11 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		agentType = schedule.SessionConfig.Params.AgentType
 		slackParams = schedule.SessionConfig.Params.Slack
 		sandbox = schedule.SessionConfig.Params.Sandbox
+		docker = schedule.SessionConfig.Params.Docker
+		initialMessageWaitSecond = schedule.SessionConfig.Params.InitialMessageWaitSecond
+		cycleMessage = schedule.SessionConfig.Params.CycleMessage
+		cycleMaxCount = schedule.SessionConfig.Params.CycleMaxCount
+		sessionTTL = schedule.SessionConfig.Params.SessionTTL
 		oneshot = schedule.SessionConfig.Params.Oneshot
 	}
 
@@ -284,18 +293,23 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		TeamID: schedule.TeamID,
 		// ResolveTeams centralises the scope-based teams logic so that it cannot
 		// accidentally diverge between the worker and the manual-trigger handler.
-		Teams:            sessionuc.ResolveTeams(scheduleScope, schedule.TeamID, schedule.UserTeams),
-		Environment:      schedule.SessionConfig.Environment,
-		Tags:             tags,
-		InitialMessage:   initialMessage,
-		GithubToken:      githubToken,
-		AgentType:        agentType,
-		SlackParams:      slackParams,
-		Sandbox:          sandbox,
-		Oneshot:          oneshot,
-		MemoryKey:        memoryKey,
-		RepoInfo:         app.ExtractRepositoryInfo(tags, sessionID),
-		SessionProfileID: schedule.SessionConfig.SessionProfileID,
+		Teams:                    sessionuc.ResolveTeams(scheduleScope, schedule.TeamID, schedule.UserTeams),
+		Environment:              schedule.SessionConfig.Environment,
+		Tags:                     tags,
+		InitialMessage:           initialMessage,
+		GithubToken:              githubToken,
+		AgentType:                agentType,
+		SlackParams:              slackParams,
+		Sandbox:                  sandbox,
+		Docker:                   docker,
+		Oneshot:                  oneshot,
+		InitialMessageWaitSecond: initialMessageWaitSecond,
+		CycleMessage:             cycleMessage,
+		CycleMaxCount:            cycleMaxCount,
+		SessionTTL:               sessionTTL,
+		MemoryKey:                memoryKey,
+		RepoInfo:                 app.ExtractRepositoryInfo(tags, sessionID),
+		SessionProfileID:         schedule.SessionConfig.SessionProfileID,
 		// Session reuse: when enabled, an existing active session matching schedule_id
 		// tag receives the message instead of a new session being created.
 		ReuseSession:   schedule.SessionConfig.ReuseSession,
