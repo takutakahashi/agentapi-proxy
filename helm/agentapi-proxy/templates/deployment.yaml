@@ -197,7 +197,7 @@ spec:
             - name: AGENTAPI_K8S_SESSION_ENABLED
               value: "true"
             - name: AGENTAPI_K8S_SESSION_NAMESPACE
-              value: {{ .Values.kubernetesSession.namespace | default .Release.Namespace | quote }}
+              value: {{ .Release.Namespace | quote }}
             - name: AGENTAPI_K8S_SESSION_IMAGE
               value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository .Chart.AppVersion) | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE
@@ -311,10 +311,8 @@ spec:
             - name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL
               value: {{ .Values.scheduleWorker.checkInterval | quote }}
             {{- end }}
-            {{- if (.Values.scheduleWorker).namespace }}
             - name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE
-              value: {{ .Values.scheduleWorker.namespace | quote }}
-            {{- end }}
+              value: {{ .Release.Namespace | quote }}
             {{- if (.Values.scheduleWorker).leaseDuration }}
             - name: AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION
               value: {{ .Values.scheduleWorker.leaseDuration | quote }}
@@ -360,7 +358,7 @@ spec:
               value: {{ .Values.stockInventoryWorker.checkInterval | quote }}
             {{- end }}
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE
-              value: {{ .Values.stockInventoryWorker.namespace | default .Values.kubernetesSession.namespace | default .Release.Namespace | quote }}
+              value: {{ .Release.Namespace | quote }}
             {{- if (.Values.stockInventoryWorker).targetCount }}
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT
               value: {{ .Values.stockInventoryWorker.targetCount | quote }}

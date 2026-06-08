@@ -330,7 +330,7 @@ kubernetesSession:
   # Number of replicas for the agentapi-proxy Deployment
   replicaCount: 3
 
-  # Namespace for session resources (defaults to release namespace if empty)
+  # Deprecated: session resources always use the Helm release namespace.
   namespace: ""
 
   # Container image for session pods
@@ -572,10 +572,6 @@ stockInventoryWorker:
 
   # How often to check and replenish stock sessions
   checkInterval: "30s"
-
-  # Namespace for stock session resources and leader election.
-  # Defaults to kubernetesSession.namespace, then the release namespace.
-  namespace: ""
 
   # Desired number of available stock sessions matching the capability template
   targetCount: 2
