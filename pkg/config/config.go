@@ -36,6 +36,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -693,6 +694,38 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	}
 	if namespace := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE"); namespace != "" {
 		config.StockInventoryWorker.Namespace = namespace
+	}
+	if enabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED"); enabled != "" {
+		if parsed, err := strconv.ParseBool(enabled); err == nil {
+			config.StockInventoryWorker.Enabled = parsed
+		}
+	}
+	if checkInterval := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL"); checkInterval != "" {
+		config.StockInventoryWorker.CheckInterval = checkInterval
+	}
+	if targetCount := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT"); targetCount != "" {
+		if parsed, err := strconv.Atoi(targetCount); err == nil {
+			config.StockInventoryWorker.TargetCount = parsed
+		}
+	}
+	if sandboxEnabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED"); sandboxEnabled != "" {
+		if parsed, err := strconv.ParseBool(sandboxEnabled); err == nil {
+			config.StockInventoryWorker.SandboxEnabled = parsed
+		}
+	}
+	if dockerEnabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED"); dockerEnabled != "" {
+		if parsed, err := strconv.ParseBool(dockerEnabled); err == nil {
+			config.StockInventoryWorker.DockerEnabled = parsed
+		}
+	}
+	if leaseDuration := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION"); leaseDuration != "" {
+		config.StockInventoryWorker.LeaseDuration = leaseDuration
+	}
+	if renewDeadline := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE"); renewDeadline != "" {
+		config.StockInventoryWorker.RenewDeadline = renewDeadline
+	}
+	if retryPeriod := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD"); retryPeriod != "" {
+		config.StockInventoryWorker.RetryPeriod = retryPeriod
 	}
 	if poolsJSON := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS"); poolsJSON != "" {
 		var pools []StockInventoryPoolConfig
