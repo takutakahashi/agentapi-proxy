@@ -33,6 +33,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"reflect"
@@ -618,12 +619,81 @@ func stockInventoryPoolsDecodeHook() mapstructure.DecodeHookFunc {
 		if data == "" {
 			return []StockInventoryPoolConfig{}, nil
 		}
-		var pools []StockInventoryPoolConfig
-		if err := json.Unmarshal([]byte(data.(string)), &pools); err != nil {
+		pools, err := parseStockInventoryPoolsJSON(data.(string))
+		if err != nil {
 			return nil, err
 		}
 		return pools, nil
 	}
+}
+
+func parseStockInventoryPoolsJSON(poolsJSON string) ([]StockInventoryPoolConfig, error) {
+	var rawPools []map[string]interface{}
+	if err := json.Unmarshal([]byte(poolsJSON), &rawPools); err != nil {
+		return nil, err
+	}
+
+	pools := make([]StockInventoryPoolConfig, 0, len(rawPools))
+	for _, rawPool := range rawPools {
+		targetCount, err := jsonInt(rawPool, "target_count", "targetCount")
+		if err != nil {
+			return nil, err
+		}
+		sandboxEnabled, err := jsonBool(rawPool, "sandbox_enabled", "sandboxEnabled")
+		if err != nil {
+			return nil, err
+		}
+		dockerEnabled, err := jsonBool(rawPool, "docker_enabled", "dockerEnabled")
+		if err != nil {
+			return nil, err
+		}
+
+		pools = append(pools, StockInventoryPoolConfig{
+			TargetCount:    targetCount,
+			SandboxEnabled: sandboxEnabled,
+			DockerEnabled:  dockerEnabled,
+		})
+	}
+	return pools, nil
+}
+
+func jsonInt(values map[string]interface{}, keys ...string) (int, error) {
+	value, ok := jsonValue(values, keys...)
+	if !ok {
+		return 0, nil
+	}
+	switch typedValue := value.(type) {
+	case float64:
+		return int(typedValue), nil
+	case string:
+		return strconv.Atoi(typedValue)
+	default:
+		return 0, fmt.Errorf("expected integer for %s, got %T", keys[0], value)
+	}
+}
+
+func jsonBool(values map[string]interface{}, keys ...string) (bool, error) {
+	value, ok := jsonValue(values, keys...)
+	if !ok {
+		return false, nil
+	}
+	switch typedValue := value.(type) {
+	case bool:
+		return typedValue, nil
+	case string:
+		return strconv.ParseBool(typedValue)
+	default:
+		return false, fmt.Errorf("expected boolean for %s, got %T", keys[0], value)
+	}
+}
+
+func jsonValue(values map[string]interface{}, keys ...string) (interface{}, bool) {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 // initializeConfigStructsFromEnv initializes config structs from environment variables
@@ -746,8 +816,8 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		config.StockInventoryWorker.RetryPeriod = retryPeriod
 	}
 	if poolsJSON := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS"); poolsJSON != "" {
-		var pools []StockInventoryPoolConfig
-		if err := json.Unmarshal([]byte(poolsJSON), &pools); err != nil {
+		pools, err := parseStockInventoryPoolsJSON(poolsJSON)
+		if err != nil {
 			log.Printf("[CONFIG] Warning: Failed to parse stock inventory worker pools JSON: %v", err)
 		} else {
 			config.StockInventoryWorker.Pools = pools

@@ -434,6 +434,27 @@ func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 	}
 }
 
+func TestLoadConfigWithStockInventoryPoolsEnv(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	_ = os.Setenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS", `[
+		{"targetCount":1,"sandboxEnabled":false,"dockerEnabled":false},
+		{"targetCount":2,"sandboxEnabled":true,"dockerEnabled":false},
+		{"target_count":3,"sandbox_enabled":false,"docker_enabled":true}
+	]`)
+
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	assert.Equal(t, []StockInventoryPoolConfig{
+		{TargetCount: 1, SandboxEnabled: false, DockerEnabled: false},
+		{TargetCount: 2, SandboxEnabled: true, DockerEnabled: false},
+		{TargetCount: 3, SandboxEnabled: false, DockerEnabled: true},
+	}, loadedConfig.StockInventoryWorker.Pools)
+}
+
 func TestLoadConfigNetworkFilterResourceDefaults(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 
