@@ -446,6 +446,10 @@ func TestLoadConfigNetworkFilterResourceDefaults(t *testing.T) {
 	assert.Equal(t, "1000m", loadedConfig.KubernetesSession.NetworkFilterCPULimit)
 	assert.Equal(t, "256Mi", loadedConfig.KubernetesSession.NetworkFilterMemoryRequest)
 	assert.Equal(t, "512Mi", loadedConfig.KubernetesSession.NetworkFilterMemoryLimit)
+	assert.Equal(t, "50m", loadedConfig.KubernetesSession.NetworkFilterInitCPURequest)
+	assert.Equal(t, "100m", loadedConfig.KubernetesSession.NetworkFilterInitCPULimit)
+	assert.Equal(t, "32Mi", loadedConfig.KubernetesSession.NetworkFilterInitMemoryRequest)
+	assert.Equal(t, "64Mi", loadedConfig.KubernetesSession.NetworkFilterInitMemoryLimit)
 }
 
 func TestInitializeConfigStructsFromEnv_StaticAuth(t *testing.T) {

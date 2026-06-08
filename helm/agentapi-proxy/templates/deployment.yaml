@@ -202,6 +202,8 @@ spec:
               value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository .Chart.AppVersion) | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE
               value: {{ .Values.kubernetesSession.networkFilterImage | quote }}
+            - name: AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE
+              value: {{ .Values.kubernetesSession.sandboxInitImage | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST
               value: {{ dig "networkFilter" "resources" "requests" "cpu" "250m" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT
