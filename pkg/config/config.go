@@ -35,11 +35,13 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v2"
 )
@@ -567,7 +569,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	var config Config
-	if err := v.Unmarshal(&config); err != nil {
+	if err := v.Unmarshal(&config, viper.DecodeHook(stockInventoryPoolsDecodeHook())); err != nil {
 		return nil, err
 	}
 
@@ -606,6 +608,22 @@ func LoadConfig(filename string) (*Config, error) {
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
 	return &config, nil
+}
+
+func stockInventoryPoolsDecodeHook() mapstructure.DecodeHookFunc {
+	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+		if from.Kind() != reflect.String || to != reflect.TypeOf([]StockInventoryPoolConfig{}) {
+			return data, nil
+		}
+		if data == "" {
+			return []StockInventoryPoolConfig{}, nil
+		}
+		var pools []StockInventoryPoolConfig
+		if err := json.Unmarshal([]byte(data.(string)), &pools); err != nil {
+			return nil, err
+		}
+		return pools, nil
+	}
 }
 
 // initializeConfigStructsFromEnv initializes config structs from environment variables
