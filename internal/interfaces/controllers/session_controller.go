@@ -488,6 +488,17 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session")
 	}
 
+	if c.sessionRouteRepo != nil {
+		route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+		if err != nil {
+			log.Printf("Delete session: failed to look up route for cleanup %s: %v", sessionID, err)
+		} else if route != nil && route.ProxyURL == "" && route.RemoteSessionID == "" {
+			if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
+				log.Printf("Delete session: failed to delete pending route for %s: %v", sessionID, err)
+			}
+		}
+	}
+
 	log.Printf("Session %s deletion completed successfully", sessionID)
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
