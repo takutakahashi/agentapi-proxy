@@ -195,12 +195,26 @@ type StockInventoryWorkerConfig struct {
 	SandboxEnabled bool `json:"sandbox_enabled" mapstructure:"sandbox_enabled"`
 	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
 	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
+	// Pools optionally configures multiple stock pools. When set, each pool is
+	// replenished independently; otherwise the legacy single-pool fields above
+	// are used.
+	Pools []StockInventoryPoolConfig `json:"pools" mapstructure:"pools"`
 	// Namespace overrides the Kubernetes namespace (falls back to KubernetesSession.Namespace).
 	Namespace string `json:"namespace" mapstructure:"namespace"`
 	// Leader election timings.
 	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
 	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
 	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// StockInventoryPoolConfig represents one stock inventory capability pool.
+type StockInventoryPoolConfig struct {
+	// TargetCount is the desired number of stock sessions for this capability pool.
+	TargetCount int `json:"target_count" mapstructure:"target_count"`
+	// SandboxEnabled controls whether stock sessions include the network sandbox sidecar.
+	SandboxEnabled bool `json:"sandbox_enabled" mapstructure:"sandbox_enabled"`
+	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
+	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
 }
 
 // WebhookConfig represents webhook configuration
@@ -671,6 +685,15 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		config.GitSync.SyncInterval = syncInterval
 	}
 
+	if poolsJSON := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS"); poolsJSON != "" {
+		var pools []StockInventoryPoolConfig
+		if err := json.Unmarshal([]byte(poolsJSON), &pools); err != nil {
+			log.Printf("[CONFIG] Warning: Failed to parse stock inventory worker pools JSON: %v", err)
+		} else {
+			config.StockInventoryWorker.Pools = pools
+		}
+	}
+
 	// Override fields if environment variables are set (even if structures already exist)
 	if config.Auth.Static != nil {
 		if v.IsSet("auth.static.keys_file") {
@@ -823,6 +846,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("stock_inventory_worker.target_count", "AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT")
 	_ = v.BindEnv("stock_inventory_worker.sandbox_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED")
 	_ = v.BindEnv("stock_inventory_worker.docker_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED")
+	_ = v.BindEnv("stock_inventory_worker.pools", "AGENTAPI_STOCK_INVENTORY_WORKER_POOLS")
 	_ = v.BindEnv("stock_inventory_worker.namespace", "AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE")
 	_ = v.BindEnv("stock_inventory_worker.lease_duration", "AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION")
 	_ = v.BindEnv("stock_inventory_worker.renew_deadline", "AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE")

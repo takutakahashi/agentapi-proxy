@@ -458,6 +458,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 	if targetCount <= 0 {
 		targetCount = 2
 	}
+	pools := buildStockInventoryPools(configData.StockInventoryWorker, targetCount)
 
 	workerConfig := stock_inventory.WorkerConfig{
 		CheckInterval: checkInterval,
@@ -466,6 +467,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 			Sandbox: configData.StockInventoryWorker.SandboxEnabled,
 			DinD:    configData.StockInventoryWorker.DockerEnabled,
 		},
+		Pools:         pools,
 		Enabled:       true,
 	}
 
@@ -494,9 +496,35 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 
 	go leaderWorker.Run(context.Background())
 
-	log.Printf("[STOCK_INVENTORY] Stock inventory worker started in namespace: %s (target: %d, sandbox=%t, dind=%t)",
-		namespace, targetCount, workerConfig.Requirements.Sandbox, workerConfig.Requirements.DinD)
+	poolCount := len(pools)
+	if poolCount == 0 {
+		poolCount = 1
+	}
+	log.Printf("[STOCK_INVENTORY] Stock inventory worker started in namespace: %s (pools: %d)",
+		namespace, poolCount)
 	return leaderWorker
+}
+
+func buildStockInventoryPools(workerConfig config.StockInventoryWorkerConfig, defaultTargetCount int) []stock_inventory.StockPool {
+	if len(workerConfig.Pools) == 0 {
+		return nil
+	}
+
+	pools := make([]stock_inventory.StockPool, 0, len(workerConfig.Pools))
+	for _, poolConfig := range workerConfig.Pools {
+		targetCount := poolConfig.TargetCount
+		if targetCount <= 0 {
+			targetCount = defaultTargetCount
+		}
+		pools = append(pools, stock_inventory.StockPool{
+			TargetCount: targetCount,
+			Requirements: stock_inventory.StockRequirements{
+				Sandbox: poolConfig.SandboxEnabled,
+				DinD:    poolConfig.DockerEnabled,
+			},
+		})
+	}
+	return pools
 }
 
 // registerWebhookHandlers registers webhook REST API handlers

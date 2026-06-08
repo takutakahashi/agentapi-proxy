@@ -367,6 +367,10 @@ spec:
               value: {{ ((.Values.stockInventoryWorker).sandboxEnabled) | default false | quote }}
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED
               value: {{ ((.Values.stockInventoryWorker).dockerEnabled) | default false | quote }}
+            {{- if (.Values.stockInventoryWorker).pools }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_POOLS
+              value: {{ .Values.stockInventoryWorker.pools | toJson | quote }}
+            {{- end }}
             {{- if ((.Values.stockInventoryWorker).leaderElection).leaseDuration }}
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION
               value: {{ .Values.stockInventoryWorker.leaderElection.leaseDuration | quote }}
