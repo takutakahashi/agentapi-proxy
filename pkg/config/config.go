@@ -685,6 +685,15 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		config.GitSync.SyncInterval = syncInterval
 	}
 
+	if namespace := v.GetString("kubernetes_session.namespace"); namespace != "" {
+		config.KubernetesSession.Namespace = namespace
+	}
+	if namespace := v.GetString("schedule_worker.namespace"); namespace != "" {
+		config.ScheduleWorker.Namespace = namespace
+	}
+	if namespace := v.GetString("stock_inventory_worker.namespace"); namespace != "" {
+		config.StockInventoryWorker.Namespace = namespace
+	}
 	if poolsJSON := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS"); poolsJSON != "" {
 		var pools []StockInventoryPoolConfig
 		if err := json.Unmarshal([]byte(poolsJSON), &pools); err != nil {

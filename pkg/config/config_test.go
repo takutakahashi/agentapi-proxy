@@ -115,6 +115,47 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAppliesWorkerNamespaceEnvOverrides(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	tmpfile, err := os.CreateTemp("", "config*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+
+	if _, err := tmpfile.WriteString("{}"); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+	_ = tmpfile.Close()
+
+	_ = os.Setenv("AGENTAPI_K8S_SESSION_NAMESPACE", "agentapi-ui-dev")
+	_ = os.Setenv("AGENTAPI_SCHEDULE_WORKER_NAMESPACE", "agentapi-ui-dev")
+	_ = os.Setenv("AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE", "agentapi-ui-dev")
+	_ = os.Setenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS", `[{"target_count":1,"sandbox_enabled":true,"docker_enabled":true}]`)
+
+	loadedConfig, err := LoadConfig(tmpfile.Name())
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if got := loadedConfig.KubernetesSession.Namespace; got != "agentapi-ui-dev" {
+		t.Fatalf("KubernetesSession.Namespace = %q, want agentapi-ui-dev", got)
+	}
+	if got := loadedConfig.ScheduleWorker.Namespace; got != "agentapi-ui-dev" {
+		t.Fatalf("ScheduleWorker.Namespace = %q, want agentapi-ui-dev", got)
+	}
+	if got := loadedConfig.StockInventoryWorker.Namespace; got != "agentapi-ui-dev" {
+		t.Fatalf("StockInventoryWorker.Namespace = %q, want agentapi-ui-dev", got)
+	}
+	if len(loadedConfig.StockInventoryWorker.Pools) != 1 {
+		t.Fatalf("StockInventoryWorker.Pools length = %d, want 1", len(loadedConfig.StockInventoryWorker.Pools))
+	}
+	if !loadedConfig.StockInventoryWorker.Pools[0].SandboxEnabled || !loadedConfig.StockInventoryWorker.Pools[0].DockerEnabled {
+		t.Fatalf("StockInventoryWorker.Pools[0] = %+v, want sandbox and docker enabled", loadedConfig.StockInventoryWorker.Pools[0])
+	}
+}
+
 func TestLoadConfigNonexistentFile(t *testing.T) {
 	_, err := LoadConfig("nonexistent-file.json")
 	if err == nil {
