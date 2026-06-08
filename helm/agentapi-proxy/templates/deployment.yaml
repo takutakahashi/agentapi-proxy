@@ -244,8 +244,6 @@ spec:
               value: {{ .Values.kubernetesSession.podStopTimeout | quote }}
             - name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL
               value: {{ dig "provisioner" "proxyUrl" "" .Values.kubernetesSession | quote }}
-            - name: AGENTAPI_K8S_SESSION_CODEX_REQUIREMENTS_CONFIGMAP_NAME
-              value: {{ printf "%s-codex-requirements" (include "agentapi-proxy.fullname" .) | quote }}
             {{- if or .Values.github.token (and .Values.github.app.id .Values.github.app.privateKey.secretName) }}
             - name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME
               value: {{ printf "%s-github-session" (include "agentapi-proxy.fullname" .) | quote }}

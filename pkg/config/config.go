@@ -320,11 +320,6 @@ type KubernetesSessionConfig struct {
 	// Defaults to "{release-name}-sandbox-iptables" (created by the Helm chart).
 	SandboxIptablesConfigMapName string `json:"sandbox_iptables_configmap_name" mapstructure:"sandbox_iptables_configmap_name"`
 
-	// CodexRequirementsConfigMapName is the name of the ConfigMap containing the managed
-	// Codex requirements (key: requirements.toml) mounted read-only at /etc/codex/ in
-	// session pods so Codex auto-trusts the declared hooks without user approval.
-	// Defaults to "{release-name}-codex-requirements" (created by the Helm chart).
-	CodexRequirementsConfigMapName string `json:"codex_requirements_configmap_name" mapstructure:"codex_requirements_configmap_name"`
 
 	// NetworkFilterImage is the container image for both the network-filter-setup init
 	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.7.0.
@@ -774,7 +769,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.sandbox_init_image", "AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE")
 	_ = v.BindEnv("kubernetes_session.sandbox_iptables_configmap_name", "AGENTAPI_K8S_SESSION_SANDBOX_IPTABLES_CONFIGMAP_NAME")
-	_ = v.BindEnv("kubernetes_session.codex_requirements_configmap_name", "AGENTAPI_K8S_SESSION_CODEX_REQUIREMENTS_CONFIGMAP_NAME")
 	_ = v.BindEnv("kubernetes_session.network_filter_image", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.network_filter_cpu_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST")
 	_ = v.BindEnv("kubernetes_session.network_filter_cpu_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT")
@@ -938,7 +932,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.init_container_image", "")
 	v.SetDefault("kubernetes_session.sandbox_init_image", "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a")
 	v.SetDefault("kubernetes_session.sandbox_iptables_configmap_name", "")
-	v.SetDefault("kubernetes_session.codex_requirements_configmap_name", "")
 	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.7.0")
 	v.SetDefault("kubernetes_session.network_filter_cpu_request", "250m")
 	v.SetDefault("kubernetes_session.network_filter_cpu_limit", "1000m")
