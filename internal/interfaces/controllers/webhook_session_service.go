@@ -90,16 +90,25 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	// Determine session params fields from rendered params
 	var githubToken, agentType string
 	var oneshot bool
+	var initialMessageWaitSecond *int
+	var cycleMessage, sessionTTL string
+	var cycleMaxCount int
 	if renderedParams != nil {
 		githubToken = renderedParams.GithubToken
 		agentType = renderedParams.AgentType
 		oneshot = renderedParams.Oneshot
+		initialMessageWaitSecond = renderedParams.InitialMessageWaitSecond
+		cycleMessage = renderedParams.CycleMessage
+		cycleMaxCount = renderedParams.CycleMaxCount
+		sessionTTL = renderedParams.SessionTTL
 	}
 
 	// Sandbox is not a template field — read directly from the merged session config params.
 	var sandbox *entities.SandboxParams
+	var docker *entities.DockerParams
 	if sessionConfig != nil && sessionConfig.Params() != nil {
 		sandbox = sessionConfig.Params().Sandbox
+		docker = sessionConfig.Params().Docker
 	}
 
 	// Build repository info from tags
@@ -136,25 +145,30 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		sessionProfileID = sessionConfig.SessionProfileID()
 	}
 	result, err := s.launcher.Launch(ctx, sessionID, sessionuc.LaunchRequest{
-		UserID:           webhook.UserID(),
-		Scope:            webhook.Scope(),
-		TeamID:           webhook.TeamID(),
-		Teams:            sessionuc.ResolveTeams(webhook.Scope(), webhook.TeamID(), webhook.UserTeams()),
-		Environment:      env,
-		Tags:             tags,
-		InitialMessage:   initialMessage,
-		GithubToken:      githubToken,
-		AgentType:        agentType,
-		Oneshot:          oneshot,
-		Sandbox:          sandbox,
-		RepoInfo:         repoInfo,
-		WebhookPayload:   webhookPayload,
-		SessionProfileID: sessionProfileID,
-		ReuseSession:     sessionConfig != nil && sessionConfig.ReuseSession(),
-		ReuseMatchTags:   tags,
-		ReuseMessage:     reuseMessage,
-		MaxSessions:      webhook.MaxSessions(),
-		LimitMatchTags:   map[string]string{"webhook_id": webhook.ID()},
+		UserID:                   webhook.UserID(),
+		Scope:                    webhook.Scope(),
+		TeamID:                   webhook.TeamID(),
+		Teams:                    sessionuc.ResolveTeams(webhook.Scope(), webhook.TeamID(), webhook.UserTeams()),
+		Environment:              env,
+		Tags:                     tags,
+		InitialMessage:           initialMessage,
+		GithubToken:              githubToken,
+		AgentType:                agentType,
+		Oneshot:                  oneshot,
+		InitialMessageWaitSecond: initialMessageWaitSecond,
+		CycleMessage:             cycleMessage,
+		CycleMaxCount:            cycleMaxCount,
+		Sandbox:                  sandbox,
+		Docker:                   docker,
+		SessionTTL:               sessionTTL,
+		RepoInfo:                 repoInfo,
+		WebhookPayload:           webhookPayload,
+		SessionProfileID:         sessionProfileID,
+		ReuseSession:             sessionConfig != nil && sessionConfig.ReuseSession(),
+		ReuseMatchTags:           tags,
+		ReuseMessage:             reuseMessage,
+		MaxSessions:              webhook.MaxSessions(),
+		LimitMatchTags:           map[string]string{"webhook_id": webhook.ID()},
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create session: %w", err)

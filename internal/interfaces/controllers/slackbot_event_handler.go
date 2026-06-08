@@ -419,23 +419,38 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 
 		var slackSandbox *entities.SandboxParams
+		var slackDocker *entities.DockerParams
+		var slackInitialMessageWaitSecond *int
+		var slackCycleMessage, slackSessionTTL string
+		var slackCycleMaxCount int
 		if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
-			slackSandbox = bot.SessionConfig().Params().Sandbox
+			params := bot.SessionConfig().Params()
+			slackSandbox = params.Sandbox
+			slackDocker = params.Docker
+			slackInitialMessageWaitSecond = params.InitialMessageWaitSecond
+			slackCycleMessage = params.CycleMessage
+			slackCycleMaxCount = params.CycleMaxCount
+			slackSessionTTL = params.SessionTTL
 		}
 
 		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
-			UserID:           userID,
-			Scope:            scope,
-			TeamID:           teamID,
-			Teams:            teams,
-			Environment:      env,
-			Tags:             tags,
-			InitialMessage:   initialMessage,
-			AgentType:        agentType,
-			MemoryKey:        memoryKey,
-			RepoInfo:         repoInfo,
-			Sandbox:          slackSandbox,
-			SessionProfileID: slackSessionProfileID,
+			UserID:                   userID,
+			Scope:                    scope,
+			TeamID:                   teamID,
+			Teams:                    teams,
+			Environment:              env,
+			Tags:                     tags,
+			InitialMessage:           initialMessage,
+			AgentType:                agentType,
+			MemoryKey:                memoryKey,
+			RepoInfo:                 repoInfo,
+			Sandbox:                  slackSandbox,
+			Docker:                   slackDocker,
+			InitialMessageWaitSecond: slackInitialMessageWaitSecond,
+			CycleMessage:             slackCycleMessage,
+			CycleMaxCount:            slackCycleMaxCount,
+			SessionTTL:               slackSessionTTL,
+			SessionProfileID:         slackSessionProfileID,
 			SlackParams: func() *entities.SlackParams {
 				sp := &entities.SlackParams{
 					Channel:  channel,
