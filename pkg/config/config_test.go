@@ -129,10 +129,10 @@ func TestLoadConfigAppliesWorkerNamespaceEnvOverrides(t *testing.T) {
 	}
 	_ = tmpfile.Close()
 
-	_ = os.Setenv("AGENTAPI_K8S_SESSION_NAMESPACE", "agentapi-ui-dev")
-	_ = os.Setenv("AGENTAPI_SCHEDULE_WORKER_NAMESPACE", "agentapi-ui-dev")
-	_ = os.Setenv("AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE", "agentapi-ui-dev")
-	_ = os.Setenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS", `[{"target_count":1,"sandbox_enabled":true,"docker_enabled":true}]`)
+	t.Setenv("AGENTAPI_K8S_SESSION_NAMESPACE", "agentapi-ui-dev")
+	t.Setenv("AGENTAPI_SCHEDULE_WORKER_NAMESPACE", "agentapi-ui-dev")
+	t.Setenv("AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE", "agentapi-ui-dev")
+	t.Setenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS", `[{"target_count":1,"sandbox_enabled":true,"docker_enabled":true}]`)
 
 	loadedConfig, err := LoadConfig(tmpfile.Name())
 	if err != nil {
