@@ -1,0 +1,16 @@
+{{- if .Values.kubernetesSession.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-codex-requirements
+  namespace: {{ .Values.kubernetesSession.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+data:
+  requirements.toml: |
+    [hooks]
+    managed_dir = "/etc/codex"
+    {{- if .Values.kubernetesSession.codexRequirements }}
+    {{- .Values.kubernetesSession.codexRequirements | nindent 4 }}
+    {{- end }}
+{{- end }}

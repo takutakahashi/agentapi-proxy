@@ -2478,6 +2478,21 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		},
 	})
 
+	// Add codex-requirements ConfigMap volume if configured.
+	// Mounted read-only at /etc/codex/ so Codex auto-trusts the declared managed hooks.
+	if m.k8sConfig.CodexRequirementsConfigMapName != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "codex-requirements",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: m.k8sConfig.CodexRequirementsConfigMapName,
+					},
+				},
+			},
+		})
+	}
+
 	return volumes
 }
 
@@ -3341,6 +3356,15 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		Name:      "claude-agentapi-history",
 		MountPath: "/opt/claude-agentapi",
 	})
+
+	// Mount codex-requirements ConfigMap read-only at /etc/codex/ when configured.
+	if m.k8sConfig.CodexRequirementsConfigMapName != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "codex-requirements",
+			MountPath: "/etc/codex",
+			ReadOnly:  true,
+		})
+	}
 
 	return volumeMounts
 }

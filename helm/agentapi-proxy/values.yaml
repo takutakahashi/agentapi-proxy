@@ -456,6 +456,18 @@ kubernetesSession:
   #       }
   settingsBaseSecret: "agentapi-settings-base"
 
+  # Additional TOML content to append to the managed Codex requirements ConfigMap
+  # ({release-name}-codex-requirements). The ConfigMap is mounted read-only at
+  # /etc/codex/ in session pods so Codex auto-trusts the declared hooks.
+  # Example:
+  #   codexRequirements: |
+  #     [[hooks.PostToolCall]]
+  #     matcher = {trigger_name = "bash"}
+  #     [[hooks.PostToolCall.hooks]]
+  #     type = "command"
+  #     command = "my-command"
+  codexRequirements: ""
+
   # Slack Integration
   # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar).
   # Requires agent_type=claude-agentapi to produce the history file.
@@ -608,7 +620,7 @@ redis:
     password: ""
   master:
     persistence:
-      enabled: true
+      enabled: false
       size: 1Gi
     resources:
       requests:
