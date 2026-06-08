@@ -1877,15 +1877,11 @@ func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session
 
 	// Build volumes
 	volumes := m.buildVolumes(session)
-	if sandboxEnabled && m.k8sConfig.SandboxIptablesConfigMapName != "" {
+	if sandboxEnabled {
 		volumes = append(volumes, corev1.Volume{
 			Name: "sandbox-iptables",
 			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.SandboxIptablesConfigMapName,
-					},
-				},
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		})
 	}
@@ -2182,8 +2178,8 @@ func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req
 	return effective
 }
 
-// buildSandboxContainers returns the init container (iptables setup) and sidecar
-// (network-filter proxy) needed for session network sandboxing.
+// buildSandboxContainers returns the init containers (iptables rule generation
+// and restore) and sidecar (network-filter proxy) needed for session network sandboxing.
 // The sidecar runs as UID 0 (root) so that iptables rules can skip its traffic
 // via the "--uid-owner 0" match, preventing redirect loops.
 func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.SandboxParams) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
@@ -2206,11 +2202,35 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 
 	nfaImage := m.k8sConfig.NetworkFilterImage
 
-	initContainer := corev1.Container{
-		Name:            "network-filter-setup",
+	initResources := buildResourceRequirements(m.k8sConfig.NetworkFilterInitCPURequest, m.k8sConfig.NetworkFilterInitCPULimit, m.k8sConfig.NetworkFilterInitMemoryRequest, m.k8sConfig.NetworkFilterInitMemoryLimit)
+
+	generateRulesInitContainer := corev1.Container{
+		Name:            "network-filter-generate-iptables",
 		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"nfa", "setup"},
+		Command:         []string{"nfa", "setup-iptables", "--output", "/etc/iptables/rules.v4"},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    &rootUID,
+			RunAsNonRoot: &falseVal,
+		},
+		Resources: initResources,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "sandbox-iptables",
+				MountPath: "/etc/iptables",
+			},
+		},
+	}
+
+	sandboxInitImage := m.k8sConfig.SandboxInitImage
+	if sandboxInitImage == "" {
+		sandboxInitImage = m.k8sConfig.Image
+	}
+	restoreRulesInitContainer := corev1.Container{
+		Name:            "network-filter-setup",
+		Image:           sandboxInitImage,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"iptables-restore", "/etc/iptables/rules.v4"},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    &rootUID,
 			RunAsNonRoot: &falseVal,
@@ -2218,7 +2238,14 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 				Add: []corev1.Capability{"NET_ADMIN"},
 			},
 		},
-		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterInitCPURequest, m.k8sConfig.NetworkFilterInitCPULimit, m.k8sConfig.NetworkFilterInitMemoryRequest, m.k8sConfig.NetworkFilterInitMemoryLimit),
+		Resources: initResources,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "sandbox-iptables",
+				MountPath: "/etc/iptables",
+				ReadOnly:  true,
+			},
+		},
 	}
 
 	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort)
@@ -2256,7 +2283,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 		{Name: "no_proxy", Value: noProxy},
 	}
 
-	return []corev1.Container{initContainer}, &sidecar, proxyEnvVars
+	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
 }
 
 // buildDinDContainers returns the DinD sidecar container, env vars for the main container,
