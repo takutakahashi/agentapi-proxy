@@ -603,10 +603,14 @@ redis:
   # Bitnami Redis サブチャートの設定
   # https://github.com/bitnami/charts/tree/main/bitnami/redis
   architecture: standalone
+  image:
+    tag: latest
+    pullPolicy: Always
   auth:
     enabled: false
     password: ""
   master:
+    kind: Deployment
     persistence:
       enabled: false
       size: 1Gi
