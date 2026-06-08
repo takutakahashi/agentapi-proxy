@@ -507,7 +507,7 @@ func buildStockInventoryPools(workerConfig config.StockInventoryWorkerConfig, de
 	pools := make([]stock_inventory.StockPool, 0, len(workerConfig.Pools))
 	for _, poolConfig := range workerConfig.Pools {
 		targetCount := poolConfig.TargetCount
-		if targetCount <= 0 {
+		if targetCount < 0 {
 			targetCount = defaultTargetCount
 		}
 		pools = append(pools, stock_inventory.StockPool{

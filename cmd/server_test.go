@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
 )
 
 func TestServerCmd(t *testing.T) {
@@ -99,6 +101,22 @@ func TestServerCmdFlags(t *testing.T) {
 			assert.Equal(t, tt.expectedVerb, verbFlag)
 		})
 	}
+}
+
+func TestBuildStockInventoryPoolsAllowsZeroTargetCount(t *testing.T) {
+	pools := buildStockInventoryPools(config.StockInventoryWorkerConfig{
+		Pools: []config.StockInventoryPoolConfig{
+			{TargetCount: 0, SandboxEnabled: false, DockerEnabled: true},
+		},
+	}, 2)
+
+	require.Equal(t, []stock_inventory.StockPool{{
+		TargetCount: 0,
+		Requirements: stock_inventory.StockRequirements{
+			Sandbox: false,
+			DinD:    true,
+		},
+	}}, pools)
 }
 
 func TestRunProxyWithInvalidConfig(t *testing.T) {
