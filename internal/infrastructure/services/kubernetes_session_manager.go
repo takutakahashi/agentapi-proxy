@@ -175,11 +175,7 @@ func NewKubernetesSessionManagerWithClient(
 	k8sConfig := &cfg.KubernetesSession
 
 	// Determine namespace
-	namespace := k8sConfig.Namespace
-	if namespace == "" {
-		// Use namespace from controller-runtime config or default
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(k8sConfig.Namespace)
 
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
@@ -220,6 +216,20 @@ func NewKubernetesSessionManagerWithClient(
 	}
 
 	return manager, nil
+}
+
+func resolveKubernetesNamespace(candidates ...string) string {
+	for _, candidate := range candidates {
+		if namespace := strings.TrimSpace(candidate); namespace != "" {
+			return namespace
+		}
+	}
+	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		if namespace := strings.TrimSpace(string(data)); namespace != "" {
+			return namespace
+		}
+	}
+	return "default"
 }
 
 // SetStatusEventRepository injects a StatusEventRepository for cross-pod status
