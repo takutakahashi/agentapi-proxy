@@ -573,6 +573,10 @@ stockInventoryWorker:
   # How often to check and replenish stock sessions
   checkInterval: "30s"
 
+  # Namespace for stock session resources and leader election.
+  # Defaults to kubernetesSession.namespace, then the release namespace.
+  namespace: ""
+
   # Desired number of available stock sessions matching the capability template
   targetCount: 2
 

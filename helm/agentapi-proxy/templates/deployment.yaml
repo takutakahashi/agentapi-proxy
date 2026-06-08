@@ -359,6 +359,8 @@ spec:
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL
               value: {{ .Values.stockInventoryWorker.checkInterval | quote }}
             {{- end }}
+            - name: AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE
+              value: {{ .Values.stockInventoryWorker.namespace | default .Values.kubernetesSession.namespace | default .Release.Namespace | quote }}
             {{- if (.Values.stockInventoryWorker).targetCount }}
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT
               value: {{ .Values.stockInventoryWorker.targetCount | quote }}
