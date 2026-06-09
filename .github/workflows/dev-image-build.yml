@@ -91,6 +91,7 @@ jobs:
           echo "Generated tags: $TAGS"
       
       - name: Set up QEMU
+        if: contains(github.event.inputs.platforms, 'linux/arm64')
         uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
@@ -127,7 +128,7 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
           build-args: |
             AGENTAPI_VERSION=v0.6.0
       

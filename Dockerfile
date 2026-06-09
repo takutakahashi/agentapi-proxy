@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # Build stage
 FROM golang:1.25-alpine AS builder
 
@@ -11,42 +13,56 @@ WORKDIR /app
 COPY go.mod go.sum ./
 
 # Download dependencies
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # Copy source code
 COPY . .
 
 
 # Build the application with optimizations
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
 
-# Build agentapi from source stage
-FROM golang:1.25-alpine AS agentapi-builder
+# Download agentapi release binary instead of rebuilding it from source.
+FROM alpine:3.22 AS agentapi-downloader
 
-# Install git for cloning
-RUN apk add --no-cache git
+ARG TARGETOS=linux
+ARG TARGETARCH
+ARG AGENTAPI_VERSION=v0.6.0
 
-# Clone and build agentapi from source (takutakahashi fork, main branch)
-WORKDIR /agentapi-src
-RUN set -ex && \
-    echo "Building agentapi from takutakahashi/agentapi main branch for native architecture" && \
-    git clone --depth 1 --branch main https://github.com/takutakahashi/agentapi.git . && \
-    go mod download && \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentapi . && \
-    echo "Built agentapi binary info:" && \
+RUN apk add --no-cache ca-certificates curl && \
+    set -ex && \
+    if [ -z "$TARGETARCH" ]; then \
+      case "$(apk --print-arch)" in \
+        x86_64) TARGETARCH="amd64" ;; \
+        aarch64) TARGETARCH="arm64" ;; \
+        *) echo "Unsupported architecture: $(apk --print-arch)" && exit 1 ;; \
+      esac; \
+    fi && \
+    case "$TARGETARCH" in \
+      amd64|arm64) ;; \
+      *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/coder/agentapi/releases/download/${AGENTAPI_VERSION}/agentapi-${TARGETOS}-${TARGETARCH}" \
+      -o /agentapi && \
+    chmod +x /agentapi && \
+    echo "Downloaded agentapi binary info:" && \
     ls -la /agentapi
 
 # Runtime stage
 FROM ubuntu:24.04
 
 # Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables && \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
-    apt-get install -y gh && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y gh
 
 # Create a non-root user
 RUN groupadd -r agentapi && useradd -r -g agentapi -d /home/agentapi -s /bin/bash agentapi && \
@@ -57,11 +73,8 @@ RUN groupadd -r agentapi && useradd -r -g agentapi -d /home/agentapi -s /bin/bas
 # Set working directory
 WORKDIR /home/agentapi/workdir
 
-# Copy binary from builder stage (agentapi-proxy binary only)
-COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
-
 # Copy agentapi binary from builder stage
-COPY --from=agentapi-builder /agentapi /usr/local/bin/agentapi
+COPY --from=agentapi-downloader /agentapi /usr/local/bin/agentapi
 
 # Copy github-mcp-server binary from official image
 COPY --from=ghcr.io/github/github-mcp-server:v0.26.3 /server/github-mcp-server /usr/local/bin/
@@ -193,6 +206,10 @@ ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
 ENV CLAUDE_CODE_EXECUTABLE_PATH=/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
 # Set CLAUDE_CODE_EXECUTABLE for @agentclientprotocol/claude-agent-acp (reads this env var, not CLAUDE_CODE_EXECUTABLE_PATH)
 ENV CLAUDE_CODE_EXECUTABLE=/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
+
+# Copy the frequently changing proxy binary after the expensive runtime toolchain
+# setup so ordinary app changes do not invalidate those cached layers.
+COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
