@@ -33,12 +33,16 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v2"
 )
@@ -195,12 +199,26 @@ type StockInventoryWorkerConfig struct {
 	SandboxEnabled bool `json:"sandbox_enabled" mapstructure:"sandbox_enabled"`
 	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
 	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
+	// Pools optionally configures multiple stock pools. When set, each pool is
+	// replenished independently; otherwise the legacy single-pool fields above
+	// are used.
+	Pools []StockInventoryPoolConfig `json:"pools" mapstructure:"pools"`
 	// Namespace overrides the Kubernetes namespace (falls back to KubernetesSession.Namespace).
 	Namespace string `json:"namespace" mapstructure:"namespace"`
 	// Leader election timings.
 	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
 	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
 	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// StockInventoryPoolConfig represents one stock inventory capability pool.
+type StockInventoryPoolConfig struct {
+	// TargetCount is the desired number of stock sessions for this capability pool.
+	TargetCount int `json:"target_count" mapstructure:"target_count"`
+	// SandboxEnabled controls whether stock sessions include the network sandbox sidecar.
+	SandboxEnabled bool `json:"sandbox_enabled" mapstructure:"sandbox_enabled"`
+	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
+	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
 }
 
 // WebhookConfig represents webhook configuration
@@ -552,7 +570,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	var config Config
-	if err := v.Unmarshal(&config); err != nil {
+	if err := v.Unmarshal(&config, viper.DecodeHook(stockInventoryPoolsDecodeHook())); err != nil {
 		return nil, err
 	}
 
@@ -591,6 +609,91 @@ func LoadConfig(filename string) (*Config, error) {
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
 	return &config, nil
+}
+
+func stockInventoryPoolsDecodeHook() mapstructure.DecodeHookFunc {
+	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+		if from.Kind() != reflect.String || to != reflect.TypeOf([]StockInventoryPoolConfig{}) {
+			return data, nil
+		}
+		if data == "" {
+			return []StockInventoryPoolConfig{}, nil
+		}
+		pools, err := parseStockInventoryPoolsJSON(data.(string))
+		if err != nil {
+			return nil, err
+		}
+		return pools, nil
+	}
+}
+
+func parseStockInventoryPoolsJSON(poolsJSON string) ([]StockInventoryPoolConfig, error) {
+	var rawPools []map[string]interface{}
+	if err := json.Unmarshal([]byte(poolsJSON), &rawPools); err != nil {
+		return nil, err
+	}
+
+	pools := make([]StockInventoryPoolConfig, 0, len(rawPools))
+	for _, rawPool := range rawPools {
+		targetCount, err := jsonInt(rawPool, "target_count", "targetCount")
+		if err != nil {
+			return nil, err
+		}
+		sandboxEnabled, err := jsonBool(rawPool, "sandbox_enabled", "sandboxEnabled")
+		if err != nil {
+			return nil, err
+		}
+		dockerEnabled, err := jsonBool(rawPool, "docker_enabled", "dockerEnabled")
+		if err != nil {
+			return nil, err
+		}
+
+		pools = append(pools, StockInventoryPoolConfig{
+			TargetCount:    targetCount,
+			SandboxEnabled: sandboxEnabled,
+			DockerEnabled:  dockerEnabled,
+		})
+	}
+	return pools, nil
+}
+
+func jsonInt(values map[string]interface{}, keys ...string) (int, error) {
+	value, ok := jsonValue(values, keys...)
+	if !ok {
+		return 0, nil
+	}
+	switch typedValue := value.(type) {
+	case float64:
+		return int(typedValue), nil
+	case string:
+		return strconv.Atoi(typedValue)
+	default:
+		return 0, fmt.Errorf("expected integer for %s, got %T", keys[0], value)
+	}
+}
+
+func jsonBool(values map[string]interface{}, keys ...string) (bool, error) {
+	value, ok := jsonValue(values, keys...)
+	if !ok {
+		return false, nil
+	}
+	switch typedValue := value.(type) {
+	case bool:
+		return typedValue, nil
+	case string:
+		return strconv.ParseBool(typedValue)
+	default:
+		return false, fmt.Errorf("expected boolean for %s, got %T", keys[0], value)
+	}
+}
+
+func jsonValue(values map[string]interface{}, keys ...string) (interface{}, bool) {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 // initializeConfigStructsFromEnv initializes config structs from environment variables
@@ -669,6 +772,56 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	}
 	if syncInterval := v.GetString("git_sync.sync_interval"); syncInterval != "" {
 		config.GitSync.SyncInterval = syncInterval
+	}
+
+	if namespace := os.Getenv("AGENTAPI_K8S_SESSION_NAMESPACE"); namespace != "" {
+		config.KubernetesSession.Namespace = namespace
+	}
+	if namespace := os.Getenv("AGENTAPI_SCHEDULE_WORKER_NAMESPACE"); namespace != "" {
+		config.ScheduleWorker.Namespace = namespace
+	}
+	if namespace := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE"); namespace != "" {
+		config.StockInventoryWorker.Namespace = namespace
+	}
+	if enabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED"); enabled != "" {
+		if parsed, err := strconv.ParseBool(enabled); err == nil {
+			config.StockInventoryWorker.Enabled = parsed
+		}
+	}
+	if checkInterval := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL"); checkInterval != "" {
+		config.StockInventoryWorker.CheckInterval = checkInterval
+	}
+	if targetCount := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT"); targetCount != "" {
+		if parsed, err := strconv.Atoi(targetCount); err == nil {
+			config.StockInventoryWorker.TargetCount = parsed
+		}
+	}
+	if sandboxEnabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED"); sandboxEnabled != "" {
+		if parsed, err := strconv.ParseBool(sandboxEnabled); err == nil {
+			config.StockInventoryWorker.SandboxEnabled = parsed
+		}
+	}
+	if dockerEnabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED"); dockerEnabled != "" {
+		if parsed, err := strconv.ParseBool(dockerEnabled); err == nil {
+			config.StockInventoryWorker.DockerEnabled = parsed
+		}
+	}
+	if leaseDuration := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION"); leaseDuration != "" {
+		config.StockInventoryWorker.LeaseDuration = leaseDuration
+	}
+	if renewDeadline := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE"); renewDeadline != "" {
+		config.StockInventoryWorker.RenewDeadline = renewDeadline
+	}
+	if retryPeriod := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD"); retryPeriod != "" {
+		config.StockInventoryWorker.RetryPeriod = retryPeriod
+	}
+	if poolsJSON := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS"); poolsJSON != "" {
+		pools, err := parseStockInventoryPoolsJSON(poolsJSON)
+		if err != nil {
+			log.Printf("[CONFIG] Warning: Failed to parse stock inventory worker pools JSON: %v", err)
+		} else {
+			config.StockInventoryWorker.Pools = pools
+		}
 	}
 
 	// Override fields if environment variables are set (even if structures already exist)
@@ -823,6 +976,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("stock_inventory_worker.target_count", "AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT")
 	_ = v.BindEnv("stock_inventory_worker.sandbox_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED")
 	_ = v.BindEnv("stock_inventory_worker.docker_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED")
+	_ = v.BindEnv("stock_inventory_worker.pools", "AGENTAPI_STOCK_INVENTORY_WORKER_POOLS")
 	_ = v.BindEnv("stock_inventory_worker.namespace", "AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE")
 	_ = v.BindEnv("stock_inventory_worker.lease_duration", "AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION")
 	_ = v.BindEnv("stock_inventory_worker.renew_deadline", "AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE")

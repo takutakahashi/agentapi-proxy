@@ -26,6 +26,12 @@ type StockRequirements struct {
 	DinD      bool
 }
 
+// StockPool captures one stock inventory target for a capability set.
+type StockPool struct {
+	TargetCount  int
+	Requirements StockRequirements
+}
+
 // WorkerConfig contains configuration for the stock inventory worker.
 type WorkerConfig struct {
 	// CheckInterval is how often to check and replenish stock sessions.
@@ -34,6 +40,9 @@ type WorkerConfig struct {
 	TargetCount int
 	// Requirements is the pod capability template for stock sessions.
 	Requirements StockRequirements
+	// Pools optionally configures multiple stock inventory targets. When set,
+	// TargetCount and Requirements are ignored.
+	Pools []StockPool
 	// Enabled indicates whether the worker should run.
 	Enabled bool
 }
@@ -81,8 +90,8 @@ func (w *Worker) Start(ctx context.Context) error {
 	w.wg.Add(1)
 	go w.run(ctx)
 
-	log.Printf("[STOCK_INVENTORY] Started with check interval %v, target count %d",
-		w.config.CheckInterval, w.config.TargetCount)
+	log.Printf("[STOCK_INVENTORY] Started with check interval %v, pools %d",
+		w.config.CheckInterval, len(w.effectivePools()))
 	return nil
 }
 
@@ -134,25 +143,41 @@ func (w *Worker) run(ctx context.Context) {
 
 // replenishStock checks the current stock count and creates sessions to reach TargetCount.
 func (w *Worker) replenishStock(ctx context.Context) {
-	count, err := w.repo.CountStockSessions(ctx, w.config.Requirements.Sandbox, w.config.Requirements.DinD)
+	for _, pool := range w.effectivePools() {
+		w.replenishPool(ctx, pool)
+	}
+}
+
+func (w *Worker) replenishPool(ctx context.Context, pool StockPool) {
+	count, err := w.repo.CountStockSessions(ctx, pool.Requirements.Sandbox, pool.Requirements.DinD)
 	if err != nil {
 		log.Printf("[STOCK_INVENTORY] Failed to count stock sessions: %v", err)
 		return
 	}
 
-	needed := w.config.TargetCount - count
+	needed := pool.TargetCount - count
 	if needed <= 0 {
 		return
 	}
 
 	log.Printf("[STOCK_INVENTORY] Replenishing %d stock session(s) (current: %d, target: %d, sandbox=%t, dind=%t)",
-		needed, count, w.config.TargetCount, w.config.Requirements.Sandbox, w.config.Requirements.DinD)
+		needed, count, pool.TargetCount, pool.Requirements.Sandbox, pool.Requirements.DinD)
 
 	for i := 0; i < needed; i++ {
-		if err := w.repo.CreateStockSession(ctx, w.config.Requirements.Sandbox, w.config.Requirements.DinD); err != nil {
+		if err := w.repo.CreateStockSession(ctx, pool.Requirements.Sandbox, pool.Requirements.DinD); err != nil {
 			log.Printf("[STOCK_INVENTORY] Failed to create stock session: %v", err)
 		}
 	}
+}
+
+func (w *Worker) effectivePools() []StockPool {
+	if len(w.config.Pools) > 0 {
+		return w.config.Pools
+	}
+	return []StockPool{{
+		TargetCount:  w.config.TargetCount,
+		Requirements: w.config.Requirements,
+	}}
 }
 
 // LeaderWorker wraps Worker with Kubernetes leader election so that only one

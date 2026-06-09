@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,6 +44,20 @@ var ServerCmd = &cobra.Command{
 	Short: "Start the AgentAPI Proxy Server",
 	Long:  "Start the reverse proxy server for AgentAPI that routes requests based on configuration",
 	Run:   runProxy,
+}
+
+func resolveKubernetesNamespace(candidates ...string) string {
+	for _, candidate := range candidates {
+		if namespace := strings.TrimSpace(candidate); namespace != "" {
+			return namespace
+		}
+	}
+	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		if namespace := strings.TrimSpace(string(data)); namespace != "" {
+			return namespace
+		}
+	}
+	return "default"
 }
 
 func init() {
@@ -211,13 +226,7 @@ func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server
 	}
 
 	// Determine namespace
-	namespace := configData.ScheduleWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create schedule manager
 	scheduleManager := schedule.NewKubernetesManager(client, namespace)
@@ -253,13 +262,7 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 	}
 
 	// Determine namespace
-	namespace := configData.ScheduleWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create schedule manager
 	scheduleManager := schedule.NewKubernetesManager(client, namespace)
@@ -338,10 +341,7 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 		return nil
 	}
 
-	namespace := configData.KubernetesSession.Namespace
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.KubernetesSession.Namespace)
 
 	checkInterval, err := time.ParseDuration(configData.SlackbotCleanupWorker.CheckInterval)
 	if err != nil || checkInterval <= 0 {
@@ -433,13 +433,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 		return nil
 	}
 
-	namespace := configData.StockInventoryWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.StockInventoryWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// KubernetesSessionManager implements StockRepository.
 	stockRepo, ok := proxyServer.GetSessionManager().(stock_inventory.StockRepository)
@@ -458,6 +452,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 	if targetCount <= 0 {
 		targetCount = 2
 	}
+	pools := buildStockInventoryPools(configData.StockInventoryWorker, targetCount)
 
 	workerConfig := stock_inventory.WorkerConfig{
 		CheckInterval: checkInterval,
@@ -466,6 +461,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 			Sandbox: configData.StockInventoryWorker.SandboxEnabled,
 			DinD:    configData.StockInventoryWorker.DockerEnabled,
 		},
+		Pools:         pools,
 		Enabled:       true,
 	}
 
@@ -494,9 +490,35 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 
 	go leaderWorker.Run(context.Background())
 
-	log.Printf("[STOCK_INVENTORY] Stock inventory worker started in namespace: %s (target: %d, sandbox=%t, dind=%t)",
-		namespace, targetCount, workerConfig.Requirements.Sandbox, workerConfig.Requirements.DinD)
+	poolCount := len(pools)
+	if poolCount == 0 {
+		poolCount = 1
+	}
+	log.Printf("[STOCK_INVENTORY] Stock inventory worker started in namespace: %s (pools: %d)",
+		namespace, poolCount)
 	return leaderWorker
+}
+
+func buildStockInventoryPools(workerConfig config.StockInventoryWorkerConfig, defaultTargetCount int) []stock_inventory.StockPool {
+	if len(workerConfig.Pools) == 0 {
+		return nil
+	}
+
+	pools := make([]stock_inventory.StockPool, 0, len(workerConfig.Pools))
+	for _, poolConfig := range workerConfig.Pools {
+		targetCount := poolConfig.TargetCount
+		if targetCount < 0 {
+			targetCount = defaultTargetCount
+		}
+		pools = append(pools, stock_inventory.StockPool{
+			TargetCount: targetCount,
+			Requirements: stock_inventory.StockRequirements{
+				Sandbox: poolConfig.SandboxEnabled,
+				DinD:    poolConfig.DockerEnabled,
+			},
+		})
+	}
+	return pools
 }
 
 // registerWebhookHandlers registers webhook REST API handlers
@@ -517,13 +539,7 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 	}
 
 	// Determine namespace
-	namespace := configData.ScheduleWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create webhook repository (clean architecture)
 	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
@@ -570,13 +586,7 @@ func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *
 	}
 	manager.SetSessionAllocationNotifier(buildSessionAllocationNotifier(configData))
 
-	namespace := configData.StockInventoryWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.StockInventoryWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	leaseDuration, err := time.ParseDuration(configData.StockInventoryWorker.LeaseDuration)
 	if err != nil {
@@ -669,13 +679,7 @@ func registerImportExportHandlers(configData *config.Config, proxyServer *app.Se
 	}
 
 	// Determine namespace
-	namespace := configData.ScheduleWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create schedule manager
 	scheduleManager := schedule.NewKubernetesManager(client, namespace)
@@ -725,13 +729,7 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 	}
 
 	// Determine namespace
-	namespace := configData.ScheduleWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create SlackBot repository
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
@@ -761,13 +759,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 	}
 
 	// Determine namespace
-	namespace := configData.ScheduleWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create dependencies
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
@@ -896,13 +888,7 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 		return
 	}
 
-	namespace := configData.ScheduleWorker.Namespace
-	if namespace == "" {
-		namespace = configData.KubernetesSession.Namespace
-	}
-	if namespace == "" {
-		namespace = "default"
-	}
+	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	scheduleManager := schedule.NewKubernetesManager(client, namespace)
 	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)

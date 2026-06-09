@@ -35,9 +35,54 @@ func TestReplenishStockUsesConfiguredRequirements(t *testing.T) {
 	}
 }
 
+func TestReplenishStockUsesAllConfiguredPools(t *testing.T) {
+	repo := &recordingStockRepo{
+		counts: map[StockRequirements]int{
+			{Sandbox: false, DinD: false}: 1,
+			{Sandbox: false, DinD: true}:  0,
+			{Sandbox: true, DinD: false}:  2,
+			{Sandbox: true, DinD: true}:   1,
+		},
+	}
+	pools := []StockPool{
+		{TargetCount: 2, Requirements: StockRequirements{Sandbox: false, DinD: false}},
+		{TargetCount: 2, Requirements: StockRequirements{Sandbox: false, DinD: true}},
+		{TargetCount: 2, Requirements: StockRequirements{Sandbox: true, DinD: false}},
+		{TargetCount: 2, Requirements: StockRequirements{Sandbox: true, DinD: true}},
+	}
+	worker := NewWorker(repo, WorkerConfig{
+		CheckInterval: time.Minute,
+		Pools:         pools,
+		Enabled:       true,
+	})
+
+	worker.replenishStock(context.Background())
+
+	if !reflect.DeepEqual(repo.countedRequirements, []StockRequirements{
+		{Sandbox: false, DinD: false},
+		{Sandbox: false, DinD: true},
+		{Sandbox: true, DinD: false},
+		{Sandbox: true, DinD: true},
+	}) {
+		t.Fatalf("CountStockSessions requirements = %+v", repo.countedRequirements)
+	}
+
+	wantCreates := []StockRequirements{
+		{Sandbox: false, DinD: false},
+		{Sandbox: false, DinD: true},
+		{Sandbox: false, DinD: true},
+		{Sandbox: true, DinD: true},
+	}
+	if !reflect.DeepEqual(repo.createRequirements, wantCreates) {
+		t.Fatalf("CreateStockSession requirements = %+v, want %+v", repo.createRequirements, wantCreates)
+	}
+}
+
 type recordingStockRepo struct {
-	count              int
-	countRequirements StockRequirements
+	count               int
+	counts              map[StockRequirements]int
+	countRequirements   StockRequirements
+	countedRequirements []StockRequirements
 	createRequirements []StockRequirements
 }
 
@@ -47,7 +92,12 @@ func (r *recordingStockRepo) CreateStockSession(_ context.Context, sandbox, dind
 }
 
 func (r *recordingStockRepo) CountStockSessions(_ context.Context, sandbox, dind bool) (int, error) {
-	r.countRequirements = StockRequirements{Sandbox: sandbox, DinD: dind}
+	requirements := StockRequirements{Sandbox: sandbox, DinD: dind}
+	r.countRequirements = requirements
+	r.countedRequirements = append(r.countedRequirements, requirements)
+	if r.counts != nil {
+		return r.counts[requirements], nil
+	}
 	return r.count, nil
 }
 

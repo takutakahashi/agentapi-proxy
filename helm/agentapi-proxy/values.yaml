@@ -330,7 +330,7 @@ kubernetesSession:
   # Number of replicas for the agentapi-proxy Deployment
   replicaCount: 3
 
-  # Namespace for session resources (defaults to release namespace if empty)
+  # Deprecated: session resources always use the Helm release namespace.
   namespace: ""
 
   # Container image for session pods
@@ -580,6 +580,25 @@ stockInventoryWorker:
   # expected by sessions the allocator should serve from stock.
   sandboxEnabled: false
   dockerEnabled: false
+
+  # Optional capability pools. When set, each pool is replenished independently
+  # and the single targetCount/sandboxEnabled/dockerEnabled fields above are
+  # used only as defaults for pool entries with no targetCount.
+  # To keep inventory for every sandbox/DinD combination, configure:
+  # pools:
+  #   - targetCount: 2
+  #     sandboxEnabled: false
+  #     dockerEnabled: false
+  #   - targetCount: 2
+  #     sandboxEnabled: false
+  #     dockerEnabled: true
+  #   - targetCount: 2
+  #     sandboxEnabled: true
+  #     dockerEnabled: false
+  #   - targetCount: 2
+  #     sandboxEnabled: true
+  #     dockerEnabled: true
+  pools: []
 
   # Leader election configuration (prevents duplicate stock creation in multi-replica deployments)
   leaderElection:
