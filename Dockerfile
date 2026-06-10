@@ -177,19 +177,19 @@ RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x npm "$@"
 ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
 
 # install claude-agentapi
-RUN bun install -g @takutakahashi/claude-agentapi
+RUN bun add -g @takutakahashi/claude-agentapi
 
 # Install codex CLI and place a wrapper in /opt/claude/bin (first in PATH).
 # The bun-installed codex script uses "#!/usr/bin/env node", but /usr/local/bin/node is a
 # claude wrapper. The wrapper here explicitly invokes bun so codex works reliably in the proxy.
 # Uses the absolute path to the codex script so it works even when HOME is overridden.
-RUN bun install -g @openai/codex && \
+RUN bun add -g @openai/codex && \
     printf '#!/bin/bash\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
     sudo tee /opt/claude/bin/codex > /dev/null && \
     sudo chmod +x /opt/claude/bin/codex
 
 # Install claude-agent-sdk CLI and create arch-agnostic symlink
-RUN bun install -g @anthropic-ai/claude-agent-sdk && \
+RUN bun add -g @anthropic-ai/claude-agent-sdk && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) SDK_ARCH="linux-x64" ;; \
