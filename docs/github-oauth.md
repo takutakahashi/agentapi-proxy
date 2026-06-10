@@ -54,7 +54,7 @@
       "oauth": {
         "client_id": "${GITHUB_CLIENT_ID}",
         "client_secret": "${GITHUB_CLIENT_SECRET}",
-        "scope": "repo workflow read:org admin:repo_hook notifications user:email",
+        "scope": "repo workflow read:org project admin:repo_hook notifications user:email",
         "base_url": "https://github.com"
       },
       "user_mapping": {
@@ -342,25 +342,26 @@ const sessions = await client.makeAuthenticatedRequest('/search');
 
 #### 1. 基本的な開発（推奨）
 ```json
-"scope": "repo workflow read:org admin:repo_hook notifications user:email"
+"scope": "repo workflow read:org project admin:repo_hook notifications user:email"
 ```
 - **repo**: プライベート・パブリックリポジトリの読み書き、プルリクエスト、イシュー管理
 - **workflow**: GitHub Actionsワークフローファイルの作成・編集
 - **read:org**: Organization メンバーシップの確認
+- **project**: GitHub Projects の読み書き
 - **admin:repo_hook**: リポジトリWebhookの管理
 - **notifications**: 通知の管理
 - **user:email**: ユーザーのメールアドレス取得
 
 #### 2. パブリックリポジトリのみ
 ```json
-"scope": "public_repo workflow read:org notifications user:email"
+"scope": "public_repo workflow read:org project notifications user:email"
 ```
 - **public_repo**: パブリックリポジトリのみの読み書き
 - プライベートリポジトリへのアクセスが不要な場合
 
 #### 3. エンタープライズ環境（フル権限）
 ```json
-"scope": "repo workflow admin:org admin:repo_hook admin:org_hook notifications user:email delete_repo"
+"scope": "repo workflow project admin:org admin:repo_hook admin:org_hook notifications user:email delete_repo"
 ```
 - **admin:org**: Organization設定の完全管理
 - **admin:org_hook**: Organization レベルのWebhook管理
@@ -368,7 +369,7 @@ const sessions = await client.makeAuthenticatedRequest('/search');
 
 #### 4. 読み取り専用（最小権限）
 ```json
-"scope": "read:user read:org"
+"scope": "read:user read:org project"
 ```
 - ユーザー情報とOrganization情報の読み取りのみ
 
@@ -379,6 +380,7 @@ const sessions = await client.makeAuthenticatedRequest('/search');
 | `repo` | プライベート・パブリックリポジトリのフル権限 | 基本的な開発作業 |
 | `public_repo` | パブリックリポジトリのみの読み書き | オープンソース開発 |
 | `workflow` | GitHub Actionsワークフローの管理 | CI/CD設定 |
+| `project` | GitHub Projects の読み書き | プロジェクト管理 |
 | `admin:org` | Organization の完全管理 | 管理者権限 |
 | `admin:repo_hook` | リポジトリWebhookの管理 | 統合・自動化 |
 | `admin:org_hook` | OrganizationWebhookの管理 | エンタープライズ統合 |

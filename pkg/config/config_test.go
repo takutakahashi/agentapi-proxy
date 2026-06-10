@@ -109,8 +109,8 @@ func TestLoadConfig(t *testing.T) {
 		}
 		if loadedConfig.Auth.GitHub.OAuth == nil {
 			t.Error("Auth.GitHub.OAuth should not be nil")
-		} else if loadedConfig.Auth.GitHub.OAuth.Scope != "read:user read:org" {
-			t.Errorf("Auth.GitHub.OAuth.Scope should be 'read:user read:org', got '%s'", loadedConfig.Auth.GitHub.OAuth.Scope)
+		} else if loadedConfig.Auth.GitHub.OAuth.Scope != "read:user read:org project" {
+			t.Errorf("Auth.GitHub.OAuth.Scope should be 'read:user read:org project', got '%s'", loadedConfig.Auth.GitHub.OAuth.Scope)
 		}
 	}
 }

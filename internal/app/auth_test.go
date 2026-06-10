@@ -31,7 +31,7 @@ func setupTestServerWithOAuth(t *testing.T) (*Server, *httptest.Server) {
 		case "/login/oauth/access_token":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer","scope":"read:user,read:org"}`))
+			_, _ = w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer","scope":"read:user,read:org,project"}`))
 		case "/user":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -58,7 +58,7 @@ func setupTestServerWithOAuth(t *testing.T) (*Server, *httptest.Server) {
 				OAuth: &config.GitHubOAuthConfig{
 					ClientID:     "test-client-id",
 					ClientSecret: "test-client-secret",
-					Scope:        "read:user read:org",
+					Scope:        "read:user read:org project",
 					BaseURL:      mockServer.URL,
 				},
 			},

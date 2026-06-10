@@ -46,7 +46,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 				response := map[string]interface{}{
 					"access_token": "gho_integration_test_token",
 					"token_type":   "bearer",
-					"scope":        "read:user,read:org",
+					"scope":        "read:user,read:org,project",
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(response)
@@ -182,7 +182,7 @@ func TestGitHubOAuthIntegration(t *testing.T) {
 	oauthCfg := &config.GitHubOAuthConfig{
 		ClientID:     "test-client-id",
 		ClientSecret: "test-client-secret",
-		Scope:        "read:user read:org",
+		Scope:        "read:user read:org project",
 		BaseURL:      mockGitHub.URL,
 	}
 
