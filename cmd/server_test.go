@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	stockmodule "github.com/takutakahashi/agentapi-proxy/internal/app/modules/stock"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
 )
@@ -104,7 +105,7 @@ func TestServerCmdFlags(t *testing.T) {
 }
 
 func TestBuildStockInventoryPoolsAllowsZeroTargetCount(t *testing.T) {
-	pools := buildStockInventoryPools(config.StockInventoryWorkerConfig{
+	pools := stockmodule.BuildPools(config.StockInventoryWorkerConfig{
 		Pools: []config.StockInventoryPoolConfig{
 			{TargetCount: 0, SandboxEnabled: false, DockerEnabled: true},
 		},
