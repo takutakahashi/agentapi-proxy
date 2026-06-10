@@ -57,7 +57,7 @@ FROM ubuntu:24.04
 # Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables && \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables unzip && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
