@@ -3,12 +3,12 @@ package mcpmodule
 import (
 	"log"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/modulehost"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
 )
 
 // RegisterHandler registers the MCP HTTP handler.
-func RegisterHandler(proxyServer *app.Server) {
+func RegisterHandler(proxyServer modulehost.MCPHost) {
 	log.Printf("[MCP_HANDLER] Registering MCP handler...")
 
 	mcpHandler := mcpiface.NewMCPHandler(proxyServer)

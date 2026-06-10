@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/k8sutil"
+	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/modulehost"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"k8s.io/client-go/kubernetes"
@@ -14,7 +14,7 @@ import (
 )
 
 // RegisterHandlers registers schedule REST API handlers.
-func RegisterHandlers(configData *config.Config, proxyServer *app.Server) {
+func RegisterHandlers(configData *config.Config, proxyServer modulehost.ScheduleHost) {
 	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
 
 	restConfig, err := ctrl.GetConfig()
@@ -43,7 +43,7 @@ func RegisterHandlers(configData *config.Config, proxyServer *app.Server) {
 }
 
 // StartWorker starts the schedule worker with leader election.
-func StartWorker(configData *config.Config, proxyServer *app.Server) *schedule.LeaderWorker {
+func StartWorker(configData *config.Config, proxyServer modulehost.ScheduleHost) *schedule.LeaderWorker {
 	log.Printf("[SCHEDULE_WORKER] Initializing schedule worker...")
 
 	restConfig, err := ctrl.GetConfig()

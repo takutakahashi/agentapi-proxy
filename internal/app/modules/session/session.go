@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/k8sutil"
+	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/modulehost"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
@@ -18,7 +18,7 @@ import (
 )
 
 // StartAllocator starts the leader-elected SessionAllocator.
-func StartAllocator(configData *config.Config, proxyServer *app.Server) *services.SessionAllocator {
+func StartAllocator(configData *config.Config, proxyServer modulehost.SessionAllocatorHost) *services.SessionAllocator {
 	log.Printf("[SESSION_ALLOCATOR] Initializing session allocator...")
 
 	restConfig, err := ctrl.GetConfig()
@@ -115,7 +115,7 @@ func buildAllocationNotifier(configData *config.Config) services.SessionAllocati
 }
 
 // RegisterManagerHandlers registers the session manager forwarding endpoint.
-func RegisterManagerHandlers(configData *config.Config, proxyServer *app.Server) {
+func RegisterManagerHandlers(configData *config.Config, proxyServer modulehost.SessionManagerHost) {
 	if !configData.SessionManager.Enabled {
 		log.Printf("[SESSION_MANAGER] Session manager endpoint is disabled")
 		return
@@ -133,7 +133,7 @@ func RegisterManagerHandlers(configData *config.Config, proxyServer *app.Server)
 }
 
 // StartManagerAllocator starts outbound allocator polling against an upstream proxy.
-func StartManagerAllocator(ctx context.Context, configData *config.Config, proxyServer *app.Server) {
+func StartManagerAllocator(ctx context.Context, configData *config.Config, proxyServer modulehost.SessionAllocatorHost) {
 	upstreamURL := configData.SessionManager.UpstreamURL
 	token := configData.SessionManager.ConnectionToken
 	if upstreamURL == "" || token == "" {

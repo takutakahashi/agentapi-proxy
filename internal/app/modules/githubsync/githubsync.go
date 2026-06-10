@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/k8sutil"
+	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/modulehost"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -17,7 +17,7 @@ import (
 )
 
 // RegisterHandlers registers GitHub bidirectional sync REST API handlers.
-func RegisterHandlers(configData *config.Config, proxyServer *app.Server) {
+func RegisterHandlers(configData *config.Config, proxyServer modulehost.GitHubSyncHost) {
 	log.Printf("[GITHUB_SYNC] Registering GitHub sync handlers...")
 
 	restConfig, err := ctrl.GetConfig()

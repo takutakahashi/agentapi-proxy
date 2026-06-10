@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/k8sutil"
+	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/modulehost"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
@@ -19,7 +19,7 @@ import (
 )
 
 // RegisterHandlers registers SlackBot management REST API handlers.
-func RegisterHandlers(configData *config.Config, proxyServer *app.Server) {
+func RegisterHandlers(configData *config.Config, proxyServer modulehost.SlackBotHandlerHost) {
 	log.Printf("[SLACKBOT_HANDLERS] Registering slackbot handlers...")
 
 	restConfig, err := ctrl.GetConfig()
@@ -44,7 +44,7 @@ func RegisterHandlers(configData *config.Config, proxyServer *app.Server) {
 }
 
 // StartCleanupWorker starts the Slackbot session cleanup worker with leader election.
-func StartCleanupWorker(configData *config.Config, proxyServer *app.Server) *slackbotcleanup.LeaderCleanupWorker {
+func StartCleanupWorker(configData *config.Config, proxyServer modulehost.SessionManagerProvider) *slackbotcleanup.LeaderCleanupWorker {
 	log.Printf("[SLACKBOT_CLEANUP] Initializing Slackbot cleanup worker...")
 
 	restConfig, err := ctrl.GetConfig()
@@ -134,7 +134,7 @@ func StartCleanupWorker(configData *config.Config, proxyServer *app.Server) *sla
 }
 
 // StartSocketManager starts the Slack Socket Mode manager with per-bot leader election.
-func StartSocketManager(configData *config.Config, proxyServer *app.Server) {
+func StartSocketManager(configData *config.Config, proxyServer modulehost.SlackSocketHost) {
 	log.Printf("[SOCKET_MANAGER] Initializing Slack Socket Mode manager...")
 
 	restConfig, err := ctrl.GetConfig()

@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/k8sutil"
+	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/modulehost"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	stockinventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
@@ -15,7 +15,7 @@ import (
 )
 
 // StartWorker starts the stock session inventory worker with leader election.
-func StartWorker(configData *config.Config, proxyServer *app.Server) *stockinventory.LeaderWorker {
+func StartWorker(configData *config.Config, proxyServer modulehost.SessionManagerProvider) *stockinventory.LeaderWorker {
 	log.Printf("[STOCK_INVENTORY] Initializing stock inventory worker...")
 
 	restConfig, err := ctrl.GetConfig()

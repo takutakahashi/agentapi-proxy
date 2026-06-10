@@ -30,8 +30,16 @@ type MCPHandler struct {
 	httpHandler    http.Handler
 }
 
+type DependencyProvider interface {
+	GetSessionManager() repositories.SessionManager
+	GetShareRepository() repositories.ShareRepository
+	GetTaskRepository() repositories.TaskRepository
+	GetTaskGroupRepository() repositories.TaskGroupRepository
+	GetMemoryRepository() repositories.MemoryRepository
+}
+
 // NewMCPHandler creates a new MCP handler for the /mcp endpoint
-func NewMCPHandler(server *app.Server) *MCPHandler {
+func NewMCPHandler(server DependencyProvider) *MCPHandler {
 	// Get dependencies from server
 	sessionManager := server.GetSessionManager()
 	shareRepo := server.GetShareRepository()

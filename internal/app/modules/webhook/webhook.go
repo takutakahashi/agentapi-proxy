@@ -3,8 +3,8 @@ package webhookmodule
 import (
 	"log"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/k8sutil"
+	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/modulehost"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
@@ -13,7 +13,7 @@ import (
 )
 
 // RegisterHandlers registers webhook REST API handlers.
-func RegisterHandlers(configData *config.Config, proxyServer *app.Server) {
+func RegisterHandlers(configData *config.Config, proxyServer modulehost.WebhookHost) {
 	log.Printf("[WEBHOOK_HANDLERS] Registering webhook handlers...")
 
 	restConfig, err := ctrl.GetConfig()

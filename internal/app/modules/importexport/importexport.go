@@ -3,8 +3,8 @@ package importexportmodule
 import (
 	"log"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/k8sutil"
+	"github.com/takutakahashi/agentapi-proxy/internal/app/modules/modulehost"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -15,7 +15,7 @@ import (
 )
 
 // RegisterHandlers registers import/export REST API handlers.
-func RegisterHandlers(configData *config.Config, proxyServer *app.Server) {
+func RegisterHandlers(configData *config.Config, proxyServer modulehost.ImportExportHost) {
 	log.Printf("[IMPORT_EXPORT_HANDLERS] Registering import/export handlers...")
 
 	restConfig, err := ctrl.GetConfig()
