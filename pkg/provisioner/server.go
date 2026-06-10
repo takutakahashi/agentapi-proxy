@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/claudeconfig"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -81,6 +83,13 @@ func (s *Server) Start(ctx context.Context) error {
 	// beyond the HTTP request that triggered them.
 	s.serverCtx = ctx
 
+	// Seed Claude Code settings before the startup pre-script runs. Stock pods
+	// execute bun/npm wrappers via `claude x` before session provisioning, so
+	// compile-time settings are not available yet.
+	if err := ensureClaudeStartupDefaults("/home/agentapi"); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to seed Claude startup settings: %v", err)
+	}
+
 	// Run the common startup pre-script immediately in the background.
 	// This pre-fetches ACP packages while the Pod is idle (stock inventory or
 	// Pod restart), so provisioning does not have to wait for network downloads.
@@ -146,6 +155,62 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		log.Printf("[PROVISIONER] Failed to encode status response: %v", err)
 	}
+}
+
+func ensureClaudeStartupDefaults(homeDir string) error {
+	claudeDir := filepath.Join(homeDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create .claude directory: %w", err)
+	}
+
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	settingsJSON, err := readJSONMap(settingsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read Claude settings: %w", err)
+	}
+	claudeconfig.EnsureSettingsJSONDefaults(settingsJSON)
+	if err := writeJSONMap(settingsPath, settingsJSON); err != nil {
+		return fmt.Errorf("failed to write Claude settings: %w", err)
+	}
+
+	claudeJSONPath := filepath.Join(homeDir, ".claude.json")
+	claudeJSON, err := readJSONMap(claudeJSONPath)
+	if err != nil {
+		return fmt.Errorf("failed to read Claude config: %w", err)
+	}
+	claudeconfig.EnsureClaudeJSONDefaults(claudeJSON)
+	if err := writeJSONMap(claudeJSONPath, claudeJSON); err != nil {
+		return fmt.Errorf("failed to write Claude config: %w", err)
+	}
+
+	return nil
+}
+
+func readJSONMap(path string) (map[string]interface{}, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]interface{}), nil
+		}
+		return nil, err
+	}
+	if len(data) == 0 {
+		return make(map[string]interface{}), nil
+	}
+
+	result := make(map[string]interface{})
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func writeJSONMap(path string, data map[string]interface{}) error {
+	raw, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o644)
 }
 
 // setStatus updates the provisioning state thread-safely.
