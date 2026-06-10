@@ -16,7 +16,7 @@ func TestGitHubOAuthProvider_GenerateAuthURL(t *testing.T) {
 	cfg := &config.GitHubOAuthConfig{
 		ClientID:     "test-client-id",
 		ClientSecret: "test-client-secret",
-		Scope:        "read:user read:org",
+		Scope:        "read:user read:org project",
 		BaseURL:      "https://github.com",
 	}
 
@@ -37,7 +37,7 @@ func TestGitHubOAuthProvider_GenerateAuthURL(t *testing.T) {
 	assert.Contains(t, authURL, "https://github.com/login/oauth/authorize")
 	assert.Contains(t, authURL, "client_id=test-client-id")
 	assert.Contains(t, authURL, "redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fcallback")
-	assert.Contains(t, authURL, "scope=read%3Auser+read%3Aorg")
+	assert.Contains(t, authURL, "scope=read%3Auser+read%3Aorg+project")
 	assert.Contains(t, authURL, "state=")
 	// State is URL encoded, so we just check that it exists and is not empty
 	stateIndex := strings.Index(authURL, "state=")
@@ -54,7 +54,7 @@ func TestGitHubOAuthProvider_ExchangeCode(t *testing.T) {
 			// Mock token exchange response
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer","scope":"read:user,read:org"}`))
+			_, _ = w.Write([]byte(`{"access_token":"gho_test_token","token_type":"bearer","scope":"read:user,read:org,project"}`))
 		case "/user":
 			// Mock user API response
 			w.Header().Set("Content-Type", "application/json")
@@ -74,7 +74,7 @@ func TestGitHubOAuthProvider_ExchangeCode(t *testing.T) {
 	cfg := &config.GitHubOAuthConfig{
 		ClientID:     "test-client-id",
 		ClientSecret: "test-client-secret",
-		Scope:        "read:user read:org",
+		Scope:        "read:user read:org project",
 		BaseURL:      mockServer.URL,
 	}
 
@@ -113,7 +113,7 @@ func TestGitHubOAuthProvider_ExchangeCode_InvalidState(t *testing.T) {
 	cfg := &config.GitHubOAuthConfig{
 		ClientID:     "test-client-id",
 		ClientSecret: "test-client-secret",
-		Scope:        "read:user read:org",
+		Scope:        "read:user read:org project",
 		BaseURL:      "https://github.com",
 	}
 
@@ -136,7 +136,7 @@ func TestGitHubOAuthProvider_ExchangeCode_ExpiredState(t *testing.T) {
 	cfg := &config.GitHubOAuthConfig{
 		ClientID:     "test-client-id",
 		ClientSecret: "test-client-secret",
-		Scope:        "read:user read:org",
+		Scope:        "read:user read:org project",
 		BaseURL:      "https://github.com",
 	}
 

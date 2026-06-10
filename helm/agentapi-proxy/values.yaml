@@ -141,7 +141,7 @@ config:
       oauth:
         clientId: ""
         clientSecret: ""
-        scope: "read:user read:org repo workflow"
+        scope: "read:user read:org project repo workflow"
         baseUrl: ""
         # 許可するリダイレクトURI (カンマ区切りで複数指定可能)
         allowedRedirectUris: ""

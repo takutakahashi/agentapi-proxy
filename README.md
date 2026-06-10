@@ -192,7 +192,7 @@ agentapi-proxy supports flexible authentication mechanisms:
       "oauth": {
         "client_id": "${GITHUB_CLIENT_ID}",
         "client_secret": "${GITHUB_CLIENT_SECRET}",
-        "scope": "read:user read:org"
+        "scope": "read:user read:org project"
       }
     }
   }

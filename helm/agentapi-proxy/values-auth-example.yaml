@@ -12,7 +12,7 @@ config:
       oauth:
         clientId: "your-github-client-id"
         clientSecret: "your-github-client-secret"
-        scope: "repo workflow read:org admin:repo_hook notifications user:email"
+        scope: "repo workflow read:org project admin:repo_hook notifications user:email"
 
 # Auth configuration - stored in ConfigMap and mounted to container
 # This allows complex authorization rules that cannot be expressed as environment variables

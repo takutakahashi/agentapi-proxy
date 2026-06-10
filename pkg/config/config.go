@@ -17,7 +17,7 @@
 //	AGENTAPI_AUTH_GITHUB_TOKEN_HEADER=Authorization
 //	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID=your_client_id
 //	AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
-//	AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE=read:user read:org
+//	AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE=read:user read:org project
 //	AGENTAPI_AUTH_GITHUB_USER_MAPPING_DEFAULT_ROLE=user
 //	AGENTAPI_ENABLE_MULTIPLE_USERS=true
 //	AGENTAPI_WEBHOOK_BASE_URL=https://example.com
@@ -1048,7 +1048,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.github.token_header", "Authorization")
 	v.SetDefault("auth.github.oauth.client_id", "")
 	v.SetDefault("auth.github.oauth.client_secret", "")
-	v.SetDefault("auth.github.oauth.scope", "read:user read:org")
+	v.SetDefault("auth.github.oauth.scope", "read:user read:org project")
 	v.SetDefault("auth.github.oauth.base_url", "")
 
 	// AWS auth defaults
@@ -1179,7 +1179,7 @@ func applyConfigDefaults(config *Config) {
 			config.Auth.GitHub.TokenHeader = "Authorization"
 		}
 		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
-			config.Auth.GitHub.OAuth.Scope = "read:user read:org"
+			config.Auth.GitHub.OAuth.Scope = "read:user read:org project"
 		}
 	}
 	if config.Auth.AWS != nil {
