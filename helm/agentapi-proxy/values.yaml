@@ -398,6 +398,8 @@ kubernetesSession:
   podStopTimeout: 30
 
   # Session Pods poll the proxy internal API for provisioning jobs.
+  # Empty defaults to this chart's Service DNS:
+  # http://<release-fullname>.<release-namespace>.svc.cluster.local:<service.port>
   provisioner:
     proxyUrl: ""
 
