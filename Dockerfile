@@ -161,6 +161,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
+# Install Bun for build-time global package installation.
+RUN curl -fsSL https://bun.sh/install | bash
+
 # Create npm, npx, bun, bunx, and node wrapper scripts that use claude x with BUN_BE_BUN=1
 RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x npm "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
     sudo chmod +x /usr/local/bin/npm && \
@@ -177,19 +180,19 @@ RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x npm "$@"
 ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
 
 # install claude-agentapi
-RUN bun add -g @takutakahashi/claude-agentapi
+RUN /home/agentapi/.bun/bin/bun add -g @takutakahashi/claude-agentapi
 
 # Install codex CLI and place a wrapper in /opt/claude/bin (first in PATH).
 # The bun-installed codex script uses "#!/usr/bin/env node", but /usr/local/bin/node is a
 # claude wrapper. The wrapper here explicitly invokes bun so codex works reliably in the proxy.
 # Uses the absolute path to the codex script so it works even when HOME is overridden.
-RUN bun add -g @openai/codex && \
+RUN /home/agentapi/.bun/bin/bun add -g @openai/codex && \
     printf '#!/bin/bash\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
     sudo tee /opt/claude/bin/codex > /dev/null && \
     sudo chmod +x /opt/claude/bin/codex
 
 # Install claude-agent-sdk CLI and create arch-agnostic symlink
-RUN bun add -g @anthropic-ai/claude-agent-sdk && \
+RUN /home/agentapi/.bun/bin/bun add -g @anthropic-ai/claude-agent-sdk && \
     ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) SDK_ARCH="linux-x64" ;; \
