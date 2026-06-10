@@ -1,4 +1,7 @@
 {
   "hasCompletedOnboarding": true,
-  "bypassPermissionsModeAccepted": true
+  "bypassPermissionsModeAccepted": true,
+  "hasTrustDialogAccepted": true,
+  "hasCompletedProjectOnboarding": true,
+  "dontCrawlDirectory": true
 }

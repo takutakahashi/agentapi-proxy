@@ -131,6 +131,9 @@ func generateClaudeJSON(outputDir string) error {
 
 	existing["hasCompletedOnboarding"] = true
 	existing["bypassPermissionsModeAccepted"] = true
+	existing["hasTrustDialogAccepted"] = true
+	existing["hasCompletedProjectOnboarding"] = true
+	existing["dontCrawlDirectory"] = true
 
 	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {

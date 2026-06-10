@@ -121,6 +121,9 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcp
 	// Always set required onboarding fields
 	existing["hasCompletedOnboarding"] = true
 	existing["bypassPermissionsModeAccepted"] = true
+	existing["hasTrustDialogAccepted"] = true
+	existing["hasCompletedProjectOnboarding"] = true
+	existing["dontCrawlDirectory"] = true
 
 	// Write MCP servers directly into claude.json so Claude Code reads them natively
 	if len(mcpServers) > 0 {

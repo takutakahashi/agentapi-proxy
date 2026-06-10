@@ -186,6 +186,9 @@ func TestCompile_ClaudeJSON(t *testing.T) {
 	// Verify onboarding flags are always present
 	assert.Equal(t, true, claudeJSON["hasCompletedOnboarding"])
 	assert.Equal(t, true, claudeJSON["bypassPermissionsModeAccepted"])
+	assert.Equal(t, true, claudeJSON["hasTrustDialogAccepted"])
+	assert.Equal(t, true, claudeJSON["hasCompletedProjectOnboarding"])
+	assert.Equal(t, true, claudeJSON["dontCrawlDirectory"])
 
 	// Verify custom key is preserved
 	assert.Equal(t, "customValue", claudeJSON["customKey"])

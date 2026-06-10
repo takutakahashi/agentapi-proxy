@@ -332,6 +332,9 @@ func runGenerateSettingSchedule() error {
 			ClaudeJSON: map[string]interface{}{
 				"hasCompletedOnboarding":        true,
 				"bypassPermissionsModeAccepted": true,
+				"hasTrustDialogAccepted":        true,
+				"hasCompletedProjectOnboarding": true,
+				"dontCrawlDirectory":            true,
 			},
 		},
 	}
@@ -430,6 +433,9 @@ func runGenerateSettingSlackBot(cmd *cobra.Command) error {
 			ClaudeJSON: map[string]interface{}{
 				"hasCompletedOnboarding":        true,
 				"bypassPermissionsModeAccepted": true,
+				"hasTrustDialogAccepted":        true,
+				"hasCompletedProjectOnboarding": true,
+				"dontCrawlDirectory":            true,
 			},
 		},
 	}

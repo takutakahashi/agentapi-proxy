@@ -421,6 +421,15 @@ func TestGenerateClaudeJSON(t *testing.T) {
 		if result["bypassPermissionsModeAccepted"] != true {
 			t.Error("Expected bypassPermissionsModeAccepted to be true")
 		}
+		if result["hasTrustDialogAccepted"] != true {
+			t.Error("Expected hasTrustDialogAccepted to be true")
+		}
+		if result["hasCompletedProjectOnboarding"] != true {
+			t.Error("Expected hasCompletedProjectOnboarding to be true")
+		}
+		if result["dontCrawlDirectory"] != true {
+			t.Error("Expected dontCrawlDirectory to be true")
+		}
 	})
 
 	t.Run("preserves existing fields", func(t *testing.T) {

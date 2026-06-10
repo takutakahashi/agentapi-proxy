@@ -106,6 +106,9 @@ func mergeClaudeConfig(homeDir string) error {
 	configToMerge := map[string]interface{}{
 		"hasCompletedOnboarding":        true,
 		"bypassPermissionsModeAccepted": true,
+		"hasTrustDialogAccepted":        true,
+		"hasCompletedProjectOnboarding": true,
+		"dontCrawlDirectory":            true,
 	}
 
 	// Read existing ~/.claude.json if it exists
