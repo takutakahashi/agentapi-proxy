@@ -162,15 +162,15 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
 # Create npm, npx, bun, bunx, and node wrapper scripts that use claude x with BUN_BE_BUN=1
-RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
+RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x npm "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
     sudo chmod +x /usr/local/bin/npm && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
+    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x npx "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
     sudo chmod +x /usr/local/bin/npx && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
+    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x bun "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
     sudo chmod +x /usr/local/bin/bun && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
+    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x bunx "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
     sudo chmod +x /usr/local/bin/bunx && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/node > /dev/null && \
+    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x node "$@"\n' | sudo tee /usr/local/bin/node > /dev/null && \
     sudo chmod +x /usr/local/bin/node
 
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI)
