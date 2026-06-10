@@ -53,4 +53,7 @@ func TestEnsureSettingsJSONDefaults(t *testing.T) {
 	if permissions["skipDangerousModePermissionPrompt"] != true {
 		t.Fatalf("expected skipDangerousModePermissionPrompt")
 	}
+	if settings["skipDangerousModePermissionPrompt"] != true {
+		t.Fatalf("expected top-level skipDangerousModePermissionPrompt")
+	}
 }

@@ -486,6 +486,7 @@ func assertClaudePermissionsBypass(t *testing.T, settingsJSON map[string]interfa
 	require.True(t, ok, "permissions should exist")
 	assert.Equal(t, "bypassPermissions", permissions["defaultMode"])
 	assert.Equal(t, true, permissions["skipDangerousModePermissionPrompt"])
+	assert.Equal(t, true, settingsJSON["skipDangerousModePermissionPrompt"])
 }
 
 func TestCompile_CodexConfigTOML(t *testing.T) {

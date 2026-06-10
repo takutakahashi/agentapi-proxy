@@ -218,6 +218,8 @@ COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
 COPY config/CLAUDE.md /etc/claude-code/CLAUDE.md
 COPY config/managed-settings.json /etc/claude-code/managed-settings.json
+COPY config/claude.json /tmp/config/claude.json
+COPY config/claude-settings.json /tmp/config/claude-settings.json
 
 # Copy Codex configuration files for entrypoint script
 # AGENTS.md is the Codex equivalent of CLAUDE.md (user-level instructions → ~/.codex/instructions.md)

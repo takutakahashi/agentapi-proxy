@@ -80,6 +80,7 @@ func EnsureSettingsJSONDefaults(settings map[string]interface{}) map[string]inte
 
 	permissions["defaultMode"] = "bypassPermissions"
 	permissions["skipDangerousModePermissionPrompt"] = true
+	settings["skipDangerousModePermissionPrompt"] = true
 
 	return settings
 }
