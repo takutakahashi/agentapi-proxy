@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	mcputil "github.com/takutakahashi/agentapi-proxy/pkg/mcp"
 	"gopkg.in/yaml.v3"
 )
 
@@ -409,6 +410,7 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 			log.Printf("[COMPILE-SETTINGS] Warning: skipping MCP server %q: value is not a map", name)
 			continue
 		}
+		envValues := codexMCPEnvValues(config)
 
 		// Use [mcp_servers.<name>] nested-table format (not [[mcp_servers]] array-of-tables).
 		// The Codex CLI expects mcp_servers to be a map keyed by server name.
@@ -420,16 +422,16 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 			fmt.Fprintf(&sb, "type = %q\n", v)
 		}
 		if v, ok := config["url"].(string); ok {
-			fmt.Fprintf(&sb, "url = %q\n", v)
+			fmt.Fprintf(&sb, "url = %q\n", mcputil.ExpandEnvVarsWithMap(v, envValues))
 		}
 		if v, ok := config["command"].(string); ok {
-			fmt.Fprintf(&sb, "command = %q\n", v)
+			fmt.Fprintf(&sb, "command = %q\n", mcputil.ExpandEnvVarsWithMap(v, envValues))
 		}
 		if args, ok := config["args"].([]interface{}); ok && len(args) > 0 {
 			parts := make([]string, 0, len(args))
 			for _, a := range args {
 				if s, ok := a.(string); ok {
-					parts = append(parts, fmt.Sprintf("%q", s))
+					parts = append(parts, fmt.Sprintf("%q", mcputil.ExpandEnvVarsWithMap(s, envValues)))
 				}
 			}
 			fmt.Fprintf(&sb, "args = [%s]\n", strings.Join(parts, ", "))
@@ -443,7 +445,7 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 			var envParts []string
 			for _, k := range envKeys {
 				if v, ok := env[k].(string); ok {
-					envParts = append(envParts, fmt.Sprintf("%s = %q", k, v))
+					envParts = append(envParts, fmt.Sprintf("%s = %q", k, mcputil.ExpandEnvVarsWithMap(v, envValues)))
 				}
 			}
 			if len(envParts) > 0 {
@@ -459,7 +461,7 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 			var headerParts []string
 			for _, k := range headerKeys {
 				if v, ok := headers[k].(string); ok {
-					headerParts = append(headerParts, fmt.Sprintf("%q = %q", k, v))
+					headerParts = append(headerParts, fmt.Sprintf("%q = %q", k, mcputil.ExpandEnvVarsWithMap(v, envValues)))
 				}
 			}
 			if len(headerParts) > 0 {
@@ -474,6 +476,21 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 
 	log.Printf("[COMPILE-SETTINGS] Appended %d MCP server(s) to %s", len(mcpServers), configPath)
 	return nil
+}
+
+func codexMCPEnvValues(config map[string]interface{}) map[string]string {
+	env, ok := config["env"].(map[string]interface{})
+	if !ok || len(env) == 0 {
+		return nil
+	}
+
+	values := make(map[string]string, len(env))
+	for k, v := range env {
+		if s, ok := v.(string); ok {
+			values[k] = s
+		}
+	}
+	return values
 }
 
 func codexMCPServerSupportsEnv(serverType string) bool {
