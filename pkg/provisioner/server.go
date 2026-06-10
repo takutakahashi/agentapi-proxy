@@ -23,8 +23,8 @@ import (
 // It pre-fetches the latest ACP package binaries so that agent startup does
 // not incur a network download when a provision request arrives.
 // Override with the PROVISIONER_PRE_SCRIPT environment variable.
-const defaultStartupScript = `bun install --global @agentclientprotocol/claude-agent-acp@latest
-npm install --global @zed-industries/codex-acp@latest
+const defaultStartupScript = `bun add -g @agentclientprotocol/claude-agent-acp@latest
+bun add -g @zed-industries/codex-acp@latest
 `
 
 // Status represents the provisioning lifecycle state.
