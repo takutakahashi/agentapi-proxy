@@ -561,9 +561,10 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 						"env":     map[string]interface{}{"GITHUB_TOKEN": "ghp_xxx"},
 					},
 					"slack": map[string]interface{}{
-						"type": "http",
-						"url":  "https://mcp.example.com/slack",
-						"env":  map[string]interface{}{"SLACK_TOKEN": "xoxb-token"},
+						"type":    "http",
+						"url":     "https://mcp.example.com/slack",
+						"env":     map[string]interface{}{"SLACK_TOKEN": "xoxb-token"},
+						"headers": map[string]interface{}{"Authorization": "Bearer token", "X-Custom": "value"},
 					},
 				},
 			},
@@ -600,6 +601,7 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		assert.Contains(t, content, "[mcp_servers.slack]")
 		assert.Contains(t, content, `type = "http"`)
 		assert.Contains(t, content, `url = "https://mcp.example.com/slack"`)
+		assert.Contains(t, content, `http_headers = {"Authorization" = "Bearer token", "X-Custom" = "value"}`)
 		assert.Contains(t, content, "GITHUB_TOKEN")
 		assert.NotContains(t, content, "SLACK_TOKEN")
 	})
@@ -622,6 +624,9 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 						"type": "streamable_http",
 						"url":  "https://api.githubcopilot.com/mcp",
 						"env":  map[string]interface{}{"GITHUB_TOKEN": "$GITHUB_TOKEN"},
+						"headers": map[string]interface{}{
+							"Authorization": "Bearer token",
+						},
 					},
 				},
 			},
@@ -652,6 +657,7 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		assert.Contains(t, content, "[mcp_servers.github]")
 		assert.Contains(t, content, `type = "streamable_http"`)
 		assert.Contains(t, content, `url = "https://api.githubcopilot.com/mcp"`)
+		assert.Contains(t, content, `http_headers = {"Authorization" = "Bearer token"}`)
 		assert.NotContains(t, content, "GITHUB_TOKEN")
 		assert.NotContains(t, content, "env =")
 	})
