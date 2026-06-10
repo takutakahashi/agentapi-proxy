@@ -4476,6 +4476,87 @@ func (m *KubernetesSessionManager) readSettingsPatch(ctx context.Context, secret
 	return &patch
 }
 
+// readSettingsPatchByName reads an agentapi settings entry through SettingsRepository.
+// The repository is responsible for storage details such as encrypted_env_vars, so
+// session startup receives plaintext values before merge/materialize.
+func (m *KubernetesSessionManager) readSettingsPatchByName(ctx context.Context, settingsName string) *settingspatch.SettingsPatch {
+	if settingsName == "" {
+		return nil
+	}
+	secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(settingsName))
+	rawPatch := m.readSettingsPatch(ctx, secretName)
+	if m.settingsRepo == nil {
+		return rawPatch
+	}
+	settings, err := m.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil {
+		return rawPatch
+	}
+	if rawPatch != nil {
+		patch := *rawPatch
+		if envVars := settings.EnvVars(); len(envVars) > 0 {
+			patch.EnvVars = cloneStringMap(envVars)
+		}
+		return &patch
+	}
+	patch := settingsToPatch(settings)
+	return &patch
+}
+
+func settingsToPatch(settings *entities.Settings) settingspatch.SettingsPatch {
+	patch := settingspatch.SettingsPatch{
+		AuthMode:        string(settings.AuthMode()),
+		OAuthToken:      settings.ClaudeCodeOAuthToken(),
+		EnvVars:         cloneStringMap(settings.EnvVars()),
+		EnabledPlugins:  append([]string(nil), settings.EnabledPlugins()...),
+		PreferredTeamID: settings.PreferredTeamID(),
+	}
+
+	if bedrock := settings.Bedrock(); bedrock != nil {
+		patch.Bedrock = &settingspatch.BedrockPatch{
+			Model:           bedrock.Model(),
+			AccessKeyID:     bedrock.AccessKeyID(),
+			SecretAccessKey: bedrock.SecretAccessKey(),
+			RoleARN:         bedrock.RoleARN(),
+			Profile:         bedrock.Profile(),
+		}
+	}
+
+	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
+		patch.MCPServers = make(map[string]*settingspatch.MCPServerPatch, len(mcpServers.Servers()))
+		for name, server := range mcpServers.Servers() {
+			patch.MCPServers[name] = &settingspatch.MCPServerPatch{
+				Type:    server.Type(),
+				URL:     server.URL(),
+				Command: server.Command(),
+				Args:    append([]string(nil), server.Args()...),
+				Env:     cloneStringMap(server.Env()),
+				Headers: cloneStringMap(server.Headers()),
+			}
+		}
+	}
+
+	if marketplaces := settings.Marketplaces(); marketplaces != nil && !marketplaces.IsEmpty() {
+		patch.Marketplaces = make(map[string]*settingspatch.MarketplacePatch, len(marketplaces.Marketplaces()))
+		for name, marketplace := range marketplaces.Marketplaces() {
+			patch.Marketplaces[name] = &settingspatch.MarketplacePatch{URL: marketplace.URL()}
+		}
+	}
+
+	return patch
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 // resolveSettings reads settings patches from the relevant Kubernetes Secrets
 // (base → team[] → user → oneshot) and returns materialized session configuration.
 //
@@ -4498,6 +4579,11 @@ func (m *KubernetesSessionManager) resolveSettings(
 			layers = append(layers, *p)
 		}
 	}
+	appendSettingsIfExists := func(settingsName string) {
+		if p := m.readSettingsPatchByName(ctx, settingsName); p != nil {
+			layers = append(layers, *p)
+		}
+	}
 
 	// 1. base (lowest priority)
 	if m.k8sConfig.SettingsBaseSecret != "" {
@@ -4507,23 +4593,23 @@ func (m *KubernetesSessionManager) resolveSettings(
 	// 2. teams (in order)
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
-		appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID)))
+		appendSettingsIfExists(req.TeamID)
 	} else {
 		// User-scoped session: check if the user has a preferred team set
 		preferredTeamID := m.resolvePreferredTeamID(ctx, req)
 		if preferredTeamID != "" {
 			// Use only the preferred team's settings
 			log.Printf("[K8S_SESSION] Using preferred team settings: %s", preferredTeamID)
-			appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(preferredTeamID)))
+			appendSettingsIfExists(preferredTeamID)
 		} else {
 			// Default: apply all teams in order
 			for _, team := range req.Teams {
-				appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team)))
+				appendSettingsIfExists(team)
 			}
 		}
 		// 3. user
 		if req.UserID != "" {
-			appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID)))
+			appendSettingsIfExists(req.UserID)
 		}
 	}
 
@@ -4547,8 +4633,11 @@ func (m *KubernetesSessionManager) resolvePreferredTeamID(ctx context.Context, r
 	if req.UserID == "" {
 		return ""
 	}
-	userSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
-	userPatch := m.readSettingsPatch(ctx, userSecretName)
+	userPatch := m.readSettingsPatchByName(ctx, req.UserID)
+	if userPatch == nil {
+		userSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
+		userPatch = m.readSettingsPatch(ctx, userSecretName)
+	}
 	if userPatch == nil || userPatch.PreferredTeamID == "" {
 		return ""
 	}
