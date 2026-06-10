@@ -450,6 +450,22 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 				fmt.Fprintf(&sb, "env = {%s}\n", strings.Join(envParts, ", "))
 			}
 		}
+		if headers, ok := config["headers"].(map[string]interface{}); ok && len(headers) > 0 && codexMCPServerSupportsHTTPHeaders(serverType) {
+			headerKeys := make([]string, 0, len(headers))
+			for k := range headers {
+				headerKeys = append(headerKeys, k)
+			}
+			sort.Strings(headerKeys)
+			var headerParts []string
+			for _, k := range headerKeys {
+				if v, ok := headers[k].(string); ok {
+					headerParts = append(headerParts, fmt.Sprintf("%q = %q", k, v))
+				}
+			}
+			if len(headerParts) > 0 {
+				fmt.Fprintf(&sb, "http_headers = {%s}\n", strings.Join(headerParts, ", "))
+			}
+		}
 	}
 
 	if err := os.WriteFile(configPath, []byte(sb.String()), 0644); err != nil {
@@ -466,6 +482,15 @@ func codexMCPServerSupportsEnv(serverType string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func codexMCPServerSupportsHTTPHeaders(serverType string) bool {
+	switch serverType {
+	case "http", "streamable_http", "sse":
+		return true
+	default:
+		return false
 	}
 }
 
