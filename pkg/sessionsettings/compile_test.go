@@ -189,6 +189,8 @@ func TestCompile_ClaudeJSON(t *testing.T) {
 	assert.Equal(t, true, claudeJSON["hasTrustDialogAccepted"])
 	assert.Equal(t, true, claudeJSON["hasCompletedProjectOnboarding"])
 	assert.Equal(t, true, claudeJSON["dontCrawlDirectory"])
+	assertClaudeProjectTrusted(t, claudeJSON, "/home/agentapi/workdir")
+	assertClaudeProjectTrusted(t, claudeJSON, "/home/agentapi/workdir/repo")
 
 	// Verify custom key is preserved
 	assert.Equal(t, "customValue", claudeJSON["customKey"])
@@ -364,6 +366,7 @@ func TestCompile_MCPServersInClaudeJSON(t *testing.T) {
 	// Verify onboarding flags are still present
 	assert.Equal(t, true, claudeJSON["hasCompletedOnboarding"])
 	assert.Equal(t, true, claudeJSON["bypassPermissionsModeAccepted"])
+	assertClaudeProjectTrusted(t, claudeJSON, "/home/agentapi/workdir")
 }
 
 func TestCompile_AutoUpdatesChannelStable(t *testing.T) {
@@ -408,6 +411,7 @@ func TestCompile_AutoUpdatesChannelStable(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, "stable", settingsJSON["autoUpdatesChannel"])
+		assertClaudePermissionsBypass(t, settingsJSON)
 	})
 
 	t.Run("custom settingsJSON also has autoUpdatesChannel stable", func(t *testing.T) {
@@ -460,9 +464,28 @@ func TestCompile_AutoUpdatesChannelStable(t *testing.T) {
 
 		// autoUpdatesChannel should always be "stable"
 		assert.Equal(t, "stable", settingsJSON["autoUpdatesChannel"])
+		assertClaudePermissionsBypass(t, settingsJSON)
 		// Custom key should be preserved
 		assert.Equal(t, "customValue", settingsJSON["customKey"])
 	})
+}
+
+func assertClaudeProjectTrusted(t *testing.T, claudeJSON map[string]interface{}, dir string) {
+	t.Helper()
+	projects, ok := claudeJSON["projects"].(map[string]interface{})
+	require.True(t, ok, "projects should exist")
+	project, ok := projects[dir].(map[string]interface{})
+	require.True(t, ok, "project %s should exist", dir)
+	assert.Equal(t, true, project["hasTrustDialogAccepted"])
+	assert.Equal(t, true, project["hasCompletedProjectOnboarding"])
+}
+
+func assertClaudePermissionsBypass(t *testing.T, settingsJSON map[string]interface{}) {
+	t.Helper()
+	permissions, ok := settingsJSON["permissions"].(map[string]interface{})
+	require.True(t, ok, "permissions should exist")
+	assert.Equal(t, "bypassPermissions", permissions["defaultMode"])
+	assert.Equal(t, true, permissions["skipDangerousModePermissionPrompt"])
 }
 
 func TestCompile_CodexConfigTOML(t *testing.T) {

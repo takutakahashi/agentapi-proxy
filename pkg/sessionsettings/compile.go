@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/claudeconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -118,12 +119,8 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcp
 		existing[k] = v
 	}
 
-	// Always set required onboarding fields
-	existing["hasCompletedOnboarding"] = true
-	existing["bypassPermissionsModeAccepted"] = true
-	existing["hasTrustDialogAccepted"] = true
-	existing["hasCompletedProjectOnboarding"] = true
-	existing["dontCrawlDirectory"] = true
+	// Always set required onboarding, bypass, and workspace trust fields.
+	claudeconfig.EnsureClaudeJSONDefaults(existing)
 
 	// Write MCP servers directly into claude.json so Claude Code reads them natively
 	if len(mcpServers) > 0 {
@@ -174,6 +171,7 @@ func generateSettingsJSON(outputDir string, settingsJSON map[string]interface{})
 	// Always set autoUpdatesChannel to "stable" to prevent automatic updates
 	// to non-stable channels in session containers.
 	settingsJSON["autoUpdatesChannel"] = "stable"
+	claudeconfig.EnsureSettingsJSONDefaults(settingsJSON)
 
 	data, err := json.MarshalIndent(settingsJSON, "", "  ")
 	if err != nil {
