@@ -30,7 +30,7 @@ FROM alpine:3.22 AS agentapi-downloader
 
 ARG TARGETOS=linux
 ARG TARGETARCH
-ARG AGENTAPI_VERSION=v0.6.0
+ARG AGENTAPI_VERSION=v0.12.2
 
 RUN apk add --no-cache ca-certificates curl && \
     set -ex && \
@@ -147,7 +147,7 @@ RUN curl https://mise.run | sh && \
 # The installer creates a symlink at ~/.local/bin/claude -> ~/.local/share/claude/versions/X.X.X
 # We copy with -L to follow the symlink and get the actual binary, then clean up
 # Then create a symlink at ~/.local/bin/claude -> /opt/claude/bin/claude for volume mount compatibility
-RUN curl -fsSL https://claude.ai/install.sh | bash -s 2.1.12 && \
+RUN curl -fsSL https://claude.ai/install.sh | bash -s 2.1.170 && \
     sudo mkdir -p /opt/claude/bin && \
     sudo cp -L /home/agentapi/.local/bin/claude /opt/claude/bin/claude && \
     sudo chown agentapi:agentapi /opt/claude/bin/claude && \
