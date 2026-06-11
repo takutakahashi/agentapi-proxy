@@ -1473,11 +1473,9 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 		}
 	}
 
-	isACP := agentType == "claude-acp" || agentType == "codex-acp"
-
 	var jsonData []byte
 	var postURL string
-	if isACP {
+	if isACPAgentType(agentType) {
 		// Fetch the ACP session ID from GET /session.
 		acpSessionID, err := m.getACPSessionIDFromPod(ctx, baseURL)
 		if err != nil {
@@ -1584,9 +1582,9 @@ func (m *KubernetesSessionManager) getACPSessionIDFromPod(ctx context.Context, b
 	return body.SessionId, nil
 }
 
-// StopAgent sends a stop_agent action to the running agent in the session via the
-// claude-agentapi POST /action endpoint. This terminates the running agent task
-// without deleting the session.
+// StopAgent sends a stop/cancel signal to the running agent without deleting the session.
+// ACP-backed sessions use JSON-RPC session/cancel; agentapi-compatible sessions use
+// the POST /action stop_agent endpoint.
 func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) error {
 	// Get session
 	session := m.GetSession(id)
@@ -1608,12 +1606,33 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 		m.k8sConfig.BasePort,
 	)
 
-	// Send stop_agent action as defined in the claude-agentapi OpenAPI spec
-	payload := map[string]interface{}{
-		"type": "stop_agent",
+	agentType := ""
+	if ks, ok := session.(*KubernetesSession); ok {
+		if req := ks.Request(); req != nil {
+			agentType = req.AgentType
+		}
 	}
 
-	// Marshal JSON
+	var payload interface{}
+	if isACPAgentType(agentType) {
+		url = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/rpc",
+			serviceName,
+			m.namespace,
+			m.k8sConfig.BasePort,
+		)
+		payload = map[string]interface{}{
+			"jsonrpc": "2.0",
+			"method":  "session/cancel",
+			"params": map[string]string{
+				"sessionId": id,
+			},
+		}
+	} else {
+		payload = map[string]interface{}{
+			"type": "stop_agent",
+		}
+	}
+
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal stop_agent payload: %w", err)
@@ -1639,8 +1658,12 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 		return fmt.Errorf("unexpected status code from stop_agent signal: %d", resp.StatusCode)
 	}
 
-	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s", id)
+	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s (agentType=%q)", id, agentType)
 	return nil
+}
+
+func isACPAgentType(agentType string) bool {
+	return agentType == "claude-acp" || agentType == "codex-acp"
 }
 
 // GetMessages retrieves conversation history from a session
