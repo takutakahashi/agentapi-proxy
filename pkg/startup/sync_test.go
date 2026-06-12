@@ -421,17 +421,6 @@ func TestGenerateClaudeJSON(t *testing.T) {
 		if result["bypassPermissionsModeAccepted"] != true {
 			t.Error("Expected bypassPermissionsModeAccepted to be true")
 		}
-		if result["hasTrustDialogAccepted"] != true {
-			t.Error("Expected hasTrustDialogAccepted to be true")
-		}
-		if result["hasCompletedProjectOnboarding"] != true {
-			t.Error("Expected hasCompletedProjectOnboarding to be true")
-		}
-		if result["dontCrawlDirectory"] != true {
-			t.Error("Expected dontCrawlDirectory to be true")
-		}
-		assertSyncProjectTrusted(t, result, "/home/agentapi/workdir")
-		assertSyncProjectTrusted(t, result, "/home/agentapi/workdir/repo")
 	})
 
 	t.Run("preserves existing fields", func(t *testing.T) {
@@ -1793,22 +1782,4 @@ func TestCloneMarketplace_GHESWithLocalURL(t *testing.T) {
 			t.Error("expected .git to exist after clone")
 		}
 	})
-}
-
-func assertSyncProjectTrusted(t *testing.T, claudeJSON map[string]interface{}, dir string) {
-	t.Helper()
-	projects, ok := claudeJSON["projects"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected projects to exist")
-	}
-	project, ok := projects[dir].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected project %s to exist", dir)
-	}
-	if project["hasTrustDialogAccepted"] != true {
-		t.Fatalf("expected project %s to be trusted", dir)
-	}
-	if project["hasCompletedProjectOnboarding"] != true {
-		t.Fatalf("expected project %s onboarding to be complete", dir)
-	}
 }

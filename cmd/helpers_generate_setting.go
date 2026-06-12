@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/takutakahashi/agentapi-proxy/pkg/claudeconfig"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"gopkg.in/yaml.v3"
 )
@@ -330,8 +329,10 @@ func runGenerateSettingSchedule() error {
 		Env:            env,
 		InitialMessage: initialMessage,
 		Claude: sessionsettings.ClaudeConfig{
-			ClaudeJSON:   claudeconfig.EnsureClaudeJSONDefaults(nil),
-			SettingsJSON: claudeconfig.EnsureSettingsJSONDefaults(nil),
+			ClaudeJSON: map[string]interface{}{
+				"hasCompletedOnboarding":        true,
+				"bypassPermissionsModeAccepted": true,
+			},
 		},
 	}
 	result.Startup = buildStartupConfig(agentType)
@@ -426,8 +427,10 @@ func runGenerateSettingSlackBot(cmd *cobra.Command) error {
 		Env:            env,
 		InitialMessage: initialMessage,
 		Claude: sessionsettings.ClaudeConfig{
-			ClaudeJSON:   claudeconfig.EnsureClaudeJSONDefaults(nil),
-			SettingsJSON: claudeconfig.EnsureSettingsJSONDefaults(nil),
+			ClaudeJSON: map[string]interface{}{
+				"hasCompletedOnboarding":        true,
+				"bypassPermissionsModeAccepted": true,
+			},
 		},
 	}
 	result.Startup = buildStartupConfig(agentType)
