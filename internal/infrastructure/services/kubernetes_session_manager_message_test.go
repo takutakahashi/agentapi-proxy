@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TestBroadcastMessageUpdate_UpdatesLastMessageAt verifies that broadcastMessageUpdate
@@ -112,6 +114,74 @@ func TestStopAgentUsesACPCancelForACPSessions(t *testing.T) {
 	params, ok := payload["params"].(map[string]interface{})
 	if !ok || params["sessionId"] != "test-session" {
 		t.Fatalf("unexpected params: %#v", payload["params"])
+	}
+}
+
+func TestStopAgentUsesServiceAgentTypeFallbackForRestoredACPSession(t *testing.T) {
+	m := newTestManagerForCycle(t)
+	session := NewKubernetesSession(
+		"test-session",
+		&entities.RunServerRequest{UserID: "user1"},
+		"test-deploy", "agentapi-session-test-session-svc", "test-pvc", "test-ns",
+		9000, nil, nil,
+	)
+	session.SetStatusSilent("active")
+	m.mutex.Lock()
+	m.sessions["test-session"] = session
+	m.mutex.Unlock()
+
+	_, err := m.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "agentapi-session-test-session-svc",
+			Annotations: map[string]string{
+				"agentapi.proxy/agent-type": "codex-acp",
+			},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Create service error = %v", err)
+	}
+
+	var requestPath string
+	withRoundTripper(t, func(req *http.Request) (*http.Response, error) {
+		requestPath = req.URL.Path
+		return jsonResponse(http.StatusOK), nil
+	})
+
+	if err := m.StopAgent(context.Background(), "test-session"); err != nil {
+		t.Fatalf("StopAgent() error = %v", err)
+	}
+	if requestPath != "/rpc" {
+		t.Fatalf("expected /rpc from Service agent-type fallback, got %q", requestPath)
+	}
+}
+
+func TestRestoreSessionFromServiceRestoresAgentType(t *testing.T) {
+	m := newTestManagerForCycle(t)
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "agentapi-session-test-session-svc",
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": "test-session",
+				"agentapi.proxy/user-id":    "user1",
+				"agentapi.proxy/scope":      "user",
+				"agentapi.proxy/agent-type": "codex-acp",
+			},
+			Annotations: map[string]string{
+				"agentapi.proxy/agent-type": "codex-acp",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{Port: 9000}},
+		},
+	}
+
+	session := m.restoreSessionFromService(svc)
+	if session == nil || session.Request() == nil {
+		t.Fatalf("expected restored session, got %#v", session)
+	}
+	if session.Request().AgentType != "codex-acp" {
+		t.Fatalf("expected AgentType codex-acp, got %q", session.Request().AgentType)
 	}
 }
 
