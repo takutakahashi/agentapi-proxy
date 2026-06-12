@@ -1472,6 +1472,9 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 			agentType = req.AgentType
 		}
 	}
+	if agentType == "" {
+		agentType = m.getSessionAgentTypeFromService(ctx, serviceName)
+	}
 
 	var jsonData []byte
 	var postURL string
@@ -1612,6 +1615,9 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 			agentType = req.AgentType
 		}
 	}
+	if agentType == "" {
+		agentType = m.getSessionAgentTypeFromService(ctx, serviceName)
+	}
 
 	var payload interface{}
 	if isACPAgentType(agentType) {
@@ -1664,6 +1670,27 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 
 func isACPAgentType(agentType string) bool {
 	return agentType == "claude-acp" || agentType == "codex-acp"
+}
+
+func restoreAgentTypeFromService(svc *corev1.Service) string {
+	if svc == nil {
+		return ""
+	}
+	if agentType := svc.Annotations["agentapi.proxy/agent-type"]; agentType != "" {
+		return agentType
+	}
+	return svc.Labels["agentapi.proxy/agent-type"]
+}
+
+func (m *KubernetesSessionManager) getSessionAgentTypeFromService(ctx context.Context, serviceName string) string {
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Printf("[K8S_SESSION] Failed to get service %s for agent type fallback: %v", serviceName, err)
+		}
+		return ""
+	}
+	return restoreAgentTypeFromService(svc)
 }
 
 // GetMessages retrieves conversation history from a session
@@ -3486,6 +3513,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 
 	// Parse session-ttl annotation if present
 	sessionTTL := svc.Annotations["agentapi.proxy/session-ttl"]
+	agentType := restoreAgentTypeFromService(svc)
 
 	// Create session using constructor
 	session := NewKubernetesSession(
@@ -3500,6 +3528,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 			Teams:          teams,
 			Oneshot:        oneshot,
 			SessionTTL:     sessionTTL,
+			AgentType:      agentType,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -3614,6 +3643,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 
 	// Parse session-ttl annotation if present
 	sessionTTL := svc.Annotations["agentapi.proxy/session-ttl"]
+	agentType := restoreAgentTypeFromService(svc)
 
 	// Create session using constructor
 	session := NewKubernetesSession(
@@ -3628,6 +3658,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 			Teams:          teams,
 			Oneshot:        oneshot,
 			SessionTTL:     sessionTTL,
+			AgentType:      agentType,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
