@@ -29,5 +29,5 @@ auth:
     oauth:
       client_id: "${AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID}"
       client_secret: "${AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET}"
-      scope: "read:user read:org"
+      scope: "read:user read:org project"
       base_url: ""  # Defaults to auth.github.base_url

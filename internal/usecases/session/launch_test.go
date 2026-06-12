@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -10,23 +12,39 @@ import (
 )
 
 type recordingSessionManager struct {
-	req *entities.RunServerRequest
+	req             *entities.RunServerRequest
+	existing        []entities.Session
+	sendMessageErr  error
+	stopAgentErr    error
+	sendMessageID   string
+	sendMessageBody string
+	stopAgentID     string
+	calls           []string
+	createdID       string
 }
 
 func (m *recordingSessionManager) CreateSession(_ context.Context, id string, req *entities.RunServerRequest, _ []byte) (entities.Session, error) {
 	m.req = req
+	m.createdID = id
 	return &launchTestSession{id: id, userID: req.UserID, status: "active"}, nil
 }
 
 func (m *recordingSessionManager) GetSession(string) entities.Session { return nil }
 func (m *recordingSessionManager) ListSessions(entities.SessionFilter) []entities.Session {
-	return nil
+	return m.existing
 }
 func (m *recordingSessionManager) DeleteSession(string) error { return nil }
-func (m *recordingSessionManager) SendMessage(context.Context, string, string) error {
-	return nil
+func (m *recordingSessionManager) SendMessage(_ context.Context, id string, message string) error {
+	m.calls = append(m.calls, "send")
+	m.sendMessageID = id
+	m.sendMessageBody = message
+	return m.sendMessageErr
 }
-func (m *recordingSessionManager) StopAgent(context.Context, string) error { return nil }
+func (m *recordingSessionManager) StopAgent(_ context.Context, id string) error {
+	m.calls = append(m.calls, "stop")
+	m.stopAgentID = id
+	return m.stopAgentErr
+}
 func (m *recordingSessionManager) GetMessages(context.Context, string) ([]repositories.Message, error) {
 	return nil, nil
 }
@@ -142,5 +160,116 @@ func TestLaunchExplicitDockerOverridesProfileDocker(t *testing.T) {
 	}
 	if sessionManager.req.Docker.Enabled {
 		t.Fatalf("expected explicit Docker.Enabled=false to override profile, got %#v", sessionManager.req.Docker)
+	}
+}
+
+func TestLaunchReuseRoutesMessageToExistingSession(t *testing.T) {
+	sessionManager := &recordingSessionManager{
+		existing: []entities.Session{&launchTestSession{id: "existing-1", userID: "user-1", status: "active"}},
+	}
+	launcher := NewLaunchUseCase(sessionManager)
+
+	result, err := launcher.Launch(context.Background(), "new-1", LaunchRequest{
+		UserID:         "user-1",
+		Scope:          entities.ScopeUser,
+		InitialMessage: "initial",
+		ReuseSession:   true,
+		ReuseMatchTags: map[string]string{"webhook_id": "webhook-1"},
+		ReuseMessage:   "reuse",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if !result.SessionReused || result.SessionID != "existing-1" {
+		t.Fatalf("expected reused existing session, got %#v", result)
+	}
+	if sessionManager.req != nil {
+		t.Fatal("CreateSession should not be called when reuse succeeds")
+	}
+	if sessionManager.sendMessageID != "existing-1" || sessionManager.sendMessageBody != "reuse" {
+		t.Fatalf("unexpected SendMessage call: id=%q body=%q", sessionManager.sendMessageID, sessionManager.sendMessageBody)
+	}
+}
+
+func TestLaunchReuseStopsExistingSessionBeforeSendingWhenRequested(t *testing.T) {
+	sessionManager := &recordingSessionManager{
+		existing: []entities.Session{&launchTestSession{id: "existing-1", userID: "user-1", status: "active"}},
+	}
+	launcher := NewLaunchUseCase(sessionManager)
+
+	result, err := launcher.Launch(context.Background(), "new-1", LaunchRequest{
+		UserID:          "user-1",
+		Scope:           entities.ScopeUser,
+		InitialMessage:  "initial",
+		ReuseSession:    true,
+		ReuseMatchTags:  map[string]string{"webhook_id": "webhook-1"},
+		ReuseMessage:    "reuse",
+		StopBeforeReuse: true,
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if !result.SessionReused || result.SessionID != "existing-1" {
+		t.Fatalf("expected reused existing session, got %#v", result)
+	}
+	if sessionManager.req != nil {
+		t.Fatal("CreateSession should not be called when reuse succeeds")
+	}
+	if sessionManager.stopAgentID != "existing-1" {
+		t.Fatalf("unexpected StopAgent id: %q", sessionManager.stopAgentID)
+	}
+	if sessionManager.sendMessageID != "existing-1" || sessionManager.sendMessageBody != "reuse" {
+		t.Fatalf("unexpected SendMessage call: id=%q body=%q", sessionManager.sendMessageID, sessionManager.sendMessageBody)
+	}
+	if !reflect.DeepEqual(sessionManager.calls, []string{"stop", "send"}) {
+		t.Fatalf("unexpected call order: %#v", sessionManager.calls)
+	}
+}
+
+func TestLaunchReuseReturnsErrorWhenStopBeforeReuseFails(t *testing.T) {
+	sessionManager := &recordingSessionManager{
+		existing:     []entities.Session{&launchTestSession{id: "existing-1", userID: "user-1", status: "active"}},
+		stopAgentErr: errors.New("stop failed"),
+	}
+	launcher := NewLaunchUseCase(sessionManager)
+
+	_, err := launcher.Launch(context.Background(), "new-1", LaunchRequest{
+		UserID:          "user-1",
+		Scope:           entities.ScopeUser,
+		InitialMessage:  "initial",
+		ReuseSession:    true,
+		ReuseMatchTags:  map[string]string{"webhook_id": "webhook-1"},
+		StopBeforeReuse: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if sessionManager.sendMessageID != "" {
+		t.Fatal("SendMessage should not be called when StopAgent fails")
+	}
+	if sessionManager.req != nil {
+		t.Fatal("CreateSession should not be called when StopAgent fails")
+	}
+}
+
+func TestLaunchReuseReturnsErrorForNonStaleSendFailure(t *testing.T) {
+	sessionManager := &recordingSessionManager{
+		existing:       []entities.Session{&launchTestSession{id: "existing-1", userID: "user-1", status: "active"}},
+		sendMessageErr: errors.New("connection refused"),
+	}
+	launcher := NewLaunchUseCase(sessionManager)
+
+	_, err := launcher.Launch(context.Background(), "new-1", LaunchRequest{
+		UserID:         "user-1",
+		Scope:          entities.ScopeUser,
+		InitialMessage: "initial",
+		ReuseSession:   true,
+		ReuseMatchTags: map[string]string{"webhook_id": "webhook-1"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if sessionManager.req != nil {
+		t.Fatal("CreateSession should not be called for non-stale reuse errors")
 	}
 }

@@ -124,8 +124,14 @@ func mergeFile(result *MCPConfig, filePath string, opts MergeOptions, log func(s
 // envVarPattern matches ${VAR} and ${VAR:-default} patterns
 var envVarPattern = regexp.MustCompile(`\$\{([^}:]+)(:-([^}]*))?\}`)
 
-// ExpandEnvVars expands ${VAR} and ${VAR:-default} patterns in a string
+// ExpandEnvVars expands ${VAR} and ${VAR:-default} patterns in a string.
 func ExpandEnvVars(s string) string {
+	return ExpandEnvVarsWithMap(s, nil)
+}
+
+// ExpandEnvVarsWithMap expands ${VAR} and ${VAR:-default} patterns in a string.
+// Values in env take precedence over process environment variables.
+func ExpandEnvVarsWithMap(s string, env map[string]string) string {
 	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
 		submatch := envVarPattern.FindStringSubmatch(match)
 		if len(submatch) < 2 {
@@ -139,6 +145,11 @@ func ExpandEnvVars(s string) string {
 			defaultVal = submatch[3]
 		}
 
+		if env != nil {
+			if val, ok := env[varName]; ok && val != "" {
+				return val
+			}
+		}
 		if val := os.Getenv(varName); val != "" {
 			return val
 		}

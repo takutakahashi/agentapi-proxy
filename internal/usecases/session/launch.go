@@ -55,6 +55,9 @@ type LaunchRequest struct {
 	ReuseMatchTags map[string]string
 	// ReuseMessage is sent to the reused session. Falls back to InitialMessage when empty.
 	ReuseMessage string
+	// StopBeforeReuse stops the running agent before sending ReuseMessage.
+	// This keeps the session resources in place while making a busy agent receive follow-up input.
+	StopBeforeReuse bool
 
 	// Session limit: when MaxSessions > 0, launch fails if the number of sessions
 	// matching LimitMatchTags already equals or exceeds MaxSessions.
@@ -149,6 +152,11 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 			reuseMessage := req.ReuseMessage
 			if reuseMessage == "" {
 				reuseMessage = req.InitialMessage
+			}
+			if req.StopBeforeReuse {
+				if err := uc.sessionManager.StopAgent(ctx, existing[0].ID()); err != nil {
+					return LaunchResult{}, fmt.Errorf("failed to stop existing session before reuse: %w", err)
+				}
 			}
 			if err := uc.sessionManager.SendMessage(ctx, existing[0].ID(), reuseMessage); err != nil {
 				return LaunchResult{}, fmt.Errorf("failed to route message to existing session: %w", err)

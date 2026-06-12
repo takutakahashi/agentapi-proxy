@@ -307,6 +307,20 @@ func TestExpandEnvVars(t *testing.T) {
 	}
 }
 
+func TestExpandEnvVarsWithMap(t *testing.T) {
+	t.Setenv("TEST_VAR", "process-value")
+
+	env := map[string]string{
+		"TEST_VAR": "map-value",
+		"EMPTY":    "",
+	}
+
+	assert.Equal(t, "Bearer map-value", ExpandEnvVarsWithMap("Bearer ${TEST_VAR}", env))
+	assert.Equal(t, "process-value", ExpandEnvVarsWithMap("${TEST_VAR}", nil))
+	assert.Equal(t, "fallback", ExpandEnvVarsWithMap("${EMPTY:-fallback}", env))
+	assert.Equal(t, "${MISSING}", ExpandEnvVarsWithMap("${MISSING}", env))
+}
+
 func TestWriteConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "output", "merged.json")

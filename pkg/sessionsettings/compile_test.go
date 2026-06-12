@@ -588,9 +588,10 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 						"env":     map[string]interface{}{"GITHUB_TOKEN": "ghp_xxx"},
 					},
 					"slack": map[string]interface{}{
-						"type": "http",
-						"url":  "https://mcp.example.com/slack",
-						"env":  map[string]interface{}{"SLACK_TOKEN": "xoxb-token"},
+						"type":    "http",
+						"url":     "https://mcp.example.com/slack",
+						"env":     map[string]interface{}{"SLACK_TOKEN": "xoxb-token"},
+						"headers": map[string]interface{}{"Authorization": "Bearer token", "X-Custom": "value"},
 					},
 				},
 			},
@@ -627,6 +628,7 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		assert.Contains(t, content, "[mcp_servers.slack]")
 		assert.Contains(t, content, `type = "http"`)
 		assert.Contains(t, content, `url = "https://mcp.example.com/slack"`)
+		assert.Contains(t, content, `http_headers = {"Authorization" = "Bearer token", "X-Custom" = "value"}`)
 		assert.Contains(t, content, "GITHUB_TOKEN")
 		assert.NotContains(t, content, "SLACK_TOKEN")
 	})
@@ -649,6 +651,9 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 						"type": "streamable_http",
 						"url":  "https://api.githubcopilot.com/mcp",
 						"env":  map[string]interface{}{"GITHUB_TOKEN": "$GITHUB_TOKEN"},
+						"headers": map[string]interface{}{
+							"Authorization": "Bearer token",
+						},
 					},
 				},
 			},
@@ -679,8 +684,68 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		assert.Contains(t, content, "[mcp_servers.github]")
 		assert.Contains(t, content, `type = "streamable_http"`)
 		assert.Contains(t, content, `url = "https://api.githubcopilot.com/mcp"`)
+		assert.Contains(t, content, `http_headers = {"Authorization" = "Bearer token"}`)
 		assert.NotContains(t, content, "GITHUB_TOKEN")
 		assert.NotContains(t, content, "env =")
+	})
+
+	t.Run("expands env placeholders for http mcp_servers without emitting env", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-mcp-http-env-placeholders-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-mcp-http-env-placeholders",
+				UserID:    "user-codex-mcp-http-env-placeholders",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Codex: CodexConfig{
+				MCPServers: map[string]interface{}{
+					"github": map[string]interface{}{
+						"type": "http",
+						"url":  "https://api.example.com/${MCP_TENANT:-default}/mcp",
+						"env": map[string]interface{}{
+							"GITHUB_TOKEN": "ghp_secret",
+							"MCP_TENANT":   "acme",
+						},
+						"headers": map[string]interface{}{
+							"Authorization": "Bearer ${GITHUB_TOKEN}",
+							"X-Tenant":      "${MCP_TENANT}",
+						},
+					},
+				},
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		assert.Contains(t, content, `url = "https://api.example.com/acme/mcp"`)
+		assert.Contains(t, content, `http_headers = {"Authorization" = "Bearer ghp_secret", "X-Tenant" = "acme"}`)
+		assert.NotContains(t, content, "env =")
+		assert.NotContains(t, content, "${GITHUB_TOKEN}")
+		assert.NotContains(t, content, "${MCP_TENANT}")
 	})
 
 	t.Run("appends mcp_servers after existing ConfigTOML", func(t *testing.T) {

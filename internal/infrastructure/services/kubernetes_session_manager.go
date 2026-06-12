@@ -1473,12 +1473,13 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 			agentType = req.AgentType
 		}
 	}
-
-	isACP := agentType == "claude-acp" || agentType == "codex-acp"
+	if agentType == "" {
+		agentType = m.getSessionAgentTypeFromService(ctx, serviceName)
+	}
 
 	var jsonData []byte
 	var postURL string
-	if isACP {
+	if isACPAgentType(agentType) {
 		// Fetch the ACP session ID from GET /session.
 		acpSessionID, err := m.getACPSessionIDFromPod(ctx, baseURL)
 		if err != nil {
@@ -1585,9 +1586,9 @@ func (m *KubernetesSessionManager) getACPSessionIDFromPod(ctx context.Context, b
 	return body.SessionId, nil
 }
 
-// StopAgent sends a stop_agent action to the running agent in the session via the
-// claude-agentapi POST /action endpoint. This terminates the running agent task
-// without deleting the session.
+// StopAgent sends a stop/cancel signal to the running agent without deleting the session.
+// ACP-backed sessions use JSON-RPC session/cancel; agentapi-compatible sessions use
+// the POST /action stop_agent endpoint.
 func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) error {
 	// Get session
 	session := m.GetSession(id)
@@ -1609,12 +1610,36 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 		m.k8sConfig.BasePort,
 	)
 
-	// Send stop_agent action as defined in the claude-agentapi OpenAPI spec
-	payload := map[string]interface{}{
-		"type": "stop_agent",
+	agentType := ""
+	if ks, ok := session.(*KubernetesSession); ok {
+		if req := ks.Request(); req != nil {
+			agentType = req.AgentType
+		}
+	}
+	if agentType == "" {
+		agentType = m.getSessionAgentTypeFromService(ctx, serviceName)
 	}
 
-	// Marshal JSON
+	var payload interface{}
+	if isACPAgentType(agentType) {
+		url = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/rpc",
+			serviceName,
+			m.namespace,
+			m.k8sConfig.BasePort,
+		)
+		payload = map[string]interface{}{
+			"jsonrpc": "2.0",
+			"method":  "session/cancel",
+			"params": map[string]string{
+				"sessionId": id,
+			},
+		}
+	} else {
+		payload = map[string]interface{}{
+			"type": "stop_agent",
+		}
+	}
+
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal stop_agent payload: %w", err)
@@ -1640,8 +1665,33 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 		return fmt.Errorf("unexpected status code from stop_agent signal: %d", resp.StatusCode)
 	}
 
-	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s", id)
+	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s (agentType=%q)", id, agentType)
 	return nil
+}
+
+func isACPAgentType(agentType string) bool {
+	return agentType == "claude-acp" || agentType == "codex-acp"
+}
+
+func restoreAgentTypeFromService(svc *corev1.Service) string {
+	if svc == nil {
+		return ""
+	}
+	if agentType := svc.Annotations["agentapi.proxy/agent-type"]; agentType != "" {
+		return agentType
+	}
+	return svc.Labels["agentapi.proxy/agent-type"]
+}
+
+func (m *KubernetesSessionManager) getSessionAgentTypeFromService(ctx context.Context, serviceName string) string {
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Printf("[K8S_SESSION] Failed to get service %s for agent type fallback: %v", serviceName, err)
+		}
+		return ""
+	}
+	return restoreAgentTypeFromService(svc)
 }
 
 // GetMessages retrieves conversation history from a session
@@ -3464,6 +3514,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 
 	// Parse session-ttl annotation if present
 	sessionTTL := svc.Annotations["agentapi.proxy/session-ttl"]
+	agentType := restoreAgentTypeFromService(svc)
 
 	// Create session using constructor
 	session := NewKubernetesSession(
@@ -3478,6 +3529,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 			Teams:          teams,
 			Oneshot:        oneshot,
 			SessionTTL:     sessionTTL,
+			AgentType:      agentType,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -3592,6 +3644,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 
 	// Parse session-ttl annotation if present
 	sessionTTL := svc.Annotations["agentapi.proxy/session-ttl"]
+	agentType := restoreAgentTypeFromService(svc)
 
 	// Create session using constructor
 	session := NewKubernetesSession(
@@ -3606,6 +3659,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithDeployment(svc *
 			Teams:          teams,
 			Oneshot:        oneshot,
 			SessionTTL:     sessionTTL,
+			AgentType:      agentType,
 		},
 		fmt.Sprintf("agentapi-session-%s", sessionID),
 		svc.Name,
@@ -4474,6 +4528,87 @@ func (m *KubernetesSessionManager) readSettingsPatch(ctx context.Context, secret
 	return &patch
 }
 
+// readSettingsPatchByName reads an agentapi settings entry through SettingsRepository.
+// The repository is responsible for storage details such as encrypted_env_vars, so
+// session startup receives plaintext values before merge/materialize.
+func (m *KubernetesSessionManager) readSettingsPatchByName(ctx context.Context, settingsName string) *settingspatch.SettingsPatch {
+	if settingsName == "" {
+		return nil
+	}
+	secretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(settingsName))
+	rawPatch := m.readSettingsPatch(ctx, secretName)
+	if m.settingsRepo == nil {
+		return rawPatch
+	}
+	settings, err := m.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil {
+		return rawPatch
+	}
+	if rawPatch != nil {
+		patch := *rawPatch
+		if envVars := settings.EnvVars(); len(envVars) > 0 {
+			patch.EnvVars = cloneStringMap(envVars)
+		}
+		return &patch
+	}
+	patch := settingsToPatch(settings)
+	return &patch
+}
+
+func settingsToPatch(settings *entities.Settings) settingspatch.SettingsPatch {
+	patch := settingspatch.SettingsPatch{
+		AuthMode:        string(settings.AuthMode()),
+		OAuthToken:      settings.ClaudeCodeOAuthToken(),
+		EnvVars:         cloneStringMap(settings.EnvVars()),
+		EnabledPlugins:  append([]string(nil), settings.EnabledPlugins()...),
+		PreferredTeamID: settings.PreferredTeamID(),
+	}
+
+	if bedrock := settings.Bedrock(); bedrock != nil {
+		patch.Bedrock = &settingspatch.BedrockPatch{
+			Model:           bedrock.Model(),
+			AccessKeyID:     bedrock.AccessKeyID(),
+			SecretAccessKey: bedrock.SecretAccessKey(),
+			RoleARN:         bedrock.RoleARN(),
+			Profile:         bedrock.Profile(),
+		}
+	}
+
+	if mcpServers := settings.MCPServers(); mcpServers != nil && !mcpServers.IsEmpty() {
+		patch.MCPServers = make(map[string]*settingspatch.MCPServerPatch, len(mcpServers.Servers()))
+		for name, server := range mcpServers.Servers() {
+			patch.MCPServers[name] = &settingspatch.MCPServerPatch{
+				Type:    server.Type(),
+				URL:     server.URL(),
+				Command: server.Command(),
+				Args:    append([]string(nil), server.Args()...),
+				Env:     cloneStringMap(server.Env()),
+				Headers: cloneStringMap(server.Headers()),
+			}
+		}
+	}
+
+	if marketplaces := settings.Marketplaces(); marketplaces != nil && !marketplaces.IsEmpty() {
+		patch.Marketplaces = make(map[string]*settingspatch.MarketplacePatch, len(marketplaces.Marketplaces()))
+		for name, marketplace := range marketplaces.Marketplaces() {
+			patch.Marketplaces[name] = &settingspatch.MarketplacePatch{URL: marketplace.URL()}
+		}
+	}
+
+	return patch
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 // resolveSettings reads settings patches from the relevant Kubernetes Secrets
 // (base → team[] → user → oneshot) and returns materialized session configuration.
 //
@@ -4496,6 +4631,11 @@ func (m *KubernetesSessionManager) resolveSettings(
 			layers = append(layers, *p)
 		}
 	}
+	appendSettingsIfExists := func(settingsName string) {
+		if p := m.readSettingsPatchByName(ctx, settingsName); p != nil {
+			layers = append(layers, *p)
+		}
+	}
 
 	// 1. base (lowest priority)
 	if m.k8sConfig.SettingsBaseSecret != "" {
@@ -4505,23 +4645,23 @@ func (m *KubernetesSessionManager) resolveSettings(
 	// 2. teams (in order)
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
-		appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.TeamID)))
+		appendSettingsIfExists(req.TeamID)
 	} else {
 		// User-scoped session: check if the user has a preferred team set
 		preferredTeamID := m.resolvePreferredTeamID(ctx, req)
 		if preferredTeamID != "" {
 			// Use only the preferred team's settings
 			log.Printf("[K8S_SESSION] Using preferred team settings: %s", preferredTeamID)
-			appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(preferredTeamID)))
+			appendSettingsIfExists(preferredTeamID)
 		} else {
 			// Default: apply all teams in order
 			for _, team := range req.Teams {
-				appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(team)))
+				appendSettingsIfExists(team)
 			}
 		}
 		// 3. user
 		if req.UserID != "" {
-			appendIfExists(fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID)))
+			appendSettingsIfExists(req.UserID)
 		}
 	}
 
@@ -4545,8 +4685,11 @@ func (m *KubernetesSessionManager) resolvePreferredTeamID(ctx context.Context, r
 	if req.UserID == "" {
 		return ""
 	}
-	userSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
-	userPatch := m.readSettingsPatch(ctx, userSecretName)
+	userPatch := m.readSettingsPatchByName(ctx, req.UserID)
+	if userPatch == nil {
+		userSecretName := fmt.Sprintf("agentapi-settings-%s", sanitizeSecretName(req.UserID))
+		userPatch = m.readSettingsPatch(ctx, userSecretName)
+	}
 	if userPatch == nil || userPatch.PreferredTeamID == "" {
 		return ""
 	}
