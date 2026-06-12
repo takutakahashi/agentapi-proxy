@@ -32,6 +32,7 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/claudeconfig"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -4168,11 +4169,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	settings.Claude = sessionsettings.ClaudeConfig{
-		ClaudeJSON: map[string]interface{}{
-			"hasCompletedOnboarding":        true,
-			"bypassPermissionsModeAccepted": true,
-		},
-		SettingsJSON: settingsJSON,
+		ClaudeJSON:   claudeconfig.EnsureClaudeJSONDefaults(nil),
+		SettingsJSON: claudeconfig.EnsureSettingsJSONDefaults(settingsJSON),
 		MCPServers:   materialized.MCPServers,
 	}
 

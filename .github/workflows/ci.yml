@@ -8,6 +8,8 @@ on:
 
 env:
   GO_VERSION: "1.25"
+  AGENTAPI_VERSION: "v0.12.2"
+  CLAUDE_CODE_VERSION: "2.1.170"
 
 jobs:
   ci:
@@ -38,16 +40,14 @@ jobs:
       with:
         path: |
           ~/.cache/agentapi
-        key: ${{ runner.os }}-agentapi-${{ hashFiles('**/go.mod') }}-v2
-        restore-keys: |
-          ${{ runner.os }}-agentapi-
+        key: ${{ runner.os }}-agentapi-${{ env.AGENTAPI_VERSION }}-${{ hashFiles('**/go.mod') }}
 
     - name: Download agentapi binary
       run: |
         mkdir -p ~/.cache/agentapi
         if [ ! -f ~/.cache/agentapi/agentapi ]; then
           echo "Downloading agentapi binary..."
-          curl -L -o ~/.cache/agentapi/agentapi https://github.com/coder/agentapi/releases/latest/download/agentapi-linux-amd64
+          curl -L -o ~/.cache/agentapi/agentapi https://github.com/coder/agentapi/releases/download/${{ env.AGENTAPI_VERSION }}/agentapi-linux-amd64
           chmod +x ~/.cache/agentapi/agentapi
         else
           echo "Using cached agentapi binary"
@@ -64,16 +64,14 @@ jobs:
       with:
         path: |
           ~/.cache/claude-code
-        key: ${{ runner.os }}-claude-code-${{ hashFiles('**/go.mod') }}-v2
-        restore-keys: |
-          ${{ runner.os }}-claude-code-
+        key: ${{ runner.os }}-claude-code-${{ env.CLAUDE_CODE_VERSION }}-${{ hashFiles('**/go.mod') }}
 
     - name: Install Claude Code
       run: |
         mkdir -p ~/.cache/claude-code
         if [ ! -f ~/.cache/claude-code/claude ]; then
           echo "Installing Claude Code..."
-          npm install -g @anthropic-ai/claude-code
+          npm install -g @anthropic-ai/claude-code@${{ env.CLAUDE_CODE_VERSION }}
           cp $(which claude) ~/.cache/claude-code/claude
         else
           echo "Using cached Claude Code"

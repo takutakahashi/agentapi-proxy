@@ -7,6 +7,28 @@ export CLAUDE_MD_PATH="${CLAUDE_MD_PATH:-/tmp/config/CLAUDE.md}"
 # Create .claude directory if it doesn't exist
 mkdir -p /home/agentapi/.claude
 
+# Ensure Claude Code can run during stock-pod startup before per-session
+# provisioning writes ~/.claude/settings.json. In particular, the provisioner
+# startup pre-script uses bun/npm wrappers implemented via `claude x`, which
+# otherwise shows the bypass-permissions warning before setup has run.
+if [ -f /tmp/config/claude-settings.json ]; then
+    if [ -f /home/agentapi/.claude/settings.json ]; then
+        tmp_settings="$(mktemp)"
+        jq -s '.[0] * .[1]' /home/agentapi/.claude/settings.json /tmp/config/claude-settings.json > "$tmp_settings" && mv "$tmp_settings" /home/agentapi/.claude/settings.json
+    else
+        cp /tmp/config/claude-settings.json /home/agentapi/.claude/settings.json
+    fi
+fi
+
+if [ -f /tmp/config/claude.json ]; then
+    if [ -f /home/agentapi/.claude.json ]; then
+        tmp_claude_json="$(mktemp)"
+        jq -s '.[0] * .[1]' /home/agentapi/.claude.json /tmp/config/claude.json > "$tmp_claude_json" && mv "$tmp_claude_json" /home/agentapi/.claude.json
+    else
+        cp /tmp/config/claude.json /home/agentapi/.claude.json
+    fi
+fi
+
 # Copy CLAUDE.md if it doesn't exist or if it's older than the source
 if [ ! -f /home/agentapi/.claude/CLAUDE.md ] || [ /tmp/config/CLAUDE.md -nt /home/agentapi/.claude/CLAUDE.md ]; then
     echo "Copying CLAUDE.md to .claude directory..."
