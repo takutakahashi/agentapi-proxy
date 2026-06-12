@@ -1,33 +1,4 @@
 {
   "hasCompletedOnboarding": true,
-  "bypassPermissionsModeAccepted": true,
-  "hasTrustDialogAccepted": true,
-  "hasCompletedProjectOnboarding": true,
-  "dontCrawlDirectory": true,
-  "projects": {
-    "/home/agentapi/workdir": {
-      "allowedTools": [],
-      "mcpContextUris": [],
-      "mcpServers": {},
-      "enabledMcpjsonServers": [],
-      "disabledMcpjsonServers": [],
-      "hasTrustDialogAccepted": true,
-      "hasCompletedProjectOnboarding": true,
-      "projectOnboardingSeenCount": 4,
-      "hasClaudeMdExternalIncludesApproved": true,
-      "hasClaudeMdExternalIncludesWarningShown": true
-    },
-    "/home/agentapi/workdir/repo": {
-      "allowedTools": [],
-      "mcpContextUris": [],
-      "mcpServers": {},
-      "enabledMcpjsonServers": [],
-      "disabledMcpjsonServers": [],
-      "hasTrustDialogAccepted": true,
-      "hasCompletedProjectOnboarding": true,
-      "projectOnboardingSeenCount": 4,
-      "hasClaudeMdExternalIncludesApproved": true,
-      "hasClaudeMdExternalIncludesWarningShown": true
-    }
-  }
+  "bypassPermissionsModeAccepted": true
 }

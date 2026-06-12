@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/takutakahashi/agentapi-proxy/pkg/claudeconfig"
 	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
 
@@ -130,7 +129,8 @@ func generateClaudeJSON(outputDir string) error {
 		}
 	}
 
-	claudeconfig.EnsureClaudeJSONDefaults(existing)
+	existing["hasCompletedOnboarding"] = true
+	existing["bypassPermissionsModeAccepted"] = true
 
 	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
