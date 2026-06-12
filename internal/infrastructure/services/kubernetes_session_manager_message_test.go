@@ -1,6 +1,12 @@
 package services
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,5 +70,106 @@ func TestSubscribeMessageEvents_ReceivesBroadcast(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for message event")
+	}
+}
+
+func TestStopAgentUsesACPCancelForACPSessions(t *testing.T) {
+	m := newTestManagerForCycle(t)
+	session := NewKubernetesSession(
+		"test-session",
+		&entities.RunServerRequest{UserID: "user1", AgentType: "codex-acp"},
+		"test-deploy", "test-svc", "test-pvc", "test-ns",
+		9000, nil, nil,
+	)
+	session.SetStatusSilent("active")
+	m.mutex.Lock()
+	m.sessions["test-session"] = session
+	m.mutex.Unlock()
+
+	var requestPath string
+	var payload map[string]interface{}
+	withRoundTripper(t, func(req *http.Request) (*http.Response, error) {
+		requestPath = req.URL.Path
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("Unmarshal() error = %v", err)
+		}
+		return jsonResponse(http.StatusOK), nil
+	})
+
+	if err := m.StopAgent(context.Background(), "test-session"); err != nil {
+		t.Fatalf("StopAgent() error = %v", err)
+	}
+	if requestPath != "/rpc" {
+		t.Fatalf("expected /rpc, got %q", requestPath)
+	}
+	if payload["jsonrpc"] != "2.0" || payload["method"] != "session/cancel" {
+		t.Fatalf("unexpected ACP cancel payload: %#v", payload)
+	}
+	params, ok := payload["params"].(map[string]interface{})
+	if !ok || params["sessionId"] != "test-session" {
+		t.Fatalf("unexpected params: %#v", payload["params"])
+	}
+}
+
+func TestStopAgentUsesActionForAgentAPISessions(t *testing.T) {
+	m := newTestManagerForCycle(t)
+	session := NewKubernetesSession(
+		"test-session",
+		&entities.RunServerRequest{UserID: "user1", AgentType: "claude-agentapi"},
+		"test-deploy", "test-svc", "test-pvc", "test-ns",
+		9000, nil, nil,
+	)
+	session.SetStatusSilent("active")
+	m.mutex.Lock()
+	m.sessions["test-session"] = session
+	m.mutex.Unlock()
+
+	var requestPath string
+	var body string
+	withRoundTripper(t, func(req *http.Request) (*http.Response, error) {
+		requestPath = req.URL.Path
+		data, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		body = string(data)
+		return jsonResponse(http.StatusOK), nil
+	})
+
+	if err := m.StopAgent(context.Background(), "test-session"); err != nil {
+		t.Fatalf("StopAgent() error = %v", err)
+	}
+	if requestPath != "/action" {
+		t.Fatalf("expected /action, got %q", requestPath)
+	}
+	if !strings.Contains(body, `"type":"stop_agent"`) {
+		t.Fatalf("unexpected action payload: %s", body)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func withRoundTripper(t *testing.T, f roundTripFunc) {
+	t.Helper()
+	originalClient := http.DefaultClient
+	http.DefaultClient = &http.Client{Transport: f}
+	t.Cleanup(func() {
+		http.DefaultClient = originalClient
+	})
+}
+
+func jsonResponse(statusCode int) *http.Response {
+	return &http.Response{
+		StatusCode: statusCode,
+		Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		Header:     make(http.Header),
 	}
 }
