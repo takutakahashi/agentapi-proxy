@@ -16,6 +16,7 @@ import (
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v57/github"
+	"github.com/takutakahashi/agentapi-proxy/pkg/claudeconfig"
 	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
 
@@ -102,12 +103,6 @@ func mergeClaudeConfig(homeDir string) error {
 
 	targetPath := filepath.Join(homeDir, ".claude.json")
 
-	// Define the configuration to merge as a map
-	configToMerge := map[string]interface{}{
-		"hasCompletedOnboarding":        true,
-		"bypassPermissionsModeAccepted": true,
-	}
-
 	// Read existing ~/.claude.json if it exists
 	var targetJSON map[string]interface{}
 	targetData, err := os.ReadFile(targetPath)
@@ -124,10 +119,7 @@ func mergeClaudeConfig(homeDir string) error {
 		}
 	}
 
-	// Merge configuration map into target
-	for key, value := range configToMerge {
-		targetJSON[key] = value
-	}
+	claudeconfig.EnsureClaudeJSONDefaults(targetJSON)
 
 	// Write merged JSON back
 	mergedData, err := json.MarshalIndent(targetJSON, "", "  ")

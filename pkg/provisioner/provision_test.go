@@ -8,6 +8,44 @@ import (
 	"testing"
 )
 
+func TestEnsureClaudeStartupDefaults(t *testing.T) {
+	homeDir := t.TempDir()
+
+	if err := ensureClaudeStartupDefaults(homeDir); err != nil {
+		t.Fatalf("ensureClaudeStartupDefaults failed: %v", err)
+	}
+
+	settingsData, err := os.ReadFile(filepath.Join(homeDir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("failed to read settings.json: %v", err)
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(settingsData, &settings); err != nil {
+		t.Fatalf("failed to parse settings.json: %v", err)
+	}
+	permissions := settings["permissions"].(map[string]interface{})
+	if permissions["defaultMode"] != "bypassPermissions" {
+		t.Fatalf("expected defaultMode bypassPermissions")
+	}
+	if settings["skipDangerousModePermissionPrompt"] != true {
+		t.Fatalf("expected top-level skipDangerousModePermissionPrompt")
+	}
+
+	claudeData, err := os.ReadFile(filepath.Join(homeDir, ".claude.json"))
+	if err != nil {
+		t.Fatalf("failed to read .claude.json: %v", err)
+	}
+	var claudeJSON map[string]interface{}
+	if err := json.Unmarshal(claudeData, &claudeJSON); err != nil {
+		t.Fatalf("failed to parse .claude.json: %v", err)
+	}
+	projects := claudeJSON["projects"].(map[string]interface{})
+	workdir := projects["/home/agentapi/workdir"].(map[string]interface{})
+	if workdir["hasTrustDialogAccepted"] != true {
+		t.Fatalf("expected workdir trust accepted")
+	}
+}
+
 // TestWriteWebhookPayloadFile_WritesWhenAbsent verifies that
 // writeWebhookPayloadFile creates the file with the given payload when
 // webhookPayloadPath does not exist (stock-session case).
