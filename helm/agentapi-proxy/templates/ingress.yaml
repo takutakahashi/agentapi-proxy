@@ -1,4 +1,10 @@
 {{- if .Values.ingress.enabled -}}
+{{- $asset := .Values.asset | default dict }}
+{{- $assetBackend := $asset.backend | default "nginx" }}
+{{- $assetEnabled := $asset.enabled | default true }}
+{{- $assetNginx := $asset.nginx | default dict }}
+{{- $assetNginxService := $assetNginx.service | default dict }}
+{{- $assetNginxServicePort := $assetNginxService.port | default 80 }}
 {{- $ingressClassName := .Values.ingress.className }}
 {{- if .Values.global }}
   {{- if .Values.global.ingress }}
@@ -56,6 +62,22 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
+          {{- if and $assetEnabled (eq $assetBackend "nginx") }}
+          - path: /assets
+            {{- if semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.fullname" $ }}-assets
+                port:
+                  number: {{ $assetNginxServicePort }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.fullname" $ }}-assets
+              servicePort: {{ $assetNginxServicePort }}
+              {{- end }}
+          {{- end }}
           {{- range .paths }}
           - path: {{ .path }}
             {{- if and .pathType (semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion) }}
@@ -77,6 +99,22 @@ spec:
     - host: {{ $apiHostname | quote }}
       http:
         paths:
+          {{- if and $assetEnabled (eq $assetBackend "nginx") }}
+          - path: /assets
+            {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.fullname" . }}-assets
+                port:
+                  number: {{ $assetNginxServicePort }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.fullname" . }}-assets
+              servicePort: {{ $assetNginxServicePort }}
+              {{- end }}
+          {{- end }}
           - path: /
             {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
             pathType: Prefix

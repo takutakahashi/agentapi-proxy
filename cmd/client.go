@@ -52,6 +52,13 @@ var (
 	memoryUnion       bool
 )
 
+// asset subcommand flags
+var (
+	assetHTML     string
+	assetHTMLFile string
+	assetFormat   string
+)
+
 // memory save-session subcommand flags
 var (
 	memorySaveSessionScope  string
@@ -226,6 +233,19 @@ var memoryCmd = &cobra.Command{
 	Use:   "memory",
 	Short: "Manage memory entries",
 	Long:  "Create, list, get, update, delete, and upsert memory entries",
+}
+
+var assetCmd = &cobra.Command{
+	Use:   "asset",
+	Short: "Manage static HTML assets",
+	Long:  "Upload HTML and receive an externally reachable asset URL",
+}
+
+var assetCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Upload an HTML asset",
+	Long:  "Upload HTML from --html, --html-file, or stdin and receive an externally reachable asset URL.",
+	Run:   runAssetCreate,
 }
 
 var memoryListCmd = &cobra.Command{
@@ -535,6 +555,13 @@ func init() {
 	memoryCmd.AddCommand(memoryUpsertCmd)
 	memoryCmd.AddCommand(memorySaveSessionCmd)
 
+	// asset create flags
+	assetCreateCmd.Flags().StringVar(&assetHTML, "html", "", "HTML content to upload")
+	assetCreateCmd.Flags().StringVar(&assetHTMLFile, "html-file", "", "Path to file containing HTML content; use - for stdin")
+	assetCreateCmd.Flags().StringVar(&assetFormat, "format", "url", `Output format: "url" or "json"`)
+
+	assetCmd.AddCommand(assetCreateCmd)
+
 	// summarize-drafts flags
 	summarizeDraftsCmd.Flags().StringVar(&summarizeDraftsSourceSessionID, "source-session-id", "", "Session ID whose draft memories should be summarized (required)")
 	summarizeDraftsCmd.Flags().StringVar(&summarizeDraftsScope, "scope", "user", `Memory scope: "user" or "team"`)
@@ -560,6 +587,7 @@ func init() {
 	ClientCmd.AddCommand(sendNotificationClientCmd)
 	ClientCmd.AddCommand(taskCmd)
 	ClientCmd.AddCommand(memoryCmd)
+	ClientCmd.AddCommand(assetCmd)
 }
 
 const (
@@ -1046,6 +1074,13 @@ func resolveBaseClient() (*client.Client, error) {
 // readContentFlag reads the memory content from --content or --content-file flags.
 func readContentFlag(content, contentFile string) (string, error) {
 	if contentFile != "" {
+		if contentFile == "-" {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return "", fmt.Errorf("failed to read stdin: %w", err)
+			}
+			return string(data), nil
+		}
 		data, err := os.ReadFile(contentFile)
 		if err != nil {
 			return "", fmt.Errorf("failed to read content file %q: %w", contentFile, err)
@@ -1053,6 +1088,45 @@ func readContentFlag(content, contentFile string) (string, error) {
 		return string(data), nil
 	}
 	return content, nil
+}
+
+func runAssetCreate(cmd *cobra.Command, args []string) {
+	html, err := readContentFlag(assetHTML, assetHTMLFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if html == "" {
+		fmt.Fprintf(os.Stderr, "Error: provide --html, --html-file, or --html-file -\n")
+		os.Exit(1)
+	}
+
+	c, err := resolveMemoryClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	asset, err := c.CreateAsset(context.Background(), &client.CreateAssetRequest{HTML: html})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating asset: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch assetFormat {
+	case "json":
+		out, err := json.MarshalIndent(asset, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(out))
+	case "url", "":
+		fmt.Println(asset.URL)
+	default:
+		fmt.Fprintf(os.Stderr, "Error: unsupported --format %q\n", assetFormat)
+		os.Exit(1)
+	}
 }
 
 // formatMemoriesMarkdown formats memory entries as Markdown suitable for CLAUDE.md injection.
