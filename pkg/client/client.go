@@ -160,6 +160,55 @@ type DeleteResponse struct {
 	SessionID string `json:"session_id"`
 }
 
+// CreateAssetRequest represents the request to upload an HTML asset.
+type CreateAssetRequest struct {
+	HTML string `json:"html"`
+}
+
+// AssetResponse represents an uploaded HTML asset.
+type AssetResponse struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// CreateAsset uploads HTML and returns an externally reachable asset URL.
+func (c *Client) CreateAsset(ctx context.Context, req *CreateAssetRequest) (*AssetResponse, error) {
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/assets", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var assetResp AssetResponse
+	if err := json.NewDecoder(resp.Body).Decode(&assetResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &assetResp, nil
+}
+
 // Start creates a new agentapi session
 func (c *Client) Start(ctx context.Context, req *StartRequest) (*StartResponse, error) {
 	jsonData, err := json.Marshal(req)

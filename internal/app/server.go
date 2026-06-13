@@ -58,6 +58,7 @@ type Server struct {
 	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	userFileRepo       portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo portrepos.SessionProfileRepository              // Session profile repository
+	assetStore         services.AssetStore                             // Static asset storage backend
 	router             *Router                                         // Router for custom handler registration
 }
 
@@ -112,7 +113,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "assets" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies"
 			}
 			return false
 		},
@@ -326,6 +327,12 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	))
 	log.Printf("[SERVER] Session profile repository initialized")
 
+	assetStore, err := services.NewAssetStore(context.Background(), cfg.Asset)
+	if err != nil {
+		log.Fatalf("[SERVER] Failed to initialize asset store: %v", err)
+	}
+	log.Printf("[SERVER] Asset store initialized (backend: %s)", cfg.Asset.Backend)
+
 	s := &Server{
 		config:             cfg,
 		echo:               e,
@@ -345,6 +352,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionRouteRepo:   sessionRouteRepo,
 		userFileRepo:       userFileRepo,
 		sessionProfileRepo: sessionProfileRepo,
+		assetStore:         assetStore,
 	}
 
 	// Add logging middleware if verbose

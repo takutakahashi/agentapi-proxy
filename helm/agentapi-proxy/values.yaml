@@ -67,6 +67,38 @@ service:
   port: 8080
   agentapiPort: 9000
 
+asset:
+  enabled: true
+  backend: nginx
+  publicBaseUrl: ""
+  storagePath: /var/lib/agentapi-assets
+  nginx:
+    image:
+      repository: nginx
+      tag: "1.27-alpine"
+      pullPolicy: IfNotPresent
+    replicaCount: 1
+    service:
+      port: 80
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "250m"
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+  s3:
+    bucket: ""
+    region: ""
+    prefix: "agentapi-assets/"
+    endpoint: ""
+
 ingress:
   enabled: false
   className: "nginx"
@@ -76,15 +108,12 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
-  hosts:
-    - host: agentapi.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls:
-    - secretName: agentapi-proxy-tls
-      hosts:
-        - agentapi.example.com
+  # When empty, global.apiHostname or config.hostname is used.
+  hosts: []
+  tls: []
+  # - secretName: agentapi-proxy-tls
+  #   hosts:
+  #     - agentapi.example.com
 
 resources:
   requests:

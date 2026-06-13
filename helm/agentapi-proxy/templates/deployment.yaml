@@ -1,3 +1,10 @@
+{{- $asset := .Values.asset | default dict }}
+{{- $assetBackend := $asset.backend | default "nginx" }}
+{{- $assetEnabled := $asset.enabled | default true }}
+{{- $assetStoragePath := $asset.storagePath | default "/var/lib/agentapi-assets" }}
+{{- $assetPersistence := $asset.persistence | default dict }}
+{{- $assetPersistenceEnabled := $assetPersistence.enabled | default true }}
+{{- $assetS3 := $asset.s3 | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -185,6 +192,40 @@ spec:
             {{- else if $hostname }}
             - name: AGENTAPI_WEBHOOK_BASE_URL
               value: {{ printf "https://%s" $hostname | quote }}
+            {{- end }}
+            # Static asset upload configuration
+            - name: AGENTAPI_ASSET_BACKEND
+              value: {{ $assetBackend | quote }}
+            {{ $assetPublicBaseURL := $asset.publicBaseUrl | default "" }}
+            {{ $assetHost := .Values.config.hostname | default "" }}
+            {{ if .Values.global }}
+              {{ $assetHost = .Values.global.apiHostname | default $assetHost }}
+            {{ end }}
+            {{ if and (eq $assetHost "") .Values.ingress.hosts }}
+              {{ $assetHost = (index .Values.ingress.hosts 0).host }}
+            {{ end }}
+            {{ if and (eq $assetPublicBaseURL "") $assetHost }}
+              {{ $assetPublicBaseURL = printf "https://%s" $assetHost }}
+            {{ end }}
+            - name: AGENTAPI_ASSET_PUBLIC_BASE_URL
+              value: {{ $assetPublicBaseURL | quote }}
+            - name: AGENTAPI_ASSET_STORAGE_PATH
+              value: {{ $assetStoragePath | quote }}
+            {{- if $assetS3.bucket }}
+            - name: AGENTAPI_ASSET_S3_BUCKET
+              value: {{ $assetS3.bucket | quote }}
+            {{- end }}
+            {{- if $assetS3.region }}
+            - name: AGENTAPI_ASSET_S3_REGION
+              value: {{ $assetS3.region | quote }}
+            {{- end }}
+            {{- if $assetS3.prefix }}
+            - name: AGENTAPI_ASSET_S3_PREFIX
+              value: {{ $assetS3.prefix | quote }}
+            {{- end }}
+            {{- if $assetS3.endpoint }}
+            - name: AGENTAPI_ASSET_S3_ENDPOINT
+              value: {{ $assetS3.endpoint | quote }}
             {{- end }}
             {{- if .Values.config.webhook.githubEnterpriseHost }}
             - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST
@@ -483,6 +524,10 @@ spec:
               mountPath: /etc/k8s-session-config
               readOnly: true
             {{- end }}
+            {{- if and $assetEnabled (eq $assetBackend "nginx") }}
+            - name: asset-storage
+              mountPath: {{ $assetStoragePath | quote }}
+            {{- end }}
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -526,6 +571,15 @@ spec:
         - name: k8s-session-config
           configMap:
             name: {{ include "agentapi-proxy.fullname" . }}-k8s-session-config
+        {{- end }}
+        {{- if and $assetEnabled (eq $assetBackend "nginx") }}
+        - name: asset-storage
+          {{ if $assetPersistenceEnabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "agentapi-proxy.fullname" . }}-assets
+          {{ else }}
+          emptyDir: {}
+          {{ end }}
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
