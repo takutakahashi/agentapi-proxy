@@ -239,11 +239,12 @@ type MarketplaceImport struct {
 
 // SessionProfileImport represents a session profile for import/export
 type SessionProfileImport struct {
-	ID          string                     `yaml:"id" toml:"id" json:"id"`
-	Name        string                     `yaml:"name" toml:"name" json:"name"`
-	Description string                     `yaml:"description,omitempty" toml:"description,omitempty" json:"description,omitempty"`
-	IsDefault   bool                       `yaml:"is_default,omitempty" toml:"is_default,omitempty" json:"is_default,omitempty"`
-	Config      SessionProfileConfigImport `yaml:"config" toml:"config" json:"config"`
+	ID           string                     `yaml:"id" toml:"id" json:"id"`
+	Name         string                     `yaml:"name" toml:"name" json:"name"`
+	Description  string                     `yaml:"description,omitempty" toml:"description,omitempty" json:"description,omitempty"`
+	IsDefault    bool                       `yaml:"is_default,omitempty" toml:"is_default,omitempty" json:"is_default,omitempty"`
+	SelectorTags map[string]string          `yaml:"selector_tags,omitempty" toml:"selector_tags,omitempty" json:"selector_tags,omitempty"`
+	Config       SessionProfileConfigImport `yaml:"config" toml:"config" json:"config"`
 }
 
 // SessionProfileConfigImport represents session profile config for import/export

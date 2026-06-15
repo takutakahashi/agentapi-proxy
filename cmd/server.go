@@ -461,8 +461,8 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 			Sandbox: configData.StockInventoryWorker.SandboxEnabled,
 			DinD:    configData.StockInventoryWorker.DockerEnabled,
 		},
-		Pools:         pools,
-		Enabled:       true,
+		Pools:   pools,
+		Enabled: true,
 	}
 
 	leaseDuration, err := time.ParseDuration(configData.StockInventoryWorker.LeaseDuration)

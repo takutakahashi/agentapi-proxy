@@ -135,6 +135,18 @@ func (m *Memory) SetTags(tags map[string]string) {
 	m.updatedAt = time.Now()
 }
 
+// SetOwnership updates the resource ownership metadata.
+func (m *Memory) SetOwnership(scope ResourceScope, ownerID, teamID string) {
+	m.scope = scope
+	m.ownerID = ownerID
+	if scope == ScopeTeam {
+		m.teamID = teamID
+	} else {
+		m.teamID = ""
+	}
+	m.updatedAt = time.Now()
+}
+
 // SetID overwrites the memory ID. Used by external repository adapters that
 // receive a server-assigned ID after persisting (e.g. memory-server generates
 // its own UUID which must replace the caller-supplied placeholder).

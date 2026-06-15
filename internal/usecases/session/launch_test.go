@@ -163,6 +163,109 @@ func TestLaunchExplicitDockerOverridesProfileDocker(t *testing.T) {
 	}
 }
 
+func TestLaunchAppliesProfileSelectedByTags(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	defaultProfile := entities.NewSessionProfile("profile-default", "default", "user-1")
+	defaultProfile.SetIsDefault(true)
+	defaultCfg := entities.NewSessionProfileConfig()
+	defaultCfg.SetParams(&entities.SessionParams{AgentType: "claude"})
+	defaultProfile.SetConfig(defaultCfg)
+
+	selectedProfile := entities.NewSessionProfile("profile-selected", "selected", "user-1")
+	selectedProfile.SetSelectorTags(map[string]string{"env": "dev"})
+	selectedCfg := entities.NewSessionProfileConfig()
+	selectedCfg.SetParams(&entities.SessionParams{AgentType: "codex"})
+	selectedCfg.SetTags(map[string]string{"profile": "selected", "env": "profile"})
+	selectedProfile.SetConfig(selectedCfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{
+			defaultProfile,
+			selectedProfile,
+		}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+		Tags:   map[string]string{"env": "dev", "request": "kept"},
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req.AgentType != "codex" {
+		t.Fatalf("expected tag-selected profile agent type, got %q", sessionManager.req.AgentType)
+	}
+	if sessionManager.req.Tags["env"] != "dev" || sessionManager.req.Tags["profile"] != "selected" || sessionManager.req.Tags["request"] != "kept" {
+		t.Fatalf("unexpected merged tags: %#v", sessionManager.req.Tags)
+	}
+}
+
+func TestLaunchExplicitProfileIDOverridesTagSelector(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	explicitProfile := entities.NewSessionProfile("profile-explicit", "explicit", "user-1")
+	explicitCfg := entities.NewSessionProfileConfig()
+	explicitCfg.SetParams(&entities.SessionParams{AgentType: "claude"})
+	explicitProfile.SetConfig(explicitCfg)
+
+	selectedProfile := entities.NewSessionProfile("profile-selected", "selected", "user-1")
+	selectedProfile.SetSelectorTags(map[string]string{"env": "dev"})
+	selectedCfg := entities.NewSessionProfileConfig()
+	selectedCfg.SetParams(&entities.SessionParams{AgentType: "codex"})
+	selectedProfile.SetConfig(selectedCfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{
+			explicitProfile,
+			selectedProfile,
+		}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:           "user-1",
+		Scope:            entities.ScopeUser,
+		Tags:             map[string]string{"env": "dev"},
+		SessionProfileID: "profile-explicit",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req.AgentType != "claude" {
+		t.Fatalf("expected explicit profile agent type, got %q", sessionManager.req.AgentType)
+	}
+}
+
+func TestLaunchChoosesMostSpecificTagSelectedProfile(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	genericProfile := entities.NewSessionProfile("profile-generic", "generic", "user-1")
+	genericProfile.SetSelectorTags(map[string]string{"env": "dev"})
+	genericCfg := entities.NewSessionProfileConfig()
+	genericCfg.SetParams(&entities.SessionParams{AgentType: "claude"})
+	genericProfile.SetConfig(genericCfg)
+
+	specificProfile := entities.NewSessionProfile("profile-specific", "specific", "user-1")
+	specificProfile.SetSelectorTags(map[string]string{"env": "dev", "repo": "owner/repo"})
+	specificCfg := entities.NewSessionProfileConfig()
+	specificCfg.SetParams(&entities.SessionParams{AgentType: "codex"})
+	specificProfile.SetConfig(specificCfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{
+			genericProfile,
+			specificProfile,
+		}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+		Tags:   map[string]string{"env": "dev", "repo": "owner/repo"},
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req.AgentType != "codex" {
+		t.Fatalf("expected most specific selected profile, got %q", sessionManager.req.AgentType)
+	}
+}
+
 func TestLaunchReuseRoutesMessageToExistingSession(t *testing.T) {
 	sessionManager := &recordingSessionManager{
 		existing: []entities.Session{&launchTestSession{id: "existing-1", userID: "user-1", status: "active"}},

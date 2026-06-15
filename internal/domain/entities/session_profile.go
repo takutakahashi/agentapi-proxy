@@ -6,16 +6,17 @@ import (
 
 // SessionProfile represents a named, reusable session configuration for a tenant
 type SessionProfile struct {
-	id          string
-	name        string
-	description string
-	userID      string
-	scope       ResourceScope
-	teamID      string
-	isDefault   bool
-	config      SessionProfileConfig
-	createdAt   time.Time
-	updatedAt   time.Time
+	id           string
+	name         string
+	description  string
+	userID       string
+	scope        ResourceScope
+	teamID       string
+	isDefault    bool
+	selectorTags map[string]string
+	config       SessionProfileConfig
+	createdAt    time.Time
+	updatedAt    time.Time
 }
 
 // SessionProfileConfig contains the reusable session configuration fields
@@ -96,6 +97,18 @@ func (p *SessionProfile) SetTeamID(teamID string) {
 	p.updatedAt = time.Now()
 }
 
+// SetOwnership updates the resource ownership metadata.
+func (p *SessionProfile) SetOwnership(scope ResourceScope, userID, teamID string) {
+	p.scope = scope
+	p.userID = userID
+	if scope == ScopeTeam {
+		p.teamID = teamID
+	} else {
+		p.teamID = ""
+	}
+	p.updatedAt = time.Now()
+}
+
 // IsDefault returns whether this profile is the tenant's default
 func (p *SessionProfile) IsDefault() bool { return p.isDefault }
 
@@ -103,6 +116,35 @@ func (p *SessionProfile) IsDefault() bool { return p.isDefault }
 func (p *SessionProfile) SetIsDefault(isDefault bool) {
 	p.isDefault = isDefault
 	p.updatedAt = time.Now()
+}
+
+// SelectorTags returns the tag selector used to choose this profile at launch time.
+func (p *SessionProfile) SelectorTags() map[string]string {
+	return copyStringMap(p.selectorTags)
+}
+
+// SetSelectorTags sets the tag selector used to choose this profile at launch time.
+func (p *SessionProfile) SetSelectorTags(tags map[string]string) {
+	p.selectorTags = copyStringMap(tags)
+	p.updatedAt = time.Now()
+}
+
+// MatchesSelectorTags returns true when requestTags contains all selector tags.
+func (p *SessionProfile) MatchesSelectorTags(requestTags map[string]string) bool {
+	if len(p.selectorTags) == 0 {
+		return false
+	}
+	for k, v := range p.selectorTags {
+		if requestTags[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// SelectorSpecificity returns the number of selector tags.
+func (p *SessionProfile) SelectorSpecificity() int {
+	return len(p.selectorTags)
 }
 
 // Config returns the session profile configuration
@@ -223,4 +265,15 @@ type ErrSessionProfileNotFound struct {
 
 func (e ErrSessionProfileNotFound) Error() string {
 	return "session profile not found: " + e.ID
+}
+
+func copyStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }

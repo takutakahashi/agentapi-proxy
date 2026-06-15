@@ -128,6 +128,18 @@ func (w *Webhook) SetTeamID(teamID string) {
 	w.updatedAt = time.Now()
 }
 
+// SetOwnership updates the resource ownership metadata.
+func (w *Webhook) SetOwnership(scope ResourceScope, userID, teamID string) {
+	w.scope = scope
+	w.userID = userID
+	if scope == ScopeTeam {
+		w.teamID = teamID
+	} else {
+		w.teamID = ""
+	}
+	w.updatedAt = time.Now()
+}
+
 // UserTeams returns the GitHub team slugs captured at webhook creation/update time.
 // These are used to inject team-level settings into sessions spawned by this webhook.
 func (w *Webhook) UserTeams() []string {
