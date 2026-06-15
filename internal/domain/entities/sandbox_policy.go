@@ -85,6 +85,18 @@ func (p *SandboxPolicy) SetCountMode(v bool) {
 	p.updatedAt = time.Now()
 }
 
+// SetOwnership updates the resource ownership metadata.
+func (p *SandboxPolicy) SetOwnership(scope ResourceScope, ownerID, teamID string) {
+	p.scope = scope
+	p.ownerID = ownerID
+	if scope == ScopeTeam {
+		p.teamID = teamID
+	} else {
+		p.teamID = ""
+	}
+	p.updatedAt = time.Now()
+}
+
 func (p *SandboxPolicy) SetCreatedAt(t time.Time) { p.createdAt = t }
 func (p *SandboxPolicy) SetUpdatedAt(t time.Time) { p.updatedAt = t }
 

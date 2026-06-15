@@ -1416,6 +1416,7 @@ type sessionProfileRecord struct {
 	Scope                  string                      `yaml:"scope"`
 	TeamID                 string                      `yaml:"team_id,omitempty"`
 	IsDefault              bool                        `yaml:"is_default,omitempty"`
+	SelectorTags           map[string]string           `yaml:"selector_tags,omitempty"`
 	Environment            map[string]string           `yaml:"environment,omitempty"`
 	Tags                   map[string]string           `yaml:"tags,omitempty"`
 	InitialMessageTemplate string                      `yaml:"initial_message_template,omitempty"`
@@ -1478,6 +1479,7 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) (sessionProf
 		Scope:                  string(p.Scope()),
 		TeamID:                 p.TeamID(),
 		IsDefault:              p.IsDefault(),
+		SelectorTags:           p.SelectorTags(),
 		Environment:            env,
 		Tags:                   cfg.Tags(),
 		InitialMessageTemplate: cfg.InitialMessageTemplate(),
@@ -1692,6 +1694,7 @@ func (s *Syncer) importSessionProfileFile(ctx context.Context, data []byte, scop
 	p.SetScope(scope)
 	p.SetTeamID(teamID)
 	p.SetIsDefault(rec.IsDefault)
+	p.SetSelectorTags(rec.SelectorTags)
 
 	cfg := entities.NewSessionProfileConfig()
 	if len(env) > 0 {

@@ -193,6 +193,18 @@ func (t *Task) SetLinks(links []*TaskLink) {
 	t.updatedAt = time.Now()
 }
 
+// SetOwnership updates the resource ownership metadata.
+func (t *Task) SetOwnership(scope ResourceScope, ownerID, teamID string) {
+	t.scope = scope
+	t.ownerID = ownerID
+	if scope == ScopeTeam {
+		t.teamID = teamID
+	} else {
+		t.teamID = ""
+	}
+	t.updatedAt = time.Now()
+}
+
 // SetCreatedAt sets the createdAt field (for deserialization only)
 func (t *Task) SetCreatedAt(ts time.Time) { t.createdAt = ts }
 
@@ -286,6 +298,18 @@ func (g *TaskGroup) SetName(name string) {
 // SetDescription sets the description and updates the updatedAt timestamp
 func (g *TaskGroup) SetDescription(description string) {
 	g.description = description
+	g.updatedAt = time.Now()
+}
+
+// SetOwnership updates the resource ownership metadata.
+func (g *TaskGroup) SetOwnership(scope ResourceScope, ownerID, teamID string) {
+	g.scope = scope
+	g.ownerID = ownerID
+	if scope == ScopeTeam {
+		g.teamID = teamID
+	} else {
+		g.teamID = ""
+	}
 	g.updatedAt = time.Now()
 }
 

@@ -98,6 +98,18 @@ func (s *SlackBot) SetTeamID(teamID string) {
 	s.updatedAt = time.Now()
 }
 
+// SetOwnership updates the resource ownership metadata.
+func (s *SlackBot) SetOwnership(scope ResourceScope, userID, teamID string) {
+	s.scope = scope
+	s.userID = userID
+	if scope == ScopeTeam {
+		s.teamID = teamID
+	} else {
+		s.teamID = ""
+	}
+	s.updatedAt = time.Now()
+}
+
 // Teams returns the GitHub team slugs stored at bot creation/update time.
 // These are used to merge team-level settings (MCP servers, env vars, etc.)
 // into sessions created by this bot.
