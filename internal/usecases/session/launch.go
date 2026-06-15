@@ -262,7 +262,7 @@ func (uc *LaunchUseCase) ensureMemoryExists(ctx context.Context, req LaunchReque
 
 // resolveSessionProfile returns the session profile to apply for the given request.
 // If SessionProfileID is set, it fetches that profile directly.
-// Otherwise it searches for the default profile scoped to the user or team.
+// Otherwise it searches for a selector_tags match before falling back to the default profile.
 func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRequest) *entities.SessionProfile {
 	if req.SessionProfileID != "" {
 		profile, err := uc.sessionProfileRepo.Get(ctx, req.SessionProfileID)
@@ -273,7 +273,6 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 		return profile
 	}
 
-	// No explicit ID — look for the default profile for this user/team scope.
 	scope := req.Scope
 	if scope == "" {
 		scope = entities.ScopeUser
@@ -290,6 +289,10 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 		log.Printf("[LAUNCH] Warning: could not list session profiles for default lookup: %v", err)
 		return nil
 	}
+	if profile := selectProfileByTags(profiles, req.Tags); profile != nil {
+		log.Printf("[LAUNCH] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), req.UserID)
+		return profile
+	}
 	for _, p := range profiles {
 		if p.IsDefault() {
 			log.Printf("[LAUNCH] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), req.UserID)
@@ -297,6 +300,31 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 		}
 	}
 	return nil
+}
+
+func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]string) *entities.SessionProfile {
+	var matches []*entities.SessionProfile
+	for _, p := range profiles {
+		if p.MatchesSelectorTags(tags) {
+			matches = append(matches, p)
+		}
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].SelectorSpecificity() != matches[j].SelectorSpecificity() {
+			return matches[i].SelectorSpecificity() > matches[j].SelectorSpecificity()
+		}
+		if matches[i].IsDefault() != matches[j].IsDefault() {
+			return matches[i].IsDefault()
+		}
+		if matches[i].Name() != matches[j].Name() {
+			return matches[i].Name() < matches[j].Name()
+		}
+		return matches[i].ID() < matches[j].ID()
+	})
+	return matches[0]
 }
 
 // applyProfileToLaunchRequest merges a SessionProfileConfig into a LaunchRequest.

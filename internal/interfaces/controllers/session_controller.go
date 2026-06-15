@@ -176,7 +176,7 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	// When SessionProfileID is set, use that profile. Otherwise fall back to the
 	// user/team's default profile. The profile is the base; explicit request fields override.
 	if c.sessionProfileRepo != nil {
-		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID)
+		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID, startReq.Tags)
 		if profile != nil {
 			cfg := profile.Config()
 
@@ -960,8 +960,8 @@ func (c *SessionController) GetSessionSandboxDomains(ctx echo.Context) error {
 
 // resolveSessionProfile returns the session profile to apply for a session creation request.
 // If profileID is set, it fetches that profile directly.
-// Otherwise it searches for the default profile scoped to the user or team.
-func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID, userID string, scope entities.ResourceScope, teamID string) *entities.SessionProfile {
+// Otherwise it searches for a selector_tags match before falling back to the default profile.
+func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID, userID string, scope entities.ResourceScope, teamID string, tags map[string]string) *entities.SessionProfile {
 	if profileID != "" {
 		profile, err := c.sessionProfileRepo.Get(ctx, profileID)
 		if err != nil {
@@ -971,7 +971,6 @@ func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID
 		return profile
 	}
 
-	// No explicit ID — look for the default profile for this user/team scope.
 	filter := repositories.SessionProfileFilter{
 		UserID: userID,
 		Scope:  scope,
@@ -984,6 +983,10 @@ func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID
 		log.Printf("[SESSION] Warning: could not list session profiles for default lookup: %v", err)
 		return nil
 	}
+	if profile := selectSessionProfileByTags(profiles, tags); profile != nil {
+		log.Printf("[SESSION] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)
+		return profile
+	}
 	for _, p := range profiles {
 		if p.IsDefault() {
 			log.Printf("[SESSION] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), userID)
@@ -991,4 +994,29 @@ func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID
 		}
 	}
 	return nil
+}
+
+func selectSessionProfileByTags(profiles []*entities.SessionProfile, tags map[string]string) *entities.SessionProfile {
+	var matches []*entities.SessionProfile
+	for _, p := range profiles {
+		if p.MatchesSelectorTags(tags) {
+			matches = append(matches, p)
+		}
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].SelectorSpecificity() != matches[j].SelectorSpecificity() {
+			return matches[i].SelectorSpecificity() > matches[j].SelectorSpecificity()
+		}
+		if matches[i].IsDefault() != matches[j].IsDefault() {
+			return matches[i].IsDefault()
+		}
+		if matches[i].Name() != matches[j].Name() {
+			return matches[i].Name() < matches[j].Name()
+		}
+		return matches[i].ID() < matches[j].ID()
+	})
+	return matches[0]
 }

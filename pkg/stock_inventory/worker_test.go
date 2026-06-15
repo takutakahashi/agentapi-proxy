@@ -83,7 +83,7 @@ type recordingStockRepo struct {
 	counts              map[StockRequirements]int
 	countRequirements   StockRequirements
 	countedRequirements []StockRequirements
-	createRequirements []StockRequirements
+	createRequirements  []StockRequirements
 }
 
 func (r *recordingStockRepo) CreateStockSession(_ context.Context, sandbox, dind bool) error {

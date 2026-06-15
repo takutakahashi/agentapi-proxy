@@ -10,6 +10,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
@@ -23,25 +24,26 @@ type Router struct {
 
 // HandlerRegistry contains all handlers
 type HandlerRegistry struct {
-	notificationHandlers      *controllers.NotificationHandlers
-	healthController          *controllers.HealthController
-	sessionController         *controllers.SessionController
-	acpController             *controllers.ACPController
-	settingsController        *controllers.SettingsController
-	credentialsController     *controllers.CredentialsController
-	codexDeviceAuthController *controllers.CodexDeviceAuthController
-	userController            *controllers.UserController
-	shareController           *controllers.ShareController
-	personalAPIKeyController  *controllers.PersonalAPIKeyController
-	memoryController          *controllers.MemoryController
-	sandboxPolicyController   *controllers.SandboxPolicyController
-	taskController            *controllers.TaskController
-	taskGroupController       *controllers.TaskGroupController
-	fileController            *controllers.FileController
-	assetController           *controllers.AssetController
-	sessionProfileController  *controllers.SessionProfileController
-	provisionerController     *controllers.ProvisionerController
-	customHandlers            []CustomHandler
+	notificationHandlers       *controllers.NotificationHandlers
+	healthController           *controllers.HealthController
+	sessionController          *controllers.SessionController
+	acpController              *controllers.ACPController
+	settingsController         *controllers.SettingsController
+	credentialsController      *controllers.CredentialsController
+	codexDeviceAuthController  *controllers.CodexDeviceAuthController
+	userController             *controllers.UserController
+	shareController            *controllers.ShareController
+	personalAPIKeyController   *controllers.PersonalAPIKeyController
+	memoryController           *controllers.MemoryController
+	sandboxPolicyController    *controllers.SandboxPolicyController
+	taskController             *controllers.TaskController
+	taskGroupController        *controllers.TaskGroupController
+	resourceTransferController *controllers.ResourceTransferController
+	fileController             *controllers.FileController
+	assetController            *controllers.AssetController
+	sessionProfileController   *controllers.SessionProfileController
+	provisionerController      *controllers.ProvisionerController
+	customHandlers             []CustomHandler
 }
 
 // CustomHandler interface for adding custom routes
@@ -143,6 +145,24 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Task group controller initialized")
 	}
 
+	resourceTransferOptions := []resource_transfer.Option{
+		resource_transfer.WithMemoryRepository(server.memoryRepo),
+		resource_transfer.WithTaskRepository(server.taskRepo),
+		resource_transfer.WithTaskGroupRepository(server.taskGroupRepo),
+		resource_transfer.WithSessionProfileRepository(server.sessionProfileRepo),
+		resource_transfer.WithSandboxPolicyRepository(server.sandboxPolicyRepo),
+	}
+	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
+		client := k8sManager.GetClient()
+		namespace := k8sManager.GetNamespace()
+		resourceTransferOptions = append(resourceTransferOptions,
+			resource_transfer.WithWebhookRepository(repositories.NewKubernetesWebhookRepository(client, namespace)),
+			resource_transfer.WithSlackBotRepository(repositories.NewKubernetesSlackBotRepository(client, namespace)),
+		)
+	}
+	resourceTransferController := controllers.NewResourceTransferController(resource_transfer.New(resourceTransferOptions...))
+	log.Printf("[ROUTER] Resource transfer controller initialized")
+
 	// Create file controller if user file repository is available
 	var fileController *controllers.FileController
 	if server.userFileRepo != nil {
@@ -175,25 +195,26 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		echo:   e,
 		server: server,
 		handlers: &HandlerRegistry{
-			notificationHandlers:      controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
-			healthController:          controllers.NewHealthController(),
-			sessionController:         sessionController,
-			acpController:             acpController,
-			settingsController:        settingsController,
-			credentialsController:     credentialsController,
-			codexDeviceAuthController: codexDeviceAuthController,
-			userController:            controllers.NewUserController(),
-			shareController:           shareController,
-			personalAPIKeyController:  personalAPIKeyController,
-			memoryController:          memoryController,
-			sandboxPolicyController:   sandboxPolicyController,
-			taskController:            taskController,
-			taskGroupController:       taskGroupController,
-			fileController:            fileController,
-			assetController:           assetController,
-			sessionProfileController:  sessionProfileController,
-			provisionerController:     provisionerController,
-			customHandlers:            make([]CustomHandler, 0),
+			notificationHandlers:       controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
+			healthController:           controllers.NewHealthController(),
+			sessionController:          sessionController,
+			acpController:              acpController,
+			settingsController:         settingsController,
+			credentialsController:      credentialsController,
+			codexDeviceAuthController:  codexDeviceAuthController,
+			userController:             controllers.NewUserController(),
+			shareController:            shareController,
+			personalAPIKeyController:   personalAPIKeyController,
+			memoryController:           memoryController,
+			sandboxPolicyController:    sandboxPolicyController,
+			taskController:             taskController,
+			taskGroupController:        taskGroupController,
+			resourceTransferController: resourceTransferController,
+			fileController:             fileController,
+			assetController:            assetController,
+			sessionProfileController:   sessionProfileController,
+			provisionerController:      provisionerController,
+			customHandlers:             make([]CustomHandler, 0),
 		},
 	}
 }
@@ -220,6 +241,8 @@ func (r *Router) RegisterRoutes() error {
 	if err := r.registerCustomHandlers(); err != nil {
 		return err
 	}
+
+	r.registerSessionProxyRoutes()
 
 	return nil
 }
@@ -263,6 +286,18 @@ func (r *Router) registerCoreRoutes() error {
 		auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	log.Printf("[ROUTES] Session status/message push endpoints registered (SSE + long-poll)")
 
+	if r.handlers.resourceTransferController != nil {
+		log.Printf("[ROUTES] Registering resource transfer endpoint...")
+		r.echo.POST("/resources/transfer", r.handlers.resourceTransferController.TransferResource, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/resources/*", func(c echo.Context) error {
+			if c.Param("*") != "transfer" {
+				return echo.NewHTTPError(http.StatusNotFound, "resource endpoint not found")
+			}
+			return r.handlers.resourceTransferController.TransferResource(c)
+		}, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Resource transfer endpoint registered")
+	}
+
 	if r.handlers.provisionerController != nil {
 		r.echo.POST("/internal/session-provisioners/connect", r.handlers.provisionerController.Connect)
 		r.echo.GET("/internal/session-provisioners/:sessionId/provision-requests", r.handlers.provisionerController.GetProvisionRequest)
@@ -302,14 +337,20 @@ func (r *Router) registerCoreRoutes() error {
 		log.Printf("[ROUTES] Session sharing endpoints registered")
 	}
 
-	// Session proxy route
-	r.echo.Any("/:sessionId/*", r.handlers.sessionController.RouteToSession)
-	log.Printf("[ROUTES] Session management endpoints registered")
-
 	// Add explicit OPTIONS handler for DELETE endpoint to ensure CORS preflight works
 	r.echo.OPTIONS("/sessions/:sessionId", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
+
+	log.Printf("[ROUTES] Session management endpoints registered")
+
+	return nil
+}
+
+func (r *Router) registerSessionProxyRoutes() {
+	// Session proxy route must be registered after all proxy-level routes so
+	// paths such as /resources/transfer are not treated as session IDs.
+	r.echo.Any("/:sessionId/*", r.handlers.sessionController.RouteToSession)
 
 	// Add explicit OPTIONS handler for session proxy routes to ensure CORS preflight works
 	r.echo.OPTIONS("/:sessionId/*", func(c echo.Context) error {
@@ -321,8 +362,6 @@ func (r *Router) registerCoreRoutes() error {
 		c.Response().Header().Set("Access-Control-Max-Age", "86400")
 		return c.NoContent(http.StatusNoContent)
 	})
-
-	return nil
 }
 
 // registerConditionalRoutes registers routes based on server configuration

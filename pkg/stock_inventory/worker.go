@@ -22,8 +22,8 @@ type StockRepository interface {
 
 // StockRequirements captures the pod capabilities a stock session is prepared for.
 type StockRequirements struct {
-	Sandbox   bool
-	DinD      bool
+	Sandbox bool
+	DinD    bool
 }
 
 // StockPool captures one stock inventory target for a capability set.

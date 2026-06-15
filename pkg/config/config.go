@@ -406,7 +406,7 @@ type AssetConfig struct {
 	// PublicBaseURL is the externally reachable base URL used to build asset URLs.
 	PublicBaseURL string `json:"public_base_url" mapstructure:"public_base_url"`
 	// StoragePath is the local directory shared with nginx when Backend is "nginx".
-	StoragePath string `json:"storage_path" mapstructure:"storage_path"`
+	StoragePath string         `json:"storage_path" mapstructure:"storage_path"`
 	S3          *AssetS3Config `json:"s3,omitempty" mapstructure:"s3"`
 }
 
