@@ -14,6 +14,9 @@ type MCPServer struct {
 	useCase                  *mcpusecases.MCPSessionToolsUseCase
 	taskUseCase              *mcpusecases.MCPTaskToolsUseCase
 	memoryUseCase            *mcpusecases.MCPMemoryToolsUseCase
+	webhookUseCase           *mcpusecases.MCPWebhookToolsUseCase
+	scheduleUseCase          *mcpusecases.MCPScheduleToolsUseCase
+	slackBotUseCase          *mcpusecases.MCPSlackBotToolsUseCase
 	authenticatedUserID      string
 	authenticatedTeams       []string // GitHub team slugs (e.g., ["org/team-a"])
 	authenticatedGithubToken string   // GitHub token from Authorization header
@@ -21,7 +24,7 @@ type MCPServer struct {
 }
 
 // NewMCPServer creates a new MCP server instance
-func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, taskRepo repositories.TaskRepository, taskGroupRepo repositories.TaskGroupRepository, memoryRepo repositories.MemoryRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, sessionID string, opts *mcp.ServerOptions) *MCPServer {
+func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, taskRepo repositories.TaskRepository, taskGroupRepo repositories.TaskGroupRepository, memoryRepo repositories.MemoryRepository, webhookRepo repositories.WebhookRepository, scheduleManager mcpusecases.ScheduleManager, slackBotRepo repositories.SlackBotRepository, sessionProfileRepo repositories.SessionProfileRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, sessionID string, opts *mcp.ServerOptions) *MCPServer {
 	// Create session use case with actual dependencies
 	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, shareRepo, taskRepo)
 
@@ -37,6 +40,19 @@ func NewMCPServer(sessionManager repositories.SessionManager, shareRepo reposito
 		memoryUseCase = mcpusecases.NewMCPMemoryToolsUseCase(memoryRepo)
 	}
 
+	var webhookUseCase *mcpusecases.MCPWebhookToolsUseCase
+	if webhookRepo != nil {
+		webhookUseCase = mcpusecases.NewMCPWebhookToolsUseCase(webhookRepo, sessionManager, memoryRepo, sessionProfileRepo)
+	}
+	var scheduleUseCase *mcpusecases.MCPScheduleToolsUseCase
+	if scheduleManager != nil {
+		scheduleUseCase = mcpusecases.NewMCPScheduleToolsUseCase(scheduleManager, sessionManager, memoryRepo, sessionProfileRepo)
+	}
+	var slackBotUseCase *mcpusecases.MCPSlackBotToolsUseCase
+	if slackBotRepo != nil {
+		slackBotUseCase = mcpusecases.NewMCPSlackBotToolsUseCase(slackBotRepo)
+	}
+
 	// Create MCP server
 	impl := &mcp.Implementation{
 		Name:    "agentapi-proxy-mcp",
@@ -50,6 +66,9 @@ func NewMCPServer(sessionManager repositories.SessionManager, shareRepo reposito
 		useCase:                  useCase,
 		taskUseCase:              taskUseCase,
 		memoryUseCase:            memoryUseCase,
+		webhookUseCase:           webhookUseCase,
+		scheduleUseCase:          scheduleUseCase,
+		slackBotUseCase:          slackBotUseCase,
 		authenticatedUserID:      authenticatedUserID,
 		authenticatedTeams:       authenticatedTeams,
 		authenticatedGithubToken: authenticatedGithubToken,
@@ -70,6 +89,18 @@ func (s *MCPServer) RegisterTools() {
 	// Register memory tools if available
 	if s.memoryUseCase != nil {
 		s.registerMemoryTools()
+	}
+
+	if s.webhookUseCase != nil {
+		s.registerWebhookTools()
+	}
+
+	if s.scheduleUseCase != nil {
+		s.registerScheduleTools()
+	}
+
+	if s.slackBotUseCase != nil {
+		s.registerSlackBotTools()
 	}
 }
 

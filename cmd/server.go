@@ -543,6 +543,7 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 
 	// Create webhook repository (clean architecture)
 	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
+	proxyServer.SetWebhookRepository(webhookRepo)
 
 	// Set default GitHub Enterprise host if configured
 	if configData.Webhook.GitHubEnterpriseHost != "" {
@@ -733,6 +734,7 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 
 	// Create SlackBot repository
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
+	proxyServer.SetSlackBotRepository(slackbotRepo)
 
 	// Create and register SlackBot management handlers (no event reception - handled by Socket Mode)
 	slackbotHandlers := slackbot.NewHandlers(slackbotRepo)

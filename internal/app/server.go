@@ -55,6 +55,8 @@ type Server struct {
 	sandboxDomainRepo  *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
 	taskRepo           portrepos.TaskRepository                        // Task repository
 	taskGroupRepo      portrepos.TaskGroupRepository                   // Task group repository
+	webhookRepo        portrepos.WebhookRepository                     // Webhook repository
+	slackBotRepo       portrepos.SlackBotRepository                    // SlackBot repository
 	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	userFileRepo       portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo portrepos.SessionProfileRepository              // Session profile repository
@@ -1101,6 +1103,26 @@ func (s *Server) GetTaskRepository() portrepos.TaskRepository {
 // GetTaskGroupRepository returns the task group repository
 func (s *Server) GetTaskGroupRepository() portrepos.TaskGroupRepository {
 	return s.taskGroupRepo
+}
+
+// GetWebhookRepository returns the webhook repository
+func (s *Server) GetWebhookRepository() portrepos.WebhookRepository {
+	return s.webhookRepo
+}
+
+// SetWebhookRepository allows configuration of a custom webhook repository
+func (s *Server) SetWebhookRepository(repo portrepos.WebhookRepository) {
+	s.webhookRepo = repo
+}
+
+// GetSlackBotRepository returns the SlackBot repository
+func (s *Server) GetSlackBotRepository() portrepos.SlackBotRepository {
+	return s.slackBotRepo
+}
+
+// SetSlackBotRepository allows configuration of a custom SlackBot repository
+func (s *Server) SetSlackBotRepository(repo portrepos.SlackBotRepository) {
+	s.slackBotRepo = repo
 }
 
 // GetSessionProfileRepository returns the session profile repository
