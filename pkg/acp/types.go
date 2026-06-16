@@ -104,12 +104,16 @@ type SessionModeState struct {
 
 // ConfigOption is a runtime config option offered by the agent.
 type ConfigOption struct {
-	Key          string      `json:"key"`
+	ID           string      `json:"id,omitempty"`
+	Key          string      `json:"key,omitempty"`
 	Name         string      `json:"name,omitempty"`
 	Description  string      `json:"description,omitempty"`
+	Category     string      `json:"category,omitempty"`
+	Type         string      `json:"type,omitempty"`
 	Value        interface{} `json:"value,omitempty"`
 	CurrentValue interface{} `json:"currentValue,omitempty"`
 	Default      interface{} `json:"default,omitempty"`
+	Options      interface{} `json:"options,omitempty"`
 }
 
 // SessionRuntimeInfo is the session metadata reported by ACP session/new or session/load.
@@ -157,6 +161,18 @@ type SessionLoadResult struct {
 type SessionSetModeParams struct {
 	SessionId string `json:"sessionId"`
 	Mode      string `json:"mode"`
+}
+
+// SessionSetConfigOptionParams is the params for "session/set_config_option".
+type SessionSetConfigOptionParams struct {
+	SessionId string `json:"sessionId"`
+	ConfigId  string `json:"configId"`
+	Value     string `json:"value"`
+}
+
+// SessionSetConfigOptionResult is the response to "session/set_config_option".
+type SessionSetConfigOptionResult struct {
+	ConfigOptions []ConfigOption `json:"configOptions"`
 }
 
 // ----------------------------------------------------------------------------
@@ -234,6 +250,7 @@ const (
 	SessionUpdateKindAvailableCommandsUpdate SessionUpdateKind = "available_commands_update"
 	SessionUpdateKindSessionInfoUpdate       SessionUpdateKind = "session_info_update"
 	SessionUpdateKindCurrentModeUpdate       SessionUpdateKind = "current_mode_update"
+	SessionUpdateKindConfigOptionUpdate      SessionUpdateKind = "config_option_update"
 )
 
 // ToolCallStatus describes the lifecycle state of a tool call.
@@ -280,6 +297,9 @@ type SessionUpdate struct {
 
 	// current_mode_update
 	Mode string `json:"mode,omitempty"`
+
+	// config_option_update
+	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
 }
 
 // SessionUpdateNotification is the params for the "session/update" notification
