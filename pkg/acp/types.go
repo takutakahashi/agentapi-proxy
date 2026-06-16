@@ -104,9 +104,20 @@ type SessionModeState struct {
 
 // ConfigOption is a runtime config option offered by the agent.
 type ConfigOption struct {
-	Key         string      `json:"key"`
-	Description string      `json:"description,omitempty"`
-	Default     interface{} `json:"default,omitempty"`
+	Key          string      `json:"key"`
+	Name         string      `json:"name,omitempty"`
+	Description  string      `json:"description,omitempty"`
+	Value        interface{} `json:"value,omitempty"`
+	CurrentValue interface{} `json:"currentValue,omitempty"`
+	Default      interface{} `json:"default,omitempty"`
+}
+
+// SessionRuntimeInfo is the session metadata reported by ACP session/new or session/load.
+type SessionRuntimeInfo struct {
+	SessionId     string            `json:"sessionId"`
+	Modes         *SessionModeState `json:"modes,omitempty"`
+	ConfigOptions []ConfigOption    `json:"configOptions,omitempty"`
+	Model         string            `json:"model,omitempty"`
 }
 
 // SessionNewResult is the response to "session/new".
