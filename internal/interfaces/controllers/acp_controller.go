@@ -109,7 +109,7 @@ func (c *ACPController) HandleRPC(ctx echo.Context) error {
 		return c.handleSessionResume(ctx, req)
 	case "session/load":
 		return c.handleSessionLoad(ctx, req)
-	case "session/prompt", "session/cancel":
+	case "session/prompt", "session/cancel", "session/set_config_option":
 		return c.proxyToBridge(ctx, req)
 	default:
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32601, "Method not found: "+req.Method))
@@ -417,7 +417,7 @@ func (c *ACPController) getBridgeSessionID(addr, proxySessionID string) (string,
 	return bridgeSession.SessionId, nil
 }
 
-// proxyToBridge forwards session/prompt and session/cancel to the ACP bridge's
+// proxyToBridge forwards session/prompt, session/cancel, and session/set_config_option to the ACP bridge's
 // /rpc endpoint. Requires the session to run with an ACP-native agent (e.g. claude-acp).
 func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 	var baseParams struct {
@@ -481,6 +481,13 @@ func (c *ACPController) proxyToBridge(ctx echo.Context, req acpRequest) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if req.Method == "session/set_config_option" {
+			var rpcResp acpResponse
+			if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+				return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to decode bridge response: "+err.Error()))
+			}
+			return ctx.JSON(http.StatusOK, rpcResp)
+		}
 		return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, struct{}{}))
 	}
 

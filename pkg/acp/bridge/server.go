@@ -168,6 +168,7 @@ type rpcEnvelope struct {
 //  1. Client-initiated requests (id + method):
 //     - "session/prompt"  → forwards text to ACP agent; result comes via SSE
 //     - "session/cancel"  → cancels the current agent turn
+//     - "session/set_config_option" → changes an ACP session config option
 //
 //  2. Client-initiated notifications (no id, method set):
 //     - "session/cancel"  → same as above, no response expected
@@ -236,6 +237,39 @@ func (s *Server) handleRPC(c echo.Context) error {
 		_ = s.bridge.Cancel(c.Request().Context())
 		// Notifications don't require a response; requests get a simple ack.
 		return c.JSON(http.StatusOK, map[string]bool{"ok": true})
+
+	case "session/set_config_option":
+		if env.ID == nil {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(nil, -32600, "id is required for session/set_config_option"))
+		}
+		var params acp.SessionSetConfigOptionParams
+		if err := json.Unmarshal(env.Params, &params); err != nil {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(env.ID, -32602, "invalid params: "+err.Error()))
+		}
+		if params.ConfigId == "" {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(env.ID, -32602, "configId is required"))
+		}
+		if params.SessionId != "" && params.SessionId != s.bridge.SessionID() {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(env.ID, -32602, "sessionId does not match active ACP session"))
+		}
+		if params.Value == "" {
+			return c.JSON(http.StatusBadRequest,
+				rpcErrorResp(env.ID, -32602, "value is required"))
+		}
+		result, err := s.bridge.SetSessionConfigOption(c.Request().Context(), params.ConfigId, params.Value)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError,
+				rpcErrorResp(env.ID, -32000, err.Error()))
+		}
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      env.ID,
+			"result":  result,
+		})
 
 	default:
 		return c.JSON(http.StatusBadRequest,

@@ -63,6 +63,9 @@ func (c *Client) registerHandlers() {
 			log.Printf("[acp] session/update parse error: %v", err)
 			return
 		}
+		if n.Update.Kind == SessionUpdateKindConfigOptionUpdate {
+			c.updateSessionConfigOptions(n.Update.ConfigOptions)
+		}
 		select {
 		case c.updateCh <- n.Update:
 		default:
@@ -302,13 +305,24 @@ func (c *Client) setSessionRuntimeInfo(sessionId string, modes *SessionModeState
 	}
 }
 
+func (c *Client) updateSessionConfigOptions(configOptions []ConfigOption) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sessionInfo.ConfigOptions = configOptions
+	c.sessionInfo.Model = ExtractModelFromConfigOptions(configOptions)
+}
+
 // ExtractModelFromConfigOptions returns the most likely active model value from ACP config options.
 func ExtractModelFromConfigOptions(configOptions []ConfigOption) string {
 	for _, option := range configOptions {
+		id := strings.ToLower(strings.TrimSpace(option.ID))
 		key := strings.ToLower(strings.TrimSpace(option.Key))
 		name := strings.ToLower(strings.TrimSpace(option.Name))
+		category := strings.ToLower(strings.TrimSpace(option.Category))
 		description := strings.ToLower(option.Description)
-		if key != "model" && key != "modelid" && key != "model_id" &&
+		if category != "model" &&
+			id != "model" && id != "modelid" && id != "model_id" &&
+			key != "model" && key != "modelid" && key != "model_id" &&
 			name != "model" && name != "modelid" && name != "model_id" &&
 			!strings.Contains(description, "model") {
 			continue
@@ -363,6 +377,29 @@ func (c *Client) Prompt(ctx context.Context, text string) (StopReason, error) {
 		return "", fmt.Errorf("acp session/prompt: parse result: %w", err)
 	}
 	return result.StopReason, nil
+}
+
+// SetSessionConfigOption changes a runtime session configuration option.
+func (c *Client) SetSessionConfigOption(ctx context.Context, configId, value string) (SessionSetConfigOptionResult, error) {
+	sessionId := c.SessionID()
+	if sessionId == "" {
+		return SessionSetConfigOptionResult{}, fmt.Errorf("acp: no active session; call NewSession first")
+	}
+	params := SessionSetConfigOptionParams{
+		SessionId: sessionId,
+		ConfigId:  configId,
+		Value:     value,
+	}
+	raw, err := c.rpc.Call(ctx, "session/set_config_option", params)
+	if err != nil {
+		return SessionSetConfigOptionResult{}, fmt.Errorf("acp session/set_config_option: %w", err)
+	}
+	var result SessionSetConfigOptionResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return SessionSetConfigOptionResult{}, fmt.Errorf("acp session/set_config_option: parse result: %w", err)
+	}
+	c.updateSessionConfigOptions(result.ConfigOptions)
+	return result, nil
 }
 
 // Cancel sends a session/cancel notification to abort the current turn.

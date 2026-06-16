@@ -37,6 +37,21 @@ func TestExtractModelFromConfigOptions(t *testing.T) {
 			want: "gpt-5.1-codex",
 		},
 		{
+			name: "v1 model category with id",
+			options: []ConfigOption{
+				{
+					ID:           "model",
+					Category:     "model",
+					Type:         "select",
+					CurrentValue: "gpt-5.1-codex",
+					Options: []interface{}{
+						map[string]interface{}{"value": "gpt-5.1-codex", "name": "GPT-5.1 Codex"},
+					},
+				},
+			},
+			want: "gpt-5.1-codex",
+		},
+		{
 			name: "non model option ignored",
 			options: []ConfigOption{
 				{Key: "cwd", Default: "/workspace"},

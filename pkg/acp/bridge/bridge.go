@@ -483,6 +483,31 @@ func (b *Bridge) HandleReply(id int64, result json.RawMessage) error {
 	return nil
 }
 
+// SetSessionConfigOption forwards a session/set_config_option request to the ACP agent.
+// The result is also emitted as a config_option_update notification so live UI clients
+// observe the same configuration state that the HTTP caller receives.
+func (b *Bridge) SetSessionConfigOption(ctx context.Context, configId, value string) (acp.SessionSetConfigOptionResult, error) {
+	result, err := b.acp.SetSessionConfigOption(ctx, configId, value)
+	if err != nil {
+		return acp.SessionSetConfigOptionResult{}, err
+	}
+
+	b.broadcast(jsonRPCMsg{
+		JSONRPC: "2.0",
+		Method:  "session/update",
+		Params: sessionUpdateParams{
+			SessionId: b.sessionId,
+			Update: acp.SessionUpdate{
+				Kind:          acp.SessionUpdateKindConfigOptionUpdate,
+				ConfigOptions: result.ConfigOptions,
+			},
+			Time: time.Now(),
+		},
+	})
+
+	return result, nil
+}
+
 // Cancel cancels the current agent turn.
 func (b *Bridge) Cancel(ctx context.Context) error {
 	return b.acp.Cancel(ctx)
