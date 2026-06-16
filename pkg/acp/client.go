@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
+	"sync"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/acp/jsonrpc"
 )
@@ -28,8 +30,10 @@ type Client struct {
 	rpc     *jsonrpc.Client
 	verbose bool
 
-	sessionId string
-	agentCaps AgentCapabilities
+	sessionId   string
+	agentCaps   AgentCapabilities
+	mu          sync.RWMutex
+	sessionInfo SessionRuntimeInfo
 
 	// updateCh is closed when the client is stopped.
 	updateCh chan SessionUpdate
@@ -244,16 +248,25 @@ func (c *Client) NewSession(ctx context.Context, cwd string, mcpServers []McpSer
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return fmt.Errorf("acp session/new: parse result: %w", err)
 	}
-	c.sessionId = result.SessionId
+	c.setSessionRuntimeInfo(result.SessionId, result.Modes, result.ConfigOptions)
 	if c.verbose {
-		log.Printf("[acp] session created: id=%s modes=%v", result.SessionId, result.Modes)
+		log.Printf("[acp] session created: id=%s modes=%v configOptions=%d", result.SessionId, result.Modes, len(result.ConfigOptions))
 	}
 	return nil
 }
 
 // SessionID returns the current session ID (set after NewSession).
 func (c *Client) SessionID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.sessionId
+}
+
+// SessionRuntimeInfo returns the runtime information reported by session/new or session/load.
+func (c *Client) SessionRuntimeInfo() SessionRuntimeInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sessionInfo
 }
 
 // LoadSession restores a previously created ACP session by its ID.
@@ -270,22 +283,73 @@ func (c *Client) LoadSession(ctx context.Context, sessionId string) error {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return fmt.Errorf("acp session/load: parse result: %w", err)
 	}
-	c.sessionId = result.SessionId
+	c.setSessionRuntimeInfo(result.SessionId, result.Modes, result.ConfigOptions)
 	if c.verbose {
-		log.Printf("[acp] session loaded: id=%s", result.SessionId)
+		log.Printf("[acp] session loaded: id=%s configOptions=%d", result.SessionId, len(result.ConfigOptions))
 	}
 	return nil
+}
+
+func (c *Client) setSessionRuntimeInfo(sessionId string, modes *SessionModeState, configOptions []ConfigOption) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sessionId = sessionId
+	c.sessionInfo = SessionRuntimeInfo{
+		SessionId:     sessionId,
+		Modes:         modes,
+		ConfigOptions: configOptions,
+		Model:         ExtractModelFromConfigOptions(configOptions),
+	}
+}
+
+// ExtractModelFromConfigOptions returns the most likely active model value from ACP config options.
+func ExtractModelFromConfigOptions(configOptions []ConfigOption) string {
+	for _, option := range configOptions {
+		key := strings.ToLower(strings.TrimSpace(option.Key))
+		name := strings.ToLower(strings.TrimSpace(option.Name))
+		description := strings.ToLower(option.Description)
+		if key != "model" && key != "modelid" && key != "model_id" &&
+			name != "model" && name != "modelid" && name != "model_id" &&
+			!strings.Contains(description, "model") {
+			continue
+		}
+		for _, value := range []interface{}{option.Value, option.CurrentValue, option.Default} {
+			if model := modelValueToString(value); model != "" {
+				return model
+			}
+		}
+	}
+	return ""
+}
+
+func modelValueToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case map[string]interface{}:
+		for _, key := range []string{"id", "model", "modelId", "name", "displayName", "value", "default"} {
+			if model := modelValueToString(v[key]); model != "" {
+				return model
+			}
+		}
+	case []interface{}:
+		if len(v) == 1 {
+			return modelValueToString(v[0])
+		}
+	}
+	return ""
 }
 
 // Prompt sends a user message and returns when the agent has finished the turn.
 // While the agent is working, session/update notifications are dispatched to
 // the channel returned by Updates().
 func (c *Client) Prompt(ctx context.Context, text string) (StopReason, error) {
-	if c.sessionId == "" {
+	sessionId := c.SessionID()
+	if sessionId == "" {
 		return "", fmt.Errorf("acp: no active session; call NewSession first")
 	}
 	params := PromptParams{
-		SessionId: c.sessionId,
+		SessionId: sessionId,
 		Prompt: []ContentBlock{
 			{Type: ContentBlockTypeText, Text: text},
 		},
@@ -303,10 +367,11 @@ func (c *Client) Prompt(ctx context.Context, text string) (StopReason, error) {
 
 // Cancel sends a session/cancel notification to abort the current turn.
 func (c *Client) Cancel(ctx context.Context) error {
-	if c.sessionId == "" {
+	sessionId := c.SessionID()
+	if sessionId == "" {
 		return nil
 	}
-	return c.rpc.Notify("session/cancel", SessionCancelParams{SessionId: c.sessionId})
+	return c.rpc.Notify("session/cancel", SessionCancelParams{SessionId: sessionId})
 }
 
 // Updates returns a channel that receives session/update notifications from

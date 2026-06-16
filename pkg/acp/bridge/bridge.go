@@ -180,6 +180,11 @@ func (b *Bridge) Messages() []json.RawMessage {
 // SessionID returns the ACP session ID.
 func (b *Bridge) SessionID() string { return b.sessionId }
 
+// SessionRuntimeInfo returns the runtime information reported by the ACP agent.
+func (b *Bridge) SessionRuntimeInfo() acp.SessionRuntimeInfo {
+	return b.acp.SessionRuntimeInfo()
+}
+
 // Status returns the current agent status ("running" or "stable").
 func (b *Bridge) Status() string {
 	b.statusMu.RLock()

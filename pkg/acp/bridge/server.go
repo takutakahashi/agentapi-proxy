@@ -131,11 +131,23 @@ func (s *Server) handleGetMessages(c echo.Context) error {
 // Returns the session ID and current status so clients know what ID to use in RPC calls.
 func (s *Server) handleGetSession(c echo.Context) error {
 	sessionId := s.bridge.SessionID()
+	info := s.bridge.SessionRuntimeInfo()
 	log.Printf("[acp-server] GET /session -> sessionId=%s (remoteAddr=%s)", sessionId, c.RealIP())
-	return c.JSON(http.StatusOK, map[string]string{
-		"sessionId": sessionId,
-		"status":    "ready",
+	return c.JSON(http.StatusOK, acpSessionResponse{
+		SessionId:     sessionId,
+		Status:        "ready",
+		Model:         info.Model,
+		Modes:         info.Modes,
+		ConfigOptions: info.ConfigOptions,
 	})
+}
+
+type acpSessionResponse struct {
+	SessionId     string                `json:"sessionId"`
+	Status        string                `json:"status"`
+	Model         string                `json:"model,omitempty"`
+	Modes         *acp.SessionModeState `json:"modes,omitempty"`
+	ConfigOptions []acp.ConfigOption    `json:"configOptions,omitempty"`
 }
 
 // rpcEnvelope is the JSON-RPC 2.0 message envelope received on POST /rpc.
