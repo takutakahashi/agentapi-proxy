@@ -31,6 +31,7 @@ on its Kubernetes Service resource.
 
 The following resources are deleted for each expired session:
   - Deployment  agentapi-session-{id}
+  - Pod         agentapi-session-{id}
   - Service     agentapi-session-{id}-svc
   - PVC         agentapi-session-{id}-pvc               (if present)
   - Secret      agentapi-session-{id}-settings
@@ -187,6 +188,13 @@ func runDeleteExpiredSessions(cmd *cobra.Command, args []string) error {
 				name: deploymentName,
 				del: func() error {
 					return client.AppsV1().Deployments(ns).Delete(ctx, deploymentName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Pod",
+				name: deploymentName,
+				del: func() error {
+					return client.CoreV1().Pods(ns).Delete(ctx, deploymentName, metav1.DeleteOptions{})
 				},
 			},
 			{

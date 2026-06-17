@@ -18,25 +18,45 @@ var (
 	orphanedVerbose   bool
 )
 
+func sessionWorkloadExists(ctx context.Context, client kubernetes.Interface, namespace, name string) (bool, error) {
+	_, depErr := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if depErr == nil {
+		return true, nil
+	}
+	if !errors.IsNotFound(depErr) {
+		return false, depErr
+	}
+
+	_, podErr := client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if podErr == nil {
+		return true, nil
+	}
+	if !errors.IsNotFound(podErr) {
+		return false, podErr
+	}
+
+	return false, nil
+}
+
 var pruneOrphanedResourcesCmd = &cobra.Command{
 	Use:   "prune-orphaned-resources",
-	Short: "Delete stale Kubernetes resources left behind after a session Deployment was deleted",
-	Long: `Delete stale Kubernetes resources for agentapi sessions whose Deployment no longer exists.
+	Short: "Delete stale Kubernetes resources left behind after a session workload was deleted",
+	Long: `Delete stale Kubernetes resources for agentapi sessions whose workload no longer exists.
 
-A session is considered orphaned when its Deployment (agentapi-session-{id})
+A session is considered orphaned when its Deployment or Pod (agentapi-session-{id})
 no longer exists but other associated resources are still present.
-This can happen when a Deployment is deleted manually or an incomplete cleanup
+This can happen when a workload is deleted manually or an incomplete cleanup
 leaves residual objects.
 
 Detection uses two complementary passes so that every stale pattern is covered:
 
   Pass 1 – Service scan:
     Sessions whose Service (agentapi-session-{id}-svc) still exists but
-    whose Deployment is gone are considered orphaned.
+    whose workload is gone are considered orphaned.
 
   Pass 2 – Settings Secret scan:
     Sessions whose settings Secret (agentapi-session-{id}-settings) still
-    exists but whose Deployment is gone are considered orphaned.
+    exists but whose workload is gone are considered orphaned.
     This catches the case where the Service was already cleaned up but the
     settings Secret was left behind.
 
@@ -44,6 +64,7 @@ Results from both passes are merged and deduplicated before deletion.
 
 The following resources are deleted for each orphaned session:
   - Deployment  agentapi-session-{id}                     (may already be gone)
+  - Pod         agentapi-session-{id}                     (may already be gone)
   - Service     agentapi-session-{id}-svc                 (if present)
   - PVC         agentapi-session-{id}-pvc                 (if present)
   - Secret      agentapi-session-{id}-settings             (if present)
@@ -128,21 +149,21 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		deploymentName := fmt.Sprintf("agentapi-session-%s", sessionID)
-		_, getErr := client.AppsV1().Deployments(ns).Get(ctx, deploymentName, metav1.GetOptions{})
-		if getErr == nil {
+		workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		exists, getErr := sessionWorkloadExists(ctx, client, ns, workloadName)
+		if getErr == nil && exists {
 			if orphanedVerbose {
-				fmt.Printf("  [ACTIVE] session %s: Deployment %s found\n", sessionID, deploymentName)
+				fmt.Printf("  [ACTIVE] session %s: workload %s found\n", sessionID, workloadName)
 			}
 			continue
 		}
 
-		if !errors.IsNotFound(getErr) {
-			fmt.Printf("  [WARN] session %s: error checking Deployment %s: %v\n", sessionID, deploymentName, getErr)
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking workload %s: %v\n", sessionID, workloadName, getErr)
 			continue
 		}
 
-		fmt.Printf("  [ORPHANED] session %s: Deployment %s not found (detected via Service)\n", sessionID, deploymentName)
+		fmt.Printf("  [ORPHANED] session %s: workload %s not found (detected via Service)\n", sessionID, workloadName)
 		seen[sessionID] = struct{}{}
 		orphanedSessions = append(orphanedSessions, orphanedSession{
 			id:     sessionID,
@@ -181,21 +202,21 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		deploymentName := fmt.Sprintf("agentapi-session-%s", sessionID)
-		_, getErr := client.AppsV1().Deployments(ns).Get(ctx, deploymentName, metav1.GetOptions{})
-		if getErr == nil {
+		workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		exists, getErr := sessionWorkloadExists(ctx, client, ns, workloadName)
+		if getErr == nil && exists {
 			if orphanedVerbose {
-				fmt.Printf("  [ACTIVE] session %s: Deployment %s found\n", sessionID, deploymentName)
+				fmt.Printf("  [ACTIVE] session %s: workload %s found\n", sessionID, workloadName)
 			}
 			continue
 		}
 
-		if !errors.IsNotFound(getErr) {
-			fmt.Printf("  [WARN] session %s: error checking Deployment %s: %v\n", sessionID, deploymentName, getErr)
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking workload %s: %v\n", sessionID, workloadName, getErr)
 			continue
 		}
 
-		fmt.Printf("  [ORPHANED] session %s: Deployment %s not found (detected via Settings Secret)\n", sessionID, deploymentName)
+		fmt.Printf("  [ORPHANED] session %s: workload %s not found (detected via Settings Secret)\n", sessionID, workloadName)
 		seen[sessionID] = struct{}{}
 		orphanedSessions = append(orphanedSessions, orphanedSession{
 			id:     sessionID,
@@ -241,6 +262,13 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 				name: deploymentName,
 				del: func() error {
 					return client.AppsV1().Deployments(ns).Delete(ctx, deploymentName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Pod",
+				name: deploymentName,
+				del: func() error {
+					return client.CoreV1().Pods(ns).Delete(ctx, deploymentName, metav1.DeleteOptions{})
 				},
 			},
 			{

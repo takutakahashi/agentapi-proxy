@@ -235,14 +235,14 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		t.Errorf("Expected InitialMessage %q in ProvisionSettings, got %q", initialMessage, ks.ProvisionSettings().InitialMessage)
 	}
 
-	// Verify deployment uses agent-provisioner (NOT initial-message-sender sidecar).
-	deploymentName := "agentapi-session-" + sessionID
-	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, deploymentName, metav1.GetOptions{})
+	// Verify pod uses agent-provisioner (NOT initial-message-sender sidecar).
+	workloadName := "agentapi-session-" + sessionID
+	pod, err := k8sClient.CoreV1().Pods(ns.Name).Get(ctx, workloadName, metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("Failed to get deployment: %v", err)
+		t.Fatalf("Failed to get pod: %v", err)
 	}
 
-	podSpec := deployment.Spec.Template.Spec
+	podSpec := pod.Spec
 	for _, container := range podSpec.Containers {
 		if container.Name == "initial-message-sender" {
 			t.Error("initial-message-sender sidecar should NOT be present (replaced by agent-provisioner)")
