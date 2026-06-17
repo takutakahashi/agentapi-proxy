@@ -11,7 +11,8 @@ rules:
   {{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    # update: required for adoptStockSession when stock sessions run as Pods.
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
