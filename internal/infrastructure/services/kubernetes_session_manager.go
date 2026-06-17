@@ -580,57 +580,94 @@ func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, sandb
 // were abandoned mid-adoption due to a crash or restart.
 func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error {
 	// Use a set-based selector to match both stock=true (unclaimed) and
-	// stock=claiming (abandoned mid-adoption) services.
+	// stock=claiming (abandoned mid-adoption). Collect session IDs from every
+	// resource kind so a previous partial purge cannot leave orphaned stock
+	// Deployments/PVCs behind.
+	selector := "agentapi.proxy/stock in (true, claiming),app.kubernetes.io/managed-by=agentapi-proxy"
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/stock in (true, claiming),app.kubernetes.io/managed-by=agentapi-proxy",
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list stock services for purge: %w", err)
+	}
+	deployments, err := m.client.AppsV1().Deployments(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock deployments for purge: %w", err)
+	}
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock pods for purge: %w", err)
+	}
+	pvcs, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list stock pvcs for purge: %w", err)
 	}
 
 	deletePolicy := metav1.DeletePropagationForeground
 	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &deletePolicy}
 
 	var purgeErrs []string
+	sessionIDs := make(map[string]struct{})
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
-		log.Printf("[STOCK_INVENTORY] Purging stock session %s", sessionID)
+		if sessionID != "" {
+			sessionIDs[sessionID] = struct{}{}
+		}
 
 		// Delete Service
 		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
 			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", svc.Name, err))
 		}
-
-		if sessionID == "" {
-			continue
+	}
+	for i := range deployments.Items {
+		if sessionID := deployments.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			sessionIDs[sessionID] = struct{}{}
 		}
+	}
+	for i := range pods.Items {
+		if sessionID := pods.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			sessionIDs[sessionID] = struct{}{}
+		}
+	}
+	for i := range pvcs.Items {
+		if sessionID := pvcs.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			sessionIDs[sessionID] = struct{}{}
+		}
+	}
 
-		// Delete workload
+	for sessionID := range sessionIDs {
+		log.Printf("[STOCK_INVENTORY] Purging stock session %s", sessionID)
+
+		// Delete workload. Try both workload kinds so stock sessions created
+		// before a PVC setting change are also purged.
 		workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
-		if m.isPVCEnabled() {
-			if err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, workloadName, deleteOptions); err != nil && !errors.IsNotFound(err) {
-				purgeErrs = append(purgeErrs, fmt.Sprintf("deployment %s: %v", workloadName, err))
-			}
-		} else {
-			if err := m.client.CoreV1().Pods(m.namespace).Delete(ctx, workloadName, deleteOptions); err != nil && !errors.IsNotFound(err) {
-				purgeErrs = append(purgeErrs, fmt.Sprintf("pod %s: %v", workloadName, err))
-			}
+		if err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, workloadName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("deployment %s: %v", workloadName, err))
+		}
+		if err := m.client.CoreV1().Pods(m.namespace).Delete(ctx, workloadName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("pod %s: %v", workloadName, err))
 		}
 
-		// Delete PVC if enabled
-		if m.isPVCEnabled() {
-			pvcName := fmt.Sprintf("agentapi-session-%s-pvc", sessionID)
-			if err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, pvcName, deleteOptions); err != nil && !errors.IsNotFound(err) {
-				purgeErrs = append(purgeErrs, fmt.Sprintf("pvc %s: %v", pvcName, err))
-			}
+		// Delete PVC if present. This intentionally does not depend on the
+		// current PVC setting because stale stock PVCs can remain after toggling
+		// PVC support off.
+		pvcName := fmt.Sprintf("agentapi-session-%s-pvc", sessionID)
+		if err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, pvcName, deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("pvc %s: %v", pvcName, err))
 		}
 	}
 
 	if len(purgeErrs) > 0 {
 		return fmt.Errorf("purge errors: %s", strings.Join(purgeErrs, "; "))
 	}
-	log.Printf("[STOCK_INVENTORY] Purged %d stock session(s)", len(svcs.Items))
+	log.Printf("[STOCK_INVENTORY] Purged %d stock session(s)", len(sessionIDs))
 	return nil
 }
 
@@ -2799,25 +2836,22 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		errs = append(errs, fmt.Sprintf("service: %v", err))
 	}
 
-	// Delete workload
-	if m.isPVCEnabled() {
-		err = m.client.AppsV1().Deployments(m.namespace).Delete(ctx, session.DeploymentName(), deleteOptions)
-		if err != nil && !errors.IsNotFound(err) {
-			errs = append(errs, fmt.Sprintf("deployment: %v", err))
-		}
-	} else {
-		err = m.client.CoreV1().Pods(m.namespace).Delete(ctx, session.DeploymentName(), deleteOptions)
-		if err != nil && !errors.IsNotFound(err) {
-			errs = append(errs, fmt.Sprintf("pod: %v", err))
-		}
+	// Delete workload. Try both kinds so sessions created before a PVC setting
+	// change are cleaned up correctly.
+	err = m.client.AppsV1().Deployments(m.namespace).Delete(ctx, session.DeploymentName(), deleteOptions)
+	if err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("deployment: %v", err))
+	}
+	err = m.client.CoreV1().Pods(m.namespace).Delete(ctx, session.DeploymentName(), deleteOptions)
+	if err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("pod: %v", err))
 	}
 
-	// Delete PVC if enabled
-	if m.isPVCEnabled() {
-		err = m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, session.PVCName(), deleteOptions)
-		if err != nil && !errors.IsNotFound(err) {
-			errs = append(errs, fmt.Sprintf("pvc: %v", err))
-		}
+	// Delete PVC if present. Do not depend on the current PVC setting because
+	// old sessions may predate the setting.
+	err = m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, session.PVCName(), deleteOptions)
+	if err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("pvc: %v", err))
 	}
 
 	// Delete webhook payload Secret
@@ -2853,10 +2887,17 @@ func (m *KubernetesSessionManager) deleteDeployment(ctx context.Context, session
 
 // deleteSessionWorkload deletes the backing Deployment or Pod for a session.
 func (m *KubernetesSessionManager) deleteSessionWorkload(ctx context.Context, session *KubernetesSession) error {
-	if m.isPVCEnabled() {
-		return m.deleteDeployment(ctx, session)
+	var errs []string
+	if err := m.deleteDeployment(ctx, session); err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("deployment: %v", err))
 	}
-	return m.client.CoreV1().Pods(m.namespace).Delete(ctx, session.DeploymentName(), metav1.DeleteOptions{})
+	if err := m.client.CoreV1().Pods(m.namespace).Delete(ctx, session.DeploymentName(), metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		errs = append(errs, fmt.Sprintf("pod: %v", err))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to delete workload: %s", strings.Join(errs, ", "))
+	}
+	return nil
 }
 
 // deletePVC deletes the PVC for a session
