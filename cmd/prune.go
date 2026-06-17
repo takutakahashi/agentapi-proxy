@@ -29,6 +29,7 @@ the settings secret was deleted manually or a cleanup was interrupted.
 
 The following resources are deleted for each stale session:
   - Deployment  agentapi-session-{id}
+  - Pod         agentapi-session-{id}
   - Service     agentapi-session-{id}-svc
   - PVC         agentapi-session-{id}-pvc               (if present)
   - Secret      agentapi-session-{id}-settings           (may already be gone)
@@ -177,6 +178,13 @@ func runPruneStaleResources(cmd *cobra.Command, args []string) error {
 				name: deploymentName,
 				del: func() error {
 					return client.AppsV1().Deployments(ns).Delete(ctx, deploymentName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Pod",
+				name: deploymentName,
+				del: func() error {
+					return client.CoreV1().Pods(ns).Delete(ctx, deploymentName, metav1.DeleteOptions{})
 				},
 			},
 			{
