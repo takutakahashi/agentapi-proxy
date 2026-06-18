@@ -316,7 +316,7 @@ func GetGitHubToken(repoFullName string) (string, error) {
 
 		// If we have installation ID (manual or auto-discovered), proceed with token generation
 		if installationID != "" {
-			return GenerateGitHubAppToken(appID, installationID, pemPath)
+			return GenerateGitHubAppTokenForRepository(appID, installationID, pemPath, repoFullName)
 		}
 	}
 
@@ -330,6 +330,17 @@ func GetGitHubToken(repoFullName string) (string, error) {
 
 // GenerateGitHubAppToken generates a GitHub App installation token
 func GenerateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string, error) {
+	return GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, "")
+}
+
+// GenerateGitHubAppTokenForRepository generates a GitHub App installation token,
+// optionally restricted to a single repository.
+func GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, repoFullName string) (string, error) {
+	repositories, err := installationTokenRepositories(repoFullName)
+	if err != nil {
+		return "", err
+	}
+
 	// Parse app ID
 	appID, err := strconv.ParseInt(appIDStr, 10, 64)
 	if err != nil {
@@ -391,13 +402,36 @@ func GenerateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 	token, _, err := client.Apps.CreateInstallationToken(
 		ctx,
 		installationID,
-		&github.InstallationTokenOptions{},
+		&github.InstallationTokenOptions{
+			Repositories: repositories,
+		},
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create installation token: %w", err)
 	}
 
 	return token.GetToken(), nil
+}
+
+func installationTokenRepositories(repoFullName string) ([]string, error) {
+	repoFullName = strings.TrimSpace(repoFullName)
+	if repoFullName == "" {
+		if repositoryRestrictionEnabled() {
+			return nil, fmt.Errorf("repository restriction is enabled; repository fullname is required for GitHub App installation token generation")
+		}
+		return nil, nil
+	}
+
+	parts := strings.Split(repoFullName, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return nil, fmt.Errorf("invalid repository fullname %q: expected owner/repo", repoFullName)
+	}
+
+	return []string{strings.TrimSuffix(strings.TrimSpace(parts[1]), ".git")}, nil
+}
+
+func repositoryRestrictionEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("REPOSITORY_RESTRICTION")), "true")
 }
 
 // AutoDiscoverInstallationID discovers the installation ID for a given repository using cache

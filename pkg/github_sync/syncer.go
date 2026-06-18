@@ -84,7 +84,7 @@ func isPersonalSync(settingsName, userID string) bool {
 // GITHUB_APP_ID / GITHUB_APP_PEM env vars and the installation ID resolved as follows:
 //  1. The proxy-level git_sync.github_app.installation_id config value
 //  2. The GITHUB_INSTALLATION_ID environment variable (set by Helm from github.app.installationId)
-func (s *Syncer) resolveToken(personalToken string) (string, error) {
+func (s *Syncer) resolveToken(personalToken, repoFullName string) (string, error) {
 	if personalToken != "" {
 		return personalToken, nil
 	}
@@ -103,7 +103,7 @@ func (s *Syncer) resolveToken(personalToken string) (string, error) {
 		return "", fmt.Errorf("github_token is not configured and GITHUB_APP_ID env var is not set")
 	}
 	pemPath := os.Getenv("GITHUB_APP_PEM_PATH")
-	token, err := startup.GenerateGitHubAppToken(appID, installID, pemPath)
+	token, err := startup.GenerateGitHubAppTokenForRepository(appID, installID, pemPath, repoFullName)
 	if err != nil {
 		return "", fmt.Errorf("github_token is not configured; GitHub App token generation failed: %w", err)
 	}
@@ -123,7 +123,7 @@ func (s *Syncer) Push(ctx context.Context, settingsName, userID string, commitMe
 		return nil, fmt.Errorf("GitHub sync is not enabled for %q", settingsName)
 	}
 
-	token, err := s.resolveToken(cfg.GitHubToken)
+	token, err := s.resolveToken(cfg.GitHubToken, cfg.RepoFullName)
 	if err != nil {
 		return nil, fmt.Errorf("no GitHub token for %q: %w", settingsName, err)
 	}
@@ -255,7 +255,7 @@ func (s *Syncer) Pull(ctx context.Context, settingsName, userID string, deleteOr
 		return nil, fmt.Errorf("GitHub sync is not enabled for %q", settingsName)
 	}
 
-	token, err := s.resolveToken(cfg.GitHubToken)
+	token, err := s.resolveToken(cfg.GitHubToken, cfg.RepoFullName)
 	if err != nil {
 		return nil, fmt.Errorf("no GitHub token for %q: %w", settingsName, err)
 	}
@@ -362,7 +362,7 @@ func (s *Syncer) importFileByPath(ctx context.Context, filePath string, content 
 // the remote .sync-meta.yaml syncedAt timestamp with the local LastPushedAt.
 // Returns "pull" when GitHub is newer, "push" otherwise.
 func (s *Syncer) resolveSyncDirection(ctx context.Context, cfg *entities.GitSyncConfig, settingsName string) (string, error) {
-	token, err := s.resolveToken(cfg.GitHubToken)
+	token, err := s.resolveToken(cfg.GitHubToken, cfg.RepoFullName)
 	if err != nil {
 		return "", err
 	}
@@ -467,7 +467,7 @@ func (s *Syncer) RotateKey(ctx context.Context, settingsName, userID string) (*R
 		return nil, fmt.Errorf("failed to decrypt old DEK: %w", err)
 	}
 
-	rotateToken, err := s.resolveToken(cfg.GitHubToken)
+	rotateToken, err := s.resolveToken(cfg.GitHubToken, cfg.RepoFullName)
 	if err != nil {
 		return nil, fmt.Errorf("no GitHub token for %q: %w", settingsName, err)
 	}
