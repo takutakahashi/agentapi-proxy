@@ -322,6 +322,10 @@ func TestSetupGHFlags(t *testing.T) {
 
 	patFlag := setupGHCmd.LocalFlags().Lookup("github-personal-access-token")
 	assert.NotNil(t, patFlag)
+
+	stepFlag := setupGHCmd.LocalFlags().Lookup("step")
+	assert.NotNil(t, stepFlag)
+	assert.Equal(t, "all", stepFlag.DefValue)
 }
 
 func TestSetGitHubEnvFromFlags(t *testing.T) {

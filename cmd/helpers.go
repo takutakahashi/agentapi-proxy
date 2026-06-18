@@ -107,9 +107,18 @@ Optional settings:
 - GITHUB_API: GitHub API URL for Enterprise Server (e.g., https://github.enterprise.com/api/v3)
 - GITHUB_REPO_FULLNAME: Repository full name for installation ID discovery (auto-detected from git remote if not provided)
 
+Steps:
+- all: Run get-token, auth-login, and setup-git behavior (default)
+- get-token: Resolve and print the GitHub token
+- auth-login: Run gh auth login --with-token
+- setup-git: Run gh auth setup-git
+
 Usage:
   agentapi-proxy helpers setup-gh                    # Auto-detect repository from git remote
   agentapi-proxy helpers setup-gh --repo-fullname owner/repo
+  agentapi-proxy helpers setup-gh --step get-token
+  agentapi-proxy helpers setup-gh --step auth-login
+  agentapi-proxy helpers setup-gh --step setup-git
   
 Examples:
   # Using personal access token
@@ -139,6 +148,7 @@ var githubAppPEM string
 var githubAPI string
 var githubToken string
 var githubPersonalAccessToken string
+var setupGHStep string
 
 func init() {
 	generateTokenCmd.Flags().StringVar(&outputPath, "output-path", "", "Path to JSON file where API keys will be saved (required)")
@@ -164,6 +174,7 @@ func init() {
 	setupGHCmd.Flags().StringVar(&githubAPI, "github-api", "", "GitHub API URL for Enterprise Server (can also be set via GITHUB_API env var)")
 	setupGHCmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub personal access token (can also be set via GITHUB_TOKEN env var)")
 	setupGHCmd.Flags().StringVar(&githubPersonalAccessToken, "github-personal-access-token", "", "GitHub personal access token (can also be set via GITHUB_PERSONAL_ACCESS_TOKEN env var)")
+	setupGHCmd.Flags().StringVar(&setupGHStep, "step", "all", "Setup step to run: all, get-token, auth-login, setup-git")
 
 	// send-notification command flags
 	sendNotificationCmd.Flags().StringVar(&notifyUserID, "user-id", "", "Target specific user ID")
@@ -385,11 +396,14 @@ func runSetupGH(cmd *cobra.Command, args []string) error {
 	}
 
 	// Call the startup package function
-	if err := startup.SetupGitHubAuth(repo); err != nil {
+	if err := startup.SetupGitHubAuthStep(repo, setupGHStep); err != nil {
 		return fmt.Errorf("failed to setup GitHub authentication: %w", err)
 	}
 
-	fmt.Println("GitHub authentication setup completed successfully!")
+	normalizedStep := strings.ToLower(strings.TrimSpace(setupGHStep))
+	if normalizedStep != "get-token" && normalizedStep != "token" {
+		fmt.Println("GitHub authentication setup completed successfully!")
+	}
 	return nil
 }
 
