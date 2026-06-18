@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 // TestWriteWebhookPayloadFile_WritesWhenAbsent verifies that
@@ -31,6 +34,22 @@ func TestWriteWebhookPayloadFile_WritesWhenAbsent(t *testing.T) {
 	}
 	if string(got) != `{"event":"push"}` {
 		t.Errorf("expected payload %q, got %q", `{"event":"push"}`, string(got))
+	}
+}
+
+func TestBuildAgentCommandCursor(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+
+	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "cursor"},
+	}, nil)
+
+	if cmd != "agentapi-proxy" {
+		t.Fatalf("command = %q, want agentapi-proxy", cmd)
+	}
+	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "agent", "acp"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
 	}
 }
 

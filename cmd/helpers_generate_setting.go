@@ -556,6 +556,14 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 			Command: []string{"agentapi-proxy"},
 			Args:    []string{"acp-server", "--", "npx", "@zed-industries/codex-acp"},
 		}
+	case "cursor":
+		// acp-server bridges Cursor Agent CLI's native ACP server to the agentapi HTTP interface.
+		// https://cursor.com/docs/cli/acp
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server --auto-approve -- agent acp]")
+		return sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args:    []string{"acp-server", "--auto-approve", "--", "agent", "acp"},
+		}
 	default:
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi server --allowed-hosts * --allowed-origins *]")
 		return sessionsettings.StartupConfig{

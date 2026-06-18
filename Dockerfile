@@ -173,8 +173,8 @@ RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | 
     printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/node > /dev/null && \
     sudo chmod +x /usr/local/bin/node
 
-# Set combined PATH environment variable (including /opt/claude/bin for claude CLI)
-ENV PATH="/opt/claude/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
+# Set combined PATH environment variable (including /opt/claude/bin for claude CLI and /opt/cursor/bin for Cursor CLI)
+ENV PATH="/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
 
 # install claude-agentapi
 RUN bun install -g @takutakahashi/claude-agentapi
@@ -187,6 +187,20 @@ RUN bun install -g @openai/codex && \
     printf '#!/bin/bash\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
     sudo tee /opt/claude/bin/codex > /dev/null && \
     sudo chmod +x /opt/claude/bin/codex
+
+# Install Cursor Agent CLI and place stable wrappers in /opt/cursor/bin.
+# Official install docs: https://cursor.com/docs/cli/installation
+RUN curl https://cursor.com/install -fsS | bash && \
+    sudo mkdir -p /opt/cursor/bin /opt/cursor/agent && \
+    CURSOR_AGENT_TARGET="$(readlink -f /home/agentapi/.local/bin/agent)" && \
+    sudo cp -a "$(dirname "$CURSOR_AGENT_TARGET")/." /opt/cursor/agent/ && \
+    sudo ln -sf /opt/cursor/agent/cursor-agent /opt/cursor/bin/agent && \
+    sudo ln -sf /opt/cursor/agent/cursor-agent /opt/cursor/bin/cursor-agent && \
+    sudo chown -R agentapi:agentapi /opt/cursor && \
+    sudo chmod +x /opt/cursor/agent/cursor-agent && \
+    rm -rf /home/agentapi/.local/share/cursor-agent /home/agentapi/.local/bin/agent /home/agentapi/.local/bin/cursor-agent 2>/dev/null || true && \
+    ln -sf /opt/cursor/bin/agent /home/agentapi/.local/bin/agent && \
+    ln -sf /opt/cursor/bin/cursor-agent /home/agentapi/.local/bin/cursor-agent
 
 # Install claude-agent-sdk CLI and create arch-agnostic symlink
 RUN bun install -g @anthropic-ai/claude-agent-sdk && \

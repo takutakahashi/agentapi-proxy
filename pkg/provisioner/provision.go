@@ -913,6 +913,18 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"npx", "@zed-industries/codex-acp",
 		}
 
+	case "cursor":
+		// Start the acp-server bridge that wraps Cursor Agent CLI's native ACP server via stdio.
+		// https://cursor.com/docs/cli/acp
+		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
+		return "agentapi-proxy", []string{
+			"acp-server",
+			"--port", agentapiPort,
+			"--auto-approve",
+			"--",
+			"agent", "acp",
+		}
+
 	default:
 		// Default: agentapi server wrapping claude
 		claudeCmd := "claude"
@@ -986,7 +998,7 @@ type acpMessagesResponse struct {
 // started, replicating the logic of initialMessageSenderScript.
 func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int) {
 	// ACP sessions use a different transport (JSON-RPC 2.0 over POST /rpc).
-	if agentType == "claude-acp" || agentType == "codex-acp" {
+	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "cursor" {
 		sendACPInitialMessage(ctx, agentapiURL, message, waitSec)
 		return
 	}
