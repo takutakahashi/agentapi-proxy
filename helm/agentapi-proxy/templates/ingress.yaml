@@ -1,7 +1,10 @@
 {{- if .Values.ingress.enabled -}}
 {{- $asset := .Values.asset | default dict }}
 {{- $assetBackend := $asset.backend | default "nginx" }}
-{{- $assetEnabled := $asset.enabled | default true }}
+{{- $assetEnabled := true }}
+{{- if hasKey $asset "enabled" }}
+{{- $assetEnabled = $asset.enabled }}
+{{- end }}
 {{- $assetNginx := $asset.nginx | default dict }}
 {{- $assetNginxService := $assetNginx.service | default dict }}
 {{- $assetNginxServicePort := $assetNginxService.port | default 80 }}

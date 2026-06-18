@@ -1,9 +1,15 @@
 {{- $asset := .Values.asset | default dict }}
 {{- $assetBackend := $asset.backend | default "nginx" }}
-{{- $assetEnabled := $asset.enabled | default true }}
+{{- $assetEnabled := true }}
+{{- if hasKey $asset "enabled" }}
+{{- $assetEnabled = $asset.enabled }}
+{{- end }}
 {{- $assetStoragePath := $asset.storagePath | default "/var/lib/agentapi-assets" }}
 {{- $assetPersistence := $asset.persistence | default dict }}
-{{- $assetPersistenceEnabled := $assetPersistence.enabled | default true }}
+{{- $assetPersistenceEnabled := true }}
+{{- if hasKey $assetPersistence "enabled" }}
+{{- $assetPersistenceEnabled = $assetPersistence.enabled }}
+{{- end }}
 {{- $assetS3 := $asset.s3 | default dict }}
 apiVersion: apps/v1
 kind: Deployment
