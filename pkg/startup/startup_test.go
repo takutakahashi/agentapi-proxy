@@ -653,6 +653,54 @@ func TestAuthenticateGHCLI(t *testing.T) {
 	}
 }
 
+func TestWithoutGitHubTokenEnv(t *testing.T) {
+	env := []string{
+		"PATH=/usr/bin:/bin",
+		"GITHUB_TOKEN=github-token",
+		"GH_TOKEN=gh-token",
+		"GITHUB_APP_ID=12345",
+		"HOME=/tmp",
+	}
+
+	filtered := withoutGitHubTokenEnv(env)
+
+	expected := []string{
+		"PATH=/usr/bin:/bin",
+		"GITHUB_APP_ID=12345",
+		"HOME=/tmp",
+	}
+	if !reflect.DeepEqual(filtered, expected) {
+		t.Fatalf("unexpected filtered env: got %#v, want %#v", filtered, expected)
+	}
+}
+
+func TestNormalizeGitHubAuthStep(t *testing.T) {
+	tests := []struct {
+		name string
+		step string
+		want string
+	}{
+		{name: "empty defaults to all", step: "", want: "all"},
+		{name: "all", step: "all", want: "all"},
+		{name: "get token", step: "get-token", want: "get-token"},
+		{name: "token alias", step: "token", want: "get-token"},
+		{name: "auth login", step: "auth-login", want: "auth-login"},
+		{name: "login alias", step: "login", want: "auth-login"},
+		{name: "setup git", step: "setup-git", want: "setup-git"},
+		{name: "git alias", step: "git", want: "setup-git"},
+		{name: "trims and lowercases", step: " SETUP-GIT ", want: "setup-git"},
+		{name: "invalid", step: "unknown", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeGitHubAuthStep(tt.step); got != tt.want {
+				t.Fatalf("normalizeGitHubAuthStep(%q) = %q, want %q", tt.step, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSetupRepository(t *testing.T) {
 	// Test case 1: Invalid repository URL
 	tempDir := t.TempDir()

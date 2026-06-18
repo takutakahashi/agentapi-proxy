@@ -567,14 +567,55 @@ func getGitHubURL() string {
 
 // SetupGitHubAuth sets up GitHub authentication using gh CLI
 func SetupGitHubAuth(repoFullName string) error {
+	return SetupGitHubAuthStep(repoFullName, "all")
+}
+
+// SetupGitHubAuthStep runs one GitHub authentication setup step.
+func SetupGitHubAuthStep(repoFullName, step string) error {
+	requestedStep := step
+	step = normalizeGitHubAuthStep(step)
+	if step == "" {
+		return fmt.Errorf("invalid GitHub auth setup step %q (valid: all, get-token, auth-login, setup-git)", requestedStep)
+	}
+
 	log.Printf("Setting up GitHub authentication for repository: %s", repoFullName)
 
 	// Determine GitHub host
-	githubHost := "github.com"
-	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
-		githubHost = strings.TrimPrefix(githubAPI, "https://")
-		githubHost = strings.TrimPrefix(githubHost, "http://")
-		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+	githubHost := getGitHubAuthHost()
+
+	switch step {
+	case "get-token":
+		token, err := GetGitHubToken(repoFullName)
+		if err != nil {
+			return fmt.Errorf("failed to get GitHub token: %w", err)
+		}
+		fmt.Println(token)
+		return nil
+	case "auth-login":
+		token, err := GetGitHubToken(repoFullName)
+		if err != nil {
+			return fmt.Errorf("failed to get GitHub token: %w", err)
+		}
+
+		env := os.Environ()
+		if githubHost != "github.com" {
+			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+		}
+
+		if err := performGHAuthLogin(githubHost, token, env); err != nil {
+			return fmt.Errorf("failed to authenticate gh CLI: %w", err)
+		}
+		return nil
+	case "setup-git":
+		env := os.Environ()
+		if githubHost != "github.com" {
+			env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
+		}
+
+		if err := performGHAuthSetupGit(githubHost, env); err != nil {
+			return fmt.Errorf("failed to setup git authentication: %w", err)
+		}
+		return nil
 	}
 
 	// Check if GITHUB_TOKEN is already set in the environment
@@ -638,6 +679,31 @@ func SetupGitHubAuth(repoFullName string) error {
 	return nil
 }
 
+func normalizeGitHubAuthStep(step string) string {
+	switch strings.ToLower(strings.TrimSpace(step)) {
+	case "", "all":
+		return "all"
+	case "token", "get-token":
+		return "get-token"
+	case "login", "auth-login":
+		return "auth-login"
+	case "git", "setup-git":
+		return "setup-git"
+	default:
+		return ""
+	}
+}
+
+func getGitHubAuthHost() string {
+	githubHost := "github.com"
+	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
+		githubHost = strings.TrimPrefix(githubAPI, "https://")
+		githubHost = strings.TrimPrefix(githubHost, "http://")
+		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
+	}
+	return githubHost
+}
+
 // performGHAuthLogin performs gh auth login
 func performGHAuthLogin(githubHost, token string, env []string) error {
 	log.Printf("Performing gh auth login for host: %s", githubHost)
@@ -652,7 +718,7 @@ func performGHAuthLogin(githubHost, token string, env []string) error {
 	}
 
 	cmd.Stdin = strings.NewReader(token)
-	cmd.Env = env
+	cmd.Env = withoutGitHubTokenEnv(env)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -663,6 +729,17 @@ func performGHAuthLogin(githubHost, token string, env []string) error {
 
 	log.Printf("Successfully authenticated gh CLI for %s", githubHost)
 	return nil
+}
+
+func withoutGitHubTokenEnv(env []string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GITHUB_TOKEN=") || strings.HasPrefix(entry, "GH_TOKEN=") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 // performGHAuthSetupGit performs gh auth setup-git
