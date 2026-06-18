@@ -605,6 +605,50 @@ func TestGenerateGitHubAppToken(t *testing.T) {
 	}
 }
 
+func TestInstallationTokenRepositories(t *testing.T) {
+	t.Run("no repository without restriction", func(t *testing.T) {
+		t.Setenv("REPOSITORY_RESTRICTION", "")
+
+		repositories, err := installationTokenRepositories("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if repositories != nil {
+			t.Fatalf("expected nil repositories, got %#v", repositories)
+		}
+	})
+
+	t.Run("no repository with restriction", func(t *testing.T) {
+		t.Setenv("REPOSITORY_RESTRICTION", "true")
+
+		_, err := installationTokenRepositories("")
+		if err == nil {
+			t.Fatal("expected error when repository restriction is enabled")
+		}
+	})
+
+	t.Run("repository fullname becomes token repository name", func(t *testing.T) {
+		t.Setenv("REPOSITORY_RESTRICTION", "true")
+
+		repositories, err := installationTokenRepositories("owner/repo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !reflect.DeepEqual(repositories, []string{"repo"}) {
+			t.Fatalf("expected repository name, got %#v", repositories)
+		}
+	})
+
+	t.Run("invalid repository fullname", func(t *testing.T) {
+		t.Setenv("REPOSITORY_RESTRICTION", "")
+
+		_, err := installationTokenRepositories("repo")
+		if err == nil {
+			t.Fatal("expected error for invalid repository fullname")
+		}
+	})
+}
+
 func TestAutoDiscoverInstallationID(t *testing.T) {
 	// Test case 1: Invalid repository format
 	_, err := AutoDiscoverInstallationID("123", "/path/to/pem", "invalid-repo-format")

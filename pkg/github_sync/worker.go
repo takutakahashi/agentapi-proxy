@@ -157,7 +157,7 @@ func (w *Worker) syncOne(ctx context.Context, settingsName string) error {
 		return nil
 	}
 
-	token, err := w.syncer.resolveToken(cfg.GitHubToken)
+	token, err := w.syncer.resolveToken(cfg.GitHubToken, cfg.RepoFullName)
 	if err != nil {
 		return err
 	}

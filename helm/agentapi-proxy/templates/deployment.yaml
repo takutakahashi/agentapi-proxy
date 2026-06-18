@@ -169,6 +169,8 @@ spec:
             - name: GITHUB_INSTALLATION_ID
               value: {{ .Values.github.app.installationId | quote }}
             {{- end }}
+            - name: REPOSITORY_RESTRICTION
+              value: {{ .Values.github.app.repositoryRestriction | default false | quote }}
             {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}
             - name: GITHUB_APP_PEM
               valueFrom:
