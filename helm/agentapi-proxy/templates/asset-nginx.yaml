@@ -1,7 +1,14 @@
 {{- $asset := .Values.asset | default dict -}}
 {{- $assetBackend := $asset.backend | default "nginx" -}}
-{{- $assetEnabled := $asset.enabled | default true -}}
+{{- $assetEnabled := true -}}
+{{- if hasKey $asset "enabled" -}}
+{{- $assetEnabled = $asset.enabled -}}
+{{- end -}}
 {{- $assetPersistence := $asset.persistence | default dict -}}
+{{- $assetPersistenceEnabled := true -}}
+{{- if hasKey $assetPersistence "enabled" -}}
+{{- $assetPersistenceEnabled = $assetPersistence.enabled -}}
+{{- end -}}
 {{- $assetNginx := $asset.nginx | default dict -}}
 {{- $assetNginxImage := $assetNginx.image | default dict -}}
 {{- $assetNginxService := $assetNginx.service | default dict -}}
@@ -68,7 +75,7 @@ spec:
             {{- toYaml $assetNginxResources | nindent 12 }}
       volumes:
         - name: asset-storage
-          {{ if $assetPersistence.enabled | default true }}
+          {{ if $assetPersistenceEnabled }}
           persistentVolumeClaim:
             claimName: {{ include "agentapi-proxy.fullname" . }}-assets
           {{ else }}

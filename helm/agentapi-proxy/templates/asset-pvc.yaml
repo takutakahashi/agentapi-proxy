@@ -1,8 +1,15 @@
 {{- $asset := .Values.asset | default dict -}}
 {{- $assetBackend := $asset.backend | default "nginx" -}}
-{{- $assetEnabled := $asset.enabled | default true -}}
+{{- $assetEnabled := true -}}
+{{- if hasKey $asset "enabled" -}}
+{{- $assetEnabled = $asset.enabled -}}
+{{- end -}}
 {{- $assetPersistence := $asset.persistence | default dict -}}
-{{- if and $assetEnabled (eq $assetBackend "nginx") ($assetPersistence.enabled | default true) -}}
+{{- $assetPersistenceEnabled := true -}}
+{{- if hasKey $assetPersistence "enabled" -}}
+{{- $assetPersistenceEnabled = $assetPersistence.enabled -}}
+{{- end -}}
+{{- if and $assetEnabled (eq $assetBackend "nginx") $assetPersistenceEnabled -}}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
