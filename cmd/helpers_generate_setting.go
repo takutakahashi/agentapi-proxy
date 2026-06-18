@@ -154,7 +154,7 @@ session settings を組み立て、その過程をログに出しながら最終
       "environment": { "MY_VAR": "value" },
       "tags": { "repo": "myorg/myrepo" },
       "params": {
-        "agent_type": "claude-agentapi",
+        "agent_type": "claude-acp",
         "message": "Run daily checks",
         "oneshot": true
       }
@@ -174,7 +174,7 @@ session settings を組み立て、その過程をログに出しながら最終
       "session_config": {
         "environment": { "MY_VAR": "value" },
         "initial_message_template": "Hello!",
-        "params": { "agent_type": "claude-agentapi", "oneshot": false }
+        "params": { "agent_type": "claude-acp", "oneshot": false }
       }
     },
     "settings": [...]
@@ -535,11 +535,6 @@ func applySessionEnv(env map[string]string, sessionEnv map[string]string) {
 // buildStartupConfig returns the startup command config for the given agent type.
 func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 	switch agentType {
-	case "claude-agentapi":
-		log.Printf("[GENERATE-SETTING]   startup.command: [claude-agentapi]")
-		return sessionsettings.StartupConfig{
-			Command: []string{"claude-agentapi"},
-		}
 	case "claude-acp":
 		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
 		// Port is determined at runtime via AGENTAPI_PORT env var.

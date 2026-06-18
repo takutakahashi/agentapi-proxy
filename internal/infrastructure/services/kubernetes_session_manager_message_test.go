@@ -191,11 +191,11 @@ func TestRestoreSessionFromServiceRestoresAgentType(t *testing.T) {
 	}
 }
 
-func TestStopAgentUsesActionForAgentAPISessions(t *testing.T) {
+func TestStopAgentUsesActionForDefaultAgentAPISessions(t *testing.T) {
 	m := newTestManagerForCycle(t)
 	session := NewKubernetesSession(
 		"test-session",
-		&entities.RunServerRequest{UserID: "user1", AgentType: "claude-agentapi"},
+		&entities.RunServerRequest{UserID: "user1"},
 		"test-deploy", "test-svc", "test-pvc", "test-ns",
 		9000, nil, nil,
 	)
@@ -224,6 +224,28 @@ func TestStopAgentUsesActionForAgentAPISessions(t *testing.T) {
 	}
 	if !strings.Contains(body, `"type":"stop_agent"`) {
 		t.Fatalf("unexpected action payload: %s", body)
+	}
+}
+
+func TestSupportedAgentTypeOrDefault(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentType string
+		want      string
+	}{
+		{name: "default", agentType: "", want: ""},
+		{name: "claude acp", agentType: "claude-acp", want: "claude-acp"},
+		{name: "codex acp", agentType: "codex-acp", want: "codex-acp"},
+		{name: "cursor", agentType: "cursor", want: "cursor"},
+		{name: "unknown", agentType: "unknown-agent", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := supportedAgentTypeOrDefault(tt.agentType); got != tt.want {
+				t.Fatalf("supportedAgentTypeOrDefault(%q) = %q, want %q", tt.agentType, got, tt.want)
+			}
+		})
 	}
 }
 

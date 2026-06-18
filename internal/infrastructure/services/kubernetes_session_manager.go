@@ -342,6 +342,8 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 // It first attempts to use a pre-warmed stock session (labeled agentapi.proxy/stock=true).
 // If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
+
 	// Attempt to adopt a stock session matching the requested pod capabilities
 	// before creating a new one.
 	if stockSvc, err := m.findStockSession(ctx, sessionRequirements(req)); err != nil {
@@ -1703,7 +1705,7 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
 
-	// Build service name and endpoint URL for the claude-agentapi /action endpoint
+	// Build service name and endpoint URL for the agentapi /action endpoint
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
 	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/action",
 		serviceName,
@@ -1772,6 +1774,15 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 
 func isACPAgentType(agentType string) bool {
 	return agentType == "claude-acp" || agentType == "codex-acp" || agentType == "cursor"
+}
+
+func supportedAgentTypeOrDefault(agentType string) string {
+	switch agentType {
+	case "claude-acp", "codex-acp", "cursor":
+		return agentType
+	default:
+		return ""
+	}
 }
 
 func restoreAgentTypeFromService(svc *corev1.Service) string {
@@ -2696,14 +2707,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 	// No otelcol ConfigMap volume needed: otelcol runs as an in-process subprocess
 	// and generates its config file at /tmp/otelcol-config.yaml at provisioning time.
 
-	// Add EmptyDir for claude-agentapi history output
-	volumes = append(volumes, corev1.Volume{
-		Name: "claude-agentapi-history",
-		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
-		},
-	})
-
 	return volumes
 }
 
@@ -3046,12 +3049,6 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	// Add Agent Type if specified
 	if req.AgentType != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_AGENT_TYPE", Value: req.AgentType})
-
-		// Add claude-agentapi / codex-agentapi specific environment variables
-		if req.AgentType == "claude-agentapi" || req.AgentType == "codex-agentapi" {
-			envVars = append(envVars, corev1.EnvVar{Name: "HOST", Value: "0.0.0.0"})
-			envVars = append(envVars, corev1.EnvVar{Name: "PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)})
-		}
 	}
 
 	proxyURL := m.k8sConfig.ProvisionerProxyURL
@@ -3625,12 +3622,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		})
 	}
 
-	// Add claude-agentapi history volume mount
-	volumeMounts = append(volumeMounts, corev1.VolumeMount{
-		Name:      "claude-agentapi-history",
-		MountPath: "/opt/claude-agentapi",
-	})
-
 	return volumeMounts
 }
 
@@ -4166,12 +4157,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Add Agent Type if specified
 	if req.AgentType != "" {
 		env["AGENTAPI_AGENT_TYPE"] = req.AgentType
-
-		// Add claude-agentapi / codex-agentapi specific environment variables
-		if req.AgentType == "claude-agentapi" || req.AgentType == "codex-agentapi" {
-			env["HOST"] = "0.0.0.0"
-			env["PORT"] = fmt.Sprintf("%d", m.k8sConfig.BasePort)
-		}
 	}
 
 	// Add CLAUDE_ARGS from request environment or proxy's environment
@@ -4391,7 +4376,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		MCPServers:   materialized.MCPServers,
 	}
 
-	// For codex sessions, populate Codex-specific config.
+	// For Codex ACP sessions, populate Codex-specific config.
 	switch req.AgentType {
 	case "codex-acp":
 		settings.Codex = sessionsettings.CodexConfig{
@@ -4403,10 +4388,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			MCPServers: materialized.MCPServers,
 		}
 		log.Printf("[K8S_SESSION] Injected Codex hooks and set approval-mode=full-auto, sandbox_mode=danger-full-access for session %s", session.id)
-	case "codex-agentapi":
-		settings.Codex = sessionsettings.CodexConfig{
-			MCPServers: materialized.MCPServers,
-		}
 	}
 
 	// Repository info
@@ -4440,10 +4421,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	// Startup command (simplified version for now - full command logic in pod)
 	switch req.AgentType {
-	case "claude-agentapi":
-		settings.Startup = sessionsettings.StartupConfig{
-			Command: []string{"claude-agentapi"},
-		}
 	case "claude-acp":
 		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
 		settings.Startup = sessionsettings.StartupConfig{

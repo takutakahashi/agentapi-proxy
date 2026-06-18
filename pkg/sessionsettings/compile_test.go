@@ -22,7 +22,7 @@ func TestCompile_FullSettings(t *testing.T) {
 			ID:        "test-123",
 			UserID:    "user-456",
 			Scope:     "user",
-			AgentType: "claude-agentapi",
+			AgentType: "claude-acp",
 		},
 		Env: map[string]string{
 			"AGENTAPI_PORT":       "9000",
@@ -550,7 +550,7 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 				ID:        "test-codex-mcp",
 				UserID:    "user-codex-mcp",
 				Scope:     "user",
-				AgentType: "codex-agentapi",
+				AgentType: "codex-acp",
 			},
 			Codex: CodexConfig{
 				MCPServers: map[string]interface{}{

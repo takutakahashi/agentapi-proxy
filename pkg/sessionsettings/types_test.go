@@ -17,7 +17,7 @@ func TestMarshalYAML_FullSettings(t *testing.T) {
 			UserID:    "user-456",
 			Scope:     "user",
 			TeamID:    "org/team",
-			AgentType: "claude-agentapi",
+			AgentType: "claude-acp",
 			Oneshot:   true,
 			Teams:     []string{"org/team1", "org/team2"},
 		},
