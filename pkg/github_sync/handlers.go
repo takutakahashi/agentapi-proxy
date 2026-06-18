@@ -6,15 +6,14 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 )
 
-// Handlers implements app.CustomHandler for GitHub sync endpoints.
+// Handlers implements the custom route handler for GitHub sync endpoints.
 type Handlers struct {
 	syncer *Syncer
 }
@@ -48,7 +47,7 @@ func (h *Handlers) GetName() string { return "GitHubSyncHandlers" }
 func (h *Handlers) Syncer() *Syncer { return h.syncer }
 
 // RegisterRoutes implements app.CustomHandler.
-func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
+func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	e.POST("/settings/:name/sync/push", h.Push)
 	e.POST("/settings/:name/sync/pull", h.Pull)
 	e.POST("/settings/:name/sync/rotate-key", h.RotateKey)

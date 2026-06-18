@@ -20,6 +20,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
+	corerepo "github.com/takutakahashi/agentapi-proxy/internal/core/repository"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
@@ -552,7 +553,7 @@ func (s *Server) AddCustomHandler(handler CustomHandler) {
 	if s.router != nil {
 		s.router.AddCustomHandler(handler)
 		// Register routes immediately since router is already initialized
-		if err := handler.RegisterRoutes(s.echo, s); err != nil {
+		if err := handler.RegisterRoutes(s.echo); err != nil {
 			log.Printf("Failed to register custom handler %s: %v", handler.GetName(), err)
 		}
 	}
@@ -1115,31 +1116,20 @@ func (s *Server) GetSessionProfileRepository() portrepos.SessionProfileRepositor
 // This is a public function that can be used by other packages (e.g., schedule).
 // The cloneDir parameter is typically the session ID.
 func ExtractRepositoryInfo(tags map[string]string, cloneDir string) *entities.RepositoryInfo {
-	if tags == nil {
-		return nil
-	}
-
-	repoURL, exists := tags["repository"]
-	if !exists || repoURL == "" {
-		return nil
-	}
-
-	// Only process repository URLs that look like valid GitHub URLs
-	if !isValidRepositoryURL(repoURL) {
-		return nil
-	}
-
-	// Extract org/repo format from repository URL
-	repoFullName, err := extractRepoFullNameFromURL(repoURL)
+	repoInfo, err := corerepo.ExtractInfo(tags, cloneDir)
 	if err != nil {
-		log.Printf("Failed to extract repository full name from URL %s: %v", repoURL, err)
+		log.Printf("Failed to extract repository full name: %v", err)
 		return nil
 	}
+	return repoInfo
+}
 
-	return &entities.RepositoryInfo{
-		FullName: repoFullName,
-		CloneDir: cloneDir,
-	}
+func isValidRepositoryURL(repoURL string) bool {
+	return corerepo.IsValidURL(repoURL)
+}
+
+func extractRepoFullNameFromURL(repoURL string) (string, error) {
+	return corerepo.FullNameFromURL(repoURL)
 }
 
 // extractRepositoryInfo extracts repository information from tags (internal method with verbose logging)
@@ -1154,7 +1144,7 @@ func (s *Server) extractRepositoryInfo(sessionID string, tags map[string]string)
 	}
 
 	// Only process repository URLs that look like valid GitHub URLs
-	if !isValidRepositoryURL(repoURL) {
+	if !corerepo.IsValidURL(repoURL) {
 		if s.verbose {
 			log.Printf("Repository tag found: %s, but it's not a valid repository URL. Skipping repository setup.", repoURL)
 		}
@@ -1174,52 +1164,6 @@ func (s *Server) extractRepositoryInfo(sessionID string, tags map[string]string)
 }
 
 // isValidRepositoryURL checks if a repository URL is valid for GitHub
-func isValidRepositoryURL(repoURL string) bool {
-	// Check for common GitHub URL patterns
-	if strings.HasPrefix(repoURL, "https://github.com/") ||
-		strings.HasPrefix(repoURL, "git@github.com:") ||
-		strings.HasPrefix(repoURL, "http://github.com/") {
-		return true
-	}
-
-	// Check for owner/repo format (e.g., "takutakahashi/agentapi-ui")
-	parts := strings.Split(repoURL, "/")
-	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-		// Simple validation: both owner and repo name should not be empty
-		// and should not contain invalid characters for GitHub usernames/repo names
-		return true
-	}
-
-	return false
-}
-
-// extractRepoFullNameFromURL extracts the org/repo format from a GitHub repository URL
-func extractRepoFullNameFromURL(repoURL string) (string, error) {
-	var repoPath string
-
-	if strings.HasPrefix(repoURL, "https://github.com/") {
-		repoPath = strings.TrimPrefix(repoURL, "https://github.com/")
-	} else if strings.HasPrefix(repoURL, "git@github.com:") {
-		repoPath = strings.TrimPrefix(repoURL, "git@github.com:")
-	} else if strings.HasPrefix(repoURL, "http://github.com/") {
-		repoPath = strings.TrimPrefix(repoURL, "http://github.com/")
-	} else {
-		// If it's not a full URL, assume it's already in owner/repo format
-		repoPath = repoURL
-	}
-
-	// Remove .git suffix if present
-	repoPath = strings.TrimSuffix(repoPath, ".git")
-
-	// Split into org/repo
-	parts := strings.Split(repoPath, "/")
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid repository path: %s", repoPath)
-	}
-
-	return repoPath, nil
-}
-
 // cleanupDefunctProcesses periodically checks for and cleans up defunct processes
 func (s *Server) cleanupDefunctProcesses() {
 	ticker := time.NewTicker(5 * time.Minute) // Check every 5 minutes

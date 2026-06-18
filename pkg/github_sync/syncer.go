@@ -11,9 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	infraservices "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
-	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"gopkg.in/yaml.v3"
 )

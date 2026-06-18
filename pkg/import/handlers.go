@@ -9,11 +9,10 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
-	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/services"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 )
 
 // Handlers handles import/export endpoints
@@ -46,7 +45,7 @@ func (h *Handlers) GetName() string {
 
 // RegisterRoutes registers import/export routes
 // Implements the app.CustomHandler interface
-func (h *Handlers) RegisterRoutes(e *echo.Echo, _ *app.Server) error {
+func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	// GET /manage/:team_id - Export team resources
 	e.GET("/manage/:team_id", h.ExportTeamResources)
 

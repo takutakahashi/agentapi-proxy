@@ -17,18 +17,17 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
-	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/webhook"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	githubsync "github.com/takutakahashi/agentapi-proxy/pkg/github_sync"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
-	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
-	"github.com/takutakahashi/agentapi-proxy/pkg/sessionmanager"
-	"github.com/takutakahashi/agentapi-proxy/pkg/slackbot"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	stock_inventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
-	"github.com/takutakahashi/agentapi-proxy/pkg/webhook"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -763,9 +762,9 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 
 	// Create dependencies
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
-	channelResolver := services.NewSlackChannelResolver(client, namespace)
+	channelResolver := slackbot.NewSlackChannelResolver(client, namespace)
 
-	eventHandler := controllers.NewSlackBotEventHandler(
+	eventHandler := slackbot.NewSlackBotEventHandler(
 		slackbotRepo,
 		proxyServer.GetSessionManager(),
 		configData.KubernetesSession.SlackBotTokenSecretName,

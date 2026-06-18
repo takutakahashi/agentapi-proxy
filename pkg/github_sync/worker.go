@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/kubernetes"
 )
