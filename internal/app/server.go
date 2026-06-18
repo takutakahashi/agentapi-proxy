@@ -1124,10 +1124,6 @@ func ExtractRepositoryInfo(tags map[string]string, cloneDir string) *entities.Re
 	return repoInfo
 }
 
-func isValidRepositoryURL(repoURL string) bool {
-	return corerepo.IsValidURL(repoURL)
-}
-
 func extractRepoFullNameFromURL(repoURL string) (string, error) {
 	return corerepo.FullNameFromURL(repoURL)
 }
