@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )

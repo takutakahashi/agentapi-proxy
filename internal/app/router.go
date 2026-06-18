@@ -48,7 +48,7 @@ type HandlerRegistry struct {
 
 // CustomHandler interface for adding custom routes
 type CustomHandler interface {
-	RegisterRoutes(e *echo.Echo, server *Server) error
+	RegisterRoutes(e *echo.Echo) error
 	GetName() string
 }
 
@@ -527,7 +527,7 @@ func (r *Router) registerConditionalRoutes() error {
 func (r *Router) registerCustomHandlers() error {
 	for _, handler := range r.handlers.customHandlers {
 		log.Printf("[ROUTES] Registering custom handler: %s", handler.GetName())
-		if err := handler.RegisterRoutes(r.echo, r.server); err != nil {
+		if err := handler.RegisterRoutes(r.echo); err != nil {
 			log.Printf("[ROUTES] Failed to register custom handler %s: %v", handler.GetName(), err)
 			return err
 		}

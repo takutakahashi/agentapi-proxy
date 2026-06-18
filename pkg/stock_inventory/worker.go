@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"k8s.io/client-go/kubernetes"
 )
 

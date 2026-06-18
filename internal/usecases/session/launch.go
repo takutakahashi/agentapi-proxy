@@ -73,6 +73,7 @@ type LaunchRequest struct {
 type LaunchResult struct {
 	SessionID     string
 	SessionReused bool
+	Session       entities.Session
 }
 
 // ResolveTeams returns the GitHub team slugs to inject into a session's settings.
@@ -161,7 +162,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 			if err := uc.sessionManager.SendMessage(ctx, existing[0].ID(), reuseMessage); err != nil {
 				return LaunchResult{}, fmt.Errorf("failed to route message to existing session: %w", err)
 			}
-			return LaunchResult{SessionID: existing[0].ID(), SessionReused: true}, nil
+			return LaunchResult{SessionID: existing[0].ID(), SessionReused: true, Session: existing[0]}, nil
 		}
 	}
 
@@ -209,7 +210,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 	if err != nil {
 		return LaunchResult{}, err
 	}
-	return LaunchResult{SessionID: session.ID(), SessionReused: false}, nil
+	return LaunchResult{SessionID: session.ID(), SessionReused: false, Session: session}, nil
 }
 
 // ensureMemoryExists checks whether a memory with all tags in req.MemoryKey already exists

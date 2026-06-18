@@ -8,8 +8,8 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/services"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/pkg/schedule"
 )
 
 // Exporter handles exporting of team resources

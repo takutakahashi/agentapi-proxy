@@ -12,6 +12,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	portservices "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
@@ -27,6 +28,7 @@ type MCPHandler struct {
 	taskRepo       repositories.TaskRepository
 	taskGroupRepo  repositories.TaskGroupRepository
 	memoryRepo     repositories.MemoryRepository
+	authService    portservices.AuthService
 	httpHandler    http.Handler
 }
 
@@ -52,6 +54,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		taskRepo:       taskRepo,
 		taskGroupRepo:  taskGroupRepo,
 		memoryRepo:     memoryRepo,
+		authService:    server.GetContainer().AuthService,
 	}
 
 	// Create factory function that creates a new MCP server per request with authenticated user
@@ -108,7 +111,7 @@ func (h *MCPHandler) GetName() string {
 }
 
 // RegisterRoutes registers the /mcp endpoint with Echo
-func (h *MCPHandler) RegisterRoutes(e *echo.Echo, server *app.Server) error {
+func (h *MCPHandler) RegisterRoutes(e *echo.Echo) error {
 	// Register /mcp endpoint with authentication middleware
 	// MCP tools require session read permission
 	e.Any("/mcp", func(c echo.Context) error {
@@ -127,7 +130,7 @@ func (h *MCPHandler) RegisterRoutes(e *echo.Echo, server *app.Server) error {
 		// Delegate to the go-sdk HTTP handler with user in context
 		h.httpHandler.ServeHTTP(c.Response(), req)
 		return nil
-	}, auth.RequirePermission(entities.PermissionSessionRead, server.GetContainer().AuthService))
+	}, auth.RequirePermission(entities.PermissionSessionRead, h.authService))
 
 	log.Printf("[MCP] Registered /mcp endpoint successfully with authentication")
 	return nil
