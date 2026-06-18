@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 	"sync/atomic"
 )
@@ -69,6 +70,7 @@ type Client struct {
 	notifHandlers map[string]NotificationHandler
 
 	verbose bool
+	rawLog  bool
 }
 
 // New creates a new Client.
@@ -80,6 +82,16 @@ func New(r io.Reader, w io.Writer, verbose bool) *Client {
 		reqHandlers:   make(map[string]RequestHandler),
 		notifHandlers: make(map[string]NotificationHandler),
 		verbose:       verbose,
+		rawLog:        verbose || envBool("AGENTAPI_ACP_RAW_LOG"),
+	}
+}
+
+func envBool(name string) bool {
+	switch os.Getenv(name) {
+	case "1", "true", "TRUE", "True", "yes", "YES", "on", "ON":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -173,9 +185,9 @@ func (c *Client) Respond(id json.RawMessage, result interface{}, rpcErr *RPCErro
 func (c *Client) send(msg Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.verbose {
-		b, _ := json.Marshal(msg)
-		log.Printf("[jsonrpc] --> %s", b)
+	if c.rawLog {
+		raw, _ := json.Marshal(msg)
+		log.Printf("[acp-raw-json] --> %s", raw)
 	}
 	return c.encoder.Encode(msg)
 }
@@ -191,17 +203,21 @@ func (c *Client) Listen(ctx context.Context) error {
 		default:
 		}
 
-		var msg Message
-		if err := c.decoder.Decode(&msg); err != nil {
+		var raw json.RawMessage
+		if err := c.decoder.Decode(&raw); err != nil {
 			if err == io.EOF {
 				return fmt.Errorf("jsonrpc: connection closed")
 			}
 			return fmt.Errorf("jsonrpc: decode: %w", err)
 		}
 
-		if c.verbose {
-			b, _ := json.Marshal(msg)
-			log.Printf("[jsonrpc] <-- %s", b)
+		if c.rawLog {
+			log.Printf("[acp-raw-json] <-- %s", raw)
+		}
+
+		var msg Message
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return fmt.Errorf("jsonrpc: unmarshal: %w", err)
 		}
 
 		c.dispatch(ctx, &msg)

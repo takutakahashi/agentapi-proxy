@@ -38,7 +38,7 @@ func TestBuildStartupConfigCursor(t *testing.T) {
 	config := buildStartupConfig("cursor")
 
 	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
-	assert.Equal(t, []string{"acp-server", "--auto-approve", "--", "agent", "acp"}, config.Args)
+	assert.Equal(t, []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}, config.Args)
 }
 
 func TestGenerateTokenFlags(t *testing.T) {

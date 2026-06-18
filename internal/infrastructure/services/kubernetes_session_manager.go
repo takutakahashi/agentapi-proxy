@@ -4487,6 +4487,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
 				"--auto-approve",
+				"--raw-json-log",
 				"--",
 				"agent", "acp",
 			},
