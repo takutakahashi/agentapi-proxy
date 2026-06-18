@@ -141,6 +141,7 @@ ENV GOCACHE=/home/agentapi/.cache/go-build
 
 # Install mise
 RUN curl https://mise.run | sh && \
+    /home/agentapi/.local/bin/mise --version && \
     echo 'export PATH="/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"' >> /home/agentapi/.bashrc
 
 # Install claude code and move to /opt/claude for persistence across volume mounts
