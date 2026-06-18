@@ -234,3 +234,92 @@ func TestPurgeStockSessionsDeletesMixedWorkloadKindsAndPVC(t *testing.T) {
 		t.Fatalf("Expected orphaned PVC to be deleted, got err=%v", err)
 	}
 }
+
+func TestPurgeStockSessionsKeepsAdoptedSessionWithStaleStockWorkloadLabels(t *testing.T) {
+	manager := newWorkloadTestManager(t, true)
+	ctx := context.Background()
+	sessionID := "adopted-stock-session"
+	name := "agentapi-session-" + sessionID
+
+	adoptedServiceLabels := map[string]string{
+		"app.kubernetes.io/name":       "agentapi-session",
+		"app.kubernetes.io/managed-by": "agentapi-proxy",
+		"agentapi.proxy/session-id":    sessionID,
+		"agentapi.proxy/user-id":       "test-user",
+		"agentapi.proxy/scope":         "user",
+	}
+	staleStockLabels := map[string]string{
+		"app.kubernetes.io/name":            "agentapi-session",
+		"app.kubernetes.io/managed-by":      "agentapi-proxy",
+		"agentapi.proxy/session-id":         sessionID,
+		"agentapi.proxy/stock":              "true",
+		"agentapi.proxy/capability-sandbox": "false",
+		"agentapi.proxy/capability-dind":    "false",
+	}
+
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name + "-svc",
+			Namespace: "test-ns",
+			Labels:    adoptedServiceLabels,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create adopted service: %v", err)
+	}
+	_, err = manager.client.AppsV1().Deployments("test-ns").Create(ctx, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "test-ns",
+			Labels:    staleStockLabels,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create stale-labeled deployment: %v", err)
+	}
+	_, err = manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "test-ns",
+			Labels:    staleStockLabels,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create stale-labeled pod: %v", err)
+	}
+	_, err = manager.client.CoreV1().PersistentVolumeClaims("test-ns").Create(ctx, &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name + "-pvc",
+			Namespace: "test-ns",
+			Labels:    staleStockLabels,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse("1Gi"),
+				},
+			},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create stale-labeled PVC: %v", err)
+	}
+
+	if err := manager.PurgeStockSessions(ctx); err != nil {
+		t.Fatalf("PurgeStockSessions failed: %v", err)
+	}
+
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name+"-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("Expected adopted service to remain, got err=%v", err)
+	}
+	if _, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("Expected stale-labeled deployment to remain, got err=%v", err)
+	}
+	if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("Expected stale-labeled pod to remain, got err=%v", err)
+	}
+	if _, err := manager.client.CoreV1().PersistentVolumeClaims("test-ns").Get(ctx, name+"-pvc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("Expected stale-labeled PVC to remain, got err=%v", err)
+	}
+}

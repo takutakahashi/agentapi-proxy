@@ -590,6 +590,12 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	if err != nil {
 		return fmt.Errorf("failed to list stock services for purge: %w", err)
 	}
+	allSessionSvcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session services for purge protection: %w", err)
+	}
 	deployments, err := m.client.AppsV1().Deployments(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -614,6 +620,18 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 
 	var purgeErrs []string
 	sessionIDs := make(map[string]struct{})
+	adoptedSessionIDs := make(map[string]struct{})
+	for i := range allSessionSvcs.Items {
+		svc := &allSessionSvcs.Items[i]
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" || svc.DeletionTimestamp != nil {
+			continue
+		}
+		stockState := svc.Labels["agentapi.proxy/stock"]
+		if stockState != "true" && stockState != "claiming" {
+			adoptedSessionIDs[sessionID] = struct{}{}
+		}
+	}
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
@@ -628,16 +646,28 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	for i := range deployments.Items {
 		if sessionID := deployments.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale deployment label)", sessionID)
+				continue
+			}
 			sessionIDs[sessionID] = struct{}{}
 		}
 	}
 	for i := range pods.Items {
 		if sessionID := pods.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale pod label)", sessionID)
+				continue
+			}
 			sessionIDs[sessionID] = struct{}{}
 		}
 	}
 	for i := range pvcs.Items {
 		if sessionID := pvcs.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale pvc label)", sessionID)
+				continue
+			}
 			sessionIDs[sessionID] = struct{}{}
 		}
 	}
