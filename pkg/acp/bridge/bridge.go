@@ -85,9 +85,10 @@ type Bridge struct {
 	// emits them as a single batched session/update when the kind changes or the
 	// agent turn ends.  This converts the per-chunk stream into a per-comment bulk
 	// delivery so that consumers receive one complete message at a time.
-	chunkMu   sync.Mutex
-	chunkKind acp.SessionUpdateKind
-	chunkText strings.Builder
+	chunkMu              sync.Mutex
+	chunkKind            acp.SessionUpdateKind
+	chunkText            strings.Builder
+	lastAgentMessageText string
 
 	// Status tracking: "running" while a prompt is being processed, "stable" otherwise.
 	// Mirrors the agentapi status convention so the proxy can watch GET /events.
@@ -295,6 +296,7 @@ func (b *Bridge) emitUpdate(update acp.SessionUpdate) {
 
 	// Non-chunk event: flush pending chunks first, then broadcast immediately.
 	b.flushChunkBuffer()
+	update = b.enrichToolCall(update)
 
 	msg := jsonRPCMsg{
 		JSONRPC: "2.0",
@@ -325,6 +327,9 @@ func (b *Bridge) flushChunkBufferLocked() {
 	kind := b.chunkKind
 	b.chunkKind = ""
 	b.chunkText.Reset()
+	if kind == acp.SessionUpdateKindAgentMessageChunk {
+		b.lastAgentMessageText = strings.TrimSpace(text)
+	}
 
 	contentRaw, _ := json.Marshal(acp.ContentBlockText{Type: "text", Text: text})
 	now := time.Now()
@@ -348,6 +353,35 @@ func (b *Bridge) flushChunkBufferLocked() {
 		b.appendToOutputFile(text)
 	}
 	b.chunkMu.Lock()
+}
+
+func (b *Bridge) enrichToolCall(update acp.SessionUpdate) acp.SessionUpdate {
+	if update.Kind != acp.SessionUpdateKindToolCall || !isEmptyRawInput(update.RawInput) {
+		return update
+	}
+
+	b.chunkMu.Lock()
+	description := b.lastAgentMessageText
+	b.chunkMu.Unlock()
+	if description == "" {
+		return update
+	}
+
+	update.RawInput = map[string]string{"description": description}
+	return update
+}
+
+func isEmptyRawInput(rawInput interface{}) bool {
+	if rawInput == nil {
+		return true
+	}
+	if raw, ok := rawInput.(map[string]interface{}); ok {
+		return len(raw) == 0
+	}
+	if raw, ok := rawInput.(map[string]string); ok {
+		return len(raw) == 0
+	}
+	return false
 }
 
 // handlePermissionRequest emits a session/request_permission request via SSE
