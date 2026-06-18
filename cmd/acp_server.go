@@ -23,6 +23,7 @@ var (
 	acpSessionFile string
 	acpOutputFile  string
 	acpVerbose     bool
+	acpRawJSONLog  bool
 	acpAutoApprove bool
 )
 
@@ -58,12 +59,18 @@ func init() {
 	AcpServerCmd.Flags().StringVar(&acpSessionFile, "session-file", "", "File to persist ACP session ID for reuse across restarts (defaults to {cwd}/.acp-session-id)")
 	AcpServerCmd.Flags().StringVar(&acpOutputFile, "output-file", "", "File to append conversation history in acp-posts JSONL format (for Slack integration)")
 	AcpServerCmd.Flags().BoolVarP(&acpVerbose, "verbose", "v", false, "Enable verbose logging")
+	AcpServerCmd.Flags().BoolVar(&acpRawJSONLog, "raw-json-log", false, "Log raw ACP JSON-RPC messages sent to and received from the agent")
 	AcpServerCmd.Flags().BoolVar(&acpAutoApprove, "auto-approve", false, "Automatically approve all permission requests without showing a UI modal")
 }
 
 func runAcpServer(cmd *cobra.Command, args []string) error {
 	if acpVerbose {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
+	}
+	if acpRawJSONLog {
+		if err := os.Setenv("AGENTAPI_ACP_RAW_LOG", "1"); err != nil {
+			return fmt.Errorf("failed to enable ACP raw JSON logging: %w", err)
+		}
 	}
 
 	// Parse agent command from args (everything after "--" separator or all args).

@@ -921,6 +921,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"acp-server",
 			"--port", agentapiPort,
 			"--auto-approve",
+			"--raw-json-log",
 			"--",
 			"agent", "acp",
 		}

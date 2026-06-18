@@ -47,7 +47,7 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 	if cmd != "agentapi-proxy" {
 		t.Fatalf("command = %q, want agentapi-proxy", cmd)
 	}
-	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "agent", "acp"}
+	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}
