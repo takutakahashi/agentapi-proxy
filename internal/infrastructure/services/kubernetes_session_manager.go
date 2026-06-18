@@ -1547,7 +1547,7 @@ func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
 }
 
 // SendMessage sends a message to an existing session.
-// For ACP sessions (claude-acp, codex-acp) it uses the ACP JSON-RPC 2.0
+// For ACP sessions (claude-acp, codex-acp, cursor) it uses the ACP JSON-RPC 2.0
 // POST /rpc endpoint with session/prompt; for standard agentapi sessions it
 // uses the agentapi-compatible POST /message endpoint.
 func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
@@ -1771,7 +1771,7 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 }
 
 func isACPAgentType(agentType string) bool {
-	return agentType == "claude-acp" || agentType == "codex-acp"
+	return agentType == "claude-acp" || agentType == "codex-acp" || agentType == "cursor"
 }
 
 func restoreAgentTypeFromService(svc *corev1.Service) string {
@@ -4475,6 +4475,20 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--auto-approve",
 				"--",
 				"npx", "@zed-industries/codex-acp",
+			},
+		}
+	case "cursor":
+		// acp-server bridges Cursor Agent CLI's native ACP server to the agentapi HTTP interface.
+		// https://cursor.com/docs/cli/acp
+		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
+		settings.Startup = sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args: []string{
+				"acp-server",
+				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
+				"--auto-approve",
+				"--",
+				"agent", "acp",
 			},
 		}
 	default:

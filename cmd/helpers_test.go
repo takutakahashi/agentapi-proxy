@@ -34,6 +34,13 @@ func TestHelpersInit(t *testing.T) {
 	assert.Contains(t, commandNames, "compile-settings")
 }
 
+func TestBuildStartupConfigCursor(t *testing.T) {
+	config := buildStartupConfig("cursor")
+
+	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
+	assert.Equal(t, []string{"acp-server", "--auto-approve", "--", "agent", "acp"}, config.Args)
+}
+
 func TestGenerateTokenFlags(t *testing.T) {
 	// Test required flags
 

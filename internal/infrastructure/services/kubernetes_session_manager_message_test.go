@@ -45,6 +45,12 @@ func TestBroadcastMessageUpdate_UpdatesLastMessageAt(t *testing.T) {
 	}
 }
 
+func TestIsACPAgentTypeIncludesCursor(t *testing.T) {
+	if !isACPAgentType("cursor") {
+		t.Fatal("expected cursor to be treated as an ACP agent type")
+	}
+}
+
 // TestSubscribeMessageEvents_ReceivesBroadcast verifies that a subscriber
 // registered before broadcastMessageUpdate is called receives the event.
 func TestSubscribeMessageEvents_ReceivesBroadcast(t *testing.T) {
