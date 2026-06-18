@@ -145,6 +145,8 @@ github:
     # GitHub App Installation ID (必須)
     # 組織にインストール後のURLから取得: /settings/installations/12345678 -> 12345678
     installationId: ""
+    # GitHub App installation token を対象リポジトリに限定する場合は true
+    repositoryRestriction: false
     # GitHub App の秘密鍵（PEM形式）を含む Secret (必須)
     # kubectl create secret generic github-app-private-key --from-file=private-key=/path/to/app.private-key.pem
     privateKey:

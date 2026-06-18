@@ -288,6 +288,18 @@ This creates files in `/etc/role-env-files/`:
 
 See [values-role-env-example.yaml](values-role-env-example.yaml) for a complete example with all secrets.
 
+### GitHub App Repository Restriction
+
+GitHub App installation tokens can be restricted to the repository being cloned or synced:
+
+```yaml
+github:
+  app:
+    repositoryRestriction: true
+```
+
+The default is `false`. When enabled, token generation requires a repository full name and sends the repository name in the GitHub installation token request body.
+
 ### Create Required Secrets
 
 ```bash
