@@ -176,9 +176,6 @@ RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | 
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI and /opt/cursor/bin for Cursor CLI)
 ENV PATH="/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
 
-# install claude-agentapi
-RUN bun install -g @takutakahashi/claude-agentapi
-
 # Install codex CLI and place a wrapper in /opt/claude/bin (first in PATH).
 # The bun-installed codex script uses "#!/usr/bin/env node", but /usr/local/bin/node is a
 # claude wrapper. The wrapper here explicitly invokes bun so codex works reliably in the proxy.

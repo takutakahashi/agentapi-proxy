@@ -27,14 +27,14 @@ var (
 )
 
 // AcpServerCmd starts an ACP agent over stdio and exposes it as an
-// agentapi-compatible HTTP server (compatible with takutakahashi/claude-agentapi).
+// agentapi-compatible HTTP server.
 var AcpServerCmd = &cobra.Command{
 	Use:   "acp-server [flags] -- <agent-command> [agent-args...]",
 	Short: "Run an ACP agent over stdio and expose it as an agentapi-compatible HTTP server",
 	Long: `acp-server launches an ACP-compatible agent as a subprocess via stdio (stdin/stdout)
 and exposes its interface as an agentapi-compatible HTTP API.
 
-The HTTP interface is compatible with takutakahashi/claude-agentapi and coder/agentapi.
+The HTTP interface is compatible with coder/agentapi.
 
 Endpoints exposed:
   GET  /health    - health check

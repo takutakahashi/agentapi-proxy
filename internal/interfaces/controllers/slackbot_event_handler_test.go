@@ -1668,7 +1668,7 @@ func TestProcessEvent_NoConfiguredRepo_FallsBackToMessageDetection(t *testing.T)
 	// Configure session params WITHOUT repo_full_name.
 	sc := entities.NewWebhookSessionConfig()
 	sc.SetParams(&entities.SessionParams{
-		AgentType: "claude-agentapi",
+		AgentType: "claude-acp",
 	})
 	bot.SetSessionConfig(sc)
 	repo.bots[botID] = bot

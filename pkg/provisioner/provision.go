@@ -50,7 +50,7 @@ const (
 //  3. Load the generated session env file
 //  4. Fetch memory from the proxy and inject into CLAUDE.md
 //  5. cd into the cloned repo if present
-//  6. Start agentapi (or claude-agentapi / codex-agentapi) as a subprocess
+//  6. Start agentapi (or an ACP bridge) as a subprocess
 //  7. Wait for agentapi to become ready
 //  8. Send the initial message if specified in settings
 //  9. Set status to "ready"; supervise the subprocess
@@ -319,19 +319,14 @@ func (s *Server) runPreScript(ctx context.Context, script string, envMap map[str
 }
 
 // runAcpPosts starts the acp-posts binary as a subprocess, forwarding
-// agent output (history.jsonl) to Slack. It waits for the history file to
-// appear before launching. The history file path depends on the agent type:
-//   - claude-acp: /opt/acp-posts/history.jsonl (written by the acp-server bridge)
-//   - others:     /opt/claude-agentapi/history.jsonl (written by claude-agentapi)
+// agent output (history.jsonl) to Slack. It waits for the ACP bridge history
+// file to appear before launching.
 //
 // The subprocess is tied to ctx: when ctx is cancelled the goroutine exits.
 func (s *Server) runAcpPosts(ctx context.Context, params *sessionsettings.SlackParams, agentType string) {
 	const acpPostsBin = "/usr/local/bin/acp-posts"
 
-	historyFile := "/opt/claude-agentapi/history.jsonl"
-	if agentType == "claude-acp" {
-		historyFile = "/opt/acp-posts/history.jsonl"
-	}
+	historyFile := "/opt/acp-posts/history.jsonl"
 
 	log.Printf("[ACP_POSTS] Waiting for history file %s", historyFile)
 	for {
@@ -867,7 +862,7 @@ service:
 }
 
 // buildAgentCommand returns the executable and arguments for the agent
-// process, mirroring the logic in buildClaudeStartCommand().
+// process, mirroring the logic in BuildRemoteProvisionSettings().
 func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, envMap map[string]string) (string, []string) {
 	agentType := settings.Session.AgentType
 
@@ -877,16 +872,6 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	}
 
 	switch agentType {
-	case "claude-agentapi":
-		args := []string{"--output-file", "/opt/claude-agentapi/history.jsonl"}
-		if claudeArgs := os.Getenv("CLAUDE_ARGS"); claudeArgs != "" {
-			args = append(args, strings.Fields(claudeArgs)...)
-		}
-		return "claude-agentapi", args
-
-	case "codex-agentapi":
-		return "bunx", []string{"@takutakahashi/codex-agentapi"}
-
 	case "claude-acp":
 		// Start the acp-server bridge that wraps claude-agent-acp (ACP agent) via stdio.
 		// The bridge exposes an agentapi-compatible HTTP server on AGENTAPI_PORT.
@@ -1016,7 +1001,7 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 		// Default agentapi: wait for running→stable transition OR stable + non-empty message.
 		waitForDefaultAgentReady(ctx, client, agentapiURL)
 	} else {
-		// claude-agentapi / codex-agentapi: just wait for stable.
+		// Non-default agents: wait for stable.
 		waitForStable(ctx, client, agentapiURL, 60)
 	}
 

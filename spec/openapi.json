@@ -5462,8 +5462,8 @@
           },
           "agent_type": {
             "type": "string",
-            "description": "Agent type for the session. Supported values: 'claude-agentapi' (uses claude-agentapi command with HOST=0.0.0.0 and PORT=9000), 'codex-agentapi' (uses codex-agentapi command with HOST=0.0.0.0 and PORT=9000, configured via environment variables). If not specified, uses default agentapi.",
-            "example": "claude-agentapi"
+            "description": "Agent type for the session. Supported values: 'claude-acp', 'codex-acp', and 'cursor'. If not specified, uses default agentapi.",
+            "example": "claude-acp"
           },
           "slack": {
             "$ref": "#/components/schemas/SlackParams"
@@ -7196,8 +7196,8 @@
       "properties": {
         "agent_type": {
           "type": "string",
-          "description": "Agent type to use (default: 'claude-agentapi')",
-          "example": "claude-agentapi"
+          "description": "Agent type to use. Supported values: 'claude-acp', 'codex-acp', and 'cursor'. If omitted, the default agentapi is used.",
+          "example": "claude-acp"
         },
         "oneshot": {
           "type": "boolean",
