@@ -1,16 +1,14 @@
 package schedule
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"log"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/core/configrender"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
@@ -279,7 +277,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 			"schedule_name": schedule.Name,
 			"timezone":      schedule.Timezone,
 		}
-		rendered, err := renderScheduleTemplateMap(memoryKey, schedulePayload)
+		rendered, err := configrender.RenderTemplateMap(memoryKey, schedulePayload)
 		if err != nil {
 			log.Printf("[SCHEDULE_WORKER] Failed to render memory_key templates for schedule %s: %v", schedule.ID, err)
 		} else {
@@ -374,22 +372,4 @@ func (w *Worker) updateNextExecution(ctx context.Context, schedule *Schedule) {
 				schedule.ID, nextAt)
 		}
 	}
-}
-
-// renderScheduleTemplateMap renders all template values in a map using schedule context data.
-// This allows memory_key values to use Go template expressions such as {{ .schedule_id }}.
-func renderScheduleTemplateMap(templates map[string]string, payload map[string]interface{}) (map[string]string, error) {
-	result := make(map[string]string, len(templates))
-	for key, tmplStr := range templates {
-		tmpl, err := template.New("schedule_memory_key").Parse(tmplStr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse template for key '%s': %w", key, err)
-		}
-		var buf bytes.Buffer
-		if err := tmpl.Execute(&buf, payload); err != nil {
-			return nil, fmt.Errorf("failed to execute template for key '%s': %w", key, err)
-		}
-		result[key] = buf.String()
-	}
-	return result, nil
 }

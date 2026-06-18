@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/takutakahashi/agentapi-proxy/internal/core/configrender"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -270,7 +271,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 
 	// Apply session config tags if present
 	if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Tags() != nil {
-		renderedTags, err := RenderTemplateMap(bot.SessionConfig().Tags(), payloadMap)
+		renderedTags, err := configrender.RenderTemplateMap(bot.SessionConfig().Tags(), payloadMap)
 		if err != nil {
 			log.Printf("[SLACKBOT] Failed to render tags: %v", err)
 		} else {
@@ -283,7 +284,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// Build environment variables
 	var env map[string]string
 	if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Environment() != nil {
-		env, err = RenderTemplateMap(bot.SessionConfig().Environment(), payloadMap)
+		env, err = configrender.RenderTemplateMap(bot.SessionConfig().Environment(), payloadMap)
 		if err != nil {
 			log.Printf("[SLACKBOT] Failed to render environment: %v", err)
 			env = nil
@@ -391,7 +392,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		// This allows values like {{ .event.channel }} to be resolved at runtime.
 		var memoryKey map[string]string
 		if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().MemoryKey() != nil {
-			renderedMemoryKey, renderErr := RenderTemplateMap(bot.SessionConfig().MemoryKey(), payloadMap)
+			renderedMemoryKey, renderErr := configrender.RenderTemplateMap(bot.SessionConfig().MemoryKey(), payloadMap)
 			if renderErr != nil {
 				log.Printf("[SLACKBOT] Failed to render memory_key: %v", renderErr)
 			} else {
@@ -547,7 +548,7 @@ func (h *SlackBotEventHandler) buildMessage(bot *entities.SlackBot, payload map[
 			tmpl = bot.SessionConfig().InitialMessageTemplate()
 		}
 		if tmpl != "" {
-			rendered, err := RenderTemplate(tmpl, payload)
+			rendered, err := configrender.RenderTemplate(tmpl, payload)
 			if err == nil {
 				return rendered
 			}

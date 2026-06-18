@@ -1,15 +1,14 @@
 package controllers
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"sort"
 	"strings"
-	"text/template"
 
 	"github.com/google/uuid"
+	"github.com/takutakahashi/agentapi-proxy/internal/core/configrender"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
@@ -55,7 +54,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	webhook := params.Webhook
 	trigger := params.Trigger
 
-	sessionConfig := MergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
+	sessionConfig := configrender.MergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
 
 	env, err := s.renderConfigMap(sessionConfig, params.Payload, func(sc *entities.WebhookSessionConfig) map[string]string {
 		return sc.Environment()
@@ -77,7 +76,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	}
 
 	// Render session params with template evaluation
-	renderedParams, err := RenderSessionParams(sessionConfig, params.Payload)
+	renderedParams, err := configrender.RenderSessionParams(sessionConfig, params.Payload)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to render session params: %w", err)
 	}
@@ -130,7 +129,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	// Resolve the reuse message (for existing-session route)
 	var reuseMessage string
 	if sessionConfig != nil && sessionConfig.ReuseMessageTemplate() != "" {
-		if rendered, renderErr := RenderTemplate(sessionConfig.ReuseMessageTemplate(), params.Payload); renderErr == nil {
+		if rendered, renderErr := configrender.RenderTemplate(sessionConfig.ReuseMessageTemplate(), params.Payload); renderErr == nil {
 			reuseMessage = rendered
 		} else {
 			log.Printf("[WEBHOOK] Failed to render reuse message template: %v", renderErr)
@@ -206,104 +205,6 @@ func SortTriggersByPriority(triggers []entities.WebhookTrigger) []entities.Webho
 	return sorted
 }
 
-// MergeSessionConfigs merges two session configs, with override taking precedence over base.
-func MergeSessionConfigs(base, override *entities.WebhookSessionConfig) *entities.WebhookSessionConfig {
-	if base == nil && override == nil {
-		return nil
-	}
-	if base == nil {
-		return override
-	}
-	if override == nil {
-		return base
-	}
-
-	result := entities.NewWebhookSessionConfig()
-
-	// Merge maps (override wins on key conflicts)
-	result.SetEnvironment(mergeMaps(base.Environment(), override.Environment()))
-	result.SetTags(mergeMaps(base.Tags(), override.Tags()))
-
-	// Override scalar fields
-	result.SetInitialMessageTemplate(firstNonEmpty(override.InitialMessageTemplate(), base.InitialMessageTemplate()))
-	result.SetReuseMessageTemplate(firstNonEmpty(override.ReuseMessageTemplate(), base.ReuseMessageTemplate()))
-	result.SetSessionProfileID(firstNonEmpty(override.SessionProfileID(), base.SessionProfileID()))
-
-	if override.Params() != nil {
-		result.SetParams(override.Params())
-	} else {
-		result.SetParams(base.Params())
-	}
-
-	result.SetReuseSession(base.ReuseSession() || override.ReuseSession())
-	result.SetMountPayload(base.MountPayload() || override.MountPayload())
-
-	return result
-}
-
-// RenderTemplate renders a Go template with a payload data map.
-func RenderTemplate(tmplStr string, payload map[string]interface{}) (string, error) {
-	tmpl, err := template.New("webhook").Parse(tmplStr)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, payload); err != nil {
-		return "", fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	return buf.String(), nil
-}
-
-// RenderTemplateMap renders all template values in a map.
-func RenderTemplateMap(templates map[string]string, payload map[string]interface{}) (map[string]string, error) {
-	result := make(map[string]string, len(templates))
-	for key, tmplStr := range templates {
-		rendered, err := RenderTemplate(tmplStr, payload)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render template for key '%s': %w", key, err)
-		}
-		result[key] = rendered
-	}
-	return result, nil
-}
-
-// RenderSessionParams renders all template fields in session params.
-func RenderSessionParams(sessionConfig *entities.WebhookSessionConfig, payload map[string]interface{}) (*entities.SessionParams, error) {
-	if sessionConfig == nil || sessionConfig.Params() == nil {
-		return nil, nil
-	}
-
-	params := sessionConfig.Params()
-	result := &entities.SessionParams{
-		Oneshot: params.Oneshot,
-	}
-
-	fields := []struct {
-		src  string
-		dest *string
-		name string
-	}{
-		{params.Message, &result.Message, "params.message"},
-		{params.GithubToken, &result.GithubToken, "params.github_token"},
-		{params.AgentType, &result.AgentType, "params.agent_type"},
-	}
-
-	for _, f := range fields {
-		if f.src == "" {
-			continue
-		}
-		rendered, err := RenderTemplate(f.src, payload)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render template for %s: %w", f.name, err)
-		}
-		*f.dest = rendered
-	}
-
-	return result, nil
-}
-
 // IsSessionLimitError checks whether an error represents a session limit being reached.
 func IsSessionLimitError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "session limit reached")
@@ -323,7 +224,7 @@ func (s *WebhookSessionService) DryRunSessionConfig(params SessionCreationParams
 	webhook := params.Webhook
 	trigger := params.Trigger
 
-	sessionConfig := MergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
+	sessionConfig := configrender.MergeSessionConfigs(webhook.SessionConfig(), trigger.SessionConfig())
 
 	env, err := s.renderConfigMap(sessionConfig, params.Payload, func(sc *entities.WebhookSessionConfig) map[string]string {
 		return sc.Environment()
@@ -344,7 +245,7 @@ func (s *WebhookSessionService) DryRunSessionConfig(params SessionCreationParams
 		tags[k] = v
 	}
 
-	renderedParams, err := RenderSessionParams(sessionConfig, params.Payload)
+	renderedParams, err := configrender.RenderSessionParams(sessionConfig, params.Payload)
 	if err != nil {
 		return &DryRunResult{Error: fmt.Sprintf("failed to render session params: %v", err)}, nil
 	}
@@ -374,7 +275,7 @@ func (s *WebhookSessionService) renderConfigMap(
 	if values == nil {
 		return make(map[string]string), nil
 	}
-	return RenderTemplateMap(values, payload)
+	return configrender.RenderTemplateMap(values, payload)
 }
 
 // determineInitialMessage determines the initial message to use for a session.
@@ -390,7 +291,7 @@ func (s *WebhookSessionService) determineInitialMessage(
 	}
 
 	if sessionConfig != nil && sessionConfig.InitialMessageTemplate() != "" {
-		msg, err := RenderTemplate(sessionConfig.InitialMessageTemplate(), payload)
+		msg, err := configrender.RenderTemplate(sessionConfig.InitialMessageTemplate(), payload)
 		if err != nil {
 			return "", fmt.Errorf("failed to render initial message template: %w", err)
 		}
@@ -398,26 +299,4 @@ func (s *WebhookSessionService) determineInitialMessage(
 	}
 
 	return defaultMessage, nil
-}
-
-// Helper functions
-
-func mergeMaps(base, override map[string]string) map[string]string {
-	result := make(map[string]string, len(base)+len(override))
-	for k, v := range base {
-		result[k] = v
-	}
-	for k, v := range override {
-		result[k] = v
-	}
-	return result
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

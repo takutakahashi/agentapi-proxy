@@ -26,6 +26,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -698,8 +699,9 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		sessionTTL = startReq.Params.SessionTTL
 	}
 
-	// Build run server request
-	req := &entities.RunServerRequest{
+	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
+		WithMemoryRepository(s.memoryRepo)
+	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
 		UserID:                   userID,
 		Environment:              startReq.Environment,
 		Tags:                     startReq.Tags,
@@ -719,10 +721,11 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		Sandbox:                  sandbox,
 		Docker:                   docker,
 		SessionTTL:               sessionTTL,
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	// Delegate to session manager
-	return s.sessionManager.CreateSession(context.Background(), sessionID, req, nil)
+	return result.Session, nil
 }
 
 // createRemoteSession forwards session creation to an external session manager (External Session Manager).
