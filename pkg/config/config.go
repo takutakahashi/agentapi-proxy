@@ -748,6 +748,21 @@ func jsonValue(values map[string]interface{}, keys ...string) (interface{}, bool
 	return nil, false
 }
 
+func commaSeparatedList(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
 // initializeConfigStructsFromEnv initializes config structs from environment variables
 func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	// Initialize Auth.Static if environment variables are set
@@ -908,6 +923,45 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 			config.Asset.S3 = &AssetS3Config{}
 		}
 		config.Asset.S3.Endpoint = endpoint
+	}
+
+	if enabled, ok := os.LookupEnv("AGENTAPI_SCIA_ENABLED"); ok {
+		config.Scia.Enabled = strings.EqualFold(enabled, "true")
+	}
+	if publicBaseURL := os.Getenv("AGENTAPI_SCIA_PUBLIC_BASE_URL"); publicBaseURL != "" {
+		config.Scia.PublicBaseURL = publicBaseURL
+	}
+	if proxyURL := os.Getenv("AGENTAPI_SCIA_PROXY_URL"); proxyURL != "" {
+		config.Scia.ProxyURL = proxyURL
+	}
+	if credential := os.Getenv("AGENTAPI_SCIA_CREDENTIAL"); credential != "" {
+		config.Scia.Credential = credential
+	}
+	if userNamespace := os.Getenv("AGENTAPI_SCIA_USER_NAMESPACE"); userNamespace != "" {
+		config.Scia.UserNamespace = userNamespace
+	}
+	if noProxy := os.Getenv("AGENTAPI_SCIA_NO_PROXY"); noProxy != "" {
+		config.Scia.NoProxy = noProxy
+	}
+	if enabled, ok := os.LookupEnv("AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED"); ok {
+		config.Scia.SessionSidecarEnabled = strings.EqualFold(enabled, "true")
+	}
+	if image := os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE"); image != "" {
+		config.Scia.SessionSidecarImage = image
+	}
+	if image := os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE"); image != "" {
+		config.Scia.SessionSidecarConfigImage = image
+	}
+	if port := os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_PORT"); port != "" {
+		if parsed, err := strconv.Atoi(port); err == nil {
+			config.Scia.SessionSidecarPort = parsed
+		}
+	}
+	if hosts := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_GOOGLE_HOSTS")); len(hosts) > 0 {
+		config.Scia.GoogleHosts = hosts
+	}
+	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_GOOGLE_PATHS")); len(paths) > 0 {
+		config.Scia.GooglePaths = paths
 	}
 
 	// Override fields if environment variables are set (even if structures already exist)

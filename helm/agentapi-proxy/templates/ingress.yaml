@@ -1,5 +1,11 @@
 {{- if .Values.ingress.enabled -}}
 {{- $asset := .Values.asset | default dict }}
+{{- $scia := .Values.scia | default dict }}
+{{- $sciaService := $scia.service | default dict }}
+{{- $sciaEnabled := true }}
+{{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
+{{- $sciaEnabled = $scia.enabled }}
+{{- end }}
 {{- $assetBackend := $asset.backend | default "nginx" }}
 {{- $assetEnabled := true }}
 {{- if hasKey $asset "enabled" }}
@@ -81,6 +87,36 @@ spec:
               servicePort: {{ $assetNginxServicePort }}
               {{- end }}
           {{- end }}
+          {{- if $sciaEnabled }}
+          - path: /oauth
+            {{- if semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.sciaServiceName" $ }}
+                port:
+                  number: {{ $sciaService.port | default 8081 }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.sciaServiceName" $ }}
+              servicePort: {{ $sciaService.port | default 8081 }}
+              {{- end }}
+          - path: /_scia
+            {{- if semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.sciaServiceName" $ }}
+                port:
+                  number: {{ $sciaService.port | default 8081 }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.sciaServiceName" $ }}
+              servicePort: {{ $sciaService.port | default 8081 }}
+              {{- end }}
+          {{- end }}
           {{- range .paths }}
           - path: {{ .path }}
             {{- if and .pathType (semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion) }}
@@ -116,6 +152,36 @@ spec:
               {{- else }}
               serviceName: {{ include "agentapi-proxy.fullname" . }}-assets
               servicePort: {{ $assetNginxServicePort }}
+              {{- end }}
+          {{- end }}
+          {{- if $sciaEnabled }}
+          - path: /oauth
+            {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.sciaServiceName" . }}
+                port:
+                  number: {{ $sciaService.port | default 8081 }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.sciaServiceName" . }}
+              servicePort: {{ $sciaService.port | default 8081 }}
+              {{- end }}
+          - path: /_scia
+            {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.sciaServiceName" . }}
+                port:
+                  number: {{ $sciaService.port | default 8081 }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.sciaServiceName" . }}
+              servicePort: {{ $sciaService.port | default 8081 }}
               {{- end }}
           {{- end }}
           - path: /

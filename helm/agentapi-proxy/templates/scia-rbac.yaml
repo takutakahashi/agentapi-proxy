@@ -1,0 +1,41 @@
+{{- $scia := .Values.scia | default dict }}
+{{- $sciaEnabled := true }}
+{{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
+{{- $sciaEnabled = $scia.enabled }}
+{{- end }}
+{{- if $sciaEnabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agentapi-proxy.sciaName" . }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scia-oauth
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agentapi-proxy.sciaName" . }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scia-oauth
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agentapi-proxy.sciaName" . }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scia-oauth
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agentapi-proxy.sciaName" . }}
+roleRef:
+  kind: Role
+  name: {{ include "agentapi-proxy.sciaName" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

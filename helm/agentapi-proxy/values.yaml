@@ -68,9 +68,62 @@ service:
   agentapiPort: 9000
 
 scia:
+  # Deploy and configure scia Google OAuth broker/proxy integration.
+  enabled: true
+  image:
+    repository: ghcr.io/takutakahashi/scia
+    tag: "0.5.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  publicBaseUrl: ""
+  proxyUrl: ""
+  credential: "default.google"
+  userNamespace: "default"
+  noProxy: "localhost,127.0.0.1,.svc,.cluster.local"
+  googleHosts:
+    - www.googleapis.com
+  googlePaths:
+    - /calendar/v3/*
+  sessionSidecar:
+    enabled: true
+    image: ghcr.io/takutakahashi/scia:0.5.0
+    configImage: busybox:1.36
+    port: 18081
+  oauth:
+    listen: "0.0.0.0:8081"
+    redirectUrl: ""
+    google:
+      scope: "https://www.googleapis.com/auth/calendar.readonly"
+      # Secret-backed Google OAuth client credentials. Set create=false and
+      # existingSecret to use a Secret managed outside Helm.
+      secret:
+        create: true
+        existingSecret: ""
+        clientIdKey: client-id
+        clientSecretKey: client-secret
+        clientId: ""
+        clientSecret: ""
+  service:
+    port: 8081
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "250m"
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  users:
+    default:
+      secretName: scia-oauth-default
   # Per-user refresh-token Secret names that session Pods may read when scia
   # runs as a session sidecar. Do not include OAuth client-secret Secrets here.
-  sessionRefreshTokenSecretNames: []
+  sessionRefreshTokenSecretNames:
+    - scia-oauth-default
 
 asset:
   enabled: true

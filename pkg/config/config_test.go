@@ -455,6 +455,33 @@ func TestLoadConfigWithStockInventoryPoolsEnv(t *testing.T) {
 	}, loadedConfig.StockInventoryWorker.Pools)
 }
 
+func TestLoadConfigWithSciaEnvironmentVariables(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	_ = os.Setenv("AGENTAPI_SCIA_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_SCIA_PUBLIC_BASE_URL", "https://agentapi.example.com")
+	_ = os.Setenv("AGENTAPI_SCIA_CREDENTIAL", "default.google")
+	_ = os.Setenv("AGENTAPI_SCIA_USER_NAMESPACE", "default")
+	_ = os.Setenv("AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_SCIA_SESSION_SIDECAR_PORT", "18082")
+	_ = os.Setenv("AGENTAPI_SCIA_GOOGLE_HOSTS", "www.googleapis.com,content.googleapis.com")
+	_ = os.Setenv("AGENTAPI_SCIA_GOOGLE_PATHS", "/calendar/v3/*,/drive/v3/*")
+
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	assert.True(t, loadedConfig.Scia.Enabled)
+	assert.Equal(t, "https://agentapi.example.com", loadedConfig.Scia.PublicBaseURL)
+	assert.Equal(t, "default.google", loadedConfig.Scia.Credential)
+	assert.Equal(t, "default", loadedConfig.Scia.UserNamespace)
+	assert.True(t, loadedConfig.Scia.SessionSidecarEnabled)
+	assert.Equal(t, 18082, loadedConfig.Scia.SessionSidecarPort)
+	assert.Equal(t, []string{"www.googleapis.com", "content.googleapis.com"}, loadedConfig.Scia.GoogleHosts)
+	assert.Equal(t, []string{"/calendar/v3/*", "/drive/v3/*"}, loadedConfig.Scia.GooglePaths)
+}
+
 func TestLoadConfigNetworkFilterResourceDefaults(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 
