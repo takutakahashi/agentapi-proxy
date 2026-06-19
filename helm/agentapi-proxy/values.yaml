@@ -67,6 +67,12 @@ service:
   port: 8080
   agentapiPort: 9000
 
+scia:
+  # Secret names that session Pods may read when scia runs as a session sidecar.
+  # Keep this list narrow: include the shared OAuth client Secret and the
+  # per-user refresh-token Secrets required by this deployment.
+  sessionSecretNames: []
+
 asset:
   enabled: true
   backend: nginx
