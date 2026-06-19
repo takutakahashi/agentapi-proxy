@@ -178,6 +178,7 @@ func (e *Exporter) convertScheduleToImport(ctx context.Context, s *schedule.Sche
 	if s.SessionConfig.Params != nil {
 		scheduleImport.SessionConfig.Params = &SessionParamsImport{
 			InitialMessage: s.SessionConfig.Params.Message,
+			AuthProxy:      s.SessionConfig.Params.AuthProxy,
 		}
 	}
 
@@ -309,6 +310,9 @@ func (e *Exporter) convertWebhookSessionConfigToImport(ctx context.Context, conf
 		sessionConfig.Params = &SessionParamsImport{}
 		if config.InitialMessageTemplate() != "" {
 			sessionConfig.Params.InitialMessageTemplate = config.InitialMessageTemplate()
+		}
+		if config.Params() != nil && config.Params().AuthProxy != nil {
+			sessionConfig.Params.AuthProxy = config.Params().AuthProxy
 		}
 
 		// Encrypt GitHub token if present

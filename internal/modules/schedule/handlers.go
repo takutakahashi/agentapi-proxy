@@ -519,6 +519,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	var slackParams *entities.SlackParams
 	var sandbox *entities.SandboxParams
 	var docker *entities.DockerParams
+	var authProxy *bool
 	var initialMessageWaitSecond *int
 	var cycleMessage, sessionTTL string
 	var cycleMaxCount int
@@ -533,6 +534,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		slackParams = schedule.SessionConfig.Params.Slack
 		sandbox = schedule.SessionConfig.Params.Sandbox
 		docker = schedule.SessionConfig.Params.Docker
+		authProxy = schedule.SessionConfig.Params.AuthProxy
 		initialMessageWaitSecond = schedule.SessionConfig.Params.InitialMessageWaitSecond
 		cycleMessage = schedule.SessionConfig.Params.CycleMessage
 		cycleMaxCount = schedule.SessionConfig.Params.CycleMaxCount
@@ -553,6 +555,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		SlackParams:              slackParams,
 		Sandbox:                  sandbox,
 		Docker:                   docker,
+		AuthProxy:                authProxy,
 		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		CycleMessage:             cycleMessage,

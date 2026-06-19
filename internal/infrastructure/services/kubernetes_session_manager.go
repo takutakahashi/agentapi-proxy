@@ -1949,7 +1949,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 
 	var sciaInitContainer *corev1.Container
 	var sciaSidecar *corev1.Container
-	if m.sciaSessionSidecarEnabled() {
+	if m.sciaSessionSidecarEnabled(req) {
 		sciaInitContainer, sciaSidecar, _ = m.buildSciaSidecarContainers(req, sandboxEnabled)
 		initContainers = append(initContainers, *sciaInitContainer)
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
@@ -2072,7 +2072,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 				corev1.ResourceMemory: memoryLimit,
 			},
 		},
-		VolumeMounts: m.buildMainContainerVolumeMounts(session),
+		VolumeMounts: m.buildMainContainerVolumeMounts(session, req),
 		// Run agent-provisioner instead of the inline shell setup+agentapi script.
 		Command: []string{"agentapi-proxy"},
 		Args:    []string{"agent-provisioner"},
@@ -2112,7 +2112,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			},
 		})
 	}
-	if m.sciaSessionSidecarEnabled() {
+	if m.sciaSessionSidecarEnabled(req) {
 		volumes = append(volumes,
 			corev1.Volume{
 				Name: "scia-config",
@@ -2537,8 +2537,14 @@ const (
 	sciaNoProxyBase  = "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com"
 )
 
-func (m *KubernetesSessionManager) sciaSessionSidecarEnabled() bool {
-	return m.config != nil && m.config.Scia.Enabled && m.config.Scia.SessionSidecarEnabled
+func (m *KubernetesSessionManager) sciaSessionSidecarEnabled(req *entities.RunServerRequest) bool {
+	if m.config == nil || !m.config.Scia.Enabled {
+		return false
+	}
+	if req != nil && req.AuthProxy != nil {
+		return *req.AuthProxy
+	}
+	return m.config.Scia.SessionSidecarEnabled
 }
 
 func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunServerRequest, sandboxEnabled bool) (*corev1.Container, *corev1.Container, []corev1.EnvVar) {
@@ -3766,7 +3772,7 @@ func isPodReady(pod *corev1.Pod) bool {
 }
 
 // buildMainContainerVolumeMounts builds the volume mounts for the main container
-func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *KubernetesSession) []corev1.VolumeMount {
+func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *KubernetesSession, req *entities.RunServerRequest) []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      "workdir",
@@ -3792,7 +3798,7 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		ReadOnly:  true,
 	})
 
-	if m.sciaSessionSidecarEnabled() {
+	if m.sciaSessionSidecarEnabled(req) {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "scia-mitm-ca",
 			MountPath: "/etc/scia/mitm",
@@ -4478,7 +4484,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		env[k] = v
 	}
 
-	m.injectSciaProxyEnv(env)
+	m.injectSciaProxyEnv(env, req)
 
 	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
 	// and memory-sync sidecar. Flags are sorted for deterministic shell script expansion.
@@ -4843,54 +4849,55 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	return settings
 }
 
-func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string) {
+func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req *entities.RunServerRequest) {
 	if m.config == nil || !m.config.Scia.Enabled {
 		return
 	}
 
 	scia := m.config.Scia
-	if scia.SessionSidecarEnabled {
-		port := scia.SessionSidecarPort
-		if port == 0 {
-			port = 18081
+	if !m.sciaSessionSidecarEnabled(req) {
+		if scia.Credential != "" {
+			env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = scia.Credential
 		}
-		userNamespace := scia.UserNamespace
-		if userNamespace == "" {
-			userNamespace = env["AGENTAPI_USER_ID"]
-		}
-		credential := scia.Credential
-		if credential == "" && userNamespace != "" {
-			credential = userNamespace + ".google"
-		}
-		proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-		env["AGENTAPI_SCIA_PROXY_URL"] = proxyURL
-		env["HTTP_PROXY"] = proxyURL
-		env["HTTPS_PROXY"] = proxyURL
-		env["http_proxy"] = proxyURL
-		env["https_proxy"] = proxyURL
-		env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
-		env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
-		env["SSL_CERT_FILE"] = sciaCABundlePath
-		env["REQUESTS_CA_BUNDLE"] = sciaCABundlePath
-		env["CURL_CA_BUNDLE"] = sciaCABundlePath
-		env["GIT_SSL_CAINFO"] = sciaCABundlePath
-		env["NODE_EXTRA_CA_CERTS"] = sciaCAPath
-		if credential != "" {
-			env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = credential
-		}
-		if userNamespace != "" {
-			env["AGENTAPI_SCIA_USER_NAMESPACE"] = userNamespace
+		if scia.UserNamespace != "" {
+			env["AGENTAPI_SCIA_USER_NAMESPACE"] = scia.UserNamespace
 		}
 		if scia.PublicBaseURL != "" {
 			env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
 		}
 		return
 	}
-	if scia.Credential != "" {
-		env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = scia.Credential
+
+	port := scia.SessionSidecarPort
+	if port == 0 {
+		port = 18081
 	}
-	if scia.UserNamespace != "" {
-		env["AGENTAPI_SCIA_USER_NAMESPACE"] = scia.UserNamespace
+	userNamespace := scia.UserNamespace
+	if userNamespace == "" {
+		userNamespace = env["AGENTAPI_USER_ID"]
+	}
+	credential := scia.Credential
+	if credential == "" && userNamespace != "" {
+		credential = userNamespace + ".google"
+	}
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	env["AGENTAPI_SCIA_PROXY_URL"] = proxyURL
+	env["HTTP_PROXY"] = proxyURL
+	env["HTTPS_PROXY"] = proxyURL
+	env["http_proxy"] = proxyURL
+	env["https_proxy"] = proxyURL
+	env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
+	env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
+	env["SSL_CERT_FILE"] = sciaCABundlePath
+	env["REQUESTS_CA_BUNDLE"] = sciaCABundlePath
+	env["CURL_CA_BUNDLE"] = sciaCABundlePath
+	env["GIT_SSL_CAINFO"] = sciaCABundlePath
+	env["NODE_EXTRA_CA_CERTS"] = sciaCAPath
+	if credential != "" {
+		env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = credential
+	}
+	if userNamespace != "" {
+		env["AGENTAPI_SCIA_USER_NAMESPACE"] = userNamespace
 	}
 	if scia.PublicBaseURL != "" {
 		env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL

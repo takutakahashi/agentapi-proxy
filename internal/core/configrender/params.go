@@ -14,7 +14,8 @@ func RenderSessionParams(sessionConfig *entities.WebhookSessionConfig, payload m
 
 	params := sessionConfig.Params()
 	result := &entities.SessionParams{
-		Oneshot: params.Oneshot,
+		Oneshot:   params.Oneshot,
+		AuthProxy: params.AuthProxy,
 	}
 
 	fields := []struct {

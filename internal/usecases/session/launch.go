@@ -36,6 +36,7 @@ type LaunchRequest struct {
 	InitialMessageWaitSecond *int
 	Sandbox                  *entities.SandboxParams
 	Docker                   *entities.DockerParams
+	AuthProxy                *bool
 	CycleMessage             string
 	CycleMaxCount            int
 	SessionTTL               string
@@ -203,6 +204,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		CycleMaxCount:            req.CycleMaxCount,
 		Sandbox:                  req.Sandbox,
 		Docker:                   req.Docker,
+		AuthProxy:                req.AuthProxy,
 		SessionTTL:               req.SessionTTL,
 	}
 
@@ -380,6 +382,9 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		}
 		if req.Docker == nil && cfg.Params().Docker != nil {
 			req.Docker = cfg.Params().Docker
+		}
+		if req.AuthProxy == nil && cfg.Params().AuthProxy != nil {
+			req.AuthProxy = cfg.Params().AuthProxy
 		}
 		if req.InitialMessageWaitSecond == nil && cfg.Params().InitialMessageWaitSecond != nil {
 			req.InitialMessageWaitSecond = cfg.Params().InitialMessageWaitSecond

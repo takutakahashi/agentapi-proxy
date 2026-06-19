@@ -163,7 +163,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm", ReadOnly: true})
 
 	env := map[string]string{"AGENTAPI_USER_ID": "takutakahashi"}
-	manager.injectSciaProxyEnv(env)
+	manager.injectSciaProxyEnv(env, req)
 	assert.Equal(t, "http://127.0.0.1:18081", env["HTTP_PROXY"])
 	assert.Equal(t, "http://127.0.0.1:18081", env["HTTPS_PROXY"])
 	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
@@ -186,4 +186,123 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	}
 	assert.True(t, foundScia)
 	assert.True(t, foundNFA)
+}
+
+func TestBuildDeploymentSkipsSciaSidecarWhenAuthProxyDisabled(t *testing.T) {
+	manager := newSciaSidecarTestManager(true)
+	session := newSciaSidecarTestSession(t, manager)
+	req := &entities.RunServerRequest{
+		UserID:    "takutakahashi",
+		AuthProxy: boolPtr(false),
+	}
+
+	deployment := manager.buildDeployment(context.Background(), session, req)
+	podSpec := deployment.Spec.Template.Spec
+
+	assert.NotContains(t, containerNames(podSpec.InitContainers), "scia-config")
+	assert.NotContains(t, containerNames(podSpec.Containers), "scia-proxy")
+	assert.NotContains(t, volumeNames(podSpec.Volumes), "scia-config")
+	assert.NotContains(t, volumeNames(podSpec.Volumes), "scia-mitm-ca")
+	assert.NotContains(t, volumeMountNames(podSpec.Containers[0].VolumeMounts), "scia-mitm-ca")
+
+	env := map[string]string{"AGENTAPI_USER_ID": "takutakahashi"}
+	manager.injectSciaProxyEnv(env, req)
+	assert.Empty(t, env["HTTP_PROXY"])
+	assert.Empty(t, env["HTTPS_PROXY"])
+	assert.Empty(t, env["SSL_CERT_FILE"])
+}
+
+func TestBuildDeploymentAddsSciaSidecarWhenAuthProxyEnabled(t *testing.T) {
+	manager := newSciaSidecarTestManager(false)
+	session := newSciaSidecarTestSession(t, manager)
+	req := &entities.RunServerRequest{
+		UserID:    "takutakahashi",
+		AuthProxy: boolPtr(true),
+	}
+
+	deployment := manager.buildDeployment(context.Background(), session, req)
+	podSpec := deployment.Spec.Template.Spec
+
+	assert.Contains(t, containerNames(podSpec.InitContainers), "scia-config")
+	assert.Contains(t, containerNames(podSpec.Containers), "scia-proxy")
+	assert.Contains(t, volumeNames(podSpec.Volumes), "scia-config")
+	assert.Contains(t, volumeNames(podSpec.Volumes), "scia-mitm-ca")
+	assert.Contains(t, volumeMountNames(podSpec.Containers[0].VolumeMounts), "scia-mitm-ca")
+
+	env := map[string]string{"AGENTAPI_USER_ID": "takutakahashi"}
+	manager.injectSciaProxyEnv(env, req)
+	assert.Equal(t, "http://127.0.0.1:18081", env["HTTP_PROXY"])
+	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
+}
+
+func newSciaSidecarTestManager(sessionSidecarEnabled bool) *KubernetesSessionManager {
+	return &KubernetesSessionManager{
+		config: &config.Config{
+			Scia: config.SciaConfig{
+				Enabled:                   true,
+				SessionSidecarEnabled:     sessionSidecarEnabled,
+				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.4.0",
+				SessionSidecarConfigImage: "busybox:1.36",
+				SessionSidecarPort:        18081,
+				Credential:                "takutakahashi.google",
+				UserNamespace:             "takutakahashi",
+				GoogleHosts:               []string{"www.googleapis.com"},
+				GooglePaths:               []string{"/calendar/v3/*"},
+			},
+		},
+		k8sConfig: &config.KubernetesSessionConfig{
+			Namespace:                      "test-ns",
+			Image:                          "session-image:latest",
+			ImagePullPolicy:                "IfNotPresent",
+			BasePort:                       9000,
+			CPURequest:                     "100m",
+			CPULimit:                       "1",
+			MemoryRequest:                  "128Mi",
+			MemoryLimit:                    "512Mi",
+			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.7.0",
+			SandboxInitImage:               "gcr.io/istio-release/iptables:latest",
+			NetworkFilterInitMemoryRequest: "32Mi",
+			NetworkFilterInitMemoryLimit:   "64Mi",
+		},
+		namespace: "test-ns",
+	}
+}
+
+func newSciaSidecarTestSession(t *testing.T, manager *KubernetesSessionManager) *KubernetesSession {
+	t.Helper()
+	return NewKubernetesSession(
+		"test-session",
+		&entities.RunServerRequest{UserID: "takutakahashi"},
+		"test-deploy",
+		"agentapi-session-test-svc",
+		"test-pvc",
+		manager.namespace,
+		9000,
+		nil,
+		nil,
+	)
+}
+
+func containerNames(containers []corev1.Container) []string {
+	names := make([]string, 0, len(containers))
+	for _, container := range containers {
+		names = append(names, container.Name)
+	}
+	return names
+}
+
+func volumeNames(volumes []corev1.Volume) []string {
+	names := make([]string, 0, len(volumes))
+	for _, volume := range volumes {
+		names = append(names, volume.Name)
+	}
+	return names
+}
+
+func volumeMountNames(mounts []corev1.VolumeMount) []string {
+	names := make([]string, 0, len(mounts))
+	for _, mount := range mounts {
+		names = append(names, mount.Name)
+	}
+	return names
 }

@@ -420,6 +420,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 
 		var slackSandbox *entities.SandboxParams
 		var slackDocker *entities.DockerParams
+		var slackAuthProxy *bool
 		var slackInitialMessageWaitSecond *int
 		var slackCycleMessage, slackSessionTTL string
 		var slackCycleMaxCount int
@@ -427,6 +428,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			params := bot.SessionConfig().Params()
 			slackSandbox = params.Sandbox
 			slackDocker = params.Docker
+			slackAuthProxy = params.AuthProxy
 			slackInitialMessageWaitSecond = params.InitialMessageWaitSecond
 			slackCycleMessage = params.CycleMessage
 			slackCycleMaxCount = params.CycleMaxCount
@@ -446,6 +448,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			RepoInfo:                 repoInfo,
 			Sandbox:                  slackSandbox,
 			Docker:                   slackDocker,
+			AuthProxy:                slackAuthProxy,
 			InitialMessageWaitSecond: slackInitialMessageWaitSecond,
 			CycleMessage:             slackCycleMessage,
 			CycleMaxCount:            slackCycleMaxCount,

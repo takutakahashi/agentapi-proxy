@@ -105,9 +105,11 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	// Sandbox is not a template field — read directly from the merged session config params.
 	var sandbox *entities.SandboxParams
 	var docker *entities.DockerParams
+	var authProxy *bool
 	if sessionConfig != nil && sessionConfig.Params() != nil {
 		sandbox = sessionConfig.Params().Sandbox
 		docker = sessionConfig.Params().Docker
+		authProxy = sessionConfig.Params().AuthProxy
 	}
 
 	// Build repository info from tags
@@ -159,6 +161,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		CycleMaxCount:            cycleMaxCount,
 		Sandbox:                  sandbox,
 		Docker:                   docker,
+		AuthProxy:                authProxy,
 		SessionTTL:               sessionTTL,
 		RepoInfo:                 repoInfo,
 		WebhookPayload:           webhookPayload,

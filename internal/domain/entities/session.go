@@ -108,6 +108,9 @@ type SessionParams struct {
 	Sandbox *SandboxParams `json:"sandbox,omitempty"`
 	// Docker configures Docker-in-Docker (DinD) for the session.
 	Docker *DockerParams `json:"docker,omitempty"`
+	// AuthProxy controls whether the session auth proxy sidecar is injected.
+	// nil means use the global server configuration.
+	AuthProxy *bool `json:"auth_proxy,omitempty"`
 	// SessionTTL is the duration after the last message before this session is automatically deleted.
 	// Accepted format: Go duration string (e.g. "48h", "7d" where d=24h, "168h").
 	// Empty string means the global cleanup worker TTL is used for Slackbot sessions;
@@ -162,6 +165,9 @@ type RunServerRequest struct {
 	Sandbox *SandboxParams
 	// Docker configures Docker-in-Docker (DinD) for the session.
 	Docker *DockerParams
+	// AuthProxy controls whether the auth proxy sidecar is injected.
+	// nil means use the global server configuration.
+	AuthProxy *bool
 	// ProvisionSettings, when non-nil, is used directly as the provision payload
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).

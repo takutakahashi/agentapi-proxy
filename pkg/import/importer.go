@@ -445,6 +445,9 @@ func (i *Importer) convertScheduleImport(ctx context.Context, scheduleImport Sch
 		if scheduleImport.SessionConfig.Params.InitialMessage != "" {
 			scheduleEntity.SessionConfig.Params.Message = scheduleImport.SessionConfig.Params.InitialMessage
 		}
+		if scheduleImport.SessionConfig.Params.AuthProxy != nil {
+			scheduleEntity.SessionConfig.Params.AuthProxy = scheduleImport.SessionConfig.Params.AuthProxy
+		}
 	}
 
 	return scheduleEntity, nil
@@ -663,6 +666,9 @@ func (i *Importer) convertWebhookSessionConfig(ctx context.Context, configImport
 			params.GithubToken = plaintext
 		} else if configImport.Params.GitHubToken != "" {
 			params.GithubToken = configImport.Params.GitHubToken
+		}
+		if configImport.Params.AuthProxy != nil {
+			params.AuthProxy = configImport.Params.AuthProxy
 		}
 
 		config.SetParams(params)
