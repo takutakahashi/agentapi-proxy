@@ -1948,13 +1948,14 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 
 	var sciaInitContainer *corev1.Container
 	var sciaSidecar *corev1.Container
-	var sciaEnvVars []corev1.EnvVar
 	if m.sciaSessionSidecarEnabled() {
-		sciaInitContainer, sciaSidecar, sciaEnvVars = m.buildSciaSidecarContainers(req, sandboxEnabled)
+		sciaInitContainer, sciaSidecar, _ = m.buildSciaSidecarContainers(req, sandboxEnabled)
 		initContainers = append(initContainers, *sciaInitContainer)
-		// Prefer the scia sidecar as the main process proxy. If nfa is enabled,
-		// scia forwards upstream through nfa via server.backendProxy.url.
-		sandboxEnvVars = replaceProxyEnvVars(sandboxEnvVars, sciaEnvVars)
+		// Do not inject sidecar proxy variables into the Pod-level container env.
+		// Kubernetes starts regular containers in parallel, so startup scripts can
+		// race the scia sidecar listener. SessionSettings injects the same proxy
+		// variables for the actual agent process after provisioning.
+		sandboxEnvVars = nil
 	}
 
 	// Build DinD sidecar if Docker-in-Docker is enabled.

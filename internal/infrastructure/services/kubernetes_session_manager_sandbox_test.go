@@ -151,10 +151,17 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	}
 
 	main := podSpec.Containers[0]
-	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
-	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
-	assert.Contains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCAPath})
+	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
+	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
+	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCAPath})
 	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm", ReadOnly: true})
+
+	env := map[string]string{"AGENTAPI_USER_ID": "takutakahashi"}
+	manager.injectSciaProxyEnv(env)
+	assert.Equal(t, "http://127.0.0.1:18081", env["HTTP_PROXY"])
+	assert.Equal(t, "http://127.0.0.1:18081", env["HTTPS_PROXY"])
+	assert.Equal(t, sciaCAPath, env["SSL_CERT_FILE"])
+	assert.Equal(t, "takutakahashi.google", env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"])
 
 	var foundScia bool
 	var foundNFA bool
