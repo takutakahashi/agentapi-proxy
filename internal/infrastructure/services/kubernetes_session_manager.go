@@ -2670,21 +2670,6 @@ func yamlKey(value string) string {
 	return strconv.Quote(value)
 }
 
-func replaceProxyEnvVars(base, replacements []corev1.EnvVar) []corev1.EnvVar {
-	replacementNames := map[string]bool{}
-	for _, env := range replacements {
-		replacementNames[env.Name] = true
-	}
-	result := make([]corev1.EnvVar, 0, len(base)+len(replacements))
-	for _, env := range base {
-		if replacementNames[env.Name] {
-			continue
-		}
-		result = append(result, env)
-	}
-	return append(result, replacements...)
-}
-
 // buildDinDContainers returns the DinD sidecar container, env vars for the main container,
 // and extra volumes needed for Docker-in-Docker support.
 // The DinD daemon listens on TCP port 2375 (no TLS) so no socket volume sharing is needed.
