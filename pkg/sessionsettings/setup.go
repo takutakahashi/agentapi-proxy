@@ -3,12 +3,10 @@ package sessionsettings
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
@@ -139,7 +137,7 @@ func cloneRepo(settings *SessionSettings) error {
 	repo := settings.Repository
 
 	// Set environment variables from session env so git/gh tools pick them up.
-	for k, v := range settings.Env {
+	for k, v := range setupProcessEnv(settings.Env) {
 		if err := os.Setenv(k, v); err != nil {
 			log.Printf("[SETUP] Warning: failed to set env %s: %v", k, err)
 		}
@@ -209,12 +207,11 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 	}
 
 	// Set env so marketplace clone / claude CLI picks up GITHUB_TOKEN etc.
-	for k, v := range settings.Env {
+	for k, v := range setupProcessEnv(settings.Env) {
 		if err := os.Setenv(k, v); err != nil {
 			log.Printf("[SETUP] Warning: failed to set env %s: %v", k, err)
 		}
 	}
-	waitForSciaProxy(settings.Env["AGENTAPI_SCIA_PROXY_URL"], 15*time.Second)
 
 	syncOpts := startup.SyncOptions{
 		OutputDir:                 outputDir,
@@ -227,29 +224,17 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 	return startup.Sync(syncOpts)
 }
 
-func waitForSciaProxy(proxyURL string, timeout time.Duration) {
-	if proxyURL == "" {
-		return
-	}
-	healthURL := strings.TrimRight(proxyURL, "/") + "/_scia/healthz"
-	client := &http.Client{
-		Timeout: 500 * time.Millisecond,
-		Transport: &http.Transport{
-			Proxy: nil,
-		},
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(healthURL)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				time.Sleep(2 * time.Second)
-				log.Printf("[SETUP] scia proxy is ready at %s", proxyURL)
-				return
-			}
+func setupProcessEnv(env map[string]string) map[string]string {
+	filtered := make(map[string]string, len(env))
+	for k, v := range env {
+		switch k {
+		case "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+			"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS",
+			"AGENTAPI_SCIA_PROXY_URL", "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", "AGENTAPI_SCIA_USER_NAMESPACE":
+			continue
+		default:
+			filtered[k] = v
 		}
-		time.Sleep(250 * time.Millisecond)
 	}
-	log.Printf("[SETUP] Warning: scia proxy did not become ready before timeout: %s", proxyURL)
+	return filtered
 }
