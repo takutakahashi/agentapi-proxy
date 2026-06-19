@@ -85,6 +85,21 @@ The command removes all the Kubernetes components associated with the chart and 
 | `ingress.hosts`            | An array with hosts and paths                      | `[{"host": "agentapi.example.com", "paths": [{"path": "/", "pathType": "Prefix"}]}]` |
 | `ingress.tls`              | TLS configuration for ingress                      | `[]`                     |
 
+### scia parameters
+
+| Name                                               | Description                                      | Value |
+| -------------------------------------------------- | ------------------------------------------------ | ----- |
+| `scia.enabled`                                     | Deploy scia OAuth broker and configure sessions | `true` |
+| `scia.publicBaseUrl`                               | Browser-facing scia base URL                    | `""` |
+| `scia.credential`                                  | Google credential ID injected into sessions     | `default.google` |
+| `scia.userNamespace`                               | scia user namespace used by default             | `default` |
+| `scia.oauth.google.secret.create`                  | Create a Kubernetes Secret for Google OAuth     | `true` |
+| `scia.oauth.google.secret.existingSecret`          | Existing Secret containing Google OAuth values  | `""` |
+| `scia.oauth.google.secret.clientIdKey`             | Secret key for the Google OAuth client ID       | `client-id` |
+| `scia.oauth.google.secret.clientSecretKey`         | Secret key for the Google OAuth client secret   | `client-secret` |
+| `scia.users`                                       | scia user-to-refresh-token Secret mapping       | `{default: {secretName: scia-oauth-default}}` |
+| `scia.sessionRefreshTokenSecretNames`              | Refresh-token Secrets readable by session pods  | `[scia-oauth-default]` |
+
 ### Application Configuration
 
 | Name                                    | Description                               | Value     |
@@ -173,6 +188,34 @@ helm install agentapi-proxy ./helm/agentapi-proxy -f values.yaml
 # From OCI registry
 helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0 -f values.yaml
 ```
+
+### With scia Google OAuth
+
+```yaml
+# values.yaml
+config:
+  hostname: agentapi.yourdomain.com
+
+scia:
+  enabled: true
+  publicBaseUrl: https://agentapi.yourdomain.com
+  credential: default.google
+  userNamespace: default
+  oauth:
+    google:
+      secret:
+        create: false
+        existingSecret: scia-google-oauth
+        clientIdKey: client-id
+        clientSecretKey: client-secret
+  users:
+    default:
+      secretName: scia-oauth-default
+  sessionRefreshTokenSecretNames:
+    - scia-oauth-default
+```
+
+The `scia-google-oauth` Secret must contain the Google OAuth client ID and client secret. When `ingress.enabled=true`, the chart routes `/oauth` and `/_scia` to the scia OAuth broker on the same host.
 
 ### With Environment Variables
 

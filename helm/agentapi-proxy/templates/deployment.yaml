@@ -30,6 +30,7 @@ spec:
       {{- end }}
       labels:
         {{- include "agentapi-proxy.labels" . | nindent 8 }}
+        app.kubernetes.io/component: proxy
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -242,6 +243,47 @@ spec:
             - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST
               value: {{ .Values.github.enterprise.baseUrl | trimPrefix "https://" | trimPrefix "http://" | trimSuffix "/" | quote }}
             {{- end }}
+            # scia Google OAuth broker/proxy integration
+            {{- $scia := .Values.scia | default dict }}
+            {{- $sciaEnabled := true }}
+            {{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
+              {{- $sciaEnabled = $scia.enabled }}
+            {{- end }}
+            {{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
+            {{- $sciaHost := .Values.config.hostname | default "" }}
+            {{- if .Values.global }}
+              {{- $sciaHost = .Values.global.apiHostname | default $sciaHost }}
+            {{- end }}
+            {{- if and (eq $sciaHost "") .Values.ingress.hosts }}
+              {{- $sciaHost = (index .Values.ingress.hosts 0).host }}
+            {{- end }}
+            {{- if and (eq $sciaPublicBaseURL "") $sciaHost }}
+              {{- $sciaPublicBaseURL = printf "https://%s" $sciaHost }}
+            {{- end }}
+            - name: AGENTAPI_SCIA_ENABLED
+              value: {{ $sciaEnabled | quote }}
+            - name: AGENTAPI_SCIA_PUBLIC_BASE_URL
+              value: {{ $sciaPublicBaseURL | quote }}
+            - name: AGENTAPI_SCIA_PROXY_URL
+              value: {{ $scia.proxyUrl | default "" | quote }}
+            - name: AGENTAPI_SCIA_CREDENTIAL
+              value: {{ $scia.credential | default "default.google" | quote }}
+            - name: AGENTAPI_SCIA_USER_NAMESPACE
+              value: {{ $scia.userNamespace | default "default" | quote }}
+            - name: AGENTAPI_SCIA_NO_PROXY
+              value: {{ $scia.noProxy | default "localhost,127.0.0.1,.svc,.cluster.local" | quote }}
+            - name: AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED
+              value: {{ dig "sessionSidecar" "enabled" true $scia | quote }}
+            - name: AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE
+              value: {{ dig "sessionSidecar" "image" "ghcr.io/takutakahashi/scia:0.5.0" $scia | quote }}
+            - name: AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE
+              value: {{ dig "sessionSidecar" "configImage" "busybox:1.36" $scia | quote }}
+            - name: AGENTAPI_SCIA_SESSION_SIDECAR_PORT
+              value: {{ dig "sessionSidecar" "port" 18081 $scia | quote }}
+            - name: AGENTAPI_SCIA_GOOGLE_HOSTS
+              value: {{ $scia.googleHosts | default (list "www.googleapis.com") | join "," | quote }}
+            - name: AGENTAPI_SCIA_GOOGLE_PATHS
+              value: {{ $scia.googlePaths | default (list "/calendar/v3/*") | join "," | quote }}
             # Kubernetes Session Management configuration
             - name: AGENTAPI_K8S_SESSION_ENABLED
               value: "true"
@@ -504,8 +546,10 @@ spec:
             {{- end }}
             {{- end }}
             {{- range .Values.env }}
+            {{- if not (hasPrefix "AGENTAPI_SCIA_" .name) }}
             - name: {{ .name }}
               value: {{ .value | quote }}
+            {{- end }}
             {{- end }}
           {{- with .Values.envFrom }}
           envFrom:

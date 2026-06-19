@@ -60,3 +60,22 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+scia OAuth broker resource names.
+*/}}
+{{- define "agentapi-proxy.sciaName" -}}
+{{- printf "%s-scia-oauth" (include "agentapi-proxy.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "agentapi-proxy.sciaServiceName" -}}
+scia-oauth
+{{- end }}
+
+{{- define "agentapi-proxy.sciaSecretName" -}}
+{{- $scia := .Values.scia | default dict }}
+{{- $oauth := $scia.oauth | default dict }}
+{{- $google := $oauth.google | default dict }}
+{{- $secret := $google.secret | default dict }}
+{{- default (include "agentapi-proxy.sciaName" .) $secret.existingSecret }}
+{{- end }}

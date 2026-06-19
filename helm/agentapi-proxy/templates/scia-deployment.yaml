@@ -1,0 +1,100 @@
+{{- $scia := .Values.scia | default dict }}
+{{- $sciaEnabled := true }}
+{{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
+{{- $sciaEnabled = $scia.enabled }}
+{{- end }}
+{{- if $sciaEnabled }}
+{{- $image := $scia.image | default dict }}
+{{- $oauth := $scia.oauth | default dict }}
+{{- $google := $oauth.google | default dict }}
+{{- $secret := $google.secret | default dict }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentapi-proxy.sciaName" . }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scia-oauth
+spec:
+  replicas: {{ $scia.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scia-oauth
+  template:
+    metadata:
+      labels:
+        {{- include "agentapi-proxy.labels" . | nindent 8 }}
+        app.kubernetes.io/component: scia-oauth
+        {{- with $scia.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $scia.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "agentapi-proxy.sciaName" . }}
+      containers:
+        - name: scia-oauth
+          image: "{{ $image.repository | default "ghcr.io/takutakahashi/scia" }}:{{ $image.tag | default "0.5.0" }}"
+          imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
+          args:
+            - -config
+            - /etc/scia/config.yaml
+          ports:
+            - name: http
+              containerPort: {{ regexFind "[0-9]+$" ($oauth.listen | default "0.0.0.0:8081") }}
+              protocol: TCP
+          env:
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentapi-proxy.sciaSecretName" . }}
+                  key: {{ $secret.clientIdKey | default "client-id" | quote }}
+                  optional: true
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentapi-proxy.sciaSecretName" . }}
+                  key: {{ $secret.clientSecretKey | default "client-secret" | quote }}
+                  optional: true
+          volumeMounts:
+            - name: scia-config
+              mountPath: /etc/scia
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /_scia/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /_scia/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $scia.resources | nindent 12 }}
+      volumes:
+        - name: scia-config
+          configMap:
+            name: {{ include "agentapi-proxy.sciaName" . }}
+      {{- with $scia.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $scia.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $scia.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

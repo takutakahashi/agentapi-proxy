@@ -1,0 +1,62 @@
+{{- $scia := .Values.scia | default dict }}
+{{- $sciaEnabled := true }}
+{{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
+{{- $sciaEnabled = $scia.enabled }}
+{{- end }}
+{{- if $sciaEnabled }}
+{{- $oauth := $scia.oauth | default dict }}
+{{- $google := $oauth.google | default dict }}
+{{- $users := $scia.users | default (dict "default" (dict "secretName" "scia-oauth-default")) }}
+{{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
+{{- $sciaHost := .Values.config.hostname | default "" }}
+{{- if .Values.global }}
+  {{- $sciaHost = .Values.global.apiHostname | default $sciaHost }}
+{{- end }}
+{{- if and (eq $sciaHost "") .Values.ingress.hosts }}
+  {{- $sciaHost = (index .Values.ingress.hosts 0).host }}
+{{- end }}
+{{- if and (eq $sciaPublicBaseURL "") $sciaHost }}
+  {{- $sciaPublicBaseURL = printf "https://%s" $sciaHost }}
+{{- end }}
+{{- $redirectURL := $oauth.redirectUrl | default "" }}
+{{- if and (eq $redirectURL "") $sciaPublicBaseURL }}
+  {{- $redirectURL = printf "%s/oauth/google/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentapi-proxy.sciaName" . }}
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scia-oauth
+data:
+  config.yaml: |
+    server:
+      mode: "oauth"
+      listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
+      secrets:
+        mode: kubernetes
+        kubernetes:
+          namespace: {{ .Release.Namespace | quote }}
+      users:
+        {{- range $userID, $user := $users }}
+        {{ $userID | quote }}:
+          secretName: {{ $user.secretName | quote }}
+        {{- end }}
+      oauth:
+        listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
+        redirectUrl: {{ $redirectURL | quote }}
+        namespaces:
+          {{- range $userID, $_ := $users }}
+          {{ $userID | quote }}:
+            google:
+              clientId: "env:GOOGLE_OAUTH_CLIENT_ID"
+              clientSecret: "env:GOOGLE_OAUTH_CLIENT_SECRET"
+              scope: {{ $google.scope | default "https://www.googleapis.com/auth/calendar.readonly" | quote }}
+              {{- if $redirectURL }}
+              redirectUrl: {{ $redirectURL | quote }}
+              {{- end }}
+          {{- end }}
+    credentials: []
+    rules: []
+{{- end }}
