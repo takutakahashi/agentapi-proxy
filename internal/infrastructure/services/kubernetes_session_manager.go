@@ -4292,6 +4292,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		env[k] = v
 	}
 
+	m.injectSciaProxyEnv(env)
+
 	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
 	// and memory-sync sidecar. Flags are sorted for deterministic shell script expansion.
 	if len(req.MemoryKey) > 0 {
@@ -4653,6 +4655,58 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	return settings
+}
+
+func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string) {
+	if m.config == nil || !m.config.Scia.Enabled {
+		return
+	}
+
+	scia := m.config.Scia
+	if scia.Credential != "" {
+		env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = scia.Credential
+	}
+	if scia.UserNamespace != "" {
+		env["AGENTAPI_SCIA_USER_NAMESPACE"] = scia.UserNamespace
+	}
+	if scia.PublicBaseURL != "" {
+		env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
+	}
+	if scia.ProxyURL == "" {
+		return
+	}
+
+	env["AGENTAPI_SCIA_PROXY_URL"] = scia.ProxyURL
+	if env["HTTP_PROXY"] == "" {
+		env["HTTP_PROXY"] = scia.ProxyURL
+	}
+	if env["HTTPS_PROXY"] == "" {
+		env["HTTPS_PROXY"] = scia.ProxyURL
+	}
+	if env["http_proxy"] == "" {
+		env["http_proxy"] = scia.ProxyURL
+	}
+	if env["https_proxy"] == "" {
+		env["https_proxy"] = scia.ProxyURL
+	}
+	env["NO_PROXY"] = mergeNoProxy(env["NO_PROXY"], scia.NoProxy)
+	env["no_proxy"] = mergeNoProxy(env["no_proxy"], scia.NoProxy)
+}
+
+func mergeNoProxy(existing, extra string) string {
+	seen := map[string]bool{}
+	values := make([]string, 0)
+	for _, list := range []string{existing, extra} {
+		for _, part := range strings.Split(list, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" || seen[part] {
+				continue
+			}
+			seen[part] = true
+			values = append(values, part)
+		}
+	}
+	return strings.Join(values, ",")
 }
 
 // createSessionSettingsSecretFromSettings creates the unified session settings Secret
