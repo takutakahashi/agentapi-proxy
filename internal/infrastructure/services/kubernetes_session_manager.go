@@ -2634,6 +2634,12 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, p
 		b.WriteString("  backendProxy:\n")
 		b.WriteString(fmt.Sprintf("    url: %q\n", fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort)))
 	}
+	b.WriteString("  integrations:\n")
+	b.WriteString("    google:\n")
+	b.WriteString("      hosts:\n")
+	for _, host := range hosts {
+		b.WriteString(fmt.Sprintf("        - %q\n", host))
+	}
 	b.WriteString("  mitm:\n")
 	b.WriteString(fmt.Sprintf("    caCertPath: %q\n", sciaCAPath))
 	b.WriteString("    caKeyPath: \"/etc/scia/mitm/ca.key\"\n")

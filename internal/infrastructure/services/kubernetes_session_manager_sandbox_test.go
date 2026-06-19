@@ -146,6 +146,9 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 		}
 		assert.Contains(t, script, "mode: proxy")
 		assert.Contains(t, script, `url: "http://127.0.0.1:3128"`)
+		assert.Contains(t, script, "  integrations:\n")
+		assert.Contains(t, script, "    google:\n")
+		assert.Contains(t, script, `        - "www.googleapis.com"`)
 		assert.Contains(t, script, `secretName: "scia-oauth-takutakahashi"`)
 		assert.Contains(t, script, `- "takutakahashi.google"`)
 	}
