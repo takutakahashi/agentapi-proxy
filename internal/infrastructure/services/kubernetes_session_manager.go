@@ -30,7 +30,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	infrasessionallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -141,7 +143,7 @@ type KubernetesSessionManager struct {
 	// SessionAllocator when the server has started that worker.
 	sessionAllocatorEnabled bool
 
-	sessionAllocationNotifier SessionAllocationNotifier
+	sessionAllocationNotifier coreallocation.Notifier
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -200,7 +202,7 @@ func NewKubernetesSessionManagerWithClient(
 		podID:                     podID,
 		statusSubCtx:              subCtx,
 		statusSubCancel:           subCancel,
-		sessionAllocationNotifier: NewLocalSessionAllocationNotifier(),
+		sessionAllocationNotifier: infrasessionallocation.NewLocalNotifier(),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -707,7 +709,7 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 // oldest available one (by CreationTimestamp, ascending). Oldest sessions have been
 // warmed up the longest and are the most ready to serve.
 // Returns (nil, nil) when no stock is available.
-func (m *KubernetesSessionManager) findStockSession(ctx context.Context, requirements SessionRequirements) (*corev1.Service, error) {
+func (m *KubernetesSessionManager) findStockSession(ctx context.Context, requirements coreallocation.Requirements) (*corev1.Service, error) {
 	selector := fmt.Sprintf(
 		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=%t,agentapi.proxy/capability-dind=%t",
 		requirements.Sandbox,
@@ -1197,7 +1199,7 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 		if len(data) == 0 {
 			continue
 		}
-		var allocation SessionAllocationRequest
+		var allocation coreallocation.AllocationRequest
 		if err := json.Unmarshal(data, &allocation); err != nil {
 			log.Printf("[K8S_SESSION] Failed to decode session allocation %s: %v", sec.Name, err)
 			continue
@@ -1216,7 +1218,7 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 			allocation.Request.TeamID,
 			allocation.Request.Tags,
 			allocation.UpdatedAt,
-			allocation.Status,
+			string(allocation.Status),
 		)
 		if len(m.applySessionListFilters([]entities.Session{session}, filter)) == 0 {
 			continue

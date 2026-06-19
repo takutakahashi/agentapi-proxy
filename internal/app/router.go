@@ -185,7 +185,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 
 	var provisionerController *controllers.ProvisionerController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
-		provisionerController = controllers.NewProvisionerController(k8sManager, server.settingsRepo, server.sessionRouteRepo)
+		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo)
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
 

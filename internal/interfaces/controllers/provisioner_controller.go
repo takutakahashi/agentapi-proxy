@@ -8,18 +8,20 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 type ProvisionerController struct {
 	manager          *services.KubernetesSessionManager
+	allocationQueue  sessionallocation.Queue
 	settingsRepo     repositories.SettingsRepository
 	sessionRouteRepo repositories.SessionRouteRepository
 }
 
-func NewProvisionerController(manager *services.KubernetesSessionManager, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository) *ProvisionerController {
-	return &ProvisionerController{manager: manager, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
+func NewProvisionerController(manager *services.KubernetesSessionManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository) *ProvisionerController {
+	return &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
 }
 
 func (pc *ProvisionerController) Connect(c echo.Context) error {
@@ -89,7 +91,7 @@ func (pc *ProvisionerController) GetNextSessionAllocation(c echo.Context) error 
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	wait := parseWait(c.QueryParam("wait"))
-	req, ok, err := pc.manager.NextSessionAllocation(c.Request().Context(), wait)
+	req, ok, err := pc.allocationQueue.NextSessionAllocation(c.Request().Context(), wait)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -103,14 +105,14 @@ func (pc *ProvisionerController) CompleteSessionAllocation(c echo.Context) error
 	if !pc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
-	var result services.SessionAllocationResult
+	var result sessionallocation.AllocationResult
 	if err := c.Bind(&result); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if result.Status == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status is required"})
 	}
-	if err := pc.manager.CompleteSessionAllocation(c.Request().Context(), c.Param("sessionId"), result); err != nil {
+	if err := pc.allocationQueue.CompleteSessionAllocation(c.Request().Context(), c.Param("sessionId"), result); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
@@ -122,7 +124,7 @@ func (pc *ProvisionerController) GetNextExternalSessionAllocation(c echo.Context
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	wait := parseWait(c.QueryParam("wait"))
-	req, found, err := pc.manager.NextExternalSessionAllocation(c.Request().Context(), managerID, wait)
+	req, found, err := pc.allocationQueue.NextExternalSessionAllocation(c.Request().Context(), managerID, wait)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -137,21 +139,21 @@ func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Contex
 	if !ok {
 		return c.NoContent(http.StatusUnauthorized)
 	}
-	var result services.SessionAllocationResult
+	var result sessionallocation.AllocationResult
 	if err := c.Bind(&result); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if result.Status == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status is required"})
 	}
-	if result.Status == "assigned" && result.AllocatedSessionID == "" {
+	if result.Status == sessionallocation.StatusAssigned && result.AllocatedSessionID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "allocated_session_id is required when status is assigned"})
 	}
-	allocation, err := pc.manager.CompleteExternalSessionAllocation(c.Request().Context(), c.Param("sessionId"), result)
+	allocation, err := pc.allocationQueue.CompleteExternalSessionAllocation(c.Request().Context(), c.Param("sessionId"), result)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
-	if result.Status != "assigned" {
+	if result.Status != sessionallocation.StatusAssigned {
 		if pc.sessionRouteRepo != nil {
 			_ = pc.sessionRouteRepo.Delete(c.Request().Context(), allocation.SessionID)
 		}
