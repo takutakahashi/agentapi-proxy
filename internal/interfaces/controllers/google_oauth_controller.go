@@ -12,15 +12,15 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
-	"k8s.io/client-go/kubernetes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 // GoogleOAuthController exposes non-secret scia Google OAuth integration status.
 type GoogleOAuthController struct {
-	scia      config.SciaConfig
-	client    kubernetes.Interface
-	namespace string
+	scia       config.SciaConfig
+	client     kubernetes.Interface
+	namespace  string
 	httpClient *http.Client
 }
 
@@ -48,11 +48,11 @@ type GoogleOAuthStatusResponse struct {
 	HealthStatus     string `json:"health_status,omitempty"`
 	ClientConfigured bool   `json:"client_configured"`
 	Connected        bool   `json:"connected"`
-	Credential        string `json:"credential,omitempty"`
-	UserNamespace     string `json:"user_namespace,omitempty"`
-	OAuthStartURL     string `json:"oauth_start_url,omitempty"`
-	AuthorizationURL  string `json:"authorization_url_endpoint,omitempty"`
-	ProxyConfigured   bool   `json:"proxy_configured"`
+	Credential       string `json:"credential,omitempty"`
+	UserNamespace    string `json:"user_namespace,omitempty"`
+	OAuthStartURL    string `json:"oauth_start_url,omitempty"`
+	AuthorizationURL string `json:"authorization_url_endpoint,omitempty"`
+	ProxyConfigured  bool   `json:"proxy_configured"`
 }
 
 // GetStatus returns the user's scia Google OAuth integration status.
@@ -69,11 +69,11 @@ func (c *GoogleOAuthController) GetStatus(ctx echo.Context) error {
 	resp := GoogleOAuthStatusResponse{
 		Enabled:          c.scia.Enabled,
 		ClientConfigured: c.scia.Enabled && credential != "",
-		Credential:        credential,
-		UserNamespace:     userNamespace,
-		OAuthStartURL:     c.oauthStartURL(userNamespace, credential),
-		AuthorizationURL:  c.authorizationURLEndpoint(userNamespace),
-		ProxyConfigured:   c.scia.Enabled && c.scia.ProxyURL != "",
+		Credential:       credential,
+		UserNamespace:    userNamespace,
+		OAuthStartURL:    c.oauthStartURL(userNamespace, credential),
+		AuthorizationURL: c.authorizationURLEndpoint(userNamespace),
+		ProxyConfigured:  c.scia.Enabled && c.scia.ProxyURL != "",
 	}
 
 	if c.scia.Enabled {
@@ -99,7 +99,9 @@ func (c *GoogleOAuthController) checkHealth(ctx context.Context) (bool, string) 
 	if err != nil {
 		return false, err.Error()
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return true, res.Status
