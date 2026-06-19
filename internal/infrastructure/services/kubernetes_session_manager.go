@@ -2533,7 +2533,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 const (
 	sciaCAPath       = "/etc/scia/mitm/ca.pem"
 	sciaCABundlePath = "/tmp/scia-ca-bundle.pem"
-	sciaNoProxyBase  = "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com,api.openai.com,*.openai.com"
+	sciaNoProxyBase  = "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com"
 )
 
 func (m *KubernetesSessionManager) sciaSessionSidecarEnabled() bool {

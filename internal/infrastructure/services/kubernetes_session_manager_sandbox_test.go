@@ -162,8 +162,8 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	assert.Equal(t, "http://127.0.0.1:18081", env["HTTPS_PROXY"])
 	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
 	assert.Equal(t, "takutakahashi.google", env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"])
-	assert.Contains(t, env["NO_PROXY"], "api.openai.com")
-	assert.Contains(t, env["no_proxy"], "api.openai.com")
+	assert.NotContains(t, env["NO_PROXY"], "api.openai.com")
+	assert.NotContains(t, env["no_proxy"], "api.openai.com")
 
 	var foundScia bool
 	var foundNFA bool
