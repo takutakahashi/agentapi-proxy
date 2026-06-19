@@ -138,7 +138,15 @@ func (m *KubernetesSessionManager) CreateProvisionRequest(ctx context.Context, s
 		Status:    "pending",
 		UpdatedAt: time.Now().UTC(),
 	}
-	return m.saveProvisionRequest(ctx, req)
+	ownerRefs, err := m.sessionOwnerReferences(ctx, session)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			ownerRefs = nil
+		} else {
+			return fmt.Errorf("failed to get owner service %s: %w", session.ServiceName(), err)
+		}
+	}
+	return m.saveProvisionRequest(ctx, req, ownerRefs)
 }
 
 func (m *KubernetesSessionManager) ConnectProvisioner(ctx context.Context, req ProvisionerConnectRequest) error {
@@ -148,7 +156,7 @@ func (m *KubernetesSessionManager) ConnectProvisioner(ctx context.Context, req P
 	}
 	provisionReq.ClaimedBy = req.PodName
 	provisionReq.UpdatedAt = time.Now().UTC()
-	return m.saveProvisionRequest(ctx, provisionReq)
+	return m.saveProvisionRequest(ctx, provisionReq, nil)
 }
 
 func (m *KubernetesSessionManager) ClaimProvisionRequest(ctx context.Context, sessionID, podName string) (*ProvisionRequest, bool, error) {
@@ -165,7 +173,7 @@ func (m *KubernetesSessionManager) ClaimProvisionRequest(ctx context.Context, se
 	provisionReq.Status = "claimed"
 	provisionReq.ClaimedBy = podName
 	provisionReq.UpdatedAt = time.Now().UTC()
-	if err := m.saveProvisionRequest(ctx, provisionReq); err != nil {
+	if err := m.saveProvisionRequest(ctx, provisionReq, nil); err != nil {
 		return nil, false, err
 	}
 	return provisionReq, true, nil
@@ -185,7 +193,7 @@ func (m *KubernetesSessionManager) UpdateProvisionRequestStatus(ctx context.Cont
 		provisionReq.ClaimedBy = req.PodName
 	}
 	provisionReq.UpdatedAt = time.Now().UTC()
-	if err := m.saveProvisionRequest(ctx, provisionReq); err != nil {
+	if err := m.saveProvisionRequest(ctx, provisionReq, nil); err != nil {
 		return err
 	}
 
@@ -248,7 +256,7 @@ func (m *KubernetesSessionManager) getProvisionRequest(ctx context.Context, sess
 	return &req, nil
 }
 
-func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req *ProvisionRequest) error {
+func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req *ProvisionRequest, ownerRefs []metav1.OwnerReference) error {
 	data, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("encode provision request: %w", err)
@@ -263,9 +271,10 @@ func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req
 	if apierrors.IsNotFound(err) {
 		sec = &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: m.namespace,
-				Labels:    labels,
+				Name:            name,
+				Namespace:       m.namespace,
+				Labels:          labels,
+				OwnerReferences: ownerRefs,
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{"request.json": data},
@@ -277,6 +286,9 @@ func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req
 		return err
 	}
 	sec.Labels = labels
+	if len(ownerRefs) > 0 {
+		sec.OwnerReferences = ownerRefs
+	}
 	if sec.Data == nil {
 		sec.Data = make(map[string][]byte)
 	}

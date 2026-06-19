@@ -19,6 +19,16 @@ func boolPtrForTest(b bool) *bool {
 	return &b
 }
 
+func assertServiceOwnerReference(t *testing.T, ownerRefs []metav1.OwnerReference, serviceName string) {
+	t.Helper()
+	for _, ownerRef := range ownerRefs {
+		if ownerRef.APIVersion == "v1" && ownerRef.Kind == "Service" && ownerRef.Name == serviceName {
+			return
+		}
+	}
+	t.Fatalf("expected owner reference to Service %q, got %#v", serviceName, ownerRefs)
+}
+
 // TestInitialMessageStoredInSettingsYAML verifies that the initial message is embedded
 // inside settings.yaml (not as a separate "initial-message" key) when the settings
 // Secret is created.
@@ -275,4 +285,130 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 			t.Error("initial-message-state volume should NOT be present (sidecar removed)")
 		}
 	}
+}
+
+func TestCreateSessionSetsServiceOwnerReferences(t *testing.T) {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-owner-ref-ns",
+		},
+	}
+	k8sClient := fake.NewSimpleClientset(ns)
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Namespace:     ns.Name,
+			Image:         "test-image:latest",
+			BasePort:      9000,
+			PVCEnabled:    boolPtrForTest(false),
+			CPURequest:    "100m",
+			CPULimit:      "1",
+			MemoryRequest: "128Mi",
+			MemoryLimit:   "512Mi",
+		},
+	}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	ctx := context.Background()
+	sessionID := "owner-ref-test"
+	req := &entities.RunServerRequest{
+		UserID:  "test-user",
+		Oneshot: true,
+	}
+	_, err = manager.CreateSession(ctx, sessionID, req, []byte(`{"event":"test"}`))
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+	workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
+
+	pod, err := k8sClient.CoreV1().Pods(ns.Name).Get(ctx, workloadName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get session pod: %v", err)
+	}
+	assertServiceOwnerReference(t, pod.OwnerReferences, serviceName)
+
+	provisionSecret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, provisionRequestSecretName(sessionID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get provision request secret: %v", err)
+	}
+	assertServiceOwnerReference(t, provisionSecret.OwnerReferences, serviceName)
+
+	webhookSecret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, serviceName+"-webhook-payload", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get webhook payload secret: %v", err)
+	}
+	assertServiceOwnerReference(t, webhookSecret.OwnerReferences, serviceName)
+
+	oneshotSecret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, serviceName+"-oneshot-settings", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get oneshot settings secret: %v", err)
+	}
+	assertServiceOwnerReference(t, oneshotSecret.OwnerReferences, serviceName)
+}
+
+func TestCreateSessionWithPVCSetsServiceOwnerReferences(t *testing.T) {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-owner-ref-pvc-ns",
+		},
+	}
+	k8sClient := fake.NewSimpleClientset(ns)
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Namespace:       ns.Name,
+			Image:           "test-image:latest",
+			BasePort:        9000,
+			PVCEnabled:      boolPtrForTest(true),
+			PVCStorageSize:  "1Gi",
+			CPURequest:      "100m",
+			CPULimit:        "1",
+			MemoryRequest:   "128Mi",
+			MemoryLimit:     "512Mi",
+		},
+	}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	ctx := context.Background()
+	sessionID := "owner-ref-pvc-test"
+	req := &entities.RunServerRequest{
+		UserID: "test-user",
+	}
+	_, err = manager.CreateSession(ctx, sessionID, req, nil)
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer func() {
+		_ = manager.DeleteSession(sessionID)
+	}()
+
+	serviceName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+	resourceName := fmt.Sprintf("agentapi-session-%s", sessionID)
+
+	pvc, err := k8sClient.CoreV1().PersistentVolumeClaims(ns.Name).Get(ctx, resourceName+"-pvc", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get PVC: %v", err)
+	}
+	assertServiceOwnerReference(t, pvc.OwnerReferences, serviceName)
+
+	deployment, err := k8sClient.AppsV1().Deployments(ns.Name).Get(ctx, resourceName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get deployment: %v", err)
+	}
+	assertServiceOwnerReference(t, deployment.OwnerReferences, serviceName)
+
+	provisionSecret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, provisionRequestSecretName(sessionID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get provision request secret: %v", err)
+	}
+	assertServiceOwnerReference(t, provisionSecret.OwnerReferences, serviceName)
 }
