@@ -1951,6 +1951,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	if m.sciaSessionSidecarEnabled() {
 		sciaInitContainer, sciaSidecar, _ = m.buildSciaSidecarContainers(req, sandboxEnabled)
 		initContainers = append(initContainers, *sciaInitContainer)
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
 		// Do not inject sidecar proxy variables into the Pod-level container env.
 		// Kubernetes starts regular containers in parallel, so startup scripts can
 		// race the scia sidecar listener. SessionSettings injects the same proxy

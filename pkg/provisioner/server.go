@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
@@ -208,6 +209,9 @@ func (s *Server) runStartupScript(ctx context.Context) {
 	script := os.Getenv("PROVISIONER_PRE_SCRIPT")
 	if script == "" {
 		script = defaultStartupScript
+	}
+	if os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED") == "true" {
+		waitForSciaProxy(ctx, "http://127.0.0.1:18081", 15*time.Second)
 	}
 	log.Printf("[PROVISIONER] Running startup pre-script")
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)

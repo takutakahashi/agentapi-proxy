@@ -954,6 +954,37 @@ func waitForAgentAPI(ctx context.Context, agentapiURL string, maxRetries int) er
 	return fmt.Errorf("agentapi not ready after %d retries", maxRetries)
 }
 
+func waitForSciaProxy(ctx context.Context, proxyURL string, timeout time.Duration) {
+	if proxyURL == "" {
+		return
+	}
+	healthURL := strings.TrimRight(proxyURL, "/") + "/_scia/healthz"
+	client := &http.Client{
+		Timeout: 500 * time.Millisecond,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		resp, err := client.Get(healthURL)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				log.Printf("[PROVISIONER] scia proxy is ready at %s", proxyURL)
+				return
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	log.Printf("[PROVISIONER] Warning: scia proxy did not become ready before timeout: %s", proxyURL)
+}
+
 // agentStatusResponse is the minimal shape of agentapi's /status response.
 type agentStatusResponse struct {
 	Status string `json:"status"`

@@ -3,10 +3,12 @@ package sessionsettings
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
@@ -212,6 +214,7 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 			log.Printf("[SETUP] Warning: failed to set env %s: %v", k, err)
 		}
 	}
+	waitForSciaProxy(settings.Env["AGENTAPI_SCIA_PROXY_URL"], 15*time.Second)
 
 	syncOpts := startup.SyncOptions{
 		OutputDir:                 outputDir,
@@ -222,4 +225,30 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 	}
 
 	return startup.Sync(syncOpts)
+}
+
+func waitForSciaProxy(proxyURL string, timeout time.Duration) {
+	if proxyURL == "" {
+		return
+	}
+	healthURL := strings.TrimRight(proxyURL, "/") + "/_scia/healthz"
+	client := &http.Client{
+		Timeout: 500 * time.Millisecond,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(healthURL)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				log.Printf("[SETUP] scia proxy is ready at %s", proxyURL)
+				return
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	log.Printf("[SETUP] Warning: scia proxy did not become ready before timeout: %s", proxyURL)
 }
