@@ -21,4 +21,14 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "update"]
+  {{- with .Values.scia.sessionRefreshTokenSecretNames }}
+  # Permissions for the scia session sidecar to read only the per-user refresh
+  # token Secrets explicitly listed by the operator. OAuth client Secrets must
+  # remain readable only by the scia OAuth broker.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      {{- toYaml . | nindent 6 }}
+    verbs: ["get"]
+  {{- end }}
 {{- end }}

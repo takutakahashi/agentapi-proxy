@@ -232,6 +232,35 @@ type WebhookConfig struct {
 	GitHubEnterpriseHost string `json:"github_enterprise_host" mapstructure:"github_enterprise_host"`
 }
 
+// SciaConfig represents scia OAuth broker/proxy integration configuration.
+type SciaConfig struct {
+	// Enabled controls whether scia integration is exposed to clients and injected into sessions.
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// PublicBaseURL is the browser-reachable origin that serves /oauth and /_scia.
+	// When empty, UI clients can still use same-origin relative OAuth URLs.
+	PublicBaseURL string `json:"public_base_url" mapstructure:"public_base_url"`
+	// ProxyURL is the forward proxy URL used by session Pods for outbound Google API calls.
+	ProxyURL string `json:"proxy_url" mapstructure:"proxy_url"`
+	// Credential is the scia credential ID used for Google OAuth, e.g. "takutakahashi.google".
+	Credential string `json:"credential" mapstructure:"credential"`
+	// UserNamespace is the scia user namespace used by the authorization-url endpoint.
+	UserNamespace string `json:"user_namespace" mapstructure:"user_namespace"`
+	// NoProxy is appended to the session NO_PROXY value when ProxyURL is injected.
+	NoProxy string `json:"no_proxy" mapstructure:"no_proxy"`
+	// SessionSidecarEnabled runs scia as a sidecar in each session Pod.
+	SessionSidecarEnabled bool `json:"session_sidecar_enabled" mapstructure:"session_sidecar_enabled"`
+	// SessionSidecarImage is the scia image used by the session sidecar.
+	SessionSidecarImage string `json:"session_sidecar_image" mapstructure:"session_sidecar_image"`
+	// SessionSidecarConfigImage is the shell-capable image used to render scia sidecar config.
+	SessionSidecarConfigImage string `json:"session_sidecar_config_image" mapstructure:"session_sidecar_config_image"`
+	// SessionSidecarPort is the localhost HTTP proxy port exposed by the sidecar.
+	SessionSidecarPort int `json:"session_sidecar_port" mapstructure:"session_sidecar_port"`
+	// GoogleHosts is the list of hosts where the sidecar injects the Google access token.
+	GoogleHosts []string `json:"google_hosts" mapstructure:"google_hosts"`
+	// GooglePaths is the list of paths where the sidecar injects the Google access token.
+	GooglePaths []string `json:"google_paths" mapstructure:"google_paths"`
+}
+
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {
 	// Namespace is the Kubernetes namespace where session resources are created
@@ -479,6 +508,8 @@ type Config struct {
 	StockInventoryWorker StockInventoryWorkerConfig `json:"stock_inventory_worker" mapstructure:"stock_inventory_worker"`
 	// Webhook is the configuration for webhook functionality
 	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
+	// Scia is the configuration for scia OAuth token broker/proxy integration.
+	Scia SciaConfig `json:"scia" mapstructure:"scia"`
 	// Memory is the configuration for memory storage backend
 	Memory MemoryConfig `json:"memory" mapstructure:"memory"`
 	// Asset is the configuration for static asset upload and serving.
@@ -949,6 +980,20 @@ func bindEnvVars(v *viper.Viper) {
 	// Other configuration
 	_ = v.BindEnv("auth_config_file")
 
+	// scia OAuth broker/proxy configuration
+	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")
+	_ = v.BindEnv("scia.public_base_url", "AGENTAPI_SCIA_PUBLIC_BASE_URL")
+	_ = v.BindEnv("scia.proxy_url", "AGENTAPI_SCIA_PROXY_URL")
+	_ = v.BindEnv("scia.credential", "AGENTAPI_SCIA_CREDENTIAL")
+	_ = v.BindEnv("scia.user_namespace", "AGENTAPI_SCIA_USER_NAMESPACE")
+	_ = v.BindEnv("scia.no_proxy", "AGENTAPI_SCIA_NO_PROXY")
+	_ = v.BindEnv("scia.session_sidecar_enabled", "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED")
+	_ = v.BindEnv("scia.session_sidecar_image", "AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE")
+	_ = v.BindEnv("scia.session_sidecar_config_image", "AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE")
+	_ = v.BindEnv("scia.session_sidecar_port", "AGENTAPI_SCIA_SESSION_SIDECAR_PORT")
+	_ = v.BindEnv("scia.google_hosts", "AGENTAPI_SCIA_GOOGLE_HOSTS")
+	_ = v.BindEnv("scia.google_paths", "AGENTAPI_SCIA_GOOGLE_PATHS")
+
 	// Role-based environment files configuration
 	_ = v.BindEnv("role_env_files.enabled")
 	_ = v.BindEnv("role_env_files.path")
@@ -1202,6 +1247,20 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("webhook.base_url", "")
 	v.SetDefault("webhook.github_enterprise_host", "")
 
+	// scia defaults
+	v.SetDefault("scia.enabled", false)
+	v.SetDefault("scia.public_base_url", "")
+	v.SetDefault("scia.proxy_url", "")
+	v.SetDefault("scia.credential", "")
+	v.SetDefault("scia.user_namespace", "")
+	v.SetDefault("scia.no_proxy", "localhost,127.0.0.1,.svc,.cluster.local")
+	v.SetDefault("scia.session_sidecar_enabled", false)
+	v.SetDefault("scia.session_sidecar_image", "ghcr.io/takutakahashi/scia:0.5.0")
+	v.SetDefault("scia.session_sidecar_config_image", "busybox:1.36")
+	v.SetDefault("scia.session_sidecar_port", 18081)
+	v.SetDefault("scia.google_hosts", []string{"www.googleapis.com"})
+	v.SetDefault("scia.google_paths", []string{"/calendar/v3/*"})
+
 	// Memory backend defaults
 	v.SetDefault("memory.backend", "kubernetes")
 	v.SetDefault("memory.s3.prefix", "agentapi-memory/")
@@ -1273,6 +1332,24 @@ func applyConfigDefaults(config *Config) {
 	}
 	if config.Asset.S3 != nil && config.Asset.S3.Prefix == "" {
 		config.Asset.S3.Prefix = "agentapi-assets/"
+	}
+	if config.Scia.NoProxy == "" {
+		config.Scia.NoProxy = "localhost,127.0.0.1,.svc,.cluster.local"
+	}
+	if config.Scia.SessionSidecarImage == "" {
+		config.Scia.SessionSidecarImage = "ghcr.io/takutakahashi/scia:0.5.0"
+	}
+	if config.Scia.SessionSidecarConfigImage == "" {
+		config.Scia.SessionSidecarConfigImage = "busybox:1.36"
+	}
+	if config.Scia.SessionSidecarPort == 0 {
+		config.Scia.SessionSidecarPort = 18081
+	}
+	if len(config.Scia.GoogleHosts) == 0 {
+		config.Scia.GoogleHosts = []string{"www.googleapis.com"}
+	}
+	if len(config.Scia.GooglePaths) == 0 {
+		config.Scia.GooglePaths = []string{"/calendar/v3/*"}
 	}
 }
 

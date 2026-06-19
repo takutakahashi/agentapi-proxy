@@ -195,6 +195,7 @@ type SessionParamsResponse struct {
 	GithubToken string `json:"github_token,omitempty"`
 	AgentType   string `json:"agent_type,omitempty"`
 	Oneshot     bool   `json:"oneshot,omitempty"`
+	AuthProxy   *bool  `json:"auth_proxy,omitempty"`
 }
 
 // DeliveryRecordResponse represents a delivery record in responses
@@ -771,6 +772,7 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 		resp.Params = &SessionParamsResponse{
 			AgentType: params.AgentType,
 			Oneshot:   params.Oneshot,
+			AuthProxy: params.AuthProxy,
 		}
 	}
 	return resp

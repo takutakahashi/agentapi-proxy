@@ -64,6 +64,7 @@ type SessionParamsImport struct {
 	InitialMessageTemplate string               `yaml:"initial_message_template,omitempty" toml:"initial_message_template,omitempty" json:"initial_message_template,omitempty"`
 	GitHubToken            string               `yaml:"github_token,omitempty" toml:"github_token,omitempty" json:"github_token,omitempty" gitsync:"encrypt"`
 	GitHubTokenEncrypted   *EncryptedSecretData `yaml:"github_token_encrypted,omitempty" toml:"github_token_encrypted,omitempty" json:"github_token_encrypted,omitempty" gitsync:"companion"`
+	AuthProxy              *bool                `yaml:"auth_proxy,omitempty" toml:"auth_proxy,omitempty" json:"auth_proxy,omitempty"`
 }
 
 // GitHubConfigImport represents GitHub-specific webhook configuration for import/export

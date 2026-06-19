@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -1946,6 +1947,19 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
 	}
 
+	var sciaInitContainer *corev1.Container
+	var sciaSidecar *corev1.Container
+	if m.sciaSessionSidecarEnabled(req) {
+		sciaInitContainer, sciaSidecar, _ = m.buildSciaSidecarContainers(req, sandboxEnabled)
+		initContainers = append(initContainers, *sciaInitContainer)
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
+		// Do not inject sidecar proxy variables into the Pod-level container env.
+		// Kubernetes starts regular containers in parallel, so startup scripts can
+		// race the scia sidecar listener. SessionSettings injects the same proxy
+		// variables for the actual agent process after provisioning.
+		sandboxEnvVars = nil
+	}
+
 	// Build DinD sidecar if Docker-in-Docker is enabled.
 	dindEnabled := req.Docker != nil && req.Docker.Enabled
 	var dindSidecar *corev1.Container
@@ -2058,7 +2072,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 				corev1.ResourceMemory: memoryLimit,
 			},
 		},
-		VolumeMounts: m.buildMainContainerVolumeMounts(session),
+		VolumeMounts: m.buildMainContainerVolumeMounts(session, req),
 		// Run agent-provisioner instead of the inline shell setup+agentapi script.
 		Command: []string{"agentapi-proxy"},
 		Args:    []string{"agent-provisioner"},
@@ -2098,6 +2112,22 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			},
 		})
 	}
+	if m.sciaSessionSidecarEnabled(req) {
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "scia-config",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+			corev1.Volume{
+				Name: "scia-mitm-ca",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+		)
+	}
 	if dindEnabled {
 		volumes = append(volumes, dindVolumes...)
 	}
@@ -2109,6 +2139,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	containers := []corev1.Container{container}
 	if sandboxSidecar != nil {
 		containers = append(containers, *sandboxSidecar)
+	}
+	if sciaSidecar != nil {
+		containers = append(containers, *sciaSidecar)
 	}
 	if dindSidecar != nil {
 		containers = append(containers, *dindSidecar)
@@ -2496,6 +2529,157 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 	}
 
 	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
+}
+
+const (
+	sciaCAPath       = "/etc/scia/mitm/ca.pem"
+	sciaCABundlePath = "/tmp/scia-ca-bundle.pem"
+	sciaNoProxyBase  = "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com"
+)
+
+func (m *KubernetesSessionManager) sciaSessionSidecarEnabled(req *entities.RunServerRequest) bool {
+	if m.config == nil || !m.config.Scia.Enabled {
+		return false
+	}
+	if req != nil && req.AuthProxy != nil {
+		return *req.AuthProxy
+	}
+	return m.config.Scia.SessionSidecarEnabled
+}
+
+func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunServerRequest, sandboxEnabled bool) (*corev1.Container, *corev1.Container, []corev1.EnvVar) {
+	scia := m.config.Scia
+	port := scia.SessionSidecarPort
+	if port == 0 {
+		port = 18081
+	}
+	userNamespace := scia.UserNamespace
+	if userNamespace == "" {
+		userNamespace = req.UserID
+	}
+	if userNamespace == "" {
+		userNamespace = "default"
+	}
+	credentialID := scia.Credential
+	if credentialID == "" {
+		credentialID = userNamespace + ".google"
+	}
+	hosts := scia.GoogleHosts
+	if len(hosts) == 0 {
+		hosts = []string{"www.googleapis.com"}
+	}
+	paths := scia.GooglePaths
+	if len(paths) == 0 {
+		paths = []string{"/calendar/v3/*"}
+	}
+
+	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, port, hosts, paths, sandboxEnabled)
+	configScript := fmt.Sprintf("cat > /etc/scia-config/config.yaml <<'EOF'\n%sEOF\n", configYAML)
+
+	initContainer := corev1.Container{
+		Name:            "scia-config",
+		Image:           defaultIfEmpty(scia.SessionSidecarConfigImage, "busybox:1.36"),
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"sh", "-c", configScript},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "scia-config", MountPath: "/etc/scia-config"},
+		},
+	}
+
+	sidecar := corev1.Container{
+		Name:            "scia-proxy",
+		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.5.0"),
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Args:            []string{"-config", "/etc/scia-config/config.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "scia-proxy", ContainerPort: int32(port), Protocol: corev1.ProtocolTCP},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "scia-config", MountPath: "/etc/scia-config", ReadOnly: true},
+			{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm"},
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/_scia/healthz",
+					Port: intstr.FromInt(port),
+				},
+			},
+			InitialDelaySeconds: 2,
+			PeriodSeconds:       2,
+		},
+	}
+
+	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", port)
+	noProxy := mergeNoProxy(sciaNoProxyBase, scia.NoProxy)
+	envVars := []corev1.EnvVar{
+		{Name: "HTTP_PROXY", Value: proxyAddr},
+		{Name: "HTTPS_PROXY", Value: proxyAddr},
+		{Name: "http_proxy", Value: proxyAddr},
+		{Name: "https_proxy", Value: proxyAddr},
+		{Name: "NO_PROXY", Value: noProxy},
+		{Name: "no_proxy", Value: noProxy},
+		{Name: "SSL_CERT_FILE", Value: sciaCABundlePath},
+		{Name: "REQUESTS_CA_BUNDLE", Value: sciaCABundlePath},
+		{Name: "CURL_CA_BUNDLE", Value: sciaCABundlePath},
+		{Name: "GIT_SSL_CAINFO", Value: sciaCABundlePath},
+		{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath},
+		{Name: "AGENTAPI_SCIA_PROXY_URL", Value: proxyAddr},
+		{Name: "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", Value: credentialID},
+		{Name: "AGENTAPI_SCIA_USER_NAMESPACE", Value: userNamespace},
+	}
+
+	return &initContainer, &sidecar, envVars
+}
+
+func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, port int, hosts, paths []string, useNFA bool) string {
+	var b strings.Builder
+	b.WriteString("server:\n")
+	b.WriteString("  mode: proxy\n")
+	b.WriteString(fmt.Sprintf("  listen: %q\n", fmt.Sprintf("0.0.0.0:%d", port)))
+	if useNFA {
+		b.WriteString("  backendProxy:\n")
+		b.WriteString(fmt.Sprintf("    url: %q\n", fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort)))
+	}
+	b.WriteString("  integrations:\n")
+	b.WriteString("    google:\n")
+	b.WriteString("      hosts:\n")
+	for _, host := range hosts {
+		b.WriteString(fmt.Sprintf("        - %q\n", host))
+	}
+	b.WriteString("  mitm:\n")
+	b.WriteString(fmt.Sprintf("    caCertPath: %q\n", sciaCAPath))
+	b.WriteString("    caKeyPath: \"/etc/scia/mitm/ca.key\"\n")
+	b.WriteString("  secrets:\n")
+	b.WriteString("    mode: kubernetes\n")
+	b.WriteString("    kubernetes:\n")
+	b.WriteString(fmt.Sprintf("      namespace: %q\n", namespace))
+	b.WriteString("  users:\n")
+	b.WriteString(fmt.Sprintf("    %s:\n", yamlKey(userNamespace)))
+	b.WriteString(fmt.Sprintf("      secretName: %q\n", "scia-oauth-"+sanitizeSecretName(userNamespace)))
+	b.WriteString("credentials:\n")
+	b.WriteString(fmt.Sprintf("  - id: %q\n", credentialID))
+	b.WriteString("    type: google-oauth-refresh-token\n")
+	b.WriteString("    params:\n")
+	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/google/token", namespace, url.PathEscape(userNamespace))))
+	b.WriteString("rules:\n")
+	b.WriteString("  - name: inject-google-oauth-token\n")
+	b.WriteString("    hosts:\n")
+	for _, host := range hosts {
+		b.WriteString(fmt.Sprintf("      - %q\n", host))
+	}
+	b.WriteString("    paths:\n")
+	for _, path := range paths {
+		b.WriteString(fmt.Sprintf("      - %q\n", path))
+	}
+	b.WriteString("    action: allow\n")
+	b.WriteString("    credentials:\n")
+	b.WriteString(fmt.Sprintf("      - %q\n", credentialID))
+	return b.String()
+}
+
+func yamlKey(value string) string {
+	return strconv.Quote(value)
 }
 
 // buildDinDContainers returns the DinD sidecar container, env vars for the main container,
@@ -3588,7 +3772,7 @@ func isPodReady(pod *corev1.Pod) bool {
 }
 
 // buildMainContainerVolumeMounts builds the volume mounts for the main container
-func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *KubernetesSession) []corev1.VolumeMount {
+func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *KubernetesSession, req *entities.RunServerRequest) []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      "workdir",
@@ -3613,6 +3797,14 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		MountPath: "/session-settings",
 		ReadOnly:  true,
 	})
+
+	if m.sciaSessionSidecarEnabled(req) {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "scia-mitm-ca",
+			MountPath: "/etc/scia/mitm",
+			ReadOnly:  true,
+		})
+	}
 
 	// Add webhook payload volume mount if webhook payload is provided
 	if len(session.WebhookPayload()) > 0 {
@@ -4292,6 +4484,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		env[k] = v
 	}
 
+	m.injectSciaProxyEnv(env, req)
+
 	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
 	// and memory-sync sidecar. Flags are sorted for deterministic shell script expansion.
 	if len(req.MemoryKey) > 0 {
@@ -4653,6 +4847,96 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	return settings
+}
+
+func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req *entities.RunServerRequest) {
+	if m.config == nil || !m.config.Scia.Enabled {
+		return
+	}
+
+	scia := m.config.Scia
+	if !m.sciaSessionSidecarEnabled(req) {
+		if scia.Credential != "" {
+			env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = scia.Credential
+		}
+		if scia.UserNamespace != "" {
+			env["AGENTAPI_SCIA_USER_NAMESPACE"] = scia.UserNamespace
+		}
+		if scia.PublicBaseURL != "" {
+			env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
+		}
+		return
+	}
+
+	port := scia.SessionSidecarPort
+	if port == 0 {
+		port = 18081
+	}
+	userNamespace := scia.UserNamespace
+	if userNamespace == "" {
+		userNamespace = env["AGENTAPI_USER_ID"]
+	}
+	credential := scia.Credential
+	if credential == "" && userNamespace != "" {
+		credential = userNamespace + ".google"
+	}
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	env["AGENTAPI_SCIA_PROXY_URL"] = proxyURL
+	env["HTTP_PROXY"] = proxyURL
+	env["HTTPS_PROXY"] = proxyURL
+	env["http_proxy"] = proxyURL
+	env["https_proxy"] = proxyURL
+	env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
+	env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
+	env["SSL_CERT_FILE"] = sciaCABundlePath
+	env["REQUESTS_CA_BUNDLE"] = sciaCABundlePath
+	env["CURL_CA_BUNDLE"] = sciaCABundlePath
+	env["GIT_SSL_CAINFO"] = sciaCABundlePath
+	env["NODE_EXTRA_CA_CERTS"] = sciaCAPath
+	if credential != "" {
+		env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = credential
+	}
+	if userNamespace != "" {
+		env["AGENTAPI_SCIA_USER_NAMESPACE"] = userNamespace
+	}
+	if scia.PublicBaseURL != "" {
+		env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
+	}
+	if scia.ProxyURL == "" {
+		return
+	}
+
+	env["AGENTAPI_SCIA_PROXY_URL"] = scia.ProxyURL
+	if env["HTTP_PROXY"] == "" {
+		env["HTTP_PROXY"] = scia.ProxyURL
+	}
+	if env["HTTPS_PROXY"] == "" {
+		env["HTTPS_PROXY"] = scia.ProxyURL
+	}
+	if env["http_proxy"] == "" {
+		env["http_proxy"] = scia.ProxyURL
+	}
+	if env["https_proxy"] == "" {
+		env["https_proxy"] = scia.ProxyURL
+	}
+	env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
+	env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
+}
+
+func mergeNoProxy(existing, extra string) string {
+	seen := map[string]bool{}
+	values := make([]string, 0)
+	for _, list := range []string{existing, extra} {
+		for _, part := range strings.Split(list, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" || seen[part] {
+				continue
+			}
+			seen[part] = true
+			values = append(values, part)
+		}
+	}
+	return strings.Join(values, ",")
 }
 
 // createSessionSettingsSecretFromSettings creates the unified session settings Secret

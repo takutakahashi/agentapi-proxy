@@ -278,6 +278,7 @@ Please ensure the webhook payload is valid JSON.
 	var slackParams *entities.SlackParams
 	var sandbox *entities.SandboxParams
 	var docker *entities.DockerParams
+	var authProxy *bool
 	var initialMessageWaitSecond *int
 	var cycleMessage, sessionTTL string
 	var cycleMaxCount int
@@ -289,6 +290,7 @@ Please ensure the webhook payload is valid JSON.
 		slackParams = params.Slack
 		sandbox = params.Sandbox
 		docker = params.Docker
+		authProxy = params.AuthProxy
 		initialMessageWaitSecond = params.InitialMessageWaitSecond
 		cycleMessage = params.CycleMessage
 		cycleMaxCount = params.CycleMaxCount
@@ -309,6 +311,7 @@ Please ensure the webhook payload is valid JSON.
 		SlackParams:              slackParams,
 		Sandbox:                  sandbox,
 		Docker:                   docker,
+		AuthProxy:                authProxy,
 		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		CycleMessage:             cycleMessage,

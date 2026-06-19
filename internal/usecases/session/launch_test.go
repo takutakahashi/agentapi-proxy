@@ -163,6 +163,57 @@ func TestLaunchExplicitDockerOverridesProfileDocker(t *testing.T) {
 	}
 }
 
+func TestLaunchAppliesDefaultProfileAuthProxy(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{
+		AuthProxy: boolPointer(true),
+	})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req == nil || sessionManager.req.AuthProxy == nil || !*sessionManager.req.AuthProxy {
+		t.Fatalf("expected profile AuthProxy=true to be applied, got %#v", sessionManager.req)
+	}
+}
+
+func TestLaunchExplicitAuthProxyOverridesProfileAuthProxy(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{
+		AuthProxy: boolPointer(true),
+	})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:    "user-1",
+		Scope:     entities.ScopeUser,
+		AuthProxy: boolPointer(false),
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req == nil || sessionManager.req.AuthProxy == nil || *sessionManager.req.AuthProxy {
+		t.Fatalf("expected explicit AuthProxy=false to override profile, got %#v", sessionManager.req)
+	}
+}
+
 func TestLaunchAppliesProfileSelectedByTags(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	defaultProfile := entities.NewSessionProfile("profile-default", "default", "user-1")
@@ -375,4 +426,8 @@ func TestLaunchReuseReturnsErrorForNonStaleSendFailure(t *testing.T) {
 	if sessionManager.req != nil {
 		t.Fatal("CreateSession should not be called for non-stale reuse errors")
 	}
+}
+
+func boolPointer(v bool) *bool {
+	return &v
 }

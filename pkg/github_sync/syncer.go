@@ -955,6 +955,7 @@ func (s *Syncer) importUserScheduleFile(ctx context.Context, data []byte, userID
 		sc.SessionConfig.Params = &entities.SessionParams{
 			Message:     si.SessionConfig.Params.InitialMessage,
 			GithubToken: si.SessionConfig.Params.GitHubToken,
+			AuthProxy:   si.SessionConfig.Params.AuthProxy,
 		}
 	}
 
@@ -1252,6 +1253,7 @@ func scheduleToImport(sc *schedule.Schedule) importexport.ScheduleImport {
 		si.SessionConfig.Params = &importexport.SessionParamsImport{
 			InitialMessage: sc.SessionConfig.Params.Message,
 			GitHubToken:    sc.SessionConfig.Params.GithubToken,
+			AuthProxy:      sc.SessionConfig.Params.AuthProxy,
 		}
 	}
 	return si
@@ -1436,6 +1438,7 @@ type sessionProfileParamsRecord struct {
 	AgentType                string                             `yaml:"agent_type,omitempty"`
 	Slack                    *sessionProfileSlackParamsRecord   `yaml:"slack,omitempty"`
 	Oneshot                  bool                               `yaml:"oneshot,omitempty"`
+	AuthProxy                *bool                              `yaml:"auth_proxy,omitempty"`
 	InitialMessageWaitSecond *int                               `yaml:"initial_message_wait_second,omitempty"`
 	ManagerID                string                             `yaml:"manager_id,omitempty"`
 	CycleMessage             string                             `yaml:"cycle_message,omitempty"`
@@ -1512,6 +1515,7 @@ func sessionParamsToRecord(p *entities.SessionParams) *sessionProfileParamsRecor
 		GitHubToken:              p.GithubToken,
 		AgentType:                p.AgentType,
 		Oneshot:                  p.Oneshot,
+		AuthProxy:                p.AuthProxy,
 		InitialMessageWaitSecond: p.InitialMessageWaitSecond,
 		ManagerID:                p.ManagerID,
 		CycleMessage:             p.CycleMessage,
@@ -1545,6 +1549,7 @@ func sessionParamsFromRecord(rec *sessionProfileParamsRecord) *entities.SessionP
 		GithubToken:              rec.GitHubToken,
 		AgentType:                rec.AgentType,
 		Oneshot:                  rec.Oneshot,
+		AuthProxy:                rec.AuthProxy,
 		InitialMessageWaitSecond: rec.InitialMessageWaitSecond,
 		ManagerID:                rec.ManagerID,
 		CycleMessage:             rec.CycleMessage,

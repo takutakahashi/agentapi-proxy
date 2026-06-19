@@ -897,6 +897,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	if override.Docker != nil {
 		merged.Docker = override.Docker
 	}
+	if override.AuthProxy != nil {
+		merged.AuthProxy = override.AuthProxy
+	}
 	if override.SessionTTL != "" {
 		merged.SessionTTL = override.SessionTTL
 	}

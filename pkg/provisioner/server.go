@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
@@ -209,8 +211,12 @@ func (s *Server) runStartupScript(ctx context.Context) {
 	if script == "" {
 		script = defaultStartupScript
 	}
+	if os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED") == "true" {
+		waitForSciaProxy(ctx, "http://127.0.0.1:18081", 15*time.Second)
+	}
 	log.Printf("[PROVISIONER] Running startup pre-script")
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+	cmd.Env = withoutProxyEnv(os.Environ())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -218,4 +224,24 @@ func (s *Server) runStartupScript(ctx context.Context) {
 	} else {
 		log.Printf("[PROVISIONER] Startup pre-script complete")
 	}
+}
+
+func withoutProxyEnv(env []string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			filtered = append(filtered, entry)
+			continue
+		}
+		switch key {
+		case "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+			"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS",
+			"AGENTAPI_SCIA_PROXY_URL", "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", "AGENTAPI_SCIA_USER_NAMESPACE":
+			continue
+		default:
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }

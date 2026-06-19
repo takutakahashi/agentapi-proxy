@@ -695,6 +695,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		docker = startReq.Params.Docker
 	}
 
+	// Determine auth proxy params from Params.AuthProxy
+	var authProxy *bool
+	if startReq.Params != nil && startReq.Params.AuthProxy != nil {
+		authProxy = startReq.Params.AuthProxy
+	}
+
 	// Determine session TTL from Params.SessionTTL
 	var sessionTTL string
 	if startReq.Params != nil && startReq.Params.SessionTTL != "" {
@@ -722,6 +728,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		CycleMaxCount:            cycleMaxCount,
 		Sandbox:                  sandbox,
 		Docker:                   docker,
+		AuthProxy:                authProxy,
 		SessionTTL:               sessionTTL,
 	})
 	if err != nil {
@@ -747,10 +754,12 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	var initialMessage string
 	var agentType string
 	var oneshot bool
+	var authProxy *bool
 	if startReq.Params != nil {
 		initialMessage = startReq.Params.Message
 		agentType = startReq.Params.AgentType
 		oneshot = startReq.Params.Oneshot
+		authProxy = startReq.Params.AuthProxy
 	}
 	runReq := &entities.RunServerRequest{
 		UserID:         userID,
@@ -764,6 +773,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		MemoryKey:      startReq.MemoryKey,
 		InitialMessage: initialMessage,
 		RepoInfo:       s.extractRepositoryInfo(sessionID, startReq.Tags),
+		AuthProxy:      authProxy,
 	}
 
 	// Try to build fully-resolved settings (env vars, Bedrock, MCP servers, OAuth token, etc.)

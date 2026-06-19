@@ -137,7 +137,7 @@ func cloneRepo(settings *SessionSettings) error {
 	repo := settings.Repository
 
 	// Set environment variables from session env so git/gh tools pick them up.
-	for k, v := range settings.Env {
+	for k, v := range setupProcessEnv(settings.Env) {
 		if err := os.Setenv(k, v); err != nil {
 			log.Printf("[SETUP] Warning: failed to set env %s: %v", k, err)
 		}
@@ -207,7 +207,7 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 	}
 
 	// Set env so marketplace clone / claude CLI picks up GITHUB_TOKEN etc.
-	for k, v := range settings.Env {
+	for k, v := range setupProcessEnv(settings.Env) {
 		if err := os.Setenv(k, v); err != nil {
 			log.Printf("[SETUP] Warning: failed to set env %s: %v", k, err)
 		}
@@ -222,4 +222,19 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 	}
 
 	return startup.Sync(syncOpts)
+}
+
+func setupProcessEnv(env map[string]string) map[string]string {
+	filtered := make(map[string]string, len(env))
+	for k, v := range env {
+		switch k {
+		case "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+			"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS",
+			"AGENTAPI_SCIA_PROXY_URL", "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", "AGENTAPI_SCIA_USER_NAMESPACE":
+			continue
+		default:
+			filtered[k] = v
+		}
+	}
+	return filtered
 }

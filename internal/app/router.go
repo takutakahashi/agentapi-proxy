@@ -29,6 +29,7 @@ type HandlerRegistry struct {
 	sessionController          *controllers.SessionController
 	acpController              *controllers.ACPController
 	settingsController         *controllers.SettingsController
+	googleOAuthController      *controllers.GoogleOAuthController
 	credentialsController      *controllers.CredentialsController
 	codexDeviceAuthController  *controllers.CodexDeviceAuthController
 	userController             *controllers.UserController
@@ -61,6 +62,15 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		gitSyncAWSRegion = cfg.GitSync.Encryption.AWSRegion
 	}
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc, gitSyncKMSKeyARN, gitSyncAWSRegion)
+
+	var googleOAuthController *controllers.GoogleOAuthController
+	if cfg := server.GetConfig(); cfg != nil {
+		if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
+			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, k8sManager.GetClient(), k8sManager.GetNamespace())
+		} else {
+			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, nil, "")
+		}
+	}
 
 	// Create credentials controller
 	var credentialsController *controllers.CredentialsController
@@ -200,6 +210,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionController:          sessionController,
 			acpController:              acpController,
 			settingsController:         settingsController,
+			googleOAuthController:      googleOAuthController,
 			credentialsController:      credentialsController,
 			codexDeviceAuthController:  codexDeviceAuthController,
 			userController:             controllers.NewUserController(),
@@ -399,6 +410,12 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Settings endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Settings repository not available, skipping settings routes")
+	}
+
+	if r.handlers.googleOAuthController != nil {
+		log.Printf("[ROUTES] Registering Google OAuth integration endpoints...")
+		r.echo.GET("/integrations/google-oauth/status", r.handlers.googleOAuthController.GetStatus, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		log.Printf("[ROUTES] Google OAuth integration endpoints registered")
 	}
 
 	// Add credentials routes if credentials repository is available (Kubernetes mode only)
