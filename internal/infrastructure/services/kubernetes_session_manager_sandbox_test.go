@@ -149,7 +149,8 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 		assert.Contains(t, script, "  integrations:\n")
 		assert.Contains(t, script, "    google:\n")
 		assert.Contains(t, script, `        - "www.googleapis.com"`)
-		assert.Contains(t, script, `secretName: "scia-oauth-takutakahashi"`)
+		assert.NotContains(t, script, `secretName:`)
+		assert.Contains(t, script, `access_token_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/takutakahashi/google/access-token"`)
 		assert.Contains(t, script, `- "takutakahashi.google"`)
 	}
 

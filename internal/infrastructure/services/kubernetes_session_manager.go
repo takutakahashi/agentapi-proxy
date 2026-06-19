@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -2643,23 +2644,11 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, p
 	b.WriteString("  mitm:\n")
 	b.WriteString(fmt.Sprintf("    caCertPath: %q\n", sciaCAPath))
 	b.WriteString("    caKeyPath: \"/etc/scia/mitm/ca.key\"\n")
-	b.WriteString("  secrets:\n")
-	b.WriteString("    mode: kubernetes\n")
-	b.WriteString("    kubernetes:\n")
-	b.WriteString(fmt.Sprintf("      namespace: %q\n", namespace))
-	b.WriteString("  users:\n")
-	b.WriteString(fmt.Sprintf("    %s:\n", yamlKey(userNamespace)))
-	b.WriteString(fmt.Sprintf("      secretName: %q\n", "scia-oauth-"+sanitizeSecretName(userNamespace)))
-	b.WriteString("    google.oauth:\n")
-	b.WriteString("      secretName: \"scia-google-oauth\"\n")
-	b.WriteString("  oauth:\n")
-	b.WriteString("    namespaces:\n")
-	b.WriteString(fmt.Sprintf("      %s:\n", yamlKey(userNamespace)))
-	b.WriteString("        google:\n")
-	b.WriteString("          clientIdSecretRef: \"secret:google.oauth.client-id\"\n")
-	b.WriteString("          clientSecretRef: \"secret:google.oauth.client-secret\"\n")
-	b.WriteString("          scope: \"https://www.googleapis.com/auth/calendar.readonly\"\n")
-	b.WriteString("credentials: []\n")
+	b.WriteString("credentials:\n")
+	b.WriteString(fmt.Sprintf("  - id: %q\n", credentialID))
+	b.WriteString("    type: google-oauth-refresh-token\n")
+	b.WriteString("    params:\n")
+	b.WriteString(fmt.Sprintf("      access_token_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/google/access-token", namespace, url.PathEscape(userNamespace))))
 	b.WriteString("rules:\n")
 	b.WriteString("  - name: inject-google-oauth-token\n")
 	b.WriteString("    hosts:\n")
