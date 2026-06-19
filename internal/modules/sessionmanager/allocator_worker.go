@@ -6,15 +6,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	infrasessionallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type AllocatorWorker struct {
 	sessionManager repositories.SessionManager
-	client         *services.SessionAllocatorClient
+	client         sessionallocation.ExternalAllocatorClient
 	publicURL      string
 }
 
@@ -23,9 +24,13 @@ type directSessionManager interface {
 }
 
 func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL, token, publicURL string) *AllocatorWorker {
+	return NewAllocatorWorkerWithClient(sessionManager, infrasessionallocation.NewClient(upstreamURL, token), publicURL)
+}
+
+func NewAllocatorWorkerWithClient(sessionManager repositories.SessionManager, client sessionallocation.ExternalAllocatorClient, publicURL string) *AllocatorWorker {
 	return &AllocatorWorker{
 		sessionManager: sessionManager,
-		client:         services.NewSessionAllocatorClient(upstreamURL, token),
+		client:         client,
 		publicURL:      publicURL,
 	}
 }
@@ -51,14 +56,14 @@ func (w *AllocatorWorker) Start(ctx context.Context) {
 	}
 }
 
-func (w *AllocatorWorker) process(ctx context.Context, allocation *services.SessionAllocationRequest) {
+func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionallocation.AllocationRequest) {
 	settings := allocation.ProvisionSettings
 	if settings == nil && allocation.Request != nil {
 		settings = allocation.Request.ProvisionSettings
 	}
 	if settings == nil {
-		_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, services.SessionAllocationResult{
-			Status:  "error",
+		_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, sessionallocation.AllocationResult{
+			Status:  sessionallocation.StatusError,
 			Message: "provision_settings is required",
 		})
 		return
@@ -69,15 +74,15 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *services.Sess
 	session, err := w.createLocalSession(ctx, sessionID, req)
 	if err != nil {
 		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to create session for allocation %s: %v", allocation.SessionID, err)
-		_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, services.SessionAllocationResult{
-			Status:  "error",
+		_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, sessionallocation.AllocationResult{
+			Status:  sessionallocation.StatusError,
 			Message: err.Error(),
 		})
 		return
 	}
 
-	if err := w.client.CompleteExternal(context.Background(), allocation.SessionID, services.SessionAllocationResult{
-		Status:             "assigned",
+	if err := w.client.CompleteExternal(context.Background(), allocation.SessionID, sessionallocation.AllocationResult{
+		Status:             sessionallocation.StatusAssigned,
 		AllocatedSessionID: session.ID(),
 		ProxyURL:           w.publicURL,
 	}); err != nil {

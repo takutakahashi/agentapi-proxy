@@ -21,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
 	corerepo "github.com/takutakahashi/agentapi-proxy/internal/core/repository"
+	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
@@ -794,11 +795,11 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		}
 	}
 
-	k8sManager, ok := s.sessionManager.(*services.KubernetesSessionManager)
+	allocationQueue, ok := s.sessionManager.(sessionallocation.Queue)
 	if !ok {
-		return nil, fmt.Errorf("external session manager allocator requires KubernetesSessionManager")
+		return nil, fmt.Errorf("external session manager allocator requires allocation queue")
 	}
-	if err := k8sManager.SubmitExternalSessionAllocation(ctx, managerID, sessionID, settings, runReq); err != nil {
+	if err := allocationQueue.SubmitExternalSessionAllocation(ctx, managerID, sessionID, settings, runReq); err != nil {
 		return nil, err
 	}
 	startedAt := time.Now()

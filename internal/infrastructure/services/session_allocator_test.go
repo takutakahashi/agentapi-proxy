@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -109,10 +110,10 @@ func TestNextSessionAllocationClaimsRequestCreatedWhileSubscribing(t *testing.T)
 	}
 	manager.SetSessionAllocationNotifier(&subscribeHookNotifier{
 		onSubscribe: func() {
-			if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+			if err := manager.saveSessionAllocation(context.Background(), &sessionallocation.AllocationRequest{
 				SessionID: "test-session",
 				Request:   &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser},
-				Status:    "pending",
+				Status:    sessionallocation.StatusPending,
 			}); err != nil {
 				t.Fatalf("saveSessionAllocation() error = %v", err)
 			}
@@ -129,7 +130,7 @@ func TestNextSessionAllocationClaimsRequestCreatedWhileSubscribing(t *testing.T)
 	if allocation.SessionID != "test-session" {
 		t.Fatalf("allocation.SessionID = %q, want test-session", allocation.SessionID)
 	}
-	if allocation.Status != "allocating" {
+	if allocation.Status != sessionallocation.StatusAllocating {
 		t.Fatalf("allocation.Status = %q, want allocating", allocation.Status)
 	}
 }
@@ -146,11 +147,11 @@ func TestNextExternalSessionAllocationClaimsRequestCreatedWhileSubscribing(t *te
 	}
 	manager.SetSessionAllocationNotifier(&subscribeHookNotifier{
 		onSubscribe: func() {
-			if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+			if err := manager.saveSessionAllocation(context.Background(), &sessionallocation.AllocationRequest{
 				SessionID: "test-session",
 				ManagerID: "manager-a",
 				Request:   &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser},
-				Status:    "pending",
+				Status:    sessionallocation.StatusPending,
 			}); err != nil {
 				t.Fatalf("saveSessionAllocation() error = %v", err)
 			}
@@ -167,7 +168,7 @@ func TestNextExternalSessionAllocationClaimsRequestCreatedWhileSubscribing(t *te
 	if allocation.SessionID != "test-session" {
 		t.Fatalf("allocation.SessionID = %q, want test-session", allocation.SessionID)
 	}
-	if allocation.Status != "allocating" {
+	if allocation.Status != sessionallocation.StatusAllocating {
 		t.Fatalf("allocation.Status = %q, want allocating", allocation.Status)
 	}
 }
@@ -183,16 +184,16 @@ func TestCompleteSessionAllocationDeletesAllocationSecret(t *testing.T) {
 		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
 	}
 
-	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+	if err := manager.saveSessionAllocation(context.Background(), &sessionallocation.AllocationRequest{
 		SessionID: "test-session",
 		Request:   &entities.RunServerRequest{UserID: "test-user"},
-		Status:    "allocating",
+		Status:    sessionallocation.StatusAllocating,
 	}); err != nil {
 		t.Fatalf("saveSessionAllocation() error = %v", err)
 	}
 
-	if err := manager.CompleteSessionAllocation(context.Background(), "test-session", SessionAllocationResult{
-		Status:             "assigned",
+	if err := manager.CompleteSessionAllocation(context.Background(), "test-session", sessionallocation.AllocationResult{
+		Status:             sessionallocation.StatusAssigned,
 		AllocatedSessionID: "test-session",
 	}); err != nil {
 		t.Fatalf("CompleteSessionAllocation() error = %v", err)
@@ -215,14 +216,14 @@ func TestListSessionsIncludesAllocatingSessionAllocation(t *testing.T) {
 		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
 	}
 
-	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+	if err := manager.saveSessionAllocation(context.Background(), &sessionallocation.AllocationRequest{
 		SessionID: "test-session",
 		Request: &entities.RunServerRequest{
 			UserID: "test-user",
 			Scope:  entities.ScopeUser,
 			Tags:   map[string]string{"purpose": "test"},
 		},
-		Status: "allocating",
+		Status: sessionallocation.StatusAllocating,
 	}); err != nil {
 		t.Fatalf("saveSessionAllocation() error = %v", err)
 	}
@@ -258,10 +259,10 @@ func TestSessionAllocationInvalidatesSessionListCache(t *testing.T) {
 	cache := &recordingSessionListCacheRepo{}
 	manager.SetSessionListCacheRepository(cache)
 
-	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+	if err := manager.saveSessionAllocation(context.Background(), &sessionallocation.AllocationRequest{
 		SessionID: "test-session",
 		Request:   &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser},
-		Status:    "pending",
+		Status:    sessionallocation.StatusPending,
 	}); err != nil {
 		t.Fatalf("saveSessionAllocation() error = %v", err)
 	}
@@ -290,14 +291,14 @@ func TestListSessionsDoesNotPopulateCacheWhileAllocationExists(t *testing.T) {
 	cache := &recordingSessionListCacheRepo{}
 	manager.SetSessionListCacheRepository(cache)
 
-	if err := manager.saveSessionAllocation(context.Background(), &SessionAllocationRequest{
+	if err := manager.saveSessionAllocation(context.Background(), &sessionallocation.AllocationRequest{
 		SessionID: "test-session",
 		Request: &entities.RunServerRequest{
 			UserID: "test-user",
 			Scope:  entities.ScopeUser,
 			Tags:   map[string]string{"purpose": "test"},
 		},
-		Status: "pending",
+		Status: sessionallocation.StatusPending,
 	}); err != nil {
 		t.Fatalf("saveSessionAllocation() error = %v", err)
 	}

@@ -15,17 +15,20 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	infrasessionallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
+	sessionallocationworker "github.com/takutakahashi/agentapi-proxy/internal/modules/sessionallocation"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/webhook"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	githubsync "github.com/takutakahashi/agentapi-proxy/pkg/github_sync"
 	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
-	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	stock_inventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
 	"k8s.io/client-go/kubernetes"
@@ -564,7 +567,7 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 // startSessionAllocator starts the leader-elected SessionAllocator. API requests
 // can land on any proxy replica, but only the elected leader consumes allocation
 // requests and creates/adopts session Pods.
-func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *services.SessionAllocator {
+func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *sessionallocationworker.Worker {
 	log.Printf("[SESSION_ALLOCATOR] Initializing session allocator...")
 
 	restConfig, err := ctrl.GetConfig()
@@ -601,7 +604,8 @@ func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *
 	}
 
 	manager.SetSessionAllocatorEnabled(true)
-	allocator := services.NewSessionAllocator(manager)
+	allocationClient := infrasessionallocation.NewClient(manager.AllocationProxyURL(), configData.KubernetesSession.ProvisionerToken)
+	allocator := sessionallocationworker.NewWorker(manager, allocationClient)
 	electorConfig := schedule.LeaderElectionConfig{
 		LeaseDuration: leaseDuration,
 		RenewDeadline: renewDeadline,
@@ -626,10 +630,10 @@ func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *
 	return allocator
 }
 
-func buildSessionAllocationNotifier(configData *config.Config) services.SessionAllocationNotifier {
+func buildSessionAllocationNotifier(configData *config.Config) sessionallocation.Notifier {
 	if configData.Redis.Addr == "" {
 		log.Printf("[SESSION_ALLOCATOR] Redis not configured; using local allocation notifier")
-		return services.NewLocalSessionAllocationNotifier()
+		return infrasessionallocation.NewLocalNotifier()
 	}
 	opts := &redis.Options{
 		Addr:     configData.Redis.Addr,
@@ -654,10 +658,10 @@ func buildSessionAllocationNotifier(configData *config.Config) services.SessionA
 	if err := client.Ping(ctx).Err(); err != nil {
 		log.Printf("[SESSION_ALLOCATOR] Warning: Redis ping failed (%s); using local allocation notifier: %v", configData.Redis.Addr, err)
 		_ = client.Close()
-		return services.NewLocalSessionAllocationNotifier()
+		return infrasessionallocation.NewLocalNotifier()
 	}
 	log.Printf("[SESSION_ALLOCATOR] Redis allocation notifier connected: addr=%s", configData.Redis.Addr)
-	return services.NewRedisSessionAllocationNotifier(client)
+	return infrasessionallocation.NewRedisNotifier(client)
 }
 
 // registerImportExportHandlers registers import/export REST API handlers
