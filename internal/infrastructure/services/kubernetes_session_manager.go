@@ -2531,8 +2531,9 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 }
 
 const (
-	sciaCAPath      = "/etc/scia/mitm/ca.pem"
-	sciaNoProxyBase = "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com,api.openai.com,*.openai.com"
+	sciaCAPath       = "/etc/scia/mitm/ca.pem"
+	sciaCABundlePath = "/tmp/scia-ca-bundle.pem"
+	sciaNoProxyBase  = "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com,api.openai.com,*.openai.com"
 )
 
 func (m *KubernetesSessionManager) sciaSessionSidecarEnabled() bool {
@@ -2611,10 +2612,10 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 		{Name: "https_proxy", Value: proxyAddr},
 		{Name: "NO_PROXY", Value: noProxy},
 		{Name: "no_proxy", Value: noProxy},
-		{Name: "SSL_CERT_FILE", Value: sciaCAPath},
-		{Name: "REQUESTS_CA_BUNDLE", Value: sciaCAPath},
-		{Name: "CURL_CA_BUNDLE", Value: sciaCAPath},
-		{Name: "GIT_SSL_CAINFO", Value: sciaCAPath},
+		{Name: "SSL_CERT_FILE", Value: sciaCABundlePath},
+		{Name: "REQUESTS_CA_BUNDLE", Value: sciaCABundlePath},
+		{Name: "CURL_CA_BUNDLE", Value: sciaCABundlePath},
+		{Name: "GIT_SSL_CAINFO", Value: sciaCABundlePath},
 		{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath},
 		{Name: "AGENTAPI_SCIA_PROXY_URL", Value: proxyAddr},
 		{Name: "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", Value: credentialID},
@@ -4867,10 +4868,10 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string) {
 		env["https_proxy"] = proxyURL
 		env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
 		env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
-		env["SSL_CERT_FILE"] = sciaCAPath
-		env["REQUESTS_CA_BUNDLE"] = sciaCAPath
-		env["CURL_CA_BUNDLE"] = sciaCAPath
-		env["GIT_SSL_CAINFO"] = sciaCAPath
+		env["SSL_CERT_FILE"] = sciaCABundlePath
+		env["REQUESTS_CA_BUNDLE"] = sciaCABundlePath
+		env["CURL_CA_BUNDLE"] = sciaCABundlePath
+		env["GIT_SSL_CAINFO"] = sciaCABundlePath
 		env["NODE_EXTRA_CA_CERTS"] = sciaCAPath
 		if credential != "" {
 			env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = credential
