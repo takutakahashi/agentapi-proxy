@@ -244,6 +244,7 @@ func waitForSciaProxy(proxyURL string, timeout time.Duration) {
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				time.Sleep(2 * time.Second)
 				log.Printf("[SETUP] scia proxy is ready at %s", proxyURL)
 				return
 			}

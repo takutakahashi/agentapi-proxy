@@ -976,6 +976,11 @@ func waitForSciaProxy(ctx context.Context, proxyURL string, timeout time.Duratio
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(2 * time.Second):
+				}
 				log.Printf("[PROVISIONER] scia proxy is ready at %s", proxyURL)
 				return
 			}
