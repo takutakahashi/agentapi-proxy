@@ -2588,7 +2588,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 
 	sidecar := corev1.Container{
 		Name:            "scia-proxy",
-		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.4.0"),
+		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.5.0"),
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Args:            []string{"-config", "/etc/scia-config/config.yaml"},
 		Ports: []corev1.ContainerPort{
