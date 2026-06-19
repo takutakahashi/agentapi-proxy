@@ -2530,7 +2530,10 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
 }
 
-const sciaCAPath = "/etc/scia/mitm/ca.pem"
+const (
+	sciaCAPath      = "/etc/scia/mitm/ca.pem"
+	sciaNoProxyBase = "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com,api.openai.com,*.openai.com"
+)
 
 func (m *KubernetesSessionManager) sciaSessionSidecarEnabled() bool {
 	return m.config != nil && m.config.Scia.Enabled && m.config.Scia.SessionSidecarEnabled
@@ -2600,7 +2603,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 	}
 
 	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", port)
-	noProxy := mergeNoProxy("127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com", scia.NoProxy)
+	noProxy := mergeNoProxy(sciaNoProxyBase, scia.NoProxy)
 	envVars := []corev1.EnvVar{
 		{Name: "HTTP_PROXY", Value: proxyAddr},
 		{Name: "HTTPS_PROXY", Value: proxyAddr},
@@ -4862,8 +4865,8 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string) {
 		env["HTTPS_PROXY"] = proxyURL
 		env["http_proxy"] = proxyURL
 		env["https_proxy"] = proxyURL
-		env["NO_PROXY"] = mergeNoProxy(env["NO_PROXY"], scia.NoProxy)
-		env["no_proxy"] = mergeNoProxy(env["no_proxy"], scia.NoProxy)
+		env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
+		env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
 		env["SSL_CERT_FILE"] = sciaCAPath
 		env["REQUESTS_CA_BUNDLE"] = sciaCAPath
 		env["CURL_CA_BUNDLE"] = sciaCAPath
@@ -4906,8 +4909,8 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string) {
 	if env["https_proxy"] == "" {
 		env["https_proxy"] = scia.ProxyURL
 	}
-	env["NO_PROXY"] = mergeNoProxy(env["NO_PROXY"], scia.NoProxy)
-	env["no_proxy"] = mergeNoProxy(env["no_proxy"], scia.NoProxy)
+	env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
+	env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
 }
 
 func mergeNoProxy(existing, extra string) string {
