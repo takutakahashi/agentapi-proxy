@@ -161,6 +161,9 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	for _, container := range podSpec.Containers {
 		if container.Name == "scia-proxy" {
 			foundScia = true
+			assert.Equal(t, []string{"-config", "/etc/scia-config/config.yaml"}, container.Args)
+			assert.Contains(t, container.VolumeMounts, corev1.VolumeMount{Name: "scia-config", MountPath: "/etc/scia-config", ReadOnly: true})
+			assert.Contains(t, container.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm"})
 		}
 		if container.Name == "network-filter" {
 			foundNFA = true

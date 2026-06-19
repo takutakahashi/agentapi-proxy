@@ -2561,7 +2561,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 	}
 
 	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, port, hosts, paths, sandboxEnabled)
-	configScript := fmt.Sprintf("cat > /etc/scia/config.yaml <<'EOF'\n%sEOF\n", configYAML)
+	configScript := fmt.Sprintf("cat > /etc/scia-config/config.yaml <<'EOF'\n%sEOF\n", configYAML)
 
 	initContainer := corev1.Container{
 		Name:            "scia-config",
@@ -2569,7 +2569,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Command:         []string{"sh", "-c", configScript},
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: "scia-config", MountPath: "/etc/scia"},
+			{Name: "scia-config", MountPath: "/etc/scia-config"},
 		},
 	}
 
@@ -2577,12 +2577,12 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 		Name:            "scia-proxy",
 		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.4.0"),
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Args:            []string{"-config", "/etc/scia/config.yaml"},
+		Args:            []string{"-config", "/etc/scia-config/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "scia-proxy", ContainerPort: int32(port), Protocol: corev1.ProtocolTCP},
 		},
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: "scia-config", MountPath: "/etc/scia", ReadOnly: true},
+			{Name: "scia-config", MountPath: "/etc/scia-config", ReadOnly: true},
 			{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm"},
 		},
 		ReadinessProbe: &corev1.Probe{
