@@ -1946,6 +1946,17 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
 	}
 
+	var sciaInitContainer *corev1.Container
+	var sciaSidecar *corev1.Container
+	var sciaEnvVars []corev1.EnvVar
+	if m.sciaSessionSidecarEnabled() {
+		sciaInitContainer, sciaSidecar, sciaEnvVars = m.buildSciaSidecarContainers(req, sandboxEnabled)
+		initContainers = append(initContainers, *sciaInitContainer)
+		// Prefer the scia sidecar as the main process proxy. If nfa is enabled,
+		// scia forwards upstream through nfa via server.backendProxy.url.
+		sandboxEnvVars = replaceProxyEnvVars(sandboxEnvVars, sciaEnvVars)
+	}
+
 	// Build DinD sidecar if Docker-in-Docker is enabled.
 	dindEnabled := req.Docker != nil && req.Docker.Enabled
 	var dindSidecar *corev1.Container
@@ -2098,6 +2109,22 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			},
 		})
 	}
+	if m.sciaSessionSidecarEnabled() {
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "scia-config",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+			corev1.Volume{
+				Name: "scia-mitm-ca",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+		)
+	}
 	if dindEnabled {
 		volumes = append(volumes, dindVolumes...)
 	}
@@ -2109,6 +2136,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	containers := []corev1.Container{container}
 	if sandboxSidecar != nil {
 		containers = append(containers, *sandboxSidecar)
+	}
+	if sciaSidecar != nil {
+		containers = append(containers, *sciaSidecar)
 	}
 	if dindSidecar != nil {
 		containers = append(containers, *dindSidecar)
@@ -2496,6 +2526,161 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 	}
 
 	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
+}
+
+const sciaCAPath = "/etc/scia/mitm/ca.pem"
+
+func (m *KubernetesSessionManager) sciaSessionSidecarEnabled() bool {
+	return m.config != nil && m.config.Scia.Enabled && m.config.Scia.SessionSidecarEnabled
+}
+
+func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunServerRequest, sandboxEnabled bool) (*corev1.Container, *corev1.Container, []corev1.EnvVar) {
+	scia := m.config.Scia
+	port := scia.SessionSidecarPort
+	if port == 0 {
+		port = 18081
+	}
+	userNamespace := scia.UserNamespace
+	if userNamespace == "" {
+		userNamespace = req.UserID
+	}
+	if userNamespace == "" {
+		userNamespace = "default"
+	}
+	credentialID := scia.Credential
+	if credentialID == "" {
+		credentialID = userNamespace + ".google"
+	}
+	hosts := scia.GoogleHosts
+	if len(hosts) == 0 {
+		hosts = []string{"www.googleapis.com"}
+	}
+	paths := scia.GooglePaths
+	if len(paths) == 0 {
+		paths = []string{"/calendar/v3/*"}
+	}
+
+	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, port, hosts, paths, sandboxEnabled)
+	configScript := fmt.Sprintf("cat > /etc/scia/config.yaml <<'EOF'\n%sEOF\n", configYAML)
+
+	initContainer := corev1.Container{
+		Name:            "scia-config",
+		Image:           defaultIfEmpty(scia.SessionSidecarConfigImage, "busybox:1.36"),
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"sh", "-c", configScript},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "scia-config", MountPath: "/etc/scia"},
+		},
+	}
+
+	sidecar := corev1.Container{
+		Name:            "scia-proxy",
+		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.4.0"),
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Args:            []string{"-config", "/etc/scia/config.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "scia-proxy", ContainerPort: int32(port), Protocol: corev1.ProtocolTCP},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "scia-config", MountPath: "/etc/scia", ReadOnly: true},
+			{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm"},
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/_scia/healthz",
+					Port: intstr.FromInt(port),
+				},
+			},
+			InitialDelaySeconds: 2,
+			PeriodSeconds:       2,
+		},
+	}
+
+	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", port)
+	noProxy := mergeNoProxy("127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com", scia.NoProxy)
+	envVars := []corev1.EnvVar{
+		{Name: "HTTP_PROXY", Value: proxyAddr},
+		{Name: "HTTPS_PROXY", Value: proxyAddr},
+		{Name: "http_proxy", Value: proxyAddr},
+		{Name: "https_proxy", Value: proxyAddr},
+		{Name: "NO_PROXY", Value: noProxy},
+		{Name: "no_proxy", Value: noProxy},
+		{Name: "SSL_CERT_FILE", Value: sciaCAPath},
+		{Name: "REQUESTS_CA_BUNDLE", Value: sciaCAPath},
+		{Name: "CURL_CA_BUNDLE", Value: sciaCAPath},
+		{Name: "GIT_SSL_CAINFO", Value: sciaCAPath},
+		{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath},
+		{Name: "AGENTAPI_SCIA_PROXY_URL", Value: proxyAddr},
+		{Name: "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", Value: credentialID},
+		{Name: "AGENTAPI_SCIA_USER_NAMESPACE", Value: userNamespace},
+	}
+
+	return &initContainer, &sidecar, envVars
+}
+
+func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, port int, hosts, paths []string, useNFA bool) string {
+	var b strings.Builder
+	b.WriteString("server:\n")
+	b.WriteString("  mode: proxy\n")
+	b.WriteString(fmt.Sprintf("  listen: %q\n", fmt.Sprintf("0.0.0.0:%d", port)))
+	if useNFA {
+		b.WriteString("  backendProxy:\n")
+		b.WriteString(fmt.Sprintf("    url: %q\n", fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort)))
+	}
+	b.WriteString("  mitm:\n")
+	b.WriteString(fmt.Sprintf("    caCertPath: %q\n", sciaCAPath))
+	b.WriteString("    caKeyPath: \"/etc/scia/mitm/ca.key\"\n")
+	b.WriteString("  secrets:\n")
+	b.WriteString("    mode: kubernetes\n")
+	b.WriteString("    kubernetes:\n")
+	b.WriteString(fmt.Sprintf("      namespace: %q\n", namespace))
+	b.WriteString("  users:\n")
+	b.WriteString(fmt.Sprintf("    %s:\n", yamlKey(userNamespace)))
+	b.WriteString(fmt.Sprintf("      secretName: %q\n", "scia-oauth-"+sanitizeSecretName(userNamespace)))
+	b.WriteString("    google.oauth:\n")
+	b.WriteString("      secretName: \"scia-google-oauth\"\n")
+	b.WriteString("  oauth:\n")
+	b.WriteString("    namespaces:\n")
+	b.WriteString(fmt.Sprintf("      %s:\n", yamlKey(userNamespace)))
+	b.WriteString("        google:\n")
+	b.WriteString("          clientIdSecretRef: \"secret:google.oauth.client-id\"\n")
+	b.WriteString("          clientSecretRef: \"secret:google.oauth.client-secret\"\n")
+	b.WriteString("          scope: \"https://www.googleapis.com/auth/calendar.readonly\"\n")
+	b.WriteString("credentials: []\n")
+	b.WriteString("rules:\n")
+	b.WriteString("  - name: inject-google-oauth-token\n")
+	b.WriteString("    hosts:\n")
+	for _, host := range hosts {
+		b.WriteString(fmt.Sprintf("      - %q\n", host))
+	}
+	b.WriteString("    paths:\n")
+	for _, path := range paths {
+		b.WriteString(fmt.Sprintf("      - %q\n", path))
+	}
+	b.WriteString("    action: allow\n")
+	b.WriteString("    credentials:\n")
+	b.WriteString(fmt.Sprintf("      - %q\n", credentialID))
+	return b.String()
+}
+
+func yamlKey(value string) string {
+	return strconv.Quote(value)
+}
+
+func replaceProxyEnvVars(base, replacements []corev1.EnvVar) []corev1.EnvVar {
+	replacementNames := map[string]bool{}
+	for _, env := range replacements {
+		replacementNames[env.Name] = true
+	}
+	result := make([]corev1.EnvVar, 0, len(base)+len(replacements))
+	for _, env := range base {
+		if replacementNames[env.Name] {
+			continue
+		}
+		result = append(result, env)
+	}
+	return append(result, replacements...)
 }
 
 // buildDinDContainers returns the DinD sidecar container, env vars for the main container,
@@ -3614,6 +3799,14 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		ReadOnly:  true,
 	})
 
+	if m.sciaSessionSidecarEnabled() {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "scia-mitm-ca",
+			MountPath: "/etc/scia/mitm",
+			ReadOnly:  true,
+		})
+	}
+
 	// Add webhook payload volume mount if webhook payload is provided
 	if len(session.WebhookPayload()) > 0 {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
@@ -4663,6 +4856,43 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string) {
 	}
 
 	scia := m.config.Scia
+	if scia.SessionSidecarEnabled {
+		port := scia.SessionSidecarPort
+		if port == 0 {
+			port = 18081
+		}
+		userNamespace := scia.UserNamespace
+		if userNamespace == "" {
+			userNamespace = env["AGENTAPI_USER_ID"]
+		}
+		credential := scia.Credential
+		if credential == "" && userNamespace != "" {
+			credential = userNamespace + ".google"
+		}
+		proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+		env["AGENTAPI_SCIA_PROXY_URL"] = proxyURL
+		env["HTTP_PROXY"] = proxyURL
+		env["HTTPS_PROXY"] = proxyURL
+		env["http_proxy"] = proxyURL
+		env["https_proxy"] = proxyURL
+		env["NO_PROXY"] = mergeNoProxy(env["NO_PROXY"], scia.NoProxy)
+		env["no_proxy"] = mergeNoProxy(env["no_proxy"], scia.NoProxy)
+		env["SSL_CERT_FILE"] = sciaCAPath
+		env["REQUESTS_CA_BUNDLE"] = sciaCAPath
+		env["CURL_CA_BUNDLE"] = sciaCAPath
+		env["GIT_SSL_CAINFO"] = sciaCAPath
+		env["NODE_EXTRA_CA_CERTS"] = sciaCAPath
+		if credential != "" {
+			env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = credential
+		}
+		if userNamespace != "" {
+			env["AGENTAPI_SCIA_USER_NAMESPACE"] = userNamespace
+		}
+		if scia.PublicBaseURL != "" {
+			env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
+		}
+		return
+	}
 	if scia.Credential != "" {
 		env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = scia.Credential
 	}

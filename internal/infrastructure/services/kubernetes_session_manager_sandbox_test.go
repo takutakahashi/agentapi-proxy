@@ -1,6 +1,8 @@
 package services
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,4 +76,96 @@ func TestBuildSandboxContainersGeneratesRulesThenRestoresWithIptablesImage(t *te
 	assert.NotEmpty(t, sidecar.Resources.Limits)
 	assert.Contains(t, sidecar.Env, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
+}
+
+func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
+	manager := &KubernetesSessionManager{
+		config: &config.Config{
+			Scia: config.SciaConfig{
+				Enabled:                   true,
+				SessionSidecarEnabled:     true,
+				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.4.0",
+				SessionSidecarConfigImage: "busybox:1.36",
+				SessionSidecarPort:        18081,
+				Credential:                "takutakahashi.google",
+				UserNamespace:             "takutakahashi",
+				NoProxy:                   ".svc,.cluster.local",
+				GoogleHosts:               []string{"www.googleapis.com"},
+				GooglePaths:               []string{"/calendar/v3/*"},
+			},
+		},
+		k8sConfig: &config.KubernetesSessionConfig{
+			Namespace:                      "test-ns",
+			Image:                          "session-image:latest",
+			ImagePullPolicy:                "IfNotPresent",
+			BasePort:                       9000,
+			CPURequest:                     "100m",
+			CPULimit:                       "1",
+			MemoryRequest:                  "128Mi",
+			MemoryLimit:                    "512Mi",
+			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.7.0",
+			SandboxInitImage:               "gcr.io/istio-release/iptables:latest",
+			NetworkFilterInitMemoryRequest: "32Mi",
+			NetworkFilterInitMemoryLimit:   "64Mi",
+		},
+		namespace: "test-ns",
+	}
+	session := NewKubernetesSession(
+		"test-session",
+		&entities.RunServerRequest{UserID: "takutakahashi"},
+		"test-deploy",
+		"agentapi-session-test-svc",
+		"test-pvc",
+		"test-ns",
+		9000,
+		nil,
+		nil,
+	)
+	req := &entities.RunServerRequest{
+		UserID: "takutakahashi",
+		Sandbox: &entities.SandboxParams{
+			Enabled:        true,
+			AllowedDomains: []string{"www.googleapis.com"},
+		},
+	}
+
+	deployment := manager.buildDeployment(context.Background(), session, req)
+	podSpec := deployment.Spec.Template.Spec
+
+	var configInit *corev1.Container
+	for i := range podSpec.InitContainers {
+		if podSpec.InitContainers[i].Name == "scia-config" {
+			configInit = &podSpec.InitContainers[i]
+			break
+		}
+	}
+	if assert.NotNil(t, configInit) {
+		script := strings.Join(configInit.Command, " ")
+		if len(configInit.Command) >= 3 {
+			script = configInit.Command[2]
+		}
+		assert.Contains(t, script, "mode: proxy")
+		assert.Contains(t, script, `url: "http://127.0.0.1:3128"`)
+		assert.Contains(t, script, `secretName: "scia-oauth-takutakahashi"`)
+		assert.Contains(t, script, `- "takutakahashi.google"`)
+	}
+
+	main := podSpec.Containers[0]
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCAPath})
+	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm", ReadOnly: true})
+
+	var foundScia bool
+	var foundNFA bool
+	for _, container := range podSpec.Containers {
+		if container.Name == "scia-proxy" {
+			foundScia = true
+		}
+		if container.Name == "network-filter" {
+			foundNFA = true
+		}
+	}
+	assert.True(t, foundScia)
+	assert.True(t, foundNFA)
 }
