@@ -101,21 +101,33 @@ scia:
           value: "https://www.googleapis.com/auth/calendar.readonly"
           name: "Google Calendar read-only"
           desc: "Read Google Calendar events."
+          group: calendar
+          groupName: "Google Calendar"
+          groupDesc: "Choose how much Google Calendar access to grant."
           enabled: true
         - id: calendar-write
           value: "https://www.googleapis.com/auth/calendar"
           name: "Google Calendar read/write"
           desc: "Read and write Google Calendar events."
+          group: calendar
+          groupName: "Google Calendar"
+          groupDesc: "Choose how much Google Calendar access to grant."
           enabled: false
         - id: tasks-read
           value: "https://www.googleapis.com/auth/tasks.readonly"
           name: "Google Tasks read-only"
           desc: "Read Google Tasks and task lists."
+          group: tasks
+          groupName: "Google Tasks"
+          groupDesc: "Choose how much Google Tasks access to grant."
           enabled: true
         - id: tasks-write
           value: "https://www.googleapis.com/auth/tasks"
           name: "Google Tasks read/write"
           desc: "Read and write Google Tasks and task lists."
+          group: tasks
+          groupName: "Google Tasks"
+          groupDesc: "Choose how much Google Tasks access to grant."
           enabled: false
       # Secret-backed Google OAuth client credentials. Set create=false and
       # existingSecret to use a Secret managed outside Helm.

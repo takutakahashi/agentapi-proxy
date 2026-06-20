@@ -57,6 +57,15 @@ data:
                 {{- if $scope.desc }}
                 desc: {{ $scope.desc | quote }}
                 {{- end }}
+                {{- if $scope.group }}
+                group: {{ $scope.group | quote }}
+                {{- end }}
+                {{- if $scope.groupName }}
+                groupName: {{ $scope.groupName | quote }}
+                {{- end }}
+                {{- if $scope.groupDesc }}
+                groupDesc: {{ $scope.groupDesc | quote }}
+                {{- end }}
                 enabled: {{ $scope.enabled | default false }}
               {{- end }}
         namespaces:
