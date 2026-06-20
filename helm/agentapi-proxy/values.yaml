@@ -94,6 +94,9 @@ scia:
     redirectUrl: ""
     google:
       scope: "https://www.googleapis.com/auth/calendar.readonly"
+      scopeId: "calendar-read"
+      scopeName: "Google Calendar read-only"
+      scopeDesc: "Read Google Calendar events."
       # Secret-backed Google OAuth client credentials. Set create=false and
       # existingSecret to use a Secret managed outside Helm.
       secret:

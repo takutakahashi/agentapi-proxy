@@ -46,6 +46,14 @@ data:
       oauth:
         listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
         redirectUrl: {{ $redirectURL | quote }}
+        integrations:
+          google:
+            scopes:
+              - id: {{ $google.scopeId | default "calendar-read" | quote }}
+                value: {{ $google.scope | default "https://www.googleapis.com/auth/calendar.readonly" | quote }}
+                name: {{ $google.scopeName | default "Google Calendar read-only" | quote }}
+                desc: {{ $google.scopeDesc | default "Read Google Calendar events." | quote }}
+                enabled: true
         namespaces:
           {{- range $userID, $_ := $users }}
           {{ $userID | quote }}:
