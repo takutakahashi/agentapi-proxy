@@ -92,13 +92,19 @@ The command removes all the Kubernetes components associated with the chart and 
 | `scia.enabled`                                     | Deploy scia OAuth broker and configure sessions | `true` |
 | `scia.publicBaseUrl`                               | Browser-facing scia base URL                    | `""` |
 | `scia.credential`                                  | Google credential ID injected into sessions     | `default.google` |
-| `scia.userNamespace`                               | scia user namespace used by default             | `default` |
+| `scia.notionCredential`                            | Notion credential ID injected into sessions     | `default-notion.notion` |
+| `scia.userNamespace`                               | scia Google user namespace used by default      | `default` |
+| `scia.notionUserNamespace`                         | scia Notion user namespace used by default      | `default-notion` |
 | `scia.oauth.google.secret.create`                  | Create a Kubernetes Secret for Google OAuth     | `true` |
 | `scia.oauth.google.secret.existingSecret`          | Existing Secret containing Google OAuth values  | `""` |
 | `scia.oauth.google.secret.clientIdKey`             | Secret key for the Google OAuth client ID       | `client-id` |
 | `scia.oauth.google.secret.clientSecretKey`         | Secret key for the Google OAuth client secret   | `client-secret` |
-| `scia.users`                                       | scia user-to-refresh-token Secret mapping       | `{default: {secretName: scia-oauth-default}}` |
-| `scia.sessionRefreshTokenSecretNames`              | Refresh-token Secrets readable by session pods  | `[scia-oauth-default]` |
+| `scia.oauth.notion.secret.create`                  | Create a Kubernetes Secret for Notion OAuth     | `true` |
+| `scia.oauth.notion.secret.existingSecret`          | Existing Secret containing Notion OAuth values  | `""` |
+| `scia.oauth.notion.secret.clientIdKey`             | Secret key for the Notion OAuth client ID       | `client-id` |
+| `scia.oauth.notion.secret.clientSecretKey`         | Secret key for the Notion OAuth client secret   | `client-secret` |
+| `scia.users`                                       | scia user-to-refresh-token Secret mapping       | `{default: {secretName: scia-oauth-default}, default-notion: {secretName: scia-oauth-default-notion}}` |
+| `scia.sessionRefreshTokenSecretNames`              | Refresh-token Secrets readable by session pods  | `[scia-oauth-default, scia-oauth-default-notion]` |
 
 ### Application Configuration
 
@@ -200,7 +206,9 @@ scia:
   enabled: true
   publicBaseUrl: https://agentapi.yourdomain.com
   credential: default.google
+  notionCredential: default-notion.notion
   userNamespace: default
+  notionUserNamespace: default-notion
   oauth:
     google:
       secret:
@@ -208,14 +216,23 @@ scia:
         existingSecret: scia-google-oauth
         clientIdKey: client-id
         clientSecretKey: client-secret
+    notion:
+      secret:
+        create: false
+        existingSecret: scia-notion-oauth
+        clientIdKey: client-id
+        clientSecretKey: client-secret
   users:
     default:
       secretName: scia-oauth-default
+    default-notion:
+      secretName: scia-oauth-default-notion
   sessionRefreshTokenSecretNames:
     - scia-oauth-default
+    - scia-oauth-default-notion
 ```
 
-The `scia-google-oauth` Secret must contain the Google OAuth client ID and client secret. When `ingress.enabled=true`, the chart routes `/oauth` and `/_scia` to the scia OAuth broker on the same host.
+The `scia-google-oauth` and `scia-notion-oauth` Secrets must contain each provider's OAuth client ID and client secret. When `ingress.enabled=true`, the chart routes `/oauth` and `/_scia` to the scia OAuth broker on the same host.
 
 ### With Environment Variables
 

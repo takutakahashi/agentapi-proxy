@@ -84,14 +84,18 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 			Scia: config.SciaConfig{
 				Enabled:                   true,
 				SessionSidecarEnabled:     true,
-				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.5.0",
+				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.7.0",
 				SessionSidecarConfigImage: "busybox:1.36",
 				SessionSidecarPort:        18081,
 				Credential:                "takutakahashi.google",
+				NotionCredential:          "takutakahashi-notion.notion",
 				UserNamespace:             "takutakahashi",
+				NotionUserNamespace:       "takutakahashi-notion",
 				NoProxy:                   ".svc,.cluster.local",
 				GoogleHosts:               []string{"www.googleapis.com"},
 				GooglePaths:               []string{"/calendar/v3/*"},
+				NotionHosts:               []string{"api.notion.com"},
+				NotionPaths:               []string{"/v1/*"},
 			},
 		},
 		k8sConfig: &config.KubernetesSessionConfig{
@@ -150,10 +154,13 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 		assert.Contains(t, script, "    google:\n")
 		assert.Contains(t, script, `        - "www.googleapis.com"`)
 		assert.Contains(t, script, `secretName: "scia-oauth-takutakahashi"`)
+		assert.Contains(t, script, `secretName: "scia-oauth-takutakahashi-notion"`)
 		assert.NotContains(t, script, `scia-google-oauth`)
 		assert.NotContains(t, script, `clientSecretRef`)
 		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/takutakahashi/google/token"`)
+		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/takutakahashi-notion/notion/token"`)
 		assert.Contains(t, script, `- "takutakahashi.google"`)
+		assert.Contains(t, script, `- "takutakahashi-notion.notion"`)
 	}
 
 	main := podSpec.Containers[0]
@@ -168,6 +175,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	assert.Equal(t, "http://127.0.0.1:18081", env["HTTPS_PROXY"])
 	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
 	assert.Equal(t, "takutakahashi.google", env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"])
+	assert.Equal(t, "takutakahashi-notion.notion", env["AGENTAPI_SCIA_NOTION_CREDENTIAL"])
 	assert.NotContains(t, env["NO_PROXY"], "api.openai.com")
 	assert.NotContains(t, env["no_proxy"], "api.openai.com")
 
@@ -241,7 +249,7 @@ func newSciaSidecarTestManager(sessionSidecarEnabled bool) *KubernetesSessionMan
 			Scia: config.SciaConfig{
 				Enabled:                   true,
 				SessionSidecarEnabled:     sessionSidecarEnabled,
-				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.5.0",
+				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.7.0",
 				SessionSidecarConfigImage: "busybox:1.36",
 				SessionSidecarPort:        18081,
 				Credential:                "takutakahashi.google",

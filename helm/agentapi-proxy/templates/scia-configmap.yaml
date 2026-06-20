@@ -6,7 +6,8 @@
 {{- if $sciaEnabled }}
 {{- $oauth := $scia.oauth | default dict }}
 {{- $google := $oauth.google | default dict }}
-{{- $users := $scia.users | default (dict "default" (dict "secretName" "scia-oauth-default")) }}
+{{- $notion := $oauth.notion | default dict }}
+{{- $users := $scia.users | default (dict "default" (dict "secretName" "scia-oauth-default") "default-notion" (dict "secretName" "scia-oauth-default-notion")) }}
 {{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
 {{- $sciaHost := .Values.config.hostname | default "" }}
 {{- if .Values.global }}
@@ -21,6 +22,10 @@
 {{- $redirectURL := $oauth.redirectUrl | default "" }}
 {{- if and (eq $redirectURL "") $sciaPublicBaseURL }}
   {{- $redirectURL = printf "%s/oauth/google/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
+{{- end }}
+{{- $notionRedirectURL := $notion.redirectUrl | default "" }}
+{{- if and (eq $notionRedirectURL "") $sciaPublicBaseURL }}
+  {{- $notionRedirectURL = printf "%s/oauth/notion/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
 {{- end }}
 apiVersion: v1
 kind: ConfigMap
@@ -55,6 +60,13 @@ data:
               scope: {{ $google.scope | default "https://www.googleapis.com/auth/calendar.readonly" | quote }}
               {{- if $redirectURL }}
               redirectUrl: {{ $redirectURL | quote }}
+              {{- end }}
+            notion:
+              clientId: "env:NOTION_OAUTH_CLIENT_ID"
+              clientSecret: "env:NOTION_OAUTH_CLIENT_SECRET"
+              notionVersion: {{ $notion.notionVersion | default "2026-03-11" | quote }}
+              {{- if $notionRedirectURL }}
+              redirectUrl: {{ $notionRedirectURL | quote }}
               {{- end }}
           {{- end }}
     credentials: []

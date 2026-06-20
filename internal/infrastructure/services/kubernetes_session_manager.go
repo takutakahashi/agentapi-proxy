@@ -2560,9 +2560,17 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 	if userNamespace == "" {
 		userNamespace = "default"
 	}
+	notionUserNamespace := scia.NotionUserNamespace
+	if notionUserNamespace == "" {
+		notionUserNamespace = userNamespace + "-notion"
+	}
 	credentialID := scia.Credential
 	if credentialID == "" {
 		credentialID = userNamespace + ".google"
+	}
+	notionCredentialID := scia.NotionCredential
+	if notionCredentialID == "" {
+		notionCredentialID = notionUserNamespace + ".notion"
 	}
 	hosts := scia.GoogleHosts
 	if len(hosts) == 0 {
@@ -2572,8 +2580,16 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 	if len(paths) == 0 {
 		paths = []string{"/calendar/v3/*"}
 	}
+	notionHosts := scia.NotionHosts
+	if len(notionHosts) == 0 {
+		notionHosts = []string{"api.notion.com"}
+	}
+	notionPaths := scia.NotionPaths
+	if len(notionPaths) == 0 {
+		notionPaths = []string{"/v1/*"}
+	}
 
-	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, port, hosts, paths, sandboxEnabled)
+	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, notionUserNamespace, credentialID, notionCredentialID, port, hosts, paths, notionHosts, notionPaths, sandboxEnabled)
 	configScript := fmt.Sprintf("cat > /etc/scia-config/config.yaml <<'EOF'\n%sEOF\n", configYAML)
 
 	initContainer := corev1.Container{
@@ -2588,7 +2604,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 
 	sidecar := corev1.Container{
 		Name:            "scia-proxy",
-		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.5.0"),
+		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.7.0"),
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Args:            []string{"-config", "/etc/scia-config/config.yaml"},
 		Ports: []corev1.ContainerPort{
@@ -2626,13 +2642,15 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 		{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath},
 		{Name: "AGENTAPI_SCIA_PROXY_URL", Value: proxyAddr},
 		{Name: "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", Value: credentialID},
+		{Name: "AGENTAPI_SCIA_NOTION_CREDENTIAL", Value: notionCredentialID},
 		{Name: "AGENTAPI_SCIA_USER_NAMESPACE", Value: userNamespace},
+		{Name: "AGENTAPI_SCIA_NOTION_USER_NAMESPACE", Value: notionUserNamespace},
 	}
 
 	return &initContainer, &sidecar, envVars
 }
 
-func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, port int, hosts, paths []string, useNFA bool) string {
+func buildSciaSidecarConfigYAML(namespace, userNamespace, notionUserNamespace, credentialID, notionCredentialID string, port int, hosts, paths, notionHosts, notionPaths []string, useNFA bool) string {
 	var b strings.Builder
 	b.WriteString("server:\n")
 	b.WriteString("  mode: proxy\n")
@@ -2657,11 +2675,17 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, p
 	b.WriteString("  users:\n")
 	b.WriteString(fmt.Sprintf("    %s:\n", yamlKey(userNamespace)))
 	b.WriteString(fmt.Sprintf("      secretName: %q\n", "scia-oauth-"+sanitizeSecretName(userNamespace)))
+	b.WriteString(fmt.Sprintf("    %s:\n", yamlKey(notionUserNamespace)))
+	b.WriteString(fmt.Sprintf("      secretName: %q\n", "scia-oauth-"+sanitizeSecretName(notionUserNamespace)))
 	b.WriteString("credentials:\n")
 	b.WriteString(fmt.Sprintf("  - id: %q\n", credentialID))
 	b.WriteString("    type: google-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
 	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/google/token", namespace, url.PathEscape(userNamespace))))
+	b.WriteString(fmt.Sprintf("  - id: %q\n", notionCredentialID))
+	b.WriteString("    type: notion-oauth-refresh-token\n")
+	b.WriteString("    params:\n")
+	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/notion/token", namespace, url.PathEscape(notionUserNamespace))))
 	b.WriteString("rules:\n")
 	b.WriteString("  - name: inject-google-oauth-token\n")
 	b.WriteString("    hosts:\n")
@@ -2675,6 +2699,18 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, p
 	b.WriteString("    action: allow\n")
 	b.WriteString("    credentials:\n")
 	b.WriteString(fmt.Sprintf("      - %q\n", credentialID))
+	b.WriteString("  - name: inject-notion-oauth-token\n")
+	b.WriteString("    hosts:\n")
+	for _, host := range notionHosts {
+		b.WriteString(fmt.Sprintf("      - %q\n", host))
+	}
+	b.WriteString("    paths:\n")
+	for _, path := range notionPaths {
+		b.WriteString(fmt.Sprintf("      - %q\n", path))
+	}
+	b.WriteString("    action: allow\n")
+	b.WriteString("    credentials:\n")
+	b.WriteString(fmt.Sprintf("      - %q\n", notionCredentialID))
 	return b.String()
 }
 
@@ -4859,8 +4895,14 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 		if scia.Credential != "" {
 			env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = scia.Credential
 		}
+		if scia.NotionCredential != "" {
+			env["AGENTAPI_SCIA_NOTION_CREDENTIAL"] = scia.NotionCredential
+		}
 		if scia.UserNamespace != "" {
 			env["AGENTAPI_SCIA_USER_NAMESPACE"] = scia.UserNamespace
+		}
+		if scia.NotionUserNamespace != "" {
+			env["AGENTAPI_SCIA_NOTION_USER_NAMESPACE"] = scia.NotionUserNamespace
 		}
 		if scia.PublicBaseURL != "" {
 			env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
@@ -4876,9 +4918,17 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 	if userNamespace == "" {
 		userNamespace = env["AGENTAPI_USER_ID"]
 	}
+	notionUserNamespace := scia.NotionUserNamespace
+	if notionUserNamespace == "" && userNamespace != "" {
+		notionUserNamespace = userNamespace + "-notion"
+	}
 	credential := scia.Credential
 	if credential == "" && userNamespace != "" {
 		credential = userNamespace + ".google"
+	}
+	notionCredential := scia.NotionCredential
+	if notionCredential == "" && notionUserNamespace != "" {
+		notionCredential = notionUserNamespace + ".notion"
 	}
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	env["AGENTAPI_SCIA_PROXY_URL"] = proxyURL
@@ -4896,8 +4946,14 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 	if credential != "" {
 		env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = credential
 	}
+	if notionCredential != "" {
+		env["AGENTAPI_SCIA_NOTION_CREDENTIAL"] = notionCredential
+	}
 	if userNamespace != "" {
 		env["AGENTAPI_SCIA_USER_NAMESPACE"] = userNamespace
+	}
+	if notionUserNamespace != "" {
+		env["AGENTAPI_SCIA_NOTION_USER_NAMESPACE"] = notionUserNamespace
 	}
 	if scia.PublicBaseURL != "" {
 		env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL

@@ -57,22 +57,31 @@ type GoogleOAuthStatusResponse struct {
 
 // GetStatus returns the user's scia Google OAuth integration status.
 func (c *GoogleOAuthController) GetStatus(ctx echo.Context) error {
+	return c.getProviderStatus(ctx, "google")
+}
+
+// GetNotionStatus returns the user's scia Notion OAuth integration status.
+func (c *GoogleOAuthController) GetNotionStatus(ctx echo.Context) error {
+	return c.getProviderStatus(ctx, "notion")
+}
+
+func (c *GoogleOAuthController) getProviderStatus(ctx echo.Context, provider string) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 
 	userID := string(user.ID())
-	userNamespace := c.userNamespace(userID)
-	credential := c.credential(userNamespace)
+	userNamespace := c.userNamespace(provider, userID)
+	credential := c.credential(provider, userNamespace)
 
 	resp := GoogleOAuthStatusResponse{
 		Enabled:          c.scia.Enabled,
 		ClientConfigured: c.scia.Enabled && credential != "",
 		Credential:       credential,
 		UserNamespace:    userNamespace,
-		OAuthStartURL:    c.oauthStartURL(userNamespace, credential),
-		AuthorizationURL: c.authorizationURLEndpoint(userNamespace),
+		OAuthStartURL:    c.oauthStartURL(provider, userNamespace, credential),
+		AuthorizationURL: c.authorizationURLEndpoint(provider, userNamespace),
 		ProxyConfigured:  c.scia.Enabled && c.scia.ProxyURL != "",
 	}
 
@@ -118,38 +127,50 @@ func (c *GoogleOAuthController) refreshTokenSecretExists(ctx context.Context, us
 	return err == nil
 }
 
-func (c *GoogleOAuthController) userNamespace(userID string) string {
+func (c *GoogleOAuthController) userNamespace(provider, userID string) string {
+	if provider == "notion" && c.scia.NotionUserNamespace != "" {
+		return c.scia.NotionUserNamespace
+	}
 	if c.scia.UserNamespace != "" {
+		if provider == "notion" {
+			return c.scia.UserNamespace + "-notion"
+		}
 		return c.scia.UserNamespace
+	}
+	if provider == "notion" {
+		return userID + "-notion"
 	}
 	return userID
 }
 
-func (c *GoogleOAuthController) credential(userNamespace string) string {
-	if c.scia.Credential != "" {
+func (c *GoogleOAuthController) credential(provider, userNamespace string) string {
+	if provider == "notion" && c.scia.NotionCredential != "" {
+		return c.scia.NotionCredential
+	}
+	if provider == "google" && c.scia.Credential != "" {
 		return c.scia.Credential
 	}
 	if userNamespace == "" {
 		return ""
 	}
-	return userNamespace + ".google"
+	return userNamespace + "." + provider
 }
 
-func (c *GoogleOAuthController) oauthStartURL(userNamespace, credential string) string {
+func (c *GoogleOAuthController) oauthStartURL(provider, userNamespace, credential string) string {
 	if credential == "" || userNamespace == "" {
 		return ""
 	}
 	values := url.Values{}
 	values.Set("credential", credential)
 	values.Set("user", userNamespace)
-	return c.withPublicBase("/oauth/google/start") + "?" + values.Encode()
+	return c.withPublicBase("/oauth/"+provider+"/start") + "?" + values.Encode()
 }
 
-func (c *GoogleOAuthController) authorizationURLEndpoint(userNamespace string) string {
+func (c *GoogleOAuthController) authorizationURLEndpoint(provider, userNamespace string) string {
 	if userNamespace == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/oauth/%s/google/authorization-url", c.withPublicBase(""), url.PathEscape(userNamespace))
+	return fmt.Sprintf("%s/oauth/%s/%s/authorization-url", c.withPublicBase(""), url.PathEscape(userNamespace), provider)
 }
 
 func (c *GoogleOAuthController) withPublicBase(path string) string {

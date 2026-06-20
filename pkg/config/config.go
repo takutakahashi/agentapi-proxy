@@ -243,8 +243,12 @@ type SciaConfig struct {
 	ProxyURL string `json:"proxy_url" mapstructure:"proxy_url"`
 	// Credential is the scia credential ID used for Google OAuth, e.g. "takutakahashi.google".
 	Credential string `json:"credential" mapstructure:"credential"`
+	// NotionCredential is the scia credential ID used for Notion OAuth, e.g. "takutakahashi.notion".
+	NotionCredential string `json:"notion_credential" mapstructure:"notion_credential"`
 	// UserNamespace is the scia user namespace used by the authorization-url endpoint.
 	UserNamespace string `json:"user_namespace" mapstructure:"user_namespace"`
+	// NotionUserNamespace is the scia user namespace used for Notion OAuth token storage.
+	NotionUserNamespace string `json:"notion_user_namespace" mapstructure:"notion_user_namespace"`
 	// NoProxy is appended to the session NO_PROXY value when ProxyURL is injected.
 	NoProxy string `json:"no_proxy" mapstructure:"no_proxy"`
 	// SessionSidecarEnabled runs scia as a sidecar in each session Pod.
@@ -259,6 +263,10 @@ type SciaConfig struct {
 	GoogleHosts []string `json:"google_hosts" mapstructure:"google_hosts"`
 	// GooglePaths is the list of paths where the sidecar injects the Google access token.
 	GooglePaths []string `json:"google_paths" mapstructure:"google_paths"`
+	// NotionHosts is the list of hosts where the sidecar injects the Notion access token.
+	NotionHosts []string `json:"notion_hosts" mapstructure:"notion_hosts"`
+	// NotionPaths is the list of paths where the sidecar injects the Notion access token.
+	NotionPaths []string `json:"notion_paths" mapstructure:"notion_paths"`
 }
 
 // KubernetesSessionConfig represents Kubernetes session manager configuration
@@ -937,8 +945,14 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	if credential := os.Getenv("AGENTAPI_SCIA_CREDENTIAL"); credential != "" {
 		config.Scia.Credential = credential
 	}
+	if credential := os.Getenv("AGENTAPI_SCIA_NOTION_CREDENTIAL"); credential != "" {
+		config.Scia.NotionCredential = credential
+	}
 	if userNamespace := os.Getenv("AGENTAPI_SCIA_USER_NAMESPACE"); userNamespace != "" {
 		config.Scia.UserNamespace = userNamespace
+	}
+	if userNamespace := os.Getenv("AGENTAPI_SCIA_NOTION_USER_NAMESPACE"); userNamespace != "" {
+		config.Scia.NotionUserNamespace = userNamespace
 	}
 	if noProxy := os.Getenv("AGENTAPI_SCIA_NO_PROXY"); noProxy != "" {
 		config.Scia.NoProxy = noProxy
@@ -962,6 +976,12 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	}
 	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_GOOGLE_PATHS")); len(paths) > 0 {
 		config.Scia.GooglePaths = paths
+	}
+	if hosts := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_NOTION_HOSTS")); len(hosts) > 0 {
+		config.Scia.NotionHosts = hosts
+	}
+	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_NOTION_PATHS")); len(paths) > 0 {
+		config.Scia.NotionPaths = paths
 	}
 
 	// Override fields if environment variables are set (even if structures already exist)
@@ -1039,7 +1059,9 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("scia.public_base_url", "AGENTAPI_SCIA_PUBLIC_BASE_URL")
 	_ = v.BindEnv("scia.proxy_url", "AGENTAPI_SCIA_PROXY_URL")
 	_ = v.BindEnv("scia.credential", "AGENTAPI_SCIA_CREDENTIAL")
+	_ = v.BindEnv("scia.notion_credential", "AGENTAPI_SCIA_NOTION_CREDENTIAL")
 	_ = v.BindEnv("scia.user_namespace", "AGENTAPI_SCIA_USER_NAMESPACE")
+	_ = v.BindEnv("scia.notion_user_namespace", "AGENTAPI_SCIA_NOTION_USER_NAMESPACE")
 	_ = v.BindEnv("scia.no_proxy", "AGENTAPI_SCIA_NO_PROXY")
 	_ = v.BindEnv("scia.session_sidecar_enabled", "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED")
 	_ = v.BindEnv("scia.session_sidecar_image", "AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE")
@@ -1047,6 +1069,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("scia.session_sidecar_port", "AGENTAPI_SCIA_SESSION_SIDECAR_PORT")
 	_ = v.BindEnv("scia.google_hosts", "AGENTAPI_SCIA_GOOGLE_HOSTS")
 	_ = v.BindEnv("scia.google_paths", "AGENTAPI_SCIA_GOOGLE_PATHS")
+	_ = v.BindEnv("scia.notion_hosts", "AGENTAPI_SCIA_NOTION_HOSTS")
+	_ = v.BindEnv("scia.notion_paths", "AGENTAPI_SCIA_NOTION_PATHS")
 
 	// Role-based environment files configuration
 	_ = v.BindEnv("role_env_files.enabled")
@@ -1306,14 +1330,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scia.public_base_url", "")
 	v.SetDefault("scia.proxy_url", "")
 	v.SetDefault("scia.credential", "")
+	v.SetDefault("scia.notion_credential", "")
 	v.SetDefault("scia.user_namespace", "")
+	v.SetDefault("scia.notion_user_namespace", "")
 	v.SetDefault("scia.no_proxy", "localhost,127.0.0.1,.svc,.cluster.local")
 	v.SetDefault("scia.session_sidecar_enabled", false)
-	v.SetDefault("scia.session_sidecar_image", "ghcr.io/takutakahashi/scia:0.5.0")
+	v.SetDefault("scia.session_sidecar_image", "ghcr.io/takutakahashi/scia:0.7.0")
 	v.SetDefault("scia.session_sidecar_config_image", "busybox:1.36")
 	v.SetDefault("scia.session_sidecar_port", 18081)
 	v.SetDefault("scia.google_hosts", []string{"www.googleapis.com"})
 	v.SetDefault("scia.google_paths", []string{"/calendar/v3/*"})
+	v.SetDefault("scia.notion_hosts", []string{"api.notion.com"})
+	v.SetDefault("scia.notion_paths", []string{"/v1/*"})
 
 	// Memory backend defaults
 	v.SetDefault("memory.backend", "kubernetes")
@@ -1391,7 +1419,7 @@ func applyConfigDefaults(config *Config) {
 		config.Scia.NoProxy = "localhost,127.0.0.1,.svc,.cluster.local"
 	}
 	if config.Scia.SessionSidecarImage == "" {
-		config.Scia.SessionSidecarImage = "ghcr.io/takutakahashi/scia:0.5.0"
+		config.Scia.SessionSidecarImage = "ghcr.io/takutakahashi/scia:0.7.0"
 	}
 	if config.Scia.SessionSidecarConfigImage == "" {
 		config.Scia.SessionSidecarConfigImage = "busybox:1.36"
@@ -1404,6 +1432,12 @@ func applyConfigDefaults(config *Config) {
 	}
 	if len(config.Scia.GooglePaths) == 0 {
 		config.Scia.GooglePaths = []string{"/calendar/v3/*"}
+	}
+	if len(config.Scia.NotionHosts) == 0 {
+		config.Scia.NotionHosts = []string{"api.notion.com"}
+	}
+	if len(config.Scia.NotionPaths) == 0 {
+		config.Scia.NotionPaths = []string{"/v1/*"}
 	}
 }
 
