@@ -85,10 +85,10 @@ type FrontendIntegration struct {
 
 // FrontendIntegrationScope is one selectable OAuth scope in scia metadata.
 type FrontendIntegrationScope struct {
-	Value       string `json:"value"`
-	Label       string `json:"label,omitempty"`
-	Description string `json:"description,omitempty"`
-	Enabled     bool   `json:"enabled"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Desc    string `json:"desc,omitempty"`
+	Enabled bool   `json:"enabled"`
 }
 
 // GetStatus returns the user's scia Google OAuth integration status.
