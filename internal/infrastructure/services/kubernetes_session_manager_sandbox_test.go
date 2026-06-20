@@ -84,7 +84,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 			Scia: config.SciaConfig{
 				Enabled:                   true,
 				SessionSidecarEnabled:     true,
-				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.5.0",
+				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.9.0",
 				SessionSidecarConfigImage: "busybox:1.36",
 				SessionSidecarPort:        18081,
 				Credential:                "takutakahashi.google",
@@ -241,7 +241,7 @@ func newSciaSidecarTestManager(sessionSidecarEnabled bool) *KubernetesSessionMan
 			Scia: config.SciaConfig{
 				Enabled:                   true,
 				SessionSidecarEnabled:     sessionSidecarEnabled,
-				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.5.0",
+				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.9.0",
 				SessionSidecarConfigImage: "busybox:1.36",
 				SessionSidecarPort:        18081,
 				Credential:                "takutakahashi.google",
