@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -55,6 +57,40 @@ type GoogleOAuthStatusResponse struct {
 	ProxyConfigured  bool   `json:"proxy_configured"`
 }
 
+// IntegrationsResponse is returned by GET /integrations.
+type IntegrationsResponse struct {
+	Enabled      bool                  `json:"enabled"`
+	HealthOK     bool                  `json:"health_ok"`
+	HealthStatus string                `json:"health_status,omitempty"`
+	Integrations []FrontendIntegration `json:"integrations"`
+}
+
+// FrontendIntegration mirrors scia's non-secret frontend metadata with proxy status.
+type FrontendIntegration struct {
+	ID                       string                     `json:"id"`
+	Provider                 string                     `json:"provider"`
+	Namespace                string                     `json:"namespace,omitempty"`
+	CredentialID             string                     `json:"credential_id"`
+	Name                     string                     `json:"name"`
+	IconURL                  string                     `json:"icon_url,omitempty"`
+	Description              string                     `json:"description,omitempty"`
+	Released                 bool                       `json:"released"`
+	Source                   string                     `json:"source,omitempty"`
+	StartURL                 string                     `json:"start_url"`
+	AuthorizationURLEndpoint string                     `json:"authorization_url_endpoint,omitempty"`
+	Setup                    map[string]string          `json:"setup,omitempty"`
+	Scopes                   []FrontendIntegrationScope `json:"scopes"`
+	Connected                bool                       `json:"connected"`
+}
+
+// FrontendIntegrationScope is one selectable OAuth scope in scia metadata.
+type FrontendIntegrationScope struct {
+	Value       string `json:"value"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	Enabled     bool   `json:"enabled"`
+}
+
 // GetStatus returns the user's scia Google OAuth integration status.
 func (c *GoogleOAuthController) GetStatus(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
@@ -84,10 +120,89 @@ func (c *GoogleOAuthController) GetStatus(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, resp)
 }
 
-func (c *GoogleOAuthController) checkHealth(ctx context.Context) (bool, string) {
-	base := strings.TrimRight(c.scia.PublicBaseURL, "/")
+// GetIntegrations returns scia frontend integration metadata for the current user.
+func (c *GoogleOAuthController) GetIntegrations(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
+
+	resp := IntegrationsResponse{Enabled: c.scia.Enabled}
+	if !c.scia.Enabled {
+		return ctx.JSON(http.StatusOK, resp)
+	}
+
+	resp.HealthOK, resp.HealthStatus = c.checkHealth(ctx.Request().Context())
+	integrations, err := c.fetchSciaIntegrations(ctx.Request().Context())
+	if err != nil {
+		resp.HealthStatus = err.Error()
+		return ctx.JSON(http.StatusOK, resp)
+	}
+
+	userID := string(user.ID())
+	defaultNamespace := c.userNamespace(userID)
+	for i := range integrations {
+		namespace := integrations[i].Namespace
+		if namespace == "" {
+			namespace = defaultNamespace
+			integrations[i].Namespace = namespace
+		}
+		integrations[i].StartURL = c.publicURL(integrations[i].StartURL)
+		integrations[i].AuthorizationURLEndpoint = c.publicURL(integrations[i].AuthorizationURLEndpoint)
+		if integrations[i].Setup != nil {
+			for key, value := range integrations[i].Setup {
+				if strings.HasSuffix(key, "_url") {
+					integrations[i].Setup[key] = c.publicURL(value)
+				}
+			}
+		}
+		integrations[i].Connected = c.refreshTokenSecretExists(ctx.Request().Context(), namespace)
+	}
+	resp.Integrations = integrations
+
+	return ctx.JSON(http.StatusOK, resp)
+}
+
+func (c *GoogleOAuthController) fetchSciaIntegrations(ctx context.Context) ([]FrontendIntegration, error) {
+	base := strings.TrimRight(c.scia.OAuthInternalURL, "/")
 	if base == "" {
-		return false, "public_base_url_not_configured"
+		base = strings.TrimRight(c.scia.PublicBaseURL, "/")
+	}
+	if base == "" {
+		return nil, fmt.Errorf("scia_oauth_url_not_configured")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/integrations", nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid_integrations_url")
+	}
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		return nil, fmt.Errorf("scia integrations returned %s: %s", res.Status, strings.TrimSpace(string(body)))
+	}
+	var body struct {
+		Integrations []FrontendIntegration `json:"integrations"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("failed to decode scia integrations: %w", err)
+	}
+	return body.Integrations, nil
+}
+
+func (c *GoogleOAuthController) checkHealth(ctx context.Context) (bool, string) {
+	base := strings.TrimRight(c.scia.OAuthInternalURL, "/")
+	if base == "" {
+		base = strings.TrimRight(c.scia.PublicBaseURL, "/")
+	}
+	if base == "" {
+		return false, "scia_oauth_url_not_configured"
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/_scia/healthz", nil)
@@ -153,9 +268,22 @@ func (c *GoogleOAuthController) authorizationURLEndpoint(userNamespace string) s
 }
 
 func (c *GoogleOAuthController) withPublicBase(path string) string {
+	return c.publicURL(path)
+}
+
+func (c *GoogleOAuthController) publicURL(path string) string {
+	if path == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(path); err == nil && parsed.IsAbs() {
+		return path
+	}
 	base := strings.TrimRight(c.scia.PublicBaseURL, "/")
 	if base == "" {
 		return path
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
 	}
 	return base + path
 }

@@ -239,6 +239,8 @@ type SciaConfig struct {
 	// PublicBaseURL is the browser-reachable origin that serves /oauth and /_scia.
 	// When empty, UI clients can still use same-origin relative OAuth URLs.
 	PublicBaseURL string `json:"public_base_url" mapstructure:"public_base_url"`
+	// OAuthInternalURL is the proxy-reachable scia OAuth server origin used for metadata.
+	OAuthInternalURL string `json:"oauth_internal_url" mapstructure:"oauth_internal_url"`
 	// ProxyURL is the forward proxy URL used by session Pods for outbound Google API calls.
 	ProxyURL string `json:"proxy_url" mapstructure:"proxy_url"`
 	// Credential is the scia credential ID used for Google OAuth, e.g. "takutakahashi.google".
@@ -1037,6 +1039,7 @@ func bindEnvVars(v *viper.Viper) {
 	// scia OAuth broker/proxy configuration
 	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")
 	_ = v.BindEnv("scia.public_base_url", "AGENTAPI_SCIA_PUBLIC_BASE_URL")
+	_ = v.BindEnv("scia.oauth_internal_url", "AGENTAPI_SCIA_OAUTH_INTERNAL_URL")
 	_ = v.BindEnv("scia.proxy_url", "AGENTAPI_SCIA_PROXY_URL")
 	_ = v.BindEnv("scia.credential", "AGENTAPI_SCIA_CREDENTIAL")
 	_ = v.BindEnv("scia.user_namespace", "AGENTAPI_SCIA_USER_NAMESPACE")
@@ -1304,6 +1307,7 @@ func setDefaults(v *viper.Viper) {
 	// scia defaults
 	v.SetDefault("scia.enabled", false)
 	v.SetDefault("scia.public_base_url", "")
+	v.SetDefault("scia.oauth_internal_url", "")
 	v.SetDefault("scia.proxy_url", "")
 	v.SetDefault("scia.credential", "")
 	v.SetDefault("scia.user_namespace", "")

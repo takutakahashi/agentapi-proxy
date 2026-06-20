@@ -260,10 +260,13 @@ spec:
             {{- if and (eq $sciaPublicBaseURL "") $sciaHost }}
               {{- $sciaPublicBaseURL = printf "https://%s" $sciaHost }}
             {{- end }}
+            {{- $sciaService := $scia.service | default dict }}
             - name: AGENTAPI_SCIA_ENABLED
               value: {{ $sciaEnabled | quote }}
             - name: AGENTAPI_SCIA_PUBLIC_BASE_URL
               value: {{ $sciaPublicBaseURL | quote }}
+            - name: AGENTAPI_SCIA_OAUTH_INTERNAL_URL
+              value: {{ $scia.oauthInternalUrl | default (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.sciaServiceName" .) .Release.Namespace ($sciaService.port | default 8081)) | quote }}
             - name: AGENTAPI_SCIA_PROXY_URL
               value: {{ $scia.proxyUrl | default "" | quote }}
             - name: AGENTAPI_SCIA_CREDENTIAL
