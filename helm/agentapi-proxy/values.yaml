@@ -82,8 +82,10 @@ scia:
   noProxy: "localhost,127.0.0.1,.svc,.cluster.local"
   googleHosts:
     - www.googleapis.com
+    - tasks.googleapis.com
   googlePaths:
     - /calendar/v3/*
+    - /tasks/v1/*
   sessionSidecar:
     enabled: true
     image: ghcr.io/takutakahashi/scia:0.9.0
@@ -94,9 +96,27 @@ scia:
     redirectUrl: ""
     google:
       scope: "https://www.googleapis.com/auth/calendar.readonly"
-      scopeId: "calendar-read"
-      scopeName: "Google Calendar read-only"
-      scopeDesc: "Read Google Calendar events."
+      scopes:
+        - id: calendar-read
+          value: "https://www.googleapis.com/auth/calendar.readonly"
+          name: "Google Calendar read-only"
+          desc: "Read Google Calendar events."
+          enabled: true
+        - id: calendar-write
+          value: "https://www.googleapis.com/auth/calendar"
+          name: "Google Calendar read/write"
+          desc: "Read and write Google Calendar events."
+          enabled: false
+        - id: tasks-read
+          value: "https://www.googleapis.com/auth/tasks.readonly"
+          name: "Google Tasks read-only"
+          desc: "Read Google Tasks and task lists."
+          enabled: true
+        - id: tasks-write
+          value: "https://www.googleapis.com/auth/tasks"
+          name: "Google Tasks read/write"
+          desc: "Read and write Google Tasks and task lists."
+          enabled: false
       # Secret-backed Google OAuth client credentials. Set create=false and
       # existingSecret to use a Secret managed outside Helm.
       secret:
