@@ -28,6 +28,9 @@
 {{- if and (eq $todoistRedirectURL "") $sciaPublicBaseURL }}
   {{- $todoistRedirectURL = printf "%s/oauth/todoist/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
 {{- end }}
+{{- if $todoist.omitRedirectUrl }}
+  {{- $todoistRedirectURL = "" }}
+{{- end }}
 {{- $googleScopes := $google.scopes | default (list (dict "id" ($google.scopeId | default "calendar-read") "value" ($google.scope | default "https://www.googleapis.com/auth/calendar.readonly") "name" ($google.scopeName | default "Google Calendar read-only") "desc" ($google.scopeDesc | default "Read Google Calendar events.") "enabled" true)) }}
 {{- $todoistScopes := $todoist.scopes | default (list (dict "id" "read-write" "value" ($todoist.scope | default "data:read_write") "name" "Todoist read/write" "desc" "Read and write Todoist tasks and projects." "enabled" true)) }}
 apiVersion: v1

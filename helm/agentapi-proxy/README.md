@@ -99,6 +99,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | `scia.oauth.google.secret.clientIdKey`             | Secret key for the Google OAuth client ID       | `client-id` |
 | `scia.oauth.google.secret.clientSecretKey`         | Secret key for the Google OAuth client secret   | `client-secret` |
 | `scia.oauth.todoist.enabled`                       | Enable Todoist OAuth in scia                    | `false` |
+| `scia.oauth.todoist.omitRedirectUrl`               | Omit Todoist redirect_uri from OAuth requests   | `false` |
 | `scia.oauth.todoist.secret.create`                 | Create a Kubernetes Secret for Todoist OAuth    | `true` |
 | `scia.oauth.todoist.secret.existingSecret`         | Existing Secret containing Todoist OAuth values | `""` |
 | `scia.users`                                       | scia user-to-refresh-token Secret mapping       | `{default: {secretName: scia-oauth-default}}` |
@@ -234,6 +235,7 @@ scia:
       enabled: true
       scope: data:read_write
       redirectUrl: https://agentapi.yourdomain.com/oauth/todoist/callback
+      omitRedirectUrl: false
       secret:
         create: false
         existingSecret: scia-todoist-oauth

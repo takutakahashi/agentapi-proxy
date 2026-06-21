@@ -146,6 +146,7 @@ scia:
     todoist:
       enabled: false
       scope: "data:read_write"
+      omitRedirectUrl: false
       scopes:
         - id: read-write
           value: "data:read_write"
