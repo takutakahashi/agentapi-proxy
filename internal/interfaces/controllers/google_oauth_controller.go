@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -80,6 +81,15 @@ type IntegrationAuthorizationURLResponse struct {
 	AuthURL          string `json:"auth_url,omitempty"`
 	RedirectURI      string `json:"redirect_uri,omitempty"`
 	Scope            string `json:"scope,omitempty"`
+}
+
+type sciaHTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e sciaHTTPError) Error() string {
+	return e.Message
 }
 
 // FrontendIntegration mirrors scia's non-secret frontend metadata with proxy status.
@@ -209,6 +219,10 @@ func (c *GoogleOAuthController) CreateAuthorizationURL(ctx echo.Context) error {
 
 	resp, err := c.createSciaAuthorizationURL(ctx.Request().Context(), integration, input)
 	if err != nil {
+		var upstream sciaHTTPError
+		if errors.As(err, &upstream) {
+			return echo.NewHTTPError(upstream.StatusCode, upstream.Message)
+		}
 		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 	}
 	resp.Scope = ""
@@ -266,7 +280,10 @@ func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, 
 	}()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return IntegrationAuthorizationURLResponse{}, fmt.Errorf("scia authorization-url returned %s: %s", res.Status, strings.TrimSpace(string(body)))
+		return IntegrationAuthorizationURLResponse{}, sciaHTTPError{
+			StatusCode: res.StatusCode,
+			Message:    strings.TrimSpace(string(body)),
+		}
 	}
 	var output IntegrationAuthorizationURLResponse
 	if err := json.NewDecoder(res.Body).Decode(&output); err != nil {
