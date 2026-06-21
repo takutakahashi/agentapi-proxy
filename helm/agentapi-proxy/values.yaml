@@ -78,6 +78,7 @@ scia:
   publicBaseUrl: ""
   proxyUrl: ""
   credential: "default.google"
+  todoistCredential: "default.todoist"
   userNamespace: "default"
   noProxy: "localhost,127.0.0.1,.svc,.cluster.local"
   googleHosts:
@@ -86,6 +87,10 @@ scia:
   googlePaths:
     - /calendar/v3/*
     - /tasks/v1/*
+  todoistHosts:
+    - api.todoist.com
+  todoistPaths:
+    - /api/v1/*
   sessionSidecar:
     enabled: true
     image: ghcr.io/takutakahashi/scia:0.10.0
@@ -131,6 +136,27 @@ scia:
           enabled: false
       # Secret-backed Google OAuth client credentials. Set create=false and
       # existingSecret to use a Secret managed outside Helm.
+      secret:
+        create: true
+        existingSecret: ""
+        clientIdKey: client-id
+        clientSecretKey: client-secret
+        clientId: ""
+        clientSecret: ""
+    todoist:
+      enabled: false
+      scope: "data:read_write"
+      scopes:
+        - id: read-write
+          value: "data:read_write"
+          name: "Todoist read/write"
+          desc: "Read and write Todoist tasks and projects."
+          enabled: true
+        - id: task-add
+          value: "task:add"
+          name: "Todoist task add"
+          desc: "Add Todoist tasks without reading existing data."
+          enabled: false
       secret:
         create: true
         existingSecret: ""

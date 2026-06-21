@@ -92,11 +92,15 @@ The command removes all the Kubernetes components associated with the chart and 
 | `scia.enabled`                                     | Deploy scia OAuth broker and configure sessions | `true` |
 | `scia.publicBaseUrl`                               | Browser-facing scia base URL                    | `""` |
 | `scia.credential`                                  | Google credential ID injected into sessions     | `default.google` |
+| `scia.todoistCredential`                           | Todoist credential ID injected into sessions    | `default.todoist` |
 | `scia.userNamespace`                               | scia user namespace used by default             | `default` |
 | `scia.oauth.google.secret.create`                  | Create a Kubernetes Secret for Google OAuth     | `true` |
 | `scia.oauth.google.secret.existingSecret`          | Existing Secret containing Google OAuth values  | `""` |
 | `scia.oauth.google.secret.clientIdKey`             | Secret key for the Google OAuth client ID       | `client-id` |
 | `scia.oauth.google.secret.clientSecretKey`         | Secret key for the Google OAuth client secret   | `client-secret` |
+| `scia.oauth.todoist.enabled`                       | Enable Todoist OAuth in scia                    | `false` |
+| `scia.oauth.todoist.secret.create`                 | Create a Kubernetes Secret for Todoist OAuth    | `true` |
+| `scia.oauth.todoist.secret.existingSecret`         | Existing Secret containing Todoist OAuth values | `""` |
 | `scia.users`                                       | scia user-to-refresh-token Secret mapping       | `{default: {secretName: scia-oauth-default}}` |
 | `scia.sessionRefreshTokenSecretNames`              | Refresh-token Secrets readable by session pods  | `[scia-oauth-default]` |
 
@@ -216,6 +220,28 @@ scia:
 ```
 
 The `scia-google-oauth` Secret must contain the Google OAuth client ID and client secret. When `ingress.enabled=true`, the chart routes `/oauth` and `/_scia` to the scia OAuth broker on the same host.
+
+### With scia Todoist OAuth
+
+```yaml
+scia:
+  enabled: true
+  publicBaseUrl: https://agentapi.yourdomain.com
+  userNamespace: default
+  todoistCredential: default.todoist
+  oauth:
+    todoist:
+      enabled: true
+      scope: data:read_write
+      redirectUrl: https://agentapi.yourdomain.com/oauth/todoist/callback
+      secret:
+        create: false
+        existingSecret: scia-todoist-oauth
+        clientIdKey: client-id
+        clientSecretKey: client-secret
+```
+
+The `scia-todoist-oauth` Secret must contain the Todoist OAuth client ID and client secret. Register the same `redirectUrl` in the Todoist app console. The session sidecar injects the Todoist token for `api.todoist.com/api/v1/*` requests by default.
 
 ### With Environment Variables
 

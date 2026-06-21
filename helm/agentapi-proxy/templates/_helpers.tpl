@@ -79,3 +79,11 @@ scia-oauth
 {{- $secret := $google.secret | default dict }}
 {{- default (include "agentapi-proxy.sciaName" .) $secret.existingSecret }}
 {{- end }}
+
+{{- define "agentapi-proxy.sciaTodoistSecretName" -}}
+{{- $scia := .Values.scia | default dict }}
+{{- $oauth := $scia.oauth | default dict }}
+{{- $todoist := $oauth.todoist | default dict }}
+{{- $secret := $todoist.secret | default dict }}
+{{- default (printf "%s-todoist" (include "agentapi-proxy.sciaName" .) | trunc 63 | trimSuffix "-") $secret.existingSecret }}
+{{- end }}

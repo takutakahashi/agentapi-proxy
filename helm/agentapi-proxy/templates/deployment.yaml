@@ -287,6 +287,12 @@ spec:
               value: {{ $scia.googleHosts | default (list "www.googleapis.com") | join "," | quote }}
             - name: AGENTAPI_SCIA_GOOGLE_PATHS
               value: {{ $scia.googlePaths | default (list "/calendar/v3/*") | join "," | quote }}
+            - name: AGENTAPI_SCIA_TODOIST_CREDENTIAL
+              value: {{ $scia.todoistCredential | default (printf "%s.todoist" ($scia.userNamespace | default "default")) | quote }}
+            - name: AGENTAPI_SCIA_TODOIST_HOSTS
+              value: {{ $scia.todoistHosts | default (list "api.todoist.com") | join "," | quote }}
+            - name: AGENTAPI_SCIA_TODOIST_PATHS
+              value: {{ $scia.todoistPaths | default (list "/api/v1/*") | join "," | quote }}
             # Kubernetes Session Management configuration
             - name: AGENTAPI_K8S_SESSION_ENABLED
               value: "true"

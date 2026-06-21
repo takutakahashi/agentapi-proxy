@@ -261,6 +261,12 @@ type SciaConfig struct {
 	GoogleHosts []string `json:"google_hosts" mapstructure:"google_hosts"`
 	// GooglePaths is the list of paths where the sidecar injects the Google access token.
 	GooglePaths []string `json:"google_paths" mapstructure:"google_paths"`
+	// TodoistCredential is the scia credential ID used for Todoist OAuth, e.g. "takutakahashi.todoist".
+	TodoistCredential string `json:"todoist_credential" mapstructure:"todoist_credential"`
+	// TodoistHosts is the list of hosts where the sidecar injects the Todoist access token.
+	TodoistHosts []string `json:"todoist_hosts" mapstructure:"todoist_hosts"`
+	// TodoistPaths is the list of paths where the sidecar injects the Todoist access token.
+	TodoistPaths []string `json:"todoist_paths" mapstructure:"todoist_paths"`
 }
 
 // KubernetesSessionConfig represents Kubernetes session manager configuration
@@ -965,6 +971,15 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_GOOGLE_PATHS")); len(paths) > 0 {
 		config.Scia.GooglePaths = paths
 	}
+	if credential := os.Getenv("AGENTAPI_SCIA_TODOIST_CREDENTIAL"); credential != "" {
+		config.Scia.TodoistCredential = credential
+	}
+	if hosts := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_TODOIST_HOSTS")); len(hosts) > 0 {
+		config.Scia.TodoistHosts = hosts
+	}
+	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_TODOIST_PATHS")); len(paths) > 0 {
+		config.Scia.TodoistPaths = paths
+	}
 
 	// Override fields if environment variables are set (even if structures already exist)
 	if config.Auth.Static != nil {
@@ -1050,6 +1065,9 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("scia.session_sidecar_port", "AGENTAPI_SCIA_SESSION_SIDECAR_PORT")
 	_ = v.BindEnv("scia.google_hosts", "AGENTAPI_SCIA_GOOGLE_HOSTS")
 	_ = v.BindEnv("scia.google_paths", "AGENTAPI_SCIA_GOOGLE_PATHS")
+	_ = v.BindEnv("scia.todoist_credential", "AGENTAPI_SCIA_TODOIST_CREDENTIAL")
+	_ = v.BindEnv("scia.todoist_hosts", "AGENTAPI_SCIA_TODOIST_HOSTS")
+	_ = v.BindEnv("scia.todoist_paths", "AGENTAPI_SCIA_TODOIST_PATHS")
 
 	// Role-based environment files configuration
 	_ = v.BindEnv("role_env_files.enabled")
@@ -1318,6 +1336,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scia.session_sidecar_port", 18081)
 	v.SetDefault("scia.google_hosts", []string{"www.googleapis.com"})
 	v.SetDefault("scia.google_paths", []string{"/calendar/v3/*"})
+	v.SetDefault("scia.todoist_credential", "")
+	v.SetDefault("scia.todoist_hosts", []string{"api.todoist.com"})
+	v.SetDefault("scia.todoist_paths", []string{"/api/v1/*"})
 
 	// Memory backend defaults
 	v.SetDefault("memory.backend", "kubernetes")
@@ -1408,6 +1429,12 @@ func applyConfigDefaults(config *Config) {
 	}
 	if len(config.Scia.GooglePaths) == 0 {
 		config.Scia.GooglePaths = []string{"/calendar/v3/*"}
+	}
+	if len(config.Scia.TodoistHosts) == 0 {
+		config.Scia.TodoistHosts = []string{"api.todoist.com"}
+	}
+	if len(config.Scia.TodoistPaths) == 0 {
+		config.Scia.TodoistPaths = []string{"/api/v1/*"}
 	}
 }
 
