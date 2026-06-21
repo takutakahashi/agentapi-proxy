@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -63,6 +64,22 @@ type IntegrationsResponse struct {
 	HealthOK     bool                  `json:"health_ok"`
 	HealthStatus string                `json:"health_status,omitempty"`
 	Integrations []FrontendIntegration `json:"integrations"`
+}
+
+// IntegrationAuthorizationURLRequest asks scia to build a provider authorization URL.
+type IntegrationAuthorizationURLRequest struct {
+	RedirectURI string   `json:"redirect_uri"`
+	ScopeIDs    []string `json:"scope_ids"`
+	State       string   `json:"state,omitempty"`
+}
+
+// IntegrationAuthorizationURLResponse is returned by scia's authorization-url endpoint.
+type IntegrationAuthorizationURLResponse struct {
+	CredentialID     string `json:"credential_id"`
+	AuthorizationURL string `json:"authorization_url"`
+	AuthURL          string `json:"auth_url,omitempty"`
+	RedirectURI      string `json:"redirect_uri,omitempty"`
+	Scope            string `json:"scope,omitempty"`
 }
 
 // FrontendIntegration mirrors scia's non-secret frontend metadata with proxy status.
@@ -164,6 +181,98 @@ func (c *GoogleOAuthController) GetIntegrations(ctx echo.Context) error {
 	resp.Integrations = integrations
 
 	return ctx.JSON(http.StatusOK, resp)
+}
+
+// CreateAuthorizationURL returns a scia-built OAuth authorization URL for one integration.
+func (c *GoogleOAuthController) CreateAuthorizationURL(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
+	if !c.scia.Enabled {
+		return echo.NewHTTPError(http.StatusNotFound, "scia integration is disabled")
+	}
+
+	var input IntegrationAuthorizationURLRequest
+	if err := json.NewDecoder(ctx.Request().Body).Decode(&input); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid json request")
+	}
+
+	integrationID := ctx.Param("id")
+	integration, ok, err := c.integrationForUser(ctx.Request().Context(), string(user.ID()), integrationID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+	}
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "integration not found")
+	}
+
+	resp, err := c.createSciaAuthorizationURL(ctx.Request().Context(), integration, input)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+	}
+	resp.Scope = ""
+	return ctx.JSON(http.StatusOK, resp)
+}
+
+func (c *GoogleOAuthController) integrationForUser(ctx context.Context, userID, integrationID string) (FrontendIntegration, bool, error) {
+	integrations, err := c.fetchSciaIntegrations(ctx)
+	if err != nil {
+		return FrontendIntegration{}, false, err
+	}
+	defaultNamespace := c.userNamespace(userID)
+	for _, integration := range integrations {
+		if integration.ID != integrationID {
+			continue
+		}
+		if integration.Namespace == "" {
+			integration.Namespace = defaultNamespace
+		}
+		return integration, true, nil
+	}
+	return FrontendIntegration{}, false, nil
+}
+
+func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, integration FrontendIntegration, input IntegrationAuthorizationURLRequest) (IntegrationAuthorizationURLResponse, error) {
+	base := strings.TrimRight(c.scia.OAuthInternalURL, "/")
+	if base == "" {
+		base = strings.TrimRight(c.scia.PublicBaseURL, "/")
+	}
+	if base == "" {
+		return IntegrationAuthorizationURLResponse{}, fmt.Errorf("scia_oauth_url_not_configured")
+	}
+	if integration.Namespace == "" || integration.Provider == "" {
+		return IntegrationAuthorizationURLResponse{}, fmt.Errorf("integration is missing namespace or provider")
+	}
+
+	path := fmt.Sprintf("/oauth/%s/%s/authorization-url", url.PathEscape(integration.Namespace), url.PathEscape(integration.Provider))
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return IntegrationAuthorizationURLResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(payload))
+	if err != nil {
+		return IntegrationAuthorizationURLResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return IntegrationAuthorizationURLResponse{}, err
+	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		return IntegrationAuthorizationURLResponse{}, fmt.Errorf("scia authorization-url returned %s: %s", res.Status, strings.TrimSpace(string(body)))
+	}
+	var output IntegrationAuthorizationURLResponse
+	if err := json.NewDecoder(res.Body).Decode(&output); err != nil {
+		return IntegrationAuthorizationURLResponse{}, fmt.Errorf("failed to decode scia authorization-url: %w", err)
+	}
+	return output, nil
 }
 
 func (c *GoogleOAuthController) fetchSciaIntegrations(ctx context.Context) ([]FrontendIntegration, error) {
