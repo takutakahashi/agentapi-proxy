@@ -234,7 +234,7 @@ scia:
     todoist:
       enabled: true
       scope: data:read_write
-      redirectUrl: https://agentapi.yourdomain.com/oauth/todoist/callback
+      redirectUrl: https://agentapi.yourdomain.com/api/oauth/todoist/callback
       omitRedirectUrl: false
       secret:
         create: false

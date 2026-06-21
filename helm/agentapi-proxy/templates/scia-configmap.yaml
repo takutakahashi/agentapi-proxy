@@ -26,7 +26,7 @@
 {{- end }}
 {{- $todoistRedirectURL := $todoist.redirectUrl | default "" }}
 {{- if and (eq $todoistRedirectURL "") $sciaPublicBaseURL }}
-  {{- $todoistRedirectURL = printf "%s/oauth/todoist/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
+  {{- $todoistRedirectURL = printf "%s/api/oauth/todoist/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
 {{- end }}
 {{- if $todoist.omitRedirectUrl }}
   {{- $todoistRedirectURL = "" }}
