@@ -8,6 +8,8 @@
 {{- $oauth := $scia.oauth | default dict }}
 {{- $google := $oauth.google | default dict }}
 {{- $secret := $google.secret | default dict }}
+{{- $todoist := $oauth.todoist | default dict }}
+{{- $todoistSecret := $todoist.secret | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -59,6 +61,18 @@ spec:
                 secretKeyRef:
                   name: {{ include "agentapi-proxy.sciaSecretName" . }}
                   key: {{ $secret.clientSecretKey | default "client-secret" | quote }}
+                  optional: true
+            - name: TODOIST_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentapi-proxy.sciaTodoistSecretName" . }}
+                  key: {{ $todoistSecret.clientIdKey | default "client-id" | quote }}
+                  optional: true
+            - name: TODOIST_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentapi-proxy.sciaTodoistSecretName" . }}
+                  key: {{ $todoistSecret.clientSecretKey | default "client-secret" | quote }}
                   optional: true
           volumeMounts:
             - name: scia-config

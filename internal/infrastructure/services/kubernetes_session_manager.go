@@ -2572,8 +2572,20 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 	if len(paths) == 0 {
 		paths = []string{"/calendar/v3/*"}
 	}
+	todoistCredentialID := scia.TodoistCredential
+	if todoistCredentialID == "" {
+		todoistCredentialID = userNamespace + ".todoist"
+	}
+	todoistHosts := scia.TodoistHosts
+	if len(todoistHosts) == 0 {
+		todoistHosts = []string{"api.todoist.com"}
+	}
+	todoistPaths := scia.TodoistPaths
+	if len(todoistPaths) == 0 {
+		todoistPaths = []string{"/api/v1/*"}
+	}
 
-	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, port, hosts, paths, sandboxEnabled)
+	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, todoistCredentialID, port, hosts, paths, todoistHosts, todoistPaths, sandboxEnabled)
 	configScript := fmt.Sprintf("cat > /etc/scia-config/config.yaml <<'EOF'\n%sEOF\n", configYAML)
 
 	initContainer := corev1.Container{
@@ -2626,13 +2638,14 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 		{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath},
 		{Name: "AGENTAPI_SCIA_PROXY_URL", Value: proxyAddr},
 		{Name: "AGENTAPI_SCIA_GOOGLE_CREDENTIAL", Value: credentialID},
+		{Name: "AGENTAPI_SCIA_TODOIST_CREDENTIAL", Value: todoistCredentialID},
 		{Name: "AGENTAPI_SCIA_USER_NAMESPACE", Value: userNamespace},
 	}
 
 	return &initContainer, &sidecar, envVars
 }
 
-func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, port int, hosts, paths []string, useNFA bool) string {
+func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistCredentialID string, port int, hosts, paths, todoistHosts, todoistPaths []string, useNFA bool) string {
 	var b strings.Builder
 	b.WriteString("server:\n")
 	b.WriteString("  mode: proxy\n")
@@ -2645,6 +2658,11 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, p
 	b.WriteString("    google:\n")
 	b.WriteString("      hosts:\n")
 	for _, host := range hosts {
+		b.WriteString(fmt.Sprintf("        - %q\n", host))
+	}
+	b.WriteString("    todoist:\n")
+	b.WriteString("      hosts:\n")
+	for _, host := range todoistHosts {
 		b.WriteString(fmt.Sprintf("        - %q\n", host))
 	}
 	b.WriteString("  mitm:\n")
@@ -2662,6 +2680,10 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, p
 	b.WriteString("    type: google-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
 	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/google/token", namespace, url.PathEscape(userNamespace))))
+	b.WriteString(fmt.Sprintf("  - id: %q\n", todoistCredentialID))
+	b.WriteString("    type: todoist-oauth-refresh-token\n")
+	b.WriteString("    params:\n")
+	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/todoist/token", namespace, url.PathEscape(userNamespace))))
 	b.WriteString("rules:\n")
 	b.WriteString("  - name: inject-google-oauth-token\n")
 	b.WriteString("    hosts:\n")
@@ -2675,6 +2697,18 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID string, p
 	b.WriteString("    action: allow\n")
 	b.WriteString("    credentials:\n")
 	b.WriteString(fmt.Sprintf("      - %q\n", credentialID))
+	b.WriteString("  - name: inject-todoist-oauth-token\n")
+	b.WriteString("    hosts:\n")
+	for _, host := range todoistHosts {
+		b.WriteString(fmt.Sprintf("      - %q\n", host))
+	}
+	b.WriteString("    paths:\n")
+	for _, path := range todoistPaths {
+		b.WriteString(fmt.Sprintf("      - %q\n", path))
+	}
+	b.WriteString("    action: allow\n")
+	b.WriteString("    credentials:\n")
+	b.WriteString(fmt.Sprintf("      - %q\n", todoistCredentialID))
 	return b.String()
 }
 
@@ -4859,6 +4893,9 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 		if scia.Credential != "" {
 			env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = scia.Credential
 		}
+		if scia.TodoistCredential != "" {
+			env["AGENTAPI_SCIA_TODOIST_CREDENTIAL"] = scia.TodoistCredential
+		}
 		if scia.UserNamespace != "" {
 			env["AGENTAPI_SCIA_USER_NAMESPACE"] = scia.UserNamespace
 		}
@@ -4895,6 +4932,13 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 	env["NODE_EXTRA_CA_CERTS"] = sciaCAPath
 	if credential != "" {
 		env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"] = credential
+	}
+	todoistCredential := scia.TodoistCredential
+	if todoistCredential == "" && userNamespace != "" {
+		todoistCredential = userNamespace + ".todoist"
+	}
+	if todoistCredential != "" {
+		env["AGENTAPI_SCIA_TODOIST_CREDENTIAL"] = todoistCredential
 	}
 	if userNamespace != "" {
 		env["AGENTAPI_SCIA_USER_NAMESPACE"] = userNamespace

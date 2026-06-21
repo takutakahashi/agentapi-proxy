@@ -6,6 +6,8 @@
 {{- if $sciaEnabled }}
 {{- $oauth := $scia.oauth | default dict }}
 {{- $google := $oauth.google | default dict }}
+{{- $todoist := $oauth.todoist | default dict }}
+{{- $todoistEnabled := $todoist.enabled | default false }}
 {{- $users := $scia.users | default (dict "default" (dict "secretName" "scia-oauth-default")) }}
 {{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
 {{- $sciaHost := .Values.config.hostname | default "" }}
@@ -22,7 +24,15 @@
 {{- if and (eq $redirectURL "") $sciaPublicBaseURL }}
   {{- $redirectURL = printf "%s/oauth/google/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
 {{- end }}
+{{- $todoistRedirectURL := $todoist.redirectUrl | default "" }}
+{{- if and (eq $todoistRedirectURL "") $sciaPublicBaseURL }}
+  {{- $todoistRedirectURL = printf "%s/api/oauth/todoist/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
+{{- end }}
+{{- if $todoist.omitRedirectUrl }}
+  {{- $todoistRedirectURL = "" }}
+{{- end }}
 {{- $googleScopes := $google.scopes | default (list (dict "id" ($google.scopeId | default "calendar-read") "value" ($google.scope | default "https://www.googleapis.com/auth/calendar.readonly") "name" ($google.scopeName | default "Google Calendar read-only") "desc" ($google.scopeDesc | default "Read Google Calendar events.") "enabled" true)) }}
+{{- $todoistScopes := $todoist.scopes | default (list (dict "id" "read-write" "value" ($todoist.scope | default "data:read_write") "name" "Todoist read/write" "desc" "Read and write Todoist tasks and projects." "enabled" true)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -49,6 +59,15 @@ data:
         redirectUrl: {{ $redirectURL | quote }}
         integrations:
           google:
+            name: {{ $google.name | default "Google" | quote }}
+            {{- if $google.iconUrl }}
+            iconUrl: {{ $google.iconUrl | quote }}
+            {{- end }}
+            {{- if $google.description }}
+            description: {{ $google.description | quote }}
+            {{- end }}
+            setup:
+              callback_url: {{ $redirectURL | quote }}
             scopes:
               {{- range $scope := $googleScopes }}
               - id: {{ $scope.id | quote }}
@@ -68,6 +87,33 @@ data:
                 {{- end }}
                 enabled: {{ $scope.enabled | default false }}
               {{- end }}
+          {{- if $todoistEnabled }}
+          todoist:
+            name: {{ $todoist.name | default "Todoist" | quote }}
+            iconUrl: {{ $todoist.iconUrl | default "https://todoist.com/favicon.ico" | quote }}
+            description: {{ $todoist.description | default "Connect Todoist tasks and projects." | quote }}
+            setup:
+              callback_url: {{ $todoistRedirectURL | quote }}
+            scopes:
+              {{- range $scope := $todoistScopes }}
+              - id: {{ $scope.id | quote }}
+                value: {{ $scope.value | quote }}
+                name: {{ $scope.name | quote }}
+                {{- if $scope.desc }}
+                desc: {{ $scope.desc | quote }}
+                {{- end }}
+                {{- if $scope.group }}
+                group: {{ $scope.group | quote }}
+                {{- end }}
+                {{- if $scope.groupName }}
+                groupName: {{ $scope.groupName | quote }}
+                {{- end }}
+                {{- if $scope.groupDesc }}
+                groupDesc: {{ $scope.groupDesc | quote }}
+                {{- end }}
+                enabled: {{ $scope.enabled | default false }}
+              {{- end }}
+          {{- end }}
         namespaces:
           {{- range $userID, $_ := $users }}
           {{ $userID | quote }}:
@@ -78,6 +124,15 @@ data:
               {{- if $redirectURL }}
               redirectUrl: {{ $redirectURL | quote }}
               {{- end }}
+            {{- if $todoistEnabled }}
+            todoist:
+              clientId: "env:TODOIST_OAUTH_CLIENT_ID"
+              clientSecret: "env:TODOIST_OAUTH_CLIENT_SECRET"
+              scope: {{ $todoist.scope | default "data:read_write" | quote }}
+              {{- if $todoistRedirectURL }}
+              redirectUrl: {{ $todoistRedirectURL | quote }}
+              {{- end }}
+            {{- end }}
           {{- end }}
     credentials: []
     rules: []
