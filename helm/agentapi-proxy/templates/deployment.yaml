@@ -278,7 +278,7 @@ spec:
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED
               value: {{ dig "sessionSidecar" "enabled" true $scia | quote }}
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE
-              value: {{ dig "sessionSidecar" "image" "ghcr.io/takutakahashi/scia:0.10.0" $scia | quote }}
+              value: {{ dig "sessionSidecar" "image" "ghcr.io/takutakahashi/scia:0.10.3" $scia | quote }}
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE
               value: {{ dig "sessionSidecar" "configImage" "busybox:1.36" $scia | quote }}
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_PORT
