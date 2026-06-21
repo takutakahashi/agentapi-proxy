@@ -239,6 +239,8 @@ type SciaConfig struct {
 	// PublicBaseURL is the browser-reachable origin that serves /oauth and /_scia.
 	// When empty, UI clients can still use same-origin relative OAuth URLs.
 	PublicBaseURL string `json:"public_base_url" mapstructure:"public_base_url"`
+	// OAuthInternalURL is the proxy-reachable scia OAuth server origin used for metadata.
+	OAuthInternalURL string `json:"oauth_internal_url" mapstructure:"oauth_internal_url"`
 	// ProxyURL is the forward proxy URL used by session Pods for outbound Google API calls.
 	ProxyURL string `json:"proxy_url" mapstructure:"proxy_url"`
 	// Credential is the scia credential ID used for Google OAuth, e.g. "takutakahashi.google".
@@ -1037,6 +1039,7 @@ func bindEnvVars(v *viper.Viper) {
 	// scia OAuth broker/proxy configuration
 	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")
 	_ = v.BindEnv("scia.public_base_url", "AGENTAPI_SCIA_PUBLIC_BASE_URL")
+	_ = v.BindEnv("scia.oauth_internal_url", "AGENTAPI_SCIA_OAUTH_INTERNAL_URL")
 	_ = v.BindEnv("scia.proxy_url", "AGENTAPI_SCIA_PROXY_URL")
 	_ = v.BindEnv("scia.credential", "AGENTAPI_SCIA_CREDENTIAL")
 	_ = v.BindEnv("scia.user_namespace", "AGENTAPI_SCIA_USER_NAMESPACE")
@@ -1304,12 +1307,13 @@ func setDefaults(v *viper.Viper) {
 	// scia defaults
 	v.SetDefault("scia.enabled", false)
 	v.SetDefault("scia.public_base_url", "")
+	v.SetDefault("scia.oauth_internal_url", "")
 	v.SetDefault("scia.proxy_url", "")
 	v.SetDefault("scia.credential", "")
 	v.SetDefault("scia.user_namespace", "")
 	v.SetDefault("scia.no_proxy", "localhost,127.0.0.1,.svc,.cluster.local")
 	v.SetDefault("scia.session_sidecar_enabled", false)
-	v.SetDefault("scia.session_sidecar_image", "ghcr.io/takutakahashi/scia:0.5.0")
+	v.SetDefault("scia.session_sidecar_image", "ghcr.io/takutakahashi/scia:0.10.0")
 	v.SetDefault("scia.session_sidecar_config_image", "busybox:1.36")
 	v.SetDefault("scia.session_sidecar_port", 18081)
 	v.SetDefault("scia.google_hosts", []string{"www.googleapis.com"})
@@ -1391,7 +1395,7 @@ func applyConfigDefaults(config *Config) {
 		config.Scia.NoProxy = "localhost,127.0.0.1,.svc,.cluster.local"
 	}
 	if config.Scia.SessionSidecarImage == "" {
-		config.Scia.SessionSidecarImage = "ghcr.io/takutakahashi/scia:0.5.0"
+		config.Scia.SessionSidecarImage = "ghcr.io/takutakahashi/scia:0.10.0"
 	}
 	if config.Scia.SessionSidecarConfigImage == "" {
 		config.Scia.SessionSidecarConfigImage = "busybox:1.36"

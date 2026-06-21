@@ -260,10 +260,13 @@ spec:
             {{- if and (eq $sciaPublicBaseURL "") $sciaHost }}
               {{- $sciaPublicBaseURL = printf "https://%s" $sciaHost }}
             {{- end }}
+            {{- $sciaService := $scia.service | default dict }}
             - name: AGENTAPI_SCIA_ENABLED
               value: {{ $sciaEnabled | quote }}
             - name: AGENTAPI_SCIA_PUBLIC_BASE_URL
               value: {{ $sciaPublicBaseURL | quote }}
+            - name: AGENTAPI_SCIA_OAUTH_INTERNAL_URL
+              value: {{ $scia.oauthInternalUrl | default (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.sciaServiceName" .) .Release.Namespace ($sciaService.port | default 8081)) | quote }}
             - name: AGENTAPI_SCIA_PROXY_URL
               value: {{ $scia.proxyUrl | default "" | quote }}
             - name: AGENTAPI_SCIA_CREDENTIAL
@@ -275,7 +278,7 @@ spec:
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED
               value: {{ dig "sessionSidecar" "enabled" true $scia | quote }}
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_IMAGE
-              value: {{ dig "sessionSidecar" "image" "ghcr.io/takutakahashi/scia:0.5.0" $scia | quote }}
+              value: {{ dig "sessionSidecar" "image" "ghcr.io/takutakahashi/scia:0.10.0" $scia | quote }}
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_CONFIG_IMAGE
               value: {{ dig "sessionSidecar" "configImage" "busybox:1.36" $scia | quote }}
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_PORT

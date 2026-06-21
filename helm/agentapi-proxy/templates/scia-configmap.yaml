@@ -22,6 +22,7 @@
 {{- if and (eq $redirectURL "") $sciaPublicBaseURL }}
   {{- $redirectURL = printf "%s/oauth/google/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
 {{- end }}
+{{- $googleScopes := $google.scopes | default (list (dict "id" ($google.scopeId | default "calendar-read") "value" ($google.scope | default "https://www.googleapis.com/auth/calendar.readonly") "name" ($google.scopeName | default "Google Calendar read-only") "desc" ($google.scopeDesc | default "Read Google Calendar events.") "enabled" true)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -46,6 +47,27 @@ data:
       oauth:
         listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
         redirectUrl: {{ $redirectURL | quote }}
+        integrations:
+          google:
+            scopes:
+              {{- range $scope := $googleScopes }}
+              - id: {{ $scope.id | quote }}
+                value: {{ $scope.value | quote }}
+                name: {{ $scope.name | quote }}
+                {{- if $scope.desc }}
+                desc: {{ $scope.desc | quote }}
+                {{- end }}
+                {{- if $scope.group }}
+                group: {{ $scope.group | quote }}
+                {{- end }}
+                {{- if $scope.groupName }}
+                groupName: {{ $scope.groupName | quote }}
+                {{- end }}
+                {{- if $scope.groupDesc }}
+                groupDesc: {{ $scope.groupDesc | quote }}
+                {{- end }}
+                enabled: {{ $scope.enabled | default false }}
+              {{- end }}
         namespaces:
           {{- range $userID, $_ := $users }}
           {{ $userID | quote }}:

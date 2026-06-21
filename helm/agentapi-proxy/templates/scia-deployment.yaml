@@ -37,7 +37,7 @@ spec:
       serviceAccountName: {{ include "agentapi-proxy.sciaName" . }}
       containers:
         - name: scia-oauth
-          image: "{{ $image.repository | default "ghcr.io/takutakahashi/scia" }}:{{ $image.tag | default "0.5.0" }}"
+          image: "{{ $image.repository | default "ghcr.io/takutakahashi/scia" }}:{{ $image.tag | default "0.10.0" }}"
           imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
           args:
             - -config

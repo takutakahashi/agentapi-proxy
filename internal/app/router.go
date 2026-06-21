@@ -413,9 +413,11 @@ func (r *Router) registerConditionalRoutes() error {
 	}
 
 	if r.handlers.googleOAuthController != nil {
-		log.Printf("[ROUTES] Registering Google OAuth integration endpoints...")
+		log.Printf("[ROUTES] Registering scia integration endpoints...")
+		r.echo.GET("/integrations", r.handlers.googleOAuthController.GetIntegrations, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/integrations/:id/authorization-url", r.handlers.googleOAuthController.CreateAuthorizationURL, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/integrations/google-oauth/status", r.handlers.googleOAuthController.GetStatus, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		log.Printf("[ROUTES] Google OAuth integration endpoints registered")
+		log.Printf("[ROUTES] scia integration endpoints registered")
 	}
 
 	// Add credentials routes if credentials repository is available (Kubernetes mode only)

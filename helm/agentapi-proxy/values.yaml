@@ -72,7 +72,7 @@ scia:
   enabled: true
   image:
     repository: ghcr.io/takutakahashi/scia
-    tag: "0.5.0"
+    tag: "0.10.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   publicBaseUrl: ""
@@ -82,11 +82,13 @@ scia:
   noProxy: "localhost,127.0.0.1,.svc,.cluster.local"
   googleHosts:
     - www.googleapis.com
+    - tasks.googleapis.com
   googlePaths:
     - /calendar/v3/*
+    - /tasks/v1/*
   sessionSidecar:
     enabled: true
-    image: ghcr.io/takutakahashi/scia:0.5.0
+    image: ghcr.io/takutakahashi/scia:0.10.0
     configImage: busybox:1.36
     port: 18081
   oauth:
@@ -94,6 +96,39 @@ scia:
     redirectUrl: ""
     google:
       scope: "https://www.googleapis.com/auth/calendar.readonly"
+      scopes:
+        - id: calendar-read
+          value: "https://www.googleapis.com/auth/calendar.readonly"
+          name: "Google Calendar read-only"
+          desc: "Read Google Calendar events."
+          group: calendar
+          groupName: "Google Calendar"
+          groupDesc: "Choose how much Google Calendar access to grant."
+          enabled: true
+        - id: calendar-write
+          value: "https://www.googleapis.com/auth/calendar"
+          name: "Google Calendar read/write"
+          desc: "Read and write Google Calendar events."
+          group: calendar
+          groupName: "Google Calendar"
+          groupDesc: "Choose how much Google Calendar access to grant."
+          enabled: false
+        - id: tasks-read
+          value: "https://www.googleapis.com/auth/tasks.readonly"
+          name: "Google Tasks read-only"
+          desc: "Read Google Tasks and task lists."
+          group: tasks
+          groupName: "Google Tasks"
+          groupDesc: "Choose how much Google Tasks access to grant."
+          enabled: true
+        - id: tasks-write
+          value: "https://www.googleapis.com/auth/tasks"
+          name: "Google Tasks read/write"
+          desc: "Read and write Google Tasks and task lists."
+          group: tasks
+          groupName: "Google Tasks"
+          groupDesc: "Choose how much Google Tasks access to grant."
+          enabled: false
       # Secret-backed Google OAuth client credentials. Set create=false and
       # existingSecret to use a Secret managed outside Helm.
       secret:
