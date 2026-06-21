@@ -91,6 +91,8 @@ scia:
     - api.todoist.com
   todoistPaths:
     - /api/v1/*
+    - /rest/v2/*
+    - /sync/v9/*
   sessionSidecar:
     enabled: true
     image: ghcr.io/takutakahashi/scia:0.10.0

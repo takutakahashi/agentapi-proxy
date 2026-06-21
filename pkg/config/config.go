@@ -1338,7 +1338,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scia.google_paths", []string{"/calendar/v3/*"})
 	v.SetDefault("scia.todoist_credential", "")
 	v.SetDefault("scia.todoist_hosts", []string{"api.todoist.com"})
-	v.SetDefault("scia.todoist_paths", []string{"/api/v1/*"})
+	v.SetDefault("scia.todoist_paths", []string{"/api/v1/*", "/rest/v2/*", "/sync/v9/*"})
 
 	// Memory backend defaults
 	v.SetDefault("memory.backend", "kubernetes")
@@ -1434,7 +1434,7 @@ func applyConfigDefaults(config *Config) {
 		config.Scia.TodoistHosts = []string{"api.todoist.com"}
 	}
 	if len(config.Scia.TodoistPaths) == 0 {
-		config.Scia.TodoistPaths = []string{"/api/v1/*"}
+		config.Scia.TodoistPaths = []string{"/api/v1/*", "/rest/v2/*", "/sync/v9/*"}
 	}
 }
 
