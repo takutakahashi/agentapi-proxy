@@ -23,16 +23,17 @@ spec:
       app.kubernetes.io/component: scia-oauth
   template:
     metadata:
+      annotations:
+        checksum/scia-config: {{ include (print $.Template.BasePath "/scia-configmap.yaml") . | sha256sum }}
+        {{- with $scia.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       labels:
         {{- include "agentapi-proxy.labels" . | nindent 8 }}
         app.kubernetes.io/component: scia-oauth
         {{- with $scia.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with $scia.podAnnotations }}
-      annotations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
     spec:
       serviceAccountName: {{ include "agentapi-proxy.sciaName" . }}
       containers:
