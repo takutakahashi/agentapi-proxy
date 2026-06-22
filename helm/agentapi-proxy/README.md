@@ -95,6 +95,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | `scia.todoistCredential`                           | Todoist credential ID injected into sessions    | `default.todoist` |
 | `scia.userNamespace`                               | Optional fixed scia user namespace; empty derives it from each agentapi user | `""` |
 | `scia.dynamicUserSecretNamePrefix`                 | Prefix for scia dynamic user token Secrets      | `scia-oauth-` |
+| `scia.oauth.integrations`                          | Service integration display metadata and scopes rendered into scia config with `toYaml` | Google/Todoist defaults |
 | `scia.oauth.google.secret.create`                  | Create a Kubernetes Secret for Google OAuth     | `false` |
 | `scia.oauth.google.secret.existingSecret`          | Existing Secret containing Google OAuth values  | `""` |
 | `scia.oauth.google.secret.clientIdKey`             | Secret key for the Google OAuth client ID       | `client-id` |
