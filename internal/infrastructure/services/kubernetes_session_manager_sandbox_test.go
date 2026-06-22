@@ -95,6 +95,10 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 				TodoistCredential:         "takutakahashi.todoist",
 				TodoistHosts:              []string{"api.todoist.com"},
 				TodoistPaths:              []string{"/api/v1/*"},
+				NotionEnabled:             true,
+				NotionCredential:          "takutakahashi.notion",
+				NotionHosts:               []string{"api.notion.com"},
+				NotionPaths:               []string{"/v1/*"},
 			},
 		},
 		k8sConfig: &config.KubernetesSessionConfig{
@@ -152,15 +156,19 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 		assert.Contains(t, script, "  integrations:\n")
 		assert.Contains(t, script, "    google:\n")
 		assert.Contains(t, script, "    todoist:\n")
+		assert.Contains(t, script, "    notion:\n")
 		assert.Contains(t, script, `        - "www.googleapis.com"`)
 		assert.Contains(t, script, `        - "api.todoist.com"`)
+		assert.Contains(t, script, `        - "api.notion.com"`)
 		assert.Contains(t, script, `secretName: "scia-oauth-takutakahashi"`)
 		assert.NotContains(t, script, `scia-google-oauth`)
 		assert.NotContains(t, script, `clientSecretRef`)
 		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/takutakahashi/google/token"`)
 		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/takutakahashi/todoist/token"`)
+		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/takutakahashi/notion/token"`)
 		assert.Contains(t, script, `- "takutakahashi.google"`)
 		assert.Contains(t, script, `- "takutakahashi.todoist"`)
+		assert.Contains(t, script, `- "takutakahashi.notion"`)
 	}
 
 	main := podSpec.Containers[0]
@@ -176,6 +184,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
 	assert.Equal(t, "takutakahashi.google", env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"])
 	assert.Equal(t, "takutakahashi.todoist", env["AGENTAPI_SCIA_TODOIST_CREDENTIAL"])
+	assert.Equal(t, "takutakahashi.notion", env["AGENTAPI_SCIA_NOTION_CREDENTIAL"])
 	assert.NotContains(t, env["NO_PROXY"], "api.openai.com")
 	assert.NotContains(t, env["no_proxy"], "api.openai.com")
 
@@ -259,6 +268,10 @@ func newSciaSidecarTestManager(sessionSidecarEnabled bool) *KubernetesSessionMan
 				TodoistCredential:         "takutakahashi.todoist",
 				TodoistHosts:              []string{"api.todoist.com"},
 				TodoistPaths:              []string{"/api/v1/*"},
+				NotionEnabled:             true,
+				NotionCredential:          "takutakahashi.notion",
+				NotionHosts:               []string{"api.notion.com"},
+				NotionPaths:               []string{"/v1/*"},
 			},
 		},
 		k8sConfig: &config.KubernetesSessionConfig{

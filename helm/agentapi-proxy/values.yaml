@@ -79,6 +79,7 @@ scia:
   proxyUrl: ""
   credential: "default.google"
   todoistCredential: "default.todoist"
+  notionCredential: ""
   userNamespace: "default"
   noProxy: "localhost,127.0.0.1,.svc,.cluster.local"
   googleHosts:
@@ -93,6 +94,10 @@ scia:
     - /api/v1/*
     - /rest/v2/*
     - /sync/v9/*
+  notionHosts:
+    - api.notion.com
+  notionPaths:
+    - /v1/*
   sessionSidecar:
     enabled: true
     image: ghcr.io/takutakahashi/scia:0.12.1
@@ -160,6 +165,23 @@ scia:
           name: "Todoist task add"
           desc: "Add Todoist tasks without reading existing data."
           enabled: false
+      secret:
+        create: true
+        existingSecret: ""
+        clientIdKey: client-id
+        clientSecretKey: client-secret
+        clientId: ""
+        clientSecret: ""
+    notion:
+      enabled: false
+      scope: ""
+      omitRedirectUrl: false
+      scopes:
+        - id: default
+          value: ""
+          name: "Notion access"
+          desc: "Connect Notion pages and databases selected during authorization."
+          enabled: true
       secret:
         create: true
         existingSecret: ""

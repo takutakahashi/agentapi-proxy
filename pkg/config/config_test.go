@@ -469,6 +469,10 @@ func TestLoadConfigWithSciaEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("AGENTAPI_SCIA_TODOIST_CREDENTIAL", "default.todoist")
 	_ = os.Setenv("AGENTAPI_SCIA_TODOIST_HOSTS", "api.todoist.com")
 	_ = os.Setenv("AGENTAPI_SCIA_TODOIST_PATHS", "/api/v1/*")
+	_ = os.Setenv("AGENTAPI_SCIA_NOTION_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_SCIA_NOTION_CREDENTIAL", "default.notion")
+	_ = os.Setenv("AGENTAPI_SCIA_NOTION_HOSTS", "api.notion.com")
+	_ = os.Setenv("AGENTAPI_SCIA_NOTION_PATHS", "/v1/*")
 
 	loadedConfig, err := LoadConfig("")
 	if err != nil {
@@ -486,6 +490,10 @@ func TestLoadConfigWithSciaEnvironmentVariables(t *testing.T) {
 	assert.Equal(t, "default.todoist", loadedConfig.Scia.TodoistCredential)
 	assert.Equal(t, []string{"api.todoist.com"}, loadedConfig.Scia.TodoistHosts)
 	assert.Equal(t, []string{"/api/v1/*"}, loadedConfig.Scia.TodoistPaths)
+	assert.True(t, loadedConfig.Scia.NotionEnabled)
+	assert.Equal(t, "default.notion", loadedConfig.Scia.NotionCredential)
+	assert.Equal(t, []string{"api.notion.com"}, loadedConfig.Scia.NotionHosts)
+	assert.Equal(t, []string{"/v1/*"}, loadedConfig.Scia.NotionPaths)
 }
 
 func TestLoadConfigNetworkFilterResourceDefaults(t *testing.T) {

@@ -102,6 +102,10 @@ The command removes all the Kubernetes components associated with the chart and 
 | `scia.oauth.todoist.omitRedirectUrl`               | Omit Todoist redirect_uri from OAuth requests   | `false` |
 | `scia.oauth.todoist.secret.create`                 | Create a Kubernetes Secret for Todoist OAuth    | `true` |
 | `scia.oauth.todoist.secret.existingSecret`         | Existing Secret containing Todoist OAuth values | `""` |
+| `scia.oauth.notion.enabled`                        | Enable Notion OAuth in scia                     | `false` |
+| `scia.oauth.notion.omitRedirectUrl`                | Omit Notion redirect_uri from OAuth requests    | `false` |
+| `scia.oauth.notion.secret.create`                  | Create a Kubernetes Secret for Notion OAuth     | `true` |
+| `scia.oauth.notion.secret.existingSecret`          | Existing Secret containing Notion OAuth values  | `""` |
 | `scia.users`                                       | scia user-to-refresh-token Secret mapping       | `{default: {secretName: scia-oauth-default}}` |
 | `scia.sessionRefreshTokenSecretNames`              | Refresh-token Secrets readable by session pods  | `[scia-oauth-default]` |
 
@@ -244,6 +248,28 @@ scia:
 ```
 
 The `scia-todoist-oauth` Secret must contain the Todoist OAuth client ID and client secret. Register the same `redirectUrl` in the Todoist app console. The session sidecar injects the Todoist token for `api.todoist.com/api/v1/*` requests by default.
+
+### With scia Notion OAuth
+
+```yaml
+scia:
+  enabled: true
+  publicBaseUrl: https://agentapi.yourdomain.com
+  userNamespace: default
+  notionCredential: default.notion
+  oauth:
+    notion:
+      enabled: true
+      redirectUrl: https://agentapi.yourdomain.com/api/oauth/notion/callback
+      omitRedirectUrl: false
+      secret:
+        create: false
+        existingSecret: scia-notion-oauth
+        clientIdKey: client-id
+        clientSecretKey: client-secret
+```
+
+The `scia-notion-oauth` Secret must contain the Notion OAuth client ID and client secret. Register the same `redirectUrl` in the Notion integration settings. The session sidecar injects the Notion token for `api.notion.com/v1/*` requests by default.
 
 ### With Environment Variables
 

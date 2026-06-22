@@ -10,6 +10,8 @@
 {{- $secret := $google.secret | default dict }}
 {{- $todoist := $oauth.todoist | default dict }}
 {{- $todoistSecret := $todoist.secret | default dict }}
+{{- $notion := $oauth.notion | default dict }}
+{{- $notionSecret := $notion.secret | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -73,6 +75,18 @@ spec:
                 secretKeyRef:
                   name: {{ include "agentapi-proxy.sciaTodoistSecretName" . }}
                   key: {{ $todoistSecret.clientSecretKey | default "client-secret" | quote }}
+                  optional: true
+            - name: NOTION_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentapi-proxy.sciaNotionSecretName" . }}
+                  key: {{ $notionSecret.clientIdKey | default "client-id" | quote }}
+                  optional: true
+            - name: NOTION_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentapi-proxy.sciaNotionSecretName" . }}
+                  key: {{ $notionSecret.clientSecretKey | default "client-secret" | quote }}
                   optional: true
           volumeMounts:
             - name: scia-config

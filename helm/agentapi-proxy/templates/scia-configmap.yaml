@@ -8,6 +8,8 @@
 {{- $google := $oauth.google | default dict }}
 {{- $todoist := $oauth.todoist | default dict }}
 {{- $todoistEnabled := $todoist.enabled | default false }}
+{{- $notion := $oauth.notion | default dict }}
+{{- $notionEnabled := $notion.enabled | default false }}
 {{- $users := $scia.users | default (dict "default" (dict "secretName" "scia-oauth-default")) }}
 {{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
 {{- $sciaHost := .Values.config.hostname | default "" }}
@@ -31,8 +33,16 @@
 {{- if $todoist.omitRedirectUrl }}
   {{- $todoistRedirectURL = "" }}
 {{- end }}
+{{- $notionRedirectURL := $notion.redirectUrl | default "" }}
+{{- if and (eq $notionRedirectURL "") $sciaPublicBaseURL }}
+  {{- $notionRedirectURL = printf "%s/api/oauth/notion/callback" (trimSuffix "/" $sciaPublicBaseURL) }}
+{{- end }}
+{{- if $notion.omitRedirectUrl }}
+  {{- $notionRedirectURL = "" }}
+{{- end }}
 {{- $googleScopes := $google.scopes | default (list (dict "id" ($google.scopeId | default "calendar-read") "value" ($google.scope | default "https://www.googleapis.com/auth/calendar.readonly") "name" ($google.scopeName | default "Google Calendar read-only") "desc" ($google.scopeDesc | default "Read Google Calendar events.") "enabled" true)) }}
 {{- $todoistScopes := $todoist.scopes | default (list (dict "id" "read-write" "value" ($todoist.scope | default "data:read_write") "name" "Todoist read/write" "desc" "Read and write Todoist tasks and projects." "enabled" true)) }}
+{{- $notionScopes := $notion.scopes | default (list (dict "id" "default" "value" ($notion.scope | default "") "name" "Notion access" "desc" "Connect Notion pages and databases selected during authorization." "enabled" true)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -114,6 +124,33 @@ data:
                 enabled: {{ $scope.enabled | default false }}
               {{- end }}
           {{- end }}
+          {{- if $notionEnabled }}
+          notion:
+            name: {{ $notion.name | default "Notion" | quote }}
+            iconUrl: {{ $notion.iconUrl | default "https://www.notion.so/images/favicon.ico" | quote }}
+            description: {{ $notion.description | default "Connect Notion pages and databases." | quote }}
+            setup:
+              callback_url: {{ $notionRedirectURL | quote }}
+            scopes:
+              {{- range $scope := $notionScopes }}
+              - id: {{ $scope.id | quote }}
+                value: {{ $scope.value | quote }}
+                name: {{ $scope.name | quote }}
+                {{- if $scope.desc }}
+                desc: {{ $scope.desc | quote }}
+                {{- end }}
+                {{- if $scope.group }}
+                group: {{ $scope.group | quote }}
+                {{- end }}
+                {{- if $scope.groupName }}
+                groupName: {{ $scope.groupName | quote }}
+                {{- end }}
+                {{- if $scope.groupDesc }}
+                groupDesc: {{ $scope.groupDesc | quote }}
+                {{- end }}
+                enabled: {{ $scope.enabled | default false }}
+              {{- end }}
+          {{- end }}
         namespaces:
           {{- range $userID, $_ := $users }}
           {{ $userID | quote }}:
@@ -131,6 +168,15 @@ data:
               scope: {{ $todoist.scope | default "data:read_write" | quote }}
               {{- if $todoistRedirectURL }}
               redirectUrl: {{ $todoistRedirectURL | quote }}
+              {{- end }}
+            {{- end }}
+            {{- if $notionEnabled }}
+            notion:
+              clientId: "env:NOTION_OAUTH_CLIENT_ID"
+              clientSecret: "env:NOTION_OAUTH_CLIENT_SECRET"
+              scope: {{ $notion.scope | default "" | quote }}
+              {{- if $notionRedirectURL }}
+              redirectUrl: {{ $notionRedirectURL | quote }}
               {{- end }}
             {{- end }}
           {{- end }}

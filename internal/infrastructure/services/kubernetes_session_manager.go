@@ -2584,8 +2584,20 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 	if len(todoistPaths) == 0 {
 		todoistPaths = []string{"/api/v1/*"}
 	}
+	notionCredentialID := scia.NotionCredential
+	if notionCredentialID == "" {
+		notionCredentialID = userNamespace + ".notion"
+	}
+	notionHosts := scia.NotionHosts
+	if len(notionHosts) == 0 {
+		notionHosts = []string{"api.notion.com"}
+	}
+	notionPaths := scia.NotionPaths
+	if len(notionPaths) == 0 {
+		notionPaths = []string{"/v1/*"}
+	}
 
-	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, todoistCredentialID, port, hosts, paths, todoistHosts, todoistPaths, sandboxEnabled)
+	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, todoistCredentialID, notionCredentialID, scia.NotionEnabled, port, hosts, paths, todoistHosts, todoistPaths, notionHosts, notionPaths, sandboxEnabled)
 	configScript := fmt.Sprintf("cat > /etc/scia-config/config.yaml <<'EOF'\n%sEOF\n", configYAML)
 
 	initContainer := corev1.Container{
@@ -2641,11 +2653,14 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 		{Name: "AGENTAPI_SCIA_TODOIST_CREDENTIAL", Value: todoistCredentialID},
 		{Name: "AGENTAPI_SCIA_USER_NAMESPACE", Value: userNamespace},
 	}
+	if scia.NotionEnabled {
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_NOTION_CREDENTIAL", Value: notionCredentialID})
+	}
 
 	return &initContainer, &sidecar, envVars
 }
 
-func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistCredentialID string, port int, hosts, paths, todoistHosts, todoistPaths []string, useNFA bool) string {
+func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistCredentialID, notionCredentialID string, notionEnabled bool, port int, hosts, paths, todoistHosts, todoistPaths, notionHosts, notionPaths []string, useNFA bool) string {
 	var b strings.Builder
 	b.WriteString("server:\n")
 	b.WriteString("  mode: proxy\n")
@@ -2664,6 +2679,13 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistC
 	b.WriteString("      hosts:\n")
 	for _, host := range todoistHosts {
 		b.WriteString(fmt.Sprintf("        - %q\n", host))
+	}
+	if notionEnabled {
+		b.WriteString("    notion:\n")
+		b.WriteString("      hosts:\n")
+		for _, host := range notionHosts {
+			b.WriteString(fmt.Sprintf("        - %q\n", host))
+		}
 	}
 	b.WriteString("  mitm:\n")
 	b.WriteString(fmt.Sprintf("    caCertPath: %q\n", sciaCAPath))
@@ -2684,6 +2706,12 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistC
 	b.WriteString("    type: todoist-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
 	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/todoist/token", namespace, url.PathEscape(userNamespace))))
+	if notionEnabled {
+		b.WriteString(fmt.Sprintf("  - id: %q\n", notionCredentialID))
+		b.WriteString("    type: notion-oauth-refresh-token\n")
+		b.WriteString("    params:\n")
+		b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/notion/token", namespace, url.PathEscape(userNamespace))))
+	}
 	b.WriteString("rules:\n")
 	b.WriteString("  - name: inject-google-oauth-token\n")
 	b.WriteString("    hosts:\n")
@@ -2709,6 +2737,20 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistC
 	b.WriteString("    action: allow\n")
 	b.WriteString("    credentials:\n")
 	b.WriteString(fmt.Sprintf("      - %q\n", todoistCredentialID))
+	if notionEnabled {
+		b.WriteString("  - name: inject-notion-oauth-token\n")
+		b.WriteString("    hosts:\n")
+		for _, host := range notionHosts {
+			b.WriteString(fmt.Sprintf("      - %q\n", host))
+		}
+		b.WriteString("    paths:\n")
+		for _, path := range notionPaths {
+			b.WriteString(fmt.Sprintf("      - %q\n", path))
+		}
+		b.WriteString("    action: allow\n")
+		b.WriteString("    credentials:\n")
+		b.WriteString(fmt.Sprintf("      - %q\n", notionCredentialID))
+	}
 	return b.String()
 }
 
@@ -4896,6 +4938,9 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 		if scia.TodoistCredential != "" {
 			env["AGENTAPI_SCIA_TODOIST_CREDENTIAL"] = scia.TodoistCredential
 		}
+		if scia.NotionEnabled && scia.NotionCredential != "" {
+			env["AGENTAPI_SCIA_NOTION_CREDENTIAL"] = scia.NotionCredential
+		}
 		if scia.UserNamespace != "" {
 			env["AGENTAPI_SCIA_USER_NAMESPACE"] = scia.UserNamespace
 		}
@@ -4939,6 +4984,15 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 	}
 	if todoistCredential != "" {
 		env["AGENTAPI_SCIA_TODOIST_CREDENTIAL"] = todoistCredential
+	}
+	if scia.NotionEnabled {
+		notionCredential := scia.NotionCredential
+		if notionCredential == "" && userNamespace != "" {
+			notionCredential = userNamespace + ".notion"
+		}
+		if notionCredential != "" {
+			env["AGENTAPI_SCIA_NOTION_CREDENTIAL"] = notionCredential
+		}
 	}
 	if userNamespace != "" {
 		env["AGENTAPI_SCIA_USER_NAMESPACE"] = userNamespace

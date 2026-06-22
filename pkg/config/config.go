@@ -267,6 +267,14 @@ type SciaConfig struct {
 	TodoistHosts []string `json:"todoist_hosts" mapstructure:"todoist_hosts"`
 	// TodoistPaths is the list of paths where the sidecar injects the Todoist access token.
 	TodoistPaths []string `json:"todoist_paths" mapstructure:"todoist_paths"`
+	// NotionEnabled controls whether Notion OAuth is injected into session sidecars.
+	NotionEnabled bool `json:"notion_enabled" mapstructure:"notion_enabled"`
+	// NotionCredential is the scia credential ID used for Notion OAuth, e.g. "takutakahashi.notion".
+	NotionCredential string `json:"notion_credential" mapstructure:"notion_credential"`
+	// NotionHosts is the list of hosts where the sidecar injects the Notion access token.
+	NotionHosts []string `json:"notion_hosts" mapstructure:"notion_hosts"`
+	// NotionPaths is the list of paths where the sidecar injects the Notion access token.
+	NotionPaths []string `json:"notion_paths" mapstructure:"notion_paths"`
 }
 
 // KubernetesSessionConfig represents Kubernetes session manager configuration
@@ -980,6 +988,18 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_TODOIST_PATHS")); len(paths) > 0 {
 		config.Scia.TodoistPaths = paths
 	}
+	if enabled, ok := os.LookupEnv("AGENTAPI_SCIA_NOTION_ENABLED"); ok {
+		config.Scia.NotionEnabled = strings.EqualFold(enabled, "true")
+	}
+	if credential := os.Getenv("AGENTAPI_SCIA_NOTION_CREDENTIAL"); credential != "" {
+		config.Scia.NotionCredential = credential
+	}
+	if hosts := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_NOTION_HOSTS")); len(hosts) > 0 {
+		config.Scia.NotionHosts = hosts
+	}
+	if paths := commaSeparatedList(os.Getenv("AGENTAPI_SCIA_NOTION_PATHS")); len(paths) > 0 {
+		config.Scia.NotionPaths = paths
+	}
 
 	// Override fields if environment variables are set (even if structures already exist)
 	if config.Auth.Static != nil {
@@ -1068,6 +1088,10 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("scia.todoist_credential", "AGENTAPI_SCIA_TODOIST_CREDENTIAL")
 	_ = v.BindEnv("scia.todoist_hosts", "AGENTAPI_SCIA_TODOIST_HOSTS")
 	_ = v.BindEnv("scia.todoist_paths", "AGENTAPI_SCIA_TODOIST_PATHS")
+	_ = v.BindEnv("scia.notion_enabled", "AGENTAPI_SCIA_NOTION_ENABLED")
+	_ = v.BindEnv("scia.notion_credential", "AGENTAPI_SCIA_NOTION_CREDENTIAL")
+	_ = v.BindEnv("scia.notion_hosts", "AGENTAPI_SCIA_NOTION_HOSTS")
+	_ = v.BindEnv("scia.notion_paths", "AGENTAPI_SCIA_NOTION_PATHS")
 
 	// Role-based environment files configuration
 	_ = v.BindEnv("role_env_files.enabled")
@@ -1339,6 +1363,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scia.todoist_credential", "")
 	v.SetDefault("scia.todoist_hosts", []string{"api.todoist.com"})
 	v.SetDefault("scia.todoist_paths", []string{"/api/v1/*", "/rest/v2/*", "/sync/v9/*"})
+	v.SetDefault("scia.notion_enabled", false)
+	v.SetDefault("scia.notion_credential", "")
+	v.SetDefault("scia.notion_hosts", []string{"api.notion.com"})
+	v.SetDefault("scia.notion_paths", []string{"/v1/*"})
 
 	// Memory backend defaults
 	v.SetDefault("memory.backend", "kubernetes")
