@@ -144,7 +144,7 @@ func (c *GoogleOAuthController) GetStatus(ctx echo.Context) error {
 
 	if c.scia.Enabled {
 		resp.HealthOK, resp.HealthStatus = c.checkHealth(ctx.Request().Context())
-		resp.Connected = c.refreshTokenSecretExists(ctx.Request().Context(), userNamespace)
+		resp.Connected = c.oauthTokenSecretExists(ctx.Request().Context(), userNamespace, c.credential(userNamespace), "google")
 	}
 
 	return ctx.JSON(http.StatusOK, resp)
@@ -186,7 +186,7 @@ func (c *GoogleOAuthController) GetIntegrations(ctx echo.Context) error {
 				}
 			}
 		}
-		integrations[i].Connected = c.refreshTokenSecretExists(ctx.Request().Context(), namespace)
+		integrations[i].Connected = c.oauthTokenSecretExists(ctx.Request().Context(), namespace, integrations[i].CredentialID, integrations[i].Provider)
 	}
 	resp.Integrations = integrations
 
@@ -353,13 +353,26 @@ func (c *GoogleOAuthController) checkHealth(ctx context.Context) (bool, string) 
 	return false, res.Status
 }
 
-func (c *GoogleOAuthController) refreshTokenSecretExists(ctx context.Context, userNamespace string) bool {
+func (c *GoogleOAuthController) oauthTokenSecretExists(ctx context.Context, userNamespace, credentialID, provider string) bool {
 	if c.client == nil || c.namespace == "" || userNamespace == "" {
 		return false
 	}
 	secretName := "scia-oauth-" + sanitizeSciaSecretSuffix(userNamespace)
-	_, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	return err == nil
+	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+	if hasSecretData(secret.Data, credentialID+".refresh_token") || hasSecretData(secret.Data, credentialID+".access_token") {
+		return true
+	}
+	// Older scia deployments stored the original Google refresh token under a
+	// shared key. Treat it as Google-only so other providers do not appear connected.
+	return provider == "google" && hasSecretData(secret.Data, "refresh_token")
+}
+
+func hasSecretData(data map[string][]byte, key string) bool {
+	value, ok := data[key]
+	return ok && len(value) > 0
 }
 
 func (c *GoogleOAuthController) userNamespace(userID string) string {
