@@ -4,10 +4,6 @@
 {{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
 {{- $sciaEnabled = $scia.enabled }}
 {{- end }}
-{{- $sciaRefreshSecretNames := list }}
-{{- if $sciaEnabled }}
-{{- $sciaRefreshSecretNames = $scia.sessionRefreshTokenSecretNames | default (list "scia-oauth-default") }}
-{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -30,14 +26,11 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "update"]
-  {{- with $sciaRefreshSecretNames }}
-  # Permissions for the scia session sidecar to read only the per-user refresh
-  # token Secrets explicitly listed by the operator. OAuth client Secrets must
-  # remain readable only by the scia OAuth broker.
+  {{- if $sciaEnabled }}
+  # Dynamic scia users create per-user refresh-token Secrets at runtime, so
+  # session pods cannot enumerate resourceNames ahead of time.
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames:
-      {{- toYaml . | nindent 6 }}
-    verbs: ["get"]
+    verbs: ["get", "list"]
   {{- end }}
 {{- end }}

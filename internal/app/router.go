@@ -63,12 +63,23 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	}
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc, gitSyncKMSKeyARN, gitSyncAWSRegion)
 
+	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
+	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
+		apiKeyRepo = repositories.NewKubernetesPersonalAPIKeyRepository(
+			k8sManager.GetClient(),
+			k8sManager.GetNamespace(),
+		)
+	}
+
 	var googleOAuthController *controllers.GoogleOAuthController
 	if cfg := server.GetConfig(); cfg != nil {
 		if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, k8sManager.GetClient(), k8sManager.GetNamespace())
 		} else {
 			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, nil, "")
+		}
+		if apiKeyRepo != nil {
+			googleOAuthController.WithPersonalAPIKeyRepository(apiKeyRepo)
 		}
 	}
 
@@ -110,11 +121,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 
 	// Create personal API key controller if session manager is Kubernetes-based
 	var personalAPIKeyController *controllers.PersonalAPIKeyController
-	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
-		apiKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(
-			k8sManager.GetClient(),
-			k8sManager.GetNamespace(),
-		)
+	if apiKeyRepo != nil {
 		getOrCreatePersonalAPIKeyUC := personal_api_key.NewGetOrCreatePersonalAPIKeyUseCase(apiKeyRepo)
 
 		// Get auth service for loading API keys into memory

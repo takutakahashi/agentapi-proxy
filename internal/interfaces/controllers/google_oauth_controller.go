@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,6 +28,7 @@ type GoogleOAuthController struct {
 	client     kubernetes.Interface
 	namespace  string
 	httpClient *http.Client
+	apiKeyRepo portrepos.PersonalAPIKeyRepository
 }
 
 // NewGoogleOAuthController creates a GoogleOAuthController.
@@ -38,6 +41,13 @@ func NewGoogleOAuthController(scia config.SciaConfig, client kubernetes.Interfac
 			Timeout: 3 * time.Second,
 		},
 	}
+}
+
+// WithPersonalAPIKeyRepository wires the user's personal API key into scia
+// dynamic user authorization.
+func (c *GoogleOAuthController) WithPersonalAPIKeyRepository(repo portrepos.PersonalAPIKeyRepository) *GoogleOAuthController {
+	c.apiKeyRepo = repo
+	return c
 }
 
 // GetName returns the controller name.
@@ -137,13 +147,14 @@ func (c *GoogleOAuthController) GetStatus(ctx echo.Context) error {
 	userID := string(user.ID())
 	userNamespace := c.userNamespace(userID)
 	credential := c.credential(userNamespace)
+	userToken := c.userToken(ctx.Request().Context(), userID)
 
 	resp := GoogleOAuthStatusResponse{
 		Enabled:          c.scia.Enabled,
 		ClientConfigured: c.scia.Enabled && credential != "",
 		Credential:       credential,
 		UserNamespace:    userNamespace,
-		OAuthStartURL:    c.oauthStartURL(userNamespace, credential),
+		OAuthStartURL:    c.oauthStartURL(userNamespace, credential, userToken),
 		AuthorizationURL: c.authorizationURLEndpoint(userNamespace),
 		ProxyConfigured:  c.scia.Enabled && c.scia.ProxyURL != "",
 	}
@@ -177,13 +188,14 @@ func (c *GoogleOAuthController) GetIntegrations(ctx echo.Context) error {
 
 	userID := string(user.ID())
 	defaultNamespace := c.userNamespace(userID)
+	userToken := c.userToken(ctx.Request().Context(), userID)
 	for i := range integrations {
 		namespace := integrations[i].Namespace
 		if namespace == "" {
 			namespace = defaultNamespace
 			integrations[i].Namespace = namespace
 		}
-		integrations[i].StartURL = c.publicURL(integrations[i].StartURL)
+		integrations[i].StartURL = c.publicURL(c.withDynamicUserQuery(integrations[i].StartURL, namespace, userToken))
 		integrations[i].AuthorizationURLEndpoint = c.publicURL(integrations[i].AuthorizationURLEndpoint)
 		if integrations[i].Setup != nil {
 			for key, value := range integrations[i].Setup {
@@ -223,7 +235,7 @@ func (c *GoogleOAuthController) CreateAuthorizationURL(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "integration not found")
 	}
 
-	resp, err := c.createSciaAuthorizationURL(ctx.Request().Context(), integration, input)
+	resp, err := c.createSciaAuthorizationURL(ctx.Request().Context(), integration, input, c.userToken(ctx.Request().Context(), string(user.ID())))
 	if err != nil {
 		var upstream sciaHTTPError
 		if errors.As(err, &upstream) {
@@ -254,7 +266,7 @@ func (c *GoogleOAuthController) RevokeIntegration(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "integration not found")
 	}
 
-	resp, err := c.revokeSciaIntegration(ctx.Request().Context(), integration)
+	resp, err := c.revokeSciaIntegration(ctx.Request().Context(), integration, c.userToken(ctx.Request().Context(), string(user.ID())))
 	if err != nil {
 		var upstream sciaHTTPError
 		if errors.As(err, &upstream) {
@@ -283,7 +295,7 @@ func (c *GoogleOAuthController) integrationForUser(ctx context.Context, userID, 
 	return FrontendIntegration{}, false, nil
 }
 
-func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, integration FrontendIntegration, input IntegrationAuthorizationURLRequest) (IntegrationAuthorizationURLResponse, error) {
+func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, integration FrontendIntegration, input IntegrationAuthorizationURLRequest, userToken string) (IntegrationAuthorizationURLResponse, error) {
 	base := strings.TrimRight(c.scia.OAuthInternalURL, "/")
 	if base == "" {
 		base = strings.TrimRight(c.scia.PublicBaseURL, "/")
@@ -293,6 +305,9 @@ func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, 
 	}
 	if integration.Namespace == "" || integration.Provider == "" {
 		return IntegrationAuthorizationURLResponse{}, fmt.Errorf("integration is missing namespace or provider")
+	}
+	if integration.AuthorizationURLEndpoint == "" {
+		return c.createSciaStartAuthorizationURL(ctx, integration, input, userToken)
 	}
 
 	path := fmt.Sprintf("/oauth/%s/%s/authorization-url", url.PathEscape(integration.Namespace), url.PathEscape(integration.Provider))
@@ -306,6 +321,9 @@ func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if userToken != "" {
+		req.Header.Set("X-Scia-User-Token", userToken)
+	}
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {
@@ -328,7 +346,61 @@ func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, 
 	return output, nil
 }
 
-func (c *GoogleOAuthController) revokeSciaIntegration(ctx context.Context, integration FrontendIntegration) (IntegrationRevokeResponse, error) {
+func (c *GoogleOAuthController) createSciaStartAuthorizationURL(ctx context.Context, integration FrontendIntegration, input IntegrationAuthorizationURLRequest, userToken string) (IntegrationAuthorizationURLResponse, error) {
+	base := strings.TrimRight(c.scia.OAuthInternalURL, "/")
+	if base == "" {
+		base = strings.TrimRight(c.scia.PublicBaseURL, "/")
+	}
+	if base == "" {
+		return IntegrationAuthorizationURLResponse{}, fmt.Errorf("scia_oauth_url_not_configured")
+	}
+	values := url.Values{}
+	values.Set("credential", integration.CredentialID)
+	values.Set("user", integration.Namespace)
+	if input.RedirectURI != "" {
+		values.Set("redirect_uri", input.RedirectURI)
+	}
+	if input.State != "" {
+		values.Set("state", input.State)
+	}
+	if userToken != "" {
+		values.Set("user_token", userToken)
+	}
+	endpoint := fmt.Sprintf("%s/oauth/%s/start?%s", base, url.PathEscape(integration.Provider), values.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return IntegrationAuthorizationURLResponse{}, err
+	}
+	client := *c.httpClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return IntegrationAuthorizationURLResponse{}, err
+	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
+	if res.StatusCode != http.StatusFound && res.StatusCode != http.StatusSeeOther {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		return IntegrationAuthorizationURLResponse{}, sciaHTTPError{
+			StatusCode: res.StatusCode,
+			Message:    strings.TrimSpace(string(body)),
+		}
+	}
+	location := res.Header.Get("Location")
+	if location == "" {
+		return IntegrationAuthorizationURLResponse{}, fmt.Errorf("scia start response did not include Location")
+	}
+	return IntegrationAuthorizationURLResponse{
+		CredentialID:     integration.CredentialID,
+		AuthorizationURL: location,
+		RedirectURI:      input.RedirectURI,
+	}, nil
+}
+
+func (c *GoogleOAuthController) revokeSciaIntegration(ctx context.Context, integration FrontendIntegration, userToken string) (IntegrationRevokeResponse, error) {
 	base := strings.TrimRight(c.scia.OAuthInternalURL, "/")
 	if base == "" {
 		base = strings.TrimRight(c.scia.PublicBaseURL, "/")
@@ -339,6 +411,9 @@ func (c *GoogleOAuthController) revokeSciaIntegration(ctx context.Context, integ
 	if integration.Namespace == "" || integration.Provider == "" {
 		return IntegrationRevokeResponse{}, fmt.Errorf("integration is missing namespace or provider")
 	}
+	if integration.AuthorizationURLEndpoint == "" {
+		return c.revokeLocalOAuthSecret(ctx, integration)
+	}
 
 	path := fmt.Sprintf("/oauth/%s/%s/revoke", url.PathEscape(integration.Namespace), url.PathEscape(integration.Provider))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, strings.NewReader(`{}`))
@@ -347,6 +422,9 @@ func (c *GoogleOAuthController) revokeSciaIntegration(ctx context.Context, integ
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if userToken != "" {
+		req.Header.Set("X-Scia-User-Token", userToken)
+	}
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {
@@ -370,6 +448,26 @@ func (c *GoogleOAuthController) revokeSciaIntegration(ctx context.Context, integ
 		output.CredentialID = integration.CredentialID
 	}
 	return output, nil
+}
+
+func (c *GoogleOAuthController) revokeLocalOAuthSecret(ctx context.Context, integration FrontendIntegration) (IntegrationRevokeResponse, error) {
+	if c.client == nil || c.namespace == "" {
+		return IntegrationRevokeResponse{}, fmt.Errorf("kubernetes client is not configured")
+	}
+	secretName := "scia-oauth-" + sanitizeSciaSecretSuffix(integration.Namespace)
+	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return IntegrationRevokeResponse{}, err
+	}
+	delete(secret.Data, integration.CredentialID+".refresh_token")
+	delete(secret.Data, integration.CredentialID+".access_token")
+	if integration.Provider == "google" {
+		delete(secret.Data, "refresh_token")
+	}
+	if _, err := c.client.CoreV1().Secrets(c.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return IntegrationRevokeResponse{}, err
+	}
+	return IntegrationRevokeResponse{Revoked: true, CredentialID: integration.CredentialID}, nil
 }
 
 func (c *GoogleOAuthController) fetchSciaIntegrations(ctx context.Context) ([]FrontendIntegration, error) {
@@ -459,7 +557,7 @@ func (c *GoogleOAuthController) userNamespace(userID string) string {
 	if c.scia.UserNamespace != "" {
 		return c.scia.UserNamespace
 	}
-	return userID
+	return sanitizeSciaDynamicUserID(userID)
 }
 
 func (c *GoogleOAuthController) credential(userNamespace string) string {
@@ -472,13 +570,16 @@ func (c *GoogleOAuthController) credential(userNamespace string) string {
 	return userNamespace + ".google"
 }
 
-func (c *GoogleOAuthController) oauthStartURL(userNamespace, credential string) string {
+func (c *GoogleOAuthController) oauthStartURL(userNamespace, credential, userToken string) string {
 	if credential == "" || userNamespace == "" {
 		return ""
 	}
 	values := url.Values{}
 	values.Set("credential", credential)
 	values.Set("user", userNamespace)
+	if userToken != "" {
+		values.Set("user_token", userToken)
+	}
 	return c.withPublicBase("/oauth/google/start") + "?" + values.Encode()
 }
 
@@ -510,7 +611,27 @@ func (c *GoogleOAuthController) publicURL(path string) string {
 	return base + path
 }
 
+func (c *GoogleOAuthController) withDynamicUserQuery(rawURL, userNamespace, userToken string) string {
+	if rawURL == "" || userNamespace == "" {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	values := parsed.Query()
+	if values.Get("user") == "" && strings.HasPrefix(parsed.Path, "/oauth/") && strings.Count(strings.Trim(parsed.Path, "/"), "/") == 2 {
+		values.Set("user", userNamespace)
+	}
+	if userToken != "" {
+		values.Set("user_token", userToken)
+	}
+	parsed.RawQuery = values.Encode()
+	return parsed.String()
+}
+
 var sciaSecretInvalidChars = regexp.MustCompile(`[^a-z0-9.-]+`)
+var sciaDynamicUserInvalidChars = regexp.MustCompile(`[^a-z0-9-]+`)
 
 func sanitizeSciaSecretSuffix(value string) string {
 	value = strings.ToLower(value)
@@ -520,4 +641,31 @@ func sanitizeSciaSecretSuffix(value string) string {
 		return "default"
 	}
 	return value
+}
+
+func sanitizeSciaDynamicUserID(value string) string {
+	value = strings.ToLower(value)
+	value = sciaDynamicUserInvalidChars.ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	if value == "" {
+		return "default"
+	}
+	if len(value) > 63 {
+		value = strings.Trim(value[:63], "-")
+	}
+	if value == "" {
+		return "default"
+	}
+	return value
+}
+
+func (c *GoogleOAuthController) userToken(ctx context.Context, userID string) string {
+	if c.apiKeyRepo == nil || userID == "" {
+		return ""
+	}
+	apiKey, err := c.apiKeyRepo.FindByUserID(ctx, entities.UserID(userID))
+	if err != nil || apiKey == nil {
+		return ""
+	}
+	return apiKey.APIKey()
 }

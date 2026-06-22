@@ -6,9 +6,11 @@
 {{- if $sciaEnabled }}
 {{- $oauth := $scia.oauth | default dict }}
 {{- $google := $oauth.google | default dict }}
+{{- $googleCredential := $scia.credential | default "" }}
+{{- $googleEnabled := ne $googleCredential "" }}
 {{- $todoist := $oauth.todoist | default dict }}
 {{- $todoistEnabled := $todoist.enabled | default false }}
-{{- $users := $scia.users | default (dict "default" (dict "secretName" "scia-oauth-default")) }}
+{{- $dynamicUserSecretNamePrefix := $scia.dynamicUserSecretNamePrefix | default "scia-oauth-" }}
 {{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
 {{- $sciaHost := .Values.config.hostname | default "" }}
 {{- if .Values.global }}
@@ -49,15 +51,33 @@ data:
         mode: kubernetes
         kubernetes:
           namespace: {{ .Release.Namespace | quote }}
-      users:
-        {{- range $userID, $user := $users }}
-        {{ $userID | quote }}:
-          secretName: {{ $user.secretName | quote }}
-        {{- end }}
+          dynamicUsers: true
+          dynamicUserSecretNamePrefix: {{ $dynamicUserSecretNamePrefix | quote }}
       oauth:
         listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
         redirectUrl: {{ $redirectURL | quote }}
+        {{- if $googleEnabled }}
+        google:
+          credentialId: {{ $googleCredential | quote }}
+          clientId: "env:GOOGLE_OAUTH_CLIENT_ID"
+          clientSecret: "env:GOOGLE_OAUTH_CLIENT_SECRET"
+          scope: {{ $google.scope | default "https://www.googleapis.com/auth/calendar.readonly" | quote }}
+          {{- if $redirectURL }}
+          redirectUrl: {{ $redirectURL | quote }}
+          {{- end }}
+        {{- end }}
+        {{- if $todoistEnabled }}
+        todoist:
+          credentialId: {{ $scia.todoistCredential | default "default.todoist" | quote }}
+          clientId: "env:TODOIST_OAUTH_CLIENT_ID"
+          clientSecret: "env:TODOIST_OAUTH_CLIENT_SECRET"
+          scope: {{ $todoist.scope | default "data:read_write" | quote }}
+          {{- if $todoistRedirectURL }}
+          redirectUrl: {{ $todoistRedirectURL | quote }}
+          {{- end }}
+        {{- end }}
         integrations:
+          {{- if $googleEnabled }}
           google:
             name: {{ $google.name | default "Google" | quote }}
             {{- if $google.iconUrl }}
@@ -87,6 +107,7 @@ data:
                 {{- end }}
                 enabled: {{ $scope.enabled | default false }}
               {{- end }}
+          {{- end }}
           {{- if $todoistEnabled }}
           todoist:
             name: {{ $todoist.name | default "Todoist" | quote }}
@@ -114,26 +135,16 @@ data:
                 enabled: {{ $scope.enabled | default false }}
               {{- end }}
           {{- end }}
-        namespaces:
-          {{- range $userID, $_ := $users }}
-          {{ $userID | quote }}:
-            google:
-              clientId: "env:GOOGLE_OAUTH_CLIENT_ID"
-              clientSecret: "env:GOOGLE_OAUTH_CLIENT_SECRET"
-              scope: {{ $google.scope | default "https://www.googleapis.com/auth/calendar.readonly" | quote }}
-              {{- if $redirectURL }}
-              redirectUrl: {{ $redirectURL | quote }}
-              {{- end }}
-            {{- if $todoistEnabled }}
-            todoist:
-              clientId: "env:TODOIST_OAUTH_CLIENT_ID"
-              clientSecret: "env:TODOIST_OAUTH_CLIENT_SECRET"
-              scope: {{ $todoist.scope | default "data:read_write" | quote }}
-              {{- if $todoistRedirectURL }}
-              redirectUrl: {{ $todoistRedirectURL | quote }}
-              {{- end }}
-            {{- end }}
-          {{- end }}
-    credentials: []
+    credentials:
+      {{- if $googleEnabled }}
+      - id: {{ $googleCredential | quote }}
+        type: google-oauth-refresh-token
+        params: {}
+      {{- end }}
+      {{- if $todoistEnabled }}
+      - id: {{ $scia.todoistCredential | default "default.todoist" | quote }}
+        type: todoist-oauth-refresh-token
+        params: {}
+      {{- end }}
     rules: []
 {{- end }}

@@ -1950,7 +1950,11 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	var sciaInitContainer *corev1.Container
 	var sciaSidecar *corev1.Container
 	if m.sciaSessionSidecarEnabled(req) {
-		sciaInitContainer, sciaSidecar, _ = m.buildSciaSidecarContainers(req, sandboxEnabled)
+		var sciaUserToken string
+		if apiKey := m.ensurePersonalAPIKey(ctx, req.UserID); apiKey != nil {
+			sciaUserToken = apiKey.APIKey()
+		}
+		sciaInitContainer, sciaSidecar, _ = m.buildSciaSidecarContainers(req, sandboxEnabled, sciaUserToken)
 		initContainers = append(initContainers, *sciaInitContainer)
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
 		// Do not inject sidecar proxy variables into the Pod-level container env.
@@ -2547,7 +2551,7 @@ func (m *KubernetesSessionManager) sciaSessionSidecarEnabled(req *entities.RunSe
 	return m.config.Scia.SessionSidecarEnabled
 }
 
-func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunServerRequest, sandboxEnabled bool) (*corev1.Container, *corev1.Container, []corev1.EnvVar) {
+func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunServerRequest, sandboxEnabled bool, userToken string) (*corev1.Container, *corev1.Container, []corev1.EnvVar) {
 	scia := m.config.Scia
 	port := scia.SessionSidecarPort
 	if port == 0 {
@@ -2555,7 +2559,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 	}
 	userNamespace := scia.UserNamespace
 	if userNamespace == "" {
-		userNamespace = req.UserID
+		userNamespace = sanitizeSciaDynamicUserID(req.UserID)
 	}
 	if userNamespace == "" {
 		userNamespace = "default"
@@ -2585,7 +2589,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 		todoistPaths = []string{"/api/v1/*"}
 	}
 
-	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, todoistCredentialID, port, hosts, paths, todoistHosts, todoistPaths, sandboxEnabled)
+	configYAML := buildSciaSidecarConfigYAML(m.namespace, userNamespace, credentialID, todoistCredentialID, userToken, port, hosts, paths, todoistHosts, todoistPaths, sandboxEnabled)
 	configScript := fmt.Sprintf("cat > /etc/scia-config/config.yaml <<'EOF'\n%sEOF\n", configYAML)
 
 	initContainer := corev1.Container{
@@ -2600,7 +2604,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 
 	sidecar := corev1.Container{
 		Name:            "scia-proxy",
-		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.12.1"),
+		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.12.2"),
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Args:            []string{"-config", "/etc/scia-config/config.yaml"},
 		Ports: []corev1.ContainerPort{
@@ -2645,7 +2649,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 	return &initContainer, &sidecar, envVars
 }
 
-func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistCredentialID string, port int, hosts, paths, todoistHosts, todoistPaths []string, useNFA bool) string {
+func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistCredentialID, userToken string, port int, hosts, paths, todoistHosts, todoistPaths []string, useNFA bool) string {
 	var b strings.Builder
 	b.WriteString("server:\n")
 	b.WriteString("  mode: proxy\n")
@@ -2672,18 +2676,19 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistC
 	b.WriteString("    mode: kubernetes\n")
 	b.WriteString("    kubernetes:\n")
 	b.WriteString(fmt.Sprintf("      namespace: %q\n", namespace))
-	b.WriteString("  users:\n")
-	b.WriteString(fmt.Sprintf("    %s:\n", yamlKey(userNamespace)))
-	b.WriteString(fmt.Sprintf("      secretName: %q\n", "scia-oauth-"+sanitizeSecretName(userNamespace)))
+	b.WriteString("      dynamicUsers: true\n")
+	b.WriteString("      dynamicUserSecretNamePrefix: \"scia-oauth-\"\n")
 	b.WriteString("credentials:\n")
 	b.WriteString(fmt.Sprintf("  - id: %q\n", credentialID))
 	b.WriteString("    type: google-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
-	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/google/token", namespace, url.PathEscape(userNamespace))))
+	b.WriteString(fmt.Sprintf("      user: %q\n", userNamespace))
+	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, userNamespace, "google", userToken)))
 	b.WriteString(fmt.Sprintf("  - id: %q\n", todoistCredentialID))
 	b.WriteString("    type: todoist-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
-	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/todoist/token", namespace, url.PathEscape(userNamespace))))
+	b.WriteString(fmt.Sprintf("      user: %q\n", userNamespace))
+	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, userNamespace, "todoist", userToken)))
 	b.WriteString("rules:\n")
 	b.WriteString("  - name: inject-google-oauth-token\n")
 	b.WriteString("    hosts:\n")
@@ -2712,8 +2717,30 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistC
 	return b.String()
 }
 
-func yamlKey(value string) string {
-	return strconv.Quote(value)
+func sciaTokenBrokerURL(namespace, userNamespace, provider, userToken string) string {
+	brokerURL := fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/%s/token", namespace, url.PathEscape(userNamespace), url.PathEscape(provider))
+	if userToken == "" {
+		return brokerURL
+	}
+	return brokerURL + "?user_token=" + url.QueryEscape(userToken)
+}
+
+var sciaDynamicUserInvalidChars = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func sanitizeSciaDynamicUserID(value string) string {
+	value = strings.ToLower(value)
+	value = sciaDynamicUserInvalidChars.ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	if value == "" {
+		return "default"
+	}
+	if len(value) > 63 {
+		value = strings.Trim(value[:63], "-")
+	}
+	if value == "" {
+		return "default"
+	}
+	return value
 }
 
 // buildDinDContainers returns the DinD sidecar container, env vars for the main container,
@@ -4336,6 +4363,36 @@ func generatePersonalAPIKey() (string, error) {
 	return "ap_" + hex.EncodeToString(keyBytes), nil
 }
 
+func (m *KubernetesSessionManager) ensurePersonalAPIKey(ctx context.Context, userID string) *entities.PersonalAPIKey {
+	if m.personalAPIKeyRepo == nil || userID == "" {
+		return nil
+	}
+	apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(userID))
+	if err == nil && apiKey != nil {
+		return apiKey
+	}
+
+	log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", userID)
+	generatedKey, genErr := generatePersonalAPIKey()
+	if genErr != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to generate personal API key: %v", genErr)
+		return nil
+	}
+	apiKey = entities.NewPersonalAPIKey(entities.UserID(userID), generatedKey)
+	if saveErr := m.personalAPIKeyRepo.Save(ctx, apiKey); saveErr != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to save personal API key for user %s: %v", userID, saveErr)
+		return nil
+	}
+	if m.personalAPIKeyLoader != nil {
+		// Register new keys immediately so in-session callbacks can authenticate
+		// without waiting for a proxy restart and Kubernetes bootstrap.
+		if loadErr := m.personalAPIKeyLoader.LoadPersonalAPIKey(ctx, apiKey); loadErr != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to register personal API key for user %s: %v", userID, loadErr)
+		}
+	}
+	return apiKey
+}
+
 // buildSessionSettings constructs SessionSettings from RunServerRequest and session state.
 // This consolidates buildEnvVars and envFrom logic into a single unified structure.
 func (m *KubernetesSessionManager) buildSessionSettings(
@@ -4464,30 +4521,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// Expand personal API key directly from repository for user-scoped sessions
 	// Treat empty scope as user scope (default behavior)
 	if (req.Scope == entities.ScopeUser || req.Scope == "") && m.personalAPIKeyRepo != nil {
-		apiKey, err := m.personalAPIKeyRepo.FindByUserID(ctx, entities.UserID(req.UserID))
-		if err != nil {
-			// If no API key exists, create a new one automatically
-			log.Printf("[K8S_SESSION] No personal API key found for user %s, creating new one", req.UserID)
-			generatedKey, genErr := generatePersonalAPIKey()
-			if genErr != nil {
-				log.Printf("[K8S_SESSION] Warning: failed to generate personal API key: %v", genErr)
-			} else {
-				apiKey = entities.NewPersonalAPIKey(entities.UserID(req.UserID), generatedKey)
-				if saveErr := m.personalAPIKeyRepo.Save(ctx, apiKey); saveErr != nil {
-					log.Printf("[K8S_SESSION] Warning: failed to save personal API key for user %s: %v", req.UserID, saveErr)
-					apiKey = nil
-				} else if m.personalAPIKeyLoader != nil {
-					// Register the new key in the auth service immediately so that
-					// it is valid without waiting for a proxy restart + bootstrap.
-					// This is critical for oneshot sessions: the Stop hook calls
-					// delete-session using this key, which would fail with 401 if
-					// the key is only persisted to K8s but not loaded in-memory.
-					if loadErr := m.personalAPIKeyLoader.LoadPersonalAPIKey(ctx, apiKey); loadErr != nil {
-						log.Printf("[K8S_SESSION] Warning: failed to register personal API key for user %s: %v", req.UserID, loadErr)
-					}
-				}
-			}
-		}
+		apiKey := m.ensurePersonalAPIKey(ctx, req.UserID)
 		if apiKey != nil {
 			env["AGENTAPI_KEY"] = apiKey.APIKey()
 			log.Printf("[K8S_SESSION] Added personal API key to session settings env for user %s", req.UserID)
@@ -4911,7 +4945,7 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 	}
 	userNamespace := scia.UserNamespace
 	if userNamespace == "" {
-		userNamespace = env["AGENTAPI_USER_ID"]
+		userNamespace = sanitizeSciaDynamicUserID(env["AGENTAPI_USER_ID"])
 	}
 	credential := scia.Credential
 	if credential == "" && userNamespace != "" {

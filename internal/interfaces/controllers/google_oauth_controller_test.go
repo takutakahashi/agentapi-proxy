@@ -1,9 +1,11 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -17,6 +19,7 @@ import (
 
 func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 	var gotScopeIDs []string
+	var gotUserToken string
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/integrations":
@@ -39,6 +42,7 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("method = %s, want POST", r.Method)
 			}
+			gotUserToken = r.Header.Get("X-Scia-User-Token")
 			var req IntegrationAuthorizationURLRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
@@ -60,7 +64,9 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 	controller := NewGoogleOAuthController(config.SciaConfig{
 		Enabled:          true,
 		OAuthInternalURL: scia.URL,
-	}, nil, "")
+	}, nil, "").WithPersonalAPIKeyRepository(&fakeGoogleOAuthPersonalAPIKeyRepo{
+		keys: map[entities.UserID]string{"takutakahashi": "ap-user-token"},
+	})
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/integrations/takutakahashi.google/authorization-url", strings.NewReader(`{"scope_ids":["calendar-write","tasks-write"],"redirect_uri":"https://app.example.com/api/oauth/google/callback"}`))
@@ -81,6 +87,9 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 	if strings.Join(gotScopeIDs, ",") != "calendar-write,tasks-write" {
 		t.Fatalf("scope_ids = %#v", gotScopeIDs)
 	}
+	if gotUserToken != "ap-user-token" {
+		t.Fatalf("X-Scia-User-Token = %q", gotUserToken)
+	}
 	var body IntegrationAuthorizationURLResponse
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -92,6 +101,7 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 
 func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
 	var revoked bool
+	var gotUserToken string
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/integrations":
@@ -114,6 +124,7 @@ func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("method = %s, want POST", r.Method)
 			}
+			gotUserToken = r.Header.Get("X-Scia-User-Token")
 			revoked = true
 			_ = json.NewEncoder(w).Encode(IntegrationRevokeResponse{
 				Revoked:      true,
@@ -128,7 +139,9 @@ func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
 	controller := NewGoogleOAuthController(config.SciaConfig{
 		Enabled:          true,
 		OAuthInternalURL: scia.URL,
-	}, nil, "")
+	}, nil, "").WithPersonalAPIKeyRepository(&fakeGoogleOAuthPersonalAPIKeyRepo{
+		keys: map[entities.UserID]string{"takutakahashi": "ap-user-token"},
+	})
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/integrations/takutakahashi.todoist/revoke", nil)
@@ -147,6 +160,9 @@ func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
 	if !revoked {
 		t.Fatalf("scia revoke endpoint was not called")
 	}
+	if gotUserToken != "ap-user-token" {
+		t.Fatalf("X-Scia-User-Token = %q", gotUserToken)
+	}
 	var body IntegrationRevokeResponse
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -155,6 +171,80 @@ func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
 		t.Fatalf("unexpected revoke response: %#v", body)
 	}
 }
+
+func TestGetStatusIncludesPersonalAPIKeyUserTokenInOAuthStartURL(t *testing.T) {
+	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/_scia/healthz" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer scia.Close()
+
+	controller := NewGoogleOAuthController(config.SciaConfig{
+		Enabled:          true,
+		OAuthInternalURL: scia.URL,
+		PublicBaseURL:    "https://agentapi.example.com",
+	}, nil, "").WithPersonalAPIKeyRepository(&fakeGoogleOAuthPersonalAPIKeyRepo{
+		keys: map[entities.UserID]string{"Alice_Example": "ap-user-token"},
+	})
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/integrations/google-oauth/status", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("internal_user", entities.NewUser("Alice_Example", entities.UserTypeRegular, "Alice_Example"))
+
+	if err := controller.GetStatus(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body GoogleOAuthStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.UserNamespace != "alice-example" {
+		t.Fatalf("user_namespace = %q", body.UserNamespace)
+	}
+	startURL, err := url.Parse(body.OAuthStartURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startURL.Query().Get("user_token") != "ap-user-token" {
+		t.Fatalf("user_token = %q", startURL.Query().Get("user_token"))
+	}
+}
+
+type fakeGoogleOAuthPersonalAPIKeyRepo struct {
+	keys map[entities.UserID]string
+}
+
+func (r *fakeGoogleOAuthPersonalAPIKeyRepo) FindByUserID(_ context.Context, userID entities.UserID) (*entities.PersonalAPIKey, error) {
+	key := r.keys[userID]
+	if key == "" {
+		return nil, assertAnError{}
+	}
+	return entities.NewPersonalAPIKey(userID, key), nil
+}
+
+func (r *fakeGoogleOAuthPersonalAPIKeyRepo) Save(context.Context, *entities.PersonalAPIKey) error {
+	return nil
+}
+
+func (r *fakeGoogleOAuthPersonalAPIKeyRepo) Delete(context.Context, entities.UserID) error {
+	return nil
+}
+
+func (r *fakeGoogleOAuthPersonalAPIKeyRepo) List(context.Context) ([]*entities.PersonalAPIKey, error) {
+	return nil, nil
+}
+
+type assertAnError struct{}
+
+func (assertAnError) Error() string { return "not found" }
 
 func TestGetIntegrationsMarksConnectedPerCredentialToken(t *testing.T) {
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
