@@ -5,8 +5,10 @@
 {{- $sciaEnabled = $scia.enabled }}
 {{- end }}
 {{- $sciaRefreshSecretNames := list }}
+{{- $sciaDynamicUsers := false }}
 {{- if $sciaEnabled }}
 {{- $sciaRefreshSecretNames = $scia.sessionRefreshTokenSecretNames | default (list "scia-oauth-default") }}
+{{- $sciaDynamicUsers = dig "dynamicUsers" "enabled" false $scia }}
 {{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -30,6 +32,13 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "update"]
+  {{- if $sciaDynamicUsers }}
+  # Dynamic scia users derive refresh-token Secret names from the authenticated
+  # user at runtime, so Kubernetes RBAC cannot enumerate resourceNames here.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  {{- else }}
   {{- with $sciaRefreshSecretNames }}
   # Permissions for the scia session sidecar to read only the per-user refresh
   # token Secrets explicitly listed by the operator. OAuth client Secrets must
@@ -39,5 +48,6 @@ rules:
     resourceNames:
       {{- toYaml . | nindent 6 }}
     verbs: ["get"]
+  {{- end }}
   {{- end }}
 {{- end }}

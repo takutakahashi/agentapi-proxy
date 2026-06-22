@@ -270,9 +270,9 @@ spec:
             - name: AGENTAPI_SCIA_PROXY_URL
               value: {{ $scia.proxyUrl | default "" | quote }}
             - name: AGENTAPI_SCIA_CREDENTIAL
-              value: {{ $scia.credential | default "default.google" | quote }}
+              value: {{ $scia.credential | default "" | quote }}
             - name: AGENTAPI_SCIA_USER_NAMESPACE
-              value: {{ $scia.userNamespace | default "default" | quote }}
+              value: {{ $scia.userNamespace | default "" | quote }}
             - name: AGENTAPI_SCIA_NO_PROXY
               value: {{ $scia.noProxy | default "localhost,127.0.0.1,.svc,.cluster.local" | quote }}
             - name: AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED
@@ -288,7 +288,7 @@ spec:
             - name: AGENTAPI_SCIA_GOOGLE_PATHS
               value: {{ $scia.googlePaths | default (list "/calendar/v3/*") | join "," | quote }}
             - name: AGENTAPI_SCIA_TODOIST_CREDENTIAL
-              value: {{ $scia.todoistCredential | default (printf "%s.todoist" ($scia.userNamespace | default "default")) | quote }}
+              value: {{ $scia.todoistCredential | default "" | quote }}
             - name: AGENTAPI_SCIA_TODOIST_HOSTS
               value: {{ $scia.todoistHosts | default (list "api.todoist.com") | join "," | quote }}
             - name: AGENTAPI_SCIA_TODOIST_PATHS

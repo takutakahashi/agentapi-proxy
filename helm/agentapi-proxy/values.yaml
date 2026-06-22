@@ -70,6 +70,14 @@ service:
 scia:
   # Deploy and configure scia Google OAuth broker/proxy integration.
   enabled: true
+  # Raw scia config.yaml. When set, this replaces the chart-generated scia
+  # OAuth broker config and is rendered with Helm tpl.
+  config: ""
+  dynamicUsers:
+    # Use runtime authenticated user IDs for session-sidecar Secret access.
+    # This grants session Pods get access to Secrets in the release namespace
+    # because Kubernetes RBAC cannot enumerate user-derived Secret names.
+    enabled: false
   image:
     repository: ghcr.io/takutakahashi/scia
     tag: "0.12.1"
@@ -77,6 +85,8 @@ scia:
   replicaCount: 1
   publicBaseUrl: ""
   proxyUrl: ""
+  # Leave credential and userNamespace empty to derive them from the
+  # authenticated user at runtime: <user>.google and <user>.
   credential: "default.google"
   todoistCredential: "default.todoist"
   userNamespace: "default"

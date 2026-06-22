@@ -90,10 +90,12 @@ The command removes all the Kubernetes components associated with the chart and 
 | Name                                               | Description                                      | Value |
 | -------------------------------------------------- | ------------------------------------------------ | ----- |
 | `scia.enabled`                                     | Deploy scia OAuth broker and configure sessions | `true` |
+| `scia.config`                                      | Raw scia `config.yaml` content for the OAuth broker | `""` |
+| `scia.dynamicUsers.enabled`                        | Derive session scia user/Secret names from authenticated users | `false` |
 | `scia.publicBaseUrl`                               | Browser-facing scia base URL                    | `""` |
-| `scia.credential`                                  | Google credential ID injected into sessions     | `default.google` |
-| `scia.todoistCredential`                           | Todoist credential ID injected into sessions    | `default.todoist` |
-| `scia.userNamespace`                               | scia user namespace used by default             | `default` |
+| `scia.credential`                                  | Google credential ID injected into sessions; empty derives `<user>.google` | `default.google` |
+| `scia.todoistCredential`                           | Todoist credential ID injected into sessions; empty derives `<user>.todoist` | `default.todoist` |
+| `scia.userNamespace`                               | scia user namespace used by default; empty uses the authenticated user | `default` |
 | `scia.oauth.google.secret.create`                  | Create a Kubernetes Secret for Google OAuth     | `true` |
 | `scia.oauth.google.secret.existingSecret`          | Existing Secret containing Google OAuth values  | `""` |
 | `scia.oauth.google.secret.clientIdKey`             | Secret key for the Google OAuth client ID       | `client-id` |
@@ -244,6 +246,59 @@ scia:
 ```
 
 The `scia-todoist-oauth` Secret must contain the Todoist OAuth client ID and client secret. Register the same `redirectUrl` in the Todoist app console. The session sidecar injects the Todoist token for `api.todoist.com/api/v1/*` requests by default.
+
+### With dynamic scia users
+
+Leave the runtime namespace and credential values empty so agentapi-proxy derives
+them from the authenticated user. For example, user `alice` uses scia namespace
+`alice`, Google credential `alice.google`, Todoist credential `alice.todoist`,
+and refresh-token Secret `scia-oauth-alice`.
+
+```yaml
+scia:
+  enabled: true
+  dynamicUsers:
+    enabled: true
+  publicBaseUrl: https://agentapi.yourdomain.com
+  credential: ""
+  todoistCredential: ""
+  userNamespace: ""
+```
+
+`scia.dynamicUsers.enabled=true` grants session Pods `get` access to Secrets in
+the release namespace because Kubernetes RBAC cannot enumerate authenticated
+user-derived Secret names ahead of time.
+
+The chart-generated scia OAuth broker config still needs explicit scia
+`server.users` and `server.oauth.namespaces` entries unless the scia image being
+used supports dynamic users. To provide the broker config directly, set
+`scia.config` with a YAML block:
+
+```yaml
+scia:
+  enabled: true
+  config: |
+    server:
+      mode: "oauth"
+      listen: "0.0.0.0:8081"
+      secrets:
+        mode: kubernetes
+        kubernetes:
+          namespace: {{ .Release.Namespace | quote }}
+      users:
+        alice:
+          secretName: scia-oauth-alice
+      oauth:
+        listen: "0.0.0.0:8081"
+        integrations: {}
+        namespaces:
+          alice:
+            google:
+              clientId: "env:GOOGLE_OAUTH_CLIENT_ID"
+              clientSecret: "env:GOOGLE_OAUTH_CLIENT_SECRET"
+    credentials: []
+    rules: []
+```
 
 ### With Environment Variables
 

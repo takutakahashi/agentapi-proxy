@@ -33,6 +33,7 @@
 {{- end }}
 {{- $googleScopes := $google.scopes | default (list (dict "id" ($google.scopeId | default "calendar-read") "value" ($google.scope | default "https://www.googleapis.com/auth/calendar.readonly") "name" ($google.scopeName | default "Google Calendar read-only") "desc" ($google.scopeDesc | default "Read Google Calendar events.") "enabled" true)) }}
 {{- $todoistScopes := $todoist.scopes | default (list (dict "id" "read-write" "value" ($todoist.scope | default "data:read_write") "name" "Todoist read/write" "desc" "Read and write Todoist tasks and projects." "enabled" true)) }}
+{{- $rawConfig := $scia.config | default "" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -42,6 +43,9 @@ metadata:
     app.kubernetes.io/component: scia-oauth
 data:
   config.yaml: |
+{{ if $rawConfig }}
+{{ tpl $rawConfig . | nindent 4 }}
+{{ else }}
     server:
       mode: "oauth"
       listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
@@ -136,4 +140,5 @@ data:
           {{- end }}
     credentials: []
     rules: []
+{{ end }}
 {{- end }}
