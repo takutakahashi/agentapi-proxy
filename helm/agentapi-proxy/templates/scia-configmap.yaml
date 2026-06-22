@@ -182,15 +182,6 @@ data:
               redirectUrl: {{ $todoistRedirectURL | quote }}
               {{- end }}
             {{- end }}
-            {{- if $notionEnabled }}
-            notion:
-              clientId: "env:NOTION_OAUTH_CLIENT_ID"
-              clientSecret: "env:NOTION_OAUTH_CLIENT_SECRET"
-              scope: {{ $notion.scope | default "" | quote }}
-              {{- if $notionRedirectURL }}
-              redirectUrl: {{ $notionRedirectURL | quote }}
-              {{- end }}
-            {{- end }}
           {{- end }}
     credentials: []
     rules: []
