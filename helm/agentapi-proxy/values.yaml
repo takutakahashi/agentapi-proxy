@@ -72,14 +72,15 @@ scia:
   enabled: true
   image:
     repository: ghcr.io/takutakahashi/scia
-    tag: "0.12.1"
+    tag: "0.12.2"
     pullPolicy: IfNotPresent
   replicaCount: 1
   publicBaseUrl: ""
   proxyUrl: ""
-  credential: "default.google"
+  credential: ""
   todoistCredential: "default.todoist"
-  userNamespace: "default"
+  userNamespace: ""
+  dynamicUserSecretNamePrefix: scia-oauth-
   noProxy: "localhost,127.0.0.1,.svc,.cluster.local"
   googleHosts:
     - www.googleapis.com
@@ -95,7 +96,7 @@ scia:
     - /sync/v9/*
   sessionSidecar:
     enabled: true
-    image: ghcr.io/takutakahashi/scia:0.12.1
+    image: ghcr.io/takutakahashi/scia:0.12.2
     configImage: busybox:1.36
     port: 18081
   oauth:
@@ -139,7 +140,7 @@ scia:
       # Secret-backed Google OAuth client credentials. Set create=false and
       # existingSecret to use a Secret managed outside Helm.
       secret:
-        create: true
+        create: false
         existingSecret: ""
         clientIdKey: client-id
         clientSecretKey: client-secret
@@ -181,13 +182,6 @@ scia:
   nodeSelector: {}
   tolerations: []
   affinity: {}
-  users:
-    default:
-      secretName: scia-oauth-default
-  # Per-user refresh-token Secret names that session Pods may read when scia
-  # runs as a session sidecar. Do not include OAuth client-secret Secrets here.
-  sessionRefreshTokenSecretNames:
-    - scia-oauth-default
 
 asset:
   enabled: true

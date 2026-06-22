@@ -7,6 +7,8 @@
 {{- $image := $scia.image | default dict }}
 {{- $oauth := $scia.oauth | default dict }}
 {{- $google := $oauth.google | default dict }}
+{{- $googleCredential := $scia.credential | default "" }}
+{{- $googleEnabled := ne $googleCredential "" }}
 {{- $secret := $google.secret | default dict }}
 {{- $todoist := $oauth.todoist | default dict }}
 {{- $todoistSecret := $todoist.secret | default dict }}
@@ -40,7 +42,7 @@ spec:
       serviceAccountName: {{ include "agentapi-proxy.sciaName" . }}
       containers:
         - name: scia-oauth
-          image: "{{ $image.repository | default "ghcr.io/takutakahashi/scia" }}:{{ $image.tag | default "0.12.1" }}"
+          image: "{{ $image.repository | default "ghcr.io/takutakahashi/scia" }}:{{ $image.tag | default "0.12.2" }}"
           imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
           args:
             - -config
@@ -50,6 +52,7 @@ spec:
               containerPort: {{ regexFind "[0-9]+$" ($oauth.listen | default "0.0.0.0:8081") }}
               protocol: TCP
           env:
+            {{- if $googleEnabled }}
             - name: GOOGLE_OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef:
@@ -62,6 +65,7 @@ spec:
                   name: {{ include "agentapi-proxy.sciaSecretName" . }}
                   key: {{ $secret.clientSecretKey | default "client-secret" | quote }}
                   optional: true
+            {{- end }}
             - name: TODOIST_OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef:
