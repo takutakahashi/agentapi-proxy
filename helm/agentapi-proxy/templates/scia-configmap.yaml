@@ -67,6 +67,18 @@ data:
       oauth:
         listen: {{ $oauth.listen | default "0.0.0.0:8081" | quote }}
         redirectUrl: {{ $redirectURL | quote }}
+        {{- if $notionEnabled }}
+        notion:
+          credentialId: {{ $scia.notionCredential | default (printf "%s.notion" ($scia.userNamespace | default "default")) | quote }}
+          clientId: "env:NOTION_OAUTH_CLIENT_ID"
+          clientSecret: "env:NOTION_OAUTH_CLIENT_SECRET"
+          {{- if $notionRedirectURL }}
+          redirectUrl: {{ $notionRedirectURL | quote }}
+          {{- end }}
+          {{- if $notion.notionVersion }}
+          notionVersion: {{ $notion.notionVersion | quote }}
+          {{- end }}
+        {{- end }}
         integrations:
           google:
             name: {{ $google.name | default "Google" | quote }}
