@@ -83,6 +83,12 @@ type IntegrationAuthorizationURLResponse struct {
 	Scope            string `json:"scope,omitempty"`
 }
 
+// IntegrationRevokeResponse is returned after disconnecting a scia integration.
+type IntegrationRevokeResponse struct {
+	Revoked      bool   `json:"revoked"`
+	CredentialID string `json:"credential_id,omitempty"`
+}
+
 type sciaHTTPError struct {
 	StatusCode int
 	Message    string
@@ -144,7 +150,7 @@ func (c *GoogleOAuthController) GetStatus(ctx echo.Context) error {
 
 	if c.scia.Enabled {
 		resp.HealthOK, resp.HealthStatus = c.checkHealth(ctx.Request().Context())
-		resp.Connected = c.refreshTokenSecretExists(ctx.Request().Context(), userNamespace)
+		resp.Connected = c.oauthTokenSecretExists(ctx.Request().Context(), userNamespace, c.credential(userNamespace), "google")
 	}
 
 	return ctx.JSON(http.StatusOK, resp)
@@ -186,7 +192,7 @@ func (c *GoogleOAuthController) GetIntegrations(ctx echo.Context) error {
 				}
 			}
 		}
-		integrations[i].Connected = c.refreshTokenSecretExists(ctx.Request().Context(), namespace)
+		integrations[i].Connected = c.oauthTokenSecretExists(ctx.Request().Context(), namespace, integrations[i].CredentialID, integrations[i].Provider)
 	}
 	resp.Integrations = integrations
 
@@ -226,6 +232,36 @@ func (c *GoogleOAuthController) CreateAuthorizationURL(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 	}
 	resp.Scope = ""
+	return ctx.JSON(http.StatusOK, resp)
+}
+
+// RevokeIntegration removes the stored OAuth token for one scia integration.
+func (c *GoogleOAuthController) RevokeIntegration(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
+	if !c.scia.Enabled {
+		return echo.NewHTTPError(http.StatusNotFound, "scia integration is disabled")
+	}
+
+	integrationID := ctx.Param("id")
+	integration, ok, err := c.integrationForUser(ctx.Request().Context(), string(user.ID()), integrationID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+	}
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "integration not found")
+	}
+
+	resp, err := c.revokeSciaIntegration(ctx.Request().Context(), integration)
+	if err != nil {
+		var upstream sciaHTTPError
+		if errors.As(err, &upstream) {
+			return echo.NewHTTPError(upstream.StatusCode, upstream.Message)
+		}
+		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+	}
 	return ctx.JSON(http.StatusOK, resp)
 }
 
@@ -292,6 +328,50 @@ func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, 
 	return output, nil
 }
 
+func (c *GoogleOAuthController) revokeSciaIntegration(ctx context.Context, integration FrontendIntegration) (IntegrationRevokeResponse, error) {
+	base := strings.TrimRight(c.scia.OAuthInternalURL, "/")
+	if base == "" {
+		base = strings.TrimRight(c.scia.PublicBaseURL, "/")
+	}
+	if base == "" {
+		return IntegrationRevokeResponse{}, fmt.Errorf("scia_oauth_url_not_configured")
+	}
+	if integration.Namespace == "" || integration.Provider == "" {
+		return IntegrationRevokeResponse{}, fmt.Errorf("integration is missing namespace or provider")
+	}
+
+	path := fmt.Sprintf("/oauth/%s/%s/revoke", url.PathEscape(integration.Namespace), url.PathEscape(integration.Provider))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, strings.NewReader(`{}`))
+	if err != nil {
+		return IntegrationRevokeResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return IntegrationRevokeResponse{}, err
+	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		return IntegrationRevokeResponse{}, sciaHTTPError{
+			StatusCode: res.StatusCode,
+			Message:    strings.TrimSpace(string(body)),
+		}
+	}
+	var output IntegrationRevokeResponse
+	if err := json.NewDecoder(res.Body).Decode(&output); err != nil {
+		return IntegrationRevokeResponse{}, fmt.Errorf("failed to decode scia revoke response: %w", err)
+	}
+	if output.CredentialID == "" {
+		output.CredentialID = integration.CredentialID
+	}
+	return output, nil
+}
+
 func (c *GoogleOAuthController) fetchSciaIntegrations(ctx context.Context) ([]FrontendIntegration, error) {
 	base := strings.TrimRight(c.scia.OAuthInternalURL, "/")
 	if base == "" {
@@ -353,13 +433,26 @@ func (c *GoogleOAuthController) checkHealth(ctx context.Context) (bool, string) 
 	return false, res.Status
 }
 
-func (c *GoogleOAuthController) refreshTokenSecretExists(ctx context.Context, userNamespace string) bool {
+func (c *GoogleOAuthController) oauthTokenSecretExists(ctx context.Context, userNamespace, credentialID, provider string) bool {
 	if c.client == nil || c.namespace == "" || userNamespace == "" {
 		return false
 	}
 	secretName := "scia-oauth-" + sanitizeSciaSecretSuffix(userNamespace)
-	_, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	return err == nil
+	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+	if hasSecretData(secret.Data, credentialID+".refresh_token") || hasSecretData(secret.Data, credentialID+".access_token") {
+		return true
+	}
+	// Older scia deployments stored the original Google refresh token under a
+	// shared key. Treat it as Google-only so other providers do not appear connected.
+	return provider == "google" && hasSecretData(secret.Data, "refresh_token")
+}
+
+func hasSecretData(data map[string][]byte, key string) bool {
+	value, ok := data[key]
+	return ok && len(value) > 0
 }
 
 func (c *GoogleOAuthController) userNamespace(userID string) string {
