@@ -90,6 +90,72 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 	}
 }
 
+func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
+	var revoked bool
+	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/integrations":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"integrations": []map[string]any{
+					{
+						"id":                         "takutakahashi.todoist",
+						"provider":                   "todoist",
+						"namespace":                  "takutakahashi",
+						"credential_id":              "takutakahashi.todoist",
+						"name":                       "Todoist",
+						"released":                   true,
+						"start_url":                  "/oauth/takutakahashi/todoist/start",
+						"authorization_url_endpoint": "/oauth/takutakahashi/todoist/authorization-url",
+						"scopes":                     []map[string]any{},
+					},
+				},
+			})
+		case "/oauth/takutakahashi/todoist/revoke":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			revoked = true
+			_ = json.NewEncoder(w).Encode(IntegrationRevokeResponse{
+				Revoked:      true,
+				CredentialID: "takutakahashi.todoist",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer scia.Close()
+
+	controller := NewGoogleOAuthController(config.SciaConfig{
+		Enabled:          true,
+		OAuthInternalURL: scia.URL,
+	}, nil, "")
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/integrations/takutakahashi.todoist/revoke", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.SetParamNames("id")
+	ctx.SetParamValues("takutakahashi.todoist")
+	ctx.Set("internal_user", entities.NewUser("takutakahashi", entities.UserTypeRegular, "takutakahashi"))
+
+	if err := controller.RevokeIntegration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !revoked {
+		t.Fatalf("scia revoke endpoint was not called")
+	}
+	var body IntegrationRevokeResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Revoked || body.CredentialID != "takutakahashi.todoist" {
+		t.Fatalf("unexpected revoke response: %#v", body)
+	}
+}
+
 func TestGetIntegrationsMarksConnectedPerCredentialToken(t *testing.T) {
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
