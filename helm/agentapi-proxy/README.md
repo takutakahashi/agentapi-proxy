@@ -271,6 +271,8 @@ scia:
 
 The `scia-notion-oauth` Secret must contain the Notion OAuth client ID and client secret. Register the same `redirectUrl` in the Notion integration settings. The session sidecar injects the Notion token for `api.notion.com/v1/*` requests by default.
 
+Notion permissions are ultimately controlled by the connection capabilities configured in the Notion Developer portal. The chart exposes read-only/read-write scope metadata so the UI can present an access-mode choice, but the Notion public connection must be configured with matching capabilities.
+
 ### With Environment Variables
 
 ```yaml

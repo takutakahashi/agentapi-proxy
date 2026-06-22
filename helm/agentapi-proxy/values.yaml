@@ -177,11 +177,22 @@ scia:
       scope: ""
       omitRedirectUrl: false
       scopes:
-        - id: default
-          value: ""
-          name: "Notion access"
-          desc: "Connect Notion pages and databases selected during authorization."
+        - id: read-only
+          value: "read_content"
+          name: "Notion read-only"
+          desc: "Read pages and databases selected during authorization."
+          group: content
+          groupName: "Notion content access"
+          groupDesc: "Choose the access mode to request for selected Notion pages and databases."
           enabled: true
+        - id: read-write
+          value: "read_content update_content insert_content"
+          name: "Notion read/write"
+          desc: "Read, update, and create content in selected Notion pages and databases."
+          group: content
+          groupName: "Notion content access"
+          groupDesc: "Choose the access mode to request for selected Notion pages and databases."
+          enabled: false
       secret:
         create: true
         existingSecret: ""
