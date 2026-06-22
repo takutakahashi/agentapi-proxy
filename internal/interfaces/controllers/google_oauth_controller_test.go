@@ -236,3 +236,74 @@ func TestGetIntegrationsMarksConnectedPerCredentialToken(t *testing.T) {
 		t.Fatalf("todoist connected = true, want false")
 	}
 }
+
+func TestGetIntegrationsSynthesizesAuthorizationEndpointForTopLevelProvider(t *testing.T) {
+	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_scia/healthz":
+			w.WriteHeader(http.StatusOK)
+		case "/api/integrations":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"integrations": []map[string]any{
+					{
+						"id":            "alice.notion",
+						"provider":      "notion",
+						"credential_id": "alice.notion",
+						"name":          "Notion",
+						"released":      true,
+						"start_url":     "/oauth/notion/start?credential=alice.notion",
+						"scopes": []map[string]any{
+							{
+								"id":      "read-only",
+								"name":    "Notion read-only",
+								"group":   "content",
+								"enabled": true,
+							},
+						},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer scia.Close()
+
+	controller := NewGoogleOAuthController(config.SciaConfig{
+		Enabled:          true,
+		OAuthInternalURL: scia.URL,
+		PublicBaseURL:    "https://app.example.com",
+	}, fake.NewSimpleClientset(), "agentapi")
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/integrations", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("internal_user", entities.NewUser("alice", entities.UserTypeRegular, "alice"))
+
+	if err := controller.GetIntegrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body IntegrationsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Integrations) != 1 {
+		t.Fatalf("integrations = %#v", body.Integrations)
+	}
+	got := body.Integrations[0]
+	if got.Namespace != "alice" {
+		t.Fatalf("namespace = %q", got.Namespace)
+	}
+	wantEndpoint := "https://app.example.com/integrations/alice.notion/authorization-url"
+	if got.AuthorizationURLEndpoint != wantEndpoint {
+		t.Fatalf("authorization_url_endpoint = %q, want %q", got.AuthorizationURLEndpoint, wantEndpoint)
+	}
+	if len(got.Scopes) != 1 || got.Scopes[0].ID != "read-only" {
+		t.Fatalf("scopes = %#v", got.Scopes)
+	}
+}

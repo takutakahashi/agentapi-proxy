@@ -192,6 +192,9 @@ func (c *GoogleOAuthController) GetIntegrations(ctx echo.Context) error {
 				}
 			}
 		}
+		if integrations[i].AuthorizationURLEndpoint == "" && integrations[i].ID != "" {
+			integrations[i].AuthorizationURLEndpoint = c.publicURL(fmt.Sprintf("/integrations/%s/authorization-url", url.PathEscape(integrations[i].ID)))
+		}
 		integrations[i].Connected = c.oauthTokenSecretExists(ctx.Request().Context(), namespace, integrations[i].CredentialID, integrations[i].Provider)
 	}
 	resp.Integrations = integrations
