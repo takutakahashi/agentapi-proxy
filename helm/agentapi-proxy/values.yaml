@@ -102,9 +102,11 @@ scia:
   oauth:
     listen: "0.0.0.0:8081"
     redirectUrl: ""
-    google:
-      scope: "https://www.googleapis.com/auth/calendar.readonly"
-      scopes:
+    integrations:
+      google:
+        name: Google
+        setup: {}
+        scopes:
         - id: calendar-read
           value: "https://www.googleapis.com/auth/calendar.readonly"
           name: "Google Calendar read-only"
@@ -137,6 +139,24 @@ scia:
           groupName: "Google Tasks"
           groupDesc: "Choose how much Google Tasks access to grant."
           enabled: false
+      todoist:
+        name: Todoist
+        iconUrl: "https://todoist.com/favicon.ico"
+        description: "Connect Todoist tasks and projects."
+        setup: {}
+        scopes:
+        - id: read-write
+          value: "data:read_write"
+          name: "Todoist read/write"
+          desc: "Read and write Todoist tasks and projects."
+          enabled: true
+        - id: task-add
+          value: "task:add"
+          name: "Todoist task add"
+          desc: "Add Todoist tasks without reading existing data."
+          enabled: false
+    google:
+      scope: "https://www.googleapis.com/auth/calendar.readonly"
       # Secret-backed Google OAuth client credentials. Set create=false and
       # existingSecret to use a Secret managed outside Helm.
       secret:
@@ -150,17 +170,6 @@ scia:
       enabled: false
       scope: "data:read_write"
       omitRedirectUrl: false
-      scopes:
-        - id: read-write
-          value: "data:read_write"
-          name: "Todoist read/write"
-          desc: "Read and write Todoist tasks and projects."
-          enabled: true
-        - id: task-add
-          value: "task:add"
-          name: "Todoist task add"
-          desc: "Add Todoist tasks without reading existing data."
-          enabled: false
       secret:
         create: true
         existingSecret: ""

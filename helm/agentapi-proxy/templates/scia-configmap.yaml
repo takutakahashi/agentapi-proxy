@@ -10,6 +10,7 @@
 {{- $googleEnabled := ne $googleCredential "" }}
 {{- $todoist := $oauth.todoist | default dict }}
 {{- $todoistEnabled := $todoist.enabled | default false }}
+{{- $integrationValues := $oauth.integrations | default dict }}
 {{- $dynamicUserSecretNamePrefix := $scia.dynamicUserSecretNamePrefix | default "scia-oauth-" }}
 {{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
 {{- $sciaHost := .Values.config.hostname | default "" }}
@@ -33,8 +34,13 @@
 {{- if $todoist.omitRedirectUrl }}
   {{- $todoistRedirectURL = "" }}
 {{- end }}
-{{- $googleScopes := $google.scopes | default (list (dict "id" ($google.scopeId | default "calendar-read") "value" ($google.scope | default "https://www.googleapis.com/auth/calendar.readonly") "name" ($google.scopeName | default "Google Calendar read-only") "desc" ($google.scopeDesc | default "Read Google Calendar events.") "enabled" true)) }}
-{{- $todoistScopes := $todoist.scopes | default (list (dict "id" "read-write" "value" ($todoist.scope | default "data:read_write") "name" "Todoist read/write" "desc" "Read and write Todoist tasks and projects." "enabled" true)) }}
+{{- $integrations := dict }}
+{{- if and $googleEnabled (hasKey $integrationValues "google") }}
+  {{- $_ := set $integrations "google" (deepCopy (get $integrationValues "google")) }}
+{{- end }}
+{{- if and $todoistEnabled (hasKey $integrationValues "todoist") }}
+  {{- $_ := set $integrations "todoist" (deepCopy (get $integrationValues "todoist")) }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -77,64 +83,7 @@ data:
           {{- end }}
         {{- end }}
         integrations:
-          {{- if $googleEnabled }}
-          google:
-            name: {{ $google.name | default "Google" | quote }}
-            {{- if $google.iconUrl }}
-            iconUrl: {{ $google.iconUrl | quote }}
-            {{- end }}
-            {{- if $google.description }}
-            description: {{ $google.description | quote }}
-            {{- end }}
-            setup:
-              callback_url: {{ $redirectURL | quote }}
-            scopes:
-              {{- range $scope := $googleScopes }}
-              - id: {{ $scope.id | quote }}
-                value: {{ $scope.value | quote }}
-                name: {{ $scope.name | quote }}
-                {{- if $scope.desc }}
-                desc: {{ $scope.desc | quote }}
-                {{- end }}
-                {{- if $scope.group }}
-                group: {{ $scope.group | quote }}
-                {{- end }}
-                {{- if $scope.groupName }}
-                groupName: {{ $scope.groupName | quote }}
-                {{- end }}
-                {{- if $scope.groupDesc }}
-                groupDesc: {{ $scope.groupDesc | quote }}
-                {{- end }}
-                enabled: {{ $scope.enabled | default false }}
-              {{- end }}
-          {{- end }}
-          {{- if $todoistEnabled }}
-          todoist:
-            name: {{ $todoist.name | default "Todoist" | quote }}
-            iconUrl: {{ $todoist.iconUrl | default "https://todoist.com/favicon.ico" | quote }}
-            description: {{ $todoist.description | default "Connect Todoist tasks and projects." | quote }}
-            setup:
-              callback_url: {{ $todoistRedirectURL | quote }}
-            scopes:
-              {{- range $scope := $todoistScopes }}
-              - id: {{ $scope.id | quote }}
-                value: {{ $scope.value | quote }}
-                name: {{ $scope.name | quote }}
-                {{- if $scope.desc }}
-                desc: {{ $scope.desc | quote }}
-                {{- end }}
-                {{- if $scope.group }}
-                group: {{ $scope.group | quote }}
-                {{- end }}
-                {{- if $scope.groupName }}
-                groupName: {{ $scope.groupName | quote }}
-                {{- end }}
-                {{- if $scope.groupDesc }}
-                groupDesc: {{ $scope.groupDesc | quote }}
-                {{- end }}
-                enabled: {{ $scope.enabled | default false }}
-              {{- end }}
-          {{- end }}
+{{- toYaml $integrations | nindent 10 }}
     credentials:
       {{- if $googleEnabled }}
       - id: {{ $googleCredential | quote }}
