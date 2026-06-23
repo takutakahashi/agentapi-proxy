@@ -5,6 +5,8 @@
 {{- end }}
 {{- if $sciaEnabled }}
 {{- $image := $scia.image | default dict }}
+{{- $sciaImageRepository := $image.repository | default "ghcr.io/takutakahashi/scia" }}
+{{- $sciaImageTag := $image.tag | default "" }}
 {{- $oauth := $scia.oauth | default dict }}
 {{- $google := $oauth.google | default dict }}
 {{- $googleCredential := $scia.credential | default "" }}
@@ -42,7 +44,7 @@ spec:
       serviceAccountName: {{ include "agentapi-proxy.sciaName" . }}
       containers:
         - name: scia-oauth
-          image: "{{ $image.repository | default "ghcr.io/takutakahashi/scia" }}:{{ $image.tag | default "0.12.2" }}"
+          image: {{ if $sciaImageTag }}{{ printf "%s:%s" $sciaImageRepository $sciaImageTag | quote }}{{ else }}{{ $sciaImageRepository | quote }}{{ end }}
           imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
           args:
             - -config
