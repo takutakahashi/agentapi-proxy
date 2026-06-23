@@ -31,7 +31,18 @@ func ExtractInfo(tags map[string]string, cloneDir string) (*entities.RepositoryI
 	return &entities.RepositoryInfo{
 		FullName: repoFullName,
 		CloneDir: cloneDir,
+		Branch:   strings.TrimSpace(tags["branch"]),
+		PR:       pullRequestTag(tags),
 	}, nil
+}
+
+func pullRequestTag(tags map[string]string) string {
+	for _, key := range []string{"pr", "pr_number", "pull_request_number"} {
+		if value := strings.TrimSpace(tags[key]); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // IsValidURL checks for supported GitHub URL or owner/repo formats.

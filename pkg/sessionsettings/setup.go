@@ -157,44 +157,107 @@ func cloneRepo(settings *SessionSettings) error {
 	// Skip clone if already present
 	if _, err := os.Stat(filepath.Join(cloneDir, ".git")); err == nil {
 		log.Printf("[SETUP] Repository already cloned at %s, skipping", cloneDir)
-		return nil
+	} else {
+		if err := os.MkdirAll(filepath.Dir(cloneDir), 0755); err != nil {
+			return fmt.Errorf("failed to create parent dir for clone: %w", err)
+		}
+
+		log.Printf("[SETUP] Cloning %s into %s via gh repo clone", repo.FullName, cloneDir)
+		cmd := exec.Command("gh", "repo", "clone", repo.FullName, cloneDir, "--", "--depth", "1")
+		cmd.Env = githubCommandEnv()
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			// Fallback: try GITHUB_URL-based git clone for non-GitHub hosts
+			githubURL := github_pkg.GetGitHubURL()
+			cloneURL := fmt.Sprintf("%s/%s.git", githubURL, repo.FullName)
+			log.Printf("[SETUP] gh repo clone failed, falling back to git clone: %s", cloneURL)
+			cmd2 := exec.Command("git", "clone", "--depth", "1", cloneURL, cloneDir)
+			cmd2.Env = githubCommandEnv()
+			cmd2.Stdout = os.Stdout
+			cmd2.Stderr = os.Stderr
+			if err2 := cmd2.Run(); err2 != nil {
+				return fmt.Errorf("git clone failed: %w", err2)
+			}
+		}
+
+		log.Printf("[SETUP] Cloned %s to %s", repo.FullName, cloneDir)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cloneDir), 0755); err != nil {
-		return fmt.Errorf("failed to create parent dir for clone: %w", err)
+	if err := checkoutRepositoryTarget(repo, cloneDir); err != nil {
+		return err
 	}
 
-	// Build env with GH_HOST for GitHub Enterprise Server.
+	return nil
+}
+
+func githubCommandEnv() []string {
 	env := os.Environ()
 	if githubAPI := os.Getenv("GITHUB_API"); githubAPI != "" && githubAPI != "https://api.github.com" {
 		githubHost := strings.TrimPrefix(githubAPI, "https://")
 		githubHost = strings.TrimPrefix(githubHost, "http://")
 		githubHost = strings.TrimSuffix(githubHost, "/api/v3")
 		env = append(env, fmt.Sprintf("GH_HOST=%s", githubHost))
-		log.Printf("[SETUP] GHE detected, setting GH_HOST=%s for clone", githubHost)
+		log.Printf("[SETUP] GHE detected, setting GH_HOST=%s for gh/git", githubHost)
+	}
+	return env
+}
+
+func checkoutRepositoryTarget(repo *RepositoryConfig, cloneDir string) error {
+	if repo == nil {
+		return nil
 	}
 
-	log.Printf("[SETUP] Cloning %s into %s via gh repo clone", repo.FullName, cloneDir)
-	cmd := exec.Command("gh", "repo", "clone", repo.FullName, cloneDir, "--", "--depth", "1")
-	cmd.Env = env
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		// Fallback: try GITHUB_URL-based git clone for non-GitHub hosts
-		githubURL := github_pkg.GetGitHubURL()
-		cloneURL := fmt.Sprintf("%s/%s.git", githubURL, repo.FullName)
-		log.Printf("[SETUP] gh repo clone failed, falling back to git clone: %s", cloneURL)
-		cmd2 := exec.Command("git", "clone", "--depth", "1", cloneURL, cloneDir)
-		cmd2.Env = env
-		cmd2.Stdout = os.Stdout
-		cmd2.Stderr = os.Stderr
-		if err2 := cmd2.Run(); err2 != nil {
-			return fmt.Errorf("git clone failed: %w", err2)
+	targetType, targetValue := repositoryCheckoutTarget(repo)
+	switch targetType {
+	case "pr":
+		pr := targetValue
+		log.Printf("[SETUP] Checking out PR %s for %s", pr, repo.FullName)
+		cmd := exec.Command("gh", "pr", "checkout", pr, "--detach")
+		cmd.Dir = cloneDir
+		cmd.Env = githubCommandEnv()
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to checkout PR %s: %w", pr, err)
+		}
+		return nil
+	case "branch":
+		branch := targetValue
+		log.Printf("[SETUP] Checking out branch %s for %s", branch, repo.FullName)
+		fetch := exec.Command("git", "fetch", "origin", branch, "--depth", "1")
+		fetch.Dir = cloneDir
+		fetch.Env = githubCommandEnv()
+		fetch.Stdout = os.Stdout
+		fetch.Stderr = os.Stderr
+		if err := fetch.Run(); err != nil {
+			return fmt.Errorf("failed to fetch branch %s: %w", branch, err)
+		}
+
+		checkout := exec.Command("git", "checkout", "-B", branch, "FETCH_HEAD")
+		checkout.Dir = cloneDir
+		checkout.Env = githubCommandEnv()
+		checkout.Stdout = os.Stdout
+		checkout.Stderr = os.Stderr
+		if err := checkout.Run(); err != nil {
+			return fmt.Errorf("failed to checkout branch %s: %w", branch, err)
 		}
 	}
 
-	log.Printf("[SETUP] Cloned %s to %s", repo.FullName, cloneDir)
 	return nil
+}
+
+func repositoryCheckoutTarget(repo *RepositoryConfig) (string, string) {
+	if repo == nil {
+		return "", ""
+	}
+	if pr := strings.TrimSpace(repo.PR); pr != "" {
+		return "pr", pr
+	}
+	if branch := strings.TrimSpace(repo.Branch); branch != "" {
+		return "branch", branch
+	}
+	return "", ""
 }
 
 // syncExtra handles credentials, notification subscriptions,

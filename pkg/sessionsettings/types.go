@@ -246,6 +246,8 @@ type CodexConfig struct {
 type RepositoryConfig struct {
 	FullName string `yaml:"fullname"   json:"fullname"`
 	CloneDir string `yaml:"clone_dir"  json:"clone_dir"`
+	Branch   string `yaml:"branch,omitempty" json:"branch,omitempty"`
+	PR       string `yaml:"pr,omitempty"     json:"pr,omitempty"`
 }
 
 // StartupConfig holds the startup command configuration.

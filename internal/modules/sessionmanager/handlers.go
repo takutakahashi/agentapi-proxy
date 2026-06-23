@@ -174,6 +174,8 @@ func (h *Handlers) CreateSession(c echo.Context) error {
 		req.RepoInfo = &entities.RepositoryInfo{
 			FullName: settings.Repository.FullName,
 			CloneDir: settings.Repository.CloneDir,
+			Branch:   settings.Repository.Branch,
+			PR:       settings.Repository.PR,
 		}
 	}
 

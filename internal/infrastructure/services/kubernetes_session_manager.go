@@ -4659,6 +4659,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		settings.Repository = &sessionsettings.RepositoryConfig{
 			FullName: req.RepoInfo.FullName,
 			CloneDir: "/home/agentapi/workdir/repo",
+			Branch:   req.RepoInfo.Branch,
+			PR:       req.RepoInfo.PR,
 		}
 	}
 
