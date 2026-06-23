@@ -141,6 +141,8 @@ type StartRequest struct {
 type RepositoryInfo struct {
 	FullName string
 	CloneDir string
+	Branch   string
+	PR       string
 }
 
 // RunServerRequest contains parameters needed to run an agentapi server

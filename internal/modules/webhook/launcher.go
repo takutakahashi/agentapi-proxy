@@ -119,6 +119,8 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		repoInfo = &entities.RepositoryInfo{
 			FullName: repoFullName,
 			CloneDir: sessionID,
+			Branch:   strings.TrimSpace(tags["branch"]),
+			PR:       firstNonEmptyTag(tags, "pr", "pr_number", "pull_request_number"),
 		}
 	}
 
@@ -302,4 +304,13 @@ func (s *WebhookSessionService) determineInitialMessage(
 	}
 
 	return defaultMessage, nil
+}
+
+func firstNonEmptyTag(tags map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(tags[key]); value != "" {
+			return value
+		}
+	}
+	return ""
 }
