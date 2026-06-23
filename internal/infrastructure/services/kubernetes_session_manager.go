@@ -28,8 +28,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/yaml"
 
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -1900,14 +1902,20 @@ func (m *KubernetesSessionManager) createSessionWorkload(ctx context.Context, se
 
 // createDeployment creates a Deployment for the session
 func (m *KubernetesSessionManager) createDeployment(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
-	deployment := m.buildDeployment(ctx, session, req)
-	_, err := m.client.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
+	deployment, err := m.buildDeployment(ctx, session, req)
+	if err != nil {
+		return err
+	}
+	_, err = m.client.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
 }
 
 // createPod creates a standalone Pod for an ephemeral session.
 func (m *KubernetesSessionManager) createPod(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) error {
-	deployment := m.buildDeployment(ctx, session, req)
+	deployment, err := m.buildDeployment(ctx, session, req)
+	if err != nil {
+		return err
+	}
 	podTemplate := deployment.Spec.Template
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1920,13 +1928,13 @@ func (m *KubernetesSessionManager) createPod(ctx context.Context, session *Kuber
 	}
 	pod.Spec.RestartPolicy = corev1.RestartPolicyNever
 
-	_, err := m.client.CoreV1().Pods(m.namespace).Create(ctx, pod, metav1.CreateOptions{})
+	_, err = m.client.CoreV1().Pods(m.namespace).Create(ctx, pod, metav1.CreateOptions{})
 	return err
 }
 
 // buildDeployment builds the Deployment object used directly for PVC-backed
 // sessions and as a Pod template source for ephemeral sessions.
-func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) *appsv1.Deployment {
+func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) (*appsv1.Deployment, error) {
 	labels := m.buildLabels(session)
 	envVars := m.buildEnvVars(session, req)
 	replicas := int32(1)
@@ -2228,7 +2236,94 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			},
 		},
 	}
-	return deployment
+	if err := m.applySessionPodTemplateFile(&deployment.Spec.Template); err != nil {
+		return nil, err
+	}
+	return deployment, nil
+}
+
+func (m *KubernetesSessionManager) applySessionPodTemplateFile(template *corev1.PodTemplateSpec) error {
+	if m.k8sConfig == nil || strings.TrimSpace(m.k8sConfig.SessionPodTemplateFile) == "" {
+		return nil
+	}
+
+	filename := strings.TrimSpace(m.k8sConfig.SessionPodTemplateFile)
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read session pod template file %s: %w", filename, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+
+	originalJSON, err := json.Marshal(template)
+	if err != nil {
+		return fmt.Errorf("failed to marshal generated session pod template: %w", err)
+	}
+	patchJSON, err := yaml.YAMLToJSON(data)
+	if err != nil {
+		return fmt.Errorf("failed to parse session pod template file %s: %w", filename, err)
+	}
+	mergedJSON, err := strategicpatch.StrategicMergePatch(originalJSON, patchJSON, corev1.PodTemplateSpec{})
+	if err != nil {
+		return fmt.Errorf("failed to merge session pod template file %s: %w", filename, err)
+	}
+
+	generated := template.DeepCopy()
+	var merged corev1.PodTemplateSpec
+	if err := json.Unmarshal(mergedJSON, &merged); err != nil {
+		return fmt.Errorf("failed to decode merged session pod template: %w", err)
+	}
+	restoreSessionPodTemplateInvariants(&merged, generated)
+	*template = merged
+	log.Printf("[K8S_SESSION] Applied session pod template file: %s", filename)
+	return nil
+}
+
+func restoreSessionPodTemplateInvariants(template *corev1.PodTemplateSpec, generated *corev1.PodTemplateSpec) {
+	if template.Labels == nil {
+		template.Labels = map[string]string{}
+	}
+	for key, value := range generated.Labels {
+		if strings.HasPrefix(key, "agentapi.proxy/") || key == "app.kubernetes.io/managed-by" {
+			template.Labels[key] = value
+		}
+	}
+
+	template.Spec.ServiceAccountName = generated.Spec.ServiceAccountName
+	template.Spec.RestartPolicy = generated.Spec.RestartPolicy
+
+	generatedMain := findContainerByName(generated.Spec.Containers, "agentapi")
+	if generatedMain == nil {
+		return
+	}
+	for i := range template.Spec.Containers {
+		if template.Spec.Containers[i].Name != "agentapi" {
+			continue
+		}
+		template.Spec.Containers[i].Image = generatedMain.Image
+		template.Spec.Containers[i].ImagePullPolicy = generatedMain.ImagePullPolicy
+		template.Spec.Containers[i].WorkingDir = generatedMain.WorkingDir
+		template.Spec.Containers[i].Command = generatedMain.Command
+		template.Spec.Containers[i].Args = generatedMain.Args
+		template.Spec.Containers[i].Ports = generatedMain.Ports
+		template.Spec.Containers[i].LivenessProbe = generatedMain.LivenessProbe
+		template.Spec.Containers[i].ReadinessProbe = generatedMain.ReadinessProbe
+		return
+	}
+	template.Spec.Containers = append([]corev1.Container{*generatedMain}, template.Spec.Containers...)
+}
+
+func findContainerByName(containers []corev1.Container, name string) *corev1.Container {
+	for i := range containers {
+		if containers[i].Name == name {
+			return &containers[i]
+		}
+	}
+	return nil
 }
 
 // NOTE: The credentialsSyncScript / credentialsSyncSidecarImage / buildCredentialsSyncSidecar
