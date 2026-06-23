@@ -323,6 +323,8 @@ type KubernetesSessionConfig struct {
 	// ConfigFile is the path to an external configuration file for kubernetes session settings
 	// This file can contain node_selector and tolerations settings
 	ConfigFile string `json:"config_file,omitempty" mapstructure:"config_file"`
+	// SessionPodTemplateFile is the path to a PodTemplateSpec YAML file merged into every session Pod.
+	SessionPodTemplateFile string `json:"session_pod_template_file,omitempty" mapstructure:"session_pod_template_file"`
 	// NodeSelector is a selector which must be true for the pod to fit on a node
 	// Example: {"disktype": "ssd", "kubernetes.io/arch": "amd64"}
 	NodeSelector map[string]string `json:"node_selector,omitempty" mapstructure:"node_selector" yaml:"node_selector"`
@@ -1106,6 +1108,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
+	_ = v.BindEnv("kubernetes_session.session_pod_template_file", "AGENTAPI_K8S_SESSION_POD_TEMPLATE_FILE")
 	// MCP servers configuration
 
 	// Settings base secret configuration

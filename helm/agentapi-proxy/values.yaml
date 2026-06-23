@@ -567,6 +567,32 @@ kubernetesSession:
   #     effect: "PreferNoSchedule"
   tolerations: []
 
+  # Additional PodTemplateSpec fields to merge into every session pod.
+  # This is rendered as a YAML file, mounted into the proxy pod, and applied
+  # with Kubernetes strategic merge patch when each session workload is created.
+  # The proxy preserves required session fields such as serviceAccountName,
+  # restartPolicy, session labels, and the main agentapi container command/args.
+  podTemplate: {}
+  # metadata:
+  #   annotations:
+  #     example.com/template: "enabled"
+  #   labels:
+  #     workload-type: agent-session
+  # spec:
+  #   priorityClassName: agent-session
+  #   imagePullSecrets:
+  #     - name: ghcr-pull-secret
+  #   volumes:
+  #     - name: extra-config
+  #       configMap:
+  #         name: extra-config
+  #   containers:
+  #     - name: agentapi
+  #       volumeMounts:
+  #         - name: extra-config
+  #           mountPath: /etc/extra-config
+  #           readOnly: true
+
   # GitHub authentication for repository cloning in session pods
   # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
   # The Secret will be used by the clone-repo init container

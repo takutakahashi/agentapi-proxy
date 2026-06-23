@@ -132,7 +132,8 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 		},
 	}
 
-	deployment := manager.buildDeployment(context.Background(), session, req)
+	deployment, err := manager.buildDeployment(context.Background(), session, req)
+	assert.NoError(t, err)
 	podSpec := deployment.Spec.Template.Spec
 
 	var configInit *corev1.Container
@@ -206,7 +207,8 @@ func TestBuildDeploymentSkipsSciaSidecarWhenAuthProxyDisabled(t *testing.T) {
 		AuthProxy: boolPtr(false),
 	}
 
-	deployment := manager.buildDeployment(context.Background(), session, req)
+	deployment, err := manager.buildDeployment(context.Background(), session, req)
+	assert.NoError(t, err)
 	podSpec := deployment.Spec.Template.Spec
 
 	assert.NotContains(t, containerNames(podSpec.InitContainers), "scia-config")
@@ -230,7 +232,8 @@ func TestBuildDeploymentAddsSciaSidecarWhenAuthProxyEnabled(t *testing.T) {
 		AuthProxy: boolPtr(true),
 	}
 
-	deployment := manager.buildDeployment(context.Background(), session, req)
+	deployment, err := manager.buildDeployment(context.Background(), session, req)
+	assert.NoError(t, err)
 	podSpec := deployment.Spec.Template.Spec
 
 	assert.Contains(t, containerNames(podSpec.InitContainers), "scia-config")
