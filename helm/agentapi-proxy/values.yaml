@@ -72,7 +72,7 @@ scia:
   enabled: true
   image:
     repository: ghcr.io/takutakahashi/scia
-    tag: "0.16.0"
+    tag: "0.17.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   publicBaseUrl: ""
@@ -96,7 +96,7 @@ scia:
     - /sync/v9/*
   sessionSidecar:
     enabled: true
-    image: ghcr.io/takutakahashi/scia:0.16.0
+    image: ghcr.io/takutakahashi/scia:0.17.0
     configImage: busybox:1.36
     port: 18081
   oauth:
@@ -107,54 +107,54 @@ scia:
         name: Google
         setup: {}
         scopes:
-        - id: calendar-read
-          value: "https://www.googleapis.com/auth/calendar.readonly"
-          name: "Google Calendar read-only"
-          desc: "Read Google Calendar events."
-          group: calendar
-          groupName: "Google Calendar"
-          groupDesc: "Choose how much Google Calendar access to grant."
-          enabled: true
-        - id: calendar-write
-          value: "https://www.googleapis.com/auth/calendar"
-          name: "Google Calendar read/write"
-          desc: "Read and write Google Calendar events."
-          group: calendar
-          groupName: "Google Calendar"
-          groupDesc: "Choose how much Google Calendar access to grant."
-          enabled: false
-        - id: tasks-read
-          value: "https://www.googleapis.com/auth/tasks.readonly"
-          name: "Google Tasks read-only"
-          desc: "Read Google Tasks and task lists."
-          group: tasks
-          groupName: "Google Tasks"
-          groupDesc: "Choose how much Google Tasks access to grant."
-          enabled: true
-        - id: tasks-write
-          value: "https://www.googleapis.com/auth/tasks"
-          name: "Google Tasks read/write"
-          desc: "Read and write Google Tasks and task lists."
-          group: tasks
-          groupName: "Google Tasks"
-          groupDesc: "Choose how much Google Tasks access to grant."
-          enabled: false
+          - id: calendar-read
+            value: "https://www.googleapis.com/auth/calendar.readonly"
+            name: "Google Calendar read-only"
+            desc: "Read Google Calendar events."
+            group: calendar
+            groupName: "Google Calendar"
+            groupDesc: "Choose how much Google Calendar access to grant."
+            enabled: true
+          - id: calendar-write
+            value: "https://www.googleapis.com/auth/calendar"
+            name: "Google Calendar read/write"
+            desc: "Read and write Google Calendar events."
+            group: calendar
+            groupName: "Google Calendar"
+            groupDesc: "Choose how much Google Calendar access to grant."
+            enabled: false
+          - id: tasks-read
+            value: "https://www.googleapis.com/auth/tasks.readonly"
+            name: "Google Tasks read-only"
+            desc: "Read Google Tasks and task lists."
+            group: tasks
+            groupName: "Google Tasks"
+            groupDesc: "Choose how much Google Tasks access to grant."
+            enabled: true
+          - id: tasks-write
+            value: "https://www.googleapis.com/auth/tasks"
+            name: "Google Tasks read/write"
+            desc: "Read and write Google Tasks and task lists."
+            group: tasks
+            groupName: "Google Tasks"
+            groupDesc: "Choose how much Google Tasks access to grant."
+            enabled: false
       todoist:
         name: Todoist
         iconUrl: "https://todoist.com/favicon.ico"
         description: "Connect Todoist tasks and projects."
         setup: {}
         scopes:
-        - id: read-write
-          value: "data:read_write"
-          name: "Todoist read/write"
-          desc: "Read and write Todoist tasks and projects."
-          enabled: true
-        - id: task-add
-          value: "task:add"
-          name: "Todoist task add"
-          desc: "Add Todoist tasks without reading existing data."
-          enabled: false
+          - id: read-write
+            value: "data:read_write"
+            name: "Todoist read/write"
+            desc: "Read and write Todoist tasks and projects."
+            enabled: true
+          - id: task-add
+            value: "task:add"
+            name: "Todoist task add"
+            desc: "Add Todoist tasks without reading existing data."
+            enabled: false
     google:
       scope: "https://www.googleapis.com/auth/calendar.readonly"
       # Secret-backed Google OAuth client credentials. Set create=false and
