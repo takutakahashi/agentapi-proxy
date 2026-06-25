@@ -84,7 +84,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 			Scia: config.SciaConfig{
 				Enabled:                   true,
 				SessionSidecarEnabled:     true,
-				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.12.2",
+				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.16.0",
 				SessionSidecarConfigImage: "busybox:1.36",
 				SessionSidecarPort:        18081,
 				Credential:                "takutakahashi.google",
@@ -160,8 +160,8 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 		assert.NotContains(t, script, `secretName: "scia-oauth-takutakahashi"`)
 		assert.NotContains(t, script, `scia-google-oauth`)
 		assert.NotContains(t, script, `clientSecretRef`)
-		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/takutakahashi/google/token"`)
-		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/takutakahashi/todoist/token"`)
+		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/google/token"`)
+		assert.Contains(t, script, `token_broker_url: "http://scia-oauth.test-ns.svc.cluster.local:8081/oauth/todoist/token"`)
 		assert.Contains(t, script, `- "takutakahashi.google"`)
 		assert.Contains(t, script, `- "takutakahashi.todoist"`)
 	}
@@ -254,7 +254,7 @@ func newSciaSidecarTestManager(sessionSidecarEnabled bool) *KubernetesSessionMan
 			Scia: config.SciaConfig{
 				Enabled:                   true,
 				SessionSidecarEnabled:     sessionSidecarEnabled,
-				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.12.2",
+				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.16.0",
 				SessionSidecarConfigImage: "busybox:1.36",
 				SessionSidecarPort:        18081,
 				Credential:                "takutakahashi.google",

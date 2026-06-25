@@ -2699,7 +2699,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 
 	sidecar := corev1.Container{
 		Name:            "scia-proxy",
-		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.12.2"),
+		Image:           defaultIfEmpty(scia.SessionSidecarImage, "ghcr.io/takutakahashi/scia:0.16.0"),
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Args:            []string{"-config", "/etc/scia-config/config.yaml"},
 		Ports: []corev1.ContainerPort{
@@ -2778,12 +2778,12 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistC
 	b.WriteString("    type: google-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
 	b.WriteString(fmt.Sprintf("      user: %q\n", userNamespace))
-	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, userNamespace, "google", userToken)))
+	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, "google", userToken)))
 	b.WriteString(fmt.Sprintf("  - id: %q\n", todoistCredentialID))
 	b.WriteString("    type: todoist-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
 	b.WriteString(fmt.Sprintf("      user: %q\n", userNamespace))
-	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, userNamespace, "todoist", userToken)))
+	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, "todoist", userToken)))
 	b.WriteString("rules:\n")
 	b.WriteString("  - name: inject-google-oauth-token\n")
 	b.WriteString("    hosts:\n")
@@ -2812,8 +2812,8 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistC
 	return b.String()
 }
 
-func sciaTokenBrokerURL(namespace, userNamespace, provider, userToken string) string {
-	brokerURL := fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/%s/token", namespace, url.PathEscape(userNamespace), url.PathEscape(provider))
+func sciaTokenBrokerURL(namespace, provider, userToken string) string {
+	brokerURL := fmt.Sprintf("http://scia-oauth.%s.svc.cluster.local:8081/oauth/%s/token", namespace, url.PathEscape(provider))
 	if userToken == "" {
 		return brokerURL
 	}
