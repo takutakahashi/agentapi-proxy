@@ -1334,7 +1334,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scia.user_namespace", "")
 	v.SetDefault("scia.no_proxy", "localhost,127.0.0.1,.svc,.cluster.local")
 	v.SetDefault("scia.session_sidecar_enabled", false)
-	v.SetDefault("scia.session_sidecar_image", "ghcr.io/takutakahashi/scia:0.16.0")
+	v.SetDefault("scia.session_sidecar_image", "ghcr.io/takutakahashi/scia:0.17.0")
 	v.SetDefault("scia.session_sidecar_config_image", "busybox:1.36")
 	v.SetDefault("scia.session_sidecar_port", 18081)
 	v.SetDefault("scia.google_hosts", []string{"www.googleapis.com"})
@@ -1419,7 +1419,7 @@ func applyConfigDefaults(config *Config) {
 		config.Scia.NoProxy = "localhost,127.0.0.1,.svc,.cluster.local"
 	}
 	if config.Scia.SessionSidecarImage == "" {
-		config.Scia.SessionSidecarImage = "ghcr.io/takutakahashi/scia:0.16.0"
+		config.Scia.SessionSidecarImage = "ghcr.io/takutakahashi/scia:0.17.0"
 	}
 	if config.Scia.SessionSidecarConfigImage == "" {
 		config.Scia.SessionSidecarConfigImage = "busybox:1.36"
