@@ -37,6 +37,8 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+const messagesHistoryLimit = 20
+
 // sessionUpdateParams is the params envelope for a session/update notification.
 type sessionUpdateParams struct {
 	SessionId string            `json:"sessionId"`
@@ -167,13 +169,17 @@ func (b *Bridge) appendToOutputFile(text string) {
 	}
 }
 
-// Messages returns a snapshot of all broadcasted JSON-RPC messages since the
-// bridge started.  Callers can use this to replay history for reconnecting clients.
+// Messages returns a snapshot of the most recent broadcasted JSON-RPC messages.
+// This keeps GET /messages bounded even when tool output makes the full history large.
 func (b *Bridge) Messages() []json.RawMessage {
 	b.histMu.RLock()
 	defer b.histMu.RUnlock()
-	out := make([]json.RawMessage, len(b.history))
-	copy(out, b.history)
+	start := len(b.history) - messagesHistoryLimit
+	if start < 0 {
+		start = 0
+	}
+	out := make([]json.RawMessage, len(b.history)-start)
+	copy(out, b.history[start:])
 	return out
 }
 
