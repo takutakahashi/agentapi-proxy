@@ -81,6 +81,7 @@ type IntegrationsResponse struct {
 type IntegrationAuthorizationURLRequest struct {
 	RedirectURI string   `json:"redirect_uri"`
 	ScopeIDs    []string `json:"scope_ids"`
+	Scope       string   `json:"scope,omitempty"`
 	State       string   `json:"state,omitempty"`
 }
 
@@ -311,7 +312,7 @@ func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, 
 	}
 
 	path := fmt.Sprintf("/oauth/%s/%s/authorization-url", url.PathEscape(integration.Namespace), url.PathEscape(integration.Provider))
-	payload, err := json.Marshal(input)
+	payload, err := json.Marshal(input.sciaRequest())
 	if err != nil {
 		return IntegrationAuthorizationURLResponse{}, err
 	}
@@ -363,6 +364,9 @@ func (c *GoogleOAuthController) createSciaStartAuthorizationURL(ctx context.Cont
 	if input.State != "" {
 		values.Set("state", input.State)
 	}
+	if scope := input.requestedScope(); scope != "" {
+		values.Set("scope", scope)
+	}
 	if userToken != "" {
 		values.Set("user_token", userToken)
 	}
@@ -398,6 +402,27 @@ func (c *GoogleOAuthController) createSciaStartAuthorizationURL(ctx context.Cont
 		AuthorizationURL: location,
 		RedirectURI:      input.RedirectURI,
 	}, nil
+}
+
+type sciaAuthorizationURLRequest struct {
+	RedirectURI string `json:"redirect_uri,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	State       string `json:"state,omitempty"`
+}
+
+func (r IntegrationAuthorizationURLRequest) sciaRequest() sciaAuthorizationURLRequest {
+	return sciaAuthorizationURLRequest{
+		RedirectURI: r.RedirectURI,
+		Scope:       r.requestedScope(),
+		State:       r.State,
+	}
+}
+
+func (r IntegrationAuthorizationURLRequest) requestedScope() string {
+	if r.Scope != "" {
+		return r.Scope
+	}
+	return strings.Join(r.ScopeIDs, " ")
 }
 
 func (c *GoogleOAuthController) revokeSciaIntegration(ctx context.Context, integration FrontendIntegration, userToken string) (IntegrationRevokeResponse, error) {

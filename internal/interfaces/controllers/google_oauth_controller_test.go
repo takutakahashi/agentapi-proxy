@@ -18,7 +18,7 @@ import (
 )
 
 func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
-	var gotScopeIDs []string
+	var gotScope string
 	var gotUserToken string
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -43,11 +43,11 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 				t.Fatalf("method = %s, want POST", r.Method)
 			}
 			gotUserToken = r.Header.Get("X-Scia-User-Token")
-			var req IntegrationAuthorizationURLRequest
+			var req sciaAuthorizationURLRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			gotScopeIDs = req.ScopeIDs
+			gotScope = req.Scope
 			if req.RedirectURI != "https://app.example.com/api/oauth/google/callback" {
 				t.Fatalf("redirect_uri = %q", req.RedirectURI)
 			}
@@ -84,8 +84,8 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if strings.Join(gotScopeIDs, ",") != "calendar-write,tasks-write" {
-		t.Fatalf("scope_ids = %#v", gotScopeIDs)
+	if gotScope != "calendar-write tasks-write" {
+		t.Fatalf("scope = %q", gotScope)
 	}
 	if gotUserToken != "ap-user-token" {
 		t.Fatalf("X-Scia-User-Token = %q", gotUserToken)
@@ -96,6 +96,70 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 	}
 	if body.AuthorizationURL != "https://accounts.google.com/o/oauth2/v2/auth?scope=calendar" {
 		t.Fatalf("authorization_url = %q", body.AuthorizationURL)
+	}
+}
+
+func TestCreateAuthorizationURLAddsScopeIDsToFallbackStartURL(t *testing.T) {
+	var gotScope string
+	var gotUserToken string
+	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/integrations":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"integrations": []map[string]any{
+					{
+						"id":            "takutakahashi.google",
+						"provider":      "google",
+						"namespace":     "takutakahashi",
+						"credential_id": "takutakahashi.google",
+						"name":          "Google",
+						"released":      true,
+						"start_url":     "/oauth/google/start",
+						"scopes":        []map[string]any{},
+					},
+				},
+			})
+		case "/oauth/google/start":
+			if r.Method != http.MethodGet {
+				t.Fatalf("method = %s, want GET", r.Method)
+			}
+			gotScope = r.URL.Query().Get("scope")
+			gotUserToken = r.URL.Query().Get("user_token")
+			http.Redirect(w, r, "https://accounts.google.com/o/oauth2/v2/auth?scope=drive", http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer scia.Close()
+
+	controller := NewGoogleOAuthController(config.SciaConfig{
+		Enabled:          true,
+		OAuthInternalURL: scia.URL,
+	}, nil, "").WithPersonalAPIKeyRepository(&fakeGoogleOAuthPersonalAPIKeyRepo{
+		keys: map[entities.UserID]string{"takutakahashi": "ap-user-token"},
+	})
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/integrations/takutakahashi.google/authorization-url", strings.NewReader(`{"scope_ids":["drive-read","gmail-read"],"redirect_uri":"https://app.example.com/oauth/google/callback"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.SetParamNames("id")
+	ctx.SetParamValues("takutakahashi.google")
+	ctx.Set("internal_user", entities.NewUser("takutakahashi", entities.UserTypeRegular, "takutakahashi"))
+
+	if err := controller.CreateAuthorizationURL(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if gotScope != "drive-read gmail-read" {
+		t.Fatalf("scope = %q", gotScope)
+	}
+	if gotUserToken != "ap-user-token" {
+		t.Fatalf("user_token = %q", gotUserToken)
 	}
 }
 

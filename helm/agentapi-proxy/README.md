@@ -95,7 +95,8 @@ The command removes all the Kubernetes components associated with the chart and 
 | `scia.todoistCredential`                           | Todoist credential ID injected into sessions    | `default.todoist` |
 | `scia.userNamespace`                               | Optional fixed scia user namespace; empty derives it from each agentapi user | `""` |
 | `scia.dynamicUserSecretNamePrefix`                 | Prefix for scia dynamic user token Secrets      | `scia-oauth-` |
-| `scia.oauth.integrations`                          | Service integration display metadata and scopes rendered into scia config with `toYaml` | Google/Todoist defaults |
+| `scia.oauth.google.scopes`                         | Google OAuth scope choices exposed to the frontend and rendered into scia integration metadata | Calendar/Tasks defaults |
+| `scia.oauth.todoist.scopes`                        | Todoist OAuth scope choices exposed to the frontend and rendered into scia integration metadata | Todoist defaults |
 | `scia.oauth.google.secret.create`                  | Create a Kubernetes Secret for Google OAuth     | `false` |
 | `scia.oauth.google.secret.existingSecret`          | Existing Secret containing Google OAuth values  | `""` |
 | `scia.oauth.google.secret.clientIdKey`             | Secret key for the Google OAuth client ID       | `client-id` |
@@ -207,6 +208,15 @@ scia:
   credential: your-user.google
   oauth:
     google:
+      scopes:
+        - id: calendar-read
+          value: https://www.googleapis.com/auth/calendar.readonly
+          name: Google Calendar read-only
+          enabled: true
+        - id: tasks-read
+          value: https://www.googleapis.com/auth/tasks.readonly
+          name: Google Tasks read-only
+          enabled: true
       secret:
         create: false
         existingSecret: scia-google-oauth
@@ -214,7 +224,7 @@ scia:
         clientSecretKey: client-secret
 ```
 
-The `scia-google-oauth` Secret must contain the Google OAuth client ID and client secret. When `ingress.enabled=true`, the chart routes `/oauth` and `/_scia` to the scia OAuth broker on the same host.
+The `scia-google-oauth` Secret must contain the Google OAuth client ID and client secret. `scia.oauth.google.scopes` is rendered into scia integration metadata, and frontends can request a selected subset by posting those scope IDs to `/integrations/{id}/authorization-url`. When `ingress.enabled=true`, the chart routes `/oauth` and `/_scia` to the scia OAuth broker on the same host.
 
 ### With scia Todoist OAuth
 
