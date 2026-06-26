@@ -10,7 +10,6 @@
 {{- $googleEnabled := ne $googleCredential "" }}
 {{- $todoist := $oauth.todoist | default dict }}
 {{- $todoistEnabled := $todoist.enabled | default false }}
-{{- $integrationValues := $oauth.integrations | default dict }}
 {{- $dynamicUserSecretNamePrefix := $scia.dynamicUserSecretNamePrefix | default "scia-oauth-" }}
 {{- $sciaPublicBaseURL := $scia.publicBaseUrl | default "" }}
 {{- $sciaHost := .Values.config.hostname | default "" }}
@@ -35,11 +34,37 @@
   {{- $todoistRedirectURL = "" }}
 {{- end }}
 {{- $integrations := dict }}
-{{- if and $googleEnabled (hasKey $integrationValues "google") }}
-  {{- $_ := set $integrations "google" (deepCopy (get $integrationValues "google")) }}
+{{- if $googleEnabled }}
+  {{- $googleIntegration := dict "name" ($google.name | default "Google") "setup" ($google.setup | default dict) }}
+  {{- with $google.iconUrl }}
+    {{- $_ := set $googleIntegration "iconUrl" . }}
+  {{- end }}
+  {{- with $google.description }}
+    {{- $_ := set $googleIntegration "description" . }}
+  {{- end }}
+  {{- if hasKey $google "released" }}
+    {{- $_ := set $googleIntegration "released" $google.released }}
+  {{- end }}
+  {{- with $google.scopes }}
+    {{- $_ := set $googleIntegration "scopes" . }}
+  {{- end }}
+  {{- $_ := set $integrations "google" $googleIntegration }}
 {{- end }}
-{{- if and $todoistEnabled (hasKey $integrationValues "todoist") }}
-  {{- $_ := set $integrations "todoist" (deepCopy (get $integrationValues "todoist")) }}
+{{- if $todoistEnabled }}
+  {{- $todoistIntegration := dict "name" ($todoist.name | default "Todoist") "setup" ($todoist.setup | default dict) }}
+  {{- with ($todoist.iconUrl | default "https://todoist.com/favicon.ico") }}
+    {{- $_ := set $todoistIntegration "iconUrl" . }}
+  {{- end }}
+  {{- with $todoist.description }}
+    {{- $_ := set $todoistIntegration "description" . }}
+  {{- end }}
+  {{- if hasKey $todoist "released" }}
+    {{- $_ := set $todoistIntegration "released" $todoist.released }}
+  {{- end }}
+  {{- with $todoist.scopes }}
+    {{- $_ := set $todoistIntegration "scopes" . }}
+  {{- end }}
+  {{- $_ := set $integrations "todoist" $todoistIntegration }}
 {{- end }}
 apiVersion: v1
 kind: ConfigMap
