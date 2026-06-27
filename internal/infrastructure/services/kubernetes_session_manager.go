@@ -73,9 +73,10 @@ type PersonalAPIKeyLoader interface {
 // It is emitted by KubernetesSessionManager whenever a session's status changes,
 // and is delivered to all active SSE/long-poll subscribers.
 type SessionStatusEvent struct {
-	SessionID string    `json:"session_id"`
-	Status    string    `json:"status"`
-	Timestamp time.Time `json:"timestamp"`
+	SessionID    string    `json:"session_id"`
+	Status       string    `json:"status"`
+	StatusReason string    `json:"status_reason,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // SessionMessageEvent represents a message_update event for a specific session.
@@ -965,7 +966,7 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 		case <-timeout:
 			readyTicker.Stop()
 			log.Printf("[K8S_SESSION] Stock session %s startup timeout", session.id)
-			session.SetStatus("timeout")
+			session.SetStatusWithReason("timeout", "timed out waiting for session pod to become ready")
 			return
 		case <-readyTicker.C:
 			ready, err := m.isSessionWorkloadReady(context.Background(), session)
@@ -980,7 +981,7 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	log.Printf("[K8S_SESSION] Waiting for pull provision request to become ready for stock session %s", session.id)
 	if err := m.waitForPullProvisioner(ctx, session); err != nil {
 		log.Printf("[K8S_SESSION] Pull provisioner error for stock session %s: %v", session.id, err)
-		session.SetStatus("error")
+		session.SetStatusWithReason("error", err.Error())
 		return
 	}
 
@@ -3114,7 +3115,7 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 
 		case <-timeout:
 			log.Printf("[K8S_SESSION] Session %s startup timeout", session.id)
-			session.SetStatus("timeout")
+			session.SetStatusWithReason("timeout", "timed out waiting for session pod to become ready")
 			return
 
 		case <-ticker.C:
@@ -3136,7 +3137,7 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 				log.Printf("[K8S_SESSION] Waiting for pull provision request to become ready for session %s", session.id)
 				if err := m.waitForPullProvisioner(ctx, session); err != nil {
 					log.Printf("[K8S_SESSION] Pull provisioner error for session %s: %v", session.id, err)
-					session.SetStatus("error")
+					session.SetStatusWithReason("error", err.Error())
 					return
 				}
 
@@ -3183,7 +3184,7 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 			}
 
 			if !ready {
-				session.SetStatus("unhealthy")
+				session.SetStatusWithReason("unhealthy", m.sessionWorkloadNotReadyReason(context.Background(), session))
 			} else {
 				// Only recover to "active" from a bad state.
 				// Do not overwrite "running" (agentapi is processing a message).
@@ -3582,9 +3583,10 @@ func (m *KubernetesSessionManager) AddSessionDeletedHandler(handler SessionDelet
 // reaches local SSE clients without causing a Redis re-publish loop.
 func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status string) {
 	evt := SessionStatusEvent{
-		SessionID: sessionID,
-		Status:    status,
-		Timestamp: time.Now(),
+		SessionID:    sessionID,
+		Status:       status,
+		StatusReason: m.sessionStatusReason(sessionID),
+		Timestamp:    time.Now(),
 	}
 	m.globalSubsMu.Lock()
 	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d (cross-pod relay)", sessionID, status, len(m.globalSubs))
@@ -3612,9 +3614,10 @@ func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status 
 // publishes an event for other pods to pick up.
 func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status string) {
 	evt := SessionStatusEvent{
-		SessionID: sessionID,
-		Status:    status,
-		Timestamp: time.Now(),
+		SessionID:    sessionID,
+		Status:       status,
+		StatusReason: m.sessionStatusReason(sessionID),
+		Timestamp:    time.Now(),
 	}
 	m.globalSubsMu.Lock()
 	log.Printf("[SSE_BROADCAST] session=%s status=%s subscribers=%d", sessionID, status, len(m.globalSubs))
@@ -3651,6 +3654,16 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on status change session=%s: %v", sessionID, err)
 		}
 	}
+}
+
+func (m *KubernetesSessionManager) sessionStatusReason(sessionID string) string {
+	m.mutex.RLock()
+	session := m.sessions[sessionID]
+	m.mutex.RUnlock()
+	if session == nil {
+		return ""
+	}
+	return session.StatusReason()
 }
 
 // broadcastMessageUpdate notifies all active per-session subscribers that a message_update
@@ -3915,6 +3928,42 @@ func (m *KubernetesSessionManager) isSessionWorkloadReady(ctx context.Context, s
 	return isPodReady(pod), nil
 }
 
+func (m *KubernetesSessionManager) sessionWorkloadNotReadyReason(ctx context.Context, session *KubernetesSession) string {
+	if !m.isPVCEnabled() {
+		pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+		if err != nil {
+			return fmt.Sprintf("failed to read session pod: %v", err)
+		}
+		return podNotReadyReason(pod)
+	}
+
+	deployment, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Sprintf("failed to read session deployment: %v", err)
+	}
+
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("agentapi.proxy/session-id=%s", session.ID()),
+	})
+	if err == nil && len(pods.Items) > 0 {
+		return podNotReadyReason(&pods.Items[0])
+	}
+
+	if len(deployment.Status.Conditions) > 0 {
+		condition := deployment.Status.Conditions[len(deployment.Status.Conditions)-1]
+		if condition.Message != "" {
+			return fmt.Sprintf("deployment %s: %s", condition.Type, condition.Message)
+		}
+		if condition.Reason != "" {
+			return fmt.Sprintf("deployment %s: %s", condition.Type, condition.Reason)
+		}
+	}
+	if err != nil {
+		return fmt.Sprintf("deployment has no ready replicas; failed to list pods: %v", err)
+	}
+	return "deployment has no ready replicas"
+}
+
 func isPodReady(pod *corev1.Pod) bool {
 	if pod.Status.Phase != corev1.PodRunning {
 		return false
@@ -3925,6 +3974,52 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+func podNotReadyReason(pod *corev1.Pod) string {
+	for _, status := range append(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses...) {
+		if status.State.Waiting != nil {
+			return formatContainerStateReason(status.Name, "waiting", status.State.Waiting.Reason, status.State.Waiting.Message)
+		}
+		if status.State.Terminated != nil {
+			reason := status.State.Terminated.Reason
+			if reason == "" && status.State.Terminated.ExitCode != 0 {
+				reason = fmt.Sprintf("exit code %d", status.State.Terminated.ExitCode)
+			}
+			return formatContainerStateReason(status.Name, "terminated", reason, status.State.Terminated.Message)
+		}
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status != corev1.ConditionTrue {
+			if condition.Message != "" {
+				return condition.Message
+			}
+			if condition.Reason != "" {
+				return condition.Reason
+			}
+		}
+	}
+	if pod.Status.Message != "" {
+		return pod.Status.Message
+	}
+	if pod.Status.Reason != "" {
+		return pod.Status.Reason
+	}
+	if pod.Status.Phase != "" {
+		return fmt.Sprintf("pod phase is %s", pod.Status.Phase)
+	}
+	return "pod is not ready"
+}
+
+func formatContainerStateReason(containerName, state, reason, message string) string {
+	parts := []string{fmt.Sprintf("container %s is %s", containerName, state)}
+	if reason != "" {
+		parts = append(parts, reason)
+	}
+	if message != "" {
+		parts = append(parts, message)
+	}
+	return strings.Join(parts, ": ")
 }
 
 // buildMainContainerVolumeMounts builds the volume mounts for the main container
@@ -4086,6 +4181,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	session.SetUpdatedAt(updatedAt)
 	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
+	if reason := m.sessionWorkloadNotReadyReason(context.Background(), session); reason != "" && session.Status() != "active" {
+		session.SetStatusReason(reason)
+	}
 	session.SetDescription(initialMessage) // Cache initial message as description
 
 	// Register proxy-wide status change broadcaster
@@ -4216,6 +4314,9 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 	session.SetUpdatedAt(updatedAt)
 	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getStatusFromWorkloadObject(deployment, pod))
+	if reason := restoredWorkloadNotReadyReason(deployment, pod, m.isPVCEnabled()); reason != "" && session.Status() != "active" {
+		session.SetStatusReason(reason)
+	}
 	session.SetDescription(initialMessage) // Cache initial message as description
 
 	// Register proxy-wide status change broadcaster
@@ -4261,6 +4362,37 @@ func (m *KubernetesSessionManager) getStatusFromWorkloadObject(deployment *appsv
 		return "starting"
 	}
 	return "unhealthy"
+}
+
+func restoredWorkloadNotReadyReason(deployment *appsv1.Deployment, pod *corev1.Pod, pvcEnabled bool) string {
+	if !pvcEnabled {
+		if pod == nil {
+			return "session pod not found"
+		}
+		if isPodReady(pod) {
+			return ""
+		}
+		return podNotReadyReason(pod)
+	}
+	if deployment == nil {
+		return "session deployment not found"
+	}
+	if deployment.Status.ReadyReplicas > 0 {
+		return ""
+	}
+	if pod != nil {
+		return podNotReadyReason(pod)
+	}
+	if len(deployment.Status.Conditions) > 0 {
+		condition := deployment.Status.Conditions[len(deployment.Status.Conditions)-1]
+		if condition.Message != "" {
+			return fmt.Sprintf("deployment %s: %s", condition.Type, condition.Message)
+		}
+		if condition.Reason != "" {
+			return fmt.Sprintf("deployment %s: %s", condition.Type, condition.Reason)
+		}
+	}
+	return "deployment has no ready replicas"
 }
 
 // ensureOtelcolConfigMap creates or updates the OpenTelemetry Collector ConfigMap

@@ -36,6 +36,10 @@ type SessionManagerProvider interface {
 	GetSessionManager() repositories.SessionManager
 }
 
+type sessionStatusReasonProvider interface {
+	StatusReason() string
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
@@ -363,6 +367,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			"scope":           session.Scope(),
 			"team_id":         session.TeamID(),
 			"status":          session.Status(),
+			"status_reason":   sessionStatusReason(session),
 			"started_at":      session.StartedAt(),
 			"updated_at":      session.UpdatedAt(),
 			"last_message_at": session.LastMessageAt(),
@@ -426,6 +431,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 					"scope":           route.Scope,
 					"team_id":         route.TeamID,
 					"status":          status,
+					"status_reason":   "",
 					"started_at":      route.StartedAt,
 					"updated_at":      route.StartedAt,
 					"last_message_at": route.StartedAt,
@@ -442,6 +448,13 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"sessions": filteredSessions,
 	})
+}
+
+func sessionStatusReason(session entities.Session) string {
+	if provider, ok := session.(sessionStatusReasonProvider); ok {
+		return provider.StatusReason()
+	}
+	return ""
 }
 
 // DeleteSession handles DELETE /sessions/:sessionId requests to terminate a session
