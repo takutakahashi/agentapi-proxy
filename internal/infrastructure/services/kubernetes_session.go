@@ -23,6 +23,7 @@ type KubernetesSession struct {
 	updatedAt         time.Time
 	lastMessageAt     time.Time
 	status            string
+	statusReason      string
 	cancelFunc        context.CancelFunc
 	mutex             sync.RWMutex
 	description       string                           // Preserved description from Secret (not truncated by label limits)
@@ -121,6 +122,13 @@ func (s *KubernetesSession) Status() string {
 	return s.status
 }
 
+// StatusReason returns the latest human-readable reason for a non-active status.
+func (s *KubernetesSession) StatusReason() string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.statusReason
+}
+
 // StartedAt returns when the session was started
 func (s *KubernetesSession) StartedAt() time.Time {
 	return s.startedAt
@@ -165,6 +173,30 @@ func (s *KubernetesSession) SetStatus(status string) {
 	s.mutex.Lock()
 	changed := s.status != status
 	s.status = status
+	if statusClearsReason(status) {
+		s.statusReason = ""
+	}
+	cb := s.statusChangeCallback
+	s.mutex.Unlock()
+
+	if changed && cb != nil {
+		cb(s.id, status)
+	}
+}
+
+// SetStatusReason records a human-readable reason for the current status.
+func (s *KubernetesSession) SetStatusReason(reason string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.statusReason = reason
+}
+
+// SetStatusWithReason updates both status and its human-readable reason.
+func (s *KubernetesSession) SetStatusWithReason(status, reason string) {
+	s.mutex.Lock()
+	changed := s.status != status
+	s.status = status
+	s.statusReason = reason
 	cb := s.statusChangeCallback
 	s.mutex.Unlock()
 
@@ -180,7 +212,19 @@ func (s *KubernetesSession) SetStatus(status string) {
 func (s *KubernetesSession) SetStatusSilent(status string) {
 	s.mutex.Lock()
 	s.status = status
+	if statusClearsReason(status) {
+		s.statusReason = ""
+	}
 	s.mutex.Unlock()
+}
+
+func statusClearsReason(status string) bool {
+	switch status {
+	case "creating", "starting", "active", "running":
+		return true
+	default:
+		return false
+	}
 }
 
 // SetStartedAt sets the session start time (used for restored sessions)

@@ -1214,9 +1214,10 @@ func (c *Client) StreamEvents(ctx context.Context, sessionID string) (<-chan str
 
 // ProxySessionStatusEvent is a proxy-level event emitted whenever any session's status changes.
 type ProxySessionStatusEvent struct {
-	SessionID string    `json:"session_id"`
-	Status    string    `json:"status"`
-	Timestamp time.Time `json:"timestamp"`
+	SessionID    string    `json:"session_id"`
+	Status       string    `json:"status"`
+	StatusReason string    `json:"status_reason,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // WatchSessionsStatus subscribes to proxy-wide session status changes via SSE.

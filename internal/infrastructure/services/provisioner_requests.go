@@ -199,7 +199,11 @@ func (m *KubernetesSessionManager) UpdateProvisionRequestStatus(ctx context.Cont
 					ks.SetStatus("active")
 				}
 			case "error":
-				ks.SetStatus("error")
+				reason := req.Message
+				if reason == "" {
+					reason = "provisioner reported error"
+				}
+				ks.SetStatusWithReason("error", reason)
 			}
 		}
 	}
