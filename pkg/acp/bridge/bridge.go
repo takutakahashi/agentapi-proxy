@@ -37,8 +37,6 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-const messagesHistoryLimit = 20
-
 // sessionUpdateParams is the params envelope for a session/update notification.
 type sessionUpdateParams struct {
 	SessionId string            `json:"sessionId"`
@@ -74,8 +72,9 @@ type Bridge struct {
 
 	// Message history: every broadcast message is appended so that reconnecting
 	// SSE clients can replay missed events via GET /messages.
-	histMu  sync.RWMutex
-	history []json.RawMessage
+	histMu             sync.RWMutex
+	history            []json.RawMessage
+	lastUserMessageIdx int
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -111,13 +110,14 @@ type statusSubscriber struct {
 // broadcasting them to the UI (equivalent to always selecting the first option).
 func New(client *acp.Client, sessionId string, verbose bool, outputFile string, autoApprove bool) *Bridge {
 	return &Bridge{
-		acp:            client,
-		sessionId:      sessionId,
-		verbose:        verbose,
-		autoApprove:    autoApprove,
-		outputFile:     outputFile,
-		pendingReplies: make(map[int64]chan json.RawMessage),
-		currentStatus:  "stable",
+		acp:                client,
+		sessionId:          sessionId,
+		verbose:            verbose,
+		autoApprove:        autoApprove,
+		outputFile:         outputFile,
+		pendingReplies:     make(map[int64]chan json.RawMessage),
+		currentStatus:      "stable",
+		lastUserMessageIdx: -1,
 	}
 }
 
@@ -169,12 +169,13 @@ func (b *Bridge) appendToOutputFile(text string) {
 	}
 }
 
-// Messages returns a snapshot of the most recent broadcasted JSON-RPC messages.
-// This keeps GET /messages bounded even when tool output makes the full history large.
+// Messages returns a snapshot of broadcasted JSON-RPC messages from the last
+// user message onward. This keeps GET /messages focused on the current turn,
+// including large tool output produced after the user's most recent prompt.
 func (b *Bridge) Messages() []json.RawMessage {
 	b.histMu.RLock()
 	defer b.histMu.RUnlock()
-	start := len(b.history) - messagesHistoryLimit
+	start := b.lastUserMessageIdx
 	if start < 0 {
 		start = 0
 	}
@@ -603,6 +604,9 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 
 	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
+	if isUserMessageUpdate(msg) {
+		b.lastUserMessageIdx = len(b.history)
+	}
 	b.history = append(b.history, raw)
 	b.histMu.Unlock()
 
@@ -612,5 +616,19 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 		default:
 			// Slow subscriber – drop the message rather than blocking.
 		}
+	}
+}
+
+func isUserMessageUpdate(msg jsonRPCMsg) bool {
+	if msg.Method != "session/update" {
+		return false
+	}
+	switch params := msg.Params.(type) {
+	case sessionUpdateParams:
+		return params.Update.Kind == acp.SessionUpdateKindUserMessageChunk
+	case *sessionUpdateParams:
+		return params != nil && params.Update.Kind == acp.SessionUpdateKindUserMessageChunk
+	default:
+		return false
 	}
 }
