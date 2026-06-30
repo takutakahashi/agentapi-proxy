@@ -75,6 +75,7 @@ type Bridge struct {
 	histMu             sync.RWMutex
 	history            []json.RawMessage
 	lastUserMessageIdx int
+	userMessageIndices []int // history indices of each user_message_chunk
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -169,19 +170,119 @@ func (b *Bridge) appendToOutputFile(text string) {
 	}
 }
 
+// UserPromptInfo describes one user prompt turn for GET /messages metadata.
+type UserPromptInfo struct {
+	Index   int    `json:"index"`
+	Preview string `json:"preview,omitempty"`
+}
+
 // Messages returns a snapshot of broadcasted JSON-RPC messages from the last
 // user message onward. This keeps GET /messages focused on the current turn,
 // including large tool output produced after the user's most recent prompt.
 func (b *Bridge) Messages() []json.RawMessage {
 	b.histMu.RLock()
 	defer b.histMu.RUnlock()
-	start := b.lastUserMessageIdx
+	return b.messagesFromIndexLocked(b.lastUserMessageIdx)
+}
+
+// UserPromptCount returns the number of user prompts recorded in history.
+func (b *Bridge) UserPromptCount() int {
+	b.histMu.RLock()
+	defer b.histMu.RUnlock()
+	return len(b.userMessageIndices)
+}
+
+// LatestUserPromptIndex returns the index of the most recent user prompt, or -1
+// when no user prompt exists yet.
+func (b *Bridge) LatestUserPromptIndex() int {
+	b.histMu.RLock()
+	defer b.histMu.RUnlock()
+	return len(b.userMessageIndices) - 1
+}
+
+// MessagesForUserPromptIndex returns messages from the given user prompt index
+// up to (but not including) the next user prompt, or the end of history when
+// index is the latest prompt.
+func (b *Bridge) MessagesForUserPromptIndex(index int) ([]json.RawMessage, bool) {
+	b.histMu.RLock()
+	defer b.histMu.RUnlock()
+	start, end, ok := b.userPromptRangeLocked(index)
+	if !ok {
+		return nil, false
+	}
+	out := make([]json.RawMessage, end-start)
+	copy(out, b.history[start:end])
+	return out, true
+}
+
+// UserPromptInfos returns metadata for every user prompt in conversation order.
+func (b *Bridge) UserPromptInfos() []UserPromptInfo {
+	b.histMu.RLock()
+	defer b.histMu.RUnlock()
+
+	infos := make([]UserPromptInfo, len(b.userMessageIndices))
+	for i, histIdx := range b.userMessageIndices {
+		infos[i] = UserPromptInfo{
+			Index:   i,
+			Preview: userPromptPreviewFromRawLocked(b.history[histIdx]),
+		}
+	}
+	return infos
+}
+
+func (b *Bridge) messagesFromIndexLocked(start int) []json.RawMessage {
 	if start < 0 {
 		start = 0
+	}
+	if start >= len(b.history) {
+		return []json.RawMessage{}
 	}
 	out := make([]json.RawMessage, len(b.history)-start)
 	copy(out, b.history[start:])
 	return out
+}
+
+func (b *Bridge) userPromptRangeLocked(index int) (start, end int, ok bool) {
+	if index < 0 || index >= len(b.userMessageIndices) {
+		return 0, 0, false
+	}
+	start = b.userMessageIndices[index]
+	if index+1 < len(b.userMessageIndices) {
+		end = b.userMessageIndices[index+1]
+	} else {
+		end = len(b.history)
+	}
+	return start, end, true
+}
+
+const userPromptPreviewMaxLen = 80
+
+func userPromptPreviewFromRawLocked(raw json.RawMessage) string {
+	var envelope struct {
+		Params struct {
+			Update struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ""
+	}
+	var content struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(envelope.Params.Update.Content, &content); err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(content.Text)
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= userPromptPreviewMaxLen {
+		return text
+	}
+	return string(runes[:userPromptPreviewMaxLen]) + "…"
 }
 
 // SessionID returns the ACP session ID.
@@ -606,6 +707,7 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	b.histMu.Lock()
 	if isUserMessageUpdate(msg) {
 		b.lastUserMessageIdx = len(b.history)
+		b.userMessageIndices = append(b.userMessageIndices, len(b.history))
 	}
 	b.history = append(b.history, raw)
 	b.histMu.Unlock()

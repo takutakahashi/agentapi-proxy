@@ -115,15 +115,56 @@ func (s *Server) handleStatus(c echo.Context) error {
 }
 
 // GET /messages
-// Returns the most recent JSON-RPC 2.0 messages that have been broadcast.
-// The response is a JSON object with a "messages" array so the client can distinguish
-// an empty history ({"messages":[]}) from an error.
+// Returns JSON-RPC 2.0 messages for a user prompt turn.
+//
+// Query parameters:
+//   - userPromptIndex (optional int): zero-based user prompt index. When omitted,
+//     returns messages from the latest user prompt onward (current turn).
+//
+// The response includes userPromptCount and userPrompts metadata so clients can
+// build turn navigation UI.
 func (s *Server) handleGetMessages(c echo.Context) error {
-	msgs := s.bridge.Messages()
+	indexParam := c.QueryParam("userPromptIndex")
+	userPromptCount := s.bridge.UserPromptCount()
+	userPrompts := s.bridge.UserPromptInfos()
+
+	var (
+		msgs            []json.RawMessage
+		userPromptIndex int
+	)
+	if indexParam == "" {
+		msgs = s.bridge.Messages()
+		userPromptIndex = s.bridge.LatestUserPromptIndex()
+	} else {
+		index, err := strconv.Atoi(indexParam)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "userPromptIndex must be an integer",
+			})
+		}
+		var ok bool
+		msgs, ok = s.bridge.MessagesForUserPromptIndex(index)
+		if !ok {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("userPromptIndex %d is out of range (count=%d)", index, userPromptCount),
+			})
+		}
+		userPromptIndex = index
+	}
+
 	if msgs == nil {
 		msgs = []json.RawMessage{}
 	}
-	return c.JSON(http.StatusOK, map[string]interface{}{"messages": msgs})
+
+	resp := map[string]interface{}{
+		"messages":        msgs,
+		"userPromptCount": userPromptCount,
+		"userPrompts":     userPrompts,
+	}
+	if userPromptIndex >= 0 {
+		resp["userPromptIndex"] = userPromptIndex
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // GET /session
