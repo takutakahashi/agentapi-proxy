@@ -239,18 +239,23 @@ Examples:
 
 var annotateSessionCmd = &cobra.Command{
 	Use:   "annotate-session",
-	Short: "Annotate the current session",
-	Long: `Annotate the current session with user-managed metadata.
+	Short: "Update current session info",
+	Long: `Update the current session's user-managed info.
 
-At least one annotation flag must be specified. Use an explicit empty string
-to clear an annotation.
+The supported fields are PR URL, issue URL, description, and running task.
+At least one flag must be specified. Use an explicit empty string to clear a field.
 
 Examples:
   agentapi-proxy client annotate-session \
     --endpoint http://proxy:8080 \
     --session-id my-session \
     --pr-url https://github.com/owner/repo/pull/123 \
-    --running-task "Implement session annotations"`,
+    --issue-url https://github.com/owner/repo/issues/456 \
+    --description "Session annotation support" \
+    --running-task "Implement session annotations"
+
+  # Clear the running task
+  agentapi-proxy client annotate-session --running-task ""`,
 	Run: runAnnotateSession,
 }
 

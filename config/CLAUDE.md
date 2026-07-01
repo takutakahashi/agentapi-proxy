@@ -50,3 +50,31 @@ agentapi-proxy client send-notification \
 ```
 
 **重要**: 全ての作業が完了した時点で、**必ず**上記コマンドを実行してユーザーに通知を送信してください。
+
+### セッション情報の更新
+
+作業中は、セッションに紐づく情報を `agentapi-proxy client annotate-session` で更新してください。
+更新できる情報は `pr_url`, `issue_url`, `description`, `running_task` です。
+
+特に以下のタイミングでは、該当する情報を更新してください：
+
+- PR を作成・更新したとき: `--pr-url`
+- 対応する issue があるとき: `--issue-url`
+- セッションの目的や要約が明確になったとき: `--description`
+- 現在取り組んでいる作業が変わったとき: `--running-task`
+
+例：
+
+```bash
+agentapi-proxy client annotate-session \
+  --pr-url "https://github.com/owner/repo/pull/123" \
+  --issue-url "https://github.com/owner/repo/issues/456" \
+  --description "セッションアノテーション機能の実装" \
+  --running-task "レビュー指摘の反映"
+```
+
+値を空文字で指定すると、その情報をクリアできます。
+
+```bash
+agentapi-proxy client annotate-session --running-task ""
+```
