@@ -118,6 +118,90 @@ func TestHandleOAuthLogin_InvalidRequest(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, httpErr.Code)
 }
 
+func TestIsAllowedRedirectURIRejectsPrefixBypass(t *testing.T) {
+	t.Setenv("OAUTH_ALLOWED_REDIRECT_URIS", "https://example.com/callback, https://app.example.com")
+
+	tests := []struct {
+		name        string
+		redirectURI string
+		want        bool
+	}{
+		{
+			name:        "exact configured redirect URI",
+			redirectURI: "https://example.com/callback",
+			want:        true,
+		},
+		{
+			name:        "path below configured redirect URI",
+			redirectURI: "https://example.com/callback/complete",
+			want:        true,
+		},
+		{
+			name:        "same origin allowed when configured without path",
+			redirectURI: "https://app.example.com/oauth/callback",
+			want:        true,
+		},
+		{
+			name:        "host prefix attack",
+			redirectURI: "https://example.com.evil.test/callback",
+			want:        false,
+		},
+		{
+			name:        "path prefix attack",
+			redirectURI: "https://example.com/callback.evil",
+			want:        false,
+		},
+		{
+			name:        "userinfo host confusion",
+			redirectURI: "https://example.com@evil.test/callback",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isAllowedRedirectURI(tt.redirectURI))
+		})
+	}
+}
+
+func TestIsAllowedRedirectURIDefaultLoopbackOnly(t *testing.T) {
+	t.Setenv("OAUTH_ALLOWED_REDIRECT_URIS", "")
+
+	tests := []struct {
+		name        string
+		redirectURI string
+		want        bool
+	}{
+		{
+			name:        "localhost with port",
+			redirectURI: "http://localhost:3000/callback",
+			want:        true,
+		},
+		{
+			name:        "127 loopback with port",
+			redirectURI: "https://127.0.0.1:8443/callback",
+			want:        true,
+		},
+		{
+			name:        "localhost host prefix attack",
+			redirectURI: "http://localhost.evil.test/callback",
+			want:        false,
+		},
+		{
+			name:        "unsupported scheme",
+			redirectURI: "javascript:alert(1)",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isAllowedRedirectURI(tt.redirectURI))
+		})
+	}
+}
+
 func TestHandleOAuthCallback(t *testing.T) {
 	proxy, mockServer := setupTestServerWithOAuth(t)
 	defer mockServer.Close()
