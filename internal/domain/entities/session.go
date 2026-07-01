@@ -118,6 +118,23 @@ type SessionParams struct {
 	SessionTTL string `json:"session_ttl,omitempty"`
 }
 
+// SessionAnnotations contains user-managed annotations attached to a session.
+type SessionAnnotations struct {
+	PRURL       string `json:"pr_url,omitempty"`
+	IssueURL    string `json:"issue_url,omitempty"`
+	Description string `json:"description,omitempty"`
+	RunningTask string `json:"running_task,omitempty"`
+}
+
+// UpdateSessionAnnotationsRequest partially updates user-managed session annotations.
+// Nil fields are left unchanged; an explicit empty string clears that annotation.
+type UpdateSessionAnnotationsRequest struct {
+	PRURL       *string `json:"pr_url,omitempty"`
+	IssueURL    *string `json:"issue_url,omitempty"`
+	Description *string `json:"description,omitempty"`
+	RunningTask *string `json:"running_task,omitempty"`
+}
+
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
 	Environment map[string]string `json:"environment,omitempty"`

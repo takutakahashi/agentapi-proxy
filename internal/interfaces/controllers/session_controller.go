@@ -36,6 +36,14 @@ type SessionManagerProvider interface {
 	GetSessionManager() repositories.SessionManager
 }
 
+type sessionAnnotationUpdater interface {
+	UpdateSessionAnnotations(ctx context.Context, sessionID string, patch entities.UpdateSessionAnnotationsRequest) (entities.SessionAnnotations, error)
+}
+
+type sessionAnnotationsProvider interface {
+	Annotations() entities.SessionAnnotations
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
@@ -102,6 +110,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	// Session management routes
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
+	e.PATCH("/sessions/:sessionId/annotations", c.UpdateSessionAnnotations)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
@@ -357,6 +366,11 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		// restoration in restoreSessionFromService.
 		initialMessage := session.Description()
 
+		annotations := getSessionAnnotations(session)
+		description := initialMessage
+		if annotations.Description != "" {
+			description = annotations.Description
+		}
 		sessionData := map[string]interface{}{
 			"session_id":      session.ID(),
 			"user_id":         session.UserID(),
@@ -368,8 +382,13 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			"last_message_at": session.LastMessageAt(),
 			"addr":            session.Addr(),
 			"tags":            session.Tags(),
+			"annotations":     annotations,
 			"metadata": map[string]interface{}{
-				"description": initialMessage,
+				"description":  description,
+				"annotations":  annotations,
+				"pr_url":       annotations.PRURL,
+				"issue_url":    annotations.IssueURL,
+				"running_task": annotations.RunningTask,
 			},
 		}
 		if ks, ok := session.(*services.KubernetesSession); ok {
@@ -431,8 +450,10 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 					"last_message_at": route.StartedAt,
 					"addr":            "",
 					"tags":            tags,
+					"annotations":     entities.SessionAnnotations{},
 					"metadata": map[string]interface{}{
 						"description": route.InitialMessage,
+						"annotations": entities.SessionAnnotations{},
 					},
 				})
 			}
@@ -441,6 +462,61 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"sessions": filteredSessions,
+	})
+}
+
+func getSessionAnnotations(session entities.Session) entities.SessionAnnotations {
+	if annotated, ok := session.(sessionAnnotationsProvider); ok {
+		return annotated.Annotations()
+	}
+	return entities.SessionAnnotations{}
+}
+
+// UpdateSessionAnnotations handles PATCH /sessions/:sessionId/annotations.
+func (c *SessionController) UpdateSessionAnnotations(ctx echo.Context) error {
+	c.setCORSHeaders(ctx)
+
+	sessionID := ctx.Param("sessionId")
+	if sessionID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "Session ID is required")
+	}
+
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanModifyResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to update this session")
+	}
+
+	var req entities.UpdateSessionAnnotationsRequest
+	if err := ctx.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+
+	updater, ok := c.getSessionManager().(sessionAnnotationUpdater)
+	if !ok {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Session annotations are not supported")
+	}
+
+	annotations, err := updater.UpdateSessionAnnotations(ctx.Request().Context(), sessionID, req)
+	if err != nil {
+		log.Printf("Failed to update session annotations for %s: %v", sessionID, err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update session annotations")
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"session_id":   sessionID,
+		"annotations":  annotations,
+		"metadata": map[string]interface{}{
+			"description":  annotations.Description,
+			"annotations":  annotations,
+			"pr_url":       annotations.PRURL,
+			"issue_url":    annotations.IssueURL,
+			"running_task": annotations.RunningTask,
+		},
 	})
 }
 

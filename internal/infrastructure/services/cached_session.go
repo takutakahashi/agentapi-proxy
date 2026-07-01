@@ -72,5 +72,9 @@ func (s *cachedSession) Description() string {
 	return s.dto.Description
 }
 
+func (s *cachedSession) Annotations() entities.SessionAnnotations {
+	return s.dto.Annotations
+}
+
 // Cancel is a no-op for cached sessions (they are read-only snapshots).
 func (s *cachedSession) Cancel() {}

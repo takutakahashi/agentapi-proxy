@@ -3,6 +3,8 @@ package repositories
 import (
 	"context"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
 // CachedSessionDTO is a serialisable snapshot of a Kubernetes session.
@@ -19,6 +21,7 @@ type CachedSessionDTO struct {
 	UpdatedAt      time.Time         `json:"updated_at"`
 	LastMessageAt  time.Time         `json:"last_message_at"`
 	Description    string            `json:"description"`
+	Annotations    entities.SessionAnnotations `json:"annotations,omitempty"`
 	ServicePort    int               `json:"service_port"`
 	Namespace      string            `json:"namespace"`
 	DeploymentName string            `json:"deployment_name"`

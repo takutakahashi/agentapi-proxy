@@ -20,6 +20,14 @@ var (
 	confirmDelete bool
 )
 
+// annotate-session command flags
+var (
+	annotationPRURL       string
+	annotationIssueURL    string
+	annotationDescription string
+	annotationRunningTask string
+)
+
 // task subcommand flags
 var (
 	taskTitle         string
@@ -227,6 +235,23 @@ Examples:
   # Delete current session without confirmation
   agentapi-proxy client delete-session --confirm`,
 	Run: runDeleteSession,
+}
+
+var annotateSessionCmd = &cobra.Command{
+	Use:   "annotate-session",
+	Short: "Annotate the current session",
+	Long: `Annotate the current session with user-managed metadata.
+
+At least one annotation flag must be specified. Use an explicit empty string
+to clear an annotation.
+
+Examples:
+  agentapi-proxy client annotate-session \
+    --endpoint http://proxy:8080 \
+    --session-id my-session \
+    --pr-url https://github.com/owner/repo/pull/123 \
+    --running-task "Implement session annotations"`,
+	Run: runAnnotateSession,
 }
 
 var memoryCmd = &cobra.Command{
@@ -481,6 +506,12 @@ func init() {
 	// delete-session command flags
 	deleteSessionCmd.Flags().BoolVar(&confirmDelete, "confirm", false, "Skip confirmation prompt")
 
+	// annotate-session command flags
+	annotateSessionCmd.Flags().StringVar(&annotationPRURL, "pr-url", "", "Pull request URL annotation")
+	annotateSessionCmd.Flags().StringVar(&annotationIssueURL, "issue-url", "", "Issue URL annotation")
+	annotateSessionCmd.Flags().StringVar(&annotationDescription, "description", "", "Description annotation")
+	annotateSessionCmd.Flags().StringVar(&annotationRunningTask, "running-task", "", "Running task annotation")
+
 	// task create flags
 	taskCreateCmd.Flags().StringVar(&taskTitle, "title", "", "Task title (required)")
 	taskCreateCmd.Flags().StringVar(&taskDescription, "description", "", "Task description")
@@ -583,6 +614,7 @@ func init() {
 	ClientCmd.AddCommand(statusCmd)
 	ClientCmd.AddCommand(eventsCmd)
 	ClientCmd.AddCommand(deleteSessionCmd)
+	ClientCmd.AddCommand(annotateSessionCmd)
 	ClientCmd.AddCommand(summarizeDraftsCmd)
 	ClientCmd.AddCommand(sendNotificationClientCmd)
 	ClientCmd.AddCommand(taskCmd)
@@ -929,6 +961,50 @@ func runTaskList(cmd *cobra.Command, args []string) {
 	for _, t := range listResp.Tasks {
 		fmt.Printf("  [%s] %s (%s/%s) session=%s\n", t.Status, t.Title, t.TaskType, t.Scope, t.SessionID)
 	}
+}
+
+func runAnnotateSession(cmd *cobra.Command, args []string) {
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	req := &client.UpdateSessionAnnotationsRequest{}
+	changed := false
+	if cmd.Flags().Changed("pr-url") {
+		req.PRURL = &annotationPRURL
+		changed = true
+	}
+	if cmd.Flags().Changed("issue-url") {
+		req.IssueURL = &annotationIssueURL
+		changed = true
+	}
+	if cmd.Flags().Changed("description") {
+		req.Description = &annotationDescription
+		changed = true
+	}
+	if cmd.Flags().Changed("running-task") {
+		req.RunningTask = &annotationRunningTask
+		changed = true
+	}
+	if !changed {
+		fmt.Fprintln(os.Stderr, "Error: at least one annotation flag is required")
+		os.Exit(1)
+	}
+
+	resp, err := c.UpdateSessionAnnotations(context.Background(), resolvedSessionID, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error updating session annotations: %v\n", err)
+		os.Exit(1)
+	}
+
+	out, err := json.MarshalIndent(resp, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting response: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
 }
 
 func runTaskGet(cmd *cobra.Command, args []string) {

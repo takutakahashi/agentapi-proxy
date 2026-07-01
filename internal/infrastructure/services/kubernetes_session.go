@@ -26,6 +26,7 @@ type KubernetesSession struct {
 	cancelFunc        context.CancelFunc
 	mutex             sync.RWMutex
 	description       string                           // Preserved description from Secret (not truncated by label limits)
+	annotations       entities.SessionAnnotations
 	webhookPayload    []byte                           // Webhook payload JSON
 	resolvedAPIKey    string                           // API key resolved during session creation, used by memory-sync sidecar
 	provisionSettings *sessionsettings.SessionSettings // Settings used for provisioning (stored after successful provisioning)
@@ -128,9 +129,16 @@ func (s *KubernetesSession) StartedAt() time.Time {
 
 // Description returns the session description (cached initial message)
 func (s *KubernetesSession) Description() string {
+	s.mutex.RLock()
+	annotationDescription := s.annotations.Description
+	cachedDescription := s.description
+	s.mutex.RUnlock()
+	if annotationDescription != "" {
+		return annotationDescription
+	}
 	// Return cached description if available
-	if s.description != "" {
-		return s.description
+	if cachedDescription != "" {
+		return cachedDescription
 	}
 	// Fall back to InitialMessage
 	if s.request != nil && s.request.InitialMessage != "" {
@@ -190,7 +198,23 @@ func (s *KubernetesSession) SetStartedAt(t time.Time) {
 
 // SetDescription sets the session description (used for restored sessions from Secret)
 func (s *KubernetesSession) SetDescription(desc string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	s.description = desc
+}
+
+// Annotations returns user-managed session annotations.
+func (s *KubernetesSession) Annotations() entities.SessionAnnotations {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.annotations
+}
+
+// SetAnnotations replaces user-managed session annotations.
+func (s *KubernetesSession) SetAnnotations(annotations entities.SessionAnnotations) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.annotations = annotations
 }
 
 // SetUpdatedAt sets the last updated time (used for restored sessions)
