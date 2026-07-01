@@ -384,11 +384,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			"tags":            session.Tags(),
 			"annotations":     annotations,
 			"metadata": map[string]interface{}{
-				"description":  description,
-				"annotations":  annotations,
-				"pr_url":       annotations.PRURL,
-				"issue_url":    annotations.IssueURL,
-				"running_task": annotations.RunningTask,
+				"description": description,
 			},
 		}
 		if ks, ok := session.(*services.KubernetesSession); ok {
@@ -453,7 +449,6 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 					"annotations":     entities.SessionAnnotations{},
 					"metadata": map[string]interface{}{
 						"description": route.InitialMessage,
-						"annotations": entities.SessionAnnotations{},
 					},
 				})
 			}
@@ -511,11 +506,7 @@ func (c *SessionController) UpdateSessionAnnotations(ctx echo.Context) error {
 		"session_id":   sessionID,
 		"annotations":  annotations,
 		"metadata": map[string]interface{}{
-			"description":  annotations.Description,
-			"annotations":  annotations,
-			"pr_url":       annotations.PRURL,
-			"issue_url":    annotations.IssueURL,
-			"running_task": annotations.RunningTask,
+			"description": annotations.Description,
 		},
 	})
 }

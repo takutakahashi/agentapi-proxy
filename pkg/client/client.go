@@ -134,11 +134,7 @@ type SessionAnnotations struct {
 
 // SessionMetadata contains additional session metadata returned by /search.
 type SessionMetadata struct {
-	Description string             `json:"description,omitempty"`
-	Annotations SessionAnnotations `json:"annotations,omitempty"`
-	PRURL       string             `json:"pr_url,omitempty"`
-	IssueURL    string             `json:"issue_url,omitempty"`
-	RunningTask string             `json:"running_task,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // UpdateSessionAnnotationsRequest partially updates user-managed session annotations.
