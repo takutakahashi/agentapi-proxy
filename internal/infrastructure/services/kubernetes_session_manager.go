@@ -1378,6 +1378,7 @@ func (m *KubernetesSessionManager) filterSessionsFromCache(dtos []portrepos.Cach
 		}
 		var s entities.Session
 		if ls, ok := live[dto.ID]; ok {
+			ls.SetAnnotations(dto.Annotations)
 			s = ls // use live in-memory session for current status
 		} else {
 			s = newCachedSession(dto)
@@ -1451,6 +1452,7 @@ func (m *KubernetesSessionManager) getOrRestoreSessionWithWorkload(svc *corev1.S
 	m.mutex.RUnlock()
 
 	if exists {
+		session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
 		// If the in-memory session was cached when this Service was still a stock
 		// session (user-id was empty at restore time), and the Service now has a
 		// real owner, repair the user-id in-place so authorization checks pass.
