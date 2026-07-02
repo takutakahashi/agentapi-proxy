@@ -57,6 +57,7 @@ type sessionProfileConfigJSON struct {
 	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
 	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                  `json:"session_ttl,omitempty"`
+	UnsyncedFilePaths      []string                `json:"unsynced_file_paths,omitempty"`
 }
 
 // KubernetesSessionProfileRepository implements SessionProfileRepository using Kubernetes Secrets
@@ -321,6 +322,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetMemoryKey(pj.Config.MemoryKey)
 	cfg.SetSandboxPolicyID(pj.Config.SandboxPolicyID)
 	cfg.SetSessionTTL(pj.Config.SessionTTL)
+	cfg.SetUnsyncedFilePaths(pj.Config.UnsyncedFilePaths)
 	profile.SetConfig(cfg)
 
 	return profile
@@ -347,6 +349,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			MemoryKey:              cfg.MemoryKey(),
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
+			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
 		},
 		CreatedAt: profile.CreatedAt(),
 		UpdatedAt: profile.UpdatedAt(),

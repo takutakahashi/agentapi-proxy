@@ -256,6 +256,14 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 					startReq.Params.SessionTTL = cfg.SessionTTL()
 				}
 			}
+			if len(cfg.UnsyncedFilePaths()) > 0 {
+				if startReq.Params == nil {
+					startReq.Params = &entities.SessionParams{}
+				}
+				if len(startReq.Params.UnsyncedFilePaths) == 0 {
+					startReq.Params.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
+				}
+			}
 		}
 	}
 
@@ -503,8 +511,8 @@ func (c *SessionController) UpdateSessionAnnotations(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
-		"session_id":   sessionID,
-		"annotations":  annotations,
+		"session_id":  sessionID,
+		"annotations": annotations,
 		"metadata": map[string]interface{}{
 			"description": annotations.Description,
 		},
@@ -969,6 +977,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	}
 	if override.SessionTTL != "" {
 		merged.SessionTTL = override.SessionTTL
+	}
+	if len(override.UnsyncedFilePaths) > 0 {
+		merged.UnsyncedFilePaths = append([]string(nil), override.UnsyncedFilePaths...)
 	}
 	return &merged
 }

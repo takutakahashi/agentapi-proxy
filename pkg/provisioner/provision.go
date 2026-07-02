@@ -237,7 +237,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// Syncs managedFilePaths → Kubernetes Secret agentapi-agent-files-{userID}.
 	// Runs in-process instead of as a sidecar so that UserID is always set
 	// (stock pool pods have empty UserID at pod creation time).
-	go s.runFilesSync(ctx, settings.Session.UserID)
+	go s.runFilesSync(ctx, settings.Session.UserID, settings.UnsyncedFilePaths)
 
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
@@ -607,7 +607,7 @@ func writeCredentials(credentialsJSON string) error {
 // all of them to the Kubernetes Secret agentapi-agent-files-{userID} using the
 // in-cluster k8s client.
 // The goroutine is tied to ctx: when ctx is cancelled the loop exits.
-func (s *Server) runFilesSync(ctx context.Context, userID string) {
+func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePaths []string) {
 	const syncInterval = 10 * time.Second
 
 	if userID == "" {
@@ -625,7 +625,13 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 	}
 	namespace := strings.TrimSpace(string(nsBytes))
 
-	log.Printf("[FILES_SYNC] Starting: watching %v -> Secret %s/%s (interval: %s)", managedFilePaths, namespace, secretName, syncInterval)
+	watchedPaths := syncedManagedFilePaths(unsyncedFilePaths)
+	if len(watchedPaths) == 0 {
+		log.Printf("[FILES_SYNC] No managed file paths left after exclusions %v, skipping files sync", unsyncedFilePaths)
+		return
+	}
+
+	log.Printf("[FILES_SYNC] Starting: watching %v -> Secret %s/%s (interval: %s)", watchedPaths, namespace, secretName, syncInterval)
 
 	k8sCfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -639,7 +645,7 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 	}
 
 	// Track last hash per file path to detect changes.
-	lastHashes := make(map[string]string, len(managedFilePaths))
+	lastHashes := make(map[string]string, len(watchedPaths))
 
 	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
@@ -656,8 +662,8 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 				data []byte
 				hash string
 			}
-			snapshots := make(map[string]fileSnapshot, len(managedFilePaths))
-			for _, path := range managedFilePaths {
+			snapshots := make(map[string]fileSnapshot, len(watchedPaths))
+			for _, path := range watchedPaths {
 				data, hash, err := readFileWithHash(path)
 				if err != nil {
 					// File may not exist yet; not an error.
@@ -667,7 +673,7 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 			}
 
 			changed := false
-			for _, path := range managedFilePaths {
+			for _, path := range watchedPaths {
 				snap, ok := snapshots[path]
 				if !ok {
 					continue
@@ -682,7 +688,7 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 
 			// Build the full snapshot of all managed files from the single read above.
 			files := make([]sessionsettings.ManagedFile, 0, len(snapshots))
-			for _, path := range managedFilePaths {
+			for _, path := range watchedPaths {
 				snap, ok := snapshots[path]
 				if !ok {
 					continue
@@ -701,7 +707,7 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 			} else {
 				log.Printf("[FILES_SYNC] Successfully synced to Secret %s", secretName)
 				// Update hashes only after a successful sync so failed upserts are retried.
-				for _, path := range managedFilePaths {
+				for _, path := range watchedPaths {
 					if snap, ok := snapshots[path]; ok {
 						lastHashes[path] = snap.hash
 					}
@@ -709,6 +715,26 @@ func (s *Server) runFilesSync(ctx context.Context, userID string) {
 			}
 		}
 	}
+}
+
+func syncedManagedFilePaths(unsyncedFilePaths []string) []string {
+	excluded := make(map[string]struct{}, len(unsyncedFilePaths))
+	for _, path := range unsyncedFilePaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		excluded[path] = struct{}{}
+	}
+
+	paths := make([]string, 0, len(managedFilePaths))
+	for _, path := range managedFilePaths {
+		if _, ok := excluded[path]; ok {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 // readFileWithHash reads a file and returns its content and hex-encoded SHA256 hash.

@@ -40,6 +40,7 @@ type LaunchRequest struct {
 	CycleMessage             string
 	CycleMaxCount            int
 	SessionTTL               string
+	UnsyncedFilePaths        []string
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -206,6 +207,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		Docker:                   req.Docker,
 		AuthProxy:                req.AuthProxy,
 		SessionTTL:               req.SessionTTL,
+		UnsyncedFilePaths:        req.UnsyncedFilePaths,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)
@@ -398,8 +400,14 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		if req.SessionTTL == "" {
 			req.SessionTTL = cfg.Params().SessionTTL
 		}
+		if len(req.UnsyncedFilePaths) == 0 && len(cfg.Params().UnsyncedFilePaths) > 0 {
+			req.UnsyncedFilePaths = append([]string(nil), cfg.Params().UnsyncedFilePaths...)
+		}
 	}
 	if cfg.SessionTTL() != "" && req.SessionTTL == "" {
 		req.SessionTTL = cfg.SessionTTL()
+	}
+	if len(cfg.UnsyncedFilePaths()) > 0 && len(req.UnsyncedFilePaths) == 0 {
+		req.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
 	}
 }
