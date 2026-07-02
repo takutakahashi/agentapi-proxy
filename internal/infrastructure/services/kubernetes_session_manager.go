@@ -1378,6 +1378,7 @@ func (m *KubernetesSessionManager) filterSessionsFromCache(dtos []portrepos.Cach
 		}
 		var s entities.Session
 		if ls, ok := live[dto.ID]; ok {
+			ls.SetAnnotations(dto.Annotations)
 			s = ls // use live in-memory session for current status
 		} else {
 			s = newCachedSession(dto)
@@ -1406,6 +1407,7 @@ func sessionsToCacheDTOs(sessions []entities.Session) []portrepos.CachedSessionD
 			UpdatedAt:     s.UpdatedAt(),
 			LastMessageAt: s.LastMessageAt(),
 			Description:   s.Description(),
+			Annotations:   sessionAnnotations(s),
 		}
 		// Capture Kubernetes-specific fields when available.
 		if ks, ok := s.(*KubernetesSession); ok {
@@ -1421,6 +1423,17 @@ func sessionsToCacheDTOs(sessions []entities.Session) []portrepos.CachedSessionD
 		dtos = append(dtos, dto)
 	}
 	return dtos
+}
+
+type sessionAnnotationsProvider interface {
+	Annotations() entities.SessionAnnotations
+}
+
+func sessionAnnotations(s entities.Session) entities.SessionAnnotations {
+	if annotated, ok := s.(sessionAnnotationsProvider); ok {
+		return annotated.Annotations()
+	}
+	return entities.SessionAnnotations{}
 }
 
 // getOrRestoreSessionWithWorkload gets a session from memory or restores it from Service
@@ -1439,6 +1452,7 @@ func (m *KubernetesSessionManager) getOrRestoreSessionWithWorkload(svc *corev1.S
 	m.mutex.RUnlock()
 
 	if exists {
+		session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
 		// If the in-memory session was cached when this Service was still a stock
 		// session (user-id was empty at restore time), and the Service now has a
 		// real owner, repair the user-id in-place so authorization checks pass.
@@ -4087,6 +4101,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
 	session.SetDescription(initialMessage) // Cache initial message as description
+	session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
 
 	// Register proxy-wide status change broadcaster
 	session.statusChangeCallback = m.broadcastStatusChange
@@ -4217,6 +4232,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 	session.SetLastMessageAt(lastMessageAt)
 	session.SetStatus(m.getStatusFromWorkloadObject(deployment, pod))
 	session.SetDescription(initialMessage) // Cache initial message as description
+	session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
 
 	// Register proxy-wide status change broadcaster
 	session.statusChangeCallback = m.broadcastStatusChange
@@ -4406,6 +4422,88 @@ func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession)
 	}
 
 	return ports
+}
+
+const (
+	sessionAnnotationPRURL       = "agentapi.proxy/session-annotation-pr-url"
+	sessionAnnotationIssueURL    = "agentapi.proxy/session-annotation-issue-url"
+	sessionAnnotationDescription = "agentapi.proxy/session-annotation-description"
+	sessionAnnotationRunningTask = "agentapi.proxy/session-annotation-running-task"
+)
+
+func sessionAnnotationsFromMap(annotations map[string]string) entities.SessionAnnotations {
+	if annotations == nil {
+		return entities.SessionAnnotations{}
+	}
+	return entities.SessionAnnotations{
+		PRURL:       annotations[sessionAnnotationPRURL],
+		IssueURL:    annotations[sessionAnnotationIssueURL],
+		Description: annotations[sessionAnnotationDescription],
+		RunningTask: annotations[sessionAnnotationRunningTask],
+	}
+}
+
+func applySessionAnnotationPatch(current entities.SessionAnnotations, patch entities.UpdateSessionAnnotationsRequest) entities.SessionAnnotations {
+	if patch.PRURL != nil {
+		current.PRURL = *patch.PRURL
+	}
+	if patch.IssueURL != nil {
+		current.IssueURL = *patch.IssueURL
+	}
+	if patch.Description != nil {
+		current.Description = *patch.Description
+	}
+	if patch.RunningTask != nil {
+		current.RunningTask = *patch.RunningTask
+	}
+	return current
+}
+
+func setSessionAnnotationValue(annotations map[string]string, key, value string) {
+	if value == "" {
+		delete(annotations, key)
+		return
+	}
+	annotations[key] = value
+}
+
+// UpdateSessionAnnotations updates user-managed annotations on a session's Service.
+func (m *KubernetesSessionManager) UpdateSessionAnnotations(ctx context.Context, sessionID string, patch entities.UpdateSessionAnnotationsRequest) (entities.SessionAnnotations, error) {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return entities.SessionAnnotations{}, fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return entities.SessionAnnotations{}, fmt.Errorf("session is not a KubernetesSession")
+	}
+
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return entities.SessionAnnotations{}, fmt.Errorf("failed to get service: %w", err)
+	}
+	if svc.Annotations == nil {
+		svc.Annotations = make(map[string]string)
+	}
+
+	updated := applySessionAnnotationPatch(sessionAnnotationsFromMap(svc.Annotations), patch)
+	setSessionAnnotationValue(svc.Annotations, sessionAnnotationPRURL, updated.PRURL)
+	setSessionAnnotationValue(svc.Annotations, sessionAnnotationIssueURL, updated.IssueURL)
+	setSessionAnnotationValue(svc.Annotations, sessionAnnotationDescription, updated.Description)
+	setSessionAnnotationValue(svc.Annotations, sessionAnnotationRunningTask, updated.RunningTask)
+
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{}); err != nil {
+		return entities.SessionAnnotations{}, fmt.Errorf("failed to update service annotations: %w", err)
+	}
+
+	ks.SetAnnotations(updated)
+	if m.sessionListCacheRepo != nil {
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(ctx, m.namespace); err != nil {
+			log.Printf("[SESSION] Failed to invalidate session list cache after annotation update for %s: %v", sessionID, err)
+		}
+	}
+	return updated, nil
 }
 
 // UpdateServiceAnnotation updates a specific annotation on a session's Service

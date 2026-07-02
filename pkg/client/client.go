@@ -109,17 +109,48 @@ type StartResponse struct {
 
 // SessionInfo represents information about a session
 type SessionInfo struct {
-	SessionID string            `json:"session_id"`
-	UserID    string            `json:"user_id"`
-	Status    string            `json:"status"`
-	StartedAt time.Time         `json:"started_at"`
-	Port      int               `json:"port"`
-	Tags      map[string]string `json:"tags,omitempty"`
+	SessionID   string             `json:"session_id"`
+	UserID      string             `json:"user_id"`
+	Status      string             `json:"status"`
+	StartedAt   time.Time          `json:"started_at"`
+	Port        int                `json:"port"`
+	Tags        map[string]string  `json:"tags,omitempty"`
+	Annotations SessionAnnotations `json:"annotations,omitempty"`
+	Metadata    SessionMetadata    `json:"metadata,omitempty"`
 }
 
 // SearchResponse represents the response from searching sessions
 type SearchResponse struct {
 	Sessions []SessionInfo `json:"sessions"`
+}
+
+// SessionAnnotations contains user-managed annotations attached to a session.
+type SessionAnnotations struct {
+	PRURL       string `json:"pr_url,omitempty"`
+	IssueURL    string `json:"issue_url,omitempty"`
+	Description string `json:"description,omitempty"`
+	RunningTask string `json:"running_task,omitempty"`
+}
+
+// SessionMetadata contains additional session metadata returned by /search.
+type SessionMetadata struct {
+	Description string `json:"description,omitempty"`
+}
+
+// UpdateSessionAnnotationsRequest partially updates user-managed session annotations.
+// Nil fields are left unchanged; an explicit empty string clears that annotation.
+type UpdateSessionAnnotationsRequest struct {
+	PRURL       *string `json:"pr_url,omitempty"`
+	IssueURL    *string `json:"issue_url,omitempty"`
+	Description *string `json:"description,omitempty"`
+	RunningTask *string `json:"running_task,omitempty"`
+}
+
+// UpdateSessionAnnotationsResponse is returned after updating session annotations.
+type UpdateSessionAnnotationsResponse struct {
+	SessionID   string             `json:"session_id"`
+	Annotations SessionAnnotations `json:"annotations"`
+	Metadata    SessionMetadata    `json:"metadata,omitempty"`
 }
 
 // Message represents an agentapi message
@@ -361,6 +392,51 @@ func (c *Client) DeleteSession(ctx context.Context, sessionID string) (*DeleteRe
 	}
 
 	return &deleteResp, nil
+}
+
+// UpdateSessionAnnotations updates user-managed annotations for a session.
+func (c *Client) UpdateSessionAnnotations(ctx context.Context, sessionID string, req *UpdateSessionAnnotationsRequest) (*UpdateSessionAnnotationsResponse, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("session ID is required")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/sessions/%s/annotations", c.baseURL, sessionID)
+	httpReq, err := http.NewRequestWithContext(ctx, "PATCH", reqURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var updateResp UpdateSessionAnnotationsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&updateResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &updateResp, nil
 }
 
 // SendMessage sends a message to an agentapi session
