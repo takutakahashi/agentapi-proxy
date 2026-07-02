@@ -707,6 +707,11 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		sessionTTL = startReq.Params.SessionTTL
 	}
 
+	var unsyncedFilePaths []string
+	if startReq.Params != nil && len(startReq.Params.UnsyncedFilePaths) > 0 {
+		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
+	}
+
 	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
 		WithMemoryRepository(s.memoryRepo)
 	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
@@ -730,6 +735,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		Docker:                   docker,
 		AuthProxy:                authProxy,
 		SessionTTL:               sessionTTL,
+		UnsyncedFilePaths:        unsyncedFilePaths,
 	})
 	if err != nil {
 		return nil, err
@@ -755,25 +761,28 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	var agentType string
 	var oneshot bool
 	var authProxy *bool
+	var unsyncedFilePaths []string
 	if startReq.Params != nil {
 		initialMessage = startReq.Params.Message
 		agentType = startReq.Params.AgentType
 		oneshot = startReq.Params.Oneshot
 		authProxy = startReq.Params.AuthProxy
+		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
 	}
 	runReq := &entities.RunServerRequest{
-		UserID:         userID,
-		Teams:          teams,
-		Scope:          startReq.Scope,
-		TeamID:         startReq.TeamID,
-		AgentType:      agentType,
-		Oneshot:        oneshot,
-		Environment:    startReq.Environment,
-		Tags:           startReq.Tags,
-		MemoryKey:      startReq.MemoryKey,
-		InitialMessage: initialMessage,
-		RepoInfo:       s.extractRepositoryInfo(sessionID, startReq.Tags),
-		AuthProxy:      authProxy,
+		UserID:            userID,
+		Teams:             teams,
+		Scope:             startReq.Scope,
+		TeamID:            startReq.TeamID,
+		AgentType:         agentType,
+		Oneshot:           oneshot,
+		Environment:       startReq.Environment,
+		Tags:              startReq.Tags,
+		MemoryKey:         startReq.MemoryKey,
+		InitialMessage:    initialMessage,
+		RepoInfo:          s.extractRepositoryInfo(sessionID, startReq.Tags),
+		AuthProxy:         authProxy,
+		UnsyncedFilePaths: unsyncedFilePaths,
 	}
 
 	// Try to build fully-resolved settings (env vars, Bedrock, MCP servers, OAuth token, etc.)
@@ -800,8 +809,9 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 				Teams:     teams,
 				MemoryKey: startReq.MemoryKey,
 			},
-			Env:            startReq.Environment,
-			InitialMessage: initialMessage,
+			Env:               startReq.Environment,
+			InitialMessage:    initialMessage,
+			UnsyncedFilePaths: unsyncedFilePaths,
 		}
 	}
 

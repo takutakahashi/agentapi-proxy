@@ -40,6 +40,7 @@ type SessionProfileConfigRequest struct {
 	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
 	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                  `json:"session_ttl,omitempty"`
+	UnsyncedFilePaths      []string                `json:"unsynced_file_paths,omitempty"`
 }
 
 // CreateSessionProfileRequest is the request body for creating a session profile
@@ -88,6 +89,7 @@ type SessionProfileConfigResponse struct {
 	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
 	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                  `json:"session_ttl,omitempty"`
+	UnsyncedFilePaths      []string                `json:"unsynced_file_paths,omitempty"`
 }
 
 // --- Handlers ---
@@ -328,6 +330,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	}
 	cfg.SetSandboxPolicyID(req.SandboxPolicyID)
 	cfg.SetSessionTTL(req.SessionTTL)
+	cfg.SetUnsyncedFilePaths(req.UnsyncedFilePaths)
 	return cfg
 }
 
@@ -352,6 +355,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			MemoryKey:              cfg.MemoryKey(),
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
+			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
 		},
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt: p.UpdatedAt().Format(time.RFC3339),

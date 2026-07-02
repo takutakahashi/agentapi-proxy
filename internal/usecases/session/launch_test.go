@@ -134,6 +134,55 @@ func TestLaunchAppliesDefaultProfileDocker(t *testing.T) {
 	}
 }
 
+func TestLaunchAppliesDefaultProfileUnsyncedFilePaths(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetUnsyncedFilePaths([]string{"/home/agentapi/.codex/auth.json"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	want := []string{"/home/agentapi/.codex/auth.json"}
+	if !reflect.DeepEqual(sessionManager.req.UnsyncedFilePaths, want) {
+		t.Fatalf("expected unsynced file paths %#v, got %#v", want, sessionManager.req.UnsyncedFilePaths)
+	}
+}
+
+func TestLaunchExplicitUnsyncedFilePathsOverrideProfile(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetUnsyncedFilePaths([]string{"/home/agentapi/.codex/auth.json"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:            "user-1",
+		Scope:             entities.ScopeUser,
+		UnsyncedFilePaths: []string{"/home/agentapi/.claude/.credentials.json"},
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	want := []string{"/home/agentapi/.claude/.credentials.json"}
+	if !reflect.DeepEqual(sessionManager.req.UnsyncedFilePaths, want) {
+		t.Fatalf("expected explicit unsynced file paths %#v, got %#v", want, sessionManager.req.UnsyncedFilePaths)
+	}
+}
+
 func TestLaunchExplicitDockerOverridesProfileDocker(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "default", "user-1")

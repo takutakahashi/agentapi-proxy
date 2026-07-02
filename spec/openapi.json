@@ -5500,6 +5500,16 @@
             "type": "string",
             "description": "Duration after the last message before this session is automatically deleted. Accepted format: Go duration string (e.g. '48h', '168h', '7d' is not valid — use hours). Empty string means the global cleanup worker TTL is used for Slackbot sessions; non-Slackbot sessions without this field are not auto-deleted.",
             "example": "48h"
+          },
+          "unsynced_file_paths": {
+            "type": "array",
+            "description": "Managed file paths that should not be synced back to storage from this session.",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "/home/agentapi/.codex/auth.json"
+            ]
           }
         }
       },
@@ -7540,6 +7550,16 @@
           "type": "string",
           "description": "Default TTL for sessions created with this profile. Overrides the global cleanup worker TTL. Accepted format: Go duration string (e.g. '48h', '168h'). Can be overridden per-session via params.session_ttl.",
           "example": "72h"
+        },
+        "unsynced_file_paths": {
+          "type": "array",
+          "description": "Managed file paths that should not be synced back to storage for sessions created with this profile.",
+          "items": {
+            "type": "string"
+          },
+          "example": [
+            "/home/agentapi/.codex/auth.json"
+          ]
         }
       }
     },
