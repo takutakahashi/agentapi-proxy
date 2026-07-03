@@ -4611,6 +4611,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		Teams:     req.Teams,
 		MemoryKey: req.MemoryKey,
 	}
+	settings.UnsyncedFilePaths = append([]string(nil), req.UnsyncedFilePaths...)
 
 	// Build env vars (mirrors buildEnvVars logic from line 2695)
 	env := map[string]string{

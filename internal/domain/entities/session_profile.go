@@ -34,7 +34,8 @@ type SessionProfileConfig struct {
 	// sessionTTL overrides the global cleanup worker TTL for sessions created with this profile.
 	// Accepted format: Go duration string (e.g. "48h", "168h").
 	// Empty string means the global cleanup worker TTL is used.
-	sessionTTL string
+	sessionTTL        string
+	unsyncedFilePaths []string
 }
 
 // NewSessionProfile creates a new SessionProfile
@@ -245,6 +246,16 @@ func (c *SessionProfileConfig) SessionTTL() string { return c.sessionTTL }
 
 // SetSessionTTL sets the session TTL override for this profile
 func (c *SessionProfileConfig) SetSessionTTL(ttl string) { c.sessionTTL = ttl }
+
+// UnsyncedFilePaths returns file paths excluded from managed file sync.
+func (c *SessionProfileConfig) UnsyncedFilePaths() []string {
+	return copyStringSlice(c.unsyncedFilePaths)
+}
+
+// SetUnsyncedFilePaths sets file paths excluded from managed file sync.
+func (c *SessionProfileConfig) SetUnsyncedFilePaths(paths []string) {
+	c.unsyncedFilePaths = copyStringSlice(paths)
+}
 
 // --- Error types ---
 

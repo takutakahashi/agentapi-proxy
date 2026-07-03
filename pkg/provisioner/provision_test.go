@@ -53,6 +53,17 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 	}
 }
 
+func TestSyncedManagedFilePathsExcludesUnsyncedPaths(t *testing.T) {
+	got := syncedManagedFilePaths([]string{
+		" /home/agentapi/.codex/auth.json ",
+		"",
+	})
+	want := []string{"/home/agentapi/.claude/.credentials.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("syncedManagedFilePaths() = %#v, want %#v", got, want)
+	}
+}
+
 // TestWriteWebhookPayloadFile_SkipsWhenPresent verifies that
 // writeWebhookPayloadFile does NOT overwrite an existing file (non-stock case:
 // Secret volume mount already provides the file as read-only).

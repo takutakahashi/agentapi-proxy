@@ -116,6 +116,8 @@ type SessionParams struct {
 	// Empty string means the global cleanup worker TTL is used for Slackbot sessions;
 	// non-Slackbot sessions without this field are not auto-deleted.
 	SessionTTL string `json:"session_ttl,omitempty"`
+	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
+	UnsyncedFilePaths []string `json:"unsynced_file_paths,omitempty"`
 }
 
 // SessionAnnotations contains user-managed annotations attached to a session.
@@ -194,6 +196,8 @@ type RunServerRequest struct {
 	// SessionTTL is the duration after the last message before this session is auto-deleted.
 	// Stored as a Go duration string (e.g. "48h"). Empty means use the global cleanup TTL.
 	SessionTTL string
+	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
+	UnsyncedFilePaths []string
 }
 
 // Session represents a running agentapi session

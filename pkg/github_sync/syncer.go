@@ -1425,6 +1425,7 @@ type sessionProfileRecord struct {
 	ReuseMessageTemplate   string                      `yaml:"reuse_message_template,omitempty"`
 	ReuseSession           bool                        `yaml:"reuse_session,omitempty"`
 	MemoryKey              map[string]string           `yaml:"memory_key,omitempty"`
+	UnsyncedFilePaths      []string                    `yaml:"unsynced_file_paths,omitempty"`
 	Params                 *sessionProfileParamsRecord `yaml:"params,omitempty"`
 	GitHubToken            string                      `yaml:"github_token,omitempty"`
 	InitialMessage         string                      `yaml:"initial_message,omitempty"`
@@ -1445,6 +1446,7 @@ type sessionProfileParamsRecord struct {
 	CycleMaxCount            int                                `yaml:"cycle_max_count,omitempty"`
 	RepoFullName             string                             `yaml:"repo_full_name,omitempty"`
 	Sandbox                  *sessionProfileSandboxParamsRecord `yaml:"sandbox,omitempty"`
+	UnsyncedFilePaths        []string                           `yaml:"unsynced_file_paths,omitempty"`
 }
 
 type sessionProfileSlackParamsRecord struct {
@@ -1489,6 +1491,7 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) (sessionProf
 		ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
 		ReuseSession:           cfg.ReuseSession(),
 		MemoryKey:              cfg.MemoryKey(),
+		UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
 		CreatedAt:              p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt:              p.UpdatedAt().Format(time.RFC3339),
 	}
@@ -1521,6 +1524,7 @@ func sessionParamsToRecord(p *entities.SessionParams) *sessionProfileParamsRecor
 		CycleMessage:             p.CycleMessage,
 		CycleMaxCount:            p.CycleMaxCount,
 		RepoFullName:             p.RepoFullName,
+		UnsyncedFilePaths:        p.UnsyncedFilePaths,
 	}
 	if p.Slack != nil {
 		rec.Slack = &sessionProfileSlackParamsRecord{
@@ -1555,6 +1559,7 @@ func sessionParamsFromRecord(rec *sessionProfileParamsRecord) *entities.SessionP
 		CycleMessage:             rec.CycleMessage,
 		CycleMaxCount:            rec.CycleMaxCount,
 		RepoFullName:             rec.RepoFullName,
+		UnsyncedFilePaths:        rec.UnsyncedFilePaths,
 	}
 	if rec.Slack != nil {
 		params.Slack = &entities.SlackParams{
@@ -1713,6 +1718,9 @@ func (s *Syncer) importSessionProfileFile(ctx context.Context, data []byte, scop
 	cfg.SetReuseSession(rec.ReuseSession)
 	if len(rec.MemoryKey) > 0 {
 		cfg.SetMemoryKey(rec.MemoryKey)
+	}
+	if len(rec.UnsyncedFilePaths) > 0 {
+		cfg.SetUnsyncedFilePaths(rec.UnsyncedFilePaths)
 	}
 	if params != nil {
 		cfg.SetParams(sessionParamsFromRecord(params))

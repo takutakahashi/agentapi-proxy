@@ -174,7 +174,8 @@ type SessionSettings struct {
 	// Credentials is deprecated: use Files instead.
 	// Kept for backward compatibility with sessions provisioned before the Files field
 	// was introduced.  The provisioner falls back to this field when Files is empty.
-	Credentials string `yaml:"credentials,omitempty" json:"credentials,omitempty"`
+	Credentials       string   `yaml:"credentials,omitempty" json:"credentials,omitempty"`
+	UnsyncedFilePaths []string `yaml:"unsynced_file_paths,omitempty" json:"unsynced_file_paths,omitempty"`
 }
 
 // OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.
