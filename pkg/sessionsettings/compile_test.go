@@ -581,6 +581,8 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 
 		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
 		assert.Contains(t, content, `model = "qwen3-coder-next"`)
+		assert.Contains(t, content, `model_context_window = 128000`)
+		assert.Contains(t, content, `model_auto_compact_token_limit = 64000`)
 		assert.Contains(t, content, `[model_providers.agentapi_openai_compatible]`)
 		assert.Contains(t, content, `base_url = "http://ollama:11434/v1"`)
 		assert.Contains(t, content, `wire_api = "responses"`)
@@ -604,9 +606,12 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 				"OPENAI_BASE_URL": "http://proxy.example.com/v1",
 				"OPENAI_MODEL":    "gpt-oss:20b",
 				"CODEX_MODEL":     "qwen3-coder-next",
+				"CODEX_MODEL_CONTEXT_WINDOW":             "65536",
+				"CODEX_MODEL_AUTO_COMPACT_TOKEN_LIMIT":    "32768",
+				"CODEX_MODEL_SUPPORTS_REASONING_SUMMARIES": "false",
 			},
 			Codex: CodexConfig{
-				ConfigTOML: "approval-mode = \"full-auto\"\nmodel = \"gpt-5.5\"\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
+				ConfigTOML: "approval-mode = \"full-auto\"\nmodel = \"gpt-5.5\"\nmodel_context_window = 128000\nmodel_auto_compact_token_limit = 64000\nmodel_supports_reasoning_summaries = true\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
 			},
 		}
 
@@ -635,9 +640,15 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 		assert.Contains(t, content, "approval-mode")
 		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
 		assert.Contains(t, content, `model = "qwen3-coder-next"`)
+		assert.Contains(t, content, `model_context_window = 65536`)
+		assert.Contains(t, content, `model_auto_compact_token_limit = 32768`)
+		assert.Contains(t, content, `model_supports_reasoning_summaries = false`)
 		assert.NotContains(t, content, `model_provider = "openai"`)
 		assert.NotContains(t, content, `model = "gpt-5.5"`)
 		assert.NotContains(t, content, `model = "gpt-oss:20b"`)
+		assert.NotContains(t, content, `model_context_window = 128000`)
+		assert.NotContains(t, content, `model_auto_compact_token_limit = 64000`)
+		assert.NotContains(t, content, `model_supports_reasoning_summaries = true`)
 		assert.Less(t, strings.Index(content, `model = "qwen3-coder-next"`), strings.Index(content, "[sandbox_workspace_write]"))
 		assert.Less(t, strings.Index(content, `model_provider = "agentapi_openai_compatible"`), strings.Index(content, "[sandbox_workspace_write]"))
 		assert.Less(t, strings.Index(content, "[sandbox_workspace_write]"), strings.Index(content, "[model_providers.agentapi_openai_compatible]"))

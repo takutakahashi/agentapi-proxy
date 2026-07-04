@@ -381,6 +381,11 @@ func codexCustomOpenAIProviderTOML(env map[string]string) string {
 		sb.WriteString(tomlString(model))
 		sb.WriteString("\n")
 	}
+	metadata := codexModelMetadataFromEnv(env, model != "")
+	for _, line := range metadata {
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
 	sb.WriteString("model_provider = ")
 	sb.WriteString(tomlString(codexCustomOpenAIProviderID))
 	sb.WriteString("\n\n")
@@ -405,6 +410,38 @@ func codexModelFromEnv(env map[string]string) string {
 	return strings.TrimSpace(env["OPENAI_MODEL"])
 }
 
+func codexModelMetadataFromEnv(env map[string]string, modelConfigured bool) []string {
+	metadata := []string{}
+
+	contextWindow := strings.TrimSpace(env["CODEX_MODEL_CONTEXT_WINDOW"])
+	if contextWindow == "" {
+		contextWindow = strings.TrimSpace(env["OPENAI_MODEL_CONTEXT_WINDOW"])
+	}
+	if contextWindow == "" && modelConfigured {
+		contextWindow = "128000"
+	}
+	if contextWindow != "" {
+		metadata = append(metadata, fmt.Sprintf("model_context_window = %s", contextWindow))
+	}
+
+	autoCompactTokenLimit := strings.TrimSpace(env["CODEX_MODEL_AUTO_COMPACT_TOKEN_LIMIT"])
+	if autoCompactTokenLimit == "" {
+		autoCompactTokenLimit = strings.TrimSpace(env["OPENAI_MODEL_AUTO_COMPACT_TOKEN_LIMIT"])
+	}
+	if autoCompactTokenLimit == "" && modelConfigured {
+		autoCompactTokenLimit = "64000"
+	}
+	if autoCompactTokenLimit != "" {
+		metadata = append(metadata, fmt.Sprintf("model_auto_compact_token_limit = %s", autoCompactTokenLimit))
+	}
+
+	if supportsReasoningSummaries := strings.TrimSpace(env["CODEX_MODEL_SUPPORTS_REASONING_SUMMARIES"]); supportsReasoningSummaries != "" {
+		metadata = append(metadata, fmt.Sprintf("model_supports_reasoning_summaries = %s", supportsReasoningSummaries))
+	}
+
+	return metadata
+}
+
 func appendCodexConfigSection(base string, section string) string {
 	if section == "" {
 		return base
@@ -413,6 +450,11 @@ func appendCodexConfigSection(base string, section string) string {
 	selector, provider := splitCodexCustomProviderTOML(section)
 	if topLevelTOMLKeyIsSet(selector, "model") {
 		base = removeTopLevelTOMLKey(base, "model")
+	}
+	for _, key := range []string{"model_context_window", "model_auto_compact_token_limit", "model_supports_reasoning_summaries"} {
+		if topLevelTOMLKeyIsSet(selector, key) {
+			base = removeTopLevelTOMLKey(base, key)
+		}
 	}
 	if base == "" {
 		return section
