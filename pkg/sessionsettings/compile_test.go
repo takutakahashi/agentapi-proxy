@@ -553,6 +553,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 			Env: map[string]string{
 				"OPENAI_BASE_URL": "http://ollama:11434/v1",
 				"OPENAI_API_KEY":  "test-api-key",
+				"OPENAI_MODEL":    "qwen3-coder-next",
 			},
 		}
 
@@ -579,6 +580,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 		content := string(data)
 
 		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
+		assert.Contains(t, content, `model = "qwen3-coder-next"`)
 		assert.Contains(t, content, `[model_providers.agentapi_openai_compatible]`)
 		assert.Contains(t, content, `base_url = "http://ollama:11434/v1"`)
 		assert.Contains(t, content, `wire_api = "responses"`)
@@ -600,9 +602,11 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 			},
 			Env: map[string]string{
 				"OPENAI_BASE_URL": "http://proxy.example.com/v1",
+				"OPENAI_MODEL":    "gpt-oss:20b",
+				"CODEX_MODEL":     "qwen3-coder-next",
 			},
 			Codex: CodexConfig{
-				ConfigTOML: "approval-mode = \"full-auto\"\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
+				ConfigTOML: "approval-mode = \"full-auto\"\nmodel = \"gpt-5.5\"\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
 			},
 		}
 
@@ -630,10 +634,61 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 
 		assert.Contains(t, content, "approval-mode")
 		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
+		assert.Contains(t, content, `model = "qwen3-coder-next"`)
 		assert.NotContains(t, content, `model_provider = "openai"`)
+		assert.NotContains(t, content, `model = "gpt-5.5"`)
+		assert.NotContains(t, content, `model = "gpt-oss:20b"`)
+		assert.Less(t, strings.Index(content, `model = "qwen3-coder-next"`), strings.Index(content, "[sandbox_workspace_write]"))
 		assert.Less(t, strings.Index(content, `model_provider = "agentapi_openai_compatible"`), strings.Index(content, "[sandbox_workspace_write]"))
 		assert.Less(t, strings.Index(content, "[sandbox_workspace_write]"), strings.Index(content, "[model_providers.agentapi_openai_compatible]"))
 		assert.NotContains(t, content, "env_key")
+	})
+
+	t.Run("preserves existing model when model env is not set", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-openai-base-url-preserve-model-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-custom-provider-preserve-model",
+				UserID:    "user-codex-custom-provider-preserve-model",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Env: map[string]string{
+				"OPENAI_BASE_URL": "http://proxy.example.com/v1",
+			},
+			Codex: CodexConfig{
+				ConfigTOML: "model = \"gpt-oss:20b\"\nmodel_provider = \"openai\"\n",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		assert.Contains(t, content, `model = "gpt-oss:20b"`)
+		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
+		assert.NotContains(t, content, `model_provider = "openai"`)
 	})
 }
 

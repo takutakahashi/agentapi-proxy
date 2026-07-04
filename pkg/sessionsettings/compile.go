@@ -373,8 +373,14 @@ func codexCustomOpenAIProviderTOML(env map[string]string) string {
 	if baseURL == "" {
 		return ""
 	}
+	model := codexModelFromEnv(env)
 
 	var sb strings.Builder
+	if model != "" {
+		sb.WriteString("model = ")
+		sb.WriteString(tomlString(model))
+		sb.WriteString("\n")
+	}
 	sb.WriteString("model_provider = ")
 	sb.WriteString(tomlString(codexCustomOpenAIProviderID))
 	sb.WriteString("\n\n")
@@ -392,12 +398,22 @@ func codexCustomOpenAIProviderTOML(env map[string]string) string {
 	return sb.String()
 }
 
+func codexModelFromEnv(env map[string]string) string {
+	if model := strings.TrimSpace(env["CODEX_MODEL"]); model != "" {
+		return model
+	}
+	return strings.TrimSpace(env["OPENAI_MODEL"])
+}
+
 func appendCodexConfigSection(base string, section string) string {
 	if section == "" {
 		return base
 	}
 	base = removeTopLevelTOMLKey(base, "model_provider")
 	selector, provider := splitCodexCustomProviderTOML(section)
+	if topLevelTOMLKeyIsSet(selector, "model") {
+		base = removeTopLevelTOMLKey(base, "model")
+	}
 	if base == "" {
 		return section
 	}
@@ -423,6 +439,25 @@ func splitCodexCustomProviderTOML(section string) (string, string) {
 		return section, ""
 	}
 	return parts[0] + "\n", parts[1]
+}
+
+func topLevelTOMLKeyIsSet(content string, key string) bool {
+	if content == "" {
+		return false
+	}
+
+	inTopLevel := true
+	prefix := key + " "
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inTopLevel = false
+		}
+		if inTopLevel && (strings.HasPrefix(trimmed, prefix) || strings.HasPrefix(trimmed, key+"=")) {
+			return true
+		}
+	}
+	return false
 }
 
 func removeTopLevelTOMLKey(content string, key string) string {
