@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	mcputil "github.com/takutakahashi/agentapi-proxy/pkg/mcp"
@@ -64,7 +65,7 @@ func Compile(opts CompileOptions) error {
 	}
 
 	// 3c. Generate ~/.codex/config.toml (codex-acp sessions only)
-	if err := generateCodexConfigTOML(opts.OutputDir, settings.Codex.ConfigTOML); err != nil {
+	if err := generateCodexConfigTOML(opts.OutputDir, settings.Codex.ConfigTOML, settings.Env); err != nil {
 		return fmt.Errorf("failed to generate codex config.toml: %w", err)
 	}
 
@@ -343,9 +344,10 @@ func generateCodexInstructionsMD(outputDir string, instructionsMD string) error 
 }
 
 // generateCodexConfigTOML creates ~/.codex/config.toml for Codex CLI configuration.
-// Only written when configTOML is non-empty (i.e., for codex-acp sessions).
-func generateCodexConfigTOML(outputDir string, configTOML string) error {
-	if configTOML == "" {
+// Only written when configTOML is non-empty or OPENAI_BASE_URL is configured.
+func generateCodexConfigTOML(outputDir string, configTOML string, env map[string]string) error {
+	customProviderTOML := codexCustomOpenAIProviderTOML(env)
+	if configTOML == "" && customProviderTOML == "" {
 		return nil
 	}
 
@@ -355,12 +357,102 @@ func generateCodexConfigTOML(outputDir string, configTOML string) error {
 	}
 
 	configPath := filepath.Join(codexDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte(configTOML), 0644); err != nil {
+	content := appendCodexConfigSection(configTOML, customProviderTOML)
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write codex config.toml: %w", err)
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s", configPath)
 	return nil
+}
+
+const codexCustomOpenAIProviderID = "agentapi_openai_compatible"
+
+func codexCustomOpenAIProviderTOML(env map[string]string) string {
+	baseURL := strings.TrimSpace(env["OPENAI_BASE_URL"])
+	if baseURL == "" {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("model_provider = ")
+	sb.WriteString(tomlString(codexCustomOpenAIProviderID))
+	sb.WriteString("\n\n")
+	sb.WriteString("[model_providers.")
+	sb.WriteString(codexCustomOpenAIProviderID)
+	sb.WriteString("]\n")
+	sb.WriteString("name = \"OpenAI compatible\"\n")
+	sb.WriteString("base_url = ")
+	sb.WriteString(tomlString(baseURL))
+	sb.WriteString("\n")
+	sb.WriteString("wire_api = \"responses\"\n")
+	if strings.TrimSpace(env["OPENAI_API_KEY"]) != "" {
+		sb.WriteString("env_key = \"OPENAI_API_KEY\"\n")
+	}
+	return sb.String()
+}
+
+func appendCodexConfigSection(base string, section string) string {
+	if section == "" {
+		return base
+	}
+	base = removeTopLevelTOMLKey(base, "model_provider")
+	selector, provider := splitCodexCustomProviderTOML(section)
+	if base == "" {
+		return section
+	}
+
+	var sb strings.Builder
+	sb.WriteString(selector)
+	if !strings.HasSuffix(selector, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
+	sb.WriteString(base)
+	if !strings.HasSuffix(base, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
+	sb.WriteString(provider)
+	return sb.String()
+}
+
+func splitCodexCustomProviderTOML(section string) (string, string) {
+	parts := strings.SplitN(section, "\n\n", 2)
+	if len(parts) != 2 {
+		return section, ""
+	}
+	return parts[0] + "\n", parts[1]
+}
+
+func removeTopLevelTOMLKey(content string, key string) string {
+	if content == "" {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	inTopLevel := true
+	prefix := key + " "
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inTopLevel = false
+		}
+		if inTopLevel && (strings.HasPrefix(trimmed, prefix) || strings.HasPrefix(trimmed, key+"=")) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func tomlString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return strconv.Quote(s)
+	}
+	return string(b)
 }
 
 // generateCodexMCPServers appends MCP server entries to ~/.codex/config.toml using
