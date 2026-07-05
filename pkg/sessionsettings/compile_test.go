@@ -537,6 +537,170 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 
 		assert.NoFileExists(t, filepath.Join(outputDir, ".codex/config.toml"))
 	})
+
+	t.Run("writes custom provider when OPENAI_BASE_URL is set", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-openai-base-url-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-custom-provider",
+				UserID:    "user-codex-custom-provider",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Env: map[string]string{
+				"OPENAI_BASE_URL": "http://ollama:11434/v1",
+				"OPENAI_API_KEY":  "test-api-key",
+				"OPENAI_MODEL":    "qwen3-coder-next",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
+		assert.Contains(t, content, `model = "qwen3-coder-next"`)
+		assert.Contains(t, content, `model_context_window = 128000`)
+		assert.Contains(t, content, `model_auto_compact_token_limit = 64000`)
+		assert.Contains(t, content, `[model_providers.agentapi_openai_compatible]`)
+		assert.Contains(t, content, `base_url = "http://ollama:11434/v1"`)
+		assert.Contains(t, content, `wire_api = "responses"`)
+		assert.Contains(t, content, `env_key = "OPENAI_API_KEY"`)
+		assert.NotContains(t, content, "test-api-key")
+	})
+
+	t.Run("appends custom provider after existing ConfigTOML", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-openai-base-url-append-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-custom-provider-append",
+				UserID:    "user-codex-custom-provider-append",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Env: map[string]string{
+				"OPENAI_BASE_URL": "http://proxy.example.com/v1",
+				"OPENAI_MODEL":    "gpt-oss:20b",
+				"CODEX_MODEL":     "qwen3-coder-next",
+				"CODEX_MODEL_CONTEXT_WINDOW":             "65536",
+				"CODEX_MODEL_AUTO_COMPACT_TOKEN_LIMIT":    "32768",
+				"CODEX_MODEL_SUPPORTS_REASONING_SUMMARIES": "false",
+			},
+			Codex: CodexConfig{
+				ConfigTOML: "approval-mode = \"full-auto\"\nmodel = \"gpt-5.5\"\nmodel_context_window = 128000\nmodel_auto_compact_token_limit = 64000\nmodel_supports_reasoning_summaries = true\nmodel_provider = \"openai\"\nsandbox_mode = \"danger-full-access\"\n\n[sandbox_workspace_write]\nnetwork_access = true\n",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		assert.Contains(t, content, "approval-mode")
+		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
+		assert.Contains(t, content, `model = "qwen3-coder-next"`)
+		assert.Contains(t, content, `model_context_window = 65536`)
+		assert.Contains(t, content, `model_auto_compact_token_limit = 32768`)
+		assert.Contains(t, content, `model_supports_reasoning_summaries = false`)
+		assert.NotContains(t, content, `model_provider = "openai"`)
+		assert.NotContains(t, content, `model = "gpt-5.5"`)
+		assert.NotContains(t, content, `model = "gpt-oss:20b"`)
+		assert.NotContains(t, content, `model_context_window = 128000`)
+		assert.NotContains(t, content, `model_auto_compact_token_limit = 64000`)
+		assert.NotContains(t, content, `model_supports_reasoning_summaries = true`)
+		assert.Less(t, strings.Index(content, `model = "qwen3-coder-next"`), strings.Index(content, "[sandbox_workspace_write]"))
+		assert.Less(t, strings.Index(content, `model_provider = "agentapi_openai_compatible"`), strings.Index(content, "[sandbox_workspace_write]"))
+		assert.Less(t, strings.Index(content, "[sandbox_workspace_write]"), strings.Index(content, "[model_providers.agentapi_openai_compatible]"))
+		assert.NotContains(t, content, "env_key")
+	})
+
+	t.Run("preserves existing model when model env is not set", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-openai-base-url-preserve-model-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-custom-provider-preserve-model",
+				UserID:    "user-codex-custom-provider-preserve-model",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Env: map[string]string{
+				"OPENAI_BASE_URL": "http://proxy.example.com/v1",
+			},
+			Codex: CodexConfig{
+				ConfigTOML: "model = \"gpt-oss:20b\"\nmodel_provider = \"openai\"\n",
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".codex/config.toml")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		content := string(data)
+
+		assert.Contains(t, content, `model = "gpt-oss:20b"`)
+		assert.Contains(t, content, `model_provider = "agentapi_openai_compatible"`)
+		assert.NotContains(t, content, `model_provider = "openai"`)
+	})
 }
 
 func TestCompile_CodexMCPServers(t *testing.T) {
