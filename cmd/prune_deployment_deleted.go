@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -19,16 +20,22 @@ var (
 )
 
 func sessionWorkloadExists(ctx context.Context, client kubernetes.Interface, namespace, name string) (bool, error) {
-	_, depErr := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	deployment, depErr := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if depErr == nil {
-		return true, nil
+		return deployment.DeletionTimestamp == nil, nil
 	}
 	if !errors.IsNotFound(depErr) {
 		return false, depErr
 	}
 
-	_, podErr := client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	pod, podErr := client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if podErr == nil {
+		if pod.DeletionTimestamp != nil {
+			return false, nil
+		}
+		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			return false, nil
+		}
 		return true, nil
 	}
 	if !errors.IsNotFound(podErr) {
@@ -70,6 +77,7 @@ The following resources are deleted for each orphaned session:
   - Secret      agentapi-session-{id}-settings             (if present)
   - Secret      agentapi-session-{id}-svc-webhook-payload  (if present)
   - Secret      agentapi-session-{id}-svc-oneshot-settings (if present)
+  - Secret      agentapi-provision-request-{id}            (if present)
 
 Use --dry-run to preview what would be deleted without making any changes.
 
@@ -255,6 +263,7 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 		settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", id)
 		webhookSecretName := fmt.Sprintf("%s-webhook-payload", svcName)
 		oneshotSecretName := fmt.Sprintf("%s-oneshot-settings", svcName)
+		provisionRequestSecretName := fmt.Sprintf("agentapi-provision-request-%s", id)
 
 		resources := []resource{
 			{
@@ -304,6 +313,13 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 				name: oneshotSecretName,
 				del: func() error {
 					return client.CoreV1().Secrets(ns).Delete(ctx, oneshotSecretName, metav1.DeleteOptions{})
+				},
+			},
+			{
+				kind: "Secret (provision-request)",
+				name: provisionRequestSecretName,
+				del: func() error {
+					return client.CoreV1().Secrets(ns).Delete(ctx, provisionRequestSecretName, metav1.DeleteOptions{})
 				},
 			},
 		}
