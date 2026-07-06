@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func newWorkloadTestManager(t *testing.T, pvcEnabled bool) *KubernetesSessionManager {
@@ -22,14 +23,15 @@ func newWorkloadTestManager(t *testing.T, pvcEnabled bool) *KubernetesSessionMan
 	k8sClient := fake.NewSimpleClientset(ns)
 	cfg := &config.Config{
 		KubernetesSession: config.KubernetesSessionConfig{
-			Namespace:     "test-ns",
-			Image:         "test-image:latest",
-			BasePort:      9000,
-			PVCEnabled:    boolPtrForTest(pvcEnabled),
-			CPURequest:    "100m",
-			CPULimit:      "1",
-			MemoryRequest: "128Mi",
-			MemoryLimit:   "512Mi",
+			Namespace:      "test-ns",
+			Image:          "test-image:latest",
+			BasePort:       9000,
+			PVCEnabled:     boolPtrForTest(pvcEnabled),
+			CPURequest:     "100m",
+			CPULimit:       "1",
+			MemoryRequest:  "128Mi",
+			MemoryLimit:    "512Mi",
+			PVCStorageSize: "1Gi",
 		},
 	}
 	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
@@ -51,6 +53,17 @@ func newWorkloadTestSession() *KubernetesSession {
 		nil,
 		nil,
 	)
+}
+
+func assertOwnedByService(t *testing.T, obj metav1.Object, serviceName string) {
+	t.Helper()
+	owners := obj.GetOwnerReferences()
+	if len(owners) != 1 {
+		t.Fatalf("Expected one owner reference on %s, got %d: %+v", obj.GetName(), len(owners), owners)
+	}
+	if owners[0].APIVersion != "v1" || owners[0].Kind != "Service" || owners[0].Name != serviceName {
+		t.Fatalf("Expected %s to be owned by Service %s, got %+v", obj.GetName(), serviceName, owners[0])
+	}
 }
 
 func TestCreateSessionWorkloadWithoutPVCUsesPodRestartPolicyNever(t *testing.T) {
@@ -110,6 +123,80 @@ func TestCreateSessionWorkloadWithPVCUsesDeploymentRestartPolicyAlways(t *testin
 	if len(pods.Items) != 0 {
 		t.Fatalf("Expected no standalone pods, got %d", len(pods.Items))
 	}
+}
+
+func TestSessionResourcesUseServiceOwnerReferenceWithoutPVC(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	session := newWorkloadTestSession()
+	ctx := context.Background()
+
+	if err := manager.createService(ctx, session); err != nil {
+		t.Fatalf("Failed to create service: %v", err)
+	}
+	if err := manager.createSessionWorkload(ctx, session, session.Request()); err != nil {
+		t.Fatalf("Failed to create workload: %v", err)
+	}
+	if err := manager.createWebhookPayloadSecret(ctx, session, []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("Failed to create webhook payload secret: %v", err)
+	}
+	if err := manager.createOneshotSettingsSecret(ctx, session); err != nil {
+		t.Fatalf("Failed to create oneshot settings secret: %v", err)
+	}
+	settings := &sessionsettings.SessionSettings{}
+	session.SetProvisionSettings(settings)
+	if err := manager.CreateProvisionRequest(ctx, session); err != nil {
+		t.Fatalf("Failed to create provision request: %v", err)
+	}
+	if err := manager.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), settings); err != nil {
+		t.Fatalf("Failed to create session settings secret: %v", err)
+	}
+
+	pod, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Expected pod to be created: %v", err)
+	}
+	assertOwnedByService(t, pod, session.ServiceName())
+
+	for _, secretName := range []string{
+		session.ServiceName() + "-webhook-payload",
+		session.ServiceName() + "-oneshot-settings",
+		"agentapi-provision-request-" + session.ID(),
+		"agentapi-session-" + session.ID() + "-settings",
+	} {
+		secret, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("Expected secret %s to be created: %v", secretName, err)
+		}
+		assertOwnedByService(t, secret, session.ServiceName())
+	}
+}
+
+func TestSessionResourcesUseServiceOwnerReferenceWithPVC(t *testing.T) {
+	manager := newWorkloadTestManager(t, true)
+	session := newWorkloadTestSession()
+	ctx := context.Background()
+
+	if err := manager.createService(ctx, session); err != nil {
+		t.Fatalf("Failed to create service: %v", err)
+	}
+	if err := manager.createPVC(ctx, session); err != nil {
+		t.Fatalf("Failed to create PVC: %v", err)
+	}
+	if err := manager.createSessionWorkload(ctx, session, session.Request()); err != nil {
+		t.Fatalf("Failed to create workload: %v", err)
+	}
+
+	pvc, err := manager.client.CoreV1().PersistentVolumeClaims("test-ns").Get(ctx, session.PVCName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Expected PVC to be created: %v", err)
+	}
+	assertOwnedByService(t, pvc, session.ServiceName())
+
+	deployment, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Expected deployment to be created: %v", err)
+	}
+	assertOwnedByService(t, deployment, session.ServiceName())
 }
 
 func TestPurgeStockSessionsDeletesMixedWorkloadKindsAndPVC(t *testing.T) {
