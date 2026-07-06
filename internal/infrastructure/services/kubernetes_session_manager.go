@@ -3318,31 +3318,6 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 	return nil
 }
 
-// deleteDeployment deletes the deployment for a session
-func (m *KubernetesSessionManager) deleteDeployment(ctx context.Context, session *KubernetesSession) error {
-	return m.client.AppsV1().Deployments(m.namespace).Delete(ctx, session.DeploymentName(), metav1.DeleteOptions{})
-}
-
-// deleteSessionWorkload deletes the backing Deployment or Pod for a session.
-func (m *KubernetesSessionManager) deleteSessionWorkload(ctx context.Context, session *KubernetesSession) error {
-	var errs []string
-	if err := m.deleteDeployment(ctx, session); err != nil && !errors.IsNotFound(err) {
-		errs = append(errs, fmt.Sprintf("deployment: %v", err))
-	}
-	if err := m.client.CoreV1().Pods(m.namespace).Delete(ctx, session.DeploymentName(), metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
-		errs = append(errs, fmt.Sprintf("pod: %v", err))
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to delete workload: %s", strings.Join(errs, ", "))
-	}
-	return nil
-}
-
-// deletePVC deletes the PVC for a session
-func (m *KubernetesSessionManager) deletePVC(ctx context.Context, session *KubernetesSession) error {
-	return m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, session.PVCName(), metav1.DeleteOptions{})
-}
-
 // cleanupSession removes a session from the internal map and releases its message subscribers.
 func (m *KubernetesSessionManager) cleanupSession(id string) {
 	m.mutex.Lock()
