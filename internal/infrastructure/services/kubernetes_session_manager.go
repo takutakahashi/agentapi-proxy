@@ -393,9 +393,20 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 
 	log.Printf("[K8S_SESSION] Creating session %s in namespace %s", id, m.namespace)
 
+	// Create Service first. It is the canonical session resource and owns every
+	// other per-session Kubernetes resource through ownerReferences.
+	if err := m.createService(ctx, session); err != nil {
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create Service: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Created Service %s for session %s", serviceName, id)
+
 	// Create PVC if enabled
 	if m.isPVCEnabled() {
 		if err := m.createPVC(ctx, session); err != nil {
+			if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup resources after PVC creation failure: %v", delErr)
+			}
 			m.cleanupSession(id)
 			return nil, fmt.Errorf("failed to create PVC: %w", err)
 		}
@@ -445,6 +456,9 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 
 	session.SetProvisionSettings(sessionSettings)
 	if err := m.CreateProvisionRequest(ctx, session); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after provision request creation failure: %v", delErr)
+		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create provision request: %w", err)
 	}
@@ -452,30 +466,13 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 	// Create workload. PVC-backed sessions use a Deployment for restart recovery;
 	// ephemeral EmptyDir sessions use a Pod with restartPolicy=Never.
 	if err := m.createSessionWorkload(ctx, session, req); err != nil {
-		if m.isPVCEnabled() {
-			if delErr := m.deletePVC(ctx, session); delErr != nil {
-				log.Printf("[K8S_SESSION] Failed to cleanup PVC after workload creation failure: %v", delErr)
-			}
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after workload creation failure: %v", delErr)
 		}
 		m.cleanupSession(id)
 		return nil, fmt.Errorf("failed to create session workload: %w", err)
 	}
 	log.Printf("[K8S_SESSION] Created workload %s for session %s", deploymentName, id)
-
-	// Create Service
-	if err := m.createService(ctx, session); err != nil {
-		if delErr := m.deleteSessionWorkload(ctx, session); delErr != nil {
-			log.Printf("[K8S_SESSION] Failed to cleanup workload after service creation failure: %v", delErr)
-		}
-		if m.isPVCEnabled() {
-			if delErr := m.deletePVC(ctx, session); delErr != nil {
-				log.Printf("[K8S_SESSION] Failed to cleanup PVC after service creation failure: %v", delErr)
-			}
-		}
-		m.cleanupSession(id)
-		return nil, fmt.Errorf("failed to create Service: %w", err)
-	}
-	log.Printf("[K8S_SESSION] Created Service %s for session %s", serviceName, id)
 
 	// Start watching session in background
 	go m.watchSession(sessionCtx, session)
@@ -524,34 +521,49 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, sandb
 		m.namespace, m.k8sConfig.BasePort, cancel, nil)
 	session.SetIsStock(true)
 
+	// Create the Service first so stock resources can reference it as owner.
+	// Keep it out of the available stock pool until the workload is created.
+	stockLabels := m.buildLabels(session)
+	stockLabels["agentapi.proxy/stock"] = "creating"
+	if err := m.createServiceWithLabels(ctx, session, stockLabels); err != nil {
+		cancel()
+		return fmt.Errorf("failed to create stock service: %w", err)
+	}
+
 	// Create PVC if enabled (required for Deployment volume mounts).
 	if m.isPVCEnabled() {
 		if err := m.createPVC(ctx, session); err != nil {
+			if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup resources after stock PVC creation failure: %v", delErr)
+			}
 			cancel()
 			return fmt.Errorf("failed to create stock PVC: %w", err)
 		}
 	}
 
 	if err := m.createSessionWorkload(ctx, session, minimalReq); err != nil {
-		if m.isPVCEnabled() {
-			if delErr := m.deletePVC(ctx, session); delErr != nil {
-				log.Printf("[K8S_SESSION] Failed to cleanup PVC after stock workload creation failure: %v", delErr)
-			}
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock workload creation failure: %v", delErr)
 		}
 		cancel()
 		return fmt.Errorf("failed to create stock workload: %w", err)
 	}
-	if err := m.createService(ctx, session); err != nil {
-		if delErr := m.deleteSessionWorkload(ctx, session); delErr != nil {
-			log.Printf("[K8S_SESSION] Failed to cleanup workload after stock service creation failure: %v", delErr)
-		}
-		if m.isPVCEnabled() {
-			if delErr := m.deletePVC(ctx, session); delErr != nil {
-				log.Printf("[K8S_SESSION] Failed to cleanup PVC after stock service creation failure: %v", delErr)
-			}
+
+	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service lookup failure: %v", delErr)
 		}
 		cancel()
-		return fmt.Errorf("failed to create stock service: %w", err)
+		return fmt.Errorf("failed to get stock service: %w", err)
+	}
+	stockSvc.Labels["agentapi.proxy/stock"] = "true"
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, stockSvc, metav1.UpdateOptions{}); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service update failure: %v", delErr)
+		}
+		cancel()
+		return fmt.Errorf("failed to mark stock service ready: %w", err)
 	}
 	log.Printf("[K8S_SESSION] Stock session %s created successfully (sandbox=%t, dind=%t)",
 		id, sandbox, dind)
@@ -590,7 +602,7 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	// stock=claiming (abandoned mid-adoption). Collect session IDs from every
 	// resource kind so a previous partial purge cannot leave orphaned stock
 	// Deployments/PVCs behind.
-	selector := "agentapi.proxy/stock in (true, claiming),app.kubernetes.io/managed-by=agentapi-proxy"
+	selector := "agentapi.proxy/stock in (true, claiming, creating),app.kubernetes.io/managed-by=agentapi-proxy"
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -814,6 +826,12 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	switch {
 	case pvcErr == nil:
 		log.Printf("[K8S_SESSION] Stock session %s has existing PVC %s, reusing it", stockID, pvcName)
+		if currentPVC, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Get(ctx, pvcName, metav1.GetOptions{}); err == nil {
+			currentPVC.OwnerReferences = m.sessionServiceOwnerReferences(ctx, stockID)
+			if _, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Update(ctx, currentPVC, metav1.UpdateOptions{}); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to update stock PVC owner reference for session %s: %v", stockID, err)
+			}
+		}
 	case errors.IsNotFound(pvcErr):
 		log.Printf("[K8S_SESSION] Stock session %s has no PVC, using EmptyDir", stockID)
 	default:
@@ -896,6 +914,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 			log.Printf("[K8S_SESSION] Warning: failed to get stock deployment for label update: %v", err)
 		} else {
 			currentDep.Labels = newLabels
+			currentDep.OwnerReferences = m.sessionServiceOwnerReferences(ctx, stockID)
 			if _, err := m.client.AppsV1().Deployments(m.namespace).Update(ctx, currentDep, metav1.UpdateOptions{}); err != nil {
 				log.Printf("[K8S_SESSION] Warning: failed to update stock deployment labels for session %s: %v", stockID, err)
 			}
@@ -906,6 +925,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 			log.Printf("[K8S_SESSION] Warning: failed to get stock pod for label update: %v", err)
 		} else {
 			currentPod.Labels = newLabels
+			currentPod.OwnerReferences = m.sessionServiceOwnerReferences(ctx, stockID)
 			if _, err := m.client.CoreV1().Pods(m.namespace).Update(ctx, currentPod, metav1.UpdateOptions{}); err != nil {
 				log.Printf("[K8S_SESSION] Warning: failed to update stock pod labels for session %s: %v", stockID, err)
 			}
@@ -1878,9 +1898,10 @@ func (m *KubernetesSessionManager) createPVC(ctx context.Context, session *Kuber
 
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.PVCName(),
-			Namespace: m.namespace,
-			Labels:    m.buildLabels(session),
+			Name:            session.PVCName(),
+			Namespace:       m.namespace,
+			Labels:          m.buildLabels(session),
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{
@@ -1933,10 +1954,11 @@ func (m *KubernetesSessionManager) createPod(ctx context.Context, session *Kuber
 	podTemplate := deployment.Spec.Template
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        session.DeploymentName(),
-			Namespace:   m.namespace,
-			Labels:      podTemplate.Labels,
-			Annotations: podTemplate.Annotations,
+			Name:            session.DeploymentName(),
+			Namespace:       m.namespace,
+			Labels:          podTemplate.Labels,
+			Annotations:     podTemplate.Annotations,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
 		},
 		Spec: podTemplate.Spec,
 	}
@@ -2217,9 +2239,10 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      session.DeploymentName(),
-			Namespace: m.namespace,
-			Labels:    labels,
+			Name:            session.DeploymentName(),
+			Namespace:       m.namespace,
+			Labels:          labels,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -2367,8 +2390,9 @@ func (m *KubernetesSessionManager) createWebhookPayloadSecret(
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
+			Name:            secretName,
+			Namespace:       m.namespace,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
 			Labels: map[string]string{
 				"agentapi.proxy/session-id": session.id,
 				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
@@ -2485,8 +2509,9 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
+			Name:            secretName,
+			Namespace:       m.namespace,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
 			Labels: map[string]string{
 				"agentapi.proxy/session-id": session.id,
 				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
@@ -3068,6 +3093,10 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 
 // createService creates a Service for the session
 func (m *KubernetesSessionManager) createService(ctx context.Context, session *KubernetesSession) error {
+	return m.createServiceWithLabels(ctx, session, m.buildLabels(session))
+}
+
+func (m *KubernetesSessionManager) createServiceWithLabels(ctx context.Context, session *KubernetesSession, labels map[string]string) error {
 	annotations := map[string]string{
 		"agentapi.proxy/created-at": session.startedAt.Format(time.RFC3339),
 		"agentapi.proxy/updated-at": session.startedAt.Format(time.RFC3339),
@@ -3092,7 +3121,7 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        session.ServiceName(),
 			Namespace:   m.namespace,
-			Labels:      m.buildLabels(session),
+			Labels:      labels,
 			Annotations: annotations,
 		},
 		Spec: corev1.ServiceSpec{
@@ -3106,6 +3135,26 @@ func (m *KubernetesSessionManager) createService(ctx context.Context, session *K
 
 	_, err := m.client.CoreV1().Services(m.namespace).Create(ctx, service, metav1.CreateOptions{})
 	return err
+}
+
+func (m *KubernetesSessionManager) sessionServiceOwnerReferences(ctx context.Context, sessionID string) []metav1.OwnerReference {
+	if m == nil || m.client == nil {
+		return nil
+	}
+	svcName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, svcName, metav1.GetOptions{})
+	if err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to get Service %s for owner reference: %v", svcName, err)
+		return nil
+	}
+	return []metav1.OwnerReference{
+		{
+			APIVersion: "v1",
+			Kind:       "Service",
+			Name:       svc.Name,
+			UID:        svc.UID,
+		},
+	}
 }
 
 // watchSession monitors the session deployment status
@@ -3267,31 +3316,6 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 	}
 
 	return nil
-}
-
-// deleteDeployment deletes the deployment for a session
-func (m *KubernetesSessionManager) deleteDeployment(ctx context.Context, session *KubernetesSession) error {
-	return m.client.AppsV1().Deployments(m.namespace).Delete(ctx, session.DeploymentName(), metav1.DeleteOptions{})
-}
-
-// deleteSessionWorkload deletes the backing Deployment or Pod for a session.
-func (m *KubernetesSessionManager) deleteSessionWorkload(ctx context.Context, session *KubernetesSession) error {
-	var errs []string
-	if err := m.deleteDeployment(ctx, session); err != nil && !errors.IsNotFound(err) {
-		errs = append(errs, fmt.Sprintf("deployment: %v", err))
-	}
-	if err := m.client.CoreV1().Pods(m.namespace).Delete(ctx, session.DeploymentName(), metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
-		errs = append(errs, fmt.Sprintf("pod: %v", err))
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to delete workload: %s", strings.Join(errs, ", "))
-	}
-	return nil
-}
-
-// deletePVC deletes the PVC for a session
-func (m *KubernetesSessionManager) deletePVC(ctx context.Context, session *KubernetesSession) error {
-	return m.client.CoreV1().PersistentVolumeClaims(m.namespace).Delete(ctx, session.PVCName(), metav1.DeleteOptions{})
 }
 
 // cleanupSession removes a session from the internal map and releases its message subscribers.
@@ -5231,8 +5255,9 @@ func (m *KubernetesSessionManager) createSessionSettingsSecretFromSettings(
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: m.namespace,
+			Name:            secretName,
+			Namespace:       m.namespace,
+			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
 			Labels: map[string]string{
 				"agentapi.proxy/session-id": session.id,
 				"agentapi.proxy/user-id":    sanitizeLabelValue(req.UserID),

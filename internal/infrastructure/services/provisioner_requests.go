@@ -259,13 +259,15 @@ func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req
 		"agentapi.proxy/session-id":        req.SessionID,
 		"agentapi.proxy/provision-request": "true",
 	}
+	ownerReferences := m.sessionServiceOwnerReferences(ctx, req.SessionID)
 	sec, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		sec = &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: m.namespace,
-				Labels:    labels,
+				Name:            name,
+				Namespace:       m.namespace,
+				Labels:          labels,
+				OwnerReferences: ownerReferences,
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{"request.json": data},
@@ -277,6 +279,7 @@ func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req
 		return err
 	}
 	sec.Labels = labels
+	sec.OwnerReferences = ownerReferences
 	if sec.Data == nil {
 		sec.Data = make(map[string][]byte)
 	}
