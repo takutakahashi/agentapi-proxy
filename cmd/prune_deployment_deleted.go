@@ -67,7 +67,14 @@ Detection uses two complementary passes so that every stale pattern is covered:
     This catches the case where the Service was already cleaned up but the
     settings Secret was left behind.
 
-Results from both passes are merged and deduplicated before deletion.
+  Pass 3 – Provision Request Secret scan:
+    Sessions whose provision request Secret (agentapi-provision-request-{id})
+    still exists, but whose Service and settings Secret are gone and whose
+    workload is gone or terminal, are considered orphaned. This catches
+    interrupted creates and partial cleanups that happened before settings
+    Secret creation.
+
+Results from all passes are merged and deduplicated before deletion.
 
 The following resources are deleted for each orphaned session:
   - Deployment  agentapi-session-{id}                     (may already be gone)
@@ -108,7 +115,18 @@ func init() {
 // resources for a single session.
 type orphanedSession struct {
 	id     string
-	source string // "service" or "settings-secret" – for logging only
+	source string // for logging only
+}
+
+func resourceExists(get func() error) (bool, error) {
+	err := get()
+	if err == nil {
+		return true, nil
+	}
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
@@ -229,6 +247,90 @@ func runPruneOrphanedResources(cmd *cobra.Command, args []string) error {
 		orphanedSessions = append(orphanedSessions, orphanedSession{
 			id:     sessionID,
 			source: "settings-secret",
+		})
+	}
+
+	// ------------------------------------------------------------------ //
+	// Pass 3: Provision Request Secret-based detection
+	//   Sessions whose provision request Secret remains after Service and
+	//   settings Secret cleanup. To avoid racing active creates, only treat the
+	//   session as orphaned when no active workload exists.
+	// ------------------------------------------------------------------ //
+	provisionRequestList, err := client.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/provision-request=true",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list provision request secrets: %w", err)
+	}
+
+	fmt.Printf("Pass 3 (Provision Request Secret scan): found %d provision request secret(s)\n", len(provisionRequestList.Items))
+
+	for _, secret := range provisionRequestList.Items {
+		sessionID := secret.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] Secret %s: missing agentapi.proxy/session-id label\n", secret.Name)
+			}
+			continue
+		}
+
+		if _, alreadySeen := seen[sessionID]; alreadySeen {
+			if orphanedVerbose {
+				fmt.Printf("  [SKIP] session %s: already detected in earlier pass\n", sessionID)
+			}
+			continue
+		}
+
+		svcName := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+		serviceExists, getErr := resourceExists(func() error {
+			_, err := client.CoreV1().Services(ns).Get(ctx, svcName, metav1.GetOptions{})
+			return err
+		})
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking Service %s: %v\n", sessionID, svcName, getErr)
+			continue
+		}
+		if serviceExists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: Service %s found\n", sessionID, svcName)
+			}
+			continue
+		}
+
+		settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
+		settingsExists, getErr := resourceExists(func() error {
+			_, err := client.CoreV1().Secrets(ns).Get(ctx, settingsSecretName, metav1.GetOptions{})
+			return err
+		})
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking settings Secret %s: %v\n", sessionID, settingsSecretName, getErr)
+			continue
+		}
+		if settingsExists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: settings Secret %s found\n", sessionID, settingsSecretName)
+			}
+			continue
+		}
+
+		workloadName := fmt.Sprintf("agentapi-session-%s", sessionID)
+		exists, getErr := sessionWorkloadExists(ctx, client, ns, workloadName)
+		if getErr == nil && exists {
+			if orphanedVerbose {
+				fmt.Printf("  [ACTIVE] session %s: workload %s found\n", sessionID, workloadName)
+			}
+			continue
+		}
+		if getErr != nil {
+			fmt.Printf("  [WARN] session %s: error checking workload %s: %v\n", sessionID, workloadName, getErr)
+			continue
+		}
+
+		fmt.Printf("  [ORPHANED] session %s: provision request remains but Service/settings/workload are gone (detected via Provision Request Secret)\n", sessionID)
+		seen[sessionID] = struct{}{}
+		orphanedSessions = append(orphanedSessions, orphanedSession{
+			id:     sessionID,
+			source: "provision-request-secret",
 		})
 	}
 
