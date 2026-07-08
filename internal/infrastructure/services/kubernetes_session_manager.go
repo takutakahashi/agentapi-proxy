@@ -3508,8 +3508,12 @@ const (
 	piOllamaCommandPath      = "/home/agentapi/.session/pi-ollama-pi"
 	piOllamaInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
 test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
-NPM_SHIM_DIR="$(mktemp -d)"
-cat > "$NPM_SHIM_DIR/npm" <<'EOF'
+if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
+  echo "pi-ollama-cloud already installed, skipping install"
+else
+  NPM_SHIM_DIR="$(mktemp -d)"
+  trap 'rm -rf "$NPM_SHIM_DIR"' EXIT
+  cat > "$NPM_SHIM_DIR/npm" <<'EOF'
 #!/bin/sh
 set -e
 prefix=""
@@ -3527,9 +3531,11 @@ mkdir -p "$prefix"
 test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
 exec bun add --cwd "$prefix" $packages
 EOF
-chmod +x "$NPM_SHIM_DIR/npm"
-PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
-rm -rf "$NPM_SHIM_DIR"`
+  chmod +x "$NPM_SHIM_DIR/npm"
+  PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
+  rm -rf "$NPM_SHIM_DIR"
+  trap - EXIT
+fi`
 )
 
 func ensurePiOllamaPodEnv(envVars []corev1.EnvVar) []corev1.EnvVar {

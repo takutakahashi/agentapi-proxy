@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -176,5 +177,8 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 	}
 	if settings.Startup.PreScript == "" {
 		t.Fatalf("expected pi-ollama startup pre-script")
+	}
+	if !strings.Contains(settings.Startup.PreScript, "node_modules/pi-ollama-cloud") {
+		t.Fatalf("expected pi-ollama pre-script to skip install when package is baked into the image")
 	}
 }
