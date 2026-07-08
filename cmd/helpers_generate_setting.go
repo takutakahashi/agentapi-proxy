@@ -551,6 +551,14 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 			Command: []string{"agentapi-proxy"},
 			Args:    []string{"acp-server", "--", "npx", "@zed-industries/codex-acp"},
 		}
+	case "pi-ollama":
+		// acp-server bridges pi-acp to Pi, which is configured with the pi-ollama-cloud provider.
+		// https://github.com/svkozak/pi-acp
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y pi-acp]")
+		return sessionsettings.StartupConfig{
+			Command: []string{"agentapi-proxy"},
+			Args:    []string{"acp-server", "--", "npx", "-y", "pi-acp"},
+		}
 	case "cursor":
 		// acp-server bridges Cursor Agent CLI's native ACP server to the agentapi HTTP interface.
 		// https://cursor.com/docs/cli/acp

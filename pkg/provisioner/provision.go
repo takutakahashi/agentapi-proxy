@@ -925,6 +925,19 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"npx", "@zed-industries/codex-acp",
 		}
 
+	case "pi-ollama":
+		// Start the acp-server bridge that wraps pi-acp via stdio. pi-acp starts
+		// `pi --mode rpc`; the image/pre-script install pi-ollama-cloud so Pi can
+		// talk directly to Ollama Cloud without a local Ollama daemon.
+		// https://github.com/svkozak/pi-acp
+		return "agentapi-proxy", []string{
+			"acp-server",
+			"--port", agentapiPort,
+			"--auto-approve",
+			"--",
+			"npx", "-y", "pi-acp",
+		}
+
 	case "cursor":
 		// Start the acp-server bridge that wraps Cursor Agent CLI's native ACP server via stdio.
 		// https://cursor.com/docs/cli/acp
@@ -1095,7 +1108,7 @@ type acpMessagesResponse struct {
 // started, replicating the logic of initialMessageSenderScript.
 func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int) {
 	// ACP sessions use a different transport (JSON-RPC 2.0 over POST /rpc).
-	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "cursor" {
+	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi-ollama" || agentType == "cursor" {
 		sendACPInitialMessage(ctx, agentapiURL, message, waitSec)
 		return
 	}

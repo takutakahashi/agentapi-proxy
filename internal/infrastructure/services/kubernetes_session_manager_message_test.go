@@ -51,6 +51,12 @@ func TestIsACPAgentTypeIncludesCursor(t *testing.T) {
 	}
 }
 
+func TestIsACPAgentTypeIncludesPiOllama(t *testing.T) {
+	if !isACPAgentType("pi-ollama") {
+		t.Fatal("expected pi-ollama to be treated as an ACP agent type")
+	}
+}
+
 // TestSubscribeMessageEvents_ReceivesBroadcast verifies that a subscriber
 // registered before broadcastMessageUpdate is called receives the event.
 func TestSubscribeMessageEvents_ReceivesBroadcast(t *testing.T) {
@@ -236,6 +242,7 @@ func TestSupportedAgentTypeOrDefault(t *testing.T) {
 		{name: "default", agentType: "", want: ""},
 		{name: "claude acp", agentType: "claude-acp", want: "claude-acp"},
 		{name: "codex acp", agentType: "codex-acp", want: "codex-acp"},
+		{name: "pi ollama", agentType: "pi-ollama", want: "pi-ollama"},
 		{name: "cursor", agentType: "cursor", want: "cursor"},
 		{name: "unknown", agentType: "unknown-agent", want: ""},
 	}

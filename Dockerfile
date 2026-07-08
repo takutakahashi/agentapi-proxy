@@ -186,6 +186,13 @@ RUN bun install -g @openai/codex && \
     sudo tee /opt/claude/bin/codex > /dev/null && \
     sudo chmod +x /opt/claude/bin/codex
 
+# Install Pi, pi-acp, and the Ollama Cloud provider extension for pi-ollama sessions.
+# pi-acp starts `pi --mode rpc`, and pi-ollama-cloud connects directly to
+# https://ollama.com/v1 using OLLAMA_API_KEY/OLLAMA_API_KEYS.
+RUN bun install -g @earendil-works/pi-coding-agent && \
+    npm install --global pi-acp@latest && \
+    pi install npm:pi-ollama-cloud
+
 # Install Cursor Agent CLI and place stable wrappers in /opt/cursor/bin.
 # Official install docs: https://cursor.com/docs/cli/installation
 RUN curl https://cursor.com/install -fsS | bash && \

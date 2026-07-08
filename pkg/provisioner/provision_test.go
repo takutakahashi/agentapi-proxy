@@ -53,6 +53,22 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 	}
 }
 
+func TestBuildAgentCommandPiOllama(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+
+	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
+	}, nil)
+
+	if cmd != "agentapi-proxy" {
+		t.Fatalf("command = %q, want agentapi-proxy", cmd)
+	}
+	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "npx", "-y", "pi-acp"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestSyncedManagedFilePathsExcludesUnsyncedPaths(t *testing.T) {
 	got := syncedManagedFilePaths([]string{
 		" /home/agentapi/.codex/auth.json ",

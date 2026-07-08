@@ -41,6 +41,13 @@ func TestBuildStartupConfigCursor(t *testing.T) {
 	assert.Equal(t, []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}, config.Args)
 }
 
+func TestBuildStartupConfigPiOllama(t *testing.T) {
+	config := buildStartupConfig("pi-ollama")
+
+	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
+	assert.Equal(t, []string{"acp-server", "--", "npx", "-y", "pi-acp"}, config.Args)
+}
+
 func TestGenerateTokenFlags(t *testing.T) {
 	// Test required flags
 

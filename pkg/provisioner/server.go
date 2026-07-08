@@ -25,6 +25,9 @@ import (
 // Override with the PROVISIONER_PRE_SCRIPT environment variable.
 const defaultStartupScript = `bun install --global @agentclientprotocol/claude-agent-acp@latest
 npm install --global @zed-industries/codex-acp@latest
+bun install --global @earendil-works/pi-coding-agent@latest
+npm install --global pi-acp@latest
+pi install npm:pi-ollama-cloud
 `
 
 // Status represents the provisioning lifecycle state.
