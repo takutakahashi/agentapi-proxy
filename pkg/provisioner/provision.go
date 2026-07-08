@@ -43,6 +43,8 @@ const (
 )
 
 var piOllamaCommandPath = "/home/agentapi/.session/pi-ollama-pi"
+var codexSkillsPath = "/home/agentapi/.codex/skills"
+var piSkillsPath = "/home/agentapi/.pi/agent/skills"
 
 // runProvision executes the full provisioning sequence and then supervises
 // the agentapi subprocess.
@@ -133,6 +135,14 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		} else {
 			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json (legacy)")
 		}
+	}
+
+	// ── Step 2.6: expose Codex skills to Pi ─────────────────────────────────
+	// sessionsettings.Setup syncs marketplace skills into ~/.codex/skills. Pi
+	// discovers global skills from ~/.pi/agent/skills, so link that path to the
+	// Codex skills directory before the ACP bridge starts Pi.
+	if err := symlinkCodexSkillsForPi(codexSkillsPath, piSkillsPath); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to link Codex skills for Pi: %v", err)
 	}
 
 	// ── Step 2.7: write managed Codex requirements ─────────────────────────
@@ -1002,6 +1012,56 @@ esac
 		return err
 	}
 	return os.Chmod(path, 0o755)
+}
+
+func symlinkCodexSkillsForPi(codexPath, piPath string) error {
+	if strings.TrimSpace(codexPath) == "" || strings.TrimSpace(piPath) == "" {
+		return fmt.Errorf("codex and pi skills paths must be set")
+	}
+	if err := os.MkdirAll(codexPath, 0o755); err != nil {
+		return fmt.Errorf("create codex skills dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(piPath), 0o755); err != nil {
+		return fmt.Errorf("create pi skills parent: %w", err)
+	}
+
+	info, err := os.Lstat(piPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return os.Symlink(codexPath, piPath)
+		}
+		return fmt.Errorf("stat pi skills path: %w", err)
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(piPath)
+		if err != nil {
+			return fmt.Errorf("read pi skills symlink: %w", err)
+		}
+		if target == codexPath {
+			return nil
+		}
+		if err := os.Remove(piPath); err != nil {
+			return fmt.Errorf("remove stale pi skills symlink: %w", err)
+		}
+		return os.Symlink(codexPath, piPath)
+	}
+
+	if info.IsDir() {
+		entries, err := os.ReadDir(piPath)
+		if err != nil {
+			return fmt.Errorf("read existing pi skills dir: %w", err)
+		}
+		if len(entries) == 0 {
+			if err := os.Remove(piPath); err != nil {
+				return fmt.Errorf("remove empty pi skills dir: %w", err)
+			}
+			return os.Symlink(codexPath, piPath)
+		}
+		return fmt.Errorf("pi skills path already exists and is not empty: %s", piPath)
+	}
+
+	return fmt.Errorf("pi skills path already exists and is not a directory or symlink: %s", piPath)
 }
 
 // waitForAgentAPI polls agentapiURL/status until it responds 200 or the

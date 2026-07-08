@@ -102,6 +102,79 @@ func TestBuildAgentCommandPiOllamaPreservesExplicitModel(t *testing.T) {
 	}
 }
 
+func TestSymlinkCodexSkillsForPiCreatesLink(t *testing.T) {
+	dir := t.TempDir()
+	codexPath := filepath.Join(dir, ".codex", "skills")
+	piPath := filepath.Join(dir, ".pi", "agent", "skills")
+
+	if err := symlinkCodexSkillsForPi(codexPath, piPath); err != nil {
+		t.Fatalf("symlinkCodexSkillsForPi: %v", err)
+	}
+	target, err := os.Readlink(piPath)
+	if err != nil {
+		t.Fatalf("read pi skills symlink: %v", err)
+	}
+	if target != codexPath {
+		t.Fatalf("pi skills symlink target = %q, want %q", target, codexPath)
+	}
+	if _, err := os.Stat(codexPath); err != nil {
+		t.Fatalf("codex skills dir should exist: %v", err)
+	}
+}
+
+func TestSymlinkCodexSkillsForPiIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	codexPath := filepath.Join(dir, ".codex", "skills")
+	piPath := filepath.Join(dir, ".pi", "agent", "skills")
+
+	if err := symlinkCodexSkillsForPi(codexPath, piPath); err != nil {
+		t.Fatalf("first symlinkCodexSkillsForPi: %v", err)
+	}
+	if err := symlinkCodexSkillsForPi(codexPath, piPath); err != nil {
+		t.Fatalf("second symlinkCodexSkillsForPi: %v", err)
+	}
+}
+
+func TestSymlinkCodexSkillsForPiReplacesEmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	codexPath := filepath.Join(dir, ".codex", "skills")
+	piPath := filepath.Join(dir, ".pi", "agent", "skills")
+	if err := os.MkdirAll(piPath, 0o755); err != nil {
+		t.Fatalf("mkdir pi skills: %v", err)
+	}
+
+	if err := symlinkCodexSkillsForPi(codexPath, piPath); err != nil {
+		t.Fatalf("symlinkCodexSkillsForPi: %v", err)
+	}
+	target, err := os.Readlink(piPath)
+	if err != nil {
+		t.Fatalf("read pi skills symlink: %v", err)
+	}
+	if target != codexPath {
+		t.Fatalf("pi skills symlink target = %q, want %q", target, codexPath)
+	}
+}
+
+func TestSymlinkCodexSkillsForPiPreservesNonEmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	codexPath := filepath.Join(dir, ".codex", "skills")
+	piPath := filepath.Join(dir, ".pi", "agent", "skills")
+	if err := os.MkdirAll(piPath, 0o755); err != nil {
+		t.Fatalf("mkdir pi skills: %v", err)
+	}
+	existingPath := filepath.Join(piPath, "existing.md")
+	if err := os.WriteFile(existingPath, []byte("existing"), 0o644); err != nil {
+		t.Fatalf("write existing skill: %v", err)
+	}
+
+	if err := symlinkCodexSkillsForPi(codexPath, piPath); err == nil {
+		t.Fatal("expected error for non-empty pi skills dir")
+	}
+	if got, err := os.ReadFile(existingPath); err != nil || string(got) != "existing" {
+		t.Fatalf("existing skill was not preserved, got %q err=%v", string(got), err)
+	}
+}
+
 func TestSyncedManagedFilePathsExcludesUnsyncedPaths(t *testing.T) {
 	got := syncedManagedFilePaths([]string{
 		" /home/agentapi/.codex/auth.json ",
