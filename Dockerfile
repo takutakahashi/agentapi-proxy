@@ -191,6 +191,8 @@ RUN bun install -g @openai/codex && \
 # https://ollama.com/v1 using OLLAMA_API_KEY/OLLAMA_API_KEYS.
 RUN bun install -g @earendil-works/pi-coding-agent && \
     npm install --global pi-acp@latest && \
+    mkdir -p /home/agentapi/.pi/agent/npm && \
+    printf '{"private":true,"dependencies":{}}\n' > /home/agentapi/.pi/agent/npm/package.json && \
     pi install npm:pi-ollama-cloud
 
 # Install Cursor Agent CLI and place stable wrappers in /opt/cursor/bin.

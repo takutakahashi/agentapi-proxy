@@ -27,6 +27,8 @@ const defaultStartupScript = `bun install --global @agentclientprotocol/claude-a
 npm install --global @zed-industries/codex-acp@latest
 bun install --global @earendil-works/pi-coding-agent@latest
 npm install --global pi-acp@latest
+mkdir -p "$HOME/.pi/agent/npm"
+test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
 pi install npm:pi-ollama-cloud
 `
 
