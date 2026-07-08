@@ -186,6 +186,36 @@ RUN bun install -g @openai/codex && \
     sudo tee /opt/claude/bin/codex > /dev/null && \
     sudo chmod +x /opt/claude/bin/codex
 
+# Install Pi, pi-acp, and the Ollama Cloud provider extension for pi-ollama sessions.
+# pi-acp starts `pi --mode rpc`, and pi-ollama-cloud connects directly to
+# https://ollama.com/v1 using OLLAMA_API_KEY/OLLAMA_API_KEYS.
+RUN bun install -g @earendil-works/pi-coding-agent && \
+    npm install --global pi-acp@latest && \
+    mkdir -p /home/agentapi/.pi/agent/npm && \
+    printf '{"private":true,"dependencies":{}}\n' > /home/agentapi/.pi/agent/npm/package.json && \
+    mkdir -p /tmp/pi-npm-shim && \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      'set -e' \
+      'prefix=""' \
+      'packages=""' \
+      'while [ "$#" -gt 0 ]; do' \
+      '  case "$1" in' \
+      '    install) shift ;;' \
+      '    --prefix) prefix="$2"; shift 2 ;;' \
+      '    --legacy-peer-deps) shift ;;' \
+      '    *) packages="$packages $1"; shift ;;' \
+      '  esac' \
+      'done' \
+      'if [ -z "$prefix" ]; then prefix="$PWD"; fi' \
+      'mkdir -p "$prefix"' \
+      'test -f "$prefix/package.json" || printf "%s\n" "{\"private\":true,\"dependencies\":{}}" > "$prefix/package.json"' \
+      'exec bun add --cwd "$prefix" $packages' \
+      > /tmp/pi-npm-shim/npm && \
+    chmod +x /tmp/pi-npm-shim/npm && \
+    PATH="/tmp/pi-npm-shim:$PATH" pi install npm:pi-ollama-cloud && \
+    rm -rf /tmp/pi-npm-shim
+
 # Install Cursor Agent CLI and place stable wrappers in /opt/cursor/bin.
 # Official install docs: https://cursor.com/docs/cli/installation
 RUN curl https://cursor.com/install -fsS | bash && \
