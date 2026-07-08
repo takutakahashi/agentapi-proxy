@@ -125,3 +125,56 @@ func TestBuildSessionSettings_TeamSettingsUsesRepositoryEnvVars(t *testing.T) {
 		t.Fatalf("SECRET_TOKEN = %q, want decrypted-secret", got)
 	}
 }
+
+func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	})
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Namespace:     "test-ns",
+			Image:         "test-image:latest",
+			BasePort:      9000,
+			PVCEnabled:    boolPtrForTest(false),
+			CPURequest:    "100m",
+			CPULimit:      "1",
+			MemoryRequest: "128Mi",
+			MemoryLimit:   "512Mi",
+		},
+	}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+
+	session := NewKubernetesSession(
+		"test-session",
+		&entities.RunServerRequest{UserID: "test-user"},
+		"test-deploy",
+		"agentapi-session-test-svc",
+		"test-pvc",
+		"test-ns",
+		9000,
+		nil,
+		nil,
+	)
+	req := &entities.RunServerRequest{
+		UserID:    "test-user",
+		AgentType: "pi-ollama",
+		Environment: map[string]string{
+			"OPENAI_API_KEY": "openai-key",
+		},
+	}
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if _, ok := settings.Env["OLLAMA_API_KEY"]; ok {
+		t.Fatalf("OLLAMA_API_KEY should not be synthesized")
+	}
+	if got := settings.Env["PI_ACP_PI_COMMAND"]; got != piOllamaCommandPath {
+		t.Fatalf("PI_ACP_PI_COMMAND = %q", got)
+	}
+	if settings.Startup.PreScript == "" {
+		t.Fatalf("expected pi-ollama startup pre-script")
+	}
+}

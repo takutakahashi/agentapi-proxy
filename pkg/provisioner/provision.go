@@ -31,6 +31,7 @@ const (
 	sessionEnvFile        = "/home/agentapi/.session/env"
 	claudeMDPath          = "/home/agentapi/.claude/CLAUDE.md"
 	workdirRepoPath       = "/home/agentapi/workdir/repo"
+	piOllamaDefaultModel  = "glm-5"
 	// webhookPayloadPath is the well-known path where the webhook payload JSON
 	// is exposed inside the session container.
 	// For non-stock sessions this file is provided by a read-only Kubernetes
@@ -40,6 +41,8 @@ const (
 	webhookPayloadPath    = "/opt/webhook/payload.json"
 	codexRequirementsPath = "/etc/codex/requirements.toml"
 )
+
+var piOllamaCommandPath = "/home/agentapi/.session/pi-ollama-pi"
 
 // runProvision executes the full provisioning sequence and then supervises
 // the agentapi subprocess.
@@ -930,6 +933,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// `pi --mode rpc`; the image/pre-script install pi-ollama-cloud so Pi can
 		// talk directly to Ollama Cloud without a local Ollama daemon.
 		// https://github.com/svkozak/pi-acp
+		ensurePiOllamaEnv(envMap)
 		return "agentapi-proxy", []string{
 			"acp-server",
 			"--port", agentapiPort,
@@ -966,6 +970,38 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"sh", "-c", claudeCmd,
 		}
 	}
+}
+
+func ensurePiOllamaEnv(envMap map[string]string) {
+	if envMap == nil {
+		return
+	}
+	if strings.TrimSpace(envMap["PI_ACP_PI_COMMAND"]) == "" {
+		envMap["PI_ACP_PI_COMMAND"] = piOllamaCommandPath
+	}
+	if envMap["PI_ACP_PI_COMMAND"] == piOllamaCommandPath {
+		if err := writePiOllamaCommandWrapper(piOllamaCommandPath); err != nil {
+			log.Printf("[PROVISIONER] Warning: failed to write pi-ollama command wrapper: %v", err)
+		}
+	}
+}
+
+func writePiOllamaCommandWrapper(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	const script = `#!/bin/sh
+set -e
+model="${PI_OLLAMA_MODEL:-${OLLAMA_MODEL:-` + piOllamaDefaultModel + `}}"
+case "$model" in
+  */*) exec pi --model "$model" "$@" ;;
+  *) exec pi --provider ollama-cloud --model "$model" "$@" ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o755)
 }
 
 // waitForAgentAPI polls agentapiURL/status until it responds 200 or the

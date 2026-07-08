@@ -3481,6 +3481,10 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		}
 	}
 
+	if req.AgentType == "pi-ollama" {
+		envVars = ensurePiOllamaPodEnv(envVars)
+	}
+
 	// Add VAPID environment variables for push notifications
 	vapidEnvVars := []string{"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_CONTACT_EMAIL"}
 	for _, envName := range vapidEnvVars {
@@ -3498,6 +3502,58 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	// which is synced by CredentialsSecretSyncer when settings are updated via API
 
 	return envVars
+}
+
+const (
+	piOllamaCommandPath      = "/home/agentapi/.session/pi-ollama-pi"
+	piOllamaInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
+test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
+NPM_SHIM_DIR="$(mktemp -d)"
+cat > "$NPM_SHIM_DIR/npm" <<'EOF'
+#!/bin/sh
+set -e
+prefix=""
+packages=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    install) shift ;;
+    --prefix) prefix="$2"; shift 2 ;;
+    --legacy-peer-deps) shift ;;
+    *) packages="$packages $1"; shift ;;
+  esac
+done
+if [ -z "$prefix" ]; then prefix="$PWD"; fi
+mkdir -p "$prefix"
+test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
+exec bun add --cwd "$prefix" $packages
+EOF
+chmod +x "$NPM_SHIM_DIR/npm"
+PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
+rm -rf "$NPM_SHIM_DIR"`
+)
+
+func ensurePiOllamaPodEnv(envVars []corev1.EnvVar) []corev1.EnvVar {
+	values := make(map[string]string, len(envVars))
+	for _, envVar := range envVars {
+		if envVar.ValueFrom == nil {
+			values[envVar.Name] = envVar.Value
+		}
+	}
+
+	if strings.TrimSpace(values["PI_ACP_PI_COMMAND"]) == "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "PI_ACP_PI_COMMAND", Value: piOllamaCommandPath})
+	}
+
+	return envVars
+}
+
+func ensurePiOllamaSettingsEnv(env map[string]string) {
+	if env == nil {
+		return
+	}
+	if strings.TrimSpace(env["PI_ACP_PI_COMMAND"]) == "" {
+		env["PI_ACP_PI_COMMAND"] = piOllamaCommandPath
+	}
 }
 
 // sanitizeLabelKey sanitizes a string to be used as a Kubernetes label key
@@ -4770,6 +4826,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		env[k] = v
 	}
 
+	if req.AgentType == "pi-ollama" {
+		ensurePiOllamaSettingsEnv(env)
+	}
+
 	m.injectSciaProxyEnv(env, req)
 
 	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
@@ -4950,6 +5010,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--",
 				"npx", "-y", "pi-acp",
 			},
+			PreScript: piOllamaInstallPreScript,
 		}
 	case "cursor":
 		// acp-server bridges Cursor Agent CLI's native ACP server to the agentapi HTTP interface.
