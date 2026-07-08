@@ -46,6 +46,7 @@ func TestBuildStartupConfigPiOllama(t *testing.T) {
 
 	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--", "npx", "-y", "pi-acp"}, config.Args)
+	assert.NotEmpty(t, config.PreScript)
 }
 
 func TestGenerateTokenFlags(t *testing.T) {

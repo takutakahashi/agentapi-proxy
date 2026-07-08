@@ -55,10 +55,14 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 
 func TestBuildAgentCommandPiOllama(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
+	origCommandPath := piOllamaCommandPath
+	piOllamaCommandPath = filepath.Join(t.TempDir(), "pi-ollama-pi")
+	t.Cleanup(func() { piOllamaCommandPath = origCommandPath })
+	env := map[string]string{"OPENAI_API_KEY": "openai-key"}
 
 	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
 		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
-	}, nil)
+	}, env)
 
 	if cmd != "agentapi-proxy" {
 		t.Fatalf("command = %q, want agentapi-proxy", cmd)
@@ -66,6 +70,35 @@ func TestBuildAgentCommandPiOllama(t *testing.T) {
 	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "npx", "-y", "pi-acp"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	if _, ok := env["OLLAMA_API_KEY"]; ok {
+		t.Fatalf("OLLAMA_API_KEY should not be synthesized")
+	}
+	if got := env["PI_ACP_PI_COMMAND"]; got != piOllamaCommandPath {
+		t.Fatalf("PI_ACP_PI_COMMAND = %q", got)
+	}
+	content, err := os.ReadFile(piOllamaCommandPath)
+	if err != nil {
+		t.Fatalf("failed to read pi-ollama wrapper: %v", err)
+	}
+	if !strings.Contains(string(content), `exec pi --model "$model" "$@"`) {
+		t.Fatalf("wrapper does not pass model args to pi: %s", string(content))
+	}
+}
+
+func TestBuildAgentCommandPiOllamaPreservesExplicitModel(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+	env := map[string]string{
+		"PI_ACP_PI_COMMAND": "/custom/pi-wrapper",
+		"PI_OLLAMA_MODEL":   "ollama-cloud/gpt-oss:120b",
+	}
+
+	_, _ = (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
+	}, env)
+
+	if got := env["PI_ACP_PI_COMMAND"]; got != "/custom/pi-wrapper" {
+		t.Fatalf("PI_ACP_PI_COMMAND = %q", got)
 	}
 }
 
