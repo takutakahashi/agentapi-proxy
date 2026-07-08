@@ -193,7 +193,28 @@ RUN bun install -g @earendil-works/pi-coding-agent && \
     npm install --global pi-acp@latest && \
     mkdir -p /home/agentapi/.pi/agent/npm && \
     printf '{"private":true,"dependencies":{}}\n' > /home/agentapi/.pi/agent/npm/package.json && \
-    pi install npm:pi-ollama-cloud
+    mkdir -p /tmp/pi-npm-shim && \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      'set -e' \
+      'prefix=""' \
+      'packages=""' \
+      'while [ "$#" -gt 0 ]; do' \
+      '  case "$1" in' \
+      '    install) shift ;;' \
+      '    --prefix) prefix="$2"; shift 2 ;;' \
+      '    --legacy-peer-deps) shift ;;' \
+      '    *) packages="$packages $1"; shift ;;' \
+      '  esac' \
+      'done' \
+      'if [ -z "$prefix" ]; then prefix="$PWD"; fi' \
+      'mkdir -p "$prefix"' \
+      'test -f "$prefix/package.json" || printf "%s\n" "{\"private\":true,\"dependencies\":{}}" > "$prefix/package.json"' \
+      'exec bun add --cwd "$prefix" $packages' \
+      > /tmp/pi-npm-shim/npm && \
+    chmod +x /tmp/pi-npm-shim/npm && \
+    PATH="/tmp/pi-npm-shim:$PATH" pi install npm:pi-ollama-cloud && \
+    rm -rf /tmp/pi-npm-shim
 
 # Install Cursor Agent CLI and place stable wrappers in /opt/cursor/bin.
 # Official install docs: https://cursor.com/docs/cli/installation

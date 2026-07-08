@@ -29,7 +29,28 @@ bun install --global @earendil-works/pi-coding-agent@latest
 npm install --global pi-acp@latest
 mkdir -p "$HOME/.pi/agent/npm"
 test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
-pi install npm:pi-ollama-cloud
+NPM_SHIM_DIR="$(mktemp -d)"
+cat > "$NPM_SHIM_DIR/npm" <<'EOF'
+#!/bin/sh
+set -e
+prefix=""
+packages=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    install) shift ;;
+    --prefix) prefix="$2"; shift 2 ;;
+    --legacy-peer-deps) shift ;;
+    *) packages="$packages $1"; shift ;;
+  esac
+done
+if [ -z "$prefix" ]; then prefix="$PWD"; fi
+mkdir -p "$prefix"
+test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
+exec bun add --cwd "$prefix" $packages
+EOF
+chmod +x "$NPM_SHIM_DIR/npm"
+PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
+rm -rf "$NPM_SHIM_DIR"
 `
 
 // Status represents the provisioning lifecycle state.
