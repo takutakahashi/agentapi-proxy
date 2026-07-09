@@ -11,23 +11,23 @@ import (
 // It contains enough information to serve ListSessions responses from cache
 // without making Kubernetes API calls.
 type CachedSessionDTO struct {
-	ID             string            `json:"id"`
-	UserID         string            `json:"user_id"`
-	Scope          string            `json:"scope"`
-	TeamID         string            `json:"team_id"`
-	Tags           map[string]string `json:"tags"`
-	Status         string            `json:"status"`
-	StartedAt      time.Time         `json:"started_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
-	LastMessageAt  time.Time         `json:"last_message_at"`
-	Description    string            `json:"description"`
+	ID             string                      `json:"id"`
+	UserID         string                      `json:"user_id"`
+	Scope          string                      `json:"scope"`
+	TeamID         string                      `json:"team_id"`
+	Tags           map[string]string           `json:"tags"`
+	Status         string                      `json:"status"`
+	StartedAt      time.Time                   `json:"started_at"`
+	UpdatedAt      time.Time                   `json:"updated_at"`
+	LastMessageAt  time.Time                   `json:"last_message_at"`
+	Description    string                      `json:"description"`
 	Annotations    entities.SessionAnnotations `json:"annotations,omitempty"`
-	ServicePort    int               `json:"service_port"`
-	Namespace      string            `json:"namespace"`
-	DeploymentName string            `json:"deployment_name"`
-	ServiceName    string            `json:"service_name"`
-	InitialMessage string            `json:"initial_message"`
-	IsStock        bool              `json:"is_stock"`
+	ServicePort    int                         `json:"service_port"`
+	Namespace      string                      `json:"namespace"`
+	DeploymentName string                      `json:"deployment_name"`
+	ServiceName    string                      `json:"service_name"`
+	InitialMessage string                      `json:"initial_message"`
+	IsStock        bool                        `json:"is_stock"`
 }
 
 // SessionListCacheRepository provides a short-lived cache layer for session
@@ -48,4 +48,13 @@ type SessionListCacheRepository interface {
 	// given namespace.  Called by CreateSession and DeleteSession so stale lists
 	// are not served after structural changes.
 	InvalidateSessionListCache(ctx context.Context, namespace string) error
+
+	// UpdateSessionInCache updates a single session in cache entries where it is
+	// already present. It must not append the session to caches keyed by a
+	// different label selector, because that would pollute filtered list results.
+	UpdateSessionInCache(ctx context.Context, namespace string, session CachedSessionDTO, ttl time.Duration) error
+
+	// DeleteSessionFromCache removes a single session from all cache entries for the namespace.
+	// This is more efficient than invalidating the entire cache when only one session is deleted.
+	DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string, ttl time.Duration) error
 }
