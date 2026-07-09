@@ -175,6 +175,110 @@ func TestSymlinkCodexSkillsForPiPreservesNonEmptyDir(t *testing.T) {
 	}
 }
 
+func TestWritePiAgentInstructionsCopiesClaudeMD(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, ".claude", "CLAUDE.md")
+	destPath := filepath.Join(dir, ".pi", "agent", "AGENTS.md")
+	content := "# Instructions\n\nUse the repo conventions.\n"
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	if err := os.WriteFile(sourcePath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	if err := writePiAgentInstructions(sourcePath, destPath); err != nil {
+		t.Fatalf("writePiAgentInstructions: %v", err)
+	}
+
+	got, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("read Pi AGENTS.md: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("Pi AGENTS.md = %q, want %q", string(got), content)
+	}
+}
+
+func TestWritePiAgentInstructionsSkipsMissingSource(t *testing.T) {
+	destPath := filepath.Join(t.TempDir(), ".pi", "agent", "AGENTS.md")
+
+	if err := writePiAgentInstructions("/does/not/exist/CLAUDE.md", destPath); err != nil {
+		t.Fatalf("writePiAgentInstructions should skip missing source: %v", err)
+	}
+	if _, err := os.Stat(destPath); !os.IsNotExist(err) {
+		t.Fatalf("Pi AGENTS.md should not be created, stat err=%v", err)
+	}
+}
+
+func TestWritePiMCPServersMergesSettings(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), ".pi", "agent", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatalf("mkdir settings dir: %v", err)
+	}
+	existing := map[string]interface{}{
+		"defaultProvider": "ollama-cloud",
+		"theme":           "dark",
+	}
+	existingData, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(settingsPath, existingData, 0o644); err != nil {
+		t.Fatalf("write existing settings: %v", err)
+	}
+
+	servers := map[string]interface{}{
+		"github": map[string]interface{}{
+			"type":    "stdio",
+			"command": "github-mcp-server",
+			"args":    []interface{}{"stdio"},
+			"env": map[string]interface{}{
+				"GITHUB_TOKEN": "token",
+			},
+		},
+	}
+	if err := writePiMCPServers(settingsPath, servers); err != nil {
+		t.Fatalf("writePiMCPServers: %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("parse settings: %v", err)
+	}
+	if got["defaultProvider"] != "ollama-cloud" || got["theme"] != "dark" {
+		t.Fatalf("existing settings not preserved: %#v", got)
+	}
+	gotServers, ok := got["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("mcpServers = %T, want map", got["mcpServers"])
+	}
+	if _, ok := gotServers["github"]; !ok {
+		t.Fatalf("github MCP server missing: %#v", gotServers)
+	}
+}
+
+func TestPiMCPServersPrefersCodexThenClaude(t *testing.T) {
+	claudeServers := map[string]interface{}{"claude": map[string]interface{}{"type": "http", "url": "https://claude.example"}}
+	codexServers := map[string]interface{}{"codex": map[string]interface{}{"type": "http", "url": "https://codex.example"}}
+
+	got := piMCPServers(&sessionsettings.SessionSettings{
+		Claude: sessionsettings.ClaudeConfig{MCPServers: claudeServers},
+		Codex:  sessionsettings.CodexConfig{MCPServers: codexServers},
+	})
+	if !reflect.DeepEqual(got, codexServers) {
+		t.Fatalf("piMCPServers should prefer Codex MCP servers, got %#v", got)
+	}
+
+	got = piMCPServers(&sessionsettings.SessionSettings{
+		Claude: sessionsettings.ClaudeConfig{MCPServers: claudeServers},
+	})
+	if !reflect.DeepEqual(got, claudeServers) {
+		t.Fatalf("piMCPServers should fall back to Claude MCP servers, got %#v", got)
+	}
+}
+
 func TestSyncedManagedFilePathsExcludesUnsyncedPaths(t *testing.T) {
 	got := syncedManagedFilePaths([]string{
 		" /home/agentapi/.codex/auth.json ",

@@ -45,6 +45,8 @@ const (
 var piOllamaCommandPath = "/home/agentapi/.session/pi-ollama-pi"
 var codexSkillsPath = "/home/agentapi/.codex/skills"
 var piSkillsPath = "/home/agentapi/.pi/agent/skills"
+var piAgentInstructionsPath = "/home/agentapi/.pi/agent/AGENTS.md"
+var piSettingsPath = "/home/agentapi/.pi/agent/settings.json"
 
 // runProvision executes the full provisioning sequence and then supervises
 // the agentapi subprocess.
@@ -160,6 +162,14 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 
 	// ── Step 4: fetch memory from proxy → inject into CLAUDE.md ──────────────
 	s.fetchAndInjectMemory(envMap)
+
+	// ── Step 4.5: expose managed instructions and MCP servers to Pi ──────────
+	if err := writePiAgentInstructions(claudeMDPath, piAgentInstructionsPath); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write Pi AGENTS.md: %v", err)
+	}
+	if err := writePiMCPServers(piSettingsPath, piMCPServers(settings)); err != nil {
+		log.Printf("[PROVISIONER] Warning: failed to write Pi MCP settings: %v", err)
+	}
 
 	// ── Step 5: cd into cloned repo ───────────────────────────────────────────
 	if _, err := os.Stat(workdirRepoPath); err == nil {
@@ -1062,6 +1072,75 @@ func symlinkCodexSkillsForPi(codexPath, piPath string) error {
 	}
 
 	return fmt.Errorf("pi skills path already exists and is not a directory or symlink: %s", piPath)
+}
+
+func writePiAgentInstructions(sourcePath, destPath string) error {
+	if strings.TrimSpace(sourcePath) == "" || strings.TrimSpace(destPath) == "" {
+		return fmt.Errorf("source and destination paths must be set")
+	}
+	content, err := os.ReadFile(sourcePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read source instructions: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("create Pi agent dir: %w", err)
+	}
+	if err := os.WriteFile(destPath, content, 0o644); err != nil {
+		return fmt.Errorf("write Pi instructions: %w", err)
+	}
+	log.Printf("[PROVISIONER] Wrote Pi instructions to %s", destPath)
+	return nil
+}
+
+func piMCPServers(settings *sessionsettings.SessionSettings) map[string]interface{} {
+	if settings == nil {
+		return nil
+	}
+	if len(settings.Codex.MCPServers) > 0 {
+		return settings.Codex.MCPServers
+	}
+	if len(settings.Claude.MCPServers) > 0 {
+		return settings.Claude.MCPServers
+	}
+	return nil
+}
+
+func writePiMCPServers(settingsPath string, mcpServers map[string]interface{}) error {
+	if len(mcpServers) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(settingsPath) == "" {
+		return fmt.Errorf("settings path must be set")
+	}
+
+	settingsJSON := make(map[string]interface{})
+	if data, err := os.ReadFile(settingsPath); err == nil && len(bytes.TrimSpace(data)) > 0 {
+		if err := json.Unmarshal(data, &settingsJSON); err != nil {
+			return fmt.Errorf("parse existing Pi settings: %w", err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read existing Pi settings: %w", err)
+	}
+
+	settingsJSON["mcpServers"] = mcpServers
+
+	data, err := json.MarshalIndent(settingsJSON, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal Pi settings: %w", err)
+	}
+	data = append(data, '\n')
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return fmt.Errorf("create Pi settings dir: %w", err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0o644); err != nil {
+		return fmt.Errorf("write Pi settings: %w", err)
+	}
+	log.Printf("[PROVISIONER] Wrote Pi MCP settings to %s", settingsPath)
+	return nil
 }
 
 // waitForAgentAPI polls agentapiURL/status until it responds 200 or the
