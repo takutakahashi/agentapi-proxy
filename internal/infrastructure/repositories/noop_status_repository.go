@@ -69,3 +69,13 @@ func (n *NoopStatusRepository) GetSessionListCache(_ context.Context, _ string) 
 func (n *NoopStatusRepository) InvalidateSessionListCache(_ context.Context, _ string) error {
 	return nil
 }
+
+// UpdateSessionInCache does nothing (no-op).
+func (n *NoopStatusRepository) UpdateSessionInCache(_ context.Context, _ string, _ portrepos.CachedSessionDTO) error {
+	return nil
+}
+
+// DeleteSessionFromCache does nothing (no-op).
+func (n *NoopStatusRepository) DeleteSessionFromCache(_ context.Context, _ string, _ string) error {
+	return nil
+}

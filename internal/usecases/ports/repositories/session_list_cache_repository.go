@@ -48,4 +48,13 @@ type SessionListCacheRepository interface {
 	// given namespace.  Called by CreateSession and DeleteSession so stale lists
 	// are not served after structural changes.
 	InvalidateSessionListCache(ctx context.Context, namespace string) error
+
+	// UpdateSessionInCache updates a single session in all cache entries for the namespace.
+	// This is more efficient than invalidating the entire cache when only one session changes.
+	// If the session doesn't exist in a cache entry, it's appended. If it exists, it's updated.
+	UpdateSessionInCache(ctx context.Context, namespace string, session CachedSessionDTO) error
+
+	// DeleteSessionFromCache removes a single session from all cache entries for the namespace.
+	// This is more efficient than invalidating the entire cache when only one session is deleted.
+	DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string) error
 }

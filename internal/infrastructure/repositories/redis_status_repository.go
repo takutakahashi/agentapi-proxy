@@ -232,3 +232,144 @@ func (r *RedisStatusRepository) InvalidateSessionListCache(ctx context.Context, 
 	log.Printf("[REDIS_CACHE] Invalidated %d session-list cache entries for namespace=%s", len(keysToDelete), namespace)
 	return nil
 }
+
+// UpdateSessionInCache updates a single session in all cache entries for the namespace.
+// This is more efficient than invalidating the entire cache when only one session changes.
+// It finds all cache keys for the namespace, deserializes each, updates or appends the session,
+// and re-serializes with a refreshed TTL.
+func (r *RedisStatusRepository) UpdateSessionInCache(ctx context.Context, namespace string, session portrepos.CachedSessionDTO) error {
+	pattern := sessionListCachePattern(namespace)
+	var cursor uint64
+	var updatedCount int
+
+	for {
+		keys, nextCursor, err := r.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("redis UpdateSessionInCache scan: %w", err)
+		}
+
+		for _, key := range keys {
+			// Get current cache value
+			payload, err := r.client.Get(ctx, key).Bytes()
+			if err != nil {
+				if err == redis.Nil {
+					continue // cache miss, skip
+				}
+				log.Printf("[REDIS_CACHE] Failed to get cache key %s: %v", key, err)
+				continue
+			}
+
+			var sessions []portrepos.CachedSessionDTO
+			if err := json.Unmarshal(payload, &sessions); err != nil {
+				log.Printf("[REDIS_CACHE] Failed to unmarshal cache %s: %v", key, err)
+				continue
+			}
+
+			// Find and update or append the session
+			found := false
+			for i, s := range sessions {
+				if s.ID == session.ID {
+					sessions[i] = session
+					found = true
+					break
+				}
+			}
+			if !found {
+				sessions = append(sessions, session)
+			}
+
+			// Re-serialize and set with refreshed TTL
+			newPayload, err := json.Marshal(sessions)
+			if err != nil {
+				log.Printf("[REDIS_CACHE] Failed to marshal updated cache %s: %v", key, err)
+				continue
+			}
+
+			// Use the same TTL as defined in kubernetes_session_manager.go
+			if err := r.client.Set(ctx, key, newPayload, 60*time.Second).Err(); err != nil {
+				log.Printf("[REDIS_CACHE] Failed to set updated cache %s: %v", key, err)
+				continue
+			}
+			updatedCount++
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if updatedCount > 0 {
+		log.Printf("[REDIS_CACHE] Updated session %s in %d cache entries for namespace=%s", session.ID, updatedCount, namespace)
+	}
+	return nil
+}
+
+// DeleteSessionFromCache removes a single session from all cache entries for the namespace.
+// This is more efficient than invalidating the entire cache when only one session is deleted.
+func (r *RedisStatusRepository) DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string) error {
+	pattern := sessionListCachePattern(namespace)
+	var cursor uint64
+	var updatedCount int
+
+	for {
+		keys, nextCursor, err := r.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("redis DeleteSessionFromCache scan: %w", err)
+		}
+
+		for _, key := range keys {
+			// Get current cache value
+			payload, err := r.client.Get(ctx, key).Bytes()
+			if err != nil {
+				if err == redis.Nil {
+					continue // cache miss, skip
+				}
+				log.Printf("[REDIS_CACHE] Failed to get cache key %s: %v", key, err)
+				continue
+			}
+
+			var sessions []portrepos.CachedSessionDTO
+			if err := json.Unmarshal(payload, &sessions); err != nil {
+				log.Printf("[REDIS_CACHE] Failed to unmarshal cache %s: %v", key, err)
+				continue
+			}
+
+			// Filter out the deleted session
+			var newSessions []portrepos.CachedSessionDTO
+			for _, s := range sessions {
+				if s.ID != sessionID {
+					newSessions = append(newSessions, s)
+				}
+			}
+
+			if len(newSessions) == len(sessions) {
+				// Session not found in this cache, no update needed
+				continue
+			}
+
+			// Re-serialize and set with refreshed TTL
+			newPayload, err := json.Marshal(newSessions)
+			if err != nil {
+				log.Printf("[REDIS_CACHE] Failed to marshal updated cache %s: %v", key, err)
+				continue
+			}
+
+			if err := r.client.Set(ctx, key, newPayload, 60*time.Second).Err(); err != nil {
+				log.Printf("[REDIS_CACHE] Failed to set updated cache %s: %v", key, err)
+				continue
+			}
+			updatedCount++
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if updatedCount > 0 {
+		log.Printf("[REDIS_CACHE] Deleted session %s from %d cache entries for namespace=%s", sessionID, updatedCount, namespace)
+	}
+	return nil
+}

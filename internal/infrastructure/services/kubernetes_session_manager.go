@@ -486,10 +486,12 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 		log.Printf("[K8S_SESSION] Failed to log session start: %v", err)
 	}
 
-	// Invalidate session-list cache so the new session appears immediately.
+	// Update session-list cache with the new session instead of invalidating.
+	// This is more efficient and preserves cache hits for other sessions.
 	if m.sessionListCacheRepo != nil {
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after create: %v", err)
+		sessionDTO := sessionsToCacheDTOs([]entities.Session{session})[0]
+		if err := m.sessionListCacheRepo.UpdateSessionInCache(context.Background(), m.namespace, sessionDTO); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to update session list cache after create: %v", err)
 		}
 	}
 
@@ -944,14 +946,12 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		log.Printf("[K8S_SESSION] Failed to log session start for stock session %s: %v", stockID, err)
 	}
 
-	// Invalidate session-list cache so the adopted session appears immediately in
-	// list results.  The stock Service was previously excluded by the
-	// !agentapi.proxy/stock label selector; now that its labels have been updated
-	// to reflect the real owner it will be included, but only if the cache is
-	// cleared so the next ListSessions call hits Kubernetes.
+	// Update session-list cache with the adopted session instead of invalidating.
+	// This is more efficient and preserves cache hits for other sessions.
 	if m.sessionListCacheRepo != nil {
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after stock adopt: %v", err)
+		sessionDTO := sessionsToCacheDTOs([]entities.Session{session})[0]
+		if err := m.sessionListCacheRepo.UpdateSessionInCache(context.Background(), m.namespace, sessionDTO); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to update session list cache after stock adopt: %v", err)
 		}
 	}
 
@@ -1252,8 +1252,9 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 }
 
 // redisSessionListCacheTTL is the TTL passed to the cache repository.
-// Mirrors the constant defined in the Redis implementation.
-const redisSessionListCacheTTL = 15 * time.Second
+// Extended from 15s to 60s to reduce Kubernetes API calls while still ensuring
+// reasonable freshness for session list queries.
+const redisSessionListCacheTTL = 60 * time.Second
 
 // buildSessionListCacheKey returns a stable Redis cache key for the given
 // (namespace, labelSelector) combination.
@@ -1554,12 +1555,13 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 		}
 	}
 
-	// Invalidate session-list cache so the deleted session disappears immediately.
+	// Remove the deleted session from cache instead of invalidating all entries.
+	// This is more efficient and preserves cache hits for other sessions.
 	if m.sessionListCacheRepo != nil {
 		invCtx, invCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer invCancel()
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(invCtx, m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after delete: %v", err)
+		if err := m.sessionListCacheRepo.DeleteSessionFromCache(invCtx, m.namespace, id); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to delete session from cache: %v", err)
 		}
 	}
 
