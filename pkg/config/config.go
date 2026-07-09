@@ -196,9 +196,6 @@ type StockInventoryWorkerConfig struct {
 	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
 	// TargetCount is the desired number of stock sessions to maintain. Default: 2.
 	TargetCount int `json:"target_count" mapstructure:"target_count"`
-	// SandboxEnabled is deprecated: sandbox (network filter) is always enabled.
-	// The field is kept for backward compatibility with existing config files.
-	SandboxEnabled bool `json:"sandbox_enabled,omitempty" mapstructure:"sandbox_enabled,omitempty"`
 	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
 	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
 	// Pools optionally configures multiple stock pools. When set, each pool is
@@ -221,9 +218,6 @@ type StockInventoryPoolConfig struct {
 	TargetCount int `json:"target_count" mapstructure:"target_count"`
 	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
 	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
-	// SandboxEnabled is deprecated: sandbox (network filter) is always enabled.
-	// The field is kept for backward compatibility with existing config files.
-	SandboxEnabled bool `json:"sandbox_enabled,omitempty" mapstructure:"sandbox_enabled,omitempty"`
 }
 
 // WebhookConfig represents webhook configuration
@@ -706,19 +700,14 @@ func parseStockInventoryPoolsJSON(poolsJSON string) ([]StockInventoryPoolConfig,
 		if err != nil {
 			return nil, err
 		}
-		sandboxEnabled, err := jsonBool(rawPool, "sandbox_enabled", "sandboxEnabled")
-		if err != nil {
-			return nil, err
-		}
 		dockerEnabled, err := jsonBool(rawPool, "docker_enabled", "dockerEnabled")
 		if err != nil {
 			return nil, err
 		}
 
 		pools = append(pools, StockInventoryPoolConfig{
-			TargetCount:    targetCount,
-			SandboxEnabled: sandboxEnabled,
-			DockerEnabled:  dockerEnabled,
+			TargetCount:   targetCount,
+			DockerEnabled: dockerEnabled,
 		})
 	}
 	return pools, nil
@@ -876,11 +865,6 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	if targetCount := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT"); targetCount != "" {
 		if parsed, err := strconv.Atoi(targetCount); err == nil {
 			config.StockInventoryWorker.TargetCount = parsed
-		}
-	}
-	if sandboxEnabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED"); sandboxEnabled != "" {
-		if parsed, err := strconv.ParseBool(sandboxEnabled); err == nil {
-			config.StockInventoryWorker.SandboxEnabled = parsed
 		}
 	}
 	if dockerEnabled := os.Getenv("AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED"); dockerEnabled != "" {
@@ -1157,7 +1141,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("stock_inventory_worker.enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED")
 	_ = v.BindEnv("stock_inventory_worker.check_interval", "AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL")
 	_ = v.BindEnv("stock_inventory_worker.target_count", "AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT")
-	_ = v.BindEnv("stock_inventory_worker.sandbox_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED")
 	_ = v.BindEnv("stock_inventory_worker.docker_enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED")
 	_ = v.BindEnv("stock_inventory_worker.pools", "AGENTAPI_STOCK_INVENTORY_WORKER_POOLS")
 	_ = v.BindEnv("stock_inventory_worker.namespace", "AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE")
@@ -1312,7 +1295,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stock_inventory_worker.enabled", false)
 	v.SetDefault("stock_inventory_worker.check_interval", "30s")
 	v.SetDefault("stock_inventory_worker.target_count", 2)
-	v.SetDefault("stock_inventory_worker.sandbox_enabled", false)
 	v.SetDefault("stock_inventory_worker.docker_enabled", false)
 	v.SetDefault("stock_inventory_worker.namespace", "")
 	v.SetDefault("stock_inventory_worker.lease_duration", "15s")
@@ -1430,7 +1412,7 @@ func applyConfigDefaults(config *Config) {
 		config.Scia.SessionSidecarConfigImage = "busybox:1.36"
 	}
 	if config.Scia.SessionSidecarPort == 0 {
-		config.Scia.SessionSidecarPort = 8080 // Default proxy port for agent -> scia -> nfa chain
+		config.Scia.SessionSidecarPort = 18081
 	}
 	if len(config.Scia.GoogleHosts) == 0 {
 		config.Scia.GoogleHosts = []string{"www.googleapis.com"}
