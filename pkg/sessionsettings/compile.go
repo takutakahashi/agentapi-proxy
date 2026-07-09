@@ -79,6 +79,11 @@ func Compile(opts CompileOptions) error {
 		return fmt.Errorf("failed to generate codex MCP servers config: %w", err)
 	}
 
+	// 3f. Generate the shared MCP config read by pi-mcp-adapter (pi sessions only)
+	if err := generatePiMCPConfig(opts.OutputDir, settings.Session.AgentType, settings.Claude.MCPServers); err != nil {
+		return fmt.Errorf("failed to generate Pi MCP config: %w", err)
+	}
+
 	// 4. Generate env file
 	if err := generateEnvFile(opts.EnvFilePath, settings.Env); err != nil {
 		return fmt.Errorf("failed to generate env file: %w", err)
@@ -150,6 +155,35 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcp
 // the "Welcome to Claude Code" screen.
 func patchClaudeJSON(outputDir string, extra map[string]interface{}) error {
 	return generateClaudeJSON(outputDir, extra, nil)
+}
+
+// generatePiMCPConfig creates ~/.config/mcp/mcp.json for pi-mcp-adapter.
+// pi-mcp-adapter reads this shared MCP config automatically on first use.
+func generatePiMCPConfig(outputDir string, agentType string, mcpServers map[string]interface{}) error {
+	if agentType != "pi-ollama" || len(mcpServers) == 0 {
+		return nil
+	}
+
+	configDir := filepath.Join(outputDir, ".config", "mcp")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create Pi MCP config directory: %w", err)
+	}
+
+	config := map[string]interface{}{
+		"mcpServers": mcpServers,
+	}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal Pi MCP config: %w", err)
+	}
+
+	configPath := filepath.Join(configDir, "mcp.json")
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write Pi MCP config: %w", err)
+	}
+
+	log.Printf("[COMPILE-SETTINGS] Generated %s", configPath)
+	return nil
 }
 
 // generateSettingsJSON creates ~/.claude/settings.json.

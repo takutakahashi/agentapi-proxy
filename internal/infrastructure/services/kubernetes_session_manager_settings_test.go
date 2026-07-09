@@ -181,4 +181,7 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 	if !strings.Contains(settings.Startup.PreScript, "node_modules/pi-ollama-cloud") {
 		t.Fatalf("expected pi-ollama pre-script to skip install when package is baked into the image")
 	}
+	if !strings.Contains(settings.Startup.PreScript, "node_modules/pi-mcp-adapter") {
+		t.Fatalf("expected pi-ollama pre-script to skip pi-mcp-adapter install when package is baked into the image")
+	}
 }

@@ -603,11 +603,11 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 				AgentType: "codex-acp",
 			},
 			Env: map[string]string{
-				"OPENAI_BASE_URL": "http://proxy.example.com/v1",
-				"OPENAI_MODEL":    "gpt-oss:20b",
-				"CODEX_MODEL":     "qwen3-coder-next",
-				"CODEX_MODEL_CONTEXT_WINDOW":             "65536",
-				"CODEX_MODEL_AUTO_COMPACT_TOKEN_LIMIT":    "32768",
+				"OPENAI_BASE_URL":                          "http://proxy.example.com/v1",
+				"OPENAI_MODEL":                             "gpt-oss:20b",
+				"CODEX_MODEL":                              "qwen3-coder-next",
+				"CODEX_MODEL_CONTEXT_WINDOW":               "65536",
+				"CODEX_MODEL_AUTO_COMPACT_TOKEN_LIMIT":     "32768",
 				"CODEX_MODEL_SUPPORTS_REASONING_SUMMARIES": "false",
 			},
 			Codex: CodexConfig{
@@ -972,6 +972,104 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 
 		// No config.toml should be created when neither ConfigTOML nor MCPServers is set.
 		assert.NoFileExists(t, filepath.Join(outputDir, ".codex/config.toml"))
+	})
+}
+
+func TestCompile_PiMCPConfig(t *testing.T) {
+	t.Run("writes shared mcp config for pi-ollama", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-pi-mcp-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-pi-mcp",
+				UserID:    "user-pi-mcp",
+				Scope:     "user",
+				AgentType: "pi-ollama",
+			},
+			Claude: ClaudeConfig{
+				MCPServers: map[string]interface{}{
+					"github": map[string]interface{}{
+						"type":    "stdio",
+						"command": "github-mcp-server",
+						"args":    []interface{}{"stdio"},
+						"env": map[string]interface{}{
+							"GITHUB_TOKEN": "ghp_secret",
+						},
+					},
+				},
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		configPath := filepath.Join(outputDir, ".config/mcp/mcp.json")
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+
+		var config map[string]interface{}
+		require.NoError(t, json.Unmarshal(data, &config))
+		mcpServers, ok := config["mcpServers"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Contains(t, mcpServers, "github")
+	})
+
+	t.Run("skips non-pi sessions", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-non-pi-mcp-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-claude-mcp",
+				UserID:    "user-claude-mcp",
+				Scope:     "user",
+				AgentType: "claude-acp",
+			},
+			Claude: ClaudeConfig{
+				MCPServers: map[string]interface{}{
+					"github": map[string]interface{}{
+						"type": "http",
+						"url":  "https://mcp.example.com",
+					},
+				},
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		assert.NoFileExists(t, filepath.Join(outputDir, ".config/mcp/mcp.json"))
 	})
 }
 

@@ -16,8 +16,8 @@ import (
 
 const piOllamaInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
 test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
-if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
-  echo "pi-ollama-cloud already installed, skipping install"
+if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ] && [ -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
+  echo "Pi extensions already installed, skipping install"
 else
   NPM_SHIM_DIR="$(mktemp -d)"
   trap 'rm -rf "$NPM_SHIM_DIR"' EXIT
@@ -40,7 +40,12 @@ test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":
 exec bun add --cwd "$prefix" $packages
 EOF
   chmod +x "$NPM_SHIM_DIR/npm"
-  PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
+  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
+    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
+  fi
+  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
+    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-mcp-adapter
+  fi
   rm -rf "$NPM_SHIM_DIR"
   trap - EXIT
 fi`
