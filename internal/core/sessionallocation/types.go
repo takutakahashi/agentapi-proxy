@@ -38,19 +38,23 @@ type AllocationResult struct {
 }
 
 // Requirements captures pod capabilities used for stock matching.
+// Note: Sandbox (network filter) and scia sidecar are now always enabled.
+// Only DinD remains configurable.
 type Requirements struct {
 	AgentType string `json:"agent_type,omitempty"`
-	Sandbox   bool   `json:"sandbox"`
-	DinD      bool   `json:"dind"`
+	// Sandbox is always true (network filter cannot be opted out).
+	// The field is kept for backward compatibility with existing JSON.
+	Sandbox bool `json:"sandbox"`
+	DinD    bool   `json:"dind"`
 }
 
 func RequirementsFromRunServerRequest(req *entities.RunServerRequest) Requirements {
 	if req == nil {
-		return Requirements{}
+		return Requirements{Sandbox: true}
 	}
 	return Requirements{
 		AgentType: req.AgentType,
-		Sandbox:   req.Sandbox != nil && req.Sandbox.Enabled,
+		Sandbox:   true, // Always enabled
 		DinD:      req.Docker != nil && req.Docker.Enabled,
 	}
 }

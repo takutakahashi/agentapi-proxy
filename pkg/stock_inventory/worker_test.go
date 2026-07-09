@@ -10,8 +10,7 @@ import (
 func TestReplenishStockUsesConfiguredRequirements(t *testing.T) {
 	repo := &recordingStockRepo{count: 1}
 	requirements := StockRequirements{
-		Sandbox: true,
-		DinD:    true,
+		DinD: true,
 	}
 	worker := NewWorker(repo, WorkerConfig{
 		CheckInterval: time.Minute,
@@ -38,17 +37,13 @@ func TestReplenishStockUsesConfiguredRequirements(t *testing.T) {
 func TestReplenishStockUsesAllConfiguredPools(t *testing.T) {
 	repo := &recordingStockRepo{
 		counts: map[StockRequirements]int{
-			{Sandbox: false, DinD: false}: 1,
-			{Sandbox: false, DinD: true}:  0,
-			{Sandbox: true, DinD: false}:  2,
-			{Sandbox: true, DinD: true}:   1,
+			{DinD: false}: 1,
+			{DinD: true}:  0,
 		},
 	}
 	pools := []StockPool{
-		{TargetCount: 2, Requirements: StockRequirements{Sandbox: false, DinD: false}},
-		{TargetCount: 2, Requirements: StockRequirements{Sandbox: false, DinD: true}},
-		{TargetCount: 2, Requirements: StockRequirements{Sandbox: true, DinD: false}},
-		{TargetCount: 2, Requirements: StockRequirements{Sandbox: true, DinD: true}},
+		{TargetCount: 2, Requirements: StockRequirements{DinD: false}},
+		{TargetCount: 2, Requirements: StockRequirements{DinD: true}},
 	}
 	worker := NewWorker(repo, WorkerConfig{
 		CheckInterval: time.Minute,
@@ -59,19 +54,16 @@ func TestReplenishStockUsesAllConfiguredPools(t *testing.T) {
 	worker.replenishStock(context.Background())
 
 	if !reflect.DeepEqual(repo.countedRequirements, []StockRequirements{
-		{Sandbox: false, DinD: false},
-		{Sandbox: false, DinD: true},
-		{Sandbox: true, DinD: false},
-		{Sandbox: true, DinD: true},
+		{DinD: false},
+		{DinD: true},
 	}) {
 		t.Fatalf("CountStockSessions requirements = %+v", repo.countedRequirements)
 	}
 
 	wantCreates := []StockRequirements{
-		{Sandbox: false, DinD: false},
-		{Sandbox: false, DinD: true},
-		{Sandbox: false, DinD: true},
-		{Sandbox: true, DinD: true},
+		{DinD: false},
+		{DinD: true},
+		{DinD: true},
 	}
 	if !reflect.DeepEqual(repo.createRequirements, wantCreates) {
 		t.Fatalf("CreateStockSession requirements = %+v, want %+v", repo.createRequirements, wantCreates)
@@ -86,13 +78,13 @@ type recordingStockRepo struct {
 	createRequirements  []StockRequirements
 }
 
-func (r *recordingStockRepo) CreateStockSession(_ context.Context, sandbox, dind bool) error {
-	r.createRequirements = append(r.createRequirements, StockRequirements{Sandbox: sandbox, DinD: dind})
+func (r *recordingStockRepo) CreateStockSession(_ context.Context, dind bool) error {
+	r.createRequirements = append(r.createRequirements, StockRequirements{DinD: dind})
 	return nil
 }
 
-func (r *recordingStockRepo) CountStockSessions(_ context.Context, sandbox, dind bool) (int, error) {
-	requirements := StockRequirements{Sandbox: sandbox, DinD: dind}
+func (r *recordingStockRepo) CountStockSessions(_ context.Context, dind bool) (int, error) {
+	requirements := StockRequirements{DinD: dind}
 	r.countRequirements = requirements
 	r.countedRequirements = append(r.countedRequirements, requirements)
 	if r.counts != nil {

@@ -500,7 +500,8 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 // CreateStockSession creates a pre-warmed stock session (Deployment + Service)
 // without creating a provision request. The pod starts agent-provisioner and
 // waits for adoption, at which point adoptStockSession creates the request.
-func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, sandbox, dind bool) error {
+// Note: Sandbox (network filter) and scia sidecar are always enabled.
+func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind bool) error {
 	id := uuid.New().String()
 	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
@@ -509,9 +510,9 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, sandb
 	_, cancel := context.WithCancel(context.Background())
 
 	// Stock sessions have no owner; the minimal request holds pod capabilities only.
-	minimalReq := &entities.RunServerRequest{}
-	if sandbox {
-		minimalReq.Sandbox = &entities.SandboxParams{Enabled: true}
+	// Sandbox is always enabled; only DinD is configurable.
+	minimalReq := &entities.RunServerRequest{
+		Sandbox: &entities.SandboxParams{Enabled: true},
 	}
 	if dind {
 		minimalReq.Docker = &entities.DockerParams{Enabled: true}
@@ -565,16 +566,17 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, sandb
 		cancel()
 		return fmt.Errorf("failed to mark stock service ready: %w", err)
 	}
-	log.Printf("[K8S_SESSION] Stock session %s created successfully (sandbox=%t, dind=%t)",
-		id, sandbox, dind)
+	log.Printf("[K8S_SESSION] Stock session %s created successfully (dind=%t)",
+		id, dind)
 	return nil
 }
 
 // CountStockSessions returns the number of available (not being deleted) stock sessions.
-func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, sandbox, dind bool) (int, error) {
+// Note: Sandbox (network filter) is always enabled, so only DinD capability is queried.
+func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind bool) (int, error) {
+	// Sandbox is always enabled (capability-sandbox=true)
 	selector := fmt.Sprintf(
-		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=%t,agentapi.proxy/capability-dind=%t",
-		sandbox,
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
 		dind,
 	)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
@@ -724,10 +726,11 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 // oldest available one (by CreationTimestamp, ascending). Oldest sessions have been
 // warmed up the longest and are the most ready to serve.
 // Returns (nil, nil) when no stock is available.
+// Note: Sandbox (network filter) is always enabled, so only DinD is queried.
 func (m *KubernetesSessionManager) findStockSession(ctx context.Context, requirements coreallocation.Requirements) (*corev1.Service, error) {
+	// Sandbox is always enabled (capability-sandbox=true)
 	selector := fmt.Sprintf(
-		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=%t,agentapi.proxy/capability-dind=%t",
-		requirements.Sandbox,
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
 		requirements.DinD,
 	)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
@@ -1981,15 +1984,20 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	memoryRequest := resource.MustParse(m.k8sConfig.MemoryRequest)
 	memoryLimit := resource.MustParse(m.k8sConfig.MemoryLimit)
 
-	// Build init containers and sandbox sidecar if network sandbox is enabled.
-	sandboxEnabled := req.Sandbox != nil && req.Sandbox.Enabled
+	// Build init containers and sandbox sidecar.
+	// Sandbox (network filter) is now always enabled - it cannot be opted out.
+	sandboxEnabled := true
+	// Ensure req.Sandbox has a valid value with default settings
+	if req.Sandbox == nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: true}
+	} else {
+		req.Sandbox.Enabled = true
+	}
 	var initContainers []corev1.Container
 	var sandboxSidecar *corev1.Container
 	var sandboxEnvVars []corev1.EnvVar
-	if sandboxEnabled {
-		effectiveSandbox := m.resolveSandboxParams(ctx, req)
-		initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
-	}
+	effectiveSandbox := m.resolveSandboxParams(ctx, req)
+	initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
 
 	var sciaInitContainer *corev1.Container
 	var sciaSidecar *corev1.Container
@@ -2676,13 +2684,9 @@ const (
 )
 
 func (m *KubernetesSessionManager) sciaSessionSidecarEnabled(req *entities.RunServerRequest) bool {
-	if m.config == nil || !m.config.Scia.Enabled {
-		return false
-	}
-	if req != nil && req.AuthProxy != nil {
-		return *req.AuthProxy
-	}
-	return m.config.Scia.SessionSidecarEnabled
+	// scia sidecar is now mandatory when scia is enabled - it cannot be opted out.
+	// Previously req.AuthProxy could opt out; this is now ignored.
+	return m.config != nil && m.config.Scia.Enabled
 }
 
 func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunServerRequest, sandboxEnabled bool, userToken string) (*corev1.Container, *corev1.Container, []corev1.EnvVar) {
@@ -3393,7 +3397,8 @@ func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[s
 		labels["agentapi.proxy/stock"] = "true"
 	}
 	req := session.Request()
-	labels["agentapi.proxy/capability-sandbox"] = fmt.Sprintf("%t", req.Sandbox != nil && req.Sandbox.Enabled)
+	// Sandbox (network filter) is always enabled
+	labels["agentapi.proxy/capability-sandbox"] = "true"
 	labels["agentapi.proxy/capability-dind"] = fmt.Sprintf("%t", req.Docker != nil && req.Docker.Enabled)
 	if req.AgentType != "" {
 		labels["agentapi.proxy/agent-type"] = sanitizeLabelValue(req.AgentType)
@@ -5182,18 +5187,22 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] Injected CYCLE_ENABLED file (with message) for session %s", session.id)
 	}
 
-	// Embed sandbox configuration when enabled.
-	if req.Sandbox != nil && req.Sandbox.Enabled {
-		effectiveSandbox := m.resolveSandboxParams(ctx, req)
-		settings.Sandbox = &sessionsettings.SandboxConfig{
-			Enabled:        true,
-			PolicyID:       req.Sandbox.PolicyID,
-			AllowedDomains: effectiveSandbox.AllowedDomains,
-			DeniedDomains:  effectiveSandbox.DeniedDomains,
-			CountMode:      effectiveSandbox.CountMode,
-		}
-		log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (policy: %s, allowed: %v, denied: %v, count_mode=%t)", session.id, req.Sandbox.PolicyID, effectiveSandbox.AllowedDomains, effectiveSandbox.DeniedDomains, effectiveSandbox.CountMode)
+	// Embed sandbox configuration - always enabled.
+	// Sandbox (network filter) cannot be opted out.
+	if req.Sandbox == nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: true}
+	} else {
+		req.Sandbox.Enabled = true
 	}
+	effectiveSandbox := m.resolveSandboxParams(ctx, req)
+	settings.Sandbox = &sessionsettings.SandboxConfig{
+		Enabled:        true,
+		PolicyID:       req.Sandbox.PolicyID,
+		AllowedDomains: effectiveSandbox.AllowedDomains,
+		DeniedDomains:  effectiveSandbox.DeniedDomains,
+		CountMode:      effectiveSandbox.CountMode,
+	}
+	log.Printf("[K8S_SESSION] Network sandbox enabled for session %s (policy: %s, allowed: %v, denied: %v, count_mode=%t)", session.id, req.Sandbox.PolicyID, effectiveSandbox.AllowedDomains, effectiveSandbox.DeniedDomains, effectiveSandbox.CountMode)
 
 	// Embed Docker-in-Docker configuration when enabled.
 	if req.Docker != nil && req.Docker.Enabled {

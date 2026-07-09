@@ -456,12 +456,12 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 	}
 	pools := buildStockInventoryPools(configData.StockInventoryWorker, targetCount)
 
+	// Note: Sandbox (network filter) is always enabled - the SandboxEnabled config is ignored.
 	workerConfig := stock_inventory.WorkerConfig{
 		CheckInterval: checkInterval,
 		TargetCount:   targetCount,
 		Requirements: stock_inventory.StockRequirements{
-			Sandbox: configData.StockInventoryWorker.SandboxEnabled,
-			DinD:    configData.StockInventoryWorker.DockerEnabled,
+			DinD: configData.StockInventoryWorker.DockerEnabled,
 		},
 		Pools:   pools,
 		Enabled: true,
@@ -512,11 +512,11 @@ func buildStockInventoryPools(workerConfig config.StockInventoryWorkerConfig, de
 		if targetCount < 0 {
 			targetCount = defaultTargetCount
 		}
+		// Note: Sandbox (network filter) is always enabled - SandboxEnabled is ignored.
 		pools = append(pools, stock_inventory.StockPool{
 			TargetCount: targetCount,
 			Requirements: stock_inventory.StockRequirements{
-				Sandbox: poolConfig.SandboxEnabled,
-				DinD:    poolConfig.DockerEnabled,
+				DinD: poolConfig.DockerEnabled,
 			},
 		})
 	}

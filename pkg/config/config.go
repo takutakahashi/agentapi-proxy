@@ -188,6 +188,7 @@ type SlackbotCleanupWorkerConfig struct {
 
 // StockInventoryWorkerConfig represents stock inventory worker configuration.
 // The worker ensures a target number of pre-warmed stock sessions are always available.
+// Note: Sandbox (network filter) and scia sidecar are now always enabled.
 type StockInventoryWorkerConfig struct {
 	// Enabled controls whether the worker runs. Default: false (opt-in).
 	Enabled bool `json:"enabled" mapstructure:"enabled"`
@@ -195,8 +196,9 @@ type StockInventoryWorkerConfig struct {
 	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
 	// TargetCount is the desired number of stock sessions to maintain. Default: 2.
 	TargetCount int `json:"target_count" mapstructure:"target_count"`
-	// SandboxEnabled controls whether stock sessions include the network sandbox sidecar.
-	SandboxEnabled bool `json:"sandbox_enabled" mapstructure:"sandbox_enabled"`
+	// SandboxEnabled is deprecated: sandbox (network filter) is always enabled.
+	// The field is kept for backward compatibility with existing config files.
+	SandboxEnabled bool `json:"sandbox_enabled,omitempty" mapstructure:"sandbox_enabled,omitempty"`
 	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
 	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
 	// Pools optionally configures multiple stock pools. When set, each pool is
@@ -212,13 +214,16 @@ type StockInventoryWorkerConfig struct {
 }
 
 // StockInventoryPoolConfig represents one stock inventory capability pool.
+// Note: Sandbox (network filter) and scia sidecar are now always enabled.
+// Only DockerEnabled remains configurable.
 type StockInventoryPoolConfig struct {
 	// TargetCount is the desired number of stock sessions for this capability pool.
 	TargetCount int `json:"target_count" mapstructure:"target_count"`
-	// SandboxEnabled controls whether stock sessions include the network sandbox sidecar.
-	SandboxEnabled bool `json:"sandbox_enabled" mapstructure:"sandbox_enabled"`
 	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
 	DockerEnabled bool `json:"docker_enabled" mapstructure:"docker_enabled"`
+	// SandboxEnabled is deprecated: sandbox (network filter) is always enabled.
+	// The field is kept for backward compatibility with existing config files.
+	SandboxEnabled bool `json:"sandbox_enabled,omitempty" mapstructure:"sandbox_enabled,omitempty"`
 }
 
 // WebhookConfig represents webhook configuration

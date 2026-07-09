@@ -12,8 +12,8 @@ import (
 
 // StockRepository manages the creation and counting of stock sessions.
 type StockRepository interface {
-	CreateStockSession(ctx context.Context, sandbox, dind bool) error
-	CountStockSessions(ctx context.Context, sandbox, dind bool) (int, error)
+	CreateStockSession(ctx context.Context, dind bool) error
+	CountStockSessions(ctx context.Context, dind bool) (int, error)
 	// PurgeStockSessions deletes all pre-warmed stock sessions. Called on
 	// worker startup so that stale sessions (e.g. built from an old image)
 	// are replaced with fresh ones.
@@ -21,9 +21,10 @@ type StockRepository interface {
 }
 
 // StockRequirements captures the pod capabilities a stock session is prepared for.
+// Note: Sandbox (network filter) and scia sidecar are now always enabled and cannot be opted out.
+// Only DinD (Docker-in-Docker) remains configurable.
 type StockRequirements struct {
-	Sandbox bool
-	DinD    bool
+	DinD bool
 }
 
 // StockPool captures one stock inventory target for a capability set.
@@ -149,7 +150,7 @@ func (w *Worker) replenishStock(ctx context.Context) {
 }
 
 func (w *Worker) replenishPool(ctx context.Context, pool StockPool) {
-	count, err := w.repo.CountStockSessions(ctx, pool.Requirements.Sandbox, pool.Requirements.DinD)
+	count, err := w.repo.CountStockSessions(ctx, pool.Requirements.DinD)
 	if err != nil {
 		log.Printf("[STOCK_INVENTORY] Failed to count stock sessions: %v", err)
 		return
@@ -160,11 +161,11 @@ func (w *Worker) replenishPool(ctx context.Context, pool StockPool) {
 		return
 	}
 
-	log.Printf("[STOCK_INVENTORY] Replenishing %d stock session(s) (current: %d, target: %d, sandbox=%t, dind=%t)",
-		needed, count, pool.TargetCount, pool.Requirements.Sandbox, pool.Requirements.DinD)
+	log.Printf("[STOCK_INVENTORY] Replenishing %d stock session(s) (current: %d, target: %d, dind=%t)",
+		needed, count, pool.TargetCount, pool.Requirements.DinD)
 
 	for i := 0; i < needed; i++ {
-		if err := w.repo.CreateStockSession(ctx, pool.Requirements.Sandbox, pool.Requirements.DinD); err != nil {
+		if err := w.repo.CreateStockSession(ctx, pool.Requirements.DinD); err != nil {
 			log.Printf("[STOCK_INVENTORY] Failed to create stock session: %v", err)
 		}
 	}
