@@ -49,12 +49,12 @@ type SessionListCacheRepository interface {
 	// are not served after structural changes.
 	InvalidateSessionListCache(ctx context.Context, namespace string) error
 
-	// UpdateSessionInCache updates a single session in all cache entries for the namespace.
-	// This is more efficient than invalidating the entire cache when only one session changes.
-	// If the session doesn't exist in a cache entry, it's appended. If it exists, it's updated.
-	UpdateSessionInCache(ctx context.Context, namespace string, session CachedSessionDTO) error
+	// UpdateSessionInCache updates a single session in cache entries where it is
+	// already present. It must not append the session to caches keyed by a
+	// different label selector, because that would pollute filtered list results.
+	UpdateSessionInCache(ctx context.Context, namespace string, session CachedSessionDTO, ttl time.Duration) error
 
 	// DeleteSessionFromCache removes a single session from all cache entries for the namespace.
 	// This is more efficient than invalidating the entire cache when only one session is deleted.
-	DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string) error
+	DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string, ttl time.Duration) error
 }

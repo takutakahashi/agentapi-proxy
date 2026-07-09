@@ -233,11 +233,11 @@ func (r *RedisStatusRepository) InvalidateSessionListCache(ctx context.Context, 
 	return nil
 }
 
-// UpdateSessionInCache updates a single session in all cache entries for the namespace.
-// This is more efficient than invalidating the entire cache when only one session changes.
-// It finds all cache keys for the namespace, deserializes each, updates or appends the session,
-// and re-serializes with a refreshed TTL.
-func (r *RedisStatusRepository) UpdateSessionInCache(ctx context.Context, namespace string, session portrepos.CachedSessionDTO) error {
+// UpdateSessionInCache updates a single session in cache entries where it is
+// already present. It intentionally does not append sessions: cache keys are
+// scoped by label selector, and repository code cannot determine whether a new
+// session belongs in each filtered cache entry.
+func (r *RedisStatusRepository) UpdateSessionInCache(ctx context.Context, namespace string, session portrepos.CachedSessionDTO, ttl time.Duration) error {
 	pattern := sessionListCachePattern(namespace)
 	var cursor uint64
 	var updatedCount int
@@ -265,7 +265,6 @@ func (r *RedisStatusRepository) UpdateSessionInCache(ctx context.Context, namesp
 				continue
 			}
 
-			// Find and update or append the session
 			found := false
 			for i, s := range sessions {
 				if s.ID == session.ID {
@@ -275,7 +274,7 @@ func (r *RedisStatusRepository) UpdateSessionInCache(ctx context.Context, namesp
 				}
 			}
 			if !found {
-				sessions = append(sessions, session)
+				continue
 			}
 
 			// Re-serialize and set with refreshed TTL
@@ -285,8 +284,7 @@ func (r *RedisStatusRepository) UpdateSessionInCache(ctx context.Context, namesp
 				continue
 			}
 
-			// Use the same TTL as defined in kubernetes_session_manager.go
-			if err := r.client.Set(ctx, key, newPayload, 60*time.Second).Err(); err != nil {
+			if err := r.client.Set(ctx, key, newPayload, ttl).Err(); err != nil {
 				log.Printf("[REDIS_CACHE] Failed to set updated cache %s: %v", key, err)
 				continue
 			}
@@ -307,7 +305,7 @@ func (r *RedisStatusRepository) UpdateSessionInCache(ctx context.Context, namesp
 
 // DeleteSessionFromCache removes a single session from all cache entries for the namespace.
 // This is more efficient than invalidating the entire cache when only one session is deleted.
-func (r *RedisStatusRepository) DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string) error {
+func (r *RedisStatusRepository) DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string, ttl time.Duration) error {
 	pattern := sessionListCachePattern(namespace)
 	var cursor uint64
 	var updatedCount int
@@ -355,7 +353,7 @@ func (r *RedisStatusRepository) DeleteSessionFromCache(ctx context.Context, name
 				continue
 			}
 
-			if err := r.client.Set(ctx, key, newPayload, 60*time.Second).Err(); err != nil {
+			if err := r.client.Set(ctx, key, newPayload, ttl).Err(); err != nil {
 				log.Printf("[REDIS_CACHE] Failed to set updated cache %s: %v", key, err)
 				continue
 			}

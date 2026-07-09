@@ -486,12 +486,11 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 		log.Printf("[K8S_SESSION] Failed to log session start: %v", err)
 	}
 
-	// Update session-list cache with the new session instead of invalidating.
-	// This is more efficient and preserves cache hits for other sessions.
+	// Invalidate session-list cache so the new session appears immediately in
+	// every label-selector scoped list it belongs to.
 	if m.sessionListCacheRepo != nil {
-		sessionDTO := sessionsToCacheDTOs([]entities.Session{session})[0]
-		if err := m.sessionListCacheRepo.UpdateSessionInCache(context.Background(), m.namespace, sessionDTO); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to update session list cache after create: %v", err)
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after create: %v", err)
 		}
 	}
 
@@ -946,12 +945,11 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		log.Printf("[K8S_SESSION] Failed to log session start for stock session %s: %v", stockID, err)
 	}
 
-	// Update session-list cache with the adopted session instead of invalidating.
-	// This is more efficient and preserves cache hits for other sessions.
+	// Invalidate session-list cache so the adopted stock session appears
+	// immediately in every label-selector scoped list it belongs to.
 	if m.sessionListCacheRepo != nil {
-		sessionDTO := sessionsToCacheDTOs([]entities.Session{session})[0]
-		if err := m.sessionListCacheRepo.UpdateSessionInCache(context.Background(), m.namespace, sessionDTO); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to update session list cache after stock adopt: %v", err)
+		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache after stock adopt: %v", err)
 		}
 	}
 
@@ -1560,7 +1558,7 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 	if m.sessionListCacheRepo != nil {
 		invCtx, invCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer invCancel()
-		if err := m.sessionListCacheRepo.DeleteSessionFromCache(invCtx, m.namespace, id); err != nil {
+		if err := m.sessionListCacheRepo.DeleteSessionFromCache(invCtx, m.namespace, id, redisSessionListCacheTTL); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to delete session from cache: %v", err)
 		}
 	}
