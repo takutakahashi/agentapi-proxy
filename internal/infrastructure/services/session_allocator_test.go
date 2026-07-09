@@ -335,6 +335,14 @@ func (r *recordingSessionListCacheRepo) InvalidateSessionListCache(context.Conte
 	return nil
 }
 
+func (r *recordingSessionListCacheRepo) UpdateSessionInCache(context.Context, string, portrepos.CachedSessionDTO, time.Duration) error {
+	return nil
+}
+
+func (r *recordingSessionListCacheRepo) DeleteSessionFromCache(context.Context, string, string, time.Duration) error {
+	return nil
+}
+
 type subscribeHookNotifier struct {
 	onSubscribe func()
 }
