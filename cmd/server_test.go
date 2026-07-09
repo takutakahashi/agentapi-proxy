@@ -106,15 +106,14 @@ func TestServerCmdFlags(t *testing.T) {
 func TestBuildStockInventoryPoolsAllowsZeroTargetCount(t *testing.T) {
 	pools := buildStockInventoryPools(config.StockInventoryWorkerConfig{
 		Pools: []config.StockInventoryPoolConfig{
-			{TargetCount: 0, SandboxEnabled: false, DockerEnabled: true},
+			{TargetCount: 0, DockerEnabled: true},
 		},
 	}, 2)
 
 	require.Equal(t, []stock_inventory.StockPool{{
 		TargetCount: 0,
 		Requirements: stock_inventory.StockRequirements{
-			Sandbox: false,
-			DinD:    true,
+			DinD: true,
 		},
 	}}, pools)
 }

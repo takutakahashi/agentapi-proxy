@@ -438,9 +438,9 @@ func TestLoadConfigWithStockInventoryPoolsEnv(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 
 	_ = os.Setenv("AGENTAPI_STOCK_INVENTORY_WORKER_POOLS", `[
-		{"targetCount":1,"sandboxEnabled":false,"dockerEnabled":false},
-		{"targetCount":2,"sandboxEnabled":true,"dockerEnabled":false},
-		{"target_count":3,"sandbox_enabled":false,"docker_enabled":true}
+		{"targetCount":1,"dockerEnabled":false},
+		{"targetCount":2,"dockerEnabled":false},
+		{"target_count":3,"docker_enabled":true}
 	]`)
 
 	loadedConfig, err := LoadConfig("")
@@ -449,9 +449,9 @@ func TestLoadConfigWithStockInventoryPoolsEnv(t *testing.T) {
 	}
 
 	assert.Equal(t, []StockInventoryPoolConfig{
-		{TargetCount: 1, SandboxEnabled: false, DockerEnabled: false},
-		{TargetCount: 2, SandboxEnabled: true, DockerEnabled: false},
-		{TargetCount: 3, SandboxEnabled: false, DockerEnabled: true},
+		{TargetCount: 1, DockerEnabled: false},
+		{TargetCount: 2, DockerEnabled: false},
+		{TargetCount: 3, DockerEnabled: true},
 	}, loadedConfig.StockInventoryWorker.Pools)
 }
 

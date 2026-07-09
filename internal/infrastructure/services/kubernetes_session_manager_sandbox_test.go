@@ -199,7 +199,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	assert.True(t, foundNFA)
 }
 
-func TestBuildDeploymentSkipsSciaSidecarWhenAuthProxyDisabled(t *testing.T) {
+func TestBuildDeploymentAddsSciaSidecarWhenAuthProxyDisabled(t *testing.T) {
 	manager := newSciaSidecarTestManager(true)
 	session := newSciaSidecarTestSession(t, manager)
 	req := &entities.RunServerRequest{
@@ -211,17 +211,17 @@ func TestBuildDeploymentSkipsSciaSidecarWhenAuthProxyDisabled(t *testing.T) {
 	assert.NoError(t, err)
 	podSpec := deployment.Spec.Template.Spec
 
-	assert.NotContains(t, containerNames(podSpec.InitContainers), "scia-config")
-	assert.NotContains(t, containerNames(podSpec.Containers), "scia-proxy")
-	assert.NotContains(t, volumeNames(podSpec.Volumes), "scia-config")
-	assert.NotContains(t, volumeNames(podSpec.Volumes), "scia-mitm-ca")
-	assert.NotContains(t, volumeMountNames(podSpec.Containers[0].VolumeMounts), "scia-mitm-ca")
+	assert.Contains(t, containerNames(podSpec.InitContainers), "scia-config")
+	assert.Contains(t, containerNames(podSpec.Containers), "scia-proxy")
+	assert.Contains(t, volumeNames(podSpec.Volumes), "scia-config")
+	assert.Contains(t, volumeNames(podSpec.Volumes), "scia-mitm-ca")
+	assert.Contains(t, volumeMountNames(podSpec.Containers[0].VolumeMounts), "scia-mitm-ca")
 
 	env := map[string]string{"AGENTAPI_USER_ID": "takutakahashi"}
 	manager.injectSciaProxyEnv(env, req)
-	assert.Empty(t, env["HTTP_PROXY"])
-	assert.Empty(t, env["HTTPS_PROXY"])
-	assert.Empty(t, env["SSL_CERT_FILE"])
+	assert.Equal(t, "http://127.0.0.1:18081", env["HTTP_PROXY"])
+	assert.Equal(t, "http://127.0.0.1:18081", env["HTTPS_PROXY"])
+	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
 }
 
 func TestBuildDeploymentAddsSciaSidecarWhenAuthProxyEnabled(t *testing.T) {
