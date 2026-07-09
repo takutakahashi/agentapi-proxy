@@ -1430,7 +1430,7 @@ func applyConfigDefaults(config *Config) {
 		config.Scia.SessionSidecarConfigImage = "busybox:1.36"
 	}
 	if config.Scia.SessionSidecarPort == 0 {
-		config.Scia.SessionSidecarPort = 18081
+		config.Scia.SessionSidecarPort = 8080 // Default proxy port for agent -> scia -> nfa chain
 	}
 	if len(config.Scia.GoogleHosts) == 0 {
 		config.Scia.GoogleHosts = []string{"www.googleapis.com"}
