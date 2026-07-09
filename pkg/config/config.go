@@ -1545,7 +1545,6 @@ func DefaultConfig() *Config {
 			Enabled:        false,
 			CheckInterval:  "30s",
 			TargetCount:    2,
-			SandboxEnabled: false,
 			DockerEnabled:  false,
 			LeaseDuration:  "15s",
 			RenewDeadline:  "10s",
