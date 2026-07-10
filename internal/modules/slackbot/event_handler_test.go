@@ -225,6 +225,39 @@ func TestResolveBotByChannel_Success(t *testing.T) {
 	assert.Equal(t, "bot-uuid-1", resolved.ID())
 }
 
+func TestResolveBotByChannel_TeamScopedBotSuccess(t *testing.T) {
+	const (
+		namespace  = "test-ns"
+		secretName = "bot-token-secret"
+		channelID  = "C0AJABWPZMF"
+	)
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: namespace},
+			Data:       map[string][]byte{"bot-token": []byte("xoxb-test-token")},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-slack-channel-cache", Namespace: namespace},
+			Data:       map[string]string{channelID: "dev-alerts"},
+		},
+	)
+	resolver := NewSlackChannelResolver(fakeClient, namespace)
+
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot("bot-team-uuid", "Team Dev Alerts Bot", "user-1")
+	bot.SetScope(entities.ScopeTeam)
+	bot.SetTeamID("myorg/backend")
+	bot.SetAllowedChannelNames([]string{"dev-alerts"})
+	repo.bots["bot-team-uuid"] = bot
+
+	handler := NewSlackBotEventHandler(repo, &mockSessionManager{}, secretName, "bot-token", resolver, "", false, nil, nil)
+
+	resolved := handler.resolveBotByChannel(context.Background(), channelID)
+	require.NotNil(t, resolved, "should resolve team-scoped bot by channel name")
+	assert.Equal(t, "bot-team-uuid", resolved.ID())
+}
+
 func TestResolveBotByChannel_NoMatch(t *testing.T) {
 	const (
 		namespace  = "test-ns"

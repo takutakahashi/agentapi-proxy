@@ -235,6 +235,24 @@ func TestSlackBot_IsChannelNameAllowed(t *testing.T) {
 			channelName:         "backend-alerts",
 			want:                true,
 		},
+		{
+			name:                "hash-prefixed channel name matches",
+			allowedChannelNames: []string{"#dev-alerts"},
+			channelName:         "dev-alerts",
+			want:                true,
+		},
+		{
+			name:                "case-insensitive match",
+			allowedChannelNames: []string{"Dev-Alerts"},
+			channelName:         "dev-alerts",
+			want:                true,
+		},
+		{
+			name:                "slack channel ID match",
+			allowedChannelNames: []string{"C0AJABWPZMF"},
+			channelName:         "C0AJABWPZMF",
+			want:                true,
+		},
 	}
 
 	for _, tt := range tests {

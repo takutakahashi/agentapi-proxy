@@ -52,7 +52,17 @@ func (r *mockSlackBotRepository) List(_ context.Context, filter portrepos.SlackB
 		return nil, errors.New("storage error")
 	}
 	var result []*entities.SlackBot
+	listAll := filter.UserID == "" &&
+		len(filter.TeamIDs) == 0 &&
+		filter.Status == "" &&
+		filter.Scope == "" &&
+		filter.TeamID == ""
 	for _, bot := range r.bots {
+		if listAll {
+			result = append(result, bot)
+			continue
+		}
+
 		accessible := false
 		if bot.Scope() == entities.ScopeTeam && len(filter.TeamIDs) > 0 {
 			for _, teamID := range filter.TeamIDs {
@@ -227,6 +237,7 @@ func TestCreateSlackBot_WithAllOptionalFields(t *testing.T) {
 			ReuseMessageTemplate:   "Continue: {{.event.text}}",
 			Tags:                   map[string]string{"team": "engineering"},
 			Environment:            map[string]string{"LOG_LEVEL": "debug"},
+			SessionProfileID:       "profile-slack",
 		},
 	}, "user-1")
 
@@ -247,6 +258,7 @@ func TestCreateSlackBot_WithAllOptionalFields(t *testing.T) {
 	assert.Equal(t, "Continue: {{.event.text}}", resp.SessionConfig.ReuseMessageTemplate)
 	assert.Equal(t, "engineering", resp.SessionConfig.Tags["team"])
 	assert.Equal(t, "debug", resp.SessionConfig.Environment["LOG_LEVEL"])
+	assert.Equal(t, "profile-slack", resp.SessionConfig.SessionProfileID)
 }
 
 func TestCreateSlackBot_WithTeamScope(t *testing.T) {

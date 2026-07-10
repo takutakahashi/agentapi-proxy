@@ -300,17 +300,29 @@ func (s *SlackBot) IsEventTypeAllowed(eventType string) bool {
 
 // IsChannelNameAllowed returns true if the given channel name matches any of the allowed patterns.
 // Matching is partial (substring): a pattern is considered matched if the channel name contains it.
-// If no patterns are configured, all channels are allowed.
+// If no patterns are configured, all channels are allowed. Channel names are normalized so
+// user-facing values like "#general" and case differences still match Slack's API result.
 func (s *SlackBot) IsChannelNameAllowed(channelName string) bool {
 	if len(s.allowedChannelNames) == 0 {
 		return true
 	}
+	normalizedChannelName := normalizeSlackChannelPattern(channelName)
 	for _, pattern := range s.allowedChannelNames {
-		if strings.Contains(channelName, pattern) {
+		normalizedPattern := normalizeSlackChannelPattern(pattern)
+		if normalizedPattern == "" {
+			continue
+		}
+		if strings.Contains(normalizedChannelName, normalizedPattern) {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeSlackChannelPattern(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "#")
+	return strings.ToLower(value)
 }
 
 // IsUserIDAllowed returns true if the given Slack user ID is allowed.
