@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -52,8 +53,16 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		sig := <-sigCh
+		log.Printf("[PROVISIONER] Received signal %s; cancelling provisioner context", sig)
+		cancel()
+	}()
 
 	srv := provisioner.New(port, settingsFile)
 	errCh := make(chan error, 1)
