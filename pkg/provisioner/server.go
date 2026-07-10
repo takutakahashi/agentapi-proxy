@@ -24,7 +24,7 @@ import (
 // not incur a network download when a provision request arrives.
 // Override with the PROVISIONER_PRE_SCRIPT environment variable.
 const defaultStartupScript = `bun install --global @agentclientprotocol/claude-agent-acp@latest
-npm install --global @zed-industries/codex-acp@latest
+npm install --global @agentclientprotocol/codex-acp@latest
 bun install --global @earendil-works/pi-coding-agent@latest
 npm install --global pi-acp@latest
 mkdir -p "$HOME/.pi/agent/npm"
