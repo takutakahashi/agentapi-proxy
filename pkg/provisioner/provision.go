@@ -62,9 +62,18 @@ var piSettingsPath = "/home/agentapi/.pi/agent/settings.json"
 //  8. Send the initial message if specified in settings
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.SessionSettings) {
+	startedAt := time.Now()
+	s.setPhase("provision:start")
 	log.Printf("[PROVISIONER] Starting provisioning for session %s", settings.Session.ID)
+	defer func() {
+		if ctx.Err() != nil {
+			status, msg, phase, elapsed := s.snapshot()
+			log.Printf("[PROVISIONER] Provisioning stopped because context was cancelled (session=%s, status=%s, message=%q, phase=%q, phase_elapsed=%s, total_elapsed=%s, err=%v)", settings.Session.ID, status, msg, phase, elapsed.Round(time.Millisecond), time.Since(startedAt).Round(time.Millisecond), ctx.Err())
+		}
+	}()
 
 	// ── Step 1: write settings to temp YAML ──────────────────────────────────
+	s.setPhase("provision:write-settings")
 	data, err := sessionsettings.MarshalYAML(settings)
 	if err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("failed to marshal settings: %v", err))
@@ -83,6 +92,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// from the stock inventory or from a freshly created pod.
 	// For non-stock sessions the file already exists (read-only Secret volume
 	// mount), so writeWebhookPayloadFile is a no-op in that case.
+	s.setPhase("provision:write-webhook-payload")
 	if settings.WebhookPayload != "" {
 		writeWebhookPayloadFile(settings.WebhookPayload)
 	}
@@ -100,6 +110,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		NotificationsDir:          "/home/agentapi/notifications",
 		RegisterMarketplaces:      true,
 	}
+	s.setPhase("provision:session-setup")
 	log.Printf("[PROVISIONER] Running session setup")
 	if err := sessionsettings.Setup(opts); err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("setup failed: %v", err))
@@ -108,6 +119,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Session setup complete")
 
 	// ── Step 2.3: docker login for DinD registries ───────────────────────────
+	s.setPhase("provision:post-setup")
 	if settings.Docker != nil && settings.Docker.Enabled {
 		go s.runDockerLogins(ctx, settings.Docker)
 	}
@@ -156,14 +168,17 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 3: load session env file ─────────────────────────────────────────
+	s.setPhase("provision:load-env")
 	envMap := loadEnvFile(sessionEnvFile)
 	log.Printf("[PROVISIONER] Loaded %d env vars from session env file", len(envMap))
 	prepareSciaCABundle(ctx, envMap)
 
 	// ── Step 4: fetch memory from proxy → inject into CLAUDE.md ──────────────
+	s.setPhase("provision:fetch-memory")
 	s.fetchAndInjectMemory(envMap)
 
 	// ── Step 4.5: expose managed instructions and MCP servers to Pi ──────────
+	s.setPhase("provision:write-agent-files")
 	if err := writePiAgentInstructions(claudeMDPath, piAgentInstructionsPath); err != nil {
 		log.Printf("[PROVISIONER] Warning: failed to write Pi AGENTS.md: %v", err)
 	}
@@ -172,6 +187,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 5: cd into cloned repo ───────────────────────────────────────────
+	s.setPhase("provision:chdir")
 	if _, err := os.Stat(workdirRepoPath); err == nil {
 		log.Printf("[PROVISIONER] Changing to repo directory %s", workdirRepoPath)
 		if err := os.Chdir(workdirRepoPath); err != nil {
@@ -184,6 +200,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// Pre-scripts are used for setup tasks such as pre-fetching npm/bun packages.
 	// Failure is non-fatal: a warning is logged and provisioning continues.
 	if settings.Startup.PreScript != "" {
+		s.setPhase("provision:pre-script")
 		log.Printf("[PROVISIONER] Running pre-script")
 		if err := s.runPreScript(ctx, settings.Startup.PreScript, envMap); err != nil {
 			log.Printf("[PROVISIONER] Warning: pre-script failed (continuing): %v", err)
@@ -200,6 +217,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 7: build and start the agent subprocess ──────────────────────────
+	s.setPhase("provision:start-agent")
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
@@ -215,6 +233,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Agent process started (pid %d)", cmd.Process.Pid)
 
 	// ── Step 8: wait for agentapi to be ready ─────────────────────────────────
+	s.setPhase("provision:wait-agentapi-ready")
 	agentapiPort := os.Getenv("AGENTAPI_PORT")
 	if agentapiPort == "" {
 		agentapiPort = "8080"
@@ -237,6 +256,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 
 	// ── Step 9: send initial message ─────────────────────────────────────────
 	if settings.InitialMessage != "" {
+		s.setPhase("provision:send-initial-message")
 		log.Printf("[PROVISIONER] Sending initial message")
 		agentType := settings.Session.AgentType
 		waitSec := 2
@@ -249,6 +269,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 10: mark ready and supervise ────────────────────────────────────
+	s.setPhase("provision:ready")
 	s.setStatus(StatusReady, "")
 
 	// ── Step 11: launch acp-posts subprocess if SlackParams provided ─────────

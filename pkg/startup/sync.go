@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
 )
@@ -450,11 +451,15 @@ const claudeBinPath = "/opt/claude/bin/claude"
 
 // runClaudeCLI executes a claude CLI command with HOME set to outputDir.
 func runClaudeCLI(outputDir string, args ...string) error {
+	startedAt := time.Now()
+	log.Printf("[SYNC] Running claude %s", strings.Join(args, " "))
 	cmd := exec.Command(claudeBinPath, args...)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("HOME=%s", outputDir))
 	if output, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("[SYNC] claude %s failed after %s: %v", strings.Join(args, " "), time.Since(startedAt).Round(time.Millisecond), err)
 		return fmt.Errorf("claude %s failed: %w, output: %s", args[0], err, string(output))
 	}
+	log.Printf("[SYNC] claude %s completed in %s", strings.Join(args, " "), time.Since(startedAt).Round(time.Millisecond))
 	return nil
 }
 

@@ -92,6 +92,8 @@ type Server struct {
 	mu        sync.RWMutex
 	status    Status
 	message   string
+	phase     string
+	phaseTime time.Time
 	serverCtx context.Context // long-lived context for provisioning goroutines
 	reporter  func(Status, string)
 }
@@ -106,6 +108,8 @@ func New(port int, settingsFile string) *Server {
 		port:         port,
 		settingsFile: settingsFile,
 		status:       StatusPending,
+		phase:        "starting",
+		phaseTime:    time.Now(),
 	}
 }
 
@@ -152,7 +156,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// Shutdown when context is cancelled.
 	go func() {
 		<-ctx.Done()
-		log.Printf("[PROVISIONER] Context cancelled, shutting down HTTP server")
+		status, msg, phase, elapsed := s.snapshot()
+		log.Printf("[PROVISIONER] Context cancelled, shutting down HTTP server (status=%s, message=%q, phase=%q, phase_elapsed=%s, err=%v)", status, msg, phase, elapsed.Round(time.Millisecond), ctx.Err())
 		_ = srv.Shutdown(context.Background())
 	}()
 
@@ -203,6 +208,20 @@ func (s *Server) setStatus(st Status, msg string) {
 	if reporter != nil {
 		reporter(st, msg)
 	}
+}
+
+func (s *Server) setPhase(phase string) {
+	s.mu.Lock()
+	s.phase = phase
+	s.phaseTime = time.Now()
+	s.mu.Unlock()
+	log.Printf("[PROVISIONER] Phase changed to %s", phase)
+}
+
+func (s *Server) snapshot() (Status, string, string, time.Duration) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.status, s.message, s.phase, time.Since(s.phaseTime)
 }
 
 // GetStatus returns the current status (used by tests).
