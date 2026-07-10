@@ -37,3 +37,11 @@ type SlackBotRepository interface {
 	// Delete removes a SlackBot by ID
 	Delete(ctx context.Context, id string) error
 }
+
+// SlackBotInternalRepository exposes internal-only SlackBot queries.
+// These methods are for infrastructure workers that must inspect all bots,
+// independent of user/team access filtering.
+type SlackBotInternalRepository interface {
+	// ListAll retrieves all SlackBots without applying access filters.
+	ListAll(ctx context.Context) ([]*entities.SlackBot, error)
+}

@@ -30,6 +30,7 @@ type SlackSocketManager struct {
 	kubeClient      kubernetes.Interface
 	namespace       string
 	repo            repoports.SlackBotRepository
+	internalRepo    repoports.SlackBotInternalRepository
 	eventHandler    *SlackBotEventHandler
 	channelResolver *SlackChannelResolver
 
@@ -82,10 +83,13 @@ func NewSlackSocketManager(
 		cfg.DefaultBotTokenSecretKey = "bot-token"
 	}
 
+	internalRepo, _ := repo.(repoports.SlackBotInternalRepository)
+
 	return &SlackSocketManager{
 		kubeClient:                kubeClient,
 		namespace:                 namespace,
 		repo:                      repo,
+		internalRepo:              internalRepo,
 		eventHandler:              eventHandler,
 		channelResolver:           channelResolver,
 		defaultAppTokenSecretName: cfg.DefaultAppTokenSecretName,
@@ -126,7 +130,11 @@ func (m *SlackSocketManager) Stop() {
 
 // reconcile lists all SlackBots and starts/stops leader elections as needed
 func (m *SlackSocketManager) reconcile(ctx context.Context) {
-	bots, err := m.repo.List(ctx, repoports.SlackBotFilter{})
+	if m.internalRepo == nil {
+		log.Printf("[SOCKET_MANAGER] Internal SlackBot repository is not configured")
+		return
+	}
+	bots, err := m.internalRepo.ListAll(ctx)
 	if err != nil {
 		log.Printf("[SOCKET_MANAGER] Failed to list SlackBots: %v", err)
 		return

@@ -125,17 +125,7 @@ func (r *KubernetesSlackBotRepository) List(ctx context.Context, filter repoport
 	}
 
 	var result []*entities.SlackBot
-	listAll := filter.UserID == "" &&
-		len(filter.TeamIDs) == 0 &&
-		filter.Status == "" &&
-		filter.Scope == "" &&
-		filter.TeamID == ""
 	for _, sb := range slackBots {
-		if listAll {
-			result = append(result, sb)
-			continue
-		}
-
 		// Determine accessibility based on scope:
 		// - Team-scoped bots: accessible if user is a team member OR the creator
 		// - User-scoped bots: accessible if user is the owner
@@ -176,6 +166,18 @@ func (r *KubernetesSlackBotRepository) List(ctx context.Context, filter repoport
 	}
 
 	return result, nil
+}
+
+// ListAll retrieves all SlackBots without applying access filters.
+func (r *KubernetesSlackBotRepository) ListAll(ctx context.Context) ([]*entities.SlackBot, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	slackBots, err := r.loadAllSlackBots(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load slackbots: %w", err)
+	}
+	return slackBots, nil
 }
 
 // Update updates an existing SlackBot
