@@ -414,6 +414,10 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 	if len(cfg.UnsyncedFilePaths()) > 0 && len(req.UnsyncedFilePaths) == 0 {
 		req.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
 	}
+	applyProfileSandboxDefaults(cfg, req)
+}
+
+func applyProfileSandboxDefaults(cfg entities.SessionProfileConfig, req *LaunchRequest) {
 	if cfg.SandboxPolicyID() != "" {
 		if req.Sandbox == nil {
 			req.Sandbox = &entities.SandboxParams{Enabled: true, PolicyID: cfg.SandboxPolicyID()}
@@ -421,5 +425,12 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 			req.Sandbox.Enabled = true
 			req.Sandbox.PolicyID = cfg.SandboxPolicyID()
 		}
+		return
+	}
+	if req.Sandbox == nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: true, CountMode: true}
+	} else if req.Sandbox.PolicyID == "" {
+		req.Sandbox.Enabled = true
+		req.Sandbox.CountMode = true
 	}
 }

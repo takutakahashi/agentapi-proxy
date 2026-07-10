@@ -235,17 +235,10 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			}
 
 			// SandboxPolicyID: apply profile's policy when request does not already specify one.
-			if cfg.SandboxPolicyID() != "" {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				if startReq.Params.Sandbox == nil {
-					startReq.Params.Sandbox = &entities.SandboxParams{Enabled: true, PolicyID: cfg.SandboxPolicyID()}
-				} else if startReq.Params.Sandbox.PolicyID == "" {
-					startReq.Params.Sandbox.Enabled = true
-					startReq.Params.Sandbox.PolicyID = cfg.SandboxPolicyID()
-				}
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
 			}
+			applyProfileSandboxDefaults(cfg, startReq.Params)
 
 			// SessionTTL: apply profile's TTL when request does not already specify one.
 			if cfg.SessionTTL() != "" {
@@ -982,6 +975,27 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 		merged.UnsyncedFilePaths = append([]string(nil), override.UnsyncedFilePaths...)
 	}
 	return &merged
+}
+
+func applyProfileSandboxDefaults(cfg entities.SessionProfileConfig, params *entities.SessionParams) {
+	if params == nil {
+		return
+	}
+	if cfg.SandboxPolicyID() != "" {
+		if params.Sandbox == nil {
+			params.Sandbox = &entities.SandboxParams{Enabled: true, PolicyID: cfg.SandboxPolicyID()}
+		} else if params.Sandbox.PolicyID == "" {
+			params.Sandbox.Enabled = true
+			params.Sandbox.PolicyID = cfg.SandboxPolicyID()
+		}
+		return
+	}
+	if params.Sandbox == nil {
+		params.Sandbox = &entities.SandboxParams{Enabled: true, CountMode: true}
+	} else if params.Sandbox.PolicyID == "" {
+		params.Sandbox.Enabled = true
+		params.Sandbox.CountMode = true
+	}
 }
 
 // SandboxDomainsResponse is the JSON body returned by GET /sessions/:sessionId/sandbox-domains.
