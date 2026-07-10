@@ -6560,6 +6560,10 @@
           "git_sync": {
             "$ref": "#/components/schemas/GitSyncConfigRequest",
             "description": "GitHub sync configuration. If omitted, the existing sync configuration is preserved."
+          },
+          "default_session_profile_id": {
+            "type": "string",
+            "description": "Default session profile ID for this settings scope. Set to empty string to clear."
           }
         }
       },
@@ -6735,6 +6739,10 @@
           "git_sync": {
             "$ref": "#/components/schemas/GitSyncConfigResponse",
             "description": "GitHub sync configuration (token redacted). Null if not configured."
+          },
+          "default_session_profile_id": {
+            "type": "string",
+            "description": "Default session profile ID for this settings scope."
           },
           "created_at": {
             "type": "string",
@@ -7549,7 +7557,7 @@
         },
         "sandbox_policy_id": {
           "type": "string",
-          "description": "Reference to a SandboxPolicy resource. When set, the sandbox sidecar is enabled automatically with this policy applied."
+          "description": "Reference to a SandboxPolicy resource. When set, the sandbox sidecar is enabled automatically with this policy applied. params.sandbox may also be used to enable sandbox without a policy."
         },
         "session_ttl": {
           "type": "string",

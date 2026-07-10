@@ -235,17 +235,10 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			}
 
 			// SandboxPolicyID: apply profile's policy when request does not already specify one.
-			if cfg.SandboxPolicyID() != "" {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				if startReq.Params.Sandbox == nil {
-					startReq.Params.Sandbox = &entities.SandboxParams{Enabled: true, PolicyID: cfg.SandboxPolicyID()}
-				} else if startReq.Params.Sandbox.PolicyID == "" {
-					startReq.Params.Sandbox.Enabled = true
-					startReq.Params.Sandbox.PolicyID = cfg.SandboxPolicyID()
-				}
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
 			}
+			applyProfileSandboxDefaults(cfg, startReq.Params)
 
 			// SessionTTL: apply profile's TTL when request does not already specify one.
 			if cfg.SessionTTL() != "" {
@@ -984,6 +977,27 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	return &merged
 }
 
+func applyProfileSandboxDefaults(cfg entities.SessionProfileConfig, params *entities.SessionParams) {
+	if params == nil {
+		return
+	}
+	if cfg.SandboxPolicyID() != "" {
+		if params.Sandbox == nil {
+			params.Sandbox = &entities.SandboxParams{Enabled: true, PolicyID: cfg.SandboxPolicyID()}
+		} else if params.Sandbox.PolicyID == "" {
+			params.Sandbox.Enabled = true
+			params.Sandbox.PolicyID = cfg.SandboxPolicyID()
+		}
+		return
+	}
+	if params.Sandbox == nil {
+		params.Sandbox = &entities.SandboxParams{Enabled: true, CountMode: true}
+	} else if params.Sandbox.PolicyID == "" {
+		params.Sandbox.Enabled = true
+		params.Sandbox.CountMode = true
+	}
+}
+
 // SandboxDomainsResponse is the JSON body returned by GET /sessions/:sessionId/sandbox-domains.
 type SandboxDomainsResponse struct {
 	Allowed []string `json:"allowed"`
@@ -1041,7 +1055,8 @@ func (c *SessionController) GetSessionSandboxDomains(ctx echo.Context) error {
 
 // resolveSessionProfile returns the session profile to apply for a session creation request.
 // If profileID is set, it fetches that profile directly.
-// Otherwise it searches for a selector_tags match before falling back to the default profile.
+// Otherwise it searches for a selector_tags match before falling back to the settings default,
+// then the legacy profile-level default flag.
 func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID, userID string, scope entities.ResourceScope, teamID string, tags map[string]string) *entities.SessionProfile {
 	if profileID != "" {
 		profile, err := c.sessionProfileRepo.Get(ctx, profileID)
@@ -1068,6 +1083,10 @@ func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID
 		log.Printf("[SESSION] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)
 		return profile
 	}
+	if profile := c.resolveSettingsDefaultSessionProfile(ctx, userID, scope, teamID, profiles); profile != nil {
+		log.Printf("[SESSION] Applying settings default session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)
+		return profile
+	}
 	for _, p := range profiles {
 		if p.IsDefault() {
 			log.Printf("[SESSION] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), userID)
@@ -1075,6 +1094,32 @@ func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID
 		}
 	}
 	return nil
+}
+
+func (c *SessionController) resolveSettingsDefaultSessionProfile(ctx context.Context, userID string, scope entities.ResourceScope, teamID string, profiles []*entities.SessionProfile) *entities.SessionProfile {
+	if c.settingsRepo == nil {
+		return nil
+	}
+	settingsName := userID
+	if scope == entities.ScopeTeam && teamID != "" {
+		settingsName = teamID
+	}
+	settings, err := c.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil || settings == nil || settings.DefaultSessionProfileID() == "" {
+		return nil
+	}
+	defaultID := settings.DefaultSessionProfileID()
+	for _, p := range profiles {
+		if p.ID() == defaultID {
+			return p
+		}
+	}
+	profile, err := c.sessionProfileRepo.Get(ctx, defaultID)
+	if err != nil {
+		log.Printf("[SESSION] Warning: could not resolve default_session_profile_id %q from settings %q: %v", defaultID, settingsName, err)
+		return nil
+	}
+	return profile
 }
 
 func selectSessionProfileByTags(profiles []*entities.SessionProfile, tags map[string]string) *entities.SessionProfile {
