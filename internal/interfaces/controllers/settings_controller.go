@@ -109,6 +109,7 @@ type UpdateSettingsRequest struct {
 	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`     // Active notification channels (e.g. ["web", "slack"])
 	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"` // External session managers (External Session Manager registrations)
 	GitSync                 *GitSyncConfigRequest            `json:"git_sync,omitempty"`                  // GitHub sync configuration
+	DefaultSessionProfileID *string                          `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
 }
 
 // ExternalSessionManagerRequest represents a single external session manager registration
@@ -159,6 +160,7 @@ type SettingsResponse struct {
 	NotificationChannels    []string                         `json:"notification_channels,omitempty"`     // Active notification channels
 	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"` // Registered external session managers
 	GitSync                 *GitSyncConfigResponse           `json:"git_sync,omitempty"`                  // GitHub sync configuration (token redacted)
+	DefaultSessionProfileID string                           `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
 	CreatedAt               string                           `json:"created_at"`
 	UpdatedAt               string                           `json:"updated_at"`
 }
@@ -538,6 +540,10 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		})
 	}
 
+	if req.DefaultSessionProfileID != nil {
+		settings.SetDefaultSessionProfileID(*req.DefaultSessionProfileID)
+	}
+
 	// Determine and set auth_mode
 	authMode := c.determineAuthMode(settings, req.AuthMode)
 	settings.SetAuthMode(authMode)
@@ -827,6 +833,7 @@ func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings
 	resp.PreferredTeamID = settings.PreferredTeamID()
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
+	resp.DefaultSessionProfileID = settings.DefaultSessionProfileID()
 
 	if gs := settings.GitSync(); gs != nil {
 		resp.GitSync = &GitSyncConfigResponse{

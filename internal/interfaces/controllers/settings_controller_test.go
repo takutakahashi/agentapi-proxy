@@ -252,6 +252,38 @@ func TestUpdateSettings_PreserveExistingCredentials(t *testing.T) {
 	}
 }
 
+func TestUpdateSettings_DefaultSessionProfileID(t *testing.T) {
+	repo := newMockSettingsRepository()
+	h := NewSettingsController(repo, nil, "", "")
+
+	defaultProfileID := "profile-1"
+	body, err := json.Marshal(UpdateSettingsRequest{
+		DefaultSessionProfileID: &defaultProfileID,
+	})
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/settings/test-user", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("name")
+	c.SetParamValues("test-user")
+	c.Set("internal_user", createTestUser("test-user", true))
+
+	err = h.UpdateSettings(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	savedSettings, err := repo.FindByName(context.Background(), "test-user")
+	require.NoError(t, err)
+	assert.Equal(t, "profile-1", savedSettings.DefaultSessionProfileID())
+
+	var resp SettingsResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "profile-1", resp.DefaultSessionProfileID)
+}
+
 func TestMergeSecrets(t *testing.T) {
 	ctrl := &SettingsController{}
 

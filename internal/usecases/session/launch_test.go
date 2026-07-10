@@ -134,6 +134,57 @@ func TestLaunchAppliesDefaultProfileDocker(t *testing.T) {
 	}
 }
 
+func TestLaunchAppliesDefaultProfileSandbox(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{
+		Sandbox: &entities.SandboxParams{Enabled: true, CountMode: true},
+	})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req == nil || sessionManager.req.Sandbox == nil || !sessionManager.req.Sandbox.Enabled || !sessionManager.req.Sandbox.CountMode {
+		t.Fatalf("expected profile sandbox params to be applied, got %#v", sessionManager.req)
+	}
+}
+
+func TestLaunchAppliesDefaultProfileSandboxPolicyID(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetSandboxPolicyID("policy-1")
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req == nil || sessionManager.req.Sandbox == nil {
+		t.Fatalf("expected profile sandbox policy params, got %#v", sessionManager.req)
+	}
+	if !sessionManager.req.Sandbox.Enabled || sessionManager.req.Sandbox.PolicyID != "policy-1" {
+		t.Fatalf("expected sandbox policy to enable sandbox, got %#v", sessionManager.req.Sandbox)
+	}
+}
+
 func TestLaunchAppliesDefaultProfileUnsyncedFilePaths(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
