@@ -8,7 +8,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -105,6 +108,51 @@ func TestBuildDeploymentIgnoresMissingSessionPodTemplateFile(t *testing.T) {
 	assert.Equal(t, "agentapi-proxy-session", deployment.Spec.Template.Spec.ServiceAccountName)
 }
 
+func TestCountStockSessionsPurgesStalePodTemplateHash(t *testing.T) {
+	templateFile := filepath.Join(t.TempDir(), "session-pod-template.yaml")
+	if err := os.WriteFile(templateFile, []byte(`
+metadata:
+  annotations:
+    example.com/template: "old"
+`), 0o600); err != nil {
+		t.Fatalf("failed to write pod template: %v", err)
+	}
+
+	manager := newPodTemplateTestManager(templateFile)
+	manager.client = fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}})
+	ctx := context.Background()
+
+	oldHash, err := manager.currentStockPodTemplateHash(ctx, false)
+	assert.NoError(t, err)
+
+	if err := os.WriteFile(templateFile, []byte(`
+metadata:
+  annotations:
+    example.com/template: "new"
+`), 0o600); err != nil {
+		t.Fatalf("failed to update pod template: %v", err)
+	}
+	newHash, err := manager.currentStockPodTemplateHash(ctx, false)
+	assert.NoError(t, err)
+	assert.NotEqual(t, oldHash, newHash)
+
+	staleService := stockServiceForPodTemplateTest("stale-stock", oldHash)
+	currentService := stockServiceForPodTemplateTest("current-stock", newHash)
+	_, err = manager.client.CoreV1().Services("test-ns").Create(ctx, staleService, metav1.CreateOptions{})
+	assert.NoError(t, err)
+	_, err = manager.client.CoreV1().Services("test-ns").Create(ctx, currentService, metav1.CreateOptions{})
+	assert.NoError(t, err)
+
+	count, err := manager.CountStockSessions(ctx, false)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	_, err = manager.client.CoreV1().Services("test-ns").Get(ctx, staleService.Name, metav1.GetOptions{})
+	assert.True(t, k8serrors.IsNotFound(err), "stale stock service should be purged")
+	_, err = manager.client.CoreV1().Services("test-ns").Get(ctx, currentService.Name, metav1.GetOptions{})
+	assert.NoError(t, err)
+}
+
 func newPodTemplateTestManager(templateFile string) *KubernetesSessionManager {
 	return &KubernetesSessionManager{
 		config: &config.Config{},
@@ -135,4 +183,22 @@ func newPodTemplateTestSession() *KubernetesSession {
 		nil,
 		nil,
 	)
+}
+
+func stockServiceForPodTemplateTest(sessionID string, podTemplateHash string) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "agentapi-session-" + sessionID + "-svc",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app.kubernetes.io/name":            "agentapi-session",
+				"app.kubernetes.io/managed-by":      "agentapi-proxy",
+				"agentapi.proxy/session-id":         sessionID,
+				"agentapi.proxy/stock":              "true",
+				"agentapi.proxy/capability-sandbox": "true",
+				"agentapi.proxy/capability-dind":    "false",
+				stockPodTemplateHashLabel:           podTemplateHash,
+			},
+		},
+	}
 }
