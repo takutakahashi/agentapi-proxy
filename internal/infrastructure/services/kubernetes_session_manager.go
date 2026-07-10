@@ -5011,7 +5011,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
 				"--auto-approve",
 				"--",
-				"npx", "@agentclientprotocol/codex-acp",
+				"npx", "-y", "@agentclientprotocol/codex-acp",
 			},
 		}
 	case "pi-ollama":

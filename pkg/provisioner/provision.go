@@ -945,7 +945,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"--port", agentapiPort,
 			"--auto-approve",
 			"--",
-			"npx", "@agentclientprotocol/codex-acp",
+			"npx", "-y", "@agentclientprotocol/codex-acp",
 		}
 
 	case "pi-ollama":
