@@ -48,6 +48,7 @@ func TestBuildStartupConfigPiOllama(t *testing.T) {
 	assert.Equal(t, []string{"acp-server", "--", "npx", "-y", "pi-acp"}, config.Args)
 	assert.NotEmpty(t, config.PreScript)
 	assert.Contains(t, config.PreScript, "node_modules/pi-ollama-cloud")
+	assert.Contains(t, config.PreScript, "node_modules/pi-mcp-adapter")
 	assert.Contains(t, config.PreScript, "skipping install")
 }
 

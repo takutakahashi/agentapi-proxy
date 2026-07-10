@@ -2791,67 +2791,67 @@ func buildSciaSidecarConfigYAML(namespace, userNamespace, credentialID, todoistC
 	var b strings.Builder
 	b.WriteString("server:\n")
 	b.WriteString("  mode: proxy\n")
-	b.WriteString(fmt.Sprintf("  listen: %q\n", fmt.Sprintf("0.0.0.0:%d", port)))
+	fmt.Fprintf(&b, "  listen: %q\n", fmt.Sprintf("0.0.0.0:%d", port))
 	if useNFA {
 		b.WriteString("  backendProxy:\n")
-		b.WriteString(fmt.Sprintf("    url: %q\n", fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort)))
+		fmt.Fprintf(&b, "    url: %q\n", fmt.Sprintf("http://127.0.0.1:%d", nfaProxyPort))
 	}
 	b.WriteString("  integrations:\n")
 	b.WriteString("    google:\n")
 	b.WriteString("      hosts:\n")
 	for _, host := range hosts {
-		b.WriteString(fmt.Sprintf("        - %q\n", host))
+		fmt.Fprintf(&b, "        - %q\n", host)
 	}
 	b.WriteString("    todoist:\n")
 	b.WriteString("      hosts:\n")
 	for _, host := range todoistHosts {
-		b.WriteString(fmt.Sprintf("        - %q\n", host))
+		fmt.Fprintf(&b, "        - %q\n", host)
 	}
 	b.WriteString("  mitm:\n")
-	b.WriteString(fmt.Sprintf("    caCertPath: %q\n", sciaCAPath))
+	fmt.Fprintf(&b, "    caCertPath: %q\n", sciaCAPath)
 	b.WriteString("    caKeyPath: \"/etc/scia/mitm/ca.key\"\n")
 	b.WriteString("  secrets:\n")
 	b.WriteString("    mode: kubernetes\n")
 	b.WriteString("    kubernetes:\n")
-	b.WriteString(fmt.Sprintf("      namespace: %q\n", namespace))
+	fmt.Fprintf(&b, "      namespace: %q\n", namespace)
 	b.WriteString("      dynamicUsers: true\n")
 	b.WriteString("      dynamicUserSecretNamePrefix: \"scia-oauth-\"\n")
 	b.WriteString("credentials:\n")
-	b.WriteString(fmt.Sprintf("  - id: %q\n", credentialID))
+	fmt.Fprintf(&b, "  - id: %q\n", credentialID)
 	b.WriteString("    type: google-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
-	b.WriteString(fmt.Sprintf("      user: %q\n", userNamespace))
-	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, "google", userToken)))
-	b.WriteString(fmt.Sprintf("  - id: %q\n", todoistCredentialID))
+	fmt.Fprintf(&b, "      user: %q\n", userNamespace)
+	fmt.Fprintf(&b, "      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, "google", userToken))
+	fmt.Fprintf(&b, "  - id: %q\n", todoistCredentialID)
 	b.WriteString("    type: todoist-oauth-refresh-token\n")
 	b.WriteString("    params:\n")
-	b.WriteString(fmt.Sprintf("      user: %q\n", userNamespace))
-	b.WriteString(fmt.Sprintf("      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, "todoist", userToken)))
+	fmt.Fprintf(&b, "      user: %q\n", userNamespace)
+	fmt.Fprintf(&b, "      token_broker_url: %q\n", sciaTokenBrokerURL(namespace, "todoist", userToken))
 	b.WriteString("rules:\n")
 	b.WriteString("  - name: inject-google-oauth-token\n")
 	b.WriteString("    hosts:\n")
 	for _, host := range hosts {
-		b.WriteString(fmt.Sprintf("      - %q\n", host))
+		fmt.Fprintf(&b, "      - %q\n", host)
 	}
 	b.WriteString("    paths:\n")
 	for _, path := range paths {
-		b.WriteString(fmt.Sprintf("      - %q\n", path))
+		fmt.Fprintf(&b, "      - %q\n", path)
 	}
 	b.WriteString("    action: allow\n")
 	b.WriteString("    credentials:\n")
-	b.WriteString(fmt.Sprintf("      - %q\n", credentialID))
+	fmt.Fprintf(&b, "      - %q\n", credentialID)
 	b.WriteString("  - name: inject-todoist-oauth-token\n")
 	b.WriteString("    hosts:\n")
 	for _, host := range todoistHosts {
-		b.WriteString(fmt.Sprintf("      - %q\n", host))
+		fmt.Fprintf(&b, "      - %q\n", host)
 	}
 	b.WriteString("    paths:\n")
 	for _, path := range todoistPaths {
-		b.WriteString(fmt.Sprintf("      - %q\n", path))
+		fmt.Fprintf(&b, "      - %q\n", path)
 	}
 	b.WriteString("    action: allow\n")
 	b.WriteString("    credentials:\n")
-	b.WriteString(fmt.Sprintf("      - %q\n", todoistCredentialID))
+	fmt.Fprintf(&b, "      - %q\n", todoistCredentialID)
 	return b.String()
 }
 
@@ -3513,8 +3513,8 @@ const (
 	piOllamaCommandPath      = "/home/agentapi/.session/pi-ollama-pi"
 	piOllamaInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
 test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
-if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
-  echo "pi-ollama-cloud already installed, skipping install"
+if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ] && [ -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
+  echo "Pi extensions already installed, skipping install"
 else
   NPM_SHIM_DIR="$(mktemp -d)"
   trap 'rm -rf "$NPM_SHIM_DIR"' EXIT
@@ -3537,7 +3537,12 @@ test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":
 exec bun add --cwd "$prefix" $packages
 EOF
   chmod +x "$NPM_SHIM_DIR/npm"
-  PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
+  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
+    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
+  fi
+  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
+    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-mcp-adapter
+  fi
   rm -rf "$NPM_SHIM_DIR"
   trap - EXIT
 fi`

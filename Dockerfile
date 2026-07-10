@@ -186,9 +186,10 @@ RUN bun install -g @openai/codex && \
     sudo tee /opt/claude/bin/codex > /dev/null && \
     sudo chmod +x /opt/claude/bin/codex
 
-# Install Pi, pi-acp, and the Ollama Cloud provider extension for pi-ollama sessions.
+# Install Pi, pi-acp, and Pi extensions for pi-ollama sessions.
 # pi-acp starts `pi --mode rpc`, and pi-ollama-cloud connects directly to
-# https://ollama.com/v1 using OLLAMA_API_KEY/OLLAMA_API_KEYS.
+# https://ollama.com/v1 using OLLAMA_API_KEY/OLLAMA_API_KEYS. pi-mcp-adapter
+# lets Pi read MCP servers from ~/.config/mcp/mcp.json.
 RUN bun install -g @earendil-works/pi-coding-agent && \
     npm install --global pi-acp@latest && \
     mkdir -p /home/agentapi/.pi/agent/npm && \
@@ -214,6 +215,7 @@ RUN bun install -g @earendil-works/pi-coding-agent && \
       > /tmp/pi-npm-shim/npm && \
     chmod +x /tmp/pi-npm-shim/npm && \
     PATH="/tmp/pi-npm-shim:$PATH" pi install npm:pi-ollama-cloud && \
+    PATH="/tmp/pi-npm-shim:$PATH" pi install npm:pi-mcp-adapter && \
     rm -rf /tmp/pi-npm-shim
 
 # Install Cursor Agent CLI and place stable wrappers in /opt/cursor/bin.
