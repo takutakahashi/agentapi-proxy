@@ -97,6 +97,17 @@ func (r *mockSlackBotRepository) List(_ context.Context, filter portrepos.SlackB
 	return result, nil
 }
 
+func (r *mockSlackBotRepository) ListAll(_ context.Context) ([]*entities.SlackBot, error) {
+	if r.errOn == "ListAll" {
+		return nil, errors.New("storage error")
+	}
+	result := make([]*entities.SlackBot, 0, len(r.bots))
+	for _, bot := range r.bots {
+		result = append(result, bot)
+	}
+	return result, nil
+}
+
 func (r *mockSlackBotRepository) Update(_ context.Context, bot *entities.SlackBot) error {
 	if r.errOn == "Update" {
 		return errors.New("storage error")

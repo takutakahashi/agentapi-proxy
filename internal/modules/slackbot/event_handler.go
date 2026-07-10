@@ -493,7 +493,12 @@ func (h *SlackBotEventHandler) resolveBotByChannel(ctx context.Context, channelI
 	if h.channelResolver == nil || h.defaultBotTokenSecretName == "" {
 		return nil
 	}
-	allBots, err := h.repo.List(ctx, repositories.SlackBotFilter{})
+	internalRepo, ok := h.repo.(repositories.SlackBotInternalRepository)
+	if !ok {
+		log.Printf("[SLACKBOT] resolveBotByChannel: internal slackbot repository is not configured")
+		return nil
+	}
+	allBots, err := internalRepo.ListAll(ctx)
 	if err != nil {
 		log.Printf("[SLACKBOT] resolveBotByChannel: failed to list bots: %v", err)
 		return nil

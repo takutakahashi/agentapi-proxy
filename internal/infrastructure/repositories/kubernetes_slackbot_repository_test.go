@@ -11,7 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestKubernetesSlackBotRepository_ListEmptyFilterReturnsAllBots(t *testing.T) {
+func TestKubernetesSlackBotRepository_ListAllReturnsAllBots(t *testing.T) {
 	ctx := context.Background()
 	repo := NewKubernetesSlackBotRepository(fake.NewSimpleClientset(), "test-ns")
 
@@ -23,7 +23,7 @@ func TestKubernetesSlackBotRepository_ListEmptyFilterReturnsAllBots(t *testing.T
 	teamBot.SetTeamID("myorg/backend")
 	require.NoError(t, repo.Create(ctx, teamBot))
 
-	bots, err := repo.List(ctx, repoports.SlackBotFilter{})
+	bots, err := repo.ListAll(ctx)
 	require.NoError(t, err)
 	assert.Len(t, bots, 2)
 	assert.ElementsMatch(t, []string{"user-bot", "team-bot"}, slackBotIDs(bots))
