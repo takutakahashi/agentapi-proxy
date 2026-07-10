@@ -125,7 +125,17 @@ func (r *KubernetesSlackBotRepository) List(ctx context.Context, filter repoport
 	}
 
 	var result []*entities.SlackBot
+	listAll := filter.UserID == "" &&
+		len(filter.TeamIDs) == 0 &&
+		filter.Status == "" &&
+		filter.Scope == "" &&
+		filter.TeamID == ""
 	for _, sb := range slackBots {
+		if listAll {
+			result = append(result, sb)
+			continue
+		}
+
 		// Determine accessibility based on scope:
 		// - Team-scoped bots: accessible if user is a team member OR the creator
 		// - User-scoped bots: accessible if user is the owner
@@ -459,6 +469,9 @@ func (r *KubernetesSlackBotRepository) sessionConfigJSONToSlackBotEntity(scj *we
 	if scj.Params != nil {
 		sc.SetParams(scj.Params)
 	}
+	if scj.SessionProfileID != "" {
+		sc.SetSessionProfileID(scj.SessionProfileID)
+	}
 	return sc
 }
 
@@ -473,6 +486,7 @@ func (r *KubernetesSlackBotRepository) sessionConfigSlackBotEntityToJSON(sc *ent
 		ReuseSession:           sc.ReuseSession(),
 		MountPayload:           sc.MountPayload(),
 		MemoryKey:              sc.MemoryKey(),
+		SessionProfileID:       sc.SessionProfileID(),
 	}
 	if params := sc.Params(); params != nil {
 		scj.Params = params

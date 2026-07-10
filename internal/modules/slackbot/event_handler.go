@@ -167,34 +167,24 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			log.Printf("[SLACKBOT] User ID not allowed: id=%s, user=%s", botID, event.User)
 			return nil
 		}
-		// Channel name filter: resolve channel ID → name, then apply partial-match filter
+		// Channel filter: allow either Slack channel ID or resolved channel name.
 		if len(bot.AllowedChannelNames()) > 0 && h.channelResolver != nil {
-			secretName := bot.BotTokenSecretName()
-			if secretName == "" {
-				secretName = h.defaultBotTokenSecretName
-			}
-			secretKey := bot.BotTokenSecretKey()
-			if secretKey == "" {
-				secretKey = h.defaultBotTokenSecretKey
-			}
-			botToken, tokenErr := h.channelResolver.GetBotToken(ctx, secretName, secretKey)
+			allowed, tokenErr := h.isBotAllowedInChannel(ctx, bot, event.Channel)
 			if tokenErr != nil {
-				log.Printf("[SLACKBOT] Failed to get bot token for channel filter: id=%s, err=%v", botID, tokenErr)
-				return fmt.Errorf("failed to get bot token: %w", tokenErr)
-			}
-			channelName, resolveErr := h.channelResolver.ResolveChannelName(ctx, event.Channel, botToken)
-			if resolveErr != nil {
-				log.Printf("[SLACKBOT] Failed to resolve channel name: id=%s, channel=%s, err=%v", botID, event.Channel, resolveErr)
+				log.Printf("[SLACKBOT] Failed to check channel filter: id=%s, channel=%s, err=%v", botID, event.Channel, tokenErr)
 				threadTS := event.ThreadTs
 				if threadTS == "" {
 					threadTS = event.Ts
 				}
-				h.postErrorToSlack(ctx, event.Channel, threadTS,
-					":warning: チャンネル情報を取得できませんでした。しばらく待ってから再度お試しください。",
-					botToken)
-				return fmt.Errorf("failed to resolve channel name for channel %s: %w", event.Channel, resolveErr)
-			} else if !bot.IsChannelNameAllowed(channelName) {
-				log.Printf("[SLACKBOT] Channel name not allowed: id=%s, channel=%s, name=%s", botID, event.Channel, channelName)
+				if botToken, err := h.getBotToken(ctx, bot); err == nil {
+					h.postErrorToSlack(ctx, event.Channel, threadTS,
+						":warning: チャンネル情報を取得できませんでした。しばらく待ってから再度お試しください。",
+						botToken)
+				}
+				return fmt.Errorf("failed to resolve channel name for channel %s: %w", event.Channel, tokenErr)
+			}
+			if !allowed {
+				log.Printf("[SLACKBOT] Channel not allowed: id=%s, channel=%s", botID, event.Channel)
 				return nil
 			}
 		}
@@ -503,6 +493,33 @@ func (h *SlackBotEventHandler) resolveBotByChannel(ctx context.Context, channelI
 	if h.channelResolver == nil || h.defaultBotTokenSecretName == "" {
 		return nil
 	}
+	allBots, err := h.repo.List(ctx, repositories.SlackBotFilter{})
+	if err != nil {
+		log.Printf("[SLACKBOT] resolveBotByChannel: failed to list bots: %v", err)
+		return nil
+	}
+
+	candidates := make([]*entities.SlackBot, 0, len(allBots))
+	for _, candidate := range allBots {
+		// Only match bots that rely on the default bot token
+		if candidate.BotTokenSecretName() != "" {
+			continue
+		}
+		// Must have at least one AllowedChannelName to be identifiable via the default endpoint
+		if len(candidate.AllowedChannelNames()) == 0 {
+			continue
+		}
+		candidates = append(candidates, candidate)
+		if candidate.IsChannelNameAllowed(channelID) {
+			log.Printf("[SLACKBOT] resolveBotByChannel: matched bot id=%s for channel=%s by channel ID",
+				candidate.ID(), channelID)
+			return candidate
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
 	botToken, err := h.channelResolver.GetBotToken(
 		ctx,
 		h.defaultBotTokenSecretName,
@@ -517,20 +534,7 @@ func (h *SlackBotEventHandler) resolveBotByChannel(ctx context.Context, channelI
 		log.Printf("[SLACKBOT] resolveBotByChannel: failed to resolve channel name: channelID=%s, err=%v", channelID, err)
 		return nil
 	}
-	allBots, err := h.repo.List(ctx, repositories.SlackBotFilter{})
-	if err != nil {
-		log.Printf("[SLACKBOT] resolveBotByChannel: failed to list bots: %v", err)
-		return nil
-	}
-	for _, candidate := range allBots {
-		// Only match bots that rely on the default bot token
-		if candidate.BotTokenSecretName() != "" {
-			continue
-		}
-		// Must have at least one AllowedChannelName to be identifiable via the default endpoint
-		if len(candidate.AllowedChannelNames()) == 0 {
-			continue
-		}
+	for _, candidate := range candidates {
 		if candidate.IsChannelNameAllowed(channelName) {
 			log.Printf("[SLACKBOT] resolveBotByChannel: matched bot id=%s for channel=%s (name=%s)",
 				candidate.ID(), channelID, channelName)
@@ -538,6 +542,22 @@ func (h *SlackBotEventHandler) resolveBotByChannel(ctx context.Context, channelI
 		}
 	}
 	return nil
+}
+
+func (h *SlackBotEventHandler) isBotAllowedInChannel(ctx context.Context, bot *entities.SlackBot, channelID string) (bool, error) {
+	if bot.IsChannelNameAllowed(channelID) {
+		return true, nil
+	}
+
+	botToken, err := h.getBotToken(ctx, bot)
+	if err != nil {
+		return false, err
+	}
+	channelName, err := h.channelResolver.ResolveChannelName(ctx, channelID, botToken)
+	if err != nil {
+		return false, err
+	}
+	return bot.IsChannelNameAllowed(channelName), nil
 }
 
 // buildMessage constructs the message to send to the session

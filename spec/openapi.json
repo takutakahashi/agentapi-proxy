@@ -7249,6 +7249,11 @@
           },
           "description": "Environment variables to set for created sessions (Go template values supported)"
         },
+        "session_profile_id": {
+          "type": "string",
+          "description": "Optional SessionProfile ID to use as the base configuration for sessions created by this SlackBot.",
+          "example": "profile-default"
+        },
         "params": {
           "$ref": "#/components/schemas/SlackBotSessionParams"
         }
