@@ -581,11 +581,11 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		}
 	case "codex-acp":
 		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.
-		// https://github.com/zed-industries/codex-acp
-		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx @zed-industries/codex-acp]")
+		// https://github.com/agentclientprotocol/codex-acp
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y @agentclientprotocol/codex-acp]")
 		return sessionsettings.StartupConfig{
 			Command: []string{"agentapi-proxy"},
-			Args:    []string{"acp-server", "--", "npx", "@zed-industries/codex-acp"},
+			Args:    []string{"acp-server", "--", "npx", "-y", "@agentclientprotocol/codex-acp"},
 		}
 	case "pi-ollama":
 		// acp-server bridges pi-acp to Pi, which is configured with the pi-ollama-cloud provider.
