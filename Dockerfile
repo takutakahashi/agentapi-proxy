@@ -26,6 +26,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
 
 # Download agentapi release binary instead of rebuilding it from source.
+FROM node:22.19.0-bookworm-slim AS node-runtime
+
 FROM alpine:3.22 AS agentapi-downloader
 
 ARG TARGETOS=linux
@@ -54,7 +56,10 @@ RUN apk add --no-cache ca-certificates curl && \
 # Runtime stage
 FROM ubuntu:24.04
 
-# Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
+# Copy the official Node.js runtime, including npm and npx.
+COPY --from=node-runtime /usr/local/ /usr/local/
+
+# Install essential OS packages and GitHub CLI.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables && \
@@ -162,35 +167,20 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     echo 'export PATH="/home/agentapi/.cargo/bin:$PATH"' >> /home/agentapi/.bashrc && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
-# Create npm, npx, bun, bunx, and node wrapper scripts that use claude x with BUN_BE_BUN=1
-RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
-    sudo chmod +x /usr/local/bin/npm && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
-    sudo chmod +x /usr/local/bin/npx && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
-    sudo chmod +x /usr/local/bin/bun && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
-    sudo chmod +x /usr/local/bin/bunx && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/node > /dev/null && \
-    sudo chmod +x /usr/local/bin/node
+# Keep npm global packages in the non-root user home directory.
+ENV NPM_CONFIG_PREFIX=/home/agentapi/.npm-global
 
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI and /opt/cursor/bin for Cursor CLI)
-ENV PATH="/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
+ENV PATH="/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.npm-global/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:$PATH"
 
-# Install codex CLI and place a wrapper in /opt/claude/bin (first in PATH).
-# The bun-installed codex script uses "#!/usr/bin/env node", but /usr/local/bin/node is a
-# claude wrapper. The wrapper here explicitly invokes bun so codex works reliably in the proxy.
-# Uses the absolute path to the codex script so it works even when HOME is overridden.
-RUN bun install -g @openai/codex && \
-    printf '#!/bin/bash\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
-    sudo tee /opt/claude/bin/codex > /dev/null && \
-    sudo chmod +x /opt/claude/bin/codex
+# Install codex CLI with npm. Its node shebang resolves to the real Node.js executable.
+RUN npm install --global @openai/codex
 
 # Install Pi, pi-acp, and Pi extensions for pi-ollama sessions.
 # pi-acp starts `pi --mode rpc`, and pi-ollama-cloud connects directly to
 # https://ollama.com/v1 using OLLAMA_API_KEY/OLLAMA_API_KEYS. pi-mcp-adapter
 # lets Pi read MCP servers from ~/.config/mcp/mcp.json.
-RUN bun install -g @earendil-works/pi-coding-agent && \
+RUN npm install --global @earendil-works/pi-coding-agent && \
     npm install --global pi-acp@latest && \
     mkdir -p /home/agentapi/.pi/agent/npm && \
     printf '{"private":true,"dependencies":{}}\n' > /home/agentapi/.pi/agent/npm/package.json && \
@@ -211,7 +201,7 @@ RUN bun install -g @earendil-works/pi-coding-agent && \
       'if [ -z "$prefix" ]; then prefix="$PWD"; fi' \
       'mkdir -p "$prefix"' \
       'test -f "$prefix/package.json" || printf "%s\n" "{\"private\":true,\"dependencies\":{}}" > "$prefix/package.json"' \
-      'exec bun add --cwd "$prefix" $packages' \
+      'exec /usr/local/bin/npm install --prefix "$prefix" --legacy-peer-deps $packages' \
       > /tmp/pi-npm-shim/npm && \
     chmod +x /tmp/pi-npm-shim/npm && \
     PATH="/tmp/pi-npm-shim:$PATH" pi install npm:pi-ollama-cloud && \
@@ -232,24 +222,12 @@ RUN curl https://cursor.com/install -fsS | bash && \
     ln -sf /opt/cursor/bin/agent /home/agentapi/.local/bin/agent && \
     ln -sf /opt/cursor/bin/cursor-agent /home/agentapi/.local/bin/cursor-agent
 
-# Install claude-agent-sdk CLI and create arch-agnostic symlink
-RUN bun install -g @anthropic-ai/claude-agent-sdk && \
-    ARCH=$(dpkg --print-architecture) && \
-    case "$ARCH" in \
-      amd64) SDK_ARCH="linux-x64" ;; \
-      arm64) SDK_ARCH="linux-arm64" ;; \
-      *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
-    esac && \
-    ln -sf "/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk-${SDK_ARCH}/claude" \
-           /home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
-
 # Set default CLAUDE_MD_PATH for Docker environment
 ENV CLAUDE_MD_PATH=/tmp/config/CLAUDE.md
 
-# Set CLAUDE_CODE_EXECUTABLE_PATH to use claude-agent-sdk native binary (via arch-agnostic symlink)
-ENV CLAUDE_CODE_EXECUTABLE_PATH=/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
-# Set CLAUDE_CODE_EXECUTABLE for @agentclientprotocol/claude-agent-acp (reads this env var, not CLAUDE_CODE_EXECUTABLE_PATH)
-ENV CLAUDE_CODE_EXECUTABLE=/home/agentapi/.bun/install/global/node_modules/@anthropic-ai/claude-agent-sdk/claude
+# Use the installed Claude Code CLI directly for the SDK and ACP adapter.
+ENV CLAUDE_CODE_EXECUTABLE_PATH=/opt/claude/bin/claude
+ENV CLAUDE_CODE_EXECUTABLE=/opt/claude/bin/claude
 
 # Copy the frequently changing proxy binary after the expensive runtime toolchain
 # setup so ordinary app changes do not invalidate those cached layers.
