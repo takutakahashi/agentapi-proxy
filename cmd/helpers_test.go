@@ -34,6 +34,13 @@ func TestHelpersInit(t *testing.T) {
 	assert.Contains(t, commandNames, "compile-settings")
 }
 
+func TestBuildStartupConfigClaudeACP(t *testing.T) {
+	config := buildStartupConfig("claude-acp")
+
+	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
+	assert.Equal(t, []string{"acp-server", "--", "npx", "-y", "@agentclientprotocol/claude-agent-acp"}, config.Args)
+}
+
 func TestBuildStartupConfigCursor(t *testing.T) {
 	config := buildStartupConfig("cursor")
 

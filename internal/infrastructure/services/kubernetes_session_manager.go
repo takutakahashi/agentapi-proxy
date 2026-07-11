@@ -3534,7 +3534,7 @@ done
 if [ -z "$prefix" ]; then prefix="$PWD"; fi
 mkdir -p "$prefix"
 test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
-exec bun add --cwd "$prefix" $packages
+exec /usr/bin/npm install --prefix "$prefix" --legacy-peer-deps $packages
 EOF
   chmod +x "$NPM_SHIM_DIR/npm"
   if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
@@ -4989,7 +4989,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
 				"--",
-				"bunx", "@agentclientprotocol/claude-agent-acp",
+				"npx", "-y", "@agentclientprotocol/claude-agent-acp",
 			},
 		}
 		// Bypass permission prompts for claude-acp sessions so tool calls

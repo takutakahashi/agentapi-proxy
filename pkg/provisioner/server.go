@@ -23,9 +23,9 @@ import (
 // It pre-fetches the latest ACP package binaries so that agent startup does
 // not incur a network download when a provision request arrives.
 // Override with the PROVISIONER_PRE_SCRIPT environment variable.
-const defaultStartupScript = `bun install --global @agentclientprotocol/claude-agent-acp@latest
+const defaultStartupScript = `npm install --global @agentclientprotocol/claude-agent-acp@latest
 npm install --global @agentclientprotocol/codex-acp@latest
-bun install --global @earendil-works/pi-coding-agent@latest
+npm install --global @earendil-works/pi-coding-agent@latest
 npm install --global pi-acp@latest
 mkdir -p "$HOME/.pi/agent/npm"
 test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
@@ -50,7 +50,7 @@ done
 if [ -z "$prefix" ]; then prefix="$PWD"; fi
 mkdir -p "$prefix"
 test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
-exec bun add --cwd "$prefix" $packages
+exec /usr/bin/npm install --prefix "$prefix" --legacy-peer-deps $packages
 EOF
   chmod +x "$NPM_SHIM_DIR/npm"
   if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
