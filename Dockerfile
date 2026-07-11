@@ -26,6 +26,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
 
 # Download agentapi release binary instead of rebuilding it from source.
+FROM node:22.19.0-bookworm-slim AS node-runtime
+
 FROM alpine:3.22 AS agentapi-downloader
 
 ARG TARGETOS=linux
@@ -54,10 +56,13 @@ RUN apk add --no-cache ca-certificates curl && \
 # Runtime stage
 FROM ubuntu:24.04
 
-# Install essential packages, including the real Node.js and npm executables.
+# Copy the official Node.js runtime, including npm and npx.
+COPY --from=node-runtime /usr/local/ /usr/local/
+
+# Install essential OS packages and GitHub CLI.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables nodejs npm && \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
