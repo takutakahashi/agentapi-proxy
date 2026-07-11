@@ -34,6 +34,13 @@ func TestHelpersInit(t *testing.T) {
 	assert.Contains(t, commandNames, "compile-settings")
 }
 
+func TestBuildStartupConfigClaudeLegacy(t *testing.T) {
+	config := buildStartupConfig("claude-legacy")
+
+	assert.Equal(t, []string{"agentapi", "server"}, config.Command)
+	assert.Equal(t, []string{"--allowed-hosts", "*", "--allowed-origins", "*"}, config.Args)
+}
+
 func TestBuildStartupConfigClaudeACP(t *testing.T) {
 	config := buildStartupConfig("claude-acp")
 

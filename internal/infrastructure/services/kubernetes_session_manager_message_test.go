@@ -240,6 +240,7 @@ func TestSupportedAgentTypeOrDefault(t *testing.T) {
 		want      string
 	}{
 		{name: "default", agentType: "", want: ""},
+		{name: "claude legacy", agentType: "claude-legacy", want: "claude-legacy"},
 		{name: "claude acp", agentType: "claude-acp", want: "claude-acp"},
 		{name: "codex acp", agentType: "codex-acp", want: "codex-acp"},
 		{name: "pi ollama", agentType: "pi-ollama", want: "pi-ollama"},

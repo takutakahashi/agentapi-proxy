@@ -37,6 +37,23 @@ func TestWriteWebhookPayloadFile_WritesWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestBuildAgentCommandClaudeLegacy(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+	t.Setenv("CLAUDE_ARGS", "--dangerously-skip-permissions")
+
+	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "claude-legacy"},
+	}, nil)
+
+	if cmd != "agentapi" {
+		t.Fatalf("command = %q, want agentapi", cmd)
+	}
+	want := []string{"server", "--allowed-hosts", "*", "--allowed-origins", "*", "--port", "9000", "--", "sh", "-c", "claude --dangerously-skip-permissions"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestBuildAgentCommandClaudeACP(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
 

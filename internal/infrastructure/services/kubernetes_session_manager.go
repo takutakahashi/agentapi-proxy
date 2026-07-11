@@ -1820,7 +1820,7 @@ func isACPAgentType(agentType string) bool {
 
 func supportedAgentTypeOrDefault(agentType string) string {
 	switch agentType {
-	case "claude-acp", "codex-acp", "pi-ollama", "cursor":
+	case "claude-legacy", "claude-acp", "codex-acp", "pi-ollama", "cursor":
 		return agentType
 	default:
 		return ""
