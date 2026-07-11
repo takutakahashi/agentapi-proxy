@@ -3534,7 +3534,7 @@ done
 if [ -z "$prefix" ]; then prefix="$PWD"; fi
 mkdir -p "$prefix"
 test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
-exec /usr/bin/npm install --prefix "$prefix" --legacy-peer-deps $packages
+exec /usr/local/bin/npm install --prefix "$prefix" --legacy-peer-deps $packages
 EOF
   chmod +x "$NPM_SHIM_DIR/npm"
   if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then

@@ -201,7 +201,7 @@ RUN npm install --global @earendil-works/pi-coding-agent && \
       'if [ -z "$prefix" ]; then prefix="$PWD"; fi' \
       'mkdir -p "$prefix"' \
       'test -f "$prefix/package.json" || printf "%s\n" "{\"private\":true,\"dependencies\":{}}" > "$prefix/package.json"' \
-      'exec /usr/bin/npm install --prefix "$prefix" --legacy-peer-deps $packages' \
+      'exec /usr/local/bin/npm install --prefix "$prefix" --legacy-peer-deps $packages' \
       > /tmp/pi-npm-shim/npm && \
     chmod +x /tmp/pi-npm-shim/npm && \
     PATH="/tmp/pi-npm-shim:$PATH" pi install npm:pi-ollama-cloud && \
