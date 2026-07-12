@@ -2288,6 +2288,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 					Containers:     containers,
 					Volumes:        volumes,
 					NodeSelector:   m.k8sConfig.NodeSelector,
+					Affinity:       preferredNodeAffinity(m.k8sConfig.PreferredNodeSelector),
 					Tolerations:    tolerations,
 				},
 			},
@@ -2297,6 +2298,31 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		return nil, err
 	}
 	return deployment, nil
+}
+
+func preferredNodeAffinity(selector map[string]string) *corev1.Affinity {
+	if len(selector) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(selector))
+	for key := range selector {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	requirements := make([]corev1.NodeSelectorRequirement, 0, len(keys))
+	for _, key := range keys {
+		requirements = append(requirements, corev1.NodeSelectorRequirement{
+			Key: key, Operator: corev1.NodeSelectorOpIn, Values: []string{selector[key]},
+		})
+	}
+	return &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: requirements,
+			},
+		}},
+	}}
 }
 
 func (m *KubernetesSessionManager) applySessionPodTemplateFile(template *corev1.PodTemplateSpec) error {

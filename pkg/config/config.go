@@ -327,6 +327,8 @@ type KubernetesSessionConfig struct {
 	// NodeSelector is a selector which must be true for the pod to fit on a node
 	// Example: {"disktype": "ssd", "kubernetes.io/arch": "amd64"}
 	NodeSelector map[string]string `json:"node_selector,omitempty" mapstructure:"node_selector" yaml:"node_selector"`
+	// PreferredNodeSelector is a soft node scheduling preference.
+	PreferredNodeSelector map[string]string `json:"preferred_node_selector,omitempty" mapstructure:"preferred_node_selector" yaml:"preferred_node_selector"`
 	// Tolerations are tolerations for session pods to schedule onto nodes with matching taints
 	Tolerations []Toleration `json:"tolerations,omitempty" mapstructure:"tolerations" yaml:"tolerations"`
 
@@ -1711,8 +1713,9 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 // K8sSessionConfigOverride represents kubernetes session configuration overrides from external file
 type K8sSessionConfigOverride struct {
 	KubernetesSession *struct {
-		NodeSelector map[string]string `json:"node_selector,omitempty" yaml:"node_selector"`
-		Tolerations  []Toleration      `json:"tolerations,omitempty" yaml:"tolerations"`
+		NodeSelector          map[string]string `json:"node_selector,omitempty" yaml:"node_selector"`
+		PreferredNodeSelector map[string]string `json:"preferred_node_selector,omitempty" yaml:"preferred_node_selector"`
+		Tolerations           []Toleration      `json:"tolerations,omitempty" yaml:"tolerations"`
 	} `json:"kubernetes_session,omitempty" yaml:"kubernetes_session"`
 }
 
@@ -1748,6 +1751,10 @@ func loadK8sSessionConfigFromFile(config *Config, filename string) error {
 		if k8sOverride.KubernetesSession.NodeSelector != nil {
 			config.KubernetesSession.NodeSelector = k8sOverride.KubernetesSession.NodeSelector
 			log.Printf("[CONFIG] Applied kubernetes session node_selector: %v", config.KubernetesSession.NodeSelector)
+		}
+		if k8sOverride.KubernetesSession.PreferredNodeSelector != nil {
+			config.KubernetesSession.PreferredNodeSelector = k8sOverride.KubernetesSession.PreferredNodeSelector
+			log.Printf("[CONFIG] Applied kubernetes session preferred_node_selector: %v", config.KubernetesSession.PreferredNodeSelector)
 		}
 		if k8sOverride.KubernetesSession.Tolerations != nil {
 			config.KubernetesSession.Tolerations = k8sOverride.KubernetesSession.Tolerations

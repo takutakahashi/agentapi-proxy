@@ -1,4 +1,4 @@
-{{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
+{{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.preferredNodeSelector .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,6 +11,12 @@ data:
       {{- if .Values.kubernetesSession.nodeSelector }}
       node_selector:
         {{- range $key, $value := .Values.kubernetesSession.nodeSelector }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.kubernetesSession.preferredNodeSelector }}
+      preferred_node_selector:
+        {{- range $key, $value := .Values.kubernetesSession.preferredNodeSelector }}
         {{ $key }}: {{ $value | quote }}
         {{- end }}
       {{- end }}

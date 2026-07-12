@@ -561,6 +561,11 @@ kubernetesSession:
   #   kubernetes.io/arch: amd64
   nodeSelector: {}
 
+  # Soft preference; pods fall back to other nodes when none match.
+  # preferredNodeSelector:
+  #   node-pool: agent
+  preferredNodeSelector: {}
+
   # Tolerations for session pods
   # Example:
   # tolerations:
