@@ -2257,6 +2257,11 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		podAnnotations["prometheus.io/path"] = "/metrics"
 	}
 
+	affinity, err := sessionAffinity(m.k8sConfig.Affinity)
+	if err != nil {
+		return nil, err
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            session.DeploymentName(),
@@ -2288,6 +2293,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 					Containers:     containers,
 					Volumes:        volumes,
 					NodeSelector:   m.k8sConfig.NodeSelector,
+					Affinity:       affinity,
 					Tolerations:    tolerations,
 				},
 			},
@@ -2297,6 +2303,21 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		return nil, err
 	}
 	return deployment, nil
+}
+
+func sessionAffinity(value map[string]interface{}) (*corev1.Affinity, error) {
+	if len(value) == 0 {
+		return nil, nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal session affinity: %w", err)
+	}
+	var affinity corev1.Affinity
+	if err := json.Unmarshal(data, &affinity); err != nil {
+		return nil, fmt.Errorf("failed to parse session affinity: %w", err)
+	}
+	return &affinity, nil
 }
 
 func (m *KubernetesSessionManager) applySessionPodTemplateFile(template *corev1.PodTemplateSpec) error {
