@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -348,6 +349,7 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 // If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
+	applySandboxDefaults(req)
 
 	// Attempt to adopt a stock session matching the requested pod capabilities
 	// before creating a new one.
@@ -513,7 +515,7 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 	// Stock sessions have no owner; the minimal request holds pod capabilities only.
 	// Sandbox is always enabled; only DinD is configurable.
 	minimalReq := &entities.RunServerRequest{
-		Sandbox: &entities.SandboxParams{Enabled: true},
+		Sandbox: stockSandboxParams(),
 	}
 	if dind {
 		minimalReq.Docker = &entities.DockerParams{Enabled: true}
@@ -824,6 +826,16 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	m.mutex.Unlock()
 
 	log.Printf("[K8S_SESSION] Adopting stock session %s in namespace %s", stockID, m.namespace)
+
+	effectiveSandbox := m.resolveSandboxParams(ctx, req)
+	if err := applySandboxPolicyToProvisioner(ctx, stockSvc, effectiveSandbox); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup stock session after sandbox policy error: %v", delErr)
+		}
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to apply sandbox policy to stock session: %w", err)
+	}
 
 	// Check whether the stock already has a PVC; if not, we leave it as EmptyDir.
 	_, pvcErr := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Get(ctx, pvcName, metav1.GetOptions{})
@@ -2568,6 +2580,71 @@ func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req
 		effective.CountMode = true
 	}
 	return effective
+}
+
+func stockSandboxParams() *entities.SandboxParams {
+	return &entities.SandboxParams{Enabled: true, CountMode: true}
+}
+
+func applySandboxDefaults(req *entities.RunServerRequest) {
+	if req.Sandbox == nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: true, CountMode: true}
+		return
+	}
+	req.Sandbox.Enabled = true
+	if req.Sandbox.PolicyID == "" && len(req.Sandbox.AllowedDomains) == 0 && len(req.Sandbox.DeniedDomains) == 0 {
+		req.Sandbox.CountMode = true
+	}
+}
+
+func applySandboxPolicyToProvisioner(ctx context.Context, stockSvc *corev1.Service, sandbox *entities.SandboxParams) error {
+	body, err := json.Marshal(struct {
+		Allowed   []string `json:"allowed,omitempty"`
+		Denied    []string `json:"denied,omitempty"`
+		CountMode bool     `json:"count_mode,omitempty"`
+	}{
+		Allowed:   sandbox.AllowedDomains,
+		Denied:    sandbox.DeniedDomains,
+		CountMode: sandbox.CountMode,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal sandbox policy: %w", err)
+	}
+
+	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/sandbox-policy", stockSvc.Name, stockSvc.Namespace, ProvisionerPort)
+	client := &http.Client{Timeout: 2 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		if err := postSandboxPolicy(ctx, client, url, body); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return lastErr
+}
+
+func postSandboxPolicy(ctx context.Context, client *http.Client, url string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create sandbox policy request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("post sandbox policy: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("post sandbox policy returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
 }
 
 // buildSandboxContainers returns the init containers (iptables rule generation
