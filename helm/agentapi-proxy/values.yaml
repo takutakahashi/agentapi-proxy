@@ -260,16 +260,25 @@ github:
     # 例: https://github.company.com/api/v3
     apiUrl: ""
   # GitHub App 認証設定
+  #
+  # セキュリティ: ここで設定した GitHub App 資格情報（App ID / Installation ID /
+  # private key PEM / repositoryRestriction）は agentapi-proxy の Deployment だけに
+  # 渡され、セッション Pod には一切マウント・注入されません。
+  # GitHub App 認証を使う場合、proxy はサーバサイドで短命な installation token を
+  # 発行し、各セッション Pod には GITHUB_TOKEN としてその token のみを渡します。
   app:
     # GitHub App ID (必須)
     # GitHub App設定画面の "App ID" に表示される数値
     id: ""
-    # GitHub App Installation ID (必須)
+    # GitHub App Installation ID (任意)
     # 組織にインストール後のURLから取得: /settings/installations/12345678 -> 12345678
+    # 未指定の場合、proxy が対象リポジトリから自動解決します。
     installationId: ""
     # GitHub App installation token を対象リポジトリに限定する場合は true
+    # (proxy がサーバサイドでトークンを発行する際に適用されます)
     repositoryRestriction: false
     # GitHub App の秘密鍵（PEM形式）を含む Secret (必須)
+    # この PEM は proxy Deployment のみにマウントされ、セッション Pod には渡りません。
     # kubectl create secret generic github-app-private-key --from-file=private-key=/path/to/app.private-key.pem
     privateKey:
       # Secret 名
@@ -600,8 +609,12 @@ kubernetesSession:
   #           readOnly: true
 
   # GitHub authentication for repository cloning in session pods
-  # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
-  # The Secret will be used by the clone-repo init container
+  # A github-session Secret is automatically created when github.token or
+  # (github.app.id and github.app.privateKey.secretName) are set.
+  # This Secret only ever contains a personal access token (GITHUB_TOKEN); GitHub
+  # App credentials are never stored in it. For GitHub App auth, the proxy mints a
+  # short-lived installation token server-side and injects it into each session as
+  # GITHUB_TOKEN. No GitHub App private key or configuration reaches session pods.
 
   # Single base Kubernetes Secret shared by all sessions.
   # agentapi-proxy reads this Secret before each session starts and merges it at the lowest

@@ -244,6 +244,30 @@ volumes:
 - **秘密鍵の保護**: PEMファイルはKubernetes Secretに安全に格納
 - **最小権限の原則**: GitHub Appには必要最小限の権限のみ付与
 - **Access Token TTL**: Installation Access Tokenは1時間で自動的に期限切れ
+- **セッションPodへの資格情報の非公開**: GitHub App の設定（`GITHUB_APP_ID` /
+  `GITHUB_INSTALLATION_ID` / `REPOSITORY_RESTRICTION`）および秘密鍵 PEM は
+  **agentapi-proxy 本体の Pod にのみ**マウント・注入されます。個々のセッション Pod
+  には一切渡されません。
+
+### セッション Pod への認証情報の受け渡し
+
+セッション Pod（各エージェント実行環境）へ渡される GitHub 認証情報は、agentapi-proxy が
+**サーバサイドで発行した短命な installation access token のみ**です。
+
+1. セッション作成時、proxy は自身が保持する GitHub App 資格情報（App ID・秘密鍵）を
+   使って installation access token を発行します。
+   - `GITHUB_INSTALLATION_ID` 未指定時は対象リポジトリから installation ID を自動解決します。
+   - `REPOSITORY_RESTRICTION=true` の場合、token を対象リポジトリに限定して発行します。
+   - GitHub Enterprise Server では proxy の `GITHUB_API` を用いて token を発行します。
+2. 発行された token は各セッション Pod に `GITHUB_TOKEN` として渡されます。
+3. App ID・installation ID・秘密鍵 PEM・repository restriction 設定は
+   セッション Pod の環境変数・Secret・Volume のいずれにも含まれません。
+
+これにより、万一セッション Pod が侵害された場合でも、流出しうるのは 1 時間で失効する
+スコープ限定の token のみで、GitHub App の秘密鍵そのものは保護されます。
+
+> 注: `params.github_token`（個人アクセストークン）を指定した場合は従来どおりその token が
+> そのまま `GITHUB_TOKEN` として使用され、GitHub App の token 発行は行われません。
 
 ## デプロイメント
 

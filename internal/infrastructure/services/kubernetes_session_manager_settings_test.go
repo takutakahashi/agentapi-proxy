@@ -121,7 +121,10 @@ func TestBuildSessionSettings_TeamSettingsUsesRepositoryEnvVars(t *testing.T) {
 		TeamID: "org/team-a",
 	}
 
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	if got := settings.Env["SECRET_TOKEN"]; got != "decrypted-secret" {
 		t.Fatalf("SECRET_TOKEN = %q, want decrypted-secret", got)
 	}
@@ -168,7 +171,10 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 		},
 	}
 
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	if _, ok := settings.Env["OLLAMA_API_KEY"]; ok {
 		t.Fatalf("OLLAMA_API_KEY should not be synthesized")
 	}

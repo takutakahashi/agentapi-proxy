@@ -863,16 +863,19 @@ var (
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Run unified session setup (write-pem, clone-repo, compile-settings, sync-extra)",
+	Short: "Run unified session setup (clone-repo, compile-settings, sync-extra)",
 	Long: `Run the full init-container setup sequence for a session Pod.
 
 Reads /session-settings/settings.yaml and performs:
-  1. write-pem  - writes GITHUB_APP_PEM to /github-app/app.pem
-  2. clone-repo - clones the repository (if session.repository is set)
-  3. compile    - generates .claude.json, settings.json, mcp config, env file, startup script
-  4. sync-extra - copies credentials, notification subscriptions
+  1. clone-repo - clones the repository (if session.repository is set)
+  2. compile    - generates .claude.json, settings.json, mcp config, env file, startup script
+  3. sync-extra - copies credentials, notification subscriptions
 
-This replaces the old write-pem, clone-repo, merge-settings, sync-config, and setup-mcp
+GitHub authentication uses the short-lived GITHUB_TOKEN provided in the session
+settings (generated server-side by the proxy). No GitHub App private key is
+present in the Pod.
+
+This replaces the old clone-repo, merge-settings, sync-config, and setup-mcp
 init containers with a single unified step.
 
 Examples:
