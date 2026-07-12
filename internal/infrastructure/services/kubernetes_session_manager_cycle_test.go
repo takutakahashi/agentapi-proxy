@@ -67,7 +67,10 @@ func TestBuildSessionSettings_CycleHookInjected(t *testing.T) {
 		CycleMaxCount: 5,
 	}
 
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	if settings == nil {
 		t.Fatal("Expected non-nil settings")
 	}
@@ -152,7 +155,10 @@ func TestBuildSessionSettings_CycleHookWithoutMaxCount(t *testing.T) {
 		CycleMaxCount: 0, // unlimited
 	}
 
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	if settings == nil {
 		t.Fatal("Expected non-nil settings")
 	}
@@ -220,7 +226,10 @@ func TestBuildSessionSettings_CycleEnabledFileInjected(t *testing.T) {
 		CycleMessage: "Please continue the task",
 	}
 
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	if settings == nil {
 		t.Fatal("Expected non-nil settings")
 	}
@@ -251,7 +260,10 @@ func TestBuildSessionSettings_NoCycleEnabledFileWhenMessageEmpty(t *testing.T) {
 		CycleMessage: "",
 	}
 
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	if settings == nil {
 		t.Fatal("Expected non-nil settings")
 	}
@@ -277,7 +289,10 @@ func TestBuildSessionSettings_CycleHookAlwaysInjected(t *testing.T) {
 		CycleMaxCount: 5,
 	}
 
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	if settings == nil {
 		t.Fatal("Expected non-nil settings")
 	}

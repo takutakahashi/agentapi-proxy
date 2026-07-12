@@ -41,6 +41,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
 
 // provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
@@ -147,6 +148,13 @@ type KubernetesSessionManager struct {
 	sessionAllocatorEnabled bool
 
 	sessionAllocationNotifier coreallocation.Notifier
+
+	// githubTokenResolver produces the short-lived GitHub token exposed to a
+	// session Pod. It uses the proxy's own credentials (a proxy-level personal
+	// access token or GitHub App installation token) so that GitHub App
+	// configuration and private keys are never injected into session Pods.
+	// Defaults to startup.GetGitHubToken and is overridable in tests.
+	githubTokenResolver func(repoFullName string) (string, error)
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -206,6 +214,7 @@ func NewKubernetesSessionManagerWithClient(
 		statusSubCtx:              subCtx,
 		statusSubCancel:           subCancel,
 		sessionAllocationNotifier: infrasessionallocation.NewLocalNotifier(),
+		githubTokenResolver:       startup.GetGitHubToken,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -451,7 +460,15 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 	if req.ProvisionSettings != nil {
 		sessionSettings = req.ProvisionSettings
 	} else {
-		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
+		var buildErr error
+		sessionSettings, buildErr = m.buildSessionSettings(ctx, session, req, webhookPayload)
+		if buildErr != nil {
+			if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+				log.Printf("[K8S_SESSION] Failed to cleanup resources after settings build failure: %v", delErr)
+			}
+			m.cleanupSession(id)
+			return nil, fmt.Errorf("failed to build session settings: %w", buildErr)
+		}
 	}
 
 	session.SetProvisionSettings(sessionSettings)
@@ -864,7 +881,12 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	}
 
 	// Build session settings and create a provision request for the adopted pod.
-	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
+	sessionSettings, buildErr := m.buildSessionSettings(ctx, session, req, webhookPayload)
+	if buildErr != nil {
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to build session settings for stock session: %w", buildErr)
+	}
 	session.SetProvisionSettings(sessionSettings)
 	if err := m.CreateProvisionRequest(ctx, session); err != nil {
 		m.cleanupSession(stockID)
@@ -2047,51 +2069,27 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	// Setting workingDir to repo path would cause Kubernetes to pre-create the dir as root
 	workingDir := "/home/agentapi/workdir"
 
-	// Build envFrom for GitHub secrets
-	// Two secrets are used:
-	// - GitHubSecretName: Contains GITHUB_TOKEN, GITHUB_APP_PEM, GITHUB_APP_ID, GITHUB_INSTALLATION_ID (authentication)
-	// - GitHubConfigSecretName: Contains GITHUB_API, GITHUB_URL (configuration for Enterprise Server)
+	// Build envFrom for GitHub configuration.
+	//
+	// Only the non-authentication GitHub config Secret (GITHUB_API, GITHUB_URL for
+	// GitHub Enterprise Server) is mounted onto the session Pod. GitHub
+	// authentication credentials are never mounted: the resolved short-lived token
+	// (personal access token or GitHub App installation token generated
+	// server-side) is delivered exclusively via the session settings env
+	// (GITHUB_TOKEN). The GitHub App auth Secret (App ID, installation ID, private
+	// key PEM, repository restriction) is intentionally NOT referenced here.
 	var envFrom []corev1.EnvFromSource
 
-	if req.GithubToken != "" {
-		// When params.github_token is provided:
-		// - GITHUB_TOKEN is embedded directly in session-settings env (no per-session secret)
-		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings only
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-			log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
-		}
-	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided:
-		// - Mount GitHubSecretName for full GitHub App authentication
-		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
+	if m.k8sConfig.GitHubConfigSecretName != "" {
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
-					Name: m.k8sConfig.GitHubSecretName,
+					Name: m.k8sConfig.GitHubConfigSecretName,
 				},
 				Optional: boolPtr(true),
 			},
 		})
-
-		// Mount GitHub config Secret if available (for any additional config)
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-		}
+		log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
 	}
 
 	// Build container spec.
@@ -3414,8 +3412,6 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
 		{Name: "AGENTAPI_USER_ID", Value: req.UserID},
 		{Name: "HOME", Value: "/home/agentapi"},
-		// GitHub App PEM path (file is written by setup directly to container FS)
-		{Name: "GITHUB_APP_PEM_PATH", Value: "/tmp/github-app/app.pem"},
 	}
 
 	// Add Claude Code telemetry configuration
@@ -4682,14 +4678,32 @@ func (m *KubernetesSessionManager) ensurePersonalAPIKey(ctx context.Context, use
 	return apiKey
 }
 
+// resolveSessionGitHubToken produces the short-lived GitHub token that the
+// session Pod uses for repository cloning and gh operations. The token is
+// generated from the proxy's own credentials (a proxy-level personal access
+// token or GitHub App installation token). GitHub App configuration and the
+// private key never leave the proxy. When a repository is known, the resulting
+// installation token is scoped to that repository.
+func (m *KubernetesSessionManager) resolveSessionGitHubToken(repoFullName string) (string, error) {
+	resolver := m.githubTokenResolver
+	if resolver == nil {
+		resolver = startup.GetGitHubToken
+	}
+	return resolver(repoFullName)
+}
+
 // buildSessionSettings constructs SessionSettings from RunServerRequest and session state.
 // This consolidates buildEnvVars and envFrom logic into a single unified structure.
+//
+// It returns an error (aborting session creation) when GitHub authentication is
+// configured but a token cannot be resolved, so that the failure surfaces at
+// creation time rather than being deferred to the provisioner inside the Pod.
 func (m *KubernetesSessionManager) buildSessionSettings(
 	ctx context.Context,
 	session *KubernetesSession,
 	req *entities.RunServerRequest,
 	webhookPayload []byte,
-) *sessionsettings.SessionSettings {
+) (*sessionsettings.SessionSettings, error) {
 	settings := &sessionsettings.SessionSettings{}
 
 	// Session metadata
@@ -4715,7 +4729,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"AGENTAPI_SESSION_ID": session.id,
 		"AGENTAPI_USER_ID":    req.UserID,
 		"HOME":                "/home/agentapi",
-		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
 	}
 
 	// Add Claude Code telemetry configuration
@@ -4769,42 +4782,58 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	// Build list of secret names to expand into env map
-	// Pod does not have permission to read secrets, so we need to expand them here
-	var secretNames []string
-
+	// Resolve GitHub authentication for the session.
+	//
+	// Only a short-lived credential is ever exposed to the session Pod:
+	//   - a personal access token supplied via params.github_token, or
+	//   - a GitHub App installation token generated server-side from the proxy's
+	//     own App credentials (auto-resolving the installation ID and honoring
+	//     REPOSITORY_RESTRICTION and the GitHub Enterprise API base).
+	//
+	// GitHub App configuration (App ID, installation ID, private key PEM,
+	// repository restriction) is never mounted or injected into the Pod.
 	if req.GithubToken != "" {
-		// When params.github_token is provided: embed token directly, no per-session secret needed
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
-		}
 		env["GITHUB_TOKEN"] = req.GithubToken
 	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided
-		secretNames = append(secretNames, m.k8sConfig.GitHubSecretName)
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
+		repoFullName := ""
+		if req.RepoInfo != nil {
+			repoFullName = req.RepoInfo.FullName
+		}
+		token, err := m.resolveSessionGitHubToken(repoFullName)
+		if err != nil {
+			// GitHub authentication is configured (GitHubSecretName is set) but the
+			// token could not be minted. Abort session creation with a clear error
+			// rather than silently creating an unauthenticated Pod and deferring the
+			// failure to the in-Pod provisioner.
+			//
+			// The underlying resolver error may reference credential material (for
+			// example a secret echoed back in an upstream API response), so it is
+			// intentionally NOT wrapped (%w) and NOT logged. Diagnosability is
+			// provided by a fixed, secret-free message plus the session ID.
+			return nil, fmt.Errorf("failed to resolve GitHub token for session %s", session.id)
+		}
+		if token != "" {
+			env["GITHUB_TOKEN"] = token
 		}
 	}
 
-	// Expand secrets into env map (GitHub secrets only)
-	for _, secretName := range secretNames {
+	// Merge the non-authentication GitHub config Secret (GITHUB_API, GITHUB_URL for
+	// GitHub Enterprise Server) into the env map. This Secret intentionally holds
+	// no credentials. The Pod cannot read Secrets itself, so it is expanded here.
+	if m.k8sConfig.GitHubConfigSecretName != "" {
 		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
 			ctx,
-			secretName,
+			m.k8sConfig.GitHubConfigSecretName,
 			metav1.GetOptions{},
 		)
 		if err != nil {
 			if !errors.IsNotFound(err) {
-				log.Printf("[K8S_SESSION] Warning: failed to read secret %s for session settings: %v", secretName, err)
+				log.Printf("[K8S_SESSION] Warning: failed to read GitHub config secret %s for session settings: %v", m.k8sConfig.GitHubConfigSecretName, err)
 			}
-			// Skip secrets that don't exist (they are all optional)
-			continue
-		}
-
-		// Merge secret data into env map (later secrets override earlier ones due to iteration order)
-		for k, v := range secret.Data {
-			env[k] = string(v)
+		} else {
+			for k, v := range secret.Data {
+				env[k] = string(v)
+			}
 		}
 	}
 
@@ -4966,15 +4995,12 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		settings.WebhookPayload = string(webhookPayload)
 	}
 
-	// GitHub config
-	if req.GithubToken != "" {
+	// GitHub config (informational only, and delivered to the Pod via settings).
+	// The GitHub App auth Secret is intentionally never referenced here: the Pod
+	// receives only the resolved short-lived token via env (GITHUB_TOKEN) plus the
+	// non-authentication GITHUB_API/GITHUB_URL config values.
+	if m.k8sConfig.GitHubConfigSecretName != "" || env["GITHUB_TOKEN"] != "" {
 		settings.Github = &sessionsettings.GithubConfig{
-			Token:            req.GithubToken,
-			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
-		}
-	} else if m.k8sConfig.GitHubSecretName != "" {
-		settings.Github = &sessionsettings.GithubConfig{
-			SecretName:       m.k8sConfig.GitHubSecretName,
 			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
 		}
 	}
@@ -5228,7 +5254,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] DinD enabled for session %s (registries: %d)", session.id, len(registries))
 	}
 
-	return settings
+	return settings, nil
 }
 
 func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req *entities.RunServerRequest) {
@@ -5605,8 +5631,7 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 		id:          sessionID,
 		serviceName: fmt.Sprintf("agentapi-session-%s-svc", sessionID),
 	}
-	settings := m.buildSessionSettings(ctx, tempSession, req, nil)
-	return settings, nil
+	return m.buildSessionSettings(ctx, tempSession, req, nil)
 }
 
 // userFilesSecretDataToManagedFiles converts the index-based Secret data from

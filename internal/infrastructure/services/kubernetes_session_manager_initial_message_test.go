@@ -67,7 +67,10 @@ func TestInitialMessageStoredInSettingsYAML(t *testing.T) {
 	}
 
 	// Build settings and create the Secret using the new function.
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	err = manager.createSessionSettingsSecretFromSettings(context.Background(), session, req, settings)
 	if err != nil {
 		t.Fatalf("Failed to create session settings secret: %v", err)
