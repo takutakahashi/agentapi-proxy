@@ -164,7 +164,10 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 		UserID:    "test-user",
 		AgentType: "pi-ollama",
 		Environment: map[string]string{
-			"OPENAI_API_KEY": "openai-key",
+			"OPENAI_API_KEY":            "openai-key",
+			"PI_DEFAULT_PROVIDER":       "ollama-cloud",
+			"PI_DEFAULT_MODEL":          "qwen3-coder",
+			"PI_DEFAULT_THINKING_LEVEL": "high",
 		},
 	}
 
@@ -175,6 +178,15 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 	if got := settings.Env["PI_ACP_PI_COMMAND"]; got != piOllamaCommandPath {
 		t.Fatalf("PI_ACP_PI_COMMAND = %q", got)
 	}
+	if got := settings.Pi.SettingsJSON["defaultProvider"]; got != "ollama-cloud" {
+		t.Fatalf("defaultProvider = %v", got)
+	}
+	if got := settings.Pi.SettingsJSON["defaultModel"]; got != "qwen3-coder" {
+		t.Fatalf("defaultModel = %v", got)
+	}
+	if got := settings.Pi.SettingsJSON["defaultThinkingLevel"]; got != "high" {
+		t.Fatalf("defaultThinkingLevel = %v", got)
+	}
 	if settings.Startup.PreScript == "" {
 		t.Fatalf("expected pi-ollama startup pre-script")
 	}
@@ -183,5 +195,38 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 	}
 	if !strings.Contains(settings.Startup.PreScript, "node_modules/pi-mcp-adapter") {
 		t.Fatalf("expected pi-ollama pre-script to skip pi-mcp-adapter install when package is baked into the image")
+	}
+}
+
+func TestBuildPiSettingsJSON(t *testing.T) {
+	got := buildPiSettingsJSON(map[string]string{
+		"PI_DEFAULT_PROVIDER":       "ollama-cloud",
+		"PI_DEFAULT_MODEL":          "qwen3-coder",
+		"PI_DEFAULT_THINKING_LEVEL": " high ",
+		"UNRELATED":                 "ignored",
+	})
+
+	if got["defaultProvider"] != "ollama-cloud" {
+		t.Fatalf("defaultProvider = %v", got["defaultProvider"])
+	}
+	if got["defaultModel"] != "qwen3-coder" {
+		t.Fatalf("defaultModel = %v", got["defaultModel"])
+	}
+	if got["defaultThinkingLevel"] != "high" {
+		t.Fatalf("defaultThinkingLevel = %v", got["defaultThinkingLevel"])
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 Pi settings, got %d", len(got))
+	}
+}
+
+func TestBuildPiSettingsJSONSkipsEmptyValues(t *testing.T) {
+	got := buildPiSettingsJSON(map[string]string{
+		"PI_DEFAULT_PROVIDER": " ",
+		"PI_DEFAULT_MODEL":    "qwen3-coder",
+	})
+
+	if len(got) != 1 || got["defaultModel"] != "qwen3-coder" {
+		t.Fatalf("unexpected Pi settings: %#v", got)
 	}
 }

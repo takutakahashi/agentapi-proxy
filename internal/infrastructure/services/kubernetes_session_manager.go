@@ -4877,6 +4877,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	settings.Env = env
 
+	if req.AgentType == "pi-ollama" {
+		settings.Pi = sessionsettings.PiConfig{SettingsJSON: buildPiSettingsJSON(env)}
+	}
+
 	// Claude config
 	settingsJSON := materialized.SettingsJSON
 
@@ -5228,6 +5232,20 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] DinD enabled for session %s (registries: %d)", session.id, len(registries))
 	}
 
+	return settings
+}
+
+func buildPiSettingsJSON(env map[string]string) map[string]interface{} {
+	settings := make(map[string]interface{})
+	for envName, settingName := range map[string]string{
+		"PI_DEFAULT_PROVIDER":       "defaultProvider",
+		"PI_DEFAULT_MODEL":          "defaultModel",
+		"PI_DEFAULT_THINKING_LEVEL": "defaultThinkingLevel",
+	} {
+		if value := strings.TrimSpace(env[envName]); value != "" {
+			settings[settingName] = value
+		}
+	}
 	return settings
 }
 

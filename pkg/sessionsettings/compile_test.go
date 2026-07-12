@@ -1073,6 +1073,63 @@ func TestCompile_PiMCPConfig(t *testing.T) {
 	})
 }
 
+func TestGeneratePiSettingsJSON(t *testing.T) {
+	t.Run("merges managed settings into existing file", func(t *testing.T) {
+		outputDir := t.TempDir()
+		piDir := filepath.Join(outputDir, ".pi", "agent")
+		require.NoError(t, os.MkdirAll(piDir, 0755))
+		settingsPath := filepath.Join(piDir, "settings.json")
+		require.NoError(t, os.WriteFile(settingsPath, []byte(`{"theme":"dark","defaultModel":"old-model"}`), 0644))
+
+		err := generatePiSettingsJSON(outputDir, "pi-ollama", map[string]interface{}{
+			"defaultProvider":      "ollama-cloud",
+			"defaultModel":         "qwen3-coder",
+			"defaultThinkingLevel": "high",
+		})
+		require.NoError(t, err)
+
+		data, err := os.ReadFile(settingsPath)
+		require.NoError(t, err)
+		var got map[string]interface{}
+		require.NoError(t, json.Unmarshal(data, &got))
+		assert.Equal(t, "dark", got["theme"])
+		assert.Equal(t, "ollama-cloud", got["defaultProvider"])
+		assert.Equal(t, "qwen3-coder", got["defaultModel"])
+		assert.Equal(t, "high", got["defaultThinkingLevel"])
+
+		info, err := os.Stat(settingsPath)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	})
+
+	t.Run("skips non-Pi sessions", func(t *testing.T) {
+		outputDir := t.TempDir()
+		err := generatePiSettingsJSON(outputDir, "codex-acp", map[string]interface{}{
+			"defaultModel": "qwen3-coder",
+		})
+		require.NoError(t, err)
+		assert.NoFileExists(t, filepath.Join(outputDir, ".pi", "agent", "settings.json"))
+	})
+
+	t.Run("skips empty settings", func(t *testing.T) {
+		outputDir := t.TempDir()
+		require.NoError(t, generatePiSettingsJSON(outputDir, "pi-ollama", nil))
+		assert.NoFileExists(t, filepath.Join(outputDir, ".pi", "agent", "settings.json"))
+	})
+
+	t.Run("rejects invalid existing settings", func(t *testing.T) {
+		outputDir := t.TempDir()
+		piDir := filepath.Join(outputDir, ".pi", "agent")
+		require.NoError(t, os.MkdirAll(piDir, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(piDir, "settings.json"), []byte(`not-json`), 0600))
+
+		err := generatePiSettingsJSON(outputDir, "pi-ollama", map[string]interface{}{
+			"defaultModel": "qwen3-coder",
+		})
+		require.ErrorContains(t, err, "failed to parse existing Pi settings.json")
+	})
+}
+
 func TestCompile_MissingInput(t *testing.T) {
 	opts := CompileOptions{
 		InputPath:   "/nonexistent/settings.yaml",

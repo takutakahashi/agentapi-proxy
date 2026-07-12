@@ -84,6 +84,11 @@ func Compile(opts CompileOptions) error {
 		return fmt.Errorf("failed to generate Pi MCP config: %w", err)
 	}
 
+	// 3g. Generate ~/.pi/agent/settings.json (Pi sessions only)
+	if err := generatePiSettingsJSON(opts.OutputDir, settings.Session.AgentType, settings.Pi.SettingsJSON); err != nil {
+		return fmt.Errorf("failed to generate Pi settings.json: %w", err)
+	}
+
 	// 4. Generate env file
 	if err := generateEnvFile(opts.EnvFilePath, settings.Env); err != nil {
 		return fmt.Errorf("failed to generate env file: %w", err)
@@ -183,6 +188,48 @@ func generatePiMCPConfig(outputDir string, agentType string, mcpServers map[stri
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s", configPath)
+	return nil
+}
+
+// generatePiSettingsJSON merges managed Pi settings into ~/.pi/agent/settings.json.
+func generatePiSettingsJSON(outputDir, agentType string, settingsJSON map[string]interface{}) error {
+	if agentType != "pi-ollama" || len(settingsJSON) == 0 {
+		return nil
+	}
+
+	piDir := filepath.Join(outputDir, ".pi", "agent")
+	if err := os.MkdirAll(piDir, 0755); err != nil {
+		return fmt.Errorf("failed to create Pi agent directory: %w", err)
+	}
+
+	settingsPath := filepath.Join(piDir, "settings.json")
+	existing := make(map[string]interface{})
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			return fmt.Errorf("failed to parse existing Pi settings.json: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing Pi settings.json: %w", err)
+	}
+
+	for key, value := range settingsJSON {
+		existing[key] = value
+	}
+
+	data, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal Pi settings.json: %w", err)
+	}
+	data = append(data, '\n')
+
+	if err := os.WriteFile(settingsPath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write Pi settings.json: %w", err)
+	}
+	if err := os.Chmod(settingsPath, 0600); err != nil {
+		return fmt.Errorf("failed to set Pi settings.json permissions: %w", err)
+	}
+
+	log.Printf("[COMPILE-SETTINGS] Generated %s with %d managed setting(s)", settingsPath, len(settingsJSON))
 	return nil
 }
 
