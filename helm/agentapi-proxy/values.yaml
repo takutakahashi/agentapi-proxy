@@ -561,10 +561,17 @@ kubernetesSession:
   #   kubernetes.io/arch: amd64
   nodeSelector: {}
 
-  # Soft preference; pods fall back to other nodes when none match.
-  # preferredNodeSelector:
-  #   node-pool: agent
-  preferredNodeSelector: {}
+  # Kubernetes affinity rules for session pods. Example soft preference:
+  # affinity:
+  #   nodeAffinity:
+  #     preferredDuringSchedulingIgnoredDuringExecution:
+  #       - weight: 100
+  #         preference:
+  #           matchExpressions:
+  #             - key: node-pool
+  #               operator: In
+  #               values: [agent]
+  affinity: {}
 
   # Tolerations for session pods
   # Example:

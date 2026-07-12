@@ -354,7 +354,7 @@ spec:
             - name: AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME
               value: {{ printf "%s-github-config" (include "agentapi-proxy.fullname" .) | quote }}
             {{- end }}
-            {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.preferredNodeSelector .Values.kubernetesSession.tolerations }}
+            {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.affinity .Values.kubernetesSession.tolerations }}
             - name: AGENTAPI_K8S_SESSION_CONFIG_FILE
               value: "/etc/k8s-session-config/k8s-session-config.yaml"
             {{- end }}
@@ -584,7 +584,7 @@ spec:
               mountPath: /etc/github-app
               readOnly: true
             {{- end }}
-            {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.preferredNodeSelector .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
+            {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.affinity .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
             - name: k8s-session-config
               mountPath: /etc/k8s-session-config
               readOnly: true
@@ -632,7 +632,7 @@ spec:
             secretName: {{ .Values.github.app.privateKey.secretName }}
             defaultMode: 0440
         {{- end }}
-        {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.preferredNodeSelector .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
+        {{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.affinity .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
         - name: k8s-session-config
           configMap:
             name: {{ include "agentapi-proxy.fullname" . }}-k8s-session-config

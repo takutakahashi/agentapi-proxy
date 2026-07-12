@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2257,6 +2256,11 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		podAnnotations["prometheus.io/path"] = "/metrics"
 	}
 
+	affinity, err := sessionAffinity(m.k8sConfig.Affinity)
+	if err != nil {
+		return nil, err
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            session.DeploymentName(),
@@ -2288,7 +2292,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 					Containers:     containers,
 					Volumes:        volumes,
 					NodeSelector:   m.k8sConfig.NodeSelector,
-					Affinity:       preferredNodeAffinity(m.k8sConfig.PreferredNodeSelector),
+					Affinity:       affinity,
 					Tolerations:    tolerations,
 				},
 			},
@@ -2300,29 +2304,19 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	return deployment, nil
 }
 
-func preferredNodeAffinity(selector map[string]string) *corev1.Affinity {
-	if len(selector) == 0 {
-		return nil
+func sessionAffinity(value map[string]interface{}) (*corev1.Affinity, error) {
+	if len(value) == 0 {
+		return nil, nil
 	}
-	keys := make([]string, 0, len(selector))
-	for key := range selector {
-		keys = append(keys, key)
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal session affinity: %w", err)
 	}
-	sort.Strings(keys)
-	requirements := make([]corev1.NodeSelectorRequirement, 0, len(keys))
-	for _, key := range keys {
-		requirements = append(requirements, corev1.NodeSelectorRequirement{
-			Key: key, Operator: corev1.NodeSelectorOpIn, Values: []string{selector[key]},
-		})
+	var affinity corev1.Affinity
+	if err := json.Unmarshal(data, &affinity); err != nil {
+		return nil, fmt.Errorf("failed to parse session affinity: %w", err)
 	}
-	return &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
-		PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{{
-			Weight: 100,
-			Preference: corev1.NodeSelectorTerm{
-				MatchExpressions: requirements,
-			},
-		}},
-	}}
+	return &affinity, nil
 }
 
 func (m *KubernetesSessionManager) applySessionPodTemplateFile(template *corev1.PodTemplateSpec) error {

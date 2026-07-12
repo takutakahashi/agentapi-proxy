@@ -1,4 +1,4 @@
-{{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.preferredNodeSelector .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
+{{- if or .Values.kubernetesSession.nodeSelector .Values.kubernetesSession.affinity .Values.kubernetesSession.tolerations .Values.kubernetesSession.podTemplate }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -14,11 +14,9 @@ data:
         {{ $key }}: {{ $value | quote }}
         {{- end }}
       {{- end }}
-      {{- if .Values.kubernetesSession.preferredNodeSelector }}
-      preferred_node_selector:
-        {{- range $key, $value := .Values.kubernetesSession.preferredNodeSelector }}
-        {{ $key }}: {{ $value | quote }}
-        {{- end }}
+      {{- if .Values.kubernetesSession.affinity }}
+      affinity:
+        {{- toYaml .Values.kubernetesSession.affinity | nindent 8 }}
       {{- end }}
       {{- if .Values.kubernetesSession.tolerations }}
       tolerations:
