@@ -2552,6 +2552,7 @@ func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req
 		Enabled:        req.Sandbox.Enabled,
 		AllowedDomains: req.Sandbox.AllowedDomains,
 		DeniedDomains:  req.Sandbox.DeniedDomains,
+		CountMode:      req.Sandbox.CountMode,
 	}
 	if req.Sandbox.PolicyID == "" || m.sandboxPolicyRepo == nil {
 		return effective

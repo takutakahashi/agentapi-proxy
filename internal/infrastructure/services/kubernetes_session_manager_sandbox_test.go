@@ -78,6 +78,22 @@ func TestBuildSandboxContainersGeneratesRulesThenRestoresWithIptablesImage(t *te
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
 }
 
+func TestResolveSandboxParamsPreservesSessionCountModeWithoutPolicy(t *testing.T) {
+	manager := &KubernetesSessionManager{}
+	req := &entities.RunServerRequest{
+		Sandbox: &entities.SandboxParams{
+			Enabled:   true,
+			CountMode: true,
+		},
+	}
+
+	effective := manager.resolveSandboxParams(context.Background(), req)
+
+	assert.NotNil(t, effective)
+	assert.True(t, effective.Enabled)
+	assert.True(t, effective.CountMode)
+}
+
 func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	manager := &KubernetesSessionManager{
 		config: &config.Config{
