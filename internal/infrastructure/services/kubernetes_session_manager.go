@@ -4877,6 +4877,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	settings.Env = env
 
+	settings.Pi = sessionsettings.PiConfig{
+		SettingsJSON: buildPiSettingsJSON(env),
+		ModelsJSON:   buildPiModelsJSON(env),
+	}
+
 	// Claude config
 	settingsJSON := materialized.SettingsJSON
 
@@ -5229,6 +5234,85 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	return settings
+}
+
+func buildPiSettingsJSON(env map[string]string) map[string]interface{} {
+	settings := make(map[string]interface{})
+	for envName, settingName := range map[string]string{
+		"PI_DEFAULT_PROVIDER":       "defaultProvider",
+		"PI_DEFAULT_MODEL":          "defaultModel",
+		"PI_DEFAULT_THINKING_LEVEL": "defaultThinkingLevel",
+	} {
+		if value := strings.TrimSpace(env[envName]); value != "" {
+			settings[settingName] = value
+		}
+	}
+	return settings
+}
+
+func buildPiModelsJSON(env map[string]string) map[string]interface{} {
+	provider := strings.TrimSpace(env["PI_CUSTOM_MODEL_PROVIDER"])
+	if provider == "" {
+		provider = strings.TrimSpace(env["PI_CUSTOM_PROVIDER"])
+	}
+	modelID := strings.TrimSpace(env["PI_CUSTOM_MODEL_ID"])
+	baseURL := strings.TrimSpace(env["PI_CUSTOM_MODEL_BASE_URL"])
+	if provider == "" || modelID == "" || baseURL == "" {
+		return nil
+	}
+
+	api := strings.TrimSpace(env["PI_CUSTOM_MODEL_API"])
+	if api == "" {
+		api = "openai-completions"
+	}
+	name := strings.TrimSpace(env["PI_CUSTOM_MODEL_NAME"])
+	if name == "" {
+		name = modelID
+	}
+
+	model := map[string]interface{}{
+		"id":            modelID,
+		"name":          name,
+		"reasoning":     parsePiCustomModelBool(env["PI_CUSTOM_MODEL_REASONING"], false),
+		"input":         []interface{}{"text"},
+		"contextWindow": parsePiCustomModelInt(env["PI_CUSTOM_MODEL_CONTEXT_WINDOW"], 128000),
+		"maxTokens":     parsePiCustomModelInt(env["PI_CUSTOM_MODEL_MAX_TOKENS"], 16384),
+	}
+	providerConfig := map[string]interface{}{
+		"baseUrl": baseURL,
+		"api":     api,
+		"models":  []interface{}{model},
+	}
+
+	apiKeyEnv := strings.TrimSpace(env["PI_CUSTOM_MODEL_API_KEY_ENV"])
+	if regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(apiKeyEnv) {
+		providerConfig["apiKey"] = "$" + apiKeyEnv
+	}
+
+	return map[string]interface{}{
+		"providers": map[string]interface{}{
+			provider: providerConfig,
+		},
+	}
+}
+
+func parsePiCustomModelInt(value string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parsePiCustomModelBool(value string, fallback bool) bool {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req *entities.RunServerRequest) {

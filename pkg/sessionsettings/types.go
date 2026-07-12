@@ -157,6 +157,7 @@ type SessionSettings struct {
 	Env            map[string]string    `yaml:"env,omitempty"             json:"env,omitempty"`
 	Claude         ClaudeConfig         `yaml:"claude,omitempty"          json:"claude,omitempty"`
 	Codex          CodexConfig          `yaml:"codex,omitempty"           json:"codex,omitempty"`
+	Pi             PiConfig             `yaml:"pi,omitempty"              json:"pi,omitempty"`
 	Repository     *RepositoryConfig    `yaml:"repository,omitempty"      json:"repository,omitempty"`
 	InitialMessage string               `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
 	WebhookPayload string               `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
@@ -241,6 +242,14 @@ type CodexConfig struct {
 	// array-of-tables entry so the Codex CLI can read them natively.
 	// The map format mirrors ClaudeConfig.MCPServers for consistency.
 	MCPServers map[string]interface{} `yaml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
+}
+
+// PiConfig holds Pi coding agent-specific configuration data.
+type PiConfig struct {
+	// SettingsJSON is merged into ~/.pi/agent/settings.json.
+	SettingsJSON map[string]interface{} `yaml:"settings_json,omitempty" json:"settings_json,omitempty"`
+	// ModelsJSON is merged into ~/.pi/agent/models.json.
+	ModelsJSON map[string]interface{} `yaml:"models_json,omitempty" json:"models_json,omitempty"`
 }
 
 // RepositoryConfig holds repository information.
