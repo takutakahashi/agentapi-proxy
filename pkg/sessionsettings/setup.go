@@ -88,6 +88,17 @@ func Setup(opts SetupOptions) error {
 		return fmt.Errorf("compile failed: %w", err)
 	}
 
+	outputDir := opts.CompileOptions.OutputDir
+	if outputDir == "" {
+		outputDir = DefaultCompileOptions().OutputDir
+	}
+	if shouldRefreshPiOllamaCloud(settings) {
+		if err := refreshPiOllamaCloudCache(settings.Env, outputDir); err != nil {
+			// Non-fatal: pi-ollama-cloud can continue with its bundled or existing cache.
+			log.Printf("[SETUP] Warning: failed to refresh Ollama Cloud models: %v", err)
+		}
+	}
+
 	// 4. Copy credentials, CLAUDE.md, notification subscriptions
 	if err := syncExtra(settings, opts); err != nil {
 		return fmt.Errorf("sync-extra failed: %w", err)
@@ -97,10 +108,6 @@ func Setup(opts SetupOptions) error {
 	//    The sync step (marketplace clone / plugin install) may trigger Claude
 	//    CLI which rewrites ~/.claude.json and drops bypassPermissionsModeAccepted,
 	//    causing the "Welcome to Claude Code" screen on next launch.
-	outputDir := opts.CompileOptions.OutputDir
-	if outputDir == "" {
-		outputDir = DefaultCompileOptions().OutputDir
-	}
 	if err := patchClaudeJSON(outputDir, settings.Claude.ClaudeJSON); err != nil {
 		log.Printf("[SETUP] Warning: failed to re-patch .claude.json: %v", err)
 	}
