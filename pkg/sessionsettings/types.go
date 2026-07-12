@@ -246,8 +246,10 @@ type CodexConfig struct {
 
 // PiConfig holds Pi coding agent-specific configuration data.
 type PiConfig struct {
-	// SettingsJSON is merged into ~/.pi/agent/settings.json for Pi sessions.
+	// SettingsJSON is merged into ~/.pi/agent/settings.json.
 	SettingsJSON map[string]interface{} `yaml:"settings_json,omitempty" json:"settings_json,omitempty"`
+	// ModelsJSON is merged into ~/.pi/agent/models.json.
+	ModelsJSON map[string]interface{} `yaml:"models_json,omitempty" json:"models_json,omitempty"`
 }
 
 // RepositoryConfig holds repository information.

@@ -1135,6 +1135,60 @@ func TestGeneratePiSettingsJSON(t *testing.T) {
 	})
 }
 
+func TestGeneratePiModelsJSON(t *testing.T) {
+	outputDir := t.TempDir()
+	piDir := filepath.Join(outputDir, ".pi", "agent")
+	require.NoError(t, os.MkdirAll(piDir, 0755))
+	modelsPath := filepath.Join(piDir, "models.json")
+	require.NoError(t, os.WriteFile(modelsPath, []byte(`{
+		"providers": {
+			"ollama-cloud": {
+				"headers": {"x-existing": "preserved"},
+				"models": [{"id": "existing-model"}]
+			},
+			"other": {"baseUrl": "https://other.example/v1"}
+		}
+	}`), 0644))
+
+	err := generatePiModelsJSON(outputDir, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"ollama-cloud": map[string]interface{}{
+				"baseUrl": "https://ollama.com/v1",
+				"api":     "openai-completions",
+				"apiKey":  "$OLLAMA_API_KEY",
+				"models": []interface{}{
+					map[string]interface{}{"id": "glm-5.2:cloud", "reasoning": true},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(modelsPath)
+	require.NoError(t, err)
+	var got map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &got))
+	providers := got["providers"].(map[string]interface{})
+	assert.Contains(t, providers, "other")
+	provider := providers["ollama-cloud"].(map[string]interface{})
+	assert.Contains(t, provider, "headers")
+	assert.Equal(t, "$OLLAMA_API_KEY", provider["apiKey"])
+	models := provider["models"].([]interface{})
+	require.Len(t, models, 2)
+	assert.Equal(t, "existing-model", models[0].(map[string]interface{})["id"])
+	assert.Equal(t, "glm-5.2:cloud", models[1].(map[string]interface{})["id"])
+
+	info, err := os.Stat(modelsPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+}
+
+func TestGeneratePiModelsJSONSkipsEmptyConfig(t *testing.T) {
+	outputDir := t.TempDir()
+	require.NoError(t, generatePiModelsJSON(outputDir, nil))
+	assert.NoFileExists(t, filepath.Join(outputDir, ".pi", "agent", "models.json"))
+}
+
 func TestCompile_MissingInput(t *testing.T) {
 	opts := CompileOptions{
 		InputPath:   "/nonexistent/settings.yaml",
