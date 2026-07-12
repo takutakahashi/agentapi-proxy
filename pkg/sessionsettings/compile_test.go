@@ -1081,7 +1081,7 @@ func TestGeneratePiSettingsJSON(t *testing.T) {
 		settingsPath := filepath.Join(piDir, "settings.json")
 		require.NoError(t, os.WriteFile(settingsPath, []byte(`{"theme":"dark","defaultModel":"old-model"}`), 0644))
 
-		err := generatePiSettingsJSON(outputDir, "pi-ollama", map[string]interface{}{
+		err := generatePiSettingsJSON(outputDir, map[string]interface{}{
 			"defaultProvider":      "ollama-cloud",
 			"defaultModel":         "qwen3-coder",
 			"defaultThinkingLevel": "high",
@@ -1102,18 +1102,23 @@ func TestGeneratePiSettingsJSON(t *testing.T) {
 		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
 	})
 
-	t.Run("skips non-Pi sessions", func(t *testing.T) {
+	t.Run("writes settings regardless of agent type", func(t *testing.T) {
 		outputDir := t.TempDir()
-		err := generatePiSettingsJSON(outputDir, "codex-acp", map[string]interface{}{
+		err := generatePiSettingsJSON(outputDir, map[string]interface{}{
 			"defaultModel": "qwen3-coder",
 		})
 		require.NoError(t, err)
-		assert.NoFileExists(t, filepath.Join(outputDir, ".pi", "agent", "settings.json"))
+
+		data, err := os.ReadFile(filepath.Join(outputDir, ".pi", "agent", "settings.json"))
+		require.NoError(t, err)
+		var got map[string]interface{}
+		require.NoError(t, json.Unmarshal(data, &got))
+		assert.Equal(t, "qwen3-coder", got["defaultModel"])
 	})
 
 	t.Run("skips empty settings", func(t *testing.T) {
 		outputDir := t.TempDir()
-		require.NoError(t, generatePiSettingsJSON(outputDir, "pi-ollama", nil))
+		require.NoError(t, generatePiSettingsJSON(outputDir, nil))
 		assert.NoFileExists(t, filepath.Join(outputDir, ".pi", "agent", "settings.json"))
 	})
 
@@ -1123,7 +1128,7 @@ func TestGeneratePiSettingsJSON(t *testing.T) {
 		require.NoError(t, os.MkdirAll(piDir, 0755))
 		require.NoError(t, os.WriteFile(filepath.Join(piDir, "settings.json"), []byte(`not-json`), 0600))
 
-		err := generatePiSettingsJSON(outputDir, "pi-ollama", map[string]interface{}{
+		err := generatePiSettingsJSON(outputDir, map[string]interface{}{
 			"defaultModel": "qwen3-coder",
 		})
 		require.ErrorContains(t, err, "failed to parse existing Pi settings.json")

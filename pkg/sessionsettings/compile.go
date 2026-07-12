@@ -84,8 +84,8 @@ func Compile(opts CompileOptions) error {
 		return fmt.Errorf("failed to generate Pi MCP config: %w", err)
 	}
 
-	// 3g. Generate ~/.pi/agent/settings.json (Pi sessions only)
-	if err := generatePiSettingsJSON(opts.OutputDir, settings.Session.AgentType, settings.Pi.SettingsJSON); err != nil {
+	// 3g. Generate ~/.pi/agent/settings.json when managed Pi settings are present.
+	if err := generatePiSettingsJSON(opts.OutputDir, settings.Pi.SettingsJSON); err != nil {
 		return fmt.Errorf("failed to generate Pi settings.json: %w", err)
 	}
 
@@ -192,8 +192,8 @@ func generatePiMCPConfig(outputDir string, agentType string, mcpServers map[stri
 }
 
 // generatePiSettingsJSON merges managed Pi settings into ~/.pi/agent/settings.json.
-func generatePiSettingsJSON(outputDir, agentType string, settingsJSON map[string]interface{}) error {
-	if agentType != "pi-ollama" || len(settingsJSON) == 0 {
+func generatePiSettingsJSON(outputDir string, settingsJSON map[string]interface{}) error {
+	if len(settingsJSON) == 0 {
 		return nil
 	}
 

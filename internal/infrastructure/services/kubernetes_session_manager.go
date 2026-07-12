@@ -4877,9 +4877,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	settings.Env = env
 
-	if req.AgentType == "pi-ollama" {
-		settings.Pi = sessionsettings.PiConfig{SettingsJSON: buildPiSettingsJSON(env)}
-	}
+	settings.Pi = sessionsettings.PiConfig{SettingsJSON: buildPiSettingsJSON(env)}
 
 	// Claude config
 	settingsJSON := materialized.SettingsJSON

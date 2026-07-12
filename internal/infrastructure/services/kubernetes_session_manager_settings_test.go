@@ -119,11 +119,21 @@ func TestBuildSessionSettings_TeamSettingsUsesRepositoryEnvVars(t *testing.T) {
 		UserID: "test-user",
 		Scope:  entities.ScopeTeam,
 		TeamID: "org/team-a",
+		Environment: map[string]string{
+			"PI_DEFAULT_PROVIDER": "ollama-cloud",
+			"PI_DEFAULT_MODEL":    "glm-5:cloud",
+		},
 	}
 
 	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
 	if got := settings.Env["SECRET_TOKEN"]; got != "decrypted-secret" {
 		t.Fatalf("SECRET_TOKEN = %q, want decrypted-secret", got)
+	}
+	if got := settings.Pi.SettingsJSON["defaultProvider"]; got != "ollama-cloud" {
+		t.Fatalf("defaultProvider = %v", got)
+	}
+	if got := settings.Pi.SettingsJSON["defaultModel"]; got != "glm-5:cloud" {
+		t.Fatalf("defaultModel = %v", got)
 	}
 }
 
