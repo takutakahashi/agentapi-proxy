@@ -280,7 +280,7 @@ func TestBuildPiModelsJSON(t *testing.T) {
 
 func TestBuildPiModelsJSONDefaults(t *testing.T) {
 	got := buildPiModelsJSON(map[string]string{
-		"PI_CUSTOM_MODEL_PROVIDER": "custom",
+		"PI_CUSTOM_PROVIDER":       "custom",
 		"PI_CUSTOM_MODEL_ID":       "model-1",
 		"PI_CUSTOM_MODEL_BASE_URL": "https://example.com/v1",
 	})
@@ -294,6 +294,19 @@ func TestBuildPiModelsJSONDefaults(t *testing.T) {
 	}
 	if model["contextWindow"] != 128000 || model["maxTokens"] != 16384 {
 		t.Fatalf("unexpected default limits: %#v", model)
+	}
+}
+
+func TestBuildPiModelsJSONPrefersCanonicalProviderVariable(t *testing.T) {
+	got := buildPiModelsJSON(map[string]string{
+		"PI_CUSTOM_MODEL_PROVIDER": "canonical",
+		"PI_CUSTOM_PROVIDER":       "alias",
+		"PI_CUSTOM_MODEL_ID":       "model-1",
+		"PI_CUSTOM_MODEL_BASE_URL": "https://example.com/v1",
+	})
+	providers := got["providers"].(map[string]interface{})
+	if _, ok := providers["canonical"]; !ok {
+		t.Fatalf("expected canonical provider variable to take precedence: %#v", providers)
 	}
 }
 

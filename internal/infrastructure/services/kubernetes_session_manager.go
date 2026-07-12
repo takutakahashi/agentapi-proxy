@@ -5252,6 +5252,9 @@ func buildPiSettingsJSON(env map[string]string) map[string]interface{} {
 
 func buildPiModelsJSON(env map[string]string) map[string]interface{} {
 	provider := strings.TrimSpace(env["PI_CUSTOM_MODEL_PROVIDER"])
+	if provider == "" {
+		provider = strings.TrimSpace(env["PI_CUSTOM_PROVIDER"])
+	}
 	modelID := strings.TrimSpace(env["PI_CUSTOM_MODEL_ID"])
 	baseURL := strings.TrimSpace(env["PI_CUSTOM_MODEL_BASE_URL"])
 	if provider == "" || modelID == "" || baseURL == "" {
