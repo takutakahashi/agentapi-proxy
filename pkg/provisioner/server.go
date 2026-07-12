@@ -88,6 +88,8 @@ type StatusResponse struct {
 type Server struct {
 	port         int
 	settingsFile string // path to optional auto-provision settings file
+	httpClient   *http.Client
+	filterURL    string
 
 	mu        sync.RWMutex
 	status    Status
@@ -107,6 +109,8 @@ func New(port int, settingsFile string) *Server {
 	return &Server{
 		port:         port,
 		settingsFile: settingsFile,
+		httpClient:   http.DefaultClient,
+		filterURL:    "http://127.0.0.1:3129",
 		status:       StatusPending,
 		phase:        "starting",
 		phaseTime:    time.Now(),
@@ -147,6 +151,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
+	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
@@ -247,7 +252,7 @@ func (s *Server) handleSandboxDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Get("http://127.0.0.1:3129/domains") //nolint:noctx
+	resp, err := s.client().Get(s.controlURL() + "/domains") //nolint:noctx
 	if err != nil {
 		http.Error(w, "network filter not available", http.StatusServiceUnavailable)
 		return
@@ -257,6 +262,47 @@ func (s *Server) handleSandboxDomains(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// handleSandboxPolicy replaces the running network filter policy. This is used
+// when a pre-warmed stock Pod is adopted for a session with its own sandbox
+// policy, allowing the policy to change without restarting the Pod.
+func (s *Server) handleSandboxPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.controlURL()+"/policy", r.Body)
+	if err != nil {
+		http.Error(w, "invalid network filter request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.client().Do(req)
+	if err != nil {
+		http.Error(w, "network filter not available", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (s *Server) client() *http.Client {
+	if s.httpClient != nil {
+		return s.httpClient
+	}
+	return http.DefaultClient
+}
+
+func (s *Server) controlURL() string {
+	if s.filterURL != "" {
+		return s.filterURL
+	}
+	return "http://127.0.0.1:3129"
 }
 
 // runStartupScript executes the common startup pre-script as soon as the Pod
