@@ -36,8 +36,8 @@ func shouldRefreshPiOllamaCloud(settings *SessionSettings) bool {
 	if settings.Session.AgentType == "pi-ollama" {
 		return true
 	}
-	for _, key := range []string{"PI_DEFAULT_PROVIDER", "PI_CUSTOM_MODEL_PROVIDER", "PI_CUSTOM_PROVIDER"} {
-		if strings.EqualFold(strings.TrimSpace(settings.Env[key]), "ollama-cloud") {
+	for key, value := range settings.Env {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(key)), "PI_") && strings.TrimSpace(value) != "" {
 			return true
 		}
 	}
