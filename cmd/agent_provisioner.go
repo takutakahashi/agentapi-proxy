@@ -15,7 +15,7 @@ import (
 // It starts a local HTTP server (default :9001) for probes/status and pulls
 // provision requests from the proxy internal API. The provisioner then:
 //
-//  1. Runs the full setup sequence (write-pem, clone-repo, compile, sync-extra)
+//  1. Runs the full setup sequence (clone-repo, compile, sync-extra)
 //  2. Starts agentapi (or an ACP bridge) as a subprocess
 //  3. Waits for agentapi to become ready
 //  4. Sends the initial message (if any)

@@ -36,10 +36,6 @@ type SetupOptions struct {
 	// SettingsFile is the path to the user settings.json (from claude-config-user ConfigMap).
 	// Contains marketplace and plugin configuration. Optional.
 	SettingsFile string
-
-	// PEMOutputPath is where GITHUB_APP_PEM content is written.
-	// Defaults to /tmp/github-app/app.pem.
-	PEMOutputPath string
 }
 
 // DefaultSetupOptions returns the default Setup options.
@@ -47,21 +43,20 @@ func DefaultSetupOptions() SetupOptions {
 	return SetupOptions{
 		InputPath:      "/session-settings/settings.yaml",
 		CompileOptions: DefaultCompileOptions(),
-		PEMOutputPath:  "/tmp/github-app/app.pem",
 	}
 }
 
 // Setup runs the full init-container setup sequence for a session Pod:
-//  1. write-pem  : writes GITHUB_APP_PEM env var to a file on disk
-//  2. clone-repo : clones the repository (if session.repository is set)
-//  3. compile    : generates all Claude config files from settings.yaml
-//  4. sync-extra : copies credentials, notification subscriptions
+//  1. clone-repo : clones the repository (if session.repository is set)
+//  2. compile    : generates all Claude config files from settings.yaml
+//  3. sync-extra : copies credentials, notification subscriptions
+//
+// GitHub authentication uses the short-lived GITHUB_TOKEN provided in the
+// session settings env (generated server-side by the proxy). No GitHub App
+// private key is ever present in the Pod.
 func Setup(opts SetupOptions) error {
 	if opts.InputPath == "" {
 		opts.InputPath = DefaultSetupOptions().InputPath
-	}
-	if opts.PEMOutputPath == "" {
-		opts.PEMOutputPath = DefaultSetupOptions().PEMOutputPath
 	}
 
 	log.Printf("[SETUP] Reading settings from %s", opts.InputPath)
@@ -70,30 +65,24 @@ func Setup(opts SetupOptions) error {
 		return fmt.Errorf("failed to load session settings: %w", err)
 	}
 
-	// 1. Write GitHub App PEM to disk so git/gh can use it
-	if err := writePEM(settings, opts.PEMOutputPath); err != nil {
-		// Non-fatal: not all sessions use GitHub App auth
-		log.Printf("[SETUP] Warning: write-pem skipped: %v", err)
-	}
-
-	// 2. Clone repository if configured
+	// 1. Clone repository if configured
 	if settings.Repository != nil && settings.Repository.FullName != "" {
 		if err := cloneRepo(settings); err != nil {
 			return fmt.Errorf("clone-repo failed: %w", err)
 		}
 	}
 
-	// 3. Compile settings.yaml → config files
+	// 2. Compile settings.yaml → config files
 	if err := Compile(opts.CompileOptions); err != nil {
 		return fmt.Errorf("compile failed: %w", err)
 	}
 
-	// 4. Copy credentials, CLAUDE.md, notification subscriptions
+	// 3. Copy credentials, CLAUDE.md, notification subscriptions
 	if err := syncExtra(settings, opts); err != nil {
 		return fmt.Errorf("sync-extra failed: %w", err)
 	}
 
-	// 5. Re-patch ~/.claude.json to ensure onboarding fields are set.
+	// 4. Re-patch ~/.claude.json to ensure onboarding fields are set.
 	//    The sync step (marketplace clone / plugin install) may trigger Claude
 	//    CLI which rewrites ~/.claude.json and drops bypassPermissionsModeAccepted,
 	//    causing the "Welcome to Claude Code" screen on next launch.
@@ -109,30 +98,16 @@ func Setup(opts SetupOptions) error {
 	return nil
 }
 
-// writePEM writes the GITHUB_APP_PEM value from Env to a file on disk.
-// This replaces the write-pem init container.
-func writePEM(settings *SessionSettings, pemOutputPath string) error {
-	pem := settings.Env["GITHUB_APP_PEM"]
-	if pem == "" {
-		return fmt.Errorf("GITHUB_APP_PEM is not set in session env, skipping")
-	}
-
-	pemDir := filepath.Dir(pemOutputPath)
-	if err := os.MkdirAll(pemDir, 0700); err != nil {
-		return fmt.Errorf("failed to create PEM directory: %w", err)
-	}
-
-	if err := os.WriteFile(pemOutputPath, []byte(pem), 0600); err != nil {
-		return fmt.Errorf("failed to write PEM file: %w", err)
-	}
-
-	log.Printf("[SETUP] Wrote GitHub App PEM to %s", pemOutputPath)
-	return nil
-}
-
 // cloneRepo sets up GitHub auth and clones the repository using gh repo clone
-// so that GITHUB_TOKEN / GitHub App auth and GitHub Enterprise Server host
-// routing work correctly.
+// so that broker-based GitHub authentication works.
+//
+// When the session uses the broker (AGENTAPI_GITHUB_BROKER_URL is set), the git
+// credential helper and gh wrapper are installed so git/gh fetch short-lived
+// installation tokens from the proxy on demand. No GitHub App PEM is read and no
+// installation token is generated inside the Pod.
+//
+// When the broker is not configured (personal token / no auth), the legacy
+// gh-based setup (startup.SetupGitHubAuth) is used for backward compatibility.
 func cloneRepo(settings *SessionSettings) error {
 	repo := settings.Repository
 
@@ -143,10 +118,31 @@ func cloneRepo(settings *SessionSettings) error {
 		}
 	}
 
-	log.Printf("[SETUP] Setting up GitHub auth for repo: %s", repo.FullName)
-	if err := startup.SetupGitHubAuth(repo.FullName); err != nil {
-		// Non-fatal for public repos
-		log.Printf("[SETUP] Warning: GitHub auth setup failed: %v", err)
+	// Install the broker-backed gh wrapper + git credential helper when the broker
+	// env is present. The wrapper dir is prepended to PATH so the agent's `gh`
+	// invocations route through the wrapper.
+	//
+	// A broker session has NO GitHub App PEM or token available in-Pod, so if the
+	// broker helpers cannot be installed we must abort clone/setup with the error
+	// rather than silently falling back to the legacy gh-based auth (which would
+	// create an unauthenticated or mis-authenticated session). The legacy path is
+	// only used when the broker env is entirely absent (personal token / no auth).
+	binDir, err := setupGitHubBrokerAuth(settings.Env)
+	if err != nil {
+		return fmt.Errorf("setup GitHub token broker: %w", err)
+	}
+	if binDir != "" {
+		curPath := os.Getenv("PATH")
+		if perr := os.Setenv("PATH", prependToPath(binDir, curPath)); perr != nil {
+			return fmt.Errorf("prepend session bin to PATH: %w", perr)
+		}
+		log.Printf("[SETUP] GitHub token broker active; installed gh wrapper + git credential helper (PATH+=%s)", binDir)
+	} else {
+		log.Printf("[SETUP] Setting up GitHub auth for repo via legacy gh path: %s", repo.FullName)
+		if err := startup.SetupGitHubAuth(repo.FullName); err != nil {
+			// Non-fatal for public repos
+			log.Printf("[SETUP] Warning: GitHub auth setup failed: %v", err)
+		}
 	}
 
 	cloneDir := repo.CloneDir

@@ -53,7 +53,7 @@ var piSettingsPath = "/home/agentapi/.pi/agent/settings.json"
 //
 // Sequence:
 //  1. Write received settings to a temp YAML file
-//  2. Run sessionsettings.Setup() (write-pem, clone-repo, compile, sync-extra)
+//  2. Run sessionsettings.Setup() (clone-repo, compile, sync-extra)
 //  3. Load the generated session env file
 //  4. Fetch memory from the proxy and inject into CLAUDE.md
 //  5. cd into the cloned repo if present

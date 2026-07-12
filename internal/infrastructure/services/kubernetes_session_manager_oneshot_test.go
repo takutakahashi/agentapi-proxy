@@ -66,7 +66,10 @@ func TestBuildSessionSettings_OneshotHookInjected(t *testing.T) {
 		Oneshot: true,
 	}
 
-	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	settings, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil, true)
+	if buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 	if settings == nil {
 		t.Fatal("Expected non-nil settings")
 	}

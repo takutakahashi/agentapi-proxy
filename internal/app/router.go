@@ -44,6 +44,7 @@ type HandlerRegistry struct {
 	assetController            *controllers.AssetController
 	sessionProfileController   *controllers.SessionProfileController
 	provisionerController      *controllers.ProvisionerController
+	githubTokenController      *controllers.GitHubTokenController
 	customHandlers             []CustomHandler
 }
 
@@ -206,6 +207,12 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
 
+	var githubTokenController *controllers.GitHubTokenController
+	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
+		githubTokenController = controllers.NewGitHubTokenController(k8sManager)
+		log.Printf("[ROUTER] GitHub token broker controller initialized")
+	}
+
 	acpController := controllers.NewACPController(server, server)
 
 	return &Router{
@@ -232,6 +239,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			assetController:            assetController,
 			sessionProfileController:   sessionProfileController,
 			provisionerController:      provisionerController,
+			githubTokenController:      githubTokenController,
 			customHandlers:             make([]CustomHandler, 0),
 		},
 	}
@@ -326,6 +334,14 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.provisionerController.GetNextExternalSessionAllocation)
 		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.provisionerController.CompleteExternalSessionAllocation)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
+	}
+
+	// GitHub token broker endpoint (session-scoped). Session Pods fetch short-lived
+	// GitHub installation tokens from here on demand instead of receiving a
+	// long-lived credential at creation time.
+	if r.handlers.githubTokenController != nil {
+		r.echo.POST("/internal/sessions/:sessionId/github-token", r.handlers.githubTokenController.IssueToken)
+		log.Printf("[ROUTES] GitHub token broker endpoint registered")
 	}
 
 	// Session sharing routes

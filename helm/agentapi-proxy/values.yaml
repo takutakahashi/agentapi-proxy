@@ -260,16 +260,29 @@ github:
     # 例: https://github.company.com/api/v3
     apiUrl: ""
   # GitHub App 認証設定
+  #
+  # セキュリティ: ここで設定した GitHub App 資格情報（App ID / Installation ID /
+  # private key PEM / repositoryRestriction）は agentapi-proxy の Deployment だけに
+  # 渡され、セッション Pod には一切マウント・注入されません。
+  # GitHub App 認証を使う場合、proxy はトークンブローカとして働きます: セッション Pod には
+  # session-scoped なブローカクレデンシャルと endpoint のみを渡し、Pod は必要時に短命な
+  # installation token をプロキシから取得します。これにより長時間セッションでも token 失効後
+  # に git/gh が継続利用でき、App 資格情報はプロキシ内に閉じ込められます。
+  # (External Session Manager など Pod がプロキシに折り返せない経路では、サーバサイドで一度
+  # 解決した token を GITHUB_TOKEN として埋め込みます)
   app:
     # GitHub App ID (必須)
     # GitHub App設定画面の "App ID" に表示される数値
     id: ""
-    # GitHub App Installation ID (必須)
+    # GitHub App Installation ID (任意)
     # 組織にインストール後のURLから取得: /settings/installations/12345678 -> 12345678
+    # 未指定の場合、proxy が対象リポジトリから自動解決します。
     installationId: ""
     # GitHub App installation token を対象リポジトリに限定する場合は true
+    # (proxy がサーバサイドでトークンを発行する際に適用されます)
     repositoryRestriction: false
     # GitHub App の秘密鍵（PEM形式）を含む Secret (必須)
+    # この PEM は proxy Deployment のみにマウントされ、セッション Pod には渡りません。
     # kubectl create secret generic github-app-private-key --from-file=private-key=/path/to/app.private-key.pem
     privateKey:
       # Secret 名
@@ -551,6 +564,13 @@ kubernetesSession:
   podStopTimeout: 30
 
   # Session Pods poll the proxy internal API for provisioning jobs.
+  #
+  # This URL is also the base for the GitHub token broker endpoint
+  # (/internal/sessions/:sessionId/github-token) that session Pods call to fetch
+  # short-lived installation tokens on demand. When empty, the chart defaults to
+  # the in-cluster Service DNS derived from the chart fullname
+  # (http://<fullname>.<release-namespace>.svc.cluster.local:<service.port>),
+  # so custom release names or fullnameOverride are handled automatically.
   provisioner:
     proxyUrl: ""
 
@@ -600,8 +620,14 @@ kubernetesSession:
   #           readOnly: true
 
   # GitHub authentication for repository cloning in session pods
-  # A Secret is automatically created when github.app.id and github.app.privateKey.secretName are set
-  # The Secret will be used by the clone-repo init container
+  # A github-session Secret is automatically created when github.token or
+  # (github.app.id and github.app.privateKey.secretName) are set.
+  # This Secret only ever contains a personal access token (GITHUB_TOKEN); GitHub
+  # App credentials are never stored in it. For GitHub App auth, the proxy acts as a
+  # token broker: session pods receive a session-scoped broker credential + endpoint
+  # and fetch short-lived installation tokens on demand, so long-running sessions keep
+  # working after a token expires. No GitHub App private key or configuration reaches
+  # session pods.
 
   # Single base Kubernetes Secret shared by all sessions.
   # agentapi-proxy reads this Secret before each session starts and merges it at the lowest

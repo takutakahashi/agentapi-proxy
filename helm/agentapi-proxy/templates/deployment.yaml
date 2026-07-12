@@ -345,7 +345,12 @@ spec:
             - name: AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT
               value: {{ .Values.kubernetesSession.podStopTimeout | quote }}
             - name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL
-              value: {{ dig "provisioner" "proxyUrl" "" .Values.kubernetesSession | quote }}
+              # Default to the in-cluster Service DNS derived from the chart fullname
+              # so session Pods reach this proxy (for both provisioner polling and
+              # the GitHub token broker endpoint) even with custom release names or
+              # fullnameOverride. An explicit kubernetesSession.provisioner.proxyUrl
+              # value takes precedence.
+              value: {{ coalesce (dig "provisioner" "proxyUrl" "" .Values.kubernetesSession) (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port) | quote }}
             {{- if or .Values.github.token (and .Values.github.app.id .Values.github.app.privateKey.secretName) }}
             - name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME
               value: {{ printf "%s-github-session" (include "agentapi-proxy.fullname" .) | quote }}

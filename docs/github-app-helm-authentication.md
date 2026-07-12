@@ -244,6 +244,77 @@ volumes:
 - **秘密鍵の保護**: PEMファイルはKubernetes Secretに安全に格納
 - **最小権限の原則**: GitHub Appには必要最小限の権限のみ付与
 - **Access Token TTL**: Installation Access Tokenは1時間で自動的に期限切れ
+- **セッションPodへの資格情報の非公開**: GitHub App の設定（`GITHUB_APP_ID` /
+  `GITHUB_INSTALLATION_ID` / `REPOSITORY_RESTRICTION`）および秘密鍵 PEM は
+  **agentapi-proxy 本体の Pod にのみ**マウント・注入されます。個々のセッション Pod
+  には一切渡されません。
+
+### セッション Pod への認証情報の受け渡し（トークンブローカモデル）
+
+セッション Pod（各エージェント実行環境）へは、GitHub App の設定や秘密鍵を一切渡さず、
+**agentapi-proxy をトークンブローカとして利用**して短命な installation token をオンデマンドで
+取得させます。これにより長時間実行されるセッションでも token 失効後に git/gh が継続利用できます。
+
+#### proxy 側の仕組み
+
+1. proxy は自身が保持する GitHub App 資格情報（App ID・秘密鍵）をプロセス内に閉じ込め、
+   セッションごとに session-scoped なブローカクレデンシャル（HMAC で session ID に紐付け）
+   を発行します。このクレデンシャルはそのセッションのブローカ endpoint 専用で、
+   他の API や他セッションの token 取得には使えません。
+2. ブローカ endpoint: `POST /internal/sessions/:sessionId/github-token` が token を返します。
+   repository スコープを検証し（対象リポジトリがセッションのリポジトリと一致すること）、
+   `REPOSITORY_RESTRICTION` と GitHub Enterprise API base を踏襲します。
+3. 発行した installation token は期限手前でサーバ側キャッシュし、期限が近づくと再発行します。
+   token/PEM はログ・エラー・返却メッセージのいずれにも出力しません。
+
+#### セッション Pod に渡るもの
+
+セッション設定 env に以下のみが注入されます（`GITHUB_TOKEN` は注入しません）。
+
+| 環境変数 | 説明 |
+|----------|------|
+| `AGENTAPI_GITHUB_BROKER_URL` | ブローカ endpoint URL（proxy Service 経由）。chart の `kubernetesSession.provisioner.proxyUrl` 未指定時は fullname ベースの in-cluster Service DNS が自動設定されます |
+| `AGENTAPI_GITHUB_BROKER_TOKEN` | session-scoped ブーカクレデンシャル（HMAC） |
+
+#### Pod 内の仕組み
+
+- **git credential helper** (`/home/agentapi/.session/git-credential-broker`): `get` 要求時に
+  ブローカから有効な token を取得し git credential protocol で渡します。`store`/`erase` は
+  no-op で token を永続保存しません。対象 host の既存 helper chain を空エントリで reset して
+  broker helper のみを設定するため、他 helper や対話 prompt への暗黙 fallback はありません。
+  broker 取得失敗時は非 zero で終了し認証失敗として報告されます。
+- **gh wrapper** (`/home/agentapi/.session/bin/gh`): 各 gh 実行時にブローカから token を取得し
+  `GH_TOKEN` として real gh に渡します。token はコマンド引数・標準出力に出ず、再帰呼出は
+  `AGENTAPI_GH_WRAPPER_ACTIVE` で回避します。real gh は導入前に `exec.LookPath` で解決した
+  **絶対パス**を埋め込み、shell-safe な文字種のみ許可するため、PATH 再解決による無限再帰や
+  コマンド注入を防ぎます。real gh が解決できない場合は wrapper を有効化せずエラーで中止します。
+- **Cache-Control**: broker endpoint の token レスポンス（JSON / raw 双方）は `Cache-Control: no-store`
+  を返し、仲介キャッシュによる token の永続化・再利用を防ぎます。
+
+#### broker setup 失敗時の挙動（legacy fallback なし）
+
+broker env が存在するセッションには in-Pod に PEM/token がないため、wrapper/helper の作成や
+real gh の解決に失敗した場合は **legacy auth へ暗黙に fallback せず**、clone/setup を明確な
+エラーで中止します。legacy path は broker env が完全に不在（個人 token / 認証なし）の場合のみ
+使用されます。
+
+#### 各経路の挙動
+
+- **通常 Kubernetes セッション / stock セッション**: ブローカモデルを使用。Pod は token を持たず
+  必要時に更新取得するため、長時間セッションでも token 失効後も git/gh が使えます。
+- **External Session Manager (ESM)**: リモート Pod がプロキシのブローカに折り返せないため、
+  proxy がサーバサイドで token を一度解決して `GITHUB_TOKEN` として埋め込みます（更新不可だが
+  App 資格情報はプロキシから一切外れない）。
+- **GitHub Enterprise Server**: proxy の `GITHUB_API` を用いて token を発行します。
+- **`params.github_token`（個人アクセストークン）**: 従来どおりその token が `GITHUB_TOKEN` として
+  使用され、ブローカは関与しません。
+
+これにより、セッション Pod が侵害されても流出するのは短命な token のみ（またはブローカ
+  クレデンシャルはそのセッション専用で他用途に使えない）で、GitHub App の秘密鍵や App 設定は
+  プロキシ内に保護されます。
+
+> 注: トークン発行失敗時は秘密を含まない明確なエラーとなり、期限切れ token への無言 fallback は
+  行いません。
 
 ## デプロイメント
 

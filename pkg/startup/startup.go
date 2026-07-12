@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v57/github"
@@ -279,9 +280,18 @@ func InitGitHubRepo(repoFullName, cloneDir string, ignoreMissingConfig bool) err
 
 // GetGitHubToken retrieves the GitHub token for authentication
 func GetGitHubToken(repoFullName string) (string, error) {
+	token, _, err := GetGitHubTokenWithExpiry(repoFullName)
+	return token, err
+}
+
+// GetGitHubTokenWithExpiry retrieves the GitHub token for authentication together
+// with its expiration time. Personal access tokens have no known expiry and
+// return a zero time. This is used by the proxy-side token broker to cache and
+// refresh GitHub App installation tokens before they expire.
+func GetGitHubTokenWithExpiry(repoFullName string) (string, time.Time, error) {
 	// Check for personal access token first
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		return token, nil
+		return token, time.Time{}, nil
 	}
 
 	// If no token available, try to use GitHub App authentication
@@ -316,16 +326,16 @@ func GetGitHubToken(repoFullName string) (string, error) {
 
 		// If we have installation ID (manual or auto-discovered), proceed with token generation
 		if installationID != "" {
-			return GenerateGitHubAppTokenForRepository(appID, installationID, pemPath, repoFullName)
+			return GenerateGitHubAppTokenForRepositoryWithExpiry(appID, installationID, pemPath, repoFullName)
 		}
 	}
 
 	// Check for GITHUB_PERSONAL_ACCESS_TOKEN as fallback
 	if token := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"); token != "" {
-		return token, nil
+		return token, time.Time{}, nil
 	}
 
-	return "", fmt.Errorf("no GitHub authentication found: GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, or GitHub App credentials (GITHUB_APP_ID, GITHUB_APP_PEM_PATH) are required. GITHUB_INSTALLATION_ID is optional and will be auto-discovered if GITHUB_REPO_FULLNAME is set")
+	return "", time.Time{}, fmt.Errorf("no GitHub authentication found: GITHUB_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN, or GitHub App credentials (GITHUB_APP_ID, GITHUB_APP_PEM_PATH) are required. GITHUB_INSTALLATION_ID is optional and will be auto-discovered if GITHUB_REPO_FULLNAME is set")
 }
 
 // GenerateGitHubAppToken generates a GitHub App installation token
@@ -336,21 +346,30 @@ func GenerateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 // GenerateGitHubAppTokenForRepository generates a GitHub App installation token,
 // optionally restricted to a single repository.
 func GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, repoFullName string) (string, error) {
+	token, _, err := GenerateGitHubAppTokenForRepositoryWithExpiry(appIDStr, installationIDStr, pemPath, repoFullName)
+	return token, err
+}
+
+// GenerateGitHubAppTokenForRepositoryWithExpiry generates a GitHub App installation
+// token (optionally restricted to a single repository) and returns it together
+// with its expiration time. The expiration is sourced from the GitHub API response
+// and is used by the token broker cache to refresh before expiry.
+func GenerateGitHubAppTokenForRepositoryWithExpiry(appIDStr, installationIDStr, pemPath, repoFullName string) (string, time.Time, error) {
 	repositories, err := installationTokenRepositories(repoFullName)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 
 	// Parse app ID
 	appID, err := strconv.ParseInt(appIDStr, 10, 64)
 	if err != nil {
-		return "", fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
+		return "", time.Time{}, fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
 	}
 
 	// Parse installation ID
 	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
 	if err != nil {
-		return "", fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
+		return "", time.Time{}, fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
 	}
 
 	// Read private key - try file first, then fallback to environment variable
@@ -367,9 +386,9 @@ func GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, r
 			// より詳細なエラー情報を提供
 			fileInfo, statErr := os.Stat(pemPath)
 			if statErr != nil {
-				return "", fmt.Errorf("failed to read PEM file %s: file does not exist or is not accessible. Also checked GITHUB_APP_PEM environment variable: %w", pemPath, err)
+				return "", time.Time{}, fmt.Errorf("failed to read PEM file %s: file does not exist or is not accessible. Also checked GITHUB_APP_PEM environment variable: %w", pemPath, err)
 			}
-			return "", fmt.Errorf("failed to read PEM file %s (size: %d bytes, mode: %s). Also checked GITHUB_APP_PEM environment variable: %w",
+			return "", time.Time{}, fmt.Errorf("failed to read PEM file %s (size: %d bytes, mode: %s). Also checked GITHUB_APP_PEM environment variable: %w",
 				pemPath, fileInfo.Size(), fileInfo.Mode(), err)
 		}
 	}
@@ -377,7 +396,7 @@ func GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, r
 	// Create GitHub App transport
 	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, appID, pemData)
 	if err != nil {
-		return "", fmt.Errorf("failed to create GitHub App transport: %w", err)
+		return "", time.Time{}, fmt.Errorf("failed to create GitHub App transport: %w", err)
 	}
 
 	// Set base URL if specified (for GitHub Enterprise)
@@ -393,7 +412,7 @@ func GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, r
 		var err error
 		client, err = github.NewClient(&http.Client{Transport: transport}).WithEnterpriseURLs(githubAPI, githubAPI)
 		if err != nil {
-			return "", fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
+			return "", time.Time{}, fmt.Errorf("failed to create GitHub Enterprise client: %w", err)
 		}
 	}
 
@@ -407,10 +426,10 @@ func GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, r
 		},
 	)
 	if err != nil {
-		return "", fmt.Errorf("failed to create installation token: %w", err)
+		return "", time.Time{}, fmt.Errorf("failed to create installation token: %w", err)
 	}
 
-	return token.GetToken(), nil
+	return token.GetToken(), token.GetExpiresAt().UTC(), nil
 }
 
 func installationTokenRepositories(repoFullName string) ([]string, error) {

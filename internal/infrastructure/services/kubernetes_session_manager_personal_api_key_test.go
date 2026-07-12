@@ -117,7 +117,9 @@ func TestBuildSessionSettings_NewPersonalAPIKeyLoaded(t *testing.T) {
 		Scope:  entities.ScopeUser,
 	}
 
-	manager.buildSessionSettings(context.Background(), session, req, nil)
+	if _, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil, true); buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 
 	if len(loader.loaded) == 0 {
 		t.Fatal("Expected PersonalAPIKeyLoader.LoadPersonalAPIKey to be called for new user, but it was not")
@@ -163,7 +165,9 @@ func TestBuildSessionSettings_ExistingPersonalAPIKeyNotReloaded(t *testing.T) {
 		Scope:  entities.ScopeUser,
 	}
 
-	manager.buildSessionSettings(context.Background(), session, req, nil)
+	if _, buildErr := manager.buildSessionSettings(context.Background(), session, req, nil, true); buildErr != nil {
+		t.Fatalf("buildSessionSettings() error = %v", buildErr)
+	}
 
 	if len(loader.loaded) != 0 {
 		t.Errorf("Expected LoadPersonalAPIKey NOT to be called for existing user, but it was called %d time(s)", len(loader.loaded))

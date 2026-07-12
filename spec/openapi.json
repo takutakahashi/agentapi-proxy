@@ -259,6 +259,95 @@
         }
       }
     },
+    "/internal/sessions/{sessionId}/github-token": {
+      "post": {
+        "summary": "Issue a short-lived GitHub installation token for a session",
+        "description": "Session-scoped GitHub token broker. A session Pod presents its session-scoped broker credential (Authorization: Bearer) to obtain a short-lived GitHub App installation token, scoped to the session's repository and refreshed before expiry. GitHub App configuration (App ID, installation ID, private key PEM, repository restriction) is never exposed to the Pod; only the resulting token is returned. The credential is bound to the session ID in the path, so a token minted for one session cannot be used against another, and is not valid for any other proxy endpoint.",
+        "operationId": "issueSessionGitHubToken",
+        "tags": [
+          "GitHubTokenBroker"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID the broker credential is bound to",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "Response format. 'raw' returns the bare token as text/plain for simple in-Pod shell helpers; the default is JSON.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "raw"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repository": {
+                    "type": "string",
+                    "description": "Repository full name (owner/repo) to scope the token to. When present it must match the session's configured repository; otherwise the request is rejected. When omitted, the session's repository scope is used.",
+                    "example": "octo/repo"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "GitHub installation token issued",
+            "headers": {
+              "Cache-Control": {
+                "description": "no-store — the response carries a short-lived secret token that must never be cached or replayed by an intermediary.",
+                "schema": { "type": "string", "example": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubTokenResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "description": "The bare token (format=raw)"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid session broker credential"
+          },
+          "403": {
+            "description": "Forbidden - requested repository does not match the session's repository scope"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "502": {
+            "description": "Failed to issue GitHub token"
+          },
+          "503": {
+            "description": "GitHub token broker is not configured"
+          }
+        }
+      }
+    },
     "/sessions/status/stream": {
       "get": {
         "summary": "Stream all session status changes (SSE)",
@@ -4734,6 +4823,24 @@
   },
   "components": {
     "schemas": {
+      "GitHubTokenResponse": {
+        "type": "object",
+        "description": "A short-lived GitHub App installation token issued by the session-scoped token broker, together with its expiration time.",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Short-lived GitHub installation token scoped to the session's repository."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Token expiration time (RFC 3339). Empty for credentials without a known expiry (e.g. personal access tokens)."
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
       "GitSyncConfigResponse": {
         "type": "object",
         "description": "Public view of GitHub sync configuration (token redacted)",
@@ -7863,6 +7970,10 @@
     {
       "name": "SessionProfiles",
       "description": "Session profile management. Named, reusable collections of session configuration that can be referenced by sessions, webhooks, schedules, and slackbots."
+    },
+    {
+      "name": "GitHubTokenBroker",
+      "description": "Session-scoped broker that issues short-lived GitHub App installation tokens to session Pods on demand, so long-running sessions keep working after a token expires without ever receiving GitHub App credentials or the private key."
     }
   ]
 }
