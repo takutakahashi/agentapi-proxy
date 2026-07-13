@@ -5019,6 +5019,14 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		session.SetResolvedAPIKey(apiKey)
 	}
 
+	// codex-acp explicitly sends its selected sandbox policy with every turn,
+	// overriding sandbox_mode from ~/.codex/config.toml. Session Pods are already
+	// isolated by agentapi-proxy, so start the adapter in its full-access mode to
+	// avoid attempting to create a nested bubblewrap sandbox.
+	if req.AgentType == "codex-acp" {
+		env["INITIAL_AGENT_MODE"] = "agent-full-access"
+	}
+
 	settings.Env = env
 
 	settings.Pi = sessionsettings.PiConfig{
@@ -5094,7 +5102,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
 			MCPServers: materialized.MCPServers,
 		}
-		log.Printf("[K8S_SESSION] Injected Codex hooks and set approval-mode=full-auto, sandbox_mode=danger-full-access for session %s", session.id)
+		log.Printf("[K8S_SESSION] Injected Codex hooks and set INITIAL_AGENT_MODE=agent-full-access, approval-mode=full-auto, sandbox_mode=danger-full-access for session %s", session.id)
 	}
 
 	// Repository info
