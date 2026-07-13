@@ -2309,7 +2309,11 @@ func sessionAffinity(value map[string]interface{}) (*corev1.Affinity, error) {
 	if len(value) == 0 {
 		return nil, nil
 	}
-	data, err := json.Marshal(value)
+	normalized, err := normalizeJSONValue(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize session affinity: %w", err)
+	}
+	data, err := json.Marshal(normalized)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal session affinity: %w", err)
 	}
@@ -2318,6 +2322,47 @@ func sessionAffinity(value map[string]interface{}) (*corev1.Affinity, error) {
 		return nil, fmt.Errorf("failed to parse session affinity: %w", err)
 	}
 	return &affinity, nil
+}
+
+func normalizeJSONValue(value interface{}) (interface{}, error) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		normalized := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			value, err := normalizeJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized[key] = value
+		}
+		return normalized, nil
+	case map[interface{}]interface{}:
+		normalized := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			stringKey, ok := key.(string)
+			if !ok {
+				return nil, fmt.Errorf("affinity map key must be a string, got %T", key)
+			}
+			value, err := normalizeJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized[stringKey] = value
+		}
+		return normalized, nil
+	case []interface{}:
+		normalized := make([]interface{}, len(typed))
+		for index, item := range typed {
+			value, err := normalizeJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			normalized[index] = value
+		}
+		return normalized, nil
+	default:
+		return value, nil
+	}
 }
 
 func (m *KubernetesSessionManager) applySessionPodTemplateFile(template *corev1.PodTemplateSpec) error {
