@@ -146,6 +146,53 @@ func TestBuildSessionSettings_TeamSettingsUsesRepositoryEnvVars(t *testing.T) {
 	}
 }
 
+func TestBuildSessionSettings_CodexACPDisablesNestedSandbox(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	})
+	cfg := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			Namespace:     "test-ns",
+			Image:         "test-image:latest",
+			BasePort:      9000,
+			PVCEnabled:    boolPtrForTest(false),
+			CPURequest:    "100m",
+			CPULimit:      "1",
+			MemoryRequest: "128Mi",
+			MemoryLimit:   "512Mi",
+		},
+	}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+
+	req := &entities.RunServerRequest{
+		UserID:    "test-user",
+		AgentType: "codex-acp",
+	}
+	session := NewKubernetesSession(
+		"test-session",
+		req,
+		"test-deploy",
+		"agentapi-session-test-svc",
+		"test-pvc",
+		"test-ns",
+		9000,
+		nil,
+		nil,
+	)
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if got := settings.Env["INITIAL_AGENT_MODE"]; got != "agent-full-access" {
+		t.Fatalf("INITIAL_AGENT_MODE = %q, want agent-full-access", got)
+	}
+	if !strings.Contains(settings.Codex.ConfigTOML, `sandbox_mode = "danger-full-access"`) {
+		t.Fatalf("Codex config does not disable the nested sandbox: %q", settings.Codex.ConfigTOML)
+	}
+}
+
 func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},

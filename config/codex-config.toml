@@ -2,3 +2,6 @@
 # approval-mode = "full-auto" bypasses interactive permission prompts,
 # equivalent to bypassPermissionsModeAccepted in Claude Code's .claude.json.
 approval-mode = "full-auto"
+# Session containers are already isolated by agentapi-proxy. Keep Codex's own
+# nested Linux sandbox disabled for direct Codex invocations as well.
+sandbox_mode = "danger-full-access"
