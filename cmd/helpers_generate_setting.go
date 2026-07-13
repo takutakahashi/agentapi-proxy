@@ -37,7 +37,7 @@ done
 if [ -z "$prefix" ]; then prefix="$PWD"; fi
 mkdir -p "$prefix"
 test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
-exec /usr/local/bin/npm install --prefix "$prefix" --legacy-peer-deps $packages
+exec bun add --cwd "$prefix" $packages
 EOF
   chmod +x "$NPM_SHIM_DIR/npm"
   if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
@@ -574,10 +574,10 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 	case "claude-acp":
 		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
 		// Port is determined at runtime via AGENTAPI_PORT env var.
-		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y @agentclientprotocol/claude-agent-acp]")
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- bunx @agentclientprotocol/claude-agent-acp]")
 		return sessionsettings.StartupConfig{
 			Command: []string{"agentapi-proxy"},
-			Args:    []string{"acp-server", "--", "npx", "-y", "@agentclientprotocol/claude-agent-acp"},
+			Args:    []string{"acp-server", "--", "bunx", "@agentclientprotocol/claude-agent-acp"},
 		}
 	case "codex-acp":
 		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.

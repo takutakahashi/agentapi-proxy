@@ -5462,7 +5462,7 @@
           },
           "agent_type": {
             "type": "string",
-            "description": "Agent type for the session. Supported values: 'claude-legacy', 'claude-acp', 'codex-acp', 'pi-ollama', and 'cursor'. If not specified, uses default agentapi.",
+            "description": "Agent type for the session. Supported values: 'claude-acp', 'codex-acp', and 'cursor'. If not specified, uses default agentapi.",
             "example": "claude-acp"
           },
           "slack": {
@@ -7214,7 +7214,7 @@
       "properties": {
         "agent_type": {
           "type": "string",
-          "description": "Agent type to use. Supported values: 'claude-legacy', 'claude-acp', 'codex-acp', 'pi-ollama', and 'cursor'. If omitted, the default agentapi is used.",
+          "description": "Agent type to use. Supported values: 'claude-acp', 'codex-acp', and 'cursor'. If omitted, the default agentapi is used.",
           "example": "claude-acp"
         },
         "oneshot": {

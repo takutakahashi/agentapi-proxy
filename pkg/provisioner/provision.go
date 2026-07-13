@@ -197,7 +197,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 
 	// ── Step 5.5: run pre-script ─────────────────────────────────────────────
 	// Executes the optional shell pre-script before starting the agent.
-	// Pre-scripts are used for setup tasks such as pre-fetching npm packages.
+	// Pre-scripts are used for setup tasks such as pre-fetching npm/bun packages.
 	// Failure is non-fatal: a warning is logged and provisioning continues.
 	if settings.Startup.PreScript != "" {
 		s.setPhase("provision:pre-script")
@@ -954,7 +954,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"--port", agentapiPort,
 			"--output-file", "/opt/acp-posts/history.jsonl",
 			"--",
-			"npx", "-y", "@agentclientprotocol/claude-agent-acp",
+			"bunx", "@agentclientprotocol/claude-agent-acp",
 		}
 
 	case "codex-acp":
