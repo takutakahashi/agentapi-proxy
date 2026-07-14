@@ -37,8 +37,9 @@ type SandboxParams struct {
 	// PolicyID references a SandboxPolicy resource whose domain lists are merged into the session.
 	// Session-level AllowedDomains and DeniedDomains are appended on top of the policy.
 	PolicyID string `json:"policy_id,omitempty"`
-	// AllowedDomains is the list of hostnames whose traffic is permitted (allowlist mode).
-	// When non-empty, all other domains are blocked. Takes precedence over DeniedDomains.
+	// AllowedDomains is the list of hostnames, IPv4 addresses, and IPv4 CIDR ranges whose
+	// traffic is permitted (allowlist mode). IP addresses and ranges bypass the proxy via
+	// direct iptables rules. Takes precedence over DeniedDomains.
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
 	// DeniedDomains is the list of hostnames whose traffic should be blocked (denylist mode).
 	// Used only when AllowedDomains is empty.

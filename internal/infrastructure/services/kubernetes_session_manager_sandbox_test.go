@@ -13,12 +13,12 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
-func TestBuildSandboxContainersGeneratesRulesThenRestoresWithIptablesImage(t *testing.T) {
+func TestBuildSandboxContainersAppliesNFAConfigWithIPAllowlist(t *testing.T) {
 	manager := &KubernetesSessionManager{
 		k8sConfig: &config.KubernetesSessionConfig{
 			Image:                          "session-image:latest",
 			ImagePullPolicy:                "IfNotPresent",
-			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.7.0",
+			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.0",
 			SandboxInitImage:               "gcr.io/istio-release/iptables:latest",
 			NetworkFilterCPURequest:        "250m",
 			NetworkFilterCPULimit:          "1000m",
@@ -33,16 +33,23 @@ func TestBuildSandboxContainersGeneratesRulesThenRestoresWithIptablesImage(t *te
 
 	initContainers, sidecar, proxyEnvVars := manager.buildSandboxContainers(&entities.SandboxParams{
 		Enabled:        true,
-		AllowedDomains: []string{"example.com"},
+		AllowedDomains: []string{"example.com", "192.0.2.10", "198.51.100.0/24"},
 		CountMode:      true,
 	})
 
-	assert.Len(t, initContainers, 2)
+	assert.Len(t, initContainers, 1)
 
-	generate := initContainers[0]
-	assert.Equal(t, "network-filter-generate-iptables", generate.Name)
-	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.7.0", generate.Image)
-	assert.Equal(t, []string{"nfa", "setup-iptables", "--output", "/etc/iptables/rules.v4"}, generate.Command)
+	setup := initContainers[0]
+	assert.Equal(t, "network-filter-setup", setup.Name)
+	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.0", setup.Image)
+	assert.Equal(t, "/bin/sh", setup.Command[0])
+	assert.Contains(t, setup.Command[2], "nfa setup-iptables --apply --config /etc/nfa/config.yaml")
+	assert.Contains(t, setup.Env, corev1.EnvVar{
+		Name: "NFA_CONFIG",
+		Value: "filter:\n  mode: allowlist\n  countMode: true\n  domains:\n" +
+			"    - \"example.com\"\n    - \"192.0.2.10\"\n    - \"198.51.100.0/24\"\n" +
+			"deferredPolicy: true\n",
+	})
 	assert.Equal(t, corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse("50m"),
@@ -52,29 +59,20 @@ func TestBuildSandboxContainersGeneratesRulesThenRestoresWithIptablesImage(t *te
 			corev1.ResourceCPU:    resource.MustParse("100m"),
 			corev1.ResourceMemory: resource.MustParse("64Mi"),
 		},
-	}, generate.Resources)
+	}, setup.Resources)
 	assert.Equal(t, []corev1.VolumeMount{{
-		Name:      "sandbox-iptables",
-		MountPath: "/etc/iptables",
-	}}, generate.VolumeMounts)
-
-	restore := initContainers[1]
-	assert.Equal(t, "network-filter-setup", restore.Name)
-	assert.Equal(t, "gcr.io/istio-release/iptables:latest", restore.Image)
-	assert.Equal(t, []string{"iptables-restore", "/etc/iptables/rules.v4"}, restore.Command)
-	assert.Equal(t, generate.Resources, restore.Resources)
-	assert.Equal(t, []corev1.VolumeMount{{
-		Name:      "sandbox-iptables",
-		MountPath: "/etc/iptables",
-		ReadOnly:  true,
-	}}, restore.VolumeMounts)
-	assert.Contains(t, restore.SecurityContext.Capabilities.Add, corev1.Capability("NET_ADMIN"))
+		Name:      "sandbox-nfa-config",
+		MountPath: "/etc/nfa",
+	}}, setup.VolumeMounts)
+	assert.Contains(t, setup.SecurityContext.Capabilities.Add, corev1.Capability("NET_ADMIN"))
 
 	assert.NotNil(t, sidecar)
 	assert.Equal(t, "network-filter", sidecar.Name)
 	assert.NotEmpty(t, sidecar.Resources.Requests)
 	assert.NotEmpty(t, sidecar.Resources.Limits)
+	assert.Equal(t, []string{"nfa", "proxy", "--config", "/etc/nfa/config.yaml", "--deferred-policy"}, sidecar.Command)
 	assert.Contains(t, sidecar.Env, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
+	assert.Contains(t, sidecar.SecurityContext.Capabilities.Add, corev1.Capability("NET_ADMIN"))
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
 }
 
@@ -122,7 +120,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 			CPULimit:                       "1",
 			MemoryRequest:                  "128Mi",
 			MemoryLimit:                    "512Mi",
-			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.7.0",
+			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.0",
 			SandboxInitImage:               "gcr.io/istio-release/iptables:latest",
 			NetworkFilterInitMemoryRequest: "32Mi",
 			NetworkFilterInitMemoryLimit:   "64Mi",
@@ -291,7 +289,7 @@ func newSciaSidecarTestManager(sessionSidecarEnabled bool) *KubernetesSessionMan
 			CPULimit:                       "1",
 			MemoryRequest:                  "128Mi",
 			MemoryLimit:                    "512Mi",
-			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.7.0",
+			NetworkFilterImage:             "ghcr.io/takutakahashi/nfa:0.12.0",
 			SandboxInitImage:               "gcr.io/istio-release/iptables:latest",
 			NetworkFilterInitMemoryRequest: "32Mi",
 			NetworkFilterInitMemoryLimit:   "64Mi",
