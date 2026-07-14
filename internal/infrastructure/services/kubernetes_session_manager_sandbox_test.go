@@ -84,7 +84,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 	assert.NotEmpty(t, sidecar.Resources.Limits)
 	assert.Equal(t, []string{"nfa", "proxy", "--deferred-policy"}, sidecar.Command)
 	assert.Contains(t, sidecar.Env, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
-	assert.Nil(t, sidecar.SecurityContext.Capabilities)
+	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, sidecar.SecurityContext.Capabilities.Add)
 	assert.Empty(t, sidecar.VolumeMounts)
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
 }

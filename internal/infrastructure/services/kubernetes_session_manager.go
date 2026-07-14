@@ -2800,6 +2800,9 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 			RunAsUser:                &rootUID,
 			RunAsNonRoot:             &falseVal,
 			AllowPrivilegeEscalation: &falseVal,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN"},
+			},
 		},
 		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterCPURequest, m.k8sConfig.NetworkFilterCPULimit, m.k8sConfig.NetworkFilterMemoryRequest, m.k8sConfig.NetworkFilterMemoryLimit),
 		Ports: []corev1.ContainerPort{
