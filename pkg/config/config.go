@@ -366,8 +366,10 @@ type KubernetesSessionConfig struct {
 	// Defaults to "bot-token"
 	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
 
-	// SandboxInitImage is deprecated and retained for configuration compatibility.
-	// nfa v0.12.0+ applies iptables rules directly from the network-filter init container.
+	// SandboxInitImage is the container image used for the network-filter-setup init container
+	// that restores generated iptables rules for session network sandboxing.
+	// If empty, falls back to Image (the session pod image).
+	// The image must provide iptables-restore. A shell is not required.
 	SandboxInitImage string `json:"sandbox_init_image" mapstructure:"sandbox_init_image"`
 
 	// SandboxIptablesConfigMapName is deprecated. Sandbox iptables rules are now
@@ -376,8 +378,8 @@ type KubernetesSessionConfig struct {
 
 	// NetworkFilterImage is the container image for the iptables rule generation init
 	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.12.0.
-	// The init container reads the generated policy config and runs "nfa setup-iptables --apply";
-	// the sidecar reads the same config and runs "nfa proxy --deferred-policy".
+	// The init container reads the generated policy config and runs "nfa setup-iptables --output";
+	// the sidecar runs "nfa proxy --deferred-policy".
 	NetworkFilterImage string `json:"network_filter_image" mapstructure:"network_filter_image"`
 
 	// Network filter sidecar resource configuration

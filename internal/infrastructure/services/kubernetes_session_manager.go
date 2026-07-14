@@ -2174,7 +2174,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	volumes := m.buildVolumes(session)
 	if sandboxEnabled {
 		volumes = append(volumes, corev1.Volume{
-			Name: "sandbox-nfa-config",
+			Name: "sandbox-iptables",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
@@ -2713,8 +2713,8 @@ func postSandboxPolicy(ctx context.Context, client *http.Client, url string, bod
 	return nil
 }
 
-// buildSandboxContainers returns the init container (nfa config + iptables setup)
-// and sidecar (network-filter proxy) needed for session network sandboxing.
+// buildSandboxContainers returns the init containers (iptables rule generation
+// and restore) and sidecar (network-filter proxy) needed for session network sandboxing.
 // The sidecar runs as UID 0 (root) so that iptables rules can skip its traffic
 // via the "--uid-owner 0" match, preventing redirect loops.
 func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.SandboxParams) ([]corev1.Container, *corev1.Container, []corev1.EnvVar) {
@@ -2740,15 +2740,37 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 
 	initResources := buildResourceRequirements(m.k8sConfig.NetworkFilterInitCPURequest, m.k8sConfig.NetworkFilterInitCPULimit, m.k8sConfig.NetworkFilterInitMemoryRequest, m.k8sConfig.NetworkFilterInitMemoryLimit)
 
-	setupRulesInitContainer := corev1.Container{
-		Name:            "network-filter-setup",
+	generateRulesInitContainer := corev1.Container{
+		Name:            "network-filter-generate-iptables",
 		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Command: []string{"/bin/sh", "-ec", `
-printf '%s' "$NFA_CONFIG" > /etc/nfa/config.yaml
-exec nfa setup-iptables --apply --config /etc/nfa/config.yaml
+printf '%s' "$NFA_CONFIG" > /tmp/nfa-config.yaml
+exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config.yaml
 `},
 		Env: []corev1.EnvVar{{Name: "NFA_CONFIG", Value: nfaConfig}},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    &rootUID,
+			RunAsNonRoot: &falseVal,
+		},
+		Resources: initResources,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "sandbox-iptables",
+				MountPath: "/etc/iptables",
+			},
+		},
+	}
+
+	sandboxInitImage := m.k8sConfig.SandboxInitImage
+	if sandboxInitImage == "" {
+		sandboxInitImage = m.k8sConfig.Image
+	}
+	restoreRulesInitContainer := corev1.Container{
+		Name:            "network-filter-setup",
+		Image:           sandboxInitImage,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"iptables-restore", "/etc/iptables/rules.v4"},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    &rootUID,
 			RunAsNonRoot: &falseVal,
@@ -2759,8 +2781,9 @@ exec nfa setup-iptables --apply --config /etc/nfa/config.yaml
 		Resources: initResources,
 		VolumeMounts: []corev1.VolumeMount{
 			{
-				Name:      "sandbox-nfa-config",
-				MountPath: "/etc/nfa",
+				Name:      "sandbox-iptables",
+				MountPath: "/etc/iptables",
+				ReadOnly:  true,
 			},
 		},
 	}
@@ -2771,24 +2794,17 @@ exec nfa setup-iptables --apply --config /etc/nfa/config.yaml
 		Name:            "network-filter",
 		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"nfa", "proxy", "--config", "/etc/nfa/config.yaml", "--deferred-policy"},
+		Command:         []string{"nfa", "proxy", "--deferred-policy"},
 		Env:             filterEnvVars,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:                &rootUID,
 			RunAsNonRoot:             &falseVal,
 			AllowPrivilegeEscalation: &falseVal,
-			Capabilities: &corev1.Capabilities{
-				Add: []corev1.Capability{"NET_ADMIN"},
-			},
 		},
 		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterCPURequest, m.k8sConfig.NetworkFilterCPULimit, m.k8sConfig.NetworkFilterMemoryRequest, m.k8sConfig.NetworkFilterMemoryLimit),
 		Ports: []corev1.ContainerPort{
 			{Name: "proxy", ContainerPort: int32(nfaProxyPort), Protocol: corev1.ProtocolTCP},
 		},
-		VolumeMounts: []corev1.VolumeMount{{
-			Name:      "sandbox-nfa-config",
-			MountPath: "/etc/nfa",
-		}},
 	}
 
 	// Inject HTTP_PROXY / HTTPS_PROXY env vars into the main container so that
@@ -2807,7 +2823,7 @@ exec nfa setup-iptables --apply --config /etc/nfa/config.yaml
 		{Name: "no_proxy", Value: noProxy},
 	}
 
-	return []corev1.Container{setupRulesInitContainer}, &sidecar, proxyEnvVars
+	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
 }
 
 func buildNFAConfig(sandbox *entities.SandboxParams) string {

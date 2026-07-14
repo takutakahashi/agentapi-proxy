@@ -13,7 +13,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
-func TestBuildSandboxContainersAppliesNFAConfigWithIPAllowlist(t *testing.T) {
+func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptablesImage(t *testing.T) {
 	manager := &KubernetesSessionManager{
 		k8sConfig: &config.KubernetesSessionConfig{
 			Image:                          "session-image:latest",
@@ -37,14 +37,14 @@ func TestBuildSandboxContainersAppliesNFAConfigWithIPAllowlist(t *testing.T) {
 		CountMode:      true,
 	})
 
-	assert.Len(t, initContainers, 1)
+	assert.Len(t, initContainers, 2)
 
-	setup := initContainers[0]
-	assert.Equal(t, "network-filter-setup", setup.Name)
-	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.0", setup.Image)
-	assert.Equal(t, "/bin/sh", setup.Command[0])
-	assert.Contains(t, setup.Command[2], "nfa setup-iptables --apply --config /etc/nfa/config.yaml")
-	assert.Contains(t, setup.Env, corev1.EnvVar{
+	generate := initContainers[0]
+	assert.Equal(t, "network-filter-generate-iptables", generate.Name)
+	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.0", generate.Image)
+	assert.Equal(t, "/bin/sh", generate.Command[0])
+	assert.Contains(t, generate.Command[2], "nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config.yaml")
+	assert.Contains(t, generate.Env, corev1.EnvVar{
 		Name: "NFA_CONFIG",
 		Value: "filter:\n  mode: allowlist\n  countMode: true\n  domains:\n" +
 			"    - \"example.com\"\n    - \"192.0.2.10\"\n    - \"198.51.100.0/24\"\n" +
@@ -59,20 +59,33 @@ func TestBuildSandboxContainersAppliesNFAConfigWithIPAllowlist(t *testing.T) {
 			corev1.ResourceCPU:    resource.MustParse("100m"),
 			corev1.ResourceMemory: resource.MustParse("64Mi"),
 		},
-	}, setup.Resources)
+	}, generate.Resources)
 	assert.Equal(t, []corev1.VolumeMount{{
-		Name:      "sandbox-nfa-config",
-		MountPath: "/etc/nfa",
-	}}, setup.VolumeMounts)
-	assert.Contains(t, setup.SecurityContext.Capabilities.Add, corev1.Capability("NET_ADMIN"))
+		Name:      "sandbox-iptables",
+		MountPath: "/etc/iptables",
+	}}, generate.VolumeMounts)
+	assert.Empty(t, generate.SecurityContext.Capabilities)
+
+	restore := initContainers[1]
+	assert.Equal(t, "network-filter-setup", restore.Name)
+	assert.Equal(t, "gcr.io/istio-release/iptables:latest", restore.Image)
+	assert.Equal(t, []string{"iptables-restore", "/etc/iptables/rules.v4"}, restore.Command)
+	assert.Equal(t, generate.Resources, restore.Resources)
+	assert.Equal(t, []corev1.VolumeMount{{
+		Name:      "sandbox-iptables",
+		MountPath: "/etc/iptables",
+		ReadOnly:  true,
+	}}, restore.VolumeMounts)
+	assert.Contains(t, restore.SecurityContext.Capabilities.Add, corev1.Capability("NET_ADMIN"))
 
 	assert.NotNil(t, sidecar)
 	assert.Equal(t, "network-filter", sidecar.Name)
 	assert.NotEmpty(t, sidecar.Resources.Requests)
 	assert.NotEmpty(t, sidecar.Resources.Limits)
-	assert.Equal(t, []string{"nfa", "proxy", "--config", "/etc/nfa/config.yaml", "--deferred-policy"}, sidecar.Command)
+	assert.Equal(t, []string{"nfa", "proxy", "--deferred-policy"}, sidecar.Command)
 	assert.Contains(t, sidecar.Env, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
-	assert.Contains(t, sidecar.SecurityContext.Capabilities.Add, corev1.Capability("NET_ADMIN"))
+	assert.Nil(t, sidecar.SecurityContext.Capabilities)
+	assert.Empty(t, sidecar.VolumeMounts)
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
 }
 
