@@ -2632,18 +2632,17 @@ func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req
 		DeniedDomains:  req.Sandbox.DeniedDomains,
 		CountMode:      req.Sandbox.CountMode,
 	}
-	if req.Sandbox.PolicyID == "" || m.sandboxPolicyRepo == nil {
-		return effective
-	}
-	policy, err := m.sandboxPolicyRepo.GetByID(ctx, req.Sandbox.PolicyID)
-	if err != nil {
-		log.Printf("[K8S_SESSION] sandbox policy %s not found, ignoring: %v", req.Sandbox.PolicyID, err)
-		return effective
-	}
-	effective.AllowedDomains = append(policy.AllowedDomains(), effective.AllowedDomains...)
-	effective.DeniedDomains = append(policy.DeniedDomains(), effective.DeniedDomains...)
-	if policy.CountMode() {
-		effective.CountMode = true
+	if req.Sandbox.PolicyID != "" && m.sandboxPolicyRepo != nil {
+		policy, err := m.sandboxPolicyRepo.GetByID(ctx, req.Sandbox.PolicyID)
+		if err != nil {
+			log.Printf("[K8S_SESSION] sandbox policy %s not found, ignoring: %v", req.Sandbox.PolicyID, err)
+		} else {
+			effective.AllowedDomains = append(policy.AllowedDomains(), effective.AllowedDomains...)
+			effective.DeniedDomains = append(policy.DeniedDomains(), effective.DeniedDomains...)
+			if policy.CountMode() {
+				effective.CountMode = true
+			}
+		}
 	}
 	return effective
 }
@@ -2762,13 +2761,9 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 		},
 	}
 
-	sandboxInitImage := m.k8sConfig.SandboxInitImage
-	if sandboxInitImage == "" {
-		sandboxInitImage = m.k8sConfig.Image
-	}
 	restoreRulesInitContainer := corev1.Container{
 		Name:            "network-filter-setup",
-		Image:           sandboxInitImage,
+		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Command:         []string{"iptables-restore", "/etc/iptables/rules.v4"},
 		SecurityContext: &corev1.SecurityContext{
@@ -2814,9 +2809,10 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 	// proxy-aware clients (curl, Go's http.Client, pip, npm, etc.) route all
 	// HTTP and HTTPS traffic through the sidecar via CONNECT tunnels.
 	// This covers non-standard ports and avoids SNI-peeking for HTTPS.
-	// K8s cluster-internal addresses (.svc.cluster.local, 10.x.x.x) and Anthropic API
-	// endpoints bypass the proxy so that stop hooks and Claude API calls always succeed.
-	noProxy := "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com"
+	// Cluster-internal requests must pass through nfa: direct connections would be
+	// rejected by the sandbox's default TCP rule. nfa always bypasses *.svc.cluster.local.
+	// Anthropic API endpoints bypass the proxy so Claude API calls always succeed.
+	noProxy := "127.0.0.1,localhost,anthropic.com,*.anthropic.com"
 	proxyEnvVars := []corev1.EnvVar{
 		{Name: "HTTP_PROXY", Value: proxyAddr},
 		{Name: "HTTPS_PROXY", Value: proxyAddr},

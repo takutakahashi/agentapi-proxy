@@ -366,10 +366,8 @@ type KubernetesSessionConfig struct {
 	// Defaults to "bot-token"
 	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
 
-	// SandboxInitImage is the container image used for the network-filter-setup init container
-	// that restores generated iptables rules for session network sandboxing.
-	// If empty, falls back to Image (the session pod image).
-	// The image must provide iptables-restore. A shell is not required.
+	// SandboxInitImage is deprecated. The network filter image is also used to
+	// restore rules so initial setup and runtime updates use the same iptables backend.
 	SandboxInitImage string `json:"sandbox_init_image" mapstructure:"sandbox_init_image"`
 
 	// SandboxIptablesConfigMapName is deprecated. Sandbox iptables rules are now

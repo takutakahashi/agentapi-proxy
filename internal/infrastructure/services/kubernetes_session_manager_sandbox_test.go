@@ -68,7 +68,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 
 	restore := initContainers[1]
 	assert.Equal(t, "network-filter-setup", restore.Name)
-	assert.Equal(t, "gcr.io/istio-release/iptables:latest", restore.Image)
+	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.0", restore.Image)
 	assert.Equal(t, []string{"iptables-restore", "/etc/iptables/rules.v4"}, restore.Command)
 	assert.Equal(t, generate.Resources, restore.Resources)
 	assert.Equal(t, []corev1.VolumeMount{{
@@ -87,6 +87,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, sidecar.SecurityContext.Capabilities.Add)
 	assert.Empty(t, sidecar.VolumeMounts)
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
+	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost,anthropic.com,*.anthropic.com"})
 }
 
 func TestResolveSandboxParamsPreservesSessionCountModeWithoutPolicy(t *testing.T) {
