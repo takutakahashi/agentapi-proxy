@@ -2736,6 +2736,7 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 	falseVal := false
 
 	nfaImage := m.k8sConfig.NetworkFilterImage
+	nfaConfig := buildNFAConfig(sandbox)
 
 	initResources := buildResourceRequirements(m.k8sConfig.NetworkFilterInitCPURequest, m.k8sConfig.NetworkFilterInitCPULimit, m.k8sConfig.NetworkFilterInitMemoryRequest, m.k8sConfig.NetworkFilterInitMemoryLimit)
 
@@ -2743,7 +2744,11 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 		Name:            "network-filter-generate-iptables",
 		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-		Command:         []string{"nfa", "setup-iptables", "--output", "/etc/iptables/rules.v4"},
+		Command: []string{"/bin/sh", "-ec", `
+printf '%s' "$NFA_CONFIG" > /tmp/nfa-config.yaml
+exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config.yaml
+`},
+		Env: []corev1.EnvVar{{Name: "NFA_CONFIG", Value: nfaConfig}},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    &rootUID,
 			RunAsNonRoot: &falseVal,
@@ -2819,6 +2824,32 @@ func (m *KubernetesSessionManager) buildSandboxContainers(sandbox *entities.Sand
 	}
 
 	return []corev1.Container{generateRulesInitContainer, restoreRulesInitContainer}, &sidecar, proxyEnvVars
+}
+
+func buildNFAConfig(sandbox *entities.SandboxParams) string {
+	mode := "denylist"
+	domains := []string(nil)
+	countMode := false
+	if sandbox != nil {
+		countMode = sandbox.CountMode
+		switch {
+		case len(sandbox.AllowedDomains) > 0:
+			mode = "allowlist"
+			domains = sandbox.AllowedDomains
+		case len(sandbox.DeniedDomains) > 0:
+			domains = sandbox.DeniedDomains
+		default:
+			mode = "allowlist"
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "filter:\n  mode: %s\n  countMode: %t\n  domains:\n", mode, countMode)
+	for _, domain := range domains {
+		fmt.Fprintf(&b, "    - %s\n", strconv.Quote(domain))
+	}
+	b.WriteString("deferredPolicy: true\n")
+	return b.String()
 }
 
 const (

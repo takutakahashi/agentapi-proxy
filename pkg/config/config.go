@@ -377,9 +377,9 @@ type KubernetesSessionConfig struct {
 	SandboxIptablesConfigMapName string `json:"sandbox_iptables_configmap_name" mapstructure:"sandbox_iptables_configmap_name"`
 
 	// NetworkFilterImage is the container image for the iptables rule generation init
-	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.7.0.
-	// The init container runs "nfa setup-iptables --output"; the sidecar runs
-	// "nfa proxy --deferred-policy" to enforce domain filtering.
+	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.12.0.
+	// The init container reads the generated policy config and runs "nfa setup-iptables --output";
+	// the sidecar runs "nfa proxy --deferred-policy".
 	NetworkFilterImage string `json:"network_filter_image" mapstructure:"network_filter_image"`
 
 	// Network filter sidecar resource configuration
@@ -1260,7 +1260,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.init_container_image", "")
 	v.SetDefault("kubernetes_session.sandbox_init_image", "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a")
 	v.SetDefault("kubernetes_session.sandbox_iptables_configmap_name", "")
-	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.7.0")
+	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.12.0")
 	v.SetDefault("kubernetes_session.network_filter_cpu_request", "250m")
 	v.SetDefault("kubernetes_session.network_filter_cpu_limit", "1000m")
 	v.SetDefault("kubernetes_session.network_filter_memory_request", "256Mi")
