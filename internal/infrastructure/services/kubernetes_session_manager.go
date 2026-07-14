@@ -56,6 +56,8 @@ const ProvisionerPort = provisionerPort
 // nfaProxyPort is the default forward proxy port exposed by takutakahashi/nfa.
 const nfaProxyPort = 3128
 
+const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
+
 // KubernetesSessionManager manages sessions using Kubernetes Deployments
 // ServiceAccountEnsurer ensures a service account exists for a team.
 // Implementations must be safe to call concurrently.
@@ -525,10 +527,17 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 		m.namespace, m.k8sConfig.BasePort, cancel, nil)
 	session.SetIsStock(true)
 
+	podTemplateHash, err := m.stockPodTemplateHash(ctx, session, minimalReq)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("failed to calculate stock pod template hash: %w", err)
+	}
+
 	// Create the Service first so stock resources can reference it as owner.
 	// Keep it out of the available stock pool until the workload is created.
 	stockLabels := m.buildLabels(session)
 	stockLabels["agentapi.proxy/stock"] = "creating"
+	stockLabels[stockPodTemplateHashLabel] = podTemplateHash
 	if err := m.createServiceWithLabels(ctx, session, stockLabels); err != nil {
 		cancel()
 		return fmt.Errorf("failed to create stock service: %w", err)
@@ -552,6 +561,13 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 		cancel()
 		return fmt.Errorf("failed to create stock workload: %w", err)
 	}
+	if err := m.labelStockWorkload(ctx, session, podTemplateHash); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock workload label failure: %v", delErr)
+		}
+		cancel()
+		return fmt.Errorf("failed to label stock workload: %w", err)
+	}
 
 	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err != nil {
@@ -562,6 +578,7 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 		return fmt.Errorf("failed to get stock service: %w", err)
 	}
 	stockSvc.Labels["agentapi.proxy/stock"] = "true"
+	stockSvc.Labels[stockPodTemplateHashLabel] = podTemplateHash
 	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, stockSvc, metav1.UpdateOptions{}); err != nil {
 		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service update failure: %v", delErr)
@@ -577,10 +594,20 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 // CountStockSessions returns the number of available (not being deleted) stock sessions.
 // Note: Sandbox (network filter) is always enabled, so only DinD capability is queried.
 func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind bool) (int, error) {
+	podTemplateHash, err := m.currentStockPodTemplateHash(ctx, dind)
+	if err != nil {
+		return 0, err
+	}
+	if err := m.PurgeStaleStockSessions(ctx, podTemplateHash); err != nil {
+		return 0, err
+	}
+
 	// Sandbox is always enabled (capability-sandbox=true)
 	selector := fmt.Sprintf(
-		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t,%s=%s",
 		dind,
+		stockPodTemplateHashLabel,
+		podTemplateHash,
 	)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
@@ -597,6 +624,17 @@ func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind 
 	return count, nil
 }
 
+// PurgeStaleStockSessions deletes stock sessions whose pod template hash differs
+// from the current template hash. Adopted sessions are protected by the same
+// safeguards as PurgeStockSessions.
+func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context, currentHash string) error {
+	if currentHash == "" {
+		return nil
+	}
+	selector := fmt.Sprintf("agentapi.proxy/stock in (true, creating),app.kubernetes.io/managed-by=agentapi-proxy,%s!=%s", stockPodTemplateHashLabel, currentHash)
+	return m.purgeStockSessionsBySelector(ctx, selector)
+}
+
 // PurgeStockSessions deletes all existing pre-warmed stock sessions (Service,
 // Deployment, PVC). Called by the stock inventory worker on startup to ensure
 // that stale pods built from an old image are replaced with fresh ones.
@@ -608,6 +646,10 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	// resource kind so a previous partial purge cannot leave orphaned stock
 	// Deployments/PVCs behind.
 	selector := "agentapi.proxy/stock in (true, claiming, creating),app.kubernetes.io/managed-by=agentapi-proxy"
+	return m.purgeStockSessionsBySelector(ctx, selector)
+}
+
+func (m *KubernetesSessionManager) purgeStockSessionsBySelector(ctx context.Context, selector string) error {
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -731,10 +773,17 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 // Returns (nil, nil) when no stock is available.
 // Note: Sandbox (network filter) is always enabled, so only DinD is queried.
 func (m *KubernetesSessionManager) findStockSession(ctx context.Context, requirements coreallocation.Requirements) (*corev1.Service, error) {
+	podTemplateHash, err := m.currentStockPodTemplateHash(ctx, requirements.DinD)
+	if err != nil {
+		return nil, err
+	}
+
 	// Sandbox is always enabled (capability-sandbox=true)
 	selector := fmt.Sprintf(
-		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t,%s=%s",
 		requirements.DinD,
+		stockPodTemplateHashLabel,
+		podTemplateHash,
 	)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
@@ -2404,6 +2453,100 @@ func (m *KubernetesSessionManager) applySessionPodTemplateFile(template *corev1.
 	*template = merged
 	log.Printf("[K8S_SESSION] Applied session pod template file: %s", filename)
 	return nil
+}
+
+func (m *KubernetesSessionManager) currentStockPodTemplateHash(ctx context.Context, dind bool) (string, error) {
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req := &entities.RunServerRequest{
+		Sandbox: &entities.SandboxParams{Enabled: true},
+	}
+	if dind {
+		req.Docker = &entities.DockerParams{Enabled: true}
+	}
+	session := NewKubernetesSession(
+		"stock-template",
+		req,
+		"agentapi-session-stock-template",
+		"agentapi-session-stock-template-svc",
+		"agentapi-session-stock-template-pvc",
+		m.namespace,
+		m.k8sConfig.BasePort,
+		cancel,
+		nil,
+	)
+	session.SetIsStock(true)
+	return m.stockPodTemplateHash(ctx, session, req)
+}
+
+func (m *KubernetesSessionManager) stockPodTemplateHash(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) (string, error) {
+	deployment, err := m.buildDeployment(ctx, session, req)
+	if err != nil {
+		return "", err
+	}
+	template := deployment.Spec.Template.DeepCopy()
+	normalizeStockPodTemplateForHash(template)
+
+	data, err := json.Marshal(template)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal stock pod template for hash: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:16], nil
+}
+
+func normalizeStockPodTemplateForHash(template *corev1.PodTemplateSpec) {
+	delete(template.Labels, "app.kubernetes.io/instance")
+	delete(template.Labels, "agentapi.proxy/session-id")
+	delete(template.Labels, "agentapi.proxy/user-id")
+	delete(template.Labels, stockPodTemplateHashLabel)
+}
+
+func (m *KubernetesSessionManager) labelStockWorkload(ctx context.Context, session *KubernetesSession, podTemplateHash string) error {
+	if deployment, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{}); err == nil {
+		ensureLabelMap(&deployment.Labels)
+		deployment.Labels[stockPodTemplateHashLabel] = podTemplateHash
+		ensureLabelMap(&deployment.Spec.Template.Labels)
+		deployment.Spec.Template.Labels[stockPodTemplateHashLabel] = podTemplateHash
+		if _, err := m.client.AppsV1().Deployments(m.namespace).Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		return m.labelStockPVC(ctx, session, podTemplateHash)
+	} else if !errors.IsNotFound(err) {
+		return err
+	}
+
+	pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	ensureLabelMap(&pod.Labels)
+	pod.Labels[stockPodTemplateHashLabel] = podTemplateHash
+	if _, err := m.client.CoreV1().Pods(m.namespace).Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		return err
+	}
+	return m.labelStockPVC(ctx, session, podTemplateHash)
+}
+
+func (m *KubernetesSessionManager) labelStockPVC(ctx context.Context, session *KubernetesSession, podTemplateHash string) error {
+	pvc, err := m.client.CoreV1().PersistentVolumeClaims(m.namespace).Get(ctx, session.PVCName(), metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ensureLabelMap(&pvc.Labels)
+	pvc.Labels[stockPodTemplateHashLabel] = podTemplateHash
+	_, err = m.client.CoreV1().PersistentVolumeClaims(m.namespace).Update(ctx, pvc, metav1.UpdateOptions{})
+	return err
+}
+
+func ensureLabelMap(labels *map[string]string) {
+	if *labels == nil {
+		*labels = map[string]string{}
+	}
 }
 
 func restoreSessionPodTemplateInvariants(template *corev1.PodTemplateSpec, generated *corev1.PodTemplateSpec) {
