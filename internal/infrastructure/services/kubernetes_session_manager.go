@@ -2632,17 +2632,18 @@ func (m *KubernetesSessionManager) resolveSandboxParams(ctx context.Context, req
 		DeniedDomains:  req.Sandbox.DeniedDomains,
 		CountMode:      req.Sandbox.CountMode,
 	}
-	if req.Sandbox.PolicyID != "" && m.sandboxPolicyRepo != nil {
-		policy, err := m.sandboxPolicyRepo.GetByID(ctx, req.Sandbox.PolicyID)
-		if err != nil {
-			log.Printf("[K8S_SESSION] sandbox policy %s not found, ignoring: %v", req.Sandbox.PolicyID, err)
-		} else {
-			effective.AllowedDomains = append(policy.AllowedDomains(), effective.AllowedDomains...)
-			effective.DeniedDomains = append(policy.DeniedDomains(), effective.DeniedDomains...)
-			if policy.CountMode() {
-				effective.CountMode = true
-			}
-		}
+	if req.Sandbox.PolicyID == "" || m.sandboxPolicyRepo == nil {
+		return effective
+	}
+	policy, err := m.sandboxPolicyRepo.GetByID(ctx, req.Sandbox.PolicyID)
+	if err != nil {
+		log.Printf("[K8S_SESSION] sandbox policy %s not found, ignoring: %v", req.Sandbox.PolicyID, err)
+		return effective
+	}
+	effective.AllowedDomains = append(policy.AllowedDomains(), effective.AllowedDomains...)
+	effective.DeniedDomains = append(policy.DeniedDomains(), effective.DeniedDomains...)
+	if policy.CountMode() {
+		effective.CountMode = true
 	}
 	return effective
 }
