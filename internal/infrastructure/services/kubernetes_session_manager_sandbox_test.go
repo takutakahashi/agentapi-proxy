@@ -195,12 +195,11 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	}
 
 	main := podSpec.Containers[0]
-	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
-	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:3128"})
-	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost,anthropic.com,*.anthropic.com"})
-	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
-	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
-	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCABundlePath})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCAPath})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath})
 	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm", ReadOnly: true})
 
 	env := map[string]string{"AGENTAPI_USER_ID": "takutakahashi"}

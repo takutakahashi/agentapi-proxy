@@ -78,6 +78,7 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 			SessionID: os.Getenv("AGENTAPI_SESSION_ID"),
 			PodName:   os.Getenv("POD_NAME"),
 			Namespace: os.Getenv("POD_NAMESPACE"),
+			CAFile:    os.Getenv("NODE_EXTRA_CA_CERTS"),
 		})
 	}()
 

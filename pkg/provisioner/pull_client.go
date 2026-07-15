@@ -3,6 +3,8 @@ package provisioner
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -21,6 +23,7 @@ type PullClientConfig struct {
 	SessionID string
 	PodName   string
 	Namespace string
+	CAFile    string
 }
 
 type pullProvisionRequest struct {
@@ -38,7 +41,10 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 	if cfg.ProxyURL == "" || cfg.Token == "" || cfg.SessionID == "" {
 		return fmt.Errorf("pull provisioner requires proxy URL, token, and session ID")
 	}
-	client := &http.Client{Timeout: 35 * time.Second}
+	client, err := newPullHTTPClient(ctx, cfg.CAFile)
+	if err != nil {
+		return err
+	}
 	if err := postJSON(ctx, client, cfg, "/internal/session-provisioners/connect", map[string]interface{}{
 		"session_id": cfg.SessionID,
 		"pod_name":   cfg.PodName,
@@ -79,6 +85,35 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 		srv.runProvision(ctx, provisionReq.Settings)
 		<-ctx.Done()
 		return ctx.Err()
+	}
+}
+
+func newPullHTTPClient(ctx context.Context, caFile string) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if caFile == "" {
+		return &http.Client{Timeout: 35 * time.Second, Transport: transport}, nil
+	}
+
+	for {
+		caPEM, err := os.ReadFile(caFile)
+		if err == nil {
+			roots, rootsErr := x509.SystemCertPool()
+			if rootsErr != nil || roots == nil {
+				roots = x509.NewCertPool()
+			}
+			if !roots.AppendCertsFromPEM(caPEM) {
+				return nil, fmt.Errorf("pull provisioner CA file %s contains no certificates", caFile)
+			}
+			transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+			return &http.Client{Timeout: 35 * time.Second, Transport: transport}, nil
+		}
+
+		log.Printf("[PROVISIONER] Waiting for SCIA CA %s: %v", caFile, err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
 }
 

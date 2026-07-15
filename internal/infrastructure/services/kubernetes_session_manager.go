@@ -2018,13 +2018,15 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		if apiKey := m.ensurePersonalAPIKey(ctx, req.UserID); apiKey != nil {
 			sciaUserToken = apiKey.APIKey()
 		}
-		sciaInitContainer, sciaSidecar, _ = m.buildSciaSidecarContainers(req, sandboxEnabled, sciaUserToken)
+		var sciaEnvVars []corev1.EnvVar
+		sciaInitContainer, sciaSidecar, sciaEnvVars = m.buildSciaSidecarContainers(req, sandboxEnabled, sciaUserToken)
 		initContainers = append(initContainers, *sciaInitContainer)
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
-		// SessionSettings injects the scia proxy variables for the actual agent
-		// process after provisioning. Keep the nfa proxy variables on the
-		// provisioner itself so its cluster-internal API calls are not rejected by
-		// the sandbox's default TCP rule.
+		// Route provisioner traffic through SCIA from startup. The actual agent gets
+		// the same route from SessionSettings after provisioning. Keep cluster
+		// services out of NO_PROXY so provisioner management calls are observed by
+		// SCIA before SCIA chains them through nfa.
+		sandboxEnvVars = provisionerSciaEnvVars(sciaEnvVars)
 	}
 
 	// Build DinD sidecar if Docker-in-Docker is enabled.
@@ -2302,6 +2304,22 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		return nil, err
 	}
 	return deployment, nil
+}
+
+func provisionerSciaEnvVars(envVars []corev1.EnvVar) []corev1.EnvVar {
+	result := make([]corev1.EnvVar, len(envVars))
+	copy(result, envVars)
+	for i := range result {
+		switch result[i].Name {
+		case "NO_PROXY", "no_proxy":
+			result[i].Value = "127.0.0.1,localhost"
+		case "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO":
+			// The combined bundle is created later by the provisioner. Use SCIA's
+			// generated CA directly during the initial pull phase.
+			result[i].Value = sciaCAPath
+		}
+	}
+	return result
 }
 
 func sessionAffinity(value map[string]interface{}) (*corev1.Affinity, error) {
