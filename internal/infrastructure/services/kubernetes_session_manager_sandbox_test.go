@@ -68,7 +68,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 
 	restore := initContainers[1]
 	assert.Equal(t, "network-filter-setup", restore.Name)
-	assert.Equal(t, "gcr.io/istio-release/iptables:latest", restore.Image)
+	assert.Equal(t, "ghcr.io/takutakahashi/nfa:0.12.0", restore.Image)
 	assert.Equal(t, []string{"iptables-restore", "/etc/iptables/rules.v4"}, restore.Command)
 	assert.Equal(t, generate.Resources, restore.Resources)
 	assert.Equal(t, []corev1.VolumeMount{{
@@ -84,9 +84,10 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 	assert.NotEmpty(t, sidecar.Resources.Limits)
 	assert.Equal(t, []string{"nfa", "proxy", "--deferred-policy"}, sidecar.Command)
 	assert.Contains(t, sidecar.Env, corev1.EnvVar{Name: "NETWORK_FILTER_COUNT_MODE", Value: "true"})
-	assert.Nil(t, sidecar.SecurityContext.Capabilities)
+	assert.Equal(t, []corev1.Capability{"NET_ADMIN"}, sidecar.SecurityContext.Capabilities.Add)
 	assert.Empty(t, sidecar.VolumeMounts)
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
+	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost,anthropic.com,*.anthropic.com"})
 }
 
 func TestResolveSandboxParamsPreservesSessionCountModeWithoutPolicy(t *testing.T) {
@@ -194,9 +195,11 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	}
 
 	main := podSpec.Containers[0]
-	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
-	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
-	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCABundlePath})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCAPath})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath})
 	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm", ReadOnly: true})
 
 	env := map[string]string{"AGENTAPI_USER_ID": "takutakahashi"}

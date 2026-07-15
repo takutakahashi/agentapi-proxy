@@ -2018,14 +2018,15 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		if apiKey := m.ensurePersonalAPIKey(ctx, req.UserID); apiKey != nil {
 			sciaUserToken = apiKey.APIKey()
 		}
-		sciaInitContainer, sciaSidecar, _ = m.buildSciaSidecarContainers(req, sandboxEnabled, sciaUserToken)
+		var sciaEnvVars []corev1.EnvVar
+		sciaInitContainer, sciaSidecar, sciaEnvVars = m.buildSciaSidecarContainers(req, sandboxEnabled, sciaUserToken)
 		initContainers = append(initContainers, *sciaInitContainer)
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
-		// Do not inject sidecar proxy variables into the Pod-level container env.
-		// Kubernetes starts regular containers in parallel, so startup scripts can
-		// race the scia sidecar listener. SessionSettings injects the same proxy
-		// variables for the actual agent process after provisioning.
-		sandboxEnvVars = nil
+		// Route provisioner traffic through SCIA from startup. The actual agent gets
+		// the same route from SessionSettings after provisioning. Keep cluster
+		// services out of NO_PROXY so provisioner management calls are observed by
+		// SCIA before SCIA chains them through nfa.
+		sandboxEnvVars = provisionerSciaEnvVars(sciaEnvVars)
 	}
 
 	// Build DinD sidecar if Docker-in-Docker is enabled.
@@ -2303,6 +2304,22 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		return nil, err
 	}
 	return deployment, nil
+}
+
+func provisionerSciaEnvVars(envVars []corev1.EnvVar) []corev1.EnvVar {
+	result := make([]corev1.EnvVar, len(envVars))
+	copy(result, envVars)
+	for i := range result {
+		switch result[i].Name {
+		case "NO_PROXY", "no_proxy":
+			result[i].Value = "127.0.0.1,localhost"
+		case "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO":
+			// The combined bundle is created later by the provisioner. Use SCIA's
+			// generated CA directly during the initial pull phase.
+			result[i].Value = sciaCAPath
+		}
+	}
+	return result
 }
 
 func sessionAffinity(value map[string]interface{}) (*corev1.Affinity, error) {
@@ -2762,13 +2779,9 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 		},
 	}
 
-	sandboxInitImage := m.k8sConfig.SandboxInitImage
-	if sandboxInitImage == "" {
-		sandboxInitImage = m.k8sConfig.Image
-	}
 	restoreRulesInitContainer := corev1.Container{
 		Name:            "network-filter-setup",
-		Image:           sandboxInitImage,
+		Image:           nfaImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		Command:         []string{"iptables-restore", "/etc/iptables/rules.v4"},
 		SecurityContext: &corev1.SecurityContext{
@@ -2800,6 +2813,9 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 			RunAsUser:                &rootUID,
 			RunAsNonRoot:             &falseVal,
 			AllowPrivilegeEscalation: &falseVal,
+			Capabilities: &corev1.Capabilities{
+				Add: []corev1.Capability{"NET_ADMIN"},
+			},
 		},
 		Resources: buildResourceRequirements(m.k8sConfig.NetworkFilterCPURequest, m.k8sConfig.NetworkFilterCPULimit, m.k8sConfig.NetworkFilterMemoryRequest, m.k8sConfig.NetworkFilterMemoryLimit),
 		Ports: []corev1.ContainerPort{
@@ -2811,9 +2827,10 @@ exec nfa setup-iptables --output /etc/iptables/rules.v4 --config /tmp/nfa-config
 	// proxy-aware clients (curl, Go's http.Client, pip, npm, etc.) route all
 	// HTTP and HTTPS traffic through the sidecar via CONNECT tunnels.
 	// This covers non-standard ports and avoids SNI-peeking for HTTPS.
-	// K8s cluster-internal addresses (.svc.cluster.local, 10.x.x.x) and Anthropic API
-	// endpoints bypass the proxy so that stop hooks and Claude API calls always succeed.
-	noProxy := "127.0.0.1,localhost,.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,anthropic.com,*.anthropic.com"
+	// Cluster-internal requests must pass through nfa: direct connections would be
+	// rejected by the sandbox's default TCP rule. nfa always bypasses *.svc.cluster.local.
+	// Anthropic API endpoints bypass the proxy so Claude API calls always succeed.
+	noProxy := "127.0.0.1,localhost,anthropic.com,*.anthropic.com"
 	proxyEnvVars := []corev1.EnvVar{
 		{Name: "HTTP_PROXY", Value: proxyAddr},
 		{Name: "HTTPS_PROXY", Value: proxyAddr},
