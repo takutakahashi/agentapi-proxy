@@ -195,6 +195,9 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	}
 
 	main := podSpec.Containers[0]
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:3128"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost,anthropic.com,*.anthropic.com"})
 	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
 	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
 	assert.NotContains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCABundlePath})
