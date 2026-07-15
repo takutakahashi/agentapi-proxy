@@ -2859,6 +2859,9 @@ func buildNFAConfig(sandbox *entities.SandboxParams) string {
 			mode = "allowlist"
 		}
 	}
+	if mode == "allowlist" {
+		domains = append(domains, sandboxLocalAddressRanges...)
+	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "filter:\n  mode: %s\n  countMode: %t\n  domains:\n", mode, countMode)
@@ -2868,6 +2871,8 @@ func buildNFAConfig(sandbox *entities.SandboxParams) string {
 	b.WriteString("deferredPolicy: true\n")
 	return b.String()
 }
+
+var sandboxLocalAddressRanges = []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
 
 const (
 	sciaCAPath       = "/etc/scia/mitm/ca.pem"
