@@ -48,6 +48,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 		Name: "NFA_CONFIG",
 		Value: "filter:\n  mode: allowlist\n  countMode: true\n  domains:\n" +
 			"    - \"example.com\"\n    - \"192.0.2.10\"\n    - \"198.51.100.0/24\"\n" +
+			"    - \"127.0.0.0/8\"\n    - \"10.0.0.0/8\"\n    - \"172.16.0.0/12\"\n    - \"192.168.0.0/16\"\n" +
 			"deferredPolicy: true\n",
 	})
 	assert.Equal(t, corev1.ResourceRequirements{
@@ -88,6 +89,25 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 	assert.Empty(t, sidecar.VolumeMounts)
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:3128"})
 	assert.Contains(t, proxyEnvVars, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost,anthropic.com,*.anthropic.com"})
+}
+
+func TestBuildNFAConfigPreallowsLocalAddressesInAllowlistMode(t *testing.T) {
+	config := buildNFAConfig(&entities.SandboxParams{Enabled: true})
+
+	for _, addressRange := range sandboxLocalAddressRanges {
+		assert.Contains(t, config, `    - "`+addressRange+`"`)
+	}
+}
+
+func TestBuildNFAConfigDoesNotAddLocalAddressesToDenylist(t *testing.T) {
+	config := buildNFAConfig(&entities.SandboxParams{
+		Enabled:       true,
+		DeniedDomains: []string{"example.com"},
+	})
+
+	for _, addressRange := range sandboxLocalAddressRanges {
+		assert.NotContains(t, config, addressRange)
+	}
 }
 
 func TestResolveSandboxParamsPreservesSessionCountModeWithoutPolicy(t *testing.T) {
