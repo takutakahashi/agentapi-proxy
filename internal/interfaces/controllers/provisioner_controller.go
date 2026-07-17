@@ -112,8 +112,26 @@ func (pc *ProvisionerController) CompleteSessionAllocation(c echo.Context) error
 	if result.Status == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "status is required"})
 	}
-	if err := pc.allocationQueue.CompleteSessionAllocation(c.Request().Context(), c.Param("sessionId"), result); err != nil {
+	allocation, err := pc.allocationQueue.CompleteSessionAllocation(c.Request().Context(), c.Param("sessionId"), result)
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if result.Status == sessionallocation.StatusAssigned && result.AllocatedSessionID != "" && result.AllocatedSessionID != allocation.SessionID && pc.sessionRouteRepo != nil {
+		route := &repositories.SessionRoute{
+			SessionID:       allocation.SessionID,
+			RemoteSessionID: result.AllocatedSessionID,
+			StartedAt:       time.Now(),
+		}
+		if allocation.Request != nil {
+			route.UserID = allocation.Request.UserID
+			route.Scope = string(allocation.Request.Scope)
+			route.TeamID = allocation.Request.TeamID
+			route.Tags = allocation.Request.Tags
+			route.InitialMessage = allocation.Request.InitialMessage
+		}
+		if err := pc.sessionRouteRepo.Save(c.Request().Context(), route); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }

@@ -21,7 +21,7 @@ type ExternalAllocatorClient interface {
 type Queue interface {
 	SubmitExternalSessionAllocation(ctx context.Context, managerID, sessionID string, settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) error
 	NextSessionAllocation(ctx context.Context, wait time.Duration) (*AllocationRequest, bool, error)
-	CompleteSessionAllocation(ctx context.Context, sessionID string, result AllocationResult) error
+	CompleteSessionAllocation(ctx context.Context, sessionID string, result AllocationResult) (*AllocationRequest, error)
 	NextExternalSessionAllocation(ctx context.Context, managerID string, wait time.Duration) (*AllocationRequest, bool, error)
 	CompleteExternalSessionAllocation(ctx context.Context, sessionID string, result AllocationResult) (*AllocationRequest, error)
 }

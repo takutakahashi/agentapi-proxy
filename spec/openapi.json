@@ -47,7 +47,7 @@
     "/start": {
       "post": {
         "summary": "Create a new session",
-        "description": "Creates a new session and starts an agentapi server instance. Returns the session ID for subsequent requests.",
+        "description": "Creates a new session and starts an agentapi server instance. Returns a stable public session ID for subsequent requests. When allocation selects a different concrete session ID, the returned ID remains a routable alias for the lifetime of the session.",
         "operationId": "createSession",
         "tags": [
           "Sessions"
@@ -105,7 +105,7 @@
                   "properties": {
                     "session_id": {
                       "type": "string",
-                      "description": "Unique session identifier (UUID)"
+                      "description": "Stable public session identifier (UUID). This ID remains valid even when the concrete allocated session has a different ID."
                     }
                   },
                   "required": [
@@ -5740,7 +5740,11 @@
         "properties": {
           "session_id": {
             "type": "string",
-            "description": "Unique session identifier"
+            "description": "Stable public session identifier"
+          },
+          "allocated_session_id": {
+            "type": "string",
+            "description": "Concrete allocated session identifier when it differs from session_id. Requests should continue using session_id."
           },
           "user_id": {
             "type": "string",
