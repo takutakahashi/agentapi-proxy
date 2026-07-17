@@ -437,17 +437,18 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 					status = "creating"
 				}
 				filteredSessions = append(filteredSessions, map[string]interface{}{
-					"session_id":      route.SessionID,
-					"user_id":         route.UserID,
-					"scope":           route.Scope,
-					"team_id":         route.TeamID,
-					"status":          status,
-					"started_at":      route.StartedAt,
-					"updated_at":      route.StartedAt,
-					"last_message_at": route.StartedAt,
-					"addr":            "",
-					"tags":            tags,
-					"annotations":     entities.SessionAnnotations{},
+					"session_id":           route.SessionID,
+					"allocated_session_id": route.RemoteSessionID,
+					"user_id":              route.UserID,
+					"scope":                route.Scope,
+					"team_id":              route.TeamID,
+					"status":               status,
+					"started_at":           route.StartedAt,
+					"updated_at":           route.StartedAt,
+					"last_message_at":      route.StartedAt,
+					"addr":                 "",
+					"tags":                 tags,
+					"annotations":          entities.SessionAnnotations{},
 					"metadata": map[string]interface{}{
 						"description": route.InitialMessage,
 					},
@@ -534,11 +535,16 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 			if err != nil {
 				log.Printf("Delete session: failed to look up route for %s: %v", sessionID, err)
 			} else if route != nil {
+				if route.ProxyURL == "" && route.RemoteSessionID != "" {
+					return c.deleteLocalSessionAlias(ctx, route)
+				}
 				return c.deleteRemoteSession(ctx, route)
 			}
 		}
 		log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+		if session == nil {
+			return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+		}
 	}
 
 	// Check authorization using pre-resolved authorization context (guaranteed to be non-nil by AuthMiddleware)
@@ -577,10 +583,21 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 			if err != nil {
 				log.Printf("[ROUTE] Failed to look up session route for %s: %v", sessionID, err)
 			} else if route != nil {
-				return c.routeToRemoteSession(ctx, route)
+				if route.ProxyURL == "" && route.RemoteSessionID != "" {
+					session = c.getSessionManager().GetSession(route.RemoteSessionID)
+					if session != nil {
+						sessionID = route.SessionID
+					} else {
+						return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+					}
+				} else {
+					return c.routeToRemoteSession(ctx, route)
+				}
 			}
 		}
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+		if session == nil {
+			return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+		}
 	}
 
 	// Skip auth check for OPTIONS requests
@@ -690,6 +707,26 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 
 	proxy.ServeHTTP(w, req)
 	return nil
+}
+
+func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *repositories.SessionRoute) error {
+	session := c.getSessionManager().GetSession(route.RemoteSessionID)
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanModifyResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to delete this session")
+	}
+	if err := c.sessionCreator.DeleteSessionByID(route.RemoteSessionID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session")
+	}
+	if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), route.SessionID); err != nil {
+		log.Printf("Failed to delete session alias %s: %v", route.SessionID, err)
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Session terminated successfully", "session_id": route.SessionID, "status": "terminated",
+	})
 }
 
 // routeToRemoteSession proxies a session request to an external session manager (External Session Manager).

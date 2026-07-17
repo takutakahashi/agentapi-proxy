@@ -346,24 +346,24 @@ func (m *KubernetesSessionManager) CompleteExternalSessionAllocation(ctx context
 	return req, nil
 }
 
-func (m *KubernetesSessionManager) CompleteSessionAllocation(ctx context.Context, sessionID string, result sessionallocation.AllocationResult) error {
+func (m *KubernetesSessionManager) CompleteSessionAllocation(ctx context.Context, sessionID string, result sessionallocation.AllocationResult) (*sessionallocation.AllocationRequest, error) {
 	req, err := m.getSessionAllocation(ctx, sessionID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Status = result.Status
 	req.Message = result.Message
 	req.AllocatedSessionID = result.AllocatedSessionID
 	if err := m.saveSessionAllocation(ctx, req); err != nil {
-		return err
+		return nil, err
 	}
 	if err := m.notifySessionAllocation(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	if err := m.deleteSessionAllocation(context.Background(), sessionID); err != nil {
 		log.Printf("[SESSION_ALLOCATOR] Warning: failed to delete completed allocation %s: %v", sessionID, err)
 	}
-	return nil
+	return req, nil
 }
 
 func (m *KubernetesSessionManager) notifySessionAllocation(ctx context.Context) error {

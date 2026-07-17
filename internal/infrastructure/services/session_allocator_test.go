@@ -192,11 +192,15 @@ func TestCompleteSessionAllocationDeletesAllocationSecret(t *testing.T) {
 		t.Fatalf("saveSessionAllocation() error = %v", err)
 	}
 
-	if err := manager.CompleteSessionAllocation(context.Background(), "test-session", sessionallocation.AllocationResult{
+	allocation, err := manager.CompleteSessionAllocation(context.Background(), "test-session", sessionallocation.AllocationResult{
 		Status:             sessionallocation.StatusAssigned,
-		AllocatedSessionID: "test-session",
-	}); err != nil {
+		AllocatedSessionID: "allocated-session",
+	})
+	if err != nil {
 		t.Fatalf("CompleteSessionAllocation() error = %v", err)
+	}
+	if allocation.SessionID != "test-session" || allocation.AllocatedSessionID != "allocated-session" {
+		t.Fatalf("completion did not preserve public-to-allocated ID mapping: %#v", allocation)
 	}
 
 	_, err = manager.client.CoreV1().Secrets("test-ns").Get(context.Background(), sessionAllocationSecretName("test-session"), metav1.GetOptions{})

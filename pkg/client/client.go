@@ -109,14 +109,15 @@ type StartResponse struct {
 
 // SessionInfo represents information about a session
 type SessionInfo struct {
-	SessionID   string             `json:"session_id"`
-	UserID      string             `json:"user_id"`
-	Status      string             `json:"status"`
-	StartedAt   time.Time          `json:"started_at"`
-	Port        int                `json:"port"`
-	Tags        map[string]string  `json:"tags,omitempty"`
-	Annotations SessionAnnotations `json:"annotations,omitempty"`
-	Metadata    SessionMetadata    `json:"metadata,omitempty"`
+	SessionID          string             `json:"session_id"`
+	AllocatedSessionID string             `json:"allocated_session_id,omitempty"`
+	UserID             string             `json:"user_id"`
+	Status             string             `json:"status"`
+	StartedAt          time.Time          `json:"started_at"`
+	Port               int                `json:"port"`
+	Tags               map[string]string  `json:"tags,omitempty"`
+	Annotations        SessionAnnotations `json:"annotations,omitempty"`
+	Metadata           SessionMetadata    `json:"metadata,omitempty"`
 }
 
 // SearchResponse represents the response from searching sessions
