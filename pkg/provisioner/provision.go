@@ -1802,7 +1802,7 @@ func configureNetworkFilterPolicy(sandbox *sessionsettings.SandboxConfig) {
 		return
 	}
 	payload := map[string]interface{}{
-		"allowed":    sandbox.AllowedDomains,
+		"allowed":    sessionsettings.SandboxAllowedDomains(sandbox.AllowedDomains, sandbox.DeniedDomains),
 		"denied":     sandbox.DeniedDomains,
 		"count_mode": sandbox.CountMode,
 	}

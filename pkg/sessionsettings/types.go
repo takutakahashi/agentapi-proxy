@@ -125,6 +125,22 @@ type SandboxConfig struct {
 	CountMode      bool     `yaml:"count_mode,omitempty"      json:"count_mode,omitempty"`
 }
 
+// SandboxLocalAddressRanges are pre-allowed in allowlist mode so that
+// cluster-local services remain reachable through the network-filter proxy.
+var SandboxLocalAddressRanges = []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+
+// SandboxAllowedDomains returns the effective allowlist sent to the running
+// network filter. Adding an allowlist while in denylist mode would change the
+// policy semantics, so local ranges are added only when no deny-only policy is
+// configured.
+func SandboxAllowedDomains(allowed, denied []string) []string {
+	if len(allowed) == 0 && len(denied) > 0 {
+		return allowed
+	}
+	effective := append([]string(nil), allowed...)
+	return append(effective, SandboxLocalAddressRanges...)
+}
+
 // DockerConfig holds Docker-in-Docker (DinD) configuration for a session Pod.
 // When Enabled is true, a DinD sidecar is added to the session Pod and
 // DOCKER_HOST is set so the main container can communicate with the docker daemon.

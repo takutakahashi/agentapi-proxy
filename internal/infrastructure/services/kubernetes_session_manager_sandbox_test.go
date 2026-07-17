@@ -11,6 +11,7 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptablesImage(t *testing.T) {
@@ -94,7 +95,7 @@ func TestBuildSandboxContainersGeneratesIPAllowlistRulesThenRestoresWithIptables
 func TestBuildNFAConfigPreallowsLocalAddressesInAllowlistMode(t *testing.T) {
 	config := buildNFAConfig(&entities.SandboxParams{Enabled: true})
 
-	for _, addressRange := range sandboxLocalAddressRanges {
+	for _, addressRange := range sessionsettings.SandboxLocalAddressRanges {
 		assert.Contains(t, config, `    - "`+addressRange+`"`)
 	}
 }
@@ -105,7 +106,7 @@ func TestBuildNFAConfigDoesNotAddLocalAddressesToDenylist(t *testing.T) {
 		DeniedDomains: []string{"example.com"},
 	})
 
-	for _, addressRange := range sandboxLocalAddressRanges {
+	for _, addressRange := range sessionsettings.SandboxLocalAddressRanges {
 		assert.NotContains(t, config, addressRange)
 	}
 }

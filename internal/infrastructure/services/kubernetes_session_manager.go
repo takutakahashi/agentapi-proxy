@@ -2686,7 +2686,7 @@ func applySandboxPolicyToProvisioner(ctx context.Context, stockSvc *corev1.Servi
 		Denied    []string `json:"denied,omitempty"`
 		CountMode bool     `json:"count_mode,omitempty"`
 	}{
-		Allowed:   sandbox.AllowedDomains,
+		Allowed:   sessionsettings.SandboxAllowedDomains(sandbox.AllowedDomains, sandbox.DeniedDomains),
 		Denied:    sandbox.DeniedDomains,
 		CountMode: sandbox.CountMode,
 	})
@@ -2860,7 +2860,7 @@ func buildNFAConfig(sandbox *entities.SandboxParams) string {
 		}
 	}
 	if mode == "allowlist" {
-		domains = append(domains, sandboxLocalAddressRanges...)
+		domains = append(domains, sessionsettings.SandboxLocalAddressRanges...)
 	}
 
 	var b strings.Builder
@@ -2871,8 +2871,6 @@ func buildNFAConfig(sandbox *entities.SandboxParams) string {
 	b.WriteString("deferredPolicy: true\n")
 	return b.String()
 }
-
-var sandboxLocalAddressRanges = []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
 
 const (
 	sciaCAPath       = "/etc/scia/mitm/ca.pem"
