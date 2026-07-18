@@ -349,6 +349,21 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		matchingSessions = filterHiddenSessions(matchingSessions)
 	}
 
+	// Load ESM routes before building the response so the allocated session IDs
+	// can be removed from the local list. Only the parent proxy's SessionID is
+	// public; RemoteSessionID is an implementation detail used for routing.
+	var routes []*repositories.SessionRoute
+	if c.sessionRouteRepo != nil {
+		var err error
+		routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), userID)
+		if err != nil {
+			log.Printf("[SEARCH] Failed to list session routes: %v", err)
+			routes = nil
+		} else {
+			matchingSessions = excludeAllocatedSessions(matchingSessions, routes)
+		}
+	}
+
 	// Sort by start time (newest first)
 	sort.Slice(matchingSessions, func(i, j int) bool {
 		return matchingSessions[i].StartedAt().After(matchingSessions[j].StartedAt())
@@ -397,69 +412,81 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	}
 
 	// Include ESM-created sessions from session routes
-	if c.sessionRouteRepo != nil {
-		routes, err := c.sessionRouteRepo.List(ctx.Request().Context(), userID)
-		if err != nil {
-			log.Printf("[SEARCH] Failed to list session routes: %v", err)
-		} else {
-			for _, route := range routes {
-				// Skip sessions already present in the local session manager
-				if _, exists := localSessionIDs[route.SessionID]; exists {
-					continue
-				}
-				// Apply scope filter
-				if scopeFilter == string(entities.ScopeTeam) && route.Scope != string(entities.ScopeTeam) {
-					continue
-				}
-				if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
-					continue
-				}
-				if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
-					continue
-				}
-				tags := route.Tags
-				if tags == nil {
-					tags = map[string]string{}
-				}
-				// Apply tag filters
-				match := true
-				for k, v := range tagFilters {
-					if tags[k] != v {
-						match = false
-						break
-					}
-				}
-				if !match {
-					continue
-				}
-				status := "active"
-				if route.RemoteSessionID == "" {
-					status = "creating"
-				}
-				filteredSessions = append(filteredSessions, map[string]interface{}{
-					"session_id":           route.SessionID,
-					"allocated_session_id": route.RemoteSessionID,
-					"user_id":              route.UserID,
-					"scope":                route.Scope,
-					"team_id":              route.TeamID,
-					"status":               status,
-					"started_at":           route.StartedAt,
-					"updated_at":           route.StartedAt,
-					"last_message_at":      route.StartedAt,
-					"addr":                 "",
-					"tags":                 tags,
-					"annotations":          entities.SessionAnnotations{},
-					"metadata": map[string]interface{}{
-						"description": route.InitialMessage,
-					},
-				})
+	if routes != nil {
+		for _, route := range routes {
+			// Skip sessions already present in the local session manager
+			if _, exists := localSessionIDs[route.SessionID]; exists {
+				continue
 			}
+			// Apply scope filter
+			if scopeFilter == string(entities.ScopeTeam) && route.Scope != string(entities.ScopeTeam) {
+				continue
+			}
+			if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
+				continue
+			}
+			if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+				continue
+			}
+			tags := route.Tags
+			if tags == nil {
+				tags = map[string]string{}
+			}
+			// Apply tag filters
+			match := true
+			for k, v := range tagFilters {
+				if tags[k] != v {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+			status := "active"
+			if route.RemoteSessionID == "" {
+				status = "creating"
+			}
+			filteredSessions = append(filteredSessions, map[string]interface{}{
+				"session_id":           route.SessionID,
+				"allocated_session_id": route.RemoteSessionID,
+				"user_id":              route.UserID,
+				"scope":                route.Scope,
+				"team_id":              route.TeamID,
+				"status":               status,
+				"started_at":           route.StartedAt,
+				"updated_at":           route.StartedAt,
+				"last_message_at":      route.StartedAt,
+				"addr":                 "",
+				"tags":                 tags,
+				"annotations":          entities.SessionAnnotations{},
+				"metadata": map[string]interface{}{
+					"description": route.InitialMessage,
+				},
+			})
 		}
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"sessions": filteredSessions,
 	})
+}
+
+func excludeAllocatedSessions(sessions []entities.Session, routes []*repositories.SessionRoute) []entities.Session {
+	allocatedIDs := make(map[string]struct{}, len(routes))
+	for _, route := range routes {
+		if route.RemoteSessionID != "" && route.RemoteSessionID != route.SessionID {
+			allocatedIDs[route.RemoteSessionID] = struct{}{}
+		}
+	}
+
+	filtered := make([]entities.Session, 0, len(sessions))
+	for _, session := range sessions {
+		if _, allocated := allocatedIDs[session.ID()]; !allocated {
+			filtered = append(filtered, session)
+		}
+	}
+	return filtered
 }
 
 func getSessionAnnotations(session entities.Session) entities.SessionAnnotations {
