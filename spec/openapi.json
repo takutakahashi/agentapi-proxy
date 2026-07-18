@@ -4650,6 +4650,31 @@
             "ApiKeyAuth": []
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "team"
+                    ],
+                    "default": "user",
+                    "description": "Credential ownership scope"
+                  },
+                  "team_id": {
+                    "type": "string",
+                    "description": "Team ID in org/team-slug format; required when scope is team"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Device authorization started",
