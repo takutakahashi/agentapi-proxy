@@ -44,11 +44,15 @@ func EndpointFromEnv() (string, error) {
 
 // buildEndpointFromEnv builds the endpoint URL from environment variables
 func buildEndpointFromEnv() (string, error) {
+	if endpoint := os.Getenv("AGENTAPI_PROXY_ENDPOINT"); endpoint != "" {
+		return endpoint, nil
+	}
+
 	proxyHost := os.Getenv("AGENTAPI_PROXY_SERVICE_HOST")
 	proxyPort := os.Getenv("AGENTAPI_PROXY_SERVICE_PORT_HTTP")
 
 	if proxyHost == "" || proxyPort == "" {
-		return "", fmt.Errorf("AGENTAPI_PROXY_SERVICE_HOST or AGENTAPI_PROXY_SERVICE_PORT_HTTP environment variable is not set")
+		return "", fmt.Errorf("AGENTAPI_PROXY_ENDPOINT or AGENTAPI_PROXY_SERVICE_HOST and AGENTAPI_PROXY_SERVICE_PORT_HTTP environment variables are not set")
 	}
 
 	return fmt.Sprintf("http://%s:%s", proxyHost, proxyPort), nil
