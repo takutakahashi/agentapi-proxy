@@ -80,7 +80,6 @@ type SessionProfileResponse struct {
 
 // SessionProfileConfigResponse represents session profile config in responses
 type SessionProfileConfigResponse struct {
-	Environment            map[string]string       `json:"environment,omitempty"`
 	Tags                   map[string]string       `json:"tags,omitempty"`
 	InitialMessageTemplate string                  `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                  `json:"reuse_message_template,omitempty"`
@@ -346,7 +345,6 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		IsDefault:    p.IsDefault(),
 		SelectorTags: p.SelectorTags(),
 		Config: SessionProfileConfigResponse{
-			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
