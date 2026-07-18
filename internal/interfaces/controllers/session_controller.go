@@ -1036,6 +1036,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	if len(override.UnsyncedFilePaths) > 0 {
 		merged.UnsyncedFilePaths = append([]string(nil), override.UnsyncedFilePaths...)
 	}
+	if override.CredentialSource != "" {
+		merged.CredentialSource = override.CredentialSource
+	}
 	return &merged
 }
 

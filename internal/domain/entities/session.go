@@ -119,6 +119,10 @@ type SessionParams struct {
 	SessionTTL string `json:"session_ttl,omitempty"`
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string `json:"unsynced_file_paths,omitempty"`
+	// CredentialSource selects which managed credentials are injected into the session.
+	// Valid values are "session_user", "team", and "none". Empty preserves the
+	// legacy behavior (session user for user scope, none for team scope).
+	CredentialSource string `json:"credential_source,omitempty"`
 }
 
 // SessionAnnotations contains user-managed annotations attached to a session.
@@ -199,6 +203,8 @@ type RunServerRequest struct {
 	SessionTTL string
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string
+	// CredentialSource selects the owner of managed credential files.
+	CredentialSource string
 }
 
 // Session represents a running agentapi session

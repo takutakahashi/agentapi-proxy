@@ -233,6 +233,31 @@ func TestLaunchAppliesDefaultProfileUnsyncedFilePaths(t *testing.T) {
 	}
 }
 
+func TestLaunchAppliesProfileCredentialSource(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "team profile", "user-1")
+	profile.SetOwnership(entities.ScopeTeam, "user-1", "org/team-a")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{CredentialSource: "session_user"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeTeam,
+		TeamID: "org/team-a",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.CredentialSource; got != "session_user" {
+		t.Fatalf("credential source = %q, want session_user", got)
+	}
+}
+
 func TestLaunchExplicitUnsyncedFilePathsOverrideProfile(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
