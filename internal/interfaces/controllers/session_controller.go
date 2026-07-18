@@ -763,7 +763,20 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *repositories.SessionRoute) error {
 	session := c.getSessionManager().GetSession(route.RemoteSessionID)
 	if session == nil {
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+		// The runtime may already have removed itself (for example via a oneshot
+		// Stop hook). Authorize from the persisted route metadata and make DELETE
+		// idempotently clean up the stale public alias.
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if !authzCtx.CanModifyResource(route.UserID, route.Scope, route.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to delete this session")
+		}
+		if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), route.SessionID); err != nil {
+			log.Printf("Failed to delete stale session alias %s: %v", route.SessionID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session alias")
+		}
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"message": "Stale session alias removed", "session_id": route.SessionID, "status": "terminated",
+		})
 	}
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	if !authzCtx.CanModifyResource(session.UserID(), string(session.Scope()), session.TeamID()) {
