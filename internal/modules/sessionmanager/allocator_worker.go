@@ -16,6 +16,7 @@ import (
 type AllocatorWorker struct {
 	sessionManager repositories.SessionManager
 	client         sessionallocation.ExternalAllocatorClient
+	upstreamURL    string
 	publicURL      string
 }
 
@@ -24,13 +25,18 @@ type directSessionManager interface {
 }
 
 func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL, token, publicURL string) *AllocatorWorker {
-	return NewAllocatorWorkerWithClient(sessionManager, infrasessionallocation.NewClient(upstreamURL, token), publicURL)
+	return newAllocatorWorkerWithClient(sessionManager, infrasessionallocation.NewClient(upstreamURL, token), upstreamURL, publicURL)
 }
 
 func NewAllocatorWorkerWithClient(sessionManager repositories.SessionManager, client sessionallocation.ExternalAllocatorClient, publicURL string) *AllocatorWorker {
+	return newAllocatorWorkerWithClient(sessionManager, client, "", publicURL)
+}
+
+func newAllocatorWorkerWithClient(sessionManager repositories.SessionManager, client sessionallocation.ExternalAllocatorClient, upstreamURL, publicURL string) *AllocatorWorker {
 	return &AllocatorWorker{
 		sessionManager: sessionManager,
 		client:         client,
+		upstreamURL:    upstreamURL,
 		publicURL:      publicURL,
 	}
 }
@@ -67,6 +73,18 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionalloca
 			Message: "provision_settings is required",
 		})
 		return
+	}
+
+	// The public session ID belongs to the upstream proxy. Keep the oneshot Stop
+	// hook pointed at that proxy so it deletes both the allocated session and the
+	// public route alias. Without this override, Kubernetes service discovery on
+	// the session-manager cluster sends the public ID to the local proxy, where
+	// only the allocated ID exists.
+	if settings.Session.Oneshot && w.upstreamURL != "" {
+		if settings.Env == nil {
+			settings.Env = map[string]string{}
+		}
+		settings.Env["AGENTAPI_PROXY_ENDPOINT"] = w.upstreamURL
 	}
 
 	sessionID := uuid.New().String()

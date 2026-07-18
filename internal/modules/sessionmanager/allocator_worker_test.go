@@ -49,6 +49,41 @@ func TestAllocatorWorkerCompletesAssignedAllocation(t *testing.T) {
 	}
 }
 
+func TestAllocatorWorkerPointsOneshotDeletionAtUpstreamProxy(t *testing.T) {
+	client := &fakeExternalAllocatorClient{}
+	manager := &fakeAllocatorSessionManager{}
+	worker := newAllocatorWorkerWithClient(manager, client, "https://proxy.example", "https://esm.example")
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser), Oneshot: true},
+	}
+
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID:         "public-session",
+		ProvisionSettings: settings,
+	})
+
+	if got := settings.Env["AGENTAPI_PROXY_ENDPOINT"]; got != "https://proxy.example" {
+		t.Fatalf("AGENTAPI_PROXY_ENDPOINT = %q, want upstream proxy URL", got)
+	}
+}
+
+func TestAllocatorWorkerLeavesRegularSessionEndpointUnchanged(t *testing.T) {
+	worker := newAllocatorWorkerWithClient(&fakeAllocatorSessionManager{}, &fakeExternalAllocatorClient{}, "https://proxy.example", "https://esm.example")
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)},
+		Env:     map[string]string{"AGENTAPI_PROXY_ENDPOINT": "https://custom.example"},
+	}
+
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID:         "public-session",
+		ProvisionSettings: settings,
+	})
+
+	if got := settings.Env["AGENTAPI_PROXY_ENDPOINT"]; got != "https://custom.example" {
+		t.Fatalf("AGENTAPI_PROXY_ENDPOINT = %q, want existing endpoint", got)
+	}
+}
+
 func TestAllocatorWorkerCompletesErrorWhenProvisionSettingsMissing(t *testing.T) {
 	client := &fakeExternalAllocatorClient{}
 	worker := NewAllocatorWorkerWithClient(&fakeAllocatorSessionManager{}, client, "https://esm.example")
