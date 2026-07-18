@@ -32,10 +32,11 @@ var (
 
 // authSession tracks an in-progress codex login --device-auth subprocess.
 type authSession struct {
-	cmd     *exec.Cmd
-	tmpHome string
-	mu      sync.Mutex
-	status  string // "pending", "authorized", "denied"
+	cmd            *exec.Cmd
+	tmpHome        string
+	credentialName string
+	mu             sync.Mutex
+	status         string // "pending", "authorized", "denied"
 }
 
 // CodexDeviceAuthController runs `codex login --device-auth` and proxies
@@ -59,6 +60,13 @@ func (c *CodexDeviceAuthController) GetName() string {
 type StartDeviceAuthResponse struct {
 	UserCode        string `json:"user_code"`
 	VerificationURI string `json:"verification_uri"`
+}
+
+// StartDeviceAuthRequest selects where the generated auth.json is stored.
+// An omitted scope preserves the existing user-scoped behavior.
+type StartDeviceAuthRequest struct {
+	Scope  string `json:"scope,omitempty"`
+	TeamID string `json:"team_id,omitempty"`
 }
 
 // PollDeviceAuthResponse is returned by POST /codex/device-auth/token.
@@ -92,6 +100,16 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 	}
 
 	userID := string(user.ID())
+	var req StartDeviceAuthRequest
+	if ctx.Request().ContentLength != 0 {
+		if err := ctx.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+		}
+	}
+	credentialName, err := deviceAuthCredentialName(user, req)
+	if err != nil {
+		return err
+	}
 
 	codexPath, err := exec.LookPath("codex")
 	if err != nil {
@@ -139,7 +157,7 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to start codex: %v", err))
 	}
 
-	session := &authSession{cmd: cmd, tmpHome: tmpHome, status: "pending"}
+	session := &authSession{cmd: cmd, tmpHome: tmpHome, credentialName: credentialName, status: "pending"}
 	c.sessions.Store(userID, session)
 	log.Printf("[CODEX_AUTH] Session tmpHome for user=%s: %s", userID, tmpHome)
 
@@ -273,7 +291,7 @@ func (c *CodexDeviceAuthController) watchCompletion(userID string, session *auth
 	}
 	log.Printf("[CODEX_AUTH] auth.json found (%d bytes) for user=%s", len(data), userID)
 
-	creds := entities.NewCredentials(userID, json.RawMessage(data))
+	creds := entities.NewCredentials(session.credentialName, json.RawMessage(data))
 	creds.SetFileType(sessionsettings.FileTypeCodexAuth)
 
 	if err := c.repo.Save(context.Background(), creds); err != nil {
@@ -283,7 +301,33 @@ func (c *CodexDeviceAuthController) watchCompletion(userID string, session *auth
 	}
 
 	session.status = "authorized"
-	log.Printf("[CODEX_AUTH] Auth completed and credentials saved for user=%s", userID)
+	log.Printf("[CODEX_AUTH] Auth completed and credentials saved for user=%s target=%s", userID, session.credentialName)
+}
+
+func deviceAuthCredentialName(user *entities.User, req StartDeviceAuthRequest) (string, error) {
+	scope := strings.TrimSpace(req.Scope)
+	teamID := strings.TrimSpace(req.TeamID)
+	if scope == "" {
+		scope = string(entities.ScopeUser)
+	}
+
+	switch scope {
+	case string(entities.ScopeUser):
+		if teamID != "" {
+			return "", echo.NewHTTPError(http.StatusBadRequest, "team_id is only valid when scope is 'team'")
+		}
+		return string(user.ID()), nil
+	case string(entities.ScopeTeam):
+		if teamID == "" {
+			return "", echo.NewHTTPError(http.StatusBadRequest, "team_id is required when scope is 'team'")
+		}
+		if !user.IsAdmin() && !user.IsMemberOfTeam(teamID) {
+			return "", echo.NewHTTPError(http.StatusForbidden, "Access denied: not a member of the specified team")
+		}
+		return teamID, nil
+	default:
+		return "", echo.NewHTTPError(http.StatusBadRequest, "scope must be 'user' or 'team'")
+	}
 }
 
 // listDir returns relative paths of all files under root (best-effort).
