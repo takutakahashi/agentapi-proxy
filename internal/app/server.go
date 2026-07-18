@@ -516,9 +516,37 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		log.Printf("[SERVER] Memory dump handler registered for session deletion")
 	}
 
+	// Local allocation may expose a stable public session ID while running the
+	// workload under an adopted stock-session ID.  A oneshot workload deletes
+	// itself by that runtime ID, so remove the public alias at the same time.
+	// Otherwise /search keeps synthesizing an active session from a route whose
+	// workload no longer exists.
+	if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok && sessionRouteRepo != nil {
+		k8sManager.AddSessionDeletedHandler(func(ctx context.Context, sess entities.Session) {
+			cleanupLocalSessionRoutes(ctx, sessionRouteRepo, sess.ID())
+		})
+		log.Printf("[SERVER] Local session route cleanup handler registered")
+	}
+
 	s.setupRoutes()
 
 	return s
+}
+
+func cleanupLocalSessionRoutes(ctx context.Context, repo portrepos.SessionRouteRepository, runtimeSessionID string) {
+	routes, err := repo.List(ctx, "")
+	if err != nil {
+		log.Printf("[SESSION_ROUTE] Warning: failed to list routes while deleting runtime session %s: %v", runtimeSessionID, err)
+		return
+	}
+	for _, route := range routes {
+		if route.ProxyURL != "" || route.RemoteSessionID != runtimeSessionID {
+			continue
+		}
+		if err := repo.Delete(ctx, route.SessionID); err != nil {
+			log.Printf("[SESSION_ROUTE] Warning: failed to delete local alias %s for runtime session %s: %v", route.SessionID, runtimeSessionID, err)
+		}
+	}
 }
 
 // StartMonitoring starts the session monitoring (called after server is fully initialized)
