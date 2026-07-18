@@ -491,7 +491,7 @@ kubernetesSession:
   image: ""
 
   # Container image for the network-filter sidecar and initContainer (sandbox feature)
-  networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.0"
+  networkFilterImage: "ghcr.io/takutakahashi/nfa:v0.12.1"
 
   # Deprecated: networkFilterImage is used to restore sandbox iptables rules.
   sandboxInitImage: "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a"
