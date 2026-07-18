@@ -13,10 +13,56 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type fakeSettingsRepository struct {
 	settings map[string]*entities.Settings
+}
+
+func TestBuildSessionSettings_TeamScopeUsesSessionUserCredentialsWhenSelected(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-test-user", Namespace: "test-ns"},
+			Data: sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+				Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
+				Content: `{"tokens":{"access_token":"user-token"}}`,
+			}}),
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-org-team-a", Namespace: "test-ns"},
+			Data: sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+				Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
+				Content: `{"tokens":{"access_token":"team-token"}}`,
+			}}),
+		},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+	session := NewKubernetesSession("test-session", &entities.RunServerRequest{UserID: "test-user"},
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	settings := manager.buildSessionSettings(context.Background(), session, &entities.RunServerRequest{
+		UserID:           "test-user",
+		Scope:            entities.ScopeTeam,
+		TeamID:           "org/team-a",
+		CredentialSource: "session_user",
+	}, nil)
+
+	if len(settings.Files) != 1 {
+		t.Fatalf("managed files count = %d, want 1", len(settings.Files))
+	}
+	if got := settings.Files[0].Content; got != `{"tokens":{"access_token":"user-token"}}` {
+		t.Fatalf("credential content = %q, want session user's credentials", got)
+	}
 }
 
 func (r *fakeSettingsRepository) Save(ctx context.Context, settings *entities.Settings) error {

@@ -5352,12 +5352,28 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] OtelCollector in-process config embedded for session %s", session.id)
 	}
 
-	// Embed managed files from the user's agentapi-agent-files-{userID} Secret so that
+	// Embed managed files from the selected credential owner so that
 	// stock pool pods (which have no user-specific volume mounts) can restore files
 	// on startup via the provision endpoint payload.
-	// Only applies to user-scoped sessions with a known UserID.
-	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" {
-		filesSecretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(req.UserID))
+	// Empty CredentialSource preserves the legacy behavior: user-scoped sessions
+	// use the session creator and team-scoped sessions receive no credentials.
+	credentialOwner := ""
+	switch req.CredentialSource {
+	case "session_user":
+		credentialOwner = req.UserID
+	case "team":
+		credentialOwner = req.TeamID
+	case "none":
+		// Explicitly disabled.
+	case "":
+		if req.Scope == entities.ScopeUser || req.Scope == "" {
+			credentialOwner = req.UserID
+		}
+	default:
+		log.Printf("[K8S_SESSION] Warning: unknown credential_source %q for session %s; credentials disabled", req.CredentialSource, session.id)
+	}
+	if credentialOwner != "" {
+		filesSecretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(credentialOwner))
 		filesSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, filesSecretName, metav1.GetOptions{})
 		if err == nil && len(filesSecret.Data) > 0 {
 			settings.Files = sessionsettings.SecretDataToFiles(filesSecret.Data)
@@ -5372,8 +5388,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			}
 		}
 		// Not found or no data is normal (user hasn't logged in yet); skip silently.
+	}
 
-		// Also embed user-managed files from the agentapi-user-files-{userID} Secret.
+	// User-managed files retain their existing user-scope-only behavior; the
+	// credential selector above controls authentication files only.
+	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" {
 		userFilesSecretName := fmt.Sprintf("agentapi-user-files-%s", sanitizeLabelValue(req.UserID))
 		userFilesSecret, userFilesErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, userFilesSecretName, metav1.GetOptions{})
 		if userFilesErr == nil && len(userFilesSecret.Data) > 0 {
@@ -5384,7 +5403,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 					len(userManagedFiles), userFilesSecretName, session.id)
 			}
 		}
-		// Not found or no data is normal (user has no registered files); skip silently.
 	}
 
 	// When CycleMessage is set, write the message into /tmp/check/CYCLE_ENABLED so

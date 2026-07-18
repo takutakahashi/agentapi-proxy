@@ -5510,6 +5510,16 @@
             "example": [
               "/home/agentapi/.codex/auth.json"
             ]
+          },
+          "credential_source": {
+            "type": "string",
+            "enum": [
+              "session_user",
+              "team",
+              "none"
+            ],
+            "description": "Managed credential files to inject. session_user uses the user who created the session, team uses the session team, and none disables credential injection. When omitted, user-scoped sessions use session_user and team-scoped sessions use none.",
+            "example": "session_user"
           }
         }
       },

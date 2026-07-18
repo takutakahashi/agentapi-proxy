@@ -708,8 +708,12 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	}
 
 	var unsyncedFilePaths []string
+	var credentialSource string
 	if startReq.Params != nil && len(startReq.Params.UnsyncedFilePaths) > 0 {
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
+	}
+	if startReq.Params != nil {
+		credentialSource = startReq.Params.CredentialSource
 	}
 
 	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
@@ -736,6 +740,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		AuthProxy:                authProxy,
 		SessionTTL:               sessionTTL,
 		UnsyncedFilePaths:        unsyncedFilePaths,
+		CredentialSource:         credentialSource,
 	})
 	if err != nil {
 		return nil, err
@@ -762,12 +767,14 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	var oneshot bool
 	var authProxy *bool
 	var unsyncedFilePaths []string
+	var credentialSource string
 	if startReq.Params != nil {
 		initialMessage = startReq.Params.Message
 		agentType = startReq.Params.AgentType
 		oneshot = startReq.Params.Oneshot
 		authProxy = startReq.Params.AuthProxy
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
+		credentialSource = startReq.Params.CredentialSource
 	}
 	runReq := &entities.RunServerRequest{
 		UserID:            userID,
@@ -783,6 +790,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		RepoInfo:          s.extractRepositoryInfo(sessionID, startReq.Tags),
 		AuthProxy:         authProxy,
 		UnsyncedFilePaths: unsyncedFilePaths,
+		CredentialSource:  credentialSource,
 	}
 
 	// Try to build fully-resolved settings (env vars, Bedrock, MCP servers, OAuth token, etc.)
