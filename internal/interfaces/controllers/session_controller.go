@@ -412,59 +412,57 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	}
 
 	// Include ESM-created sessions from session routes
-	if routes != nil {
-		for _, route := range routes {
-			// Skip sessions already present in the local session manager
-			if _, exists := localSessionIDs[route.SessionID]; exists {
-				continue
-			}
-			// Apply scope filter
-			if scopeFilter == string(entities.ScopeTeam) && route.Scope != string(entities.ScopeTeam) {
-				continue
-			}
-			if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
-				continue
-			}
-			if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
-				continue
-			}
-			tags := route.Tags
-			if tags == nil {
-				tags = map[string]string{}
-			}
-			// Apply tag filters
-			match := true
-			for k, v := range tagFilters {
-				if tags[k] != v {
-					match = false
-					break
-				}
-			}
-			if !match {
-				continue
-			}
-			status := "active"
-			if route.RemoteSessionID == "" {
-				status = "creating"
-			}
-			filteredSessions = append(filteredSessions, map[string]interface{}{
-				"session_id":           route.SessionID,
-				"allocated_session_id": route.RemoteSessionID,
-				"user_id":              route.UserID,
-				"scope":                route.Scope,
-				"team_id":              route.TeamID,
-				"status":               status,
-				"started_at":           route.StartedAt,
-				"updated_at":           route.StartedAt,
-				"last_message_at":      route.StartedAt,
-				"addr":                 "",
-				"tags":                 tags,
-				"annotations":          entities.SessionAnnotations{},
-				"metadata": map[string]interface{}{
-					"description": route.InitialMessage,
-				},
-			})
+	for _, route := range routes {
+		// Skip sessions already present in the local session manager
+		if _, exists := localSessionIDs[route.SessionID]; exists {
+			continue
 		}
+		// Apply scope filter
+		if scopeFilter == string(entities.ScopeTeam) && route.Scope != string(entities.ScopeTeam) {
+			continue
+		}
+		if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
+			continue
+		}
+		if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+			continue
+		}
+		tags := route.Tags
+		if tags == nil {
+			tags = map[string]string{}
+		}
+		// Apply tag filters
+		match := true
+		for k, v := range tagFilters {
+			if tags[k] != v {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		status := "active"
+		if route.RemoteSessionID == "" {
+			status = "creating"
+		}
+		filteredSessions = append(filteredSessions, map[string]interface{}{
+			"session_id":           route.SessionID,
+			"allocated_session_id": route.RemoteSessionID,
+			"user_id":              route.UserID,
+			"scope":                route.Scope,
+			"team_id":              route.TeamID,
+			"status":               status,
+			"started_at":           route.StartedAt,
+			"updated_at":           route.StartedAt,
+			"last_message_at":      route.StartedAt,
+			"addr":                 "",
+			"tags":                 tags,
+			"annotations":          entities.SessionAnnotations{},
+			"metadata": map[string]interface{}{
+				"description": route.InitialMessage,
+			},
+		})
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
