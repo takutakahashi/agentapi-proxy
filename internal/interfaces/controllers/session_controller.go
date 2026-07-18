@@ -353,6 +353,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	// can be removed from the local list. Only the parent proxy's SessionID is
 	// public; RemoteSessionID is an implementation detail used for routing.
 	var routes []*repositories.SessionRoute
+	allocatedSessions := make(map[string]entities.Session)
 	if c.sessionRouteRepo != nil {
 		var err error
 		routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), userID)
@@ -360,6 +361,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			log.Printf("[SEARCH] Failed to list session routes: %v", err)
 			routes = nil
 		} else {
+			allocatedSessions = indexAllocatedSessions(matchingSessions, routes)
 			matchingSessions = excludeAllocatedSessions(matchingSessions, routes)
 		}
 	}
@@ -442,10 +444,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		if !match {
 			continue
 		}
-		status := "active"
-		if route.RemoteSessionID == "" {
-			status = "creating"
-		}
+		status := routedSessionStatus(route, allocatedSessions)
 		filteredSessions = append(filteredSessions, map[string]interface{}{
 			"session_id":           route.SessionID,
 			"allocated_session_id": route.RemoteSessionID,
@@ -468,6 +467,33 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"sessions": filteredSessions,
 	})
+}
+
+func routedSessionStatus(route *repositories.SessionRoute, allocatedSessions map[string]entities.Session) string {
+	if route.RemoteSessionID == "" {
+		return "creating"
+	}
+	if allocatedSession := allocatedSessions[route.RemoteSessionID]; allocatedSession != nil {
+		return allocatedSession.Status()
+	}
+	return "active"
+}
+
+func indexAllocatedSessions(sessions []entities.Session, routes []*repositories.SessionRoute) map[string]entities.Session {
+	allocatedIDs := make(map[string]struct{}, len(routes))
+	for _, route := range routes {
+		if route.RemoteSessionID != "" && route.RemoteSessionID != route.SessionID {
+			allocatedIDs[route.RemoteSessionID] = struct{}{}
+		}
+	}
+
+	allocatedSessions := make(map[string]entities.Session, len(allocatedIDs))
+	for _, session := range sessions {
+		if _, allocated := allocatedIDs[session.ID()]; allocated {
+			allocatedSessions[session.ID()] = session
+		}
+	}
+	return allocatedSessions
 }
 
 func excludeAllocatedSessions(sessions []entities.Session, routes []*repositories.SessionRoute) []entities.Session {
