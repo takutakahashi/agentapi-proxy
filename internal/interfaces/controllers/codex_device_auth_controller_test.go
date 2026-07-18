@@ -1,9 +1,11 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -35,7 +37,9 @@ func TestDeviceAuthCredentialName(t *testing.T) {
 			got, err := deviceAuthCredentialName(user, tt.req)
 			if tt.wantStatus != 0 {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), http.StatusText(tt.wantStatus))
+				var httpErr *echo.HTTPError
+				require.True(t, errors.As(err, &httpErr))
+				assert.Equal(t, tt.wantStatus, httpErr.Code)
 				return
 			}
 			require.NoError(t, err)
