@@ -130,6 +130,8 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	if err := ctx.Bind(&startReq); err != nil {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
 	}
+	explicitSandbox := startReq.Params != nil && startReq.Params.Sandbox != nil
+	explicitDocker := startReq.Params != nil && startReq.Params.Docker != nil
 
 	// Get authorization context from middleware (guaranteed to be non-nil by AuthMiddleware)
 	authzCtx := auth.GetAuthorizationContext(ctx)
@@ -221,6 +223,9 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 					startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
 				}
 			}
+			if containsAllocatorSelector(startReq.Tags) {
+				removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
+			}
 
 			// MemoryKey: profile is base, request keys override
 			if len(cfg.MemoryKey()) > 0 {
@@ -285,6 +290,18 @@ func containsAllocatorSelector(tags map[string]string) bool {
 		}
 	}
 	return false
+}
+
+func removeImplicitAllocatorCapabilities(params *entities.SessionParams, explicitSandbox, explicitDocker bool) {
+	if params == nil {
+		return
+	}
+	if !explicitSandbox {
+		params.Sandbox = nil
+	}
+	if !explicitDocker {
+		params.Docker = nil
+	}
 }
 
 // SearchSessions handles GET /search requests to list and filter active sessions
