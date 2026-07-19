@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -11,12 +12,14 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
@@ -30,7 +33,24 @@ var NativeSessionManagerCmd = &cobra.Command{
 }
 
 var nativeSessionManagerOptions struct {
-	listen, upstreamURL, connectionToken, upstreamAuthToken, publicURL, stateDir, binaryPath string
+	listen, upstreamURL, connectionToken, upstreamAuthToken, publicURL, stateDir, binaryPath, managerID, configPath string
+}
+
+type nativeDaemonConfig struct {
+	Listen            string            `json:"listen"`
+	UpstreamURL       string            `json:"upstream_url"`
+	ConnectionToken   string            `json:"connection_token"`
+	CredentialsPath   string            `json:"credentials_path,omitempty"`
+	UpstreamAuthToken string            `json:"upstream_auth_token,omitempty"`
+	PublicURL         string            `json:"public_url"`
+	StateDir          string            `json:"state_dir"`
+	BinaryPath        string            `json:"binary_path,omitempty"`
+	ManagerID         string            `json:"manager_id,omitempty"`
+	InstanceID        string            `json:"instance_id,omitempty"`
+	Scope             string            `json:"scope,omitempty"`
+	TeamID            string            `json:"team_id,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Version           string            `json:"version,omitempty"`
 }
 
 func init() {
@@ -42,10 +62,42 @@ func init() {
 	f.StringVar(&nativeSessionManagerOptions.publicURL, "public-url", "", "URL used by the parent proxy to route sessions")
 	f.StringVar(&nativeSessionManagerOptions.stateDir, "state-dir", "./native-sessions", "native session state directory")
 	f.StringVar(&nativeSessionManagerOptions.binaryPath, "binary", "", "agentapi-proxy binary used for provisioners")
+	f.StringVar(&nativeSessionManagerOptions.managerID, "manager-id", "", "registered external session manager ID")
+	f.StringVar(&nativeSessionManagerOptions.configPath, "config", "", "JSON daemon configuration file")
 }
 
-func runNativeSessionManager(_ *cobra.Command, _ []string) error {
+func runNativeSessionManager(command *cobra.Command, _ []string) error {
 	o := nativeSessionManagerOptions
+	if o.configPath != "" {
+		cfg, err := readNativeConfig(o.configPath)
+		if err != nil {
+			return fmt.Errorf("read native daemon config: %w", err)
+		}
+		if !command.Flags().Changed("listen") {
+			o.listen = cfg.Listen
+		}
+		if !command.Flags().Changed("upstream-url") {
+			o.upstreamURL = cfg.UpstreamURL
+		}
+		if !command.Flags().Changed("connection-token") {
+			o.connectionToken = cfg.ConnectionToken
+		}
+		if !command.Flags().Changed("upstream-auth-token") {
+			o.upstreamAuthToken = cfg.UpstreamAuthToken
+		}
+		if !command.Flags().Changed("public-url") {
+			o.publicURL = cfg.PublicURL
+		}
+		if !command.Flags().Changed("state-dir") {
+			o.stateDir = cfg.StateDir
+		}
+		if !command.Flags().Changed("binary") {
+			o.binaryPath = cfg.BinaryPath
+		}
+		if !command.Flags().Changed("manager-id") {
+			o.managerID = cfg.ManagerID
+		}
+	}
 	if o.upstreamURL == "" || o.connectionToken == "" || o.publicURL == "" {
 		return fmt.Errorf("--upstream-url, --connection-token and --public-url are required")
 	}
@@ -72,6 +124,9 @@ func runNativeSessionManager(_ *cobra.Command, _ []string) error {
 	defer cancel()
 	worker := sessionmanager.NewAllocatorWorkerWithUpstreamAuth(manager, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, o.publicURL)
 	go worker.Start(ctx)
+	if o.managerID != "" {
+		go runNativeHeartbeat(ctx, o.upstreamURL, o.managerID, o.connectionToken, o.publicURL, manager)
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -83,6 +138,48 @@ func runNativeSessionManager(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	return nil
+}
+
+func runNativeHeartbeat(ctx context.Context, upstreamURL, managerID, token, publicURL string, manager *services.NativeSessionManager) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	send := func() {
+		body, _ := json.Marshal(map[string]interface{}{
+			"public_url": publicURL, "version": nativeBuildVersion(),
+			"active_sessions": len(manager.ListSessions(entities.SessionFilter{})),
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstreamURL, "/")+"/external-session-managers/"+url.PathEscape(managerID)+"/heartbeat", bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Printf("[NATIVE_ESM] heartbeat failed: %v", err)
+			return
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			log.Printf("[NATIVE_ESM] heartbeat returned HTTP %d", resp.StatusCode)
+		}
+	}
+	send()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			send()
+		}
+	}
+}
+
+func nativeBuildVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "devel"
 }
 
 func nativeSessionProxy(manager *services.NativeSessionManager, secret []byte) echo.HandlerFunc {

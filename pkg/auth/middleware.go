@@ -69,6 +69,9 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 				strings.HasPrefix(path, "/internal/external-session-manager") {
 				return next(c)
 			}
+			if strings.HasPrefix(path, "/external-session-managers/") && strings.HasSuffix(path, "/heartbeat") {
+				return next(c)
+			}
 
 			// Skip auth for HMAC-signed requests from a trusted 親プロキシ
 			// This enables small-cluster mode where 親プロキシ proxies session requests to External Session Manager

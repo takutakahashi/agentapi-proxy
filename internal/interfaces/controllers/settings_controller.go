@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -26,6 +28,7 @@ type SettingsController struct {
 	notificationSvc  *notification.Service // Optional
 	gitSyncKMSKeyARN string                // optional; non-empty when GitHub sync encryption is configured
 	gitSyncAWSRegion string
+	esmMu            sync.Mutex
 }
 
 // NewSettingsController creates new settings controller
@@ -115,6 +118,7 @@ type UpdateSettingsRequest struct {
 // ExternalSessionManagerRequest represents a single external session manager registration
 type ExternalSessionManagerRequest struct {
 	ID         string            `json:"id,omitempty"`          // Auto-generated if empty
+	InstanceID string            `json:"instance_id,omitempty"` // Stable native host installation ID
 	Name       string            `json:"name"`                  // Human-readable name
 	HMACSecret string            `json:"hmac_secret,omitempty"` // Connection token; auto-generated if empty, omit to keep existing
 	Default    bool              `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
@@ -169,11 +173,16 @@ type SettingsResponse struct {
 // ExternalSessionManagerResponse represents a single external session manager in responses
 type ExternalSessionManagerResponse struct {
 	ID                 string            `json:"id"`
+	InstanceID         string            `json:"instance_id,omitempty"`
 	Name               string            `json:"name"`
 	HasConnectionToken bool              `json:"has_connection_token"`       // true if a connection token is configured
 	ConnectionToken    string            `json:"connection_token,omitempty"` // returned only immediately after generation or rotation
 	Default            bool              `json:"default,omitempty"`          // true if this manager is used when no manager_id is specified
 	Labels             map[string]string `json:"labels,omitempty"`
+	PublicURL          string            `json:"public_url,omitempty"`
+	Version            string            `json:"version,omitempty"`
+	ActiveSessions     int               `json:"active_sessions,omitempty"`
+	LastHeartbeatAt    *time.Time        `json:"last_heartbeat_at,omitempty"`
 }
 
 // AvailableManagerEntry represents a single available ESM entry returned by GET /settings/managers
@@ -490,13 +499,23 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				m.HMACSecret = secret
 				generatedESMTokens[m.ID] = secret
 			}
-			updated = append(updated, entities.ExternalSessionManagerEntry{
+			entry := entities.ExternalSessionManagerEntry{
 				ID:         m.ID,
+				InstanceID: m.InstanceID,
 				Name:       m.Name,
 				HMACSecret: m.HMACSecret,
 				Default:    m.Default,
 				Labels:     m.Labels,
-			})
+			}
+			// These fields are owned by the daemon registration/heartbeat API and
+			// must survive a legacy settings update.
+			if prev, ok := existing[m.ID]; ok {
+				entry.PublicURL = prev.PublicURL
+				entry.Version = prev.Version
+				entry.ActiveSessions = prev.ActiveSessions
+				entry.LastHeartbeatAt = prev.LastHeartbeatAt
+			}
+			updated = append(updated, entry)
 		}
 		settings.SetExternalSessionManagers(updated)
 	}
@@ -863,11 +882,16 @@ func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings
 			}
 			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
 				ID:                 m.ID,
+				InstanceID:         m.InstanceID,
 				Name:               m.Name,
 				HasConnectionToken: m.HMACSecret != "",
 				ConnectionToken:    connectionToken,
 				Default:            m.Default,
 				Labels:             m.Labels,
+				PublicURL:          m.PublicURL,
+				Version:            m.Version,
+				ActiveSessions:     m.ActiveSessions,
+				LastHeartbeatAt:    timePtrUnlessZero(m.LastHeartbeatAt),
 			})
 		}
 	}
