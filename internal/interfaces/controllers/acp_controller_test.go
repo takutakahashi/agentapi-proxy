@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
 // ----------------------------------------------------------------------------
@@ -99,6 +101,22 @@ type fakeSessionCreator struct {
 	created []string
 	deleted []string
 }
+
+type fakeACPRouteRepo struct {
+	route *repositories.SessionRoute
+}
+
+func (r *fakeACPRouteRepo) Save(context.Context, *repositories.SessionRoute) error { return nil }
+func (r *fakeACPRouteRepo) Get(_ context.Context, sessionID string) (*repositories.SessionRoute, error) {
+	if r.route != nil && r.route.SessionID == sessionID {
+		return r.route, nil
+	}
+	return nil, nil
+}
+func (r *fakeACPRouteRepo) List(context.Context, string) ([]*repositories.SessionRoute, error) {
+	return nil, nil
+}
+func (r *fakeACPRouteRepo) Delete(context.Context, string) error { return nil }
 
 func (c *fakeSessionCreator) CreateSession(sessionID string, req entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
 	c.created = append(c.created, sessionID)
@@ -467,5 +485,82 @@ func TestACPController_InvalidJsonrpcVersion(t *testing.T) {
 	rpcErr := resp["error"].(map[string]interface{})
 	if rpcErr["code"].(float64) != -32600 {
 		t.Errorf("expected -32600, got %v", rpcErr["code"])
+	}
+}
+
+func TestACPController_RemoteSessionSSEStreamsAndSignsRequest(t *testing.T) {
+	const secret = "remote-sse-secret"
+	requestSeen := make(chan struct{}, 1)
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/remote-session/sse" {
+			t.Errorf("remote path = %q", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		ts := r.Header.Get(hmacutil.TimestampHeader)
+		msg := hmacutil.BuildMessage(http.MethodGet, r.URL.RequestURI(), ts, nil)
+		if err := hmacutil.ValidateTimestamp(ts); err != nil || !hmacutil.Verify([]byte(secret), msg, r.Header.Get("X-Hub-Signature-256")) {
+			t.Error("remote SSE request did not contain a valid HMAC signature")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Header.Get("Last-Event-ID") != "4" {
+			t.Errorf("Last-Event-ID = %q", r.Header.Get("Last-Event-ID"))
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "id: 5\nevent: message\ndata: {\"stream\":true}\n\n")
+		w.(http.Flusher).Flush()
+		requestSeen <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer remote.Close()
+
+	mgr := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	creator := &fakeSessionCreator{}
+	ctrl := controllers.NewACPController(&testSessionManagerProvider{mgr: mgr}, creator, &fakeACPRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "proxy-session", RemoteSessionID: "remote-session", ProxyURL: remote.URL,
+		HMACSecret: secret, UserID: "user1", Scope: string(entities.ScopeUser),
+	}})
+	e := echo.New()
+	e.GET("/acp", func(c echo.Context) error {
+		c.Set("authz_context", &auth.AuthorizationContext{PersonalScope: auth.PersonalScopeAuth{UserID: "user1", CanRead: true}})
+		return ctrl.HandleSessionSSE(c)
+	})
+	proxy := httptest.NewServer(e)
+	defer proxy.Close()
+
+	req, err := http.NewRequest(http.MethodGet, proxy.URL+"/acp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Acp-Session-Id", "proxy-session")
+	req.Header.Set("Last-Event-ID", "4")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("SSE response = %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	lines := make([]string, 0, 3)
+	for scanner.Scan() {
+		if scanner.Text() != "" {
+			lines = append(lines, scanner.Text())
+		}
+		if len(lines) == 3 {
+			break
+		}
+	}
+	if got := strings.Join(lines, "|"); got != `id: 5|event: message|data: {"stream":true}` {
+		t.Fatalf("streamed event = %q", got)
+	}
+	select {
+	case <-requestSeen:
+	case <-time.After(time.Second):
+		t.Fatal("remote SSE request was not observed")
 	}
 }

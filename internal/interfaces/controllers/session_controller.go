@@ -851,11 +851,6 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	suffix := strings.TrimPrefix(originalPath, "/"+sessionID)
 	targetPath := "/" + route.RemoteSessionID + suffix
 
-	targetURL := strings.TrimRight(route.ProxyURL, "/") + targetPath
-	if ctx.Request().URL.RawQuery != "" {
-		targetURL += "?" + ctx.Request().URL.RawQuery
-	}
-
 	// Read body for HMAC signing
 	body, err := io.ReadAll(ctx.Request().Body)
 	if err != nil {
@@ -863,61 +858,51 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	}
 	ctx.Request().Body = io.NopCloser(bytes.NewReader(body))
 
-	// Build upstream request
-	upstreamReq, err := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, targetURL, bytes.NewReader(body))
+	target, err := url.Parse(route.ProxyURL)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build upstream request")
+		return echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
 	}
-
-	// Compute HMAC signature over METHOD\nPATH?QUERY\nTIMESTAMP\nBODY
-	ts := hmacutil.NowTimestamp()
-	pathWithQuery := upstreamReq.URL.RequestURI()
-	msg := hmacutil.BuildMessage(ctx.Request().Method, pathWithQuery, ts, body)
-	sig := hmacutil.Sign([]byte(route.HMACSecret), msg)
-
-	// Copy headers
-	for key, values := range ctx.Request().Header {
-		for _, v := range values {
-			upstreamReq.Header.Add(key, v)
-		}
-	}
-	upstreamReq.Header.Set("X-Hub-Signature-256", sig)
-	upstreamReq.Header.Set(hmacutil.TimestampHeader, ts)
-
-	// Include original user identity so External Session Manager can enforce access control.
-	// X-Forwarded-User is mandatory on External Session Manager — always set it when proxying.
 	authzCtx := auth.GetAuthorizationContext(ctx)
-	if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
-		upstreamReq.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
-	}
-	// For team-scoped sessions, also forward the team ID so External Session Manager can build
-	// the correct authorization context (service account tied to that team).
-	if route.TeamID != "" {
-		upstreamReq.Header.Set("X-Forwarded-Team", route.TeamID)
-	}
 
-	// Forward to External Session Manager
-	httpClient := &http.Client{Timeout: 60 * time.Second}
-	resp, err := httpClient.Do(upstreamReq)
-	if err != nil {
-		log.Printf("[REMOTE_ROUTE] Failed to proxy request to External Session Manager for session %s: %v", sessionID, err)
-		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
-	}
-	defer func() { _ = resp.Body.Close() }()
+	// ReverseProxy handles streaming responses without buffering. A negative
+	// FlushInterval flushes every write, which is required for SSE event delivery.
+	// It also avoids the previous 60-second client timeout on long-lived streams.
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.FlushInterval = -1
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.URL.Path = targetPath
+		req.URL.RawPath = ""
+		req.Host = target.Host
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		req.ContentLength = int64(len(body))
 
-	// Copy response headers
-	for key, values := range resp.Header {
-		for _, v := range values {
-			ctx.Response().Header().Add(key, v)
+		ts := hmacutil.NowTimestamp()
+		msg := hmacutil.BuildMessage(req.Method, req.URL.RequestURI(), ts, body)
+		req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
+		req.Header.Set(hmacutil.TimestampHeader, ts)
+		if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
+			req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+		}
+		if route.TeamID != "" {
+			req.Header.Set("X-Forwarded-Team", route.TeamID)
 		}
 	}
-	ctx.Response().Header().Set("Access-Control-Allow-Origin", "*")
-
-	// Copy response body
-	ctx.Response().WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(ctx.Response().Writer, resp.Body); err != nil {
-		log.Printf("[REMOTE_ROUTE] Failed to copy response body: %v", err)
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		resp.Header.Set("Access-Control-Allow-Origin", "*")
+		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+			resp.Header.Set("Cache-Control", "no-cache")
+			resp.Header.Set("X-Accel-Buffering", "no")
+			resp.Header.Del("Content-Length")
+		}
+		return nil
 	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
+		log.Printf("[REMOTE_ROUTE] Failed to proxy External Session Manager session %s: %v", sessionID, proxyErr)
+		http.Error(w, "Failed to reach external session manager", http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(ctx.Response(), ctx.Request())
 	return nil
 }
 

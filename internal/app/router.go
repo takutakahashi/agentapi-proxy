@@ -206,7 +206,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
 
-	acpController := controllers.NewACPController(server, server)
+	acpController := controllers.NewACPController(server, server, server.GetSessionRouteRepository())
 
 	return &Router{
 		echo:   e,

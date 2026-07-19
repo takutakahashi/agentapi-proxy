@@ -3,6 +3,7 @@ package controllers
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -16,7 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
 const (
@@ -30,6 +33,7 @@ const (
 type ACPController struct {
 	sessionManagerProvider SessionManagerProvider
 	sessionCreator         SessionCreator
+	sessionRouteRepo       portrepos.SessionRouteRepository
 	// bridgeSessionCache maps proxy session ID → bridge-internal session ID.
 	// Populated on first use to avoid fetching GET /session on every RPC call.
 	bridgeSessionCache sync.Map
@@ -39,10 +43,16 @@ type ACPController struct {
 func NewACPController(
 	sessionManagerProvider SessionManagerProvider,
 	sessionCreator SessionCreator,
+	sessionRouteRepos ...portrepos.SessionRouteRepository,
 ) *ACPController {
+	var sessionRouteRepo portrepos.SessionRouteRepository
+	if len(sessionRouteRepos) > 0 {
+		sessionRouteRepo = sessionRouteRepos[0]
+	}
 	return &ACPController{
 		sessionManagerProvider: sessionManagerProvider,
 		sessionCreator:         sessionCreator,
+		sessionRouteRepo:       sessionRouteRepo,
 	}
 }
 
@@ -557,6 +567,19 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	session := c.sessionManagerProvider.GetSessionManager().GetSession(sessionId)
 	if session == nil {
+		if c.sessionRouteRepo != nil {
+			route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionId)
+			if err != nil {
+				log.Printf("[ACP] HandleSessionSSE: route lookup failed (sessionId=%s): %v", sessionId, err)
+				return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "session route lookup failed"})
+			}
+			if route != nil && route.ProxyURL != "" && route.RemoteSessionID != "" {
+				if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+					return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
+				}
+				return c.handleRemoteSessionSSE(ctx, route)
+			}
+		}
 		log.Printf("[ACP] HandleSessionSSE: session not found (sessionId=%s)", sessionId)
 		return ctx.JSON(http.StatusNotFound, map[string]string{"message": "session not found"})
 	}
@@ -597,6 +620,22 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 	return nil
 }
 
+func (c *ACPController) handleRemoteSessionSSE(ctx echo.Context, route *portrepos.SessionRoute) error {
+	w := ctx.Response()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, hasFlusher := w.Writer.(http.Flusher)
+	if hasFlusher {
+		flusher.Flush()
+	}
+	c.streamRemoteBridgeSSE(ctx.Request().Context(), route, w, flusher, hasFlusher, ctx.Request().Header.Get("Last-Event-ID"))
+	return nil
+}
+
 // sseEvent holds the fields of a parsed SSE event.
 type sseEvent struct {
 	id   string
@@ -615,12 +654,38 @@ type sseEvent struct {
 // A keepalive comment is sent every 15 seconds so that NGINX proxy_read_timeout does not
 // drop the client connection while the agent is idle between messages.
 func (c *ACPController) streamBridgeSSE(
-	ctx interface{ Done() <-chan struct{} },
+	ctx context.Context,
 	addr string,
 	w io.Writer,
 	flusher http.Flusher,
 	hasFlusher bool,
 	lastEventID string,
+) {
+	c.streamSSE(ctx, w, flusher, hasFlusher, lastEventID, func(ctx context.Context, lastEventID string) (<-chan sseEvent, func()) {
+		return c.dialBridgeSSE(ctx, addr, lastEventID)
+	})
+}
+
+func (c *ACPController) streamRemoteBridgeSSE(
+	ctx context.Context,
+	route *portrepos.SessionRoute,
+	w io.Writer,
+	flusher http.Flusher,
+	hasFlusher bool,
+	lastEventID string,
+) {
+	c.streamSSE(ctx, w, flusher, hasFlusher, lastEventID, func(ctx context.Context, lastEventID string) (<-chan sseEvent, func()) {
+		return c.dialRemoteBridgeSSE(ctx, route, lastEventID)
+	})
+}
+
+func (c *ACPController) streamSSE(
+	ctx context.Context,
+	w io.Writer,
+	flusher http.Flusher,
+	hasFlusher bool,
+	lastEventID string,
+	dial func(context.Context, string) (<-chan sseEvent, func()),
 ) {
 	keepaliveTicker := time.NewTicker(15 * time.Second)
 	defer keepaliveTicker.Stop()
@@ -640,7 +705,7 @@ func (c *ACPController) streamBridgeSSE(
 		}
 
 		connStart := time.Now()
-		eventCh, cleanup := c.dialBridgeSSE(ctx, addr, lastEventID)
+		eventCh, cleanup := dial(ctx, lastEventID)
 
 		gotEvent := false
 
@@ -709,12 +774,12 @@ func (c *ACPController) streamBridgeSSE(
 // parsed events plus a cleanup function. The goroutine exits when the response body
 // closes (bridge dropped or ctx cancelled via cleanup).
 func (c *ACPController) dialBridgeSSE(
-	ctx interface{ Done() <-chan struct{} },
+	ctx context.Context,
 	addr, lastEventID string,
 ) (<-chan sseEvent, func()) {
 	eventCh := make(chan sseEvent, 8)
 
-	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/sse", nil) //nolint:noctx
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/sse", nil)
 	if err != nil {
 		log.Printf("[ACP] SSE: failed to create bridge request: %v", err)
 		close(eventCh)
@@ -766,4 +831,74 @@ func (c *ACPController) dialBridgeSSE(
 	}()
 
 	return eventCh, cleanup
+}
+
+func (c *ACPController) dialRemoteBridgeSSE(
+	ctx context.Context,
+	route *portrepos.SessionRoute,
+	lastEventID string,
+) (<-chan sseEvent, func()) {
+	eventCh := make(chan sseEvent, 8)
+	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/" + route.RemoteSessionID + "/sse"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		log.Printf("[ACP] SSE: failed to create remote bridge request: %v", err)
+		close(eventCh)
+		return eventCh, func() {}
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+	ts := hmacutil.NowTimestamp()
+	msg := hmacutil.BuildMessage(http.MethodGet, req.URL.RequestURI(), ts, nil)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[ACP] SSE: failed to connect to remote bridge: %v", err)
+		close(eventCh)
+		return eventCh, func() {}
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		log.Printf("[ACP] SSE: remote bridge returned HTTP %d", resp.StatusCode)
+		close(eventCh)
+		return eventCh, func() {}
+	}
+
+	cleanup := func() { _ = resp.Body.Close() }
+	go scanSSE(ctx, resp.Body, eventCh)
+	return eventCh, cleanup
+}
+
+func scanSSE(ctx context.Context, body io.Reader, eventCh chan<- sseEvent) {
+	defer close(eventCh)
+	scanner := bufio.NewScanner(body)
+	var cur sseEvent
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "id: "):
+			cur.id = strings.TrimPrefix(line, "id: ")
+		case strings.HasPrefix(line, "data: "):
+			cur.data = strings.TrimPrefix(line, "data: ")
+		case line == "":
+			if cur.data != "" {
+				select {
+				case eventCh <- cur:
+				case <-ctx.Done():
+					return
+				}
+			}
+			cur = sseEvent{}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		select {
+		case eventCh <- sseEvent{err: err}:
+		case <-ctx.Done():
+		}
+	}
 }
