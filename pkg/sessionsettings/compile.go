@@ -24,9 +24,11 @@ type CompileOptions struct {
 
 // DefaultCompileOptions returns the default compile options.
 func DefaultCompileOptions() CompileOptions {
-	homeDir, err := os.UserHomeDir()
-	if err != nil || homeDir == "" {
-		homeDir = "/home/agentapi"
+	homeDir := "/home/agentapi"
+	if strings.TrimSpace(os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT")) != "" {
+		if nativeHome, err := os.UserHomeDir(); err == nil && nativeHome != "" {
+			homeDir = nativeHome
+		}
 	}
 	return CompileOptions{
 		InputPath:   "/session-settings/settings.yaml",

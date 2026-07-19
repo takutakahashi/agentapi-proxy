@@ -37,7 +37,7 @@ const (
 	// that both paths behave identically.
 )
 
-var runtimeHome = envPath("HOME", "/home/agentapi")
+var runtimeHome = provisionerHome()
 var sessionEnvFile = filepath.Join(runtimeHome, ".session", "env")
 var claudeMDPath = filepath.Join(runtimeHome, ".claude", "CLAUDE.md")
 var workdirRepoPath = envPath("AGENTAPI_REPO_DIR", filepath.Join(runtimeHome, "workdir", "repo"))
@@ -55,6 +55,13 @@ func envPath(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func provisionerHome() string {
+	if strings.TrimSpace(os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT")) != "" {
+		return envPath("HOME", "/home/agentapi")
+	}
+	return "/home/agentapi"
 }
 
 func nativeRuntimePath(parts ...string) string {
