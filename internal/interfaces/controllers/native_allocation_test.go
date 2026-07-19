@@ -40,3 +40,12 @@ func TestAllocationMetadataRedactsProvisioningData(t *testing.T) {
 		t.Fatal("redaction mutated the stored allocation")
 	}
 }
+
+func TestContainsAllocatorSelector(t *testing.T) {
+	if !containsAllocatorSelector(map[string]string{"allocator.os": "linux"}) {
+		t.Fatal("allocator.* tag was not detected")
+	}
+	if containsAllocatorSelector(map[string]string{"repository": "owner/repo"}) {
+		t.Fatal("ordinary session tag was treated as allocator selector")
+	}
+}

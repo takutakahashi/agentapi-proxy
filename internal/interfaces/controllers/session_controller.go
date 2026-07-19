@@ -238,7 +238,14 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			if startReq.Params == nil {
 				startReq.Params = &entities.SessionParams{}
 			}
-			applyProfileSandboxDefaults(cfg, startReq.Params)
+			// Native allocator sessions intentionally do not support sandboxing.
+			// Do not let a profile's implicit sandbox default turn an otherwise valid
+			// allocator.* request into an unsupported-capability request. An explicit
+			// sandbox in the request remains intact and is rejected by the allocator
+			// selection layer.
+			if !containsAllocatorSelector(startReq.Tags) {
+				applyProfileSandboxDefaults(cfg, startReq.Params)
+			}
 
 			// SessionTTL: apply profile's TTL when request does not already specify one.
 			if cfg.SessionTTL() != "" {
@@ -269,6 +276,15 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
+}
+
+func containsAllocatorSelector(tags map[string]string) bool {
+	for key := range tags {
+		if strings.HasPrefix(key, "allocator.") {
+			return true
+		}
+	}
+	return false
 }
 
 // SearchSessions handles GET /search requests to list and filter active sessions
