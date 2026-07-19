@@ -80,6 +80,12 @@ func init() {
 }
 
 func runProxy(cmd *cobra.Command, args []string) {
+	// Register shutdown handling before initialization so an early SIGTERM is
+	// never delivered with the default (process-terminating) behavior.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(quit)
+
 	if verbose {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
@@ -157,8 +163,6 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}()
 
 	// Wait for interrupt signal to gracefully shutdown the server
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 
 	log.Println("Shutdown signal received, shutting down gracefully...")

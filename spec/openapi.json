@@ -2570,6 +2570,37 @@
         }
       }
     },
+    "/external-session-managers": {
+      "post": {
+        "summary": "Idempotently register a native External Session Manager",
+        "operationId": "registerExternalSessionManager",
+        "tags": ["External Session Managers"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManagerRegistrationRequest"}}}},
+        "responses": {"200": {"description": "Registered or updated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManager"}}}}}
+      },
+      "get": {
+        "summary": "List External Session Managers",
+        "operationId": "listExternalSessionManagers",
+        "tags": ["External Session Managers"],
+        "parameters": [
+          {"name": "scope", "in": "query", "schema": {"type": "string", "enum": ["user", "team"]}},
+          {"name": "team_id", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "Registered managers"}}
+      }
+    },
+    "/external-session-managers/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "get": {"summary": "Get an External Session Manager", "operationId": "getExternalSessionManager", "tags": ["External Session Managers"], "responses": {"200": {"description": "Manager", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManager"}}}}}},
+      "patch": {"summary": "Update an External Session Manager", "operationId": "updateExternalSessionManager", "tags": ["External Session Managers"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManagerRegistrationRequest"}}}}, "responses": {"200": {"description": "Updated manager"}}},
+      "delete": {"summary": "Delete an External Session Manager", "operationId": "deleteExternalSessionManager", "tags": ["External Session Managers"], "responses": {"204": {"description": "Deleted"}}}
+    },
+    "/external-session-managers/{id}/rotate-token": {
+      "post": {"summary": "Rotate an External Session Manager connection token", "operationId": "rotateExternalSessionManagerToken", "tags": ["External Session Managers"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Token rotated; connection_token is returned once"}}}
+    },
+    "/external-session-managers/{id}/heartbeat": {
+      "post": {"summary": "Report native daemon health", "description": "Authenticated with the External Session Manager connection token. The parent verifies that public_url/healthz is reachable before accepting the heartbeat.", "operationId": "heartbeatExternalSessionManager", "tags": ["External Session Managers"], "security": [], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManagerHeartbeat"}}}}, "responses": {"200": {"description": "Heartbeat accepted"}, "401": {"description": "Invalid connection token"}, "424": {"description": "public_url is unreachable"}}}
+    },
     "/settings/{name}": {
       "get": {
         "summary": "Get settings",
@@ -7240,6 +7271,47 @@
             }
           }
         }
+      },
+      "ExternalSessionManagerRegistrationRequest": {
+        "type": "object",
+        "required": ["instance_id", "name"],
+        "properties": {
+          "manager_id": {"type": "string", "description": "Optional stable manager ID, also used to migrate a legacy registration"},
+          "instance_id": {"type": "string", "description": "Stable ID persisted on the native host for idempotent registration"},
+          "name": {"type": "string"},
+          "scope": {"type": "string", "enum": ["user", "team"], "default": "user"},
+          "team_id": {"type": "string"},
+          "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+          "default": {"type": "boolean"},
+          "public_url": {"type": "string", "format": "uri"},
+          "version": {"type": "string"},
+          "rotate_token": {"type": "boolean", "description": "Generate and return a new token; used when local credentials are missing"}
+        }
+      },
+      "ExternalSessionManager": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "instance_id": {"type": "string"},
+          "name": {"type": "string"},
+          "has_connection_token": {"type": "boolean"},
+          "connection_token": {"type": "string", "description": "Returned only on creation or rotation"},
+          "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+          "default": {"type": "boolean"},
+          "public_url": {"type": "string", "format": "uri"},
+          "version": {"type": "string"},
+          "active_sessions": {"type": "integer"},
+          "last_heartbeat_at": {"type": "string", "format": "date-time"},
+          "created": {"type": "boolean"}
+        }
+      },
+      "ExternalSessionManagerHeartbeat": {
+        "type": "object",
+        "properties": {
+          "public_url": {"type": "string", "format": "uri"},
+          "version": {"type": "string"},
+          "active_sessions": {"type": "integer"}
+        }
       }
     },
     "SlackBotStatus": {
@@ -7848,6 +7920,10 @@
     {
       "name": "Sessions",
       "description": "Session lifecycle management"
+    },
+    {
+      "name": "External Session Managers",
+      "description": "Idempotent native ESM registration, token rotation, and daemon heartbeat"
     },
     {
       "name": "Session Proxy",

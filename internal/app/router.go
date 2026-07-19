@@ -410,6 +410,13 @@ func (r *Router) registerConditionalRoutes() error {
 	// Add settings routes if settings repository is available (Kubernetes mode only)
 	if r.server.settingsRepo != nil && r.handlers.settingsController != nil {
 		log.Printf("[ROUTES] Registering settings endpoints...")
+		r.echo.POST("/external-session-managers", r.handlers.settingsController.RegisterExternalSessionManager, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/external-session-managers", r.handlers.settingsController.ListExternalSessionManagers, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/external-session-managers/:id", r.handlers.settingsController.GetExternalSessionManager, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PATCH("/external-session-managers/:id", r.handlers.settingsController.PatchExternalSessionManager, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/external-session-managers/:id", r.handlers.settingsController.DeleteExternalSessionManager, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/external-session-managers/:id/rotate-token", r.handlers.settingsController.RotateExternalSessionManagerToken, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/external-session-managers/:id/heartbeat", r.handlers.settingsController.HeartbeatExternalSessionManager)
 		r.echo.GET("/settings/managers", r.handlers.settingsController.GetAvailableManagers, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/settings/:name", r.handlers.settingsController.GetSettings, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.PUT("/settings/:name", r.handlers.settingsController.UpdateSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
