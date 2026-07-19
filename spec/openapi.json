@@ -5448,7 +5448,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Tags for the session (e.g., repository, branch)"
+            "description": "Tags for the session (e.g., repository, branch). Keys prefixed with allocator. select an External Session Manager by exact label match; multiple allocator.* tags use AND semantics. allocator.id matches the manager ID."
           },
           "params": {
             "$ref": "#/components/schemas/SessionParams"

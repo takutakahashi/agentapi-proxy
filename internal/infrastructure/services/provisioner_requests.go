@@ -141,6 +141,20 @@ func (m *KubernetesSessionManager) CreateProvisionRequest(ctx context.Context, s
 	return m.saveProvisionRequest(ctx, req)
 }
 
+func (m *KubernetesSessionManager) CreateProvisionRequestFromSettings(ctx context.Context, sessionID string, settings *sessionsettings.SessionSettings) error {
+	if settings == nil {
+		return fmt.Errorf("session %s has no provision settings", sessionID)
+	}
+	return m.saveProvisionRequest(ctx, &ProvisionRequest{
+		RequestID: fmt.Sprintf("%s-provision-1", sessionID),
+		SessionID: sessionID,
+		Type:      provisionRequestType,
+		Settings:  settings,
+		Status:    "pending",
+		UpdatedAt: time.Now().UTC(),
+	})
+}
+
 func (m *KubernetesSessionManager) ConnectProvisioner(ctx context.Context, req ProvisionerConnectRequest) error {
 	provisionReq, err := m.getProvisionRequest(ctx, req.SessionID)
 	if err != nil {
@@ -290,6 +304,14 @@ func (m *KubernetesSessionManager) saveProvisionRequest(ctx context.Context, req
 
 func (m *KubernetesSessionManager) deleteProvisionRequest(ctx context.Context, sessionID string) error {
 	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, provisionRequestSecretName(sessionID), metav1.DeleteOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func (m *KubernetesSessionManager) DeleteProvisionRequest(ctx context.Context, sessionID string) error {
+	err := m.deleteProvisionRequest(ctx, sessionID)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}

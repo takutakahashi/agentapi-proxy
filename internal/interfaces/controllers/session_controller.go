@@ -897,6 +897,7 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 				log.Printf("[REMOTE_DELETE] Warning: failed to delete pending route entry for session %s: %v", sessionID, err)
 			}
 		}
+		c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"message":    "Pending external session removed",
 			"session_id": sessionID,
@@ -946,6 +947,7 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 			log.Printf("[REMOTE_DELETE] Warning: failed to delete route entry for session %s: %v", sessionID, err)
 		}
 	}
+	c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
 
 	log.Printf("[REMOTE_DELETE] Deleted remote session %s (remote ID: %s) on %s", sessionID, route.RemoteSessionID, route.ProxyURL)
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
@@ -953,6 +955,18 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
+}
+
+func (c *SessionController) cleanupRemoteProvisionRequest(ctx context.Context, sessionID string) {
+	cleaner, ok := c.sessionCreator.(interface {
+		DeleteProvisionRequest(context.Context, string) error
+	})
+	if !ok {
+		return
+	}
+	if err := cleaner.DeleteProvisionRequest(ctx, sessionID); err != nil {
+		log.Printf("[REMOTE_DELETE] Warning: failed to delete provision request for %s: %v", sessionID, err)
+	}
 }
 
 // captureFirstMessage captures the first message content for session description

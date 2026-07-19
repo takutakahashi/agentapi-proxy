@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agentapi.native</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/agentapi-proxy</string>
+    <string>native-session-manager</string>
+    <string>--listen</string><string>:8080</string>
+    <string>--upstream-url</string><string>REPLACE_UPSTREAM_URL</string>
+    <string>--connection-token</string><string>REPLACE_CONNECTION_TOKEN</string>
+    <string>--public-url</string><string>REPLACE_PUBLIC_URL</string>
+    <string>--state-dir</string><string>REPLACE_STATE_DIR</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>/tmp/agentapi-native.log</string>
+  <key>StandardErrorPath</key><string>/tmp/agentapi-native.log</string>
+</dict>
+</plist>

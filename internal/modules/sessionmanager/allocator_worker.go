@@ -28,6 +28,10 @@ func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL,
 	return newAllocatorWorkerWithClient(sessionManager, infrasessionallocation.NewClient(upstreamURL, token), upstreamURL, publicURL)
 }
 
+func NewAllocatorWorkerWithUpstreamAuth(sessionManager repositories.SessionManager, upstreamURL, token, upstreamAuthToken, publicURL string) *AllocatorWorker {
+	return newAllocatorWorkerWithClient(sessionManager, infrasessionallocation.NewNativeAllocatorClient(upstreamURL, token, upstreamAuthToken), upstreamURL, publicURL)
+}
+
 func NewAllocatorWorkerWithClient(sessionManager repositories.SessionManager, client sessionallocation.ExternalAllocatorClient, publicURL string) *AllocatorWorker {
 	return newAllocatorWorkerWithClient(sessionManager, client, "", publicURL)
 }
@@ -63,11 +67,15 @@ func (w *AllocatorWorker) Start(ctx context.Context) {
 }
 
 func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionallocation.AllocationRequest) {
+	remoteProvisioner := false
+	if manager, ok := w.sessionManager.(interface{ UsesRemoteProvisioner() bool }); ok {
+		remoteProvisioner = manager.UsesRemoteProvisioner()
+	}
 	settings := allocation.ProvisionSettings
 	if settings == nil && allocation.Request != nil {
 		settings = allocation.Request.ProvisionSettings
 	}
-	if settings == nil {
+	if settings == nil && !remoteProvisioner {
 		_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, sessionallocation.AllocationResult{
 			Status:  sessionallocation.StatusError,
 			Message: "provision_settings is required",
@@ -80,7 +88,7 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionalloca
 	// public route alias. Without this override, Kubernetes service discovery on
 	// the session-manager cluster sends the public ID to the local proxy, where
 	// only the allocated ID exists.
-	if settings.Session.Oneshot && w.upstreamURL != "" {
+	if settings != nil && settings.Session.Oneshot && w.upstreamURL != "" {
 		if settings.Env == nil {
 			settings.Env = map[string]string{}
 		}
@@ -88,7 +96,20 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionalloca
 	}
 
 	sessionID := uuid.New().String()
-	req := runRequestFromSettings(settings)
+	var req *entities.RunServerRequest
+	if remoteProvisioner {
+		sessionID = allocation.SessionID
+		req = allocation.Request
+	} else {
+		req = runRequestFromSettings(settings)
+	}
+	if req == nil {
+		_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, sessionallocation.AllocationResult{
+			Status:  sessionallocation.StatusError,
+			Message: "allocation metadata is required",
+		})
+		return
+	}
 	session, err := w.createLocalSession(ctx, sessionID, req)
 	if err != nil {
 		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to create session for allocation %s: %v", allocation.SessionID, err)

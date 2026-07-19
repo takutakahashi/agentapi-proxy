@@ -24,11 +24,15 @@ type CompileOptions struct {
 
 // DefaultCompileOptions returns the default compile options.
 func DefaultCompileOptions() CompileOptions {
+	homeDir, err := os.UserHomeDir()
+	if err != nil || homeDir == "" {
+		homeDir = "/home/agentapi"
+	}
 	return CompileOptions{
 		InputPath:   "/session-settings/settings.yaml",
-		OutputDir:   "/home/agentapi",
-		EnvFilePath: "/home/agentapi/.session/env",
-		StartupPath: "/home/agentapi/.session/startup.sh",
+		OutputDir:   homeDir,
+		EnvFilePath: filepath.Join(homeDir, ".session", "env"),
+		StartupPath: filepath.Join(homeDir, ".session", "startup.sh"),
 	}
 }
 

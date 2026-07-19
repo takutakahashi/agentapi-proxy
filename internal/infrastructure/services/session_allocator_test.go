@@ -96,6 +96,13 @@ func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
 	if allocation.ProvisionSettings == nil {
 		t.Fatalf("allocation.ProvisionSettings is nil")
 	}
+	provision, err := manager.getProvisionRequest(context.Background(), "test-session")
+	if err != nil {
+		t.Fatalf("parent provision request was not created: %v", err)
+	}
+	if provision.Settings == nil || provision.Settings.Session.UserID != "test-user" || provision.Status != "pending" {
+		t.Fatalf("unexpected parent provision request: %#v", provision)
+	}
 }
 
 func TestNextSessionAllocationClaimsRequestCreatedWhileSubscribing(t *testing.T) {
