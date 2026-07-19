@@ -630,14 +630,25 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	// these features, which require local Kubernetes deployment to add init containers/sidecars.
 	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
 	dindRequested := startReq.Params != nil && startReq.Params.Docker != nil && startReq.Params.Docker.Enabled
+	hasAllocatorSelector := hasAllocatorSelector(startReq.Tags)
+	if hasAllocatorSelector && (sandboxRequested || dindRequested) {
+		return nil, fmt.Errorf("allocator.* routing does not support sandbox or Docker-in-Docker")
+	}
 	if !sandboxRequested && !dindRequested {
-		if defaultESM, err := s.findDefaultESM(context.Background(), userID, teams); err == nil && defaultESM != nil {
-			log.Printf("[SESSION] Using default external session manager %s (%s) for session %s", defaultESM.Name, defaultESM.ID, sessionID)
+		selectedESM, err := s.findDefaultESM(context.Background(), userID, teams, startReq.Tags)
+		if err != nil {
+			return nil, fmt.Errorf("select external session manager: %w", err)
+		}
+		if selectedESM != nil {
+			log.Printf("[SESSION] Using external session manager %s (%s) for session %s", selectedESM.Name, selectedESM.ID, sessionID)
 			if startReq.Params == nil {
 				startReq.Params = &entities.SessionParams{}
 			}
-			startReq.Params.ManagerID = defaultESM.ID
+			startReq.Params.ManagerID = selectedESM.ID
 			return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
+		}
+		if hasAllocatorSelector {
+			return nil, fmt.Errorf("no external session manager matches allocator.* tags")
 		}
 	}
 
@@ -893,7 +904,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 // findESMByID searches the user's settings and team settings for an ESM entry with the given ID.
 // findDefaultESM searches user and team settings for an ESM entry with Default=true.
 // User settings take precedence over team settings.
-func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []string) (*entities.ExternalSessionManagerEntry, error) {
+func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []string, tags map[string]string) (*entities.ExternalSessionManagerEntry, error) {
 	if s.settingsRepo == nil {
 		return nil, nil
 	}
@@ -902,7 +913,7 @@ func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []stri
 	userSettings, err := s.settingsRepo.FindByName(ctx, userID)
 	if err == nil && userSettings != nil {
 		for _, esm := range userSettings.ExternalSessionManagers() {
-			if esm.Default {
+			if (esm.Default || hasAllocatorSelector(tags)) && externalSessionManagerMatches(esm, tags) {
 				entry := esm
 				return &entry, nil
 			}
@@ -916,7 +927,7 @@ func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []stri
 			continue
 		}
 		for _, esm := range teamSettings.ExternalSessionManagers() {
-			if esm.Default {
+			if (esm.Default || hasAllocatorSelector(tags)) && externalSessionManagerMatches(esm, tags) {
 				entry := esm
 				return &entry, nil
 			}
@@ -924,6 +935,34 @@ func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []stri
 	}
 
 	return nil, nil
+}
+
+func hasAllocatorSelector(tags map[string]string) bool {
+	for key := range tags {
+		if strings.HasPrefix(key, "allocator.") {
+			return true
+		}
+	}
+	return false
+}
+
+func externalSessionManagerMatches(manager entities.ExternalSessionManagerEntry, tags map[string]string) bool {
+	for key, expected := range tags {
+		if !strings.HasPrefix(key, "allocator.") {
+			continue
+		}
+		label := strings.TrimPrefix(key, "allocator.")
+		if label == "id" {
+			if manager.ID != expected {
+				return false
+			}
+			continue
+		}
+		if manager.Labels[label] != expected {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) findESMByID(ctx context.Context, userID string, teams []string, managerID string) (*entities.ExternalSessionManagerEntry, error) {
@@ -983,6 +1022,15 @@ func (s *Server) DeleteSessionByID(sessionID string) error {
 	}
 
 	return s.sessionManager.DeleteSession(sessionID)
+}
+
+func (s *Server) DeleteProvisionRequest(ctx context.Context, sessionID string) error {
+	if manager, ok := s.sessionManager.(interface {
+		DeleteProvisionRequest(context.Context, string) error
+	}); ok {
+		return manager.DeleteProvisionRequest(ctx, sessionID)
+	}
+	return nil
 }
 
 // dumpSessionToMemory fetches messages from the session, stores them as a draft memory,

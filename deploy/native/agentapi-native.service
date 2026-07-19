@@ -1,0 +1,19 @@
+[Unit]
+Description=agentapi-proxy native external session manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentapi
+Group=agentapi
+EnvironmentFile=/etc/agentapi-native/environment
+ExecStart=/usr/local/bin/agentapi-proxy native-session-manager --listen ${NATIVE_LISTEN} --upstream-url ${NATIVE_UPSTREAM_URL} --upstream-auth-token ${NATIVE_UPSTREAM_AUTH_TOKEN} --connection-token ${NATIVE_CONNECTION_TOKEN} --public-url ${NATIVE_PUBLIC_URL} --state-dir ${NATIVE_STATE_DIR}
+Restart=always
+RestartSec=3
+KillMode=process
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

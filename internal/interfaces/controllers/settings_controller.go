@@ -101,23 +101,24 @@ type UpdateSettingsRequest struct {
 	MCPServers              map[string]*MCPServerRequest     `json:"mcp_servers,omitempty"`
 	Marketplaces            map[string]*MarketplaceRequest   `json:"marketplaces,omitempty"`
 	ClaudeCodeOAuthToken    *string                          `json:"claude_code_oauth_token,omitempty"`
-	AuthMode                *string                          `json:"auth_mode,omitempty"`                 // "oauth" or "bedrock"
-	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`           // plugin@marketplace format
-	EnvVars                 map[string]string                `json:"env_vars,omitempty"`                  // Custom environment variables
-	PreferredTeamID         *string                          `json:"preferred_team_id,omitempty"`         // "org/team-slug" format; "" to clear
-	SlackUserID             *string                          `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
-	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`     // Active notification channels (e.g. ["web", "slack"])
-	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"` // External session managers (External Session Manager registrations)
-	GitSync                 *GitSyncConfigRequest            `json:"git_sync,omitempty"`                  // GitHub sync configuration
+	AuthMode                *string                          `json:"auth_mode,omitempty"`                  // "oauth" or "bedrock"
+	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`            // plugin@marketplace format
+	EnvVars                 map[string]string                `json:"env_vars,omitempty"`                   // Custom environment variables
+	PreferredTeamID         *string                          `json:"preferred_team_id,omitempty"`          // "org/team-slug" format; "" to clear
+	SlackUserID             *string                          `json:"slack_user_id,omitempty"`              // Slack DM notification user ID
+	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`      // Active notification channels (e.g. ["web", "slack"])
+	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"`  // External session managers (External Session Manager registrations)
+	GitSync                 *GitSyncConfigRequest            `json:"git_sync,omitempty"`                   // GitHub sync configuration
 	DefaultSessionProfileID *string                          `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
 }
 
 // ExternalSessionManagerRequest represents a single external session manager registration
 type ExternalSessionManagerRequest struct {
-	ID         string `json:"id,omitempty"`          // Auto-generated if empty
-	Name       string `json:"name"`                  // Human-readable name
-	HMACSecret string `json:"hmac_secret,omitempty"` // Connection token; auto-generated if empty, omit to keep existing
-	Default    bool   `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
+	ID         string            `json:"id,omitempty"`          // Auto-generated if empty
+	Name       string            `json:"name"`                  // Human-readable name
+	HMACSecret string            `json:"hmac_secret,omitempty"` // Connection token; auto-generated if empty, omit to keep existing
+	Default    bool              `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
+	Labels     map[string]string `json:"labels,omitempty"`      // Matches allocator.* session tags
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -153,13 +154,13 @@ type SettingsResponse struct {
 	Marketplaces            map[string]*MarketplaceResponse  `json:"marketplaces,omitempty"`
 	HasClaudeCodeOAuthToken bool                             `json:"has_claude_code_oauth_token"`
 	AuthMode                string                           `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`           // plugin@marketplace format
-	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`              // only keys, not values
-	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"`         // "org/team-slug" format
-	SlackUserID             string                           `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
-	NotificationChannels    []string                         `json:"notification_channels,omitempty"`     // Active notification channels
-	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"` // Registered external session managers
-	GitSync                 *GitSyncConfigResponse           `json:"git_sync,omitempty"`                  // GitHub sync configuration (token redacted)
+	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`            // plugin@marketplace format
+	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`               // only keys, not values
+	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"`          // "org/team-slug" format
+	SlackUserID             string                           `json:"slack_user_id,omitempty"`              // Slack DM notification user ID
+	NotificationChannels    []string                         `json:"notification_channels,omitempty"`      // Active notification channels
+	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"`  // Registered external session managers
+	GitSync                 *GitSyncConfigResponse           `json:"git_sync,omitempty"`                   // GitHub sync configuration (token redacted)
 	DefaultSessionProfileID string                           `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
 	CreatedAt               string                           `json:"created_at"`
 	UpdatedAt               string                           `json:"updated_at"`
@@ -167,11 +168,12 @@ type SettingsResponse struct {
 
 // ExternalSessionManagerResponse represents a single external session manager in responses
 type ExternalSessionManagerResponse struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	HasConnectionToken bool   `json:"has_connection_token"`       // true if a connection token is configured
-	ConnectionToken    string `json:"connection_token,omitempty"` // returned only immediately after generation or rotation
-	Default            bool   `json:"default,omitempty"`          // true if this manager is used when no manager_id is specified
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	HasConnectionToken bool              `json:"has_connection_token"`       // true if a connection token is configured
+	ConnectionToken    string            `json:"connection_token,omitempty"` // returned only immediately after generation or rotation
+	Default            bool              `json:"default,omitempty"`          // true if this manager is used when no manager_id is specified
+	Labels             map[string]string `json:"labels,omitempty"`
 }
 
 // AvailableManagerEntry represents a single available ESM entry returned by GET /settings/managers
@@ -493,6 +495,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				Name:       m.Name,
 				HMACSecret: m.HMACSecret,
 				Default:    m.Default,
+				Labels:     m.Labels,
 			})
 		}
 		settings.SetExternalSessionManagers(updated)
@@ -864,6 +867,7 @@ func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings
 				HasConnectionToken: m.HMACSecret != "",
 				ConnectionToken:    connectionToken,
 				Default:            m.Default,
+				Labels:             m.Labels,
 			})
 		}
 	}

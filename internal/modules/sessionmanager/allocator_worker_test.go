@@ -102,6 +102,25 @@ func TestAllocatorWorkerCompletesErrorWhenProvisionSettingsMissing(t *testing.T)
 	}
 }
 
+func TestNativeAllocatorUsesMetadataAndPublicSessionID(t *testing.T) {
+	client := &fakeExternalAllocatorClient{}
+	manager := &fakeNativeAllocatorSessionManager{}
+	worker := NewAllocatorWorkerWithClient(manager, client, "https://native.example")
+	metadata := &entities.RunServerRequest{UserID: "user-1", Scope: entities.ScopeUser, AgentType: "codex-acp"}
+
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID: "public-session",
+		Request:   metadata,
+	})
+
+	if manager.lastID != "public-session" || manager.lastReq != metadata {
+		t.Fatalf("native create = id %q request %#v", manager.lastID, manager.lastReq)
+	}
+	if len(client.completed) != 1 || client.completed[0].result.Status != sessionallocation.StatusAssigned {
+		t.Fatalf("completion = %#v", client.completed)
+	}
+}
+
 func TestAllocatorWorkerCompletesErrorWhenLocalSessionCreationFails(t *testing.T) {
 	client := &fakeExternalAllocatorClient{}
 	manager := &fakeAllocatorSessionManager{createErr: errors.New("create failed")}
@@ -147,6 +166,8 @@ func (c *fakeExternalAllocatorClient) CompleteExternal(_ context.Context, sessio
 type fakeAllocatorSessionManager struct {
 	created   int
 	createErr error
+	lastID    string
+	lastReq   *entities.RunServerRequest
 }
 
 func (m *fakeAllocatorSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
@@ -155,6 +176,7 @@ func (m *fakeAllocatorSessionManager) CreateSession(ctx context.Context, id stri
 
 func (m *fakeAllocatorSessionManager) CreateSessionDirect(_ context.Context, id string, req *entities.RunServerRequest, _ []byte) (entities.Session, error) {
 	m.created++
+	m.lastID, m.lastReq = id, req
 	if m.createErr != nil {
 		return nil, m.createErr
 	}
@@ -174,3 +196,7 @@ func (m *fakeAllocatorSessionManager) GetMessages(context.Context, string) ([]po
 	return nil, nil
 }
 func (m *fakeAllocatorSessionManager) Shutdown(time.Duration) error { return nil }
+
+type fakeNativeAllocatorSessionManager struct{ fakeAllocatorSessionManager }
+
+func (m *fakeNativeAllocatorSessionManager) UsesRemoteProvisioner() bool { return true }

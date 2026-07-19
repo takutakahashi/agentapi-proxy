@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"crypto/subtle"
 	"net/http"
 	"strconv"
@@ -9,18 +10,26 @@ import (
 
 	"github.com/labstack/echo/v4"
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 type ProvisionerController struct {
-	manager          *services.KubernetesSessionManager
+	manager          ProvisionerManager
 	allocationQueue  sessionallocation.Queue
 	settingsRepo     repositories.SettingsRepository
 	sessionRouteRepo repositories.SessionRouteRepository
 }
 
-func NewProvisionerController(manager *services.KubernetesSessionManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository) *ProvisionerController {
+type ProvisionerManager interface {
+	ValidateProvisionerToken(token string) bool
+	ConnectProvisioner(ctx context.Context, req services.ProvisionerConnectRequest) error
+	ClaimProvisionRequest(ctx context.Context, sessionID, podName string) (*services.ProvisionRequest, bool, error)
+	UpdateProvisionRequestStatus(ctx context.Context, sessionID, requestID string, req services.ProvisionRequestStatusUpdate) error
+}
+
+func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository) *ProvisionerController {
 	return &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
 }
 
@@ -149,7 +158,30 @@ func (pc *ProvisionerController) GetNextExternalSessionAllocation(c echo.Context
 	if !found {
 		return c.NoContent(http.StatusNoContent)
 	}
+	if c.QueryParam("metadata_only") == "true" {
+		req = allocationMetadata(req)
+	}
 	return c.JSON(http.StatusOK, req)
+}
+
+func allocationMetadata(req *sessionallocation.AllocationRequest) *sessionallocation.AllocationRequest {
+	if req == nil {
+		return nil
+	}
+	copyReq := *req
+	copyReq.ProvisionSettings = nil
+	if req.Request != nil {
+		copyReq.Request = &entities.RunServerRequest{
+			UserID:    req.Request.UserID,
+			Tags:      req.Request.Tags,
+			Teams:     req.Request.Teams,
+			Scope:     req.Request.Scope,
+			TeamID:    req.Request.TeamID,
+			AgentType: req.Request.AgentType,
+			Oneshot:   req.Request.Oneshot,
+		}
+	}
+	return &copyReq
 }
 
 func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Context) error {
@@ -214,17 +246,24 @@ func (pc *ProvisionerController) authorized(c echo.Context) bool {
 	}
 	h := c.Request().Header.Get("Authorization")
 	token := strings.TrimPrefix(h, "Bearer ")
-	return pc.manager.ValidateProvisionerToken(token)
+	if pc.manager.ValidateProvisionerToken(token) {
+		return true
+	}
+	_, _, ok := pc.authorizedExternalManager(c)
+	return ok
 }
 
 func (pc *ProvisionerController) authorizedExternalManager(c echo.Context) (string, string, bool) {
 	if pc.manager == nil || pc.settingsRepo == nil {
 		return "", "", false
 	}
-	h := c.Request().Header.Get("Authorization")
-	token := strings.TrimPrefix(h, "Bearer ")
-	if token == "" || token == h {
-		return "", "", false
+	token := c.Request().Header.Get("X-Session-Manager-Token")
+	if token == "" {
+		h := c.Request().Header.Get("Authorization")
+		token = strings.TrimPrefix(h, "Bearer ")
+		if token == "" || token == h {
+			return "", "", false
+		}
 	}
 	settingsList, err := pc.settingsRepo.List(c.Request().Context())
 	if err != nil {

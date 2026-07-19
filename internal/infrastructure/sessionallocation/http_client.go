@@ -15,9 +15,11 @@ import (
 )
 
 type Client struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	baseURL           string
+	token             string
+	upstreamAuthToken string
+	metadataOnly      bool
+	client            *http.Client
 }
 
 func NewClient(baseURL, token string) *Client {
@@ -28,12 +30,37 @@ func NewClient(baseURL, token string) *Client {
 	}
 }
 
+func NewClientWithUpstreamAuth(baseURL, token, upstreamAuthToken string) *Client {
+	c := NewClient(baseURL, token)
+	c.upstreamAuthToken = upstreamAuthToken
+	return c
+}
+
+func NewNativeAllocatorClient(baseURL, token, upstreamAuthToken string) *Client {
+	c := NewClientWithUpstreamAuth(baseURL, token, upstreamAuthToken)
+	c.metadataOnly = true
+	return c
+}
+
+func (c *Client) authorize(req *http.Request) {
+	if c.upstreamAuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.upstreamAuthToken)
+		req.Header.Set("X-Session-Manager-Token", c.token)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+}
+
 func (c *Client) Next(ctx context.Context, wait time.Duration) (*core.AllocationRequest, bool, error) {
 	return c.next(ctx, "/internal/session-allocations/next", wait)
 }
 
 func (c *Client) NextExternal(ctx context.Context, wait time.Duration) (*core.AllocationRequest, bool, error) {
-	return c.next(ctx, "/internal/external-session-manager/allocations/next", wait)
+	path := "/internal/external-session-manager/allocations/next"
+	if c.metadataOnly {
+		path += "?metadata_only=true"
+	}
+	return c.next(ctx, path, wait)
 }
 
 func (c *Client) next(ctx context.Context, path string, wait time.Duration) (*core.AllocationRequest, bool, error) {
@@ -48,7 +75,7 @@ func (c *Client) next(ctx context.Context, path string, wait time.Duration) (*co
 	if err != nil {
 		return nil, false, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	c.authorize(req)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, false, err
@@ -85,7 +112,7 @@ func (c *Client) complete(ctx context.Context, path string, result core.Allocati
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	c.authorize(req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {

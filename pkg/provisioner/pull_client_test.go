@@ -30,3 +30,10 @@ func TestNewPullHTTPClientLoadsSCIACA(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
+
+func TestAuthorizePullRequestWithParentAuthentication(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	authorizePullRequest(req, PullClientConfig{Token: "manager-token", UpstreamAuthToken: "parent-token"})
+	require.Equal(t, "Bearer parent-token", req.Header.Get("Authorization"))
+	require.Equal(t, "manager-token", req.Header.Get("X-Session-Manager-Token"))
+}

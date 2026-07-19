@@ -18,12 +18,13 @@ import (
 )
 
 type PullClientConfig struct {
-	ProxyURL  string
-	Token     string
-	SessionID string
-	PodName   string
-	Namespace string
-	CAFile    string
+	ProxyURL          string
+	Token             string
+	UpstreamAuthToken string
+	SessionID         string
+	PodName           string
+	Namespace         string
+	CAFile            string
 }
 
 type pullProvisionRequest struct {
@@ -131,7 +132,7 @@ func pollProvisionRequest(ctx context.Context, client *http.Client, cfg PullClie
 	if err != nil {
 		return nil, false, err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	authorizePullRequest(req, cfg)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, false, err
@@ -168,7 +169,7 @@ func postJSON(ctx context.Context, client *http.Client, cfg PullClientConfig, pa
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	authorizePullRequest(req, cfg)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -179,6 +180,15 @@ func postJSON(ctx context.Context, client *http.Client, cfg PullClientConfig, pa
 		return fmt.Errorf("POST %s returned HTTP %d", path, resp.StatusCode)
 	}
 	return nil
+}
+
+func authorizePullRequest(req *http.Request, cfg PullClientConfig) {
+	if cfg.UpstreamAuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.UpstreamAuthToken)
+		req.Header.Set("X-Session-Manager-Token", cfg.Token)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
 }
 
 func sleepOrDone(ctx context.Context, d time.Duration) {
