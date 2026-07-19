@@ -27,8 +27,7 @@ import (
 )
 
 const (
-	provisionTempSettings = "/tmp/provision-settings.yaml"
-	piOllamaDefaultModel  = "glm-5"
+	piOllamaDefaultModel = "glm-5"
 	// webhookPayloadPath is the well-known path where the webhook payload JSON
 	// is exposed inside the session container.
 	// For non-stock sessions this file is provided by a read-only Kubernetes
@@ -72,6 +71,10 @@ func nativeRuntimePath(parts ...string) string {
 		return filepath.Join(pathParts...)
 	}
 	return fallback
+}
+
+func provisionSettingsPath() string {
+	return nativeRuntimePath("provision-settings.yaml", filepath.Join(os.TempDir(), fmt.Sprintf("agentapi-provision-settings-%d.yaml", os.Getpid())))
 }
 
 func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
@@ -160,10 +163,12 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		s.setStatus(StatusError, fmt.Sprintf("failed to marshal settings: %v", err))
 		return
 	}
+	provisionTempSettings := provisionSettingsPath()
 	if err := os.WriteFile(provisionTempSettings, data, 0o600); err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("failed to write temp settings: %v", err))
 		return
 	}
+	defer func() { _ = os.Remove(provisionTempSettings) }()
 
 	// ── Step 1.5: write webhook payload file ─────────────────────────────────
 	// For stock sessions the pod is pre-created without a webhook-payload
