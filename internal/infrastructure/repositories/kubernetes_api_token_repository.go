@@ -2,6 +2,8 @@ package repositories
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -199,10 +201,31 @@ func (r *KubernetesAPITokenRepository) list(ctx context.Context, selector string
 	return out, nil
 }
 
-// secretName builds the Secret name for a token ID. The token ID is expected
-// to be opaque and already safe for K8s names, but we sanitize defensively.
+// secretName builds the Secret name for a token ID. It delegates to
+// apiTokenSecretName, which decouples the storage resource name from the
+// public, opaque token ID (the public ID carries a "tok_" prefix and may
+// contain underscores, slashes, or be arbitrarily long -- none of which are
+// legal in a Kubernetes resource name).
 func (r *KubernetesAPITokenRepository) secretName(tokenID string) string {
-	return APITokenSecretPrefix + sanitizeLabelValue(tokenID)
+	return apiTokenSecretName(tokenID)
+}
+
+// apiTokenSecretName derives a DNS-1123-safe, deterministic, bounded-length
+// Kubernetes Secret name from an arbitrary public token ID. The public token
+// ID is hashed with SHA-256 and encoded as lowercase hex (64 chars), then
+// appended to APITokenSecretPrefix. This guarantees:
+//   - DNS subdomain safety: the name only contains lowercase alphanumerics and
+//     dashes (the prefix uses dashes; hex is purely [0-9a-f]).
+//   - Bounded length: len(prefix)+64 = 84 chars, well under the 253-char limit.
+//   - Determinism: the same token ID always maps to the same Secret name, so
+//     Get/Delete/annotation lookups resolve to the exact resource Create wrote.
+//   - Collision resistance: SHA-256 makes accidental collisions infeasible.
+//
+// The original public token ID is preserved in the Secret's metadata payload
+// (token.json), so listing and authentication keep using the human-facing ID.
+func apiTokenSecretName(tokenID string) string {
+	sum := sha256.Sum256([]byte(tokenID))
+	return APITokenSecretPrefix + hex.EncodeToString(sum[:])
 }
 
 // toSecret converts an APIToken entity into a Kubernetes Secret.
