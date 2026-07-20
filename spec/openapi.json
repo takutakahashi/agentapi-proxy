@@ -4786,6 +4786,116 @@
           }
         }
       }
+    },
+    "/api-tokens": {
+      "get": {
+        "summary": "List API tokens",
+        "description": "Lists named API tokens accessible to the authenticated user. Personal (user-scoped) tokens are strictly owner-only. Team-scoped tokens are visible to team members. The plaintext secret is never returned; each item only exposes a short display_prefix.",
+        "operationId": "listAPITokens",
+        "tags": ["API Tokens"],
+        "security": [
+          { "ApiKeyAuth": [] },
+          { "BearerAuth": [] }
+        ],
+        "parameters": [
+          { "name": "scope", "in": "query", "required": false, "description": "Filter by scope: 'user' or 'team'. Omit to return both the caller's personal tokens and tokens for teams the caller belongs to.", "schema": { "type": "string", "enum": ["user", "team"] } },
+          { "name": "team_id", "in": "query", "required": false, "description": "Filter by team ID (required when scope=team)", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of API tokens",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/APITokenListResponse" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" }
+        }
+      },
+      "post": {
+        "summary": "Create an API token",
+        "description": "Creates a new named, revocable API token. Personal tokens authenticate as the owner; team tokens authenticate as a team-scoped service account. The plaintext secret is returned exactly once in the response. The response carries Cache-Control: no-store. Requested permissions cannot be broader than the caller's permissions. Team tokens require team membership (admins qualify).",
+        "operationId": "createAPIToken",
+        "tags": ["API Tokens"],
+        "security": [
+          { "ApiKeyAuth": [] },
+          { "BearerAuth": [] }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateAPITokenRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "API token created. The plaintext token is included exactly once in the `plaintext_token` field.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always 'no-store' to prevent caching the secret.",
+                "schema": { "type": "string", "example": "no-store" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/APITokenWithSecret" }
+              }
+            }
+          },
+          "400": { "description": "Invalid request" },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api-tokens/{tokenId}": {
+      "get": {
+        "summary": "Get an API token",
+        "description": "Returns metadata for a single API token. The plaintext secret is never returned. A 404 is returned both when the token does not exist and when the caller is not authorized to view it, so existence across scopes is not leaked.",
+        "operationId": "getAPIToken",
+        "tags": ["API Tokens"],
+        "security": [
+          { "ApiKeyAuth": [] },
+          { "BearerAuth": [] }
+        ],
+        "parameters": [
+          { "name": "tokenId", "in": "path", "required": true, "description": "Opaque token ID", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "API token metadata",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/APITokenMetadata" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not found (or not authorized)" }
+        }
+      },
+      "delete": {
+        "summary": "Delete an API token",
+        "description": "Deletes (revokes) an API token. Personal tokens can only be deleted by the owner. Team tokens can be deleted by the creator or an admin. The operation is idempotent: a 204 is returned for nonexistent or not-authorized token IDs without leaking whether the token exists in another scope. Revocation takes effect immediately in the in-memory auth map.",
+        "operationId": "deleteAPIToken",
+        "tags": ["API Tokens"],
+        "security": [
+          { "ApiKeyAuth": [] },
+          { "BearerAuth": [] }
+        ],
+        "parameters": [
+          { "name": "tokenId", "in": "path", "required": true, "description": "Opaque token ID", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "204": { "description": "Token deleted (or did not exist / not authorized; idempotent, no content)" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Internal error" }
+        }
+      }
     }
   },
   "components": {
@@ -7312,6 +7422,64 @@
           "version": {"type": "string"},
           "active_sessions": {"type": "integer"}
         }
+      },
+      "APITokenMetadata": {
+        "type": "object",
+        "description": "Metadata for a named API token. Never contains the plaintext secret.",
+        "properties": {
+          "id": { "type": "string", "description": "Opaque, public token ID used in URLs" },
+          "name": { "type": "string", "description": "Human-readable name" },
+          "scope": { "type": "string", "enum": ["user", "team"], "description": "Scope of the token" },
+          "user_id": { "type": "string", "description": "Identity the token authenticates as (owner for personal, service account id for team)" },
+          "team_id": { "type": "string", "description": "Team ID (populated when scope is 'team')" },
+          "permissions": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Granted permissions, bounded by the creator's permissions"
+          },
+          "display_prefix": { "type": "string", "description": "Short, safe prefix of the secret for display" },
+          "expires_at": { "type": "string", "format": "date-time", "description": "Optional expiration timestamp" },
+          "created_by": { "type": "string", "description": "User ID of the token creator" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "name", "scope", "user_id", "permissions", "display_prefix", "created_by", "created_at", "updated_at"]
+      },
+      "APITokenWithSecret": {
+        "type": "object",
+        "description": "Create response: API token metadata plus the plaintext token, returned exactly once.",
+        "allOf": [{ "$ref": "#/components/schemas/APITokenMetadata" }],
+        "properties": {
+          "plaintext_token": { "type": "string", "description": "Plaintext token secret. Returned exactly once on creation; never exposed again. Store it securely." }
+        },
+        "required": ["plaintext_token"]
+      },
+      "CreateAPITokenRequest": {
+        "type": "object",
+        "description": "Request body for creating an API token.",
+        "properties": {
+          "name": { "type": "string", "description": "Human-readable name" },
+          "scope": { "type": "string", "enum": ["user", "team"], "description": "Scope. Defaults to 'user'." },
+          "team_id": { "type": "string", "description": "Team ID (required when scope is 'team')" },
+          "permissions": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["session:create", "session:read", "session:update", "session:delete", "admin"] },
+            "description": "Granted permissions; each must be granted to the caller (no broader than caller). Defaults to session CRUD."
+          },
+          "expires_at": { "type": "string", "format": "date-time", "description": "Optional RFC3339 expiration timestamp" }
+        }
+      },
+      "APITokenListResponse": {
+        "type": "object",
+        "description": "Response containing a list of API tokens.",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/APITokenMetadata" },
+            "description": "API token metadata (no secrets)"
+          }
+        },
+        "required": ["items"]
       }
     },
     "SlackBotStatus": {
@@ -7980,6 +8148,10 @@
     {
       "name": "SessionProfiles",
       "description": "Session profile management. Named, reusable collections of session configuration that can be referenced by sessions, webhooks, schedules, and slackbots."
+    },
+    {
+      "name": "API Tokens",
+      "description": "Named, revocable API tokens for personal users and teams. Plaintext secrets are returned only once on creation; list/get responses expose only metadata and a short display prefix. Legacy GET/POST /users/me/api-key is preserved for backward compatibility."
     }
   ]
 }

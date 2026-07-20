@@ -18,12 +18,24 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
+// apiTokenRecord is the in-memory representation of a named API token used
+// for fast authentication lookups and immediate revocation.
+type apiTokenRecord struct {
+	tokenID     string
+	userID      entities.UserID
+	scope       entities.APITokenScope
+	teamID      string
+	permissions []entities.Permission
+	expiresAt   *time.Time
+}
+
 // SimpleAuthService implements AuthService with simple in-memory authentication
 type SimpleAuthService struct {
 	mu               sync.RWMutex
 	apiKeys          map[string]*services.APIKey
 	users            map[entities.UserID]*entities.User
 	keyToUserID      map[string]entities.UserID
+	apiTokens        map[string]*apiTokenRecord // keyed by plaintext secret
 	githubProvider   *auth.GitHubAuthProvider
 	githubAuthConfig *config.GitHubAuthConfig
 }
@@ -34,6 +46,7 @@ func NewSimpleAuthService() *SimpleAuthService {
 		apiKeys:     make(map[string]*services.APIKey),
 		users:       make(map[entities.UserID]*entities.User),
 		keyToUserID: make(map[string]entities.UserID),
+		apiTokens:   make(map[string]*apiTokenRecord),
 	}
 }
 
@@ -84,7 +97,8 @@ func (s *SimpleAuthService) ValidateAPIKey(ctx context.Context, apiKey string) (
 	// Check if API key exists
 	key, exists := s.apiKeys[apiKey]
 	if !exists {
-		return nil, errors.New("invalid API key")
+		// Fall through to named API tokens (new multi-token system).
+		return s.validateAPITokenLocked(apiKey)
 	}
 
 	// Check if API key is expired
@@ -103,6 +117,75 @@ func (s *SimpleAuthService) ValidateAPIKey(ctx context.Context, apiKey string) (
 	}
 
 	return user, nil
+}
+
+// validateAPITokenLocked looks up a plaintext secret in the named API token
+// map and returns a freshly constructed User entity that authenticates as the
+// token's identity (personal owner or team service account). It must be
+// called with s.mu already held (at least read-locked).
+func (s *SimpleAuthService) validateAPITokenLocked(secret string) (*entities.User, error) {
+	rec, ok := s.apiTokens[secret]
+	if !ok {
+		return nil, errors.New("invalid API key")
+	}
+	if rec.expiresAt != nil && time.Now().After(*rec.expiresAt) {
+		return nil, errors.New("API key expired")
+	}
+
+	perms := make([]entities.Permission, len(rec.permissions))
+	copy(perms, rec.permissions)
+
+	switch rec.scope {
+	case entities.APITokenScopeTeam:
+		return entities.NewServiceAccountUser(rec.userID, rec.teamID, perms), nil
+	default:
+		// Personal token authenticates as the owner with the token's
+		// explicit permissions.
+		user := entities.NewUser(rec.userID, entities.UserTypeRegular, string(rec.userID))
+		user.SetPermissions(perms)
+		return user, nil
+	}
+}
+
+// LoadAPIToken registers a named API token into the in-memory auth map so it
+// is immediately authenticatable. It is safe to call repeatedly for the same
+// secret (the latest token metadata wins).
+func (s *SimpleAuthService) LoadAPIToken(ctx context.Context, token *entities.APIToken) error {
+	if token == nil {
+		return errors.New("token cannot be nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apiTokens[token.Secret()] = &apiTokenRecord{
+		tokenID:     token.ID(),
+		userID:      token.UserID(),
+		scope:       token.Scope(),
+		teamID:      token.TeamID(),
+		permissions: token.Permissions(),
+		expiresAt:   token.ExpiresAt(),
+	}
+	return nil
+}
+
+// RevokeAPIToken removes a named API token from the in-memory auth map,
+// effecting immediate revocation. It is safe to call for a secret that is not
+// present (returns nil).
+func (s *SimpleAuthService) RevokeAPIToken(secret string) {
+	if secret == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.apiTokens, secret)
+}
+
+// IsAPITokenLoaded reports whether the given plaintext secret is currently
+// registered as a named API token. Used by tests.
+func (s *SimpleAuthService) IsAPITokenLoaded(secret string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.apiTokens[secret]
+	return ok
 }
 
 // ValidatePermission checks if a user has a specific permission

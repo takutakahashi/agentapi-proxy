@@ -61,6 +61,7 @@ type Server struct {
 	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	userFileRepo       portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo portrepos.SessionProfileRepository              // Session profile repository
+	apiTokenRepo       portrepos.APITokenRepository                    // Named API token repository
 	assetStore         services.AssetStore                             // Static asset storage backend
 	router             *Router                                         // Router for custom handler registration
 }
@@ -252,6 +253,14 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	k8sSessionManager.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
 	log.Printf("[SERVER] Personal API key repository initialized")
 
+	// Initialize the named API token repository (multi-token CRUD). It is
+	// backed by one Kubernetes Secret per token.
+	apiTokenRepo := repositories.NewKubernetesAPITokenRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] API token repository initialized")
+
 	// Initialize memory repository based on backend configuration.
 	// Supported backends: "kubernetes" (default), "s3", "external".
 	var memoryRepo portrepos.MemoryRepository
@@ -355,6 +364,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionRouteRepo:   sessionRouteRepo,
 		userFileRepo:       userFileRepo,
 		sessionProfileRepo: sessionProfileRepo,
+		apiTokenRepo:       apiTokenRepo,
 		assetStore:         assetStore,
 	}
 
@@ -482,6 +492,31 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 				// Wire up the auth service as the personal API key loader so keys
 				// created on-the-fly (for new users) are immediately authenticatable.
 				k8sSessionManager.SetPersonalAPIKeyLoader(simpleAuth)
+			}
+		}
+	}
+
+	// Migrate legacy API key material into the new multi-token repository and
+	// load all named API tokens (migrated and pre-existing) into the auth
+	// service. Migration is idempotent, preserves plaintext token values, and
+	// never deletes legacy data, so the legacy GET/POST /users/me/api-key
+	// endpoint and legacy token strings keep working.
+	if s.apiTokenRepo != nil {
+		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			ctx := context.Background()
+			var personalRepo portrepos.PersonalAPIKeyRepository
+			if k8sMgr, ok := s.sessionManager.(*services.KubernetesSessionManager); ok {
+				personalRepo = k8sMgr.GetPersonalAPIKeyRepository()
+			}
+			var annotator services.APITokenAnnotator
+			if kr, ok := s.apiTokenRepo.(*repositories.KubernetesAPITokenRepository); ok {
+				annotator = kr
+			}
+			if err := services.MigrateAPITokens(ctx, simpleAuth, s.apiTokenRepo, personalRepo, teamConfigRepo, annotator); err != nil {
+				log.Printf("[SERVER] Warning: API token migration failed: %v", err)
+			}
+			if err := services.BootstrapAPITokens(ctx, simpleAuth, s.apiTokenRepo); err != nil {
+				log.Printf("[SERVER] Warning: failed to bootstrap API tokens: %v", err)
 			}
 		}
 	}
