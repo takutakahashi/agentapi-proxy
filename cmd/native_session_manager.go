@@ -34,23 +34,29 @@ var NativeSessionManagerCmd = &cobra.Command{
 
 var nativeSessionManagerOptions struct {
 	listen, upstreamURL, connectionToken, upstreamAuthToken, publicURL, stateDir, binaryPath, managerID, configPath string
+	filesystemSandbox                                                                                               bool
+}
+
+type nativeFilesystemSandboxConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 type nativeDaemonConfig struct {
-	Listen            string            `json:"listen"`
-	UpstreamURL       string            `json:"upstream_url"`
-	ConnectionToken   string            `json:"connection_token"`
-	CredentialsPath   string            `json:"credentials_path,omitempty"`
-	UpstreamAuthToken string            `json:"upstream_auth_token,omitempty"`
-	PublicURL         string            `json:"public_url"`
-	StateDir          string            `json:"state_dir"`
-	BinaryPath        string            `json:"binary_path,omitempty"`
-	ManagerID         string            `json:"manager_id,omitempty"`
-	InstanceID        string            `json:"instance_id,omitempty"`
-	Scope             string            `json:"scope,omitempty"`
-	TeamID            string            `json:"team_id,omitempty"`
-	Labels            map[string]string `json:"labels,omitempty"`
-	Version           string            `json:"version,omitempty"`
+	Listen            string                        `json:"listen"`
+	UpstreamURL       string                        `json:"upstream_url"`
+	ConnectionToken   string                        `json:"connection_token"`
+	CredentialsPath   string                        `json:"credentials_path,omitempty"`
+	UpstreamAuthToken string                        `json:"upstream_auth_token,omitempty"`
+	PublicURL         string                        `json:"public_url"`
+	StateDir          string                        `json:"state_dir"`
+	BinaryPath        string                        `json:"binary_path,omitempty"`
+	ManagerID         string                        `json:"manager_id,omitempty"`
+	InstanceID        string                        `json:"instance_id,omitempty"`
+	Scope             string                        `json:"scope,omitempty"`
+	TeamID            string                        `json:"team_id,omitempty"`
+	Labels            map[string]string             `json:"labels,omitempty"`
+	Version           string                        `json:"version,omitempty"`
+	FilesystemSandbox nativeFilesystemSandboxConfig `json:"filesystem_sandbox,omitempty"`
 }
 
 func init() {
@@ -64,6 +70,7 @@ func init() {
 	f.StringVar(&nativeSessionManagerOptions.binaryPath, "binary", "", "agentapi-proxy binary used for provisioners")
 	f.StringVar(&nativeSessionManagerOptions.managerID, "manager-id", "", "registered external session manager ID")
 	f.StringVar(&nativeSessionManagerOptions.configPath, "config", "", "JSON daemon configuration file")
+	f.BoolVar(&nativeSessionManagerOptions.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
 }
 
 func runNativeSessionManager(command *cobra.Command, _ []string) error {
@@ -97,11 +104,14 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 		if !command.Flags().Changed("manager-id") {
 			o.managerID = cfg.ManagerID
 		}
+		if !command.Flags().Changed("filesystem-sandbox") {
+			o.filesystemSandbox = cfg.FilesystemSandbox.Enabled
+		}
 	}
 	if o.upstreamURL == "" || o.connectionToken == "" || o.publicURL == "" {
 		return fmt.Errorf("--upstream-url, --connection-token and --public-url are required")
 	}
-	manager, err := services.NewNativeSessionManager(o.stateDir, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, o.binaryPath)
+	manager, err := services.NewNativeSessionManager(o.stateDir, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, o.binaryPath, o.filesystemSandbox)
 	if err != nil {
 		return err
 	}

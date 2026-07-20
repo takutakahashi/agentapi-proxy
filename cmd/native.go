@@ -25,10 +25,10 @@ import (
 var NativeCmd = &cobra.Command{Use: "native", Short: "Install and manage a native External Session Manager"}
 
 type nativeManageOptions struct {
-	upstream, publicURL, name, listen, managerID, apiKeyEnv, apiKeyFile, configPath string
-	scope, teamID, drainTimeout                                                     string
-	labels                                                                          []string
-	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData           bool
+	upstream, publicURL, name, listen, managerID, apiKeyEnv, apiKeyFile, configPath          string
+	scope, teamID, drainTimeout                                                              string
+	labels                                                                                   []string
+	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
 }
 
 var nativeManageOpts nativeManageOptions
@@ -62,6 +62,7 @@ func init() {
 	f.StringSliceVar(&nativeManageOpts.labels, "label", nil, "allocator label in key=value form")
 	f.BoolVar(&nativeManageOpts.defaultManager, "default", false, "make this the default external session manager")
 	f.BoolVar(&nativeManageOpts.force, "force", false, "install even if the existing state directory contains sessions")
+	f.BoolVar(&nativeManageOpts.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
 
 	status := &cobra.Command{Use: "status", Short: "Show daemon and connection status", RunE: runNativeStatus}
 	doctor := &cobra.Command{Use: "doctor", Short: "Validate daemon configuration and connectivity", RunE: runNativeDoctor}
@@ -79,6 +80,9 @@ func init() {
 func runNativeInstall(_ *cobra.Command, _ []string) error {
 	if nativeManageOpts.upstream == "" || nativeManageOpts.publicURL == "" {
 		return errors.New("--upstream and --public-url are required")
+	}
+	if nativeManageOpts.filesystemSandbox && runtime.GOOS != "darwin" {
+		return errors.New("--filesystem-sandbox is only supported on macOS")
 	}
 	hostname, _ := os.Hostname()
 	if nativeManageOpts.name == "" {
@@ -131,7 +135,8 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 	cfg := nativeDaemonConfig{Listen: nativeManageOpts.listen, UpstreamURL: strings.TrimRight(nativeManageOpts.upstream, "/"),
 		ConnectionToken: token, PublicURL: strings.TrimRight(nativeManageOpts.publicURL, "/"), StateDir: paths.state,
 		BinaryPath: paths.binary, ManagerID: registration.ID, InstanceID: instanceID, Scope: nativeManageOpts.scope, TeamID: nativeManageOpts.teamID,
-		Labels: labels, Version: nativeBuildVersion()}
+		Labels: labels, Version: nativeBuildVersion(),
+		FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: nativeManageOpts.filesystemSandbox}}
 	if err := installNativeService(paths, cfg); err != nil {
 		return err
 	}
@@ -252,7 +257,7 @@ func runNativeStatus(_ *cobra.Command, _ []string) error {
 		health = "ok"
 	}
 	active, _ := filepath.Glob(filepath.Join(cfg.StateDir, "sessions", "*"))
-	fmt.Printf("Service: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nActive sessions: %d\nHealth: %s\nState: %s\n", service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, len(active), health, cfg.StateDir)
+	fmt.Printf("Service: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
 	return nil
 }
 
@@ -273,6 +278,14 @@ func runNativeDoctor(_ *cobra.Command, _ []string) error {
 	cfg, err := readNativeConfig(paths.config)
 	if err != nil {
 		return err
+	}
+	if cfg.FilesystemSandbox.Enabled {
+		if runtime.GOOS != "darwin" {
+			return errors.New("filesystem sandbox is enabled but this host is not macOS")
+		}
+		if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
+			return fmt.Errorf("filesystem sandbox executable: %w", err)
+		}
 	}
 	if err := nativeHealth(cfg.Listen); err != nil {
 		return fmt.Errorf("local health: %w", err)

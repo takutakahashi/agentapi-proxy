@@ -180,6 +180,79 @@ In dev, the working configuration was:
 - The same token used as `SESSION_MANAGER_CONNECTION_TOKEN` and
   `SESSION_MANAGER_HMAC_SECRET`
 
+## Registering a Native Manager
+
+Use `native install` on the machine that will run native sessions. The command
+registers the manager with the parent proxy, stores the returned connection
+token, installs the host service, starts it, and sends the first heartbeat.
+
+Before registering, prepare:
+
+- An API key for the parent proxy with permission to create sessions.
+- An upstream URL for the parent proxy.
+- A public URL through which the parent proxy can reach the native manager.
+  The parent must be able to request `<public-url>/healthz` and proxy session
+  traffic through the same URL. A VPN, Tailscale, or reverse tunnel can be used
+  when the native machine is not directly reachable from the cluster.
+
+For a user-scoped macOS manager with the filesystem sandbox enabled:
+
+```bash
+export AGENTAPI_KEY="<parent-proxy-api-key>"
+
+agentapi-proxy native install \
+  --upstream "https://parent-proxy.example.com" \
+  --public-url "https://native-mac.example.com" \
+  --name "ios-builder" \
+  --label purpose=ios \
+  --filesystem-sandbox
+```
+
+Add `--default` to select this manager when a session does not specify a
+manager. To register it for a team instead of the current user:
+
+```bash
+agentapi-proxy native install \
+  --upstream "https://parent-proxy.example.com" \
+  --public-url "https://native-mac.example.com" \
+  --name "team-ios-builder" \
+  --scope team \
+  --team-id "my-org/ios-team" \
+  --label purpose=ios \
+  --filesystem-sandbox
+```
+
+The registration flow is:
+
+```text
+native install
+  -> POST /external-session-managers
+  -> receive manager ID and one-time connection token
+  -> install and start the native host service
+  -> POST the manager heartbeat
+  -> parent proxy verifies <public-url>/healthz
+```
+
+On macOS, configuration and credentials are stored under:
+
+```text
+~/Library/Application Support/agentapi-native/config.json
+~/Library/Application Support/agentapi-native/credentials.json
+```
+
+Check the installed service and end-to-end parent connectivity:
+
+```bash
+agentapi-proxy native status
+agentapi-proxy native doctor
+```
+
+`native status` reports the manager ID, upstream and public URLs, active
+sessions, and whether the filesystem sandbox is enabled. `native doctor`
+checks local configuration permissions, service health, and the parent
+heartbeat. If registration must retain an existing identity, pass the existing
+ID with `--manager-id`.
+
 ## Starting a Session Through an ESM
 
 Specify the manager explicitly:
@@ -201,6 +274,42 @@ curl -X POST "$PARENT_PROXY_URL/start" \
 
 If the manager is registered with `"default": true`, omit `manager_id` to route
 new sessions to that ESM by default.
+
+## macOS Native Filesystem Sandbox
+
+Native ESM installations on macOS can wrap every session provisioner and its
+descendant processes with the built-in Seatbelt `sandbox-exec` utility. Enable
+it when installing the manager:
+
+```bash
+agentapi-proxy native install \
+  --upstream "https://parent-proxy.example.com" \
+  --public-url "https://native-mac.example.com" \
+  --filesystem-sandbox
+```
+
+The generated daemon configuration contains a single switch:
+
+```json
+{
+  "filesystem_sandbox": {
+    "enabled": true
+  }
+}
+```
+
+When omitted or set to `false`, native sessions retain their existing
+unsandboxed behavior. When enabled, the session can read and write its own
+`home`, `workdir`, `build`, `tmp`, and `runtime` directories, while the rest of
+the host user's home and sibling native sessions are inaccessible. macOS and
+Xcode services remain available so `xcodebuild` and Simulator workflows can
+run. Build output should be directed to `$AGENTAPI_BUILD_DIR`.
+
+The option is fail-closed: the daemon refuses to start on non-macOS hosts or
+when `/usr/bin/sandbox-exec` is unavailable, and a session is not launched if
+its generated Seatbelt profile fails validation. Because `sandbox-exec` is a
+deprecated macOS facility, this backend should be treated as best-effort host
+protection rather than a VM-strength isolation boundary.
 
 ## Verification
 
