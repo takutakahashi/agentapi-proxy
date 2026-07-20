@@ -37,12 +37,12 @@ func TestNativeSessionManagerRestoresLiveSessionState(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = process.Process.Kill() })
 	now := time.Now().UTC().Truncate(time.Second)
-	state := nativeSessionState{ID: "native-1", Request: &entities.RunServerRequest{UserID: "user-1", Tags: map[string]string{"allocator.os": "linux"}}, RootDir: root, AgentPort: port, ProvisionerPort: 42001, PID: process.Process.Pid, StartedAt: now, UpdatedAt: now, LastMessageAt: now, Status: "running"}
+	state := nativeSessionState{ID: "native-1", Request: &entities.RunServerRequest{UserID: "user-1", Tags: map[string]string{"allocator.os": "linux"}}, RootDir: root, AgentPort: port, ProvisionerPort: 42001, PID: process.Process.Pid, StartedAt: now, UpdatedAt: now, LastMessageAt: now, Status: "running", FilesystemSandbox: false}
 	data, _ := json.Marshal(state)
 	if err := os.WriteFile(filepath.Join(root, "runtime", "state.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", os.Args[0])
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", os.Args[0], false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestNativeSessionManagerRestoresLiveSessionState(t *testing.T) {
 }
 
 func TestNativeProvisionRequestPullLifecycle(t *testing.T) {
-	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0])
+	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
 	if err != nil {
 		t.Fatal(err)
 	}

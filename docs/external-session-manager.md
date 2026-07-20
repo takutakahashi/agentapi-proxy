@@ -202,6 +202,42 @@ curl -X POST "$PARENT_PROXY_URL/start" \
 If the manager is registered with `"default": true`, omit `manager_id` to route
 new sessions to that ESM by default.
 
+## macOS Native Filesystem Sandbox
+
+Native ESM installations on macOS can wrap every session provisioner and its
+descendant processes with the built-in Seatbelt `sandbox-exec` utility. Enable
+it when installing the manager:
+
+```bash
+agentapi-proxy native install \
+  --upstream "https://parent-proxy.example.com" \
+  --public-url "https://native-mac.example.com" \
+  --filesystem-sandbox
+```
+
+The generated daemon configuration contains a single switch:
+
+```json
+{
+  "filesystem_sandbox": {
+    "enabled": true
+  }
+}
+```
+
+When omitted or set to `false`, native sessions retain their existing
+unsandboxed behavior. When enabled, the session can read and write its own
+`home`, `workdir`, `build`, `tmp`, and `runtime` directories, while the rest of
+the host user's home and sibling native sessions are inaccessible. macOS and
+Xcode services remain available so `xcodebuild` and Simulator workflows can
+run. Build output should be directed to `$AGENTAPI_BUILD_DIR`.
+
+The option is fail-closed: the daemon refuses to start on non-macOS hosts or
+when `/usr/bin/sandbox-exec` is unavailable, and a session is not launched if
+its generated Seatbelt profile fails validation. Because `sandbox-exec` is a
+deprecated macOS facility, this backend should be treated as best-effort host
+protection rather than a VM-strength isolation boundary.
+
 ## Verification
 
 After creating a session, verify the route and live status.

@@ -35,6 +35,7 @@ type NativeSessionManager struct {
 	provisionerToken  string
 	upstreamAuthToken string
 	binaryPath        string
+	filesystemSandbox bool
 	httpClient        *http.Client
 }
 
@@ -56,20 +57,21 @@ type NativeSession struct {
 }
 
 type nativeSessionState struct {
-	ID              string                     `json:"id"`
-	Request         *entities.RunServerRequest `json:"request"`
-	RootDir         string                     `json:"root_dir"`
-	AgentPort       int                        `json:"agent_port"`
-	ProvisionerPort int                        `json:"provisioner_port"`
-	PID             int                        `json:"pid"`
-	StartedAt       time.Time                  `json:"started_at"`
-	UpdatedAt       time.Time                  `json:"updated_at"`
-	LastMessageAt   time.Time                  `json:"last_message_at"`
-	Status          string                     `json:"status"`
-	Description     string                     `json:"description,omitempty"`
+	ID                string                     `json:"id"`
+	Request           *entities.RunServerRequest `json:"request"`
+	RootDir           string                     `json:"root_dir"`
+	AgentPort         int                        `json:"agent_port"`
+	ProvisionerPort   int                        `json:"provisioner_port"`
+	PID               int                        `json:"pid"`
+	StartedAt         time.Time                  `json:"started_at"`
+	UpdatedAt         time.Time                  `json:"updated_at"`
+	LastMessageAt     time.Time                  `json:"last_message_at"`
+	Status            string                     `json:"status"`
+	Description       string                     `json:"description,omitempty"`
+	FilesystemSandbox bool                       `json:"filesystem_sandbox,omitempty"`
 }
 
-func NewNativeSessionManager(stateDir, proxyURL, provisionerToken, upstreamAuthToken, binaryPath string) (*NativeSessionManager, error) {
+func NewNativeSessionManager(stateDir, proxyURL, provisionerToken, upstreamAuthToken, binaryPath string, filesystemSandbox bool) (*NativeSessionManager, error) {
 	if stateDir == "" {
 		return nil, errors.New("native state directory is required")
 	}
@@ -86,6 +88,14 @@ func NewNativeSessionManager(stateDir, proxyURL, provisionerToken, upstreamAuthT
 			return nil, fmt.Errorf("resolve executable: %w", err)
 		}
 	}
+	if filesystemSandbox && runtime.GOOS != "darwin" {
+		return nil, fmt.Errorf("native filesystem sandbox is only supported on macOS")
+	}
+	if filesystemSandbox {
+		if _, err := os.Stat(nativeSandboxExecPath); err != nil {
+			return nil, fmt.Errorf("native filesystem sandbox requires %s: %w", nativeSandboxExecPath, err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(stateDir, "sessions"), 0o700); err != nil {
 		return nil, fmt.Errorf("create native state directory: %w", err)
 	}
@@ -97,6 +107,7 @@ func NewNativeSessionManager(stateDir, proxyURL, provisionerToken, upstreamAuthT
 		provisionerToken:  provisionerToken,
 		upstreamAuthToken: upstreamAuthToken,
 		binaryPath:        binaryPath,
+		filesystemSandbox: filesystemSandbox,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
 	}
 	if err := m.restoreSessions(); err != nil {
@@ -124,7 +135,9 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 	home := filepath.Join(root, "home")
 	workdir := filepath.Join(root, "workdir")
 	runtimeDir := filepath.Join(root, "runtime")
-	for _, dir := range []string{home, workdir, runtimeDir} {
+	buildDir := filepath.Join(root, "build")
+	tmpDir := filepath.Join(root, "tmp")
+	for _, dir := range []string{home, workdir, runtimeDir, buildDir, tmpDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create session directory %s: %w", dir, err)
 		}
@@ -156,12 +169,20 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		cancel()
 		return nil, fmt.Errorf("open provisioner log: %w", err)
 	}
-	cmd := exec.CommandContext(sessionCtx, m.binaryPath, "agent-provisioner", "--port", strconv.Itoa(provisionerPort))
+	cmd, err := m.newProvisionerCommand(sessionCtx, root, runtimeDir, provisionerPort)
+	if err != nil {
+		_ = logFile.Close()
+		cancel()
+		return nil, err
+	}
 	cmd.Dir = workdir
 	cmd.Env = append(os.Environ(),
 		"HOME="+home,
+		"TMPDIR="+tmpDir,
+		"CFFIXED_USER_HOME="+home,
 		"AGENTAPI_NATIVE_SESSION_ROOT="+root,
 		"AGENTAPI_WORKDIR="+workdir,
+		"AGENTAPI_BUILD_DIR="+buildDir,
 		"AGENTAPI_REPO_DIR="+filepath.Join(workdir, "repo"),
 		"AGENTAPI_SESSION_ID="+id,
 		"AGENTAPI_PORT="+strconv.Itoa(agentPort),
@@ -485,7 +506,8 @@ func (m *NativeSessionManager) persistSession(s *NativeSession) error {
 	s.mu.RLock()
 	state := nativeSessionState{ID: s.id, Request: s.request, RootDir: s.rootDir, AgentPort: s.agentPort,
 		ProvisionerPort: s.provisionerPort, PID: s.pid, StartedAt: s.startedAt, UpdatedAt: s.updatedAt,
-		LastMessageAt: s.lastMessageAt, Status: s.status, Description: s.description}
+		LastMessageAt: s.lastMessageAt, Status: s.status, Description: s.description,
+		FilesystemSandbox: m.filesystemSandbox}
 	s.mu.RUnlock()
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -532,6 +554,9 @@ func (m *NativeSessionManager) restoreSessions() error {
 		}
 		var state nativeSessionState
 		if json.Unmarshal(data, &state) != nil || state.ID == "" || state.PID <= 0 {
+			continue
+		}
+		if state.FilesystemSandbox != m.filesystemSandbox {
 			continue
 		}
 		if err := syscall.Kill(state.PID, 0); err != nil || !nativeProcessMatchesSession(state.PID, state.RootDir) {
