@@ -119,3 +119,179 @@ func TestSimpleAuthService_RevokeUnknownSafe(t *testing.T) {
 	s.RevokeAPIToken("never-existed") // must not panic
 	s.RevokeAPIToken("")
 }
+
+// TestSimpleAuthService_MigratedPersonalLegacyKeyRevocation is the central
+// regression for the migration/revocation bug. A legacy personal API key that
+// has been migrated into a named token must stop authenticating the moment
+// the named token is revoked, even though the legacy apiKeys entry (loaded by
+// the legacy bootstrap and possibly reloaded by the legacy
+// GET/POST /users/me/api-key controller) is still present in memory, and
+// must stay revoked across reconciliation.
+func TestSimpleAuthService_MigratedPersonalLegacyKeyRevocation(t *testing.T) {
+	s := NewSimpleAuthService()
+	const legacySecret = "ap_legacy_personal_value"
+	userID := entities.UserID("legacy-user")
+
+	// 1. Legacy bootstrap loads the legacy personal key into apiKeys. Before
+	//    migration it authenticates via the legacy path.
+	pk := entities.NewPersonalAPIKey(userID, legacySecret)
+	if err := s.LoadPersonalAPIKey(context.Background(), pk); err != nil {
+		t.Fatalf("LoadPersonalAPIKey: %v", err)
+	}
+	if s.IsShadowedLegacySecret(legacySecret) {
+		t.Error("pre-migration legacy key should not yet be shadowed")
+	}
+	if _, err := s.ValidateAPIKey(context.Background(), legacySecret); err != nil {
+		t.Fatalf("legacy key should authenticate before migration: %v", err)
+	}
+
+	// 2. Migration loads the same secret as a named token. The secret is now
+	//    shadowed and authenticates through apiTokens.
+	migrated := makeToken(legacySecret, entities.APITokenScopeUser, userID, "",
+		[]entities.Permission{entities.PermissionSessionRead}, nil)
+	if err := s.LoadAPIToken(context.Background(), migrated); err != nil {
+		t.Fatalf("LoadAPIToken: %v", err)
+	}
+	if !s.IsShadowedLegacySecret(legacySecret) {
+		t.Fatal("migrated secret must be shadowed after LoadAPIToken")
+	}
+	user, err := s.ValidateAPIKey(context.Background(), legacySecret)
+	if err != nil {
+		t.Fatalf("migrated secret should authenticate: %v", err)
+	}
+	if user.ID() != userID {
+		t.Errorf("user id = %q, want %q", user.ID(), userID)
+	}
+
+	// 3. Re-load the legacy credential (simulating the legacy controller or a
+	//    repeated bootstrap). It must NOT unshadow the secret.
+	if err := s.LoadPersonalAPIKey(context.Background(), pk); err != nil {
+		t.Fatalf("re-LoadPersonalAPIKey: %v", err)
+	}
+	if !s.IsShadowedLegacySecret(legacySecret) {
+		t.Fatal("reloading legacy credential must not unshadow it")
+	}
+
+	// 4. Revoke the migrated named token. The secret must fail authentication
+	//    immediately, despite the legacy apiKeys entry still being present.
+	s.RevokeAPIToken(legacySecret)
+	if s.IsAPITokenLoaded(legacySecret) {
+		t.Error("named token should be removed from apiTokens after revoke")
+	}
+	if !s.IsShadowedLegacySecret(legacySecret) {
+		t.Error("revoked secret must remain shadowed")
+	}
+	if _, err := s.ValidateAPIKey(context.Background(), legacySecret); err == nil {
+		t.Fatal("revoked migrated secret must not authenticate via legacy fallback")
+	}
+
+	// 5. Reconciliation must keep it invalid: the deleted named token is gone
+	//    from the store, and the shadow prevents the legacy apiKeys fallback.
+	repo := newMemTokenRepo()
+	s.SetAPITokenRepository(repo) // store is empty -> reconcile drops all named tokens
+	if err := s.ReconcileAPITokens(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if !s.IsShadowedLegacySecret(legacySecret) {
+		t.Error("shadow must survive reconcile")
+	}
+	if _, err := s.ValidateAPIKey(context.Background(), legacySecret); err == nil {
+		t.Fatal("revoked migrated secret must stay invalid after reconcile")
+	}
+}
+
+// TestSimpleAuthService_MigratedTeamLegacyKeyRevocation mirrors the personal
+// regression for team service-account tokens: a migrated team legacy key must
+// fail authentication once its named token is revoked, with no fallback to the
+// legacy apiKeys entry loaded from TeamConfig, and must stay invalid across
+// reconciliation and legacy reload.
+func TestSimpleAuthService_MigratedTeamLegacyKeyRevocation(t *testing.T) {
+	s := NewSimpleAuthService()
+	const legacySecret = "ap_legacy_team_value"
+	const teamID = "org/team"
+	saUserID := entities.UserID("sa-org-team")
+	perms := []entities.Permission{entities.PermissionSessionCreate, entities.PermissionSessionRead}
+
+	// 1. Legacy bootstrap loads the team service account into apiKeys.
+	sa := entities.NewServiceAccount(teamID, saUserID, legacySecret, perms)
+	tc := entities.NewTeamConfig(teamID, sa, nil)
+	if err := s.LoadServiceAccountFromTeamConfig(context.Background(), tc); err != nil {
+		t.Fatalf("LoadServiceAccountFromTeamConfig: %v", err)
+	}
+	if _, err := s.ValidateAPIKey(context.Background(), legacySecret); err != nil {
+		t.Fatalf("legacy team key should authenticate before migration: %v", err)
+	}
+
+	// 2. Migration loads the same secret as a team-scoped named token.
+	migrated := makeToken(legacySecret, entities.APITokenScopeTeam, saUserID, teamID, perms, nil)
+	if err := s.LoadAPIToken(context.Background(), migrated); err != nil {
+		t.Fatalf("LoadAPIToken: %v", err)
+	}
+	if !s.IsShadowedLegacySecret(legacySecret) {
+		t.Fatal("migrated team secret must be shadowed")
+	}
+	user, err := s.ValidateAPIKey(context.Background(), legacySecret)
+	if err != nil {
+		t.Fatalf("migrated team secret should authenticate: %v", err)
+	}
+	if user.UserType() != entities.UserTypeServiceAccount {
+		t.Errorf("user type = %q, want service account", user.UserType())
+	}
+	if user.TeamID() != teamID {
+		t.Errorf("team = %q, want %q", user.TeamID(), teamID)
+	}
+
+	// 3. Re-loading the legacy team config must not unshadow.
+	if err := s.LoadServiceAccountFromTeamConfig(context.Background(), tc); err != nil {
+		t.Fatalf("re-load team config: %v", err)
+	}
+	if !s.IsShadowedLegacySecret(legacySecret) {
+		t.Fatal("reloading legacy team credential must not unshadow it")
+	}
+
+	// 4. Revoke the migrated named token -> secret must fail immediately.
+	s.RevokeAPIToken(legacySecret)
+	if _, err := s.ValidateAPIKey(context.Background(), legacySecret); err == nil {
+		t.Fatal("revoked migrated team secret must not authenticate via legacy fallback")
+	}
+
+	// 5. Reconciliation must keep it invalid.
+	repo := newMemTokenRepo()
+	s.SetAPITokenRepository(repo)
+	if err := s.ReconcileAPITokens(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if !s.IsShadowedLegacySecret(legacySecret) {
+		t.Error("team shadow must survive reconcile")
+	}
+	if _, err := s.ValidateAPIKey(context.Background(), legacySecret); err == nil {
+		t.Fatal("revoked migrated team secret must stay invalid after reconcile")
+	}
+}
+
+// TestSimpleAuthService_NonMigratedLegacyKeyUnaffected ensures that shadowing
+// only applies to secrets that were actually registered as named tokens. A
+// purely-legacy key that was never migrated must keep authenticating through
+// the legacy apiKeys path, including after a reconcile that touches nothing.
+func TestSimpleAuthService_NonMigratedLegacyKeyUnaffected(t *testing.T) {
+	s := NewSimpleAuthService()
+	pk := entities.NewPersonalAPIKey(entities.UserID("plain-user"), "ap_plain_legacy")
+	if err := s.LoadPersonalAPIKey(context.Background(), pk); err != nil {
+		t.Fatalf("LoadPersonalAPIKey: %v", err)
+	}
+	if s.IsShadowedLegacySecret("ap_plain_legacy") {
+		t.Error("non-migrated legacy key should not be shadowed")
+	}
+	repo := newMemTokenRepo()
+	s.SetAPITokenRepository(repo)
+	if err := s.ReconcileAPITokens(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	user, err := s.ValidateAPIKey(context.Background(), "ap_plain_legacy")
+	if err != nil {
+		t.Fatalf("non-migrated legacy key must still authenticate: %v", err)
+	}
+	if user.ID() != entities.UserID("plain-user") {
+		t.Errorf("user id = %q", user.ID())
+	}
+}

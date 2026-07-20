@@ -39,16 +39,57 @@ type SimpleAuthService struct {
 	apiTokenRepo     repositories.APITokenRepository
 	githubProvider   *auth.GitHubAuthProvider
 	githubAuthConfig *config.GitHubAuthConfig
+
+	// shadowedSecrets records every plaintext secret that has ever been
+	// registered as a named API token (via LoadAPIToken or ReconcileAPITokens).
+	// For such a secret the named-token store (apiTokens) is authoritative and
+	// the legacy apiKeys map must NEVER be consulted for it. This is what
+	// makes revocation of a migrated legacy credential stick: a legacy
+	// personal/team secret that has been migrated into a named token lives in
+	// BOTH apiKeys (loaded by the legacy bootstrap) and apiTokens (loaded by
+	// migration). Deleting the named token only removes it from apiTokens, so
+	// without shadowing ValidateAPIKey would fall back to apiKeys and keep
+	// accepting the supposedly revoked credential. Because shadowedSecrets is
+	// sticky (revoking or reconciling away a token never unshadows its
+	// secret), re-loading the legacy credential later cannot revive it either.
+	shadowedSecrets map[string]struct{}
 }
 
 // NewSimpleAuthService creates a new SimpleAuthService
 func NewSimpleAuthService() *SimpleAuthService {
 	return &SimpleAuthService{
-		apiKeys:     make(map[string]*services.APIKey),
-		users:       make(map[entities.UserID]*entities.User),
-		keyToUserID: make(map[string]entities.UserID),
-		apiTokens:   make(map[string]*apiTokenRecord),
+		apiKeys:         make(map[string]*services.APIKey),
+		users:           make(map[entities.UserID]*entities.User),
+		keyToUserID:     make(map[string]entities.UserID),
+		apiTokens:       make(map[string]*apiTokenRecord),
+		shadowedSecrets: make(map[string]struct{}),
 	}
+}
+
+// markShadowedLocked records a secret as authoritative under the named-token
+// store. Once shadowed, the legacy apiKeys entry (if any) is never consulted
+// for this secret again. Shadowing is monotonic: nothing unshadows a secret
+// for the lifetime of the process, so revoking or reconciling away the named
+// token cannot let a leftover/reloaded legacy credential back in. Must be
+// called with s.mu held for writing.
+func (s *SimpleAuthService) markShadowedLocked(secret string) {
+	if secret == "" {
+		return
+	}
+	if s.shadowedSecrets == nil {
+		s.shadowedSecrets = make(map[string]struct{})
+	}
+	s.shadowedSecrets[secret] = struct{}{}
+}
+
+// IsShadowedLegacySecret reports whether the given plaintext secret has been
+// registered as a named token and therefore must authenticate only through
+// the named-token store. Used by tests.
+func (s *SimpleAuthService) IsShadowedLegacySecret(secret string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.shadowedSecrets[secret]
+	return ok
 }
 
 // SetAPITokenRepository wires the named API token repository so the auth
@@ -100,6 +141,14 @@ func (s *SimpleAuthService) ReconcileAPITokens(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.apiTokens = next
+	// Any secret currently present in the store is authoritative under the
+	// named-token system; shadow it so the legacy apiKeys map is bypassed for
+	// it. This is a union (monotonic): secrets of tokens that have since been
+	// deleted are NOT unshadowed, so a stale/reloaded legacy entry cannot
+	// revive a revoked migrated credential after reconciliation.
+	for secret := range next {
+		s.markShadowedLocked(secret)
+	}
 	s.mu.Unlock()
 	return nil
 }
@@ -147,6 +196,17 @@ func (s *SimpleAuthService) AuthenticateUser(ctx context.Context, credentials *s
 func (s *SimpleAuthService) ValidateAPIKey(ctx context.Context, apiKey string) (*entities.User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// If this secret has ever been registered as a named API token (e.g. via
+	// migration or explicit creation), the named-token store is authoritative.
+	// We must never fall back to the legacy apiKeys map for it: otherwise
+	// revoking the migrated named token would leave the matching legacy
+	// credential (still present in apiKeys from the legacy bootstrap) valid,
+	// silently bypassing the revocation. Shadowing is sticky, so a later
+	// legacy reload cannot unshadow it either.
+	if _, shadowed := s.shadowedSecrets[apiKey]; shadowed {
+		return s.validateAPITokenLocked(apiKey)
+	}
 
 	// Check if API key exists
 	key, exists := s.apiKeys[apiKey]
@@ -218,12 +278,19 @@ func (s *SimpleAuthService) LoadAPIToken(ctx context.Context, token *entities.AP
 		permissions: token.Permissions(),
 		expiresAt:   token.ExpiresAt(),
 	}
+	// The named-token store is now authoritative for this secret. Shadow it
+	// so any identical legacy apiKeys entry (loaded before or after this) is
+	// never consulted. This is the crux of revocation safety for migrated
+	// legacy credentials.
+	s.markShadowedLocked(token.Secret())
 	return nil
 }
 
 // RevokeAPIToken removes a named API token from the in-memory auth map,
 // effecting immediate revocation. It is safe to call for a secret that is not
-// present (returns nil).
+// present (returns nil). It deliberately does NOT unshadow the secret: the
+// named-token store stays authoritative, so the legacy apiKeys entry (if any)
+// cannot validate the revoked secret after this.
 func (s *SimpleAuthService) RevokeAPIToken(secret string) {
 	if secret == "" {
 		return
