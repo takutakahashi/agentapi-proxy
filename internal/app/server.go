@@ -61,6 +61,8 @@ type Server struct {
 	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	userFileRepo       portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo portrepos.SessionProfileRepository              // Session profile repository
+	apiTokenRepo       portrepos.APITokenRepository                    // Named API token repository
+	apiTokenDeps       *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
 	assetStore         services.AssetStore                             // Static asset storage backend
 	router             *Router                                         // Router for custom handler registration
 }
@@ -252,6 +254,14 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	k8sSessionManager.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
 	log.Printf("[SERVER] Personal API key repository initialized")
 
+	// Initialize the named API token repository (multi-token CRUD). It is
+	// backed by one Kubernetes Secret per token.
+	apiTokenRepo := repositories.NewKubernetesAPITokenRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] API token repository initialized")
+
 	// Initialize memory repository based on backend configuration.
 	// Supported backends: "kubernetes" (default), "s3", "external".
 	var memoryRepo portrepos.MemoryRepository
@@ -355,6 +365,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionRouteRepo:   sessionRouteRepo,
 		userFileRepo:       userFileRepo,
 		sessionProfileRepo: sessionProfileRepo,
+		apiTokenRepo:       apiTokenRepo,
 		assetStore:         assetStore,
 	}
 
@@ -486,6 +497,16 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		}
 	}
 
+	// Migrate legacy API key material into the new multi-token repository and
+	// load all named API tokens (migrated and pre-existing) into the auth
+	// service. This is performed by Server.InitAPITokens, which is invoked by
+	// the command layer (cmd/server.go) so that any migration or bootstrap
+	// failure prevents the process from serving traffic. A background
+	// reconciler keeps the in-memory token map consistent across replicas. We
+	// only stash the wiring here; nothing fail-prone runs inside NewServer so
+	// that tests constructing a Server are not blocked on Kubernetes.
+	s.initAPITokenWiring()
+
 	// Set up ServiceAccountEnsurer in KubernetesSessionManager so that all session creation
 	// paths (start, webhook, schedule, etc.) automatically create TeamConfig on team-scoped sessions.
 	if teamConfigRepo != nil {
@@ -575,6 +596,106 @@ func (s *Server) setupRoutes() {
 
 	// Register auth-related routes directly
 	s.setupAuthRoutes()
+}
+
+// apiTokenInitDeps bundles the optional dependencies gathered during
+// NewServer so the fail-prone migration/bootstrap step can run later (in
+// InitAPITokens) without re-deriving them. Keeping them on the Server also
+// lets tests drive initialization explicitly.
+type apiTokenInitDeps struct {
+	authService    *services.SimpleAuthService
+	personalRepo   portrepos.PersonalAPIKeyRepository
+	teamConfigRepo portrepos.TeamConfigRepository
+	annotator      services.APITokenAnnotator
+}
+
+// initAPITokenWiring records the auth service and derives the repositories
+// needed to run migration/bootstrap later. It must not perform any I/O or
+// fail-prone work so that NewServer remains side-effect-free with respect to
+// API token initialization.
+func (s *Server) initAPITokenWiring() {
+	simpleAuth, ok := s.container.AuthService.(*services.SimpleAuthService)
+	if !ok {
+		return
+	}
+	if s.apiTokenRepo == nil {
+		return
+	}
+	var personalRepo portrepos.PersonalAPIKeyRepository
+	if k8sMgr, ok := s.sessionManager.(*services.KubernetesSessionManager); ok {
+		personalRepo = k8sMgr.GetPersonalAPIKeyRepository()
+	}
+	var annotator services.APITokenAnnotator
+	if kr, ok := s.apiTokenRepo.(*repositories.KubernetesAPITokenRepository); ok {
+		annotator = kr
+	}
+	s.apiTokenDeps = &apiTokenInitDeps{
+		authService:    simpleAuth,
+		personalRepo:   personalRepo,
+		teamConfigRepo: s.teamConfigRepo,
+		annotator:      annotator,
+	}
+	// Wire the repository into the auth service so the background reconciler
+	// can keep named tokens consistent across replicas. Legacy static and
+	// personal API keys live in a separate map and are unaffected.
+	simpleAuth.SetAPITokenRepository(s.apiTokenRepo)
+}
+
+// InitAPITokens runs the idempotent legacy→multi-token migration and loads all
+// named API tokens into the in-memory auth service. It is the fail-safe
+// startup step for the API token subsystem: any migration conflict (e.g. a
+// deterministic migration ID already in use with a different secret),
+// annotation error, or bootstrap load error is returned so the caller can
+// refuse to serve traffic instead of running with a partially migrated or
+// partially loaded auth map. It is safe to call multiple times thanks to the
+// migration's idempotent AlreadyExists handling and the bootstrap's
+// overwrite-on-load semantics. Not calling it (e.g. in tests) simply leaves
+// the named-token subsystem un-bootstrapped; legacy auth paths still work.
+func (s *Server) InitAPITokens(ctx context.Context) error {
+	if s.apiTokenRepo == nil || s.apiTokenDeps == nil {
+		return nil
+	}
+	deps := s.apiTokenDeps
+	if deps.authService == nil {
+		return nil
+	}
+	if err := services.MigrateAPITokens(ctx, deps.authService, s.apiTokenRepo, deps.personalRepo, deps.teamConfigRepo, deps.annotator); err != nil {
+		return fmt.Errorf("api token migration: %w", err)
+	}
+	if err := services.BootstrapAPITokens(ctx, deps.authService, s.apiTokenRepo); err != nil {
+		return fmt.Errorf("api token bootstrap: %w", err)
+	}
+	return nil
+}
+
+// StartAPITokenReconciler launches a background goroutine that periodically
+// reconciles the in-memory named-token map with the repository so revocation
+// of a named token propagates across replicas within the given interval. It
+// returns immediately; the goroutine stops when ctx is canceled. No-op when
+// the named-token subsystem is not configured.
+func (s *Server) StartAPITokenReconciler(ctx context.Context, interval time.Duration) {
+	if s.apiTokenRepo == nil || s.apiTokenDeps == nil || s.apiTokenDeps.authService == nil {
+		return
+	}
+	if interval <= 0 {
+		return
+	}
+	authService := s.apiTokenDeps.authService
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := authService.ReconcileAPITokens(ctx); err != nil {
+					log.Printf("[RECONCILE] api token reconciliation failed: %v", err)
+				}
+			}
+		}
+	}()
+	log.Printf("[RECONCILE] api token reconciler started (interval: %s)", interval)
 }
 
 // AddCustomHandler adds a custom handler to the router

@@ -9,6 +9,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
+	apitokenuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/api_token"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
@@ -35,6 +36,7 @@ type HandlerRegistry struct {
 	userController             *controllers.UserController
 	shareController            *controllers.ShareController
 	personalAPIKeyController   *controllers.PersonalAPIKeyController
+	apiTokenController         *controllers.APITokenController
 	memoryController           *controllers.MemoryController
 	sandboxPolicyController    *controllers.SandboxPolicyController
 	taskController             *controllers.TaskController
@@ -134,6 +136,22 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Personal API key controller initialized")
 	}
 
+	// Create the unified multi API token controller (list/create/get/delete)
+	// when the new API token repository is available (Kubernetes mode only).
+	var apiTokenController *controllers.APITokenController
+	if server.apiTokenRepo != nil {
+		var tokenAuthService apitokenuc.AuthService
+		if simpleAuth, ok := server.container.AuthService.(*services.SimpleAuthService); ok {
+			tokenAuthService = simpleAuth
+		}
+		createUC := apitokenuc.NewCreateAPITokenUseCase(server.apiTokenRepo, tokenAuthService)
+		listUC := apitokenuc.NewListAPITokenUseCase(server.apiTokenRepo)
+		getUC := apitokenuc.NewGetAPITokenUseCase(server.apiTokenRepo)
+		deleteUC := apitokenuc.NewDeleteAPITokenUseCase(server.apiTokenRepo, tokenAuthService)
+		apiTokenController = controllers.NewAPITokenController(createUC, listUC, getUC, deleteUC)
+		log.Printf("[ROUTER] API token controller initialized")
+	}
+
 	// Create memory controller if memory repository is available
 	var memoryController *controllers.MemoryController
 	if server.memoryRepo != nil {
@@ -223,6 +241,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			userController:             controllers.NewUserController(),
 			shareController:            shareController,
 			personalAPIKeyController:   personalAPIKeyController,
+			apiTokenController:         apiTokenController,
 			memoryController:           memoryController,
 			sandboxPolicyController:    sandboxPolicyController,
 			taskController:             taskController,
@@ -464,6 +483,19 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Personal API key endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Personal API key controller not available, skipping personal API key routes")
+	}
+
+	// Unified multi API token endpoints (list/create/get/delete). Available
+	// in Kubernetes mode only, where the API token repository is initialized.
+	if r.handlers.apiTokenController != nil {
+		log.Printf("[ROUTES] Registering API token endpoints...")
+		r.echo.GET("/api-tokens", r.handlers.apiTokenController.List, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/api-tokens", r.handlers.apiTokenController.Create, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/api-tokens/:tokenId", r.handlers.apiTokenController.Get, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.DELETE("/api-tokens/:tokenId", r.handlers.apiTokenController.Delete, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		log.Printf("[ROUTES] API token endpoints registered")
+	} else {
+		log.Printf("[ROUTES] API token controller not available, skipping API token routes")
 	}
 
 	// Add memory routes if memory repository is available (Kubernetes mode only)
