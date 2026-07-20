@@ -180,6 +180,79 @@ In dev, the working configuration was:
 - The same token used as `SESSION_MANAGER_CONNECTION_TOKEN` and
   `SESSION_MANAGER_HMAC_SECRET`
 
+## Registering a Native Manager
+
+Use `native install` on the machine that will run native sessions. The command
+registers the manager with the parent proxy, stores the returned connection
+token, installs the host service, starts it, and sends the first heartbeat.
+
+Before registering, prepare:
+
+- An API key for the parent proxy with permission to create sessions.
+- An upstream URL for the parent proxy.
+- A public URL through which the parent proxy can reach the native manager.
+  The parent must be able to request `<public-url>/healthz` and proxy session
+  traffic through the same URL. A VPN, Tailscale, or reverse tunnel can be used
+  when the native machine is not directly reachable from the cluster.
+
+For a user-scoped macOS manager with the filesystem sandbox enabled:
+
+```bash
+export AGENTAPI_KEY="<parent-proxy-api-key>"
+
+agentapi-proxy native install \
+  --upstream "https://parent-proxy.example.com" \
+  --public-url "https://native-mac.example.com" \
+  --name "ios-builder" \
+  --label purpose=ios \
+  --filesystem-sandbox
+```
+
+Add `--default` to select this manager when a session does not specify a
+manager. To register it for a team instead of the current user:
+
+```bash
+agentapi-proxy native install \
+  --upstream "https://parent-proxy.example.com" \
+  --public-url "https://native-mac.example.com" \
+  --name "team-ios-builder" \
+  --scope team \
+  --team-id "my-org/ios-team" \
+  --label purpose=ios \
+  --filesystem-sandbox
+```
+
+The registration flow is:
+
+```text
+native install
+  -> POST /external-session-managers
+  -> receive manager ID and one-time connection token
+  -> install and start the native host service
+  -> POST the manager heartbeat
+  -> parent proxy verifies <public-url>/healthz
+```
+
+On macOS, configuration and credentials are stored under:
+
+```text
+~/Library/Application Support/agentapi-native/config.json
+~/Library/Application Support/agentapi-native/credentials.json
+```
+
+Check the installed service and end-to-end parent connectivity:
+
+```bash
+agentapi-proxy native status
+agentapi-proxy native doctor
+```
+
+`native status` reports the manager ID, upstream and public URLs, active
+sessions, and whether the filesystem sandbox is enabled. `native doctor`
+checks local configuration permissions, service health, and the parent
+heartbeat. If registration must retain an existing identity, pass the existing
+ID with `--manager-id`.
+
 ## Starting a Session Through an ESM
 
 Specify the manager explicitly:
