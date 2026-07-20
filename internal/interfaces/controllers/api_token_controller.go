@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -11,6 +12,19 @@ import (
 	apitokenuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/api_token"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
+
+// Public API scope vocabulary. The product/UI speaks of "personal" and "team"
+// tokens. Internally the entity layer keeps the "user" enum value for personal
+// tokens (see entities.APITokenScopeUser); the controller translates in both
+// directions so the public API never exposes the "user" wording.
+const (
+	publicScopePersonal = "personal"
+	publicScopeTeam     = "team"
+)
+
+// maxNameLen is the maximum allowed length (in runes) of a token name after
+// trimming.
+const maxNameLen = 64
 
 // CreateAPITokenUC is the use case interface for creating tokens.
 type CreateAPITokenUC interface {
@@ -51,35 +65,40 @@ func NewAPITokenController(createUC CreateAPITokenUC, listUC ListAPITokenUC, get
 }
 
 // CreateAPITokenRequest is the JSON body for POST /api-tokens.
+//
+// Scope uses the public vocabulary "personal" (default) or "team". The
+// internal "user" wording is intentionally not accepted on the public API.
 type CreateAPITokenRequest struct {
 	Name        string   `json:"name"`
-	Scope       string   `json:"scope"`             // "user" (default) or "team"
+	Scope       string   `json:"scope"`             // "personal" (default) or "team"
 	TeamID      string   `json:"team_id,omitempty"` // required when scope=="team"
 	Permissions []string `json:"permissions,omitempty"`
 	ExpiresAt   *string  `json:"expires_at,omitempty"` // RFC3339
 }
 
 // APITokenMetadata is the metadata-only representation of a token (no secret).
+// The safe secret prefix is exposed as "token_prefix" (never "display_prefix"
+// and never the full secret).
 type APITokenMetadata struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Scope         string   `json:"scope"`
-	UserID        string   `json:"user_id"`
-	TeamID        string   `json:"team_id,omitempty"`
-	Permissions   []string `json:"permissions"`
-	DisplayPrefix string   `json:"display_prefix"`
-	ExpiresAt     *string  `json:"expires_at,omitempty"`
-	CreatedBy     string   `json:"created_by"`
-	CreatedAt     string   `json:"created_at"`
-	UpdatedAt     string   `json:"updated_at"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Scope       string   `json:"scope"` // "personal" or "team"
+	UserID      string   `json:"user_id"`
+	TeamID      string   `json:"team_id,omitempty"`
+	Permissions []string `json:"permissions"`
+	TokenPrefix string   `json:"token_prefix"`
+	ExpiresAt   *string  `json:"expires_at,omitempty"`
+	CreatedBy   string   `json:"created_by"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
 }
 
-// APITokenWithSecret is the create response: metadata plus the plaintext
-// token, returned exactly once. The JSON field is named "plaintext_token" to
-// match the agentapi-ui create-token contract.
-type APITokenWithSecret struct {
-	APITokenMetadata
-	Secret string `json:"plaintext_token"`
+// CreateAPITokenResponse is the exact create response contract: a nested
+// "token" object holding the metadata plus the one-time "plaintext_token". It
+// matches the agentapi-ui create-token contract.
+type CreateAPITokenResponse struct {
+	Token          APITokenMetadata `json:"token"`
+	PlaintextToken string           `json:"plaintext_token"`
 }
 
 // APITokenListResponse wraps a list of tokens: {items:[...]}.
@@ -99,9 +118,17 @@ func (c *APITokenController) Create(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	scope := req.Scope
-	if scope == "" {
-		scope = string(entities.APITokenScopeUser)
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
+	}
+	if len([]rune(name)) > maxNameLen {
+		return echo.NewHTTPError(http.StatusBadRequest, "name must be 1..64 characters")
+	}
+
+	internalScope, err := publicScopeToInternal(req.Scope)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	perms := make([]entities.Permission, 0, len(req.Permissions))
@@ -109,14 +136,12 @@ func (c *APITokenController) Create(ctx echo.Context) error {
 		perms = append(perms, entities.Permission(p))
 	}
 	if len(perms) == 0 {
-		// Default to the caller's session permissions so a freshly created
-		// token is at least useful. Still bounded by the caller.
-		perms = []entities.Permission{
-			entities.PermissionSessionCreate,
-			entities.PermissionSessionRead,
-			entities.PermissionSessionUpdate,
-			entities.PermissionSessionDelete,
-		}
+		// Derive a safe default from the caller's own session permissions so a
+		// token is never granted a permission the caller does not have (e.g. a
+		// read-only caller must not silently receive session:delete). The
+		// use case still re-validates that every permission is a subset of the
+		// caller's permissions.
+		perms = deriveDefaultPermissions(user)
 	}
 
 	var expiresAt *time.Time
@@ -130,8 +155,8 @@ func (c *APITokenController) Create(ctx echo.Context) error {
 
 	out, err := c.createUC.Execute(ctx.Request().Context(), &apitokenuc.CreateAPITokenInput{
 		Caller:      user,
-		Name:        req.Name,
-		Scope:       scope,
+		Name:        name,
+		Scope:       internalScope,
 		TeamID:      req.TeamID,
 		Permissions: perms,
 		ExpiresAt:   expiresAt,
@@ -143,9 +168,9 @@ func (c *APITokenController) Create(ctx echo.Context) error {
 	// The plaintext token is returned exactly once. Cache-Control: no-store
 	// prevents any intermediary from caching the response.
 	ctx.Response().Header().Set("Cache-Control", "no-store")
-	return ctx.JSON(http.StatusCreated, &APITokenWithSecret{
-		APITokenMetadata: toMetadata(*out.Token),
-		Secret:           out.Token.Secret(),
+	return ctx.JSON(http.StatusCreated, &CreateAPITokenResponse{
+		Token:          toMetadata(*out.Token),
+		PlaintextToken: out.Token.Secret(),
 	})
 }
 
@@ -156,12 +181,15 @@ func (c *APITokenController) List(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 
-	scope := ctx.QueryParam("scope")
+	internalScope, err := publicScopeToInternal(ctx.QueryParam("scope"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	teamID := ctx.QueryParam("team_id")
 
 	out, err := c.listUC.Execute(ctx.Request().Context(), &apitokenuc.ListAPITokenInput{
 		Caller: user,
-		Scope:  scope,
+		Scope:  internalScope,
 		TeamID: teamID,
 	})
 	if err != nil {
@@ -241,7 +269,7 @@ func (c *APITokenController) mapCreateError(err error) error {
 	case contains(msg, "team_id is required"):
 		return echo.NewHTTPError(http.StatusBadRequest, "team_id is required for team-scoped tokens")
 	case contains(msg, "invalid scope"):
-		return echo.NewHTTPError(http.StatusBadRequest, "scope must be 'user' or 'team'")
+		return echo.NewHTTPError(http.StatusBadRequest, "scope must be 'personal' or 'team'")
 	case contains(msg, "permissions cannot be empty"):
 		return echo.NewHTTPError(http.StatusBadRequest, "permissions cannot be empty")
 	default:
@@ -258,7 +286,7 @@ func (c *APITokenController) mapListError(err error) error {
 	case contains(msg, "team_id is required"):
 		return echo.NewHTTPError(http.StatusBadRequest, "team_id is required for team-scoped tokens")
 	case contains(msg, "invalid scope"):
-		return echo.NewHTTPError(http.StatusBadRequest, "scope must be 'user' or 'team'")
+		return echo.NewHTTPError(http.StatusBadRequest, "scope must be 'personal' or 'team'")
 	default:
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list api tokens")
 	}
@@ -278,6 +306,56 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
+// publicScopeToInternal translates the public scope vocabulary ("personal" /
+// "team", with "" defaulting to "personal") into the internal enum value
+// ("user" / "team"). Any other value is rejected.
+func publicScopeToInternal(public string) (string, error) {
+	switch public {
+	case "", publicScopePersonal:
+		return string(entities.APITokenScopeUser), nil
+	case publicScopeTeam:
+		return string(entities.APITokenScopeTeam), nil
+	default:
+		return "", errors.New("invalid scope: must be 'personal' or 'team'")
+	}
+}
+
+// internalScopeToPublic translates the internal enum back to the public
+// vocabulary. Unknown values pass through unchanged so a future scope is not
+// silently mislabeled.
+func internalScopeToPublic(internal string) string {
+	switch entities.APITokenScope(internal) {
+	case entities.APITokenScopeUser:
+		return publicScopePersonal
+	case entities.APITokenScopeTeam:
+		return publicScopeTeam
+	default:
+		return internal
+	}
+}
+
+// deriveDefaultPermissions returns the session permissions the caller
+// actually holds, restricted to the well-known session set. A read-only
+// caller therefore receives only [session:read]; an admin receives all
+// session permissions. The result may be empty if the caller holds none of the
+// session permissions, in which case the use case rejects the request with a
+// 400 (permissions cannot be empty) rather than silently over-granting.
+func deriveDefaultPermissions(user *entities.User) []entities.Permission {
+	sessionPerms := []entities.Permission{
+		entities.PermissionSessionCreate,
+		entities.PermissionSessionRead,
+		entities.PermissionSessionUpdate,
+		entities.PermissionSessionDelete,
+	}
+	out := make([]entities.Permission, 0, len(sessionPerms))
+	for _, p := range sessionPerms {
+		if user.HasPermission(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // toMetadata converts a token entity into its metadata-only DTO (no secret).
 func toMetadata(t entities.APIToken) APITokenMetadata {
 	return *toMetadataPtr(&t)
@@ -295,16 +373,16 @@ func toMetadataPtr(t *entities.APIToken) *APITokenMetadata {
 		expiresAt = &s
 	}
 	m := &APITokenMetadata{
-		ID:            t.ID(),
-		Name:          t.Name(),
-		Scope:         string(t.Scope()),
-		UserID:        string(t.UserID()),
-		Permissions:   perms,
-		DisplayPrefix: t.DisplayPrefix(),
-		ExpiresAt:     expiresAt,
-		CreatedBy:     string(t.CreatedBy()),
-		CreatedAt:     t.CreatedAt().Format(time.RFC3339Nano),
-		UpdatedAt:     t.UpdatedAt().Format(time.RFC3339Nano),
+		ID:          t.ID(),
+		Name:        t.Name(),
+		Scope:       internalScopeToPublic(string(t.Scope())),
+		UserID:      string(t.UserID()),
+		Permissions: perms,
+		TokenPrefix: t.DisplayPrefix(),
+		ExpiresAt:   expiresAt,
+		CreatedBy:   string(t.CreatedBy()),
+		CreatedAt:   t.CreatedAt().Format(time.RFC3339Nano),
+		UpdatedAt:   t.UpdatedAt().Format(time.RFC3339Nano),
 	}
 	if t.TeamID() != "" {
 		m.TeamID = t.TeamID()

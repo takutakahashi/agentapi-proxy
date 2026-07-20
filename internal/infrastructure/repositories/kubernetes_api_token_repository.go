@@ -45,17 +45,17 @@ const (
 // apiTokenMetadataJSON is the JSON representation of token metadata stored in
 // the Secret. It intentionally excludes the plaintext secret.
 type apiTokenMetadataJSON struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Scope         string    `json:"scope"`
-	UserID        string    `json:"user_id"`
-	TeamID        string    `json:"team_id,omitempty"`
-	Permissions   []string  `json:"permissions"`
-	DisplayPrefix string    `json:"display_prefix"`
-	ExpiresAt     *string   `json:"expires_at,omitempty"`
-	CreatedBy     string    `json:"created_by"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Scope       string    `json:"scope"`
+	UserID      string    `json:"user_id"`
+	TeamID      string    `json:"team_id,omitempty"`
+	Permissions []string  `json:"permissions"`
+	TokenPrefix string    `json:"token_prefix"`
+	ExpiresAt   *string   `json:"expires_at,omitempty"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // KubernetesAPITokenRepository implements APITokenRepository using one
@@ -256,17 +256,17 @@ func (r *KubernetesAPITokenRepository) toJSON(token *entities.APIToken) ([]byte,
 		expiresAt = &s
 	}
 	return json.Marshal(apiTokenMetadataJSON{
-		ID:            token.ID(),
-		Name:          token.Name(),
-		Scope:         string(token.Scope()),
-		UserID:        string(token.UserID()),
-		TeamID:        token.TeamID(),
-		Permissions:   perms,
-		DisplayPrefix: token.DisplayPrefix(),
-		ExpiresAt:     expiresAt,
-		CreatedBy:     string(token.CreatedBy()),
-		CreatedAt:     token.CreatedAt(),
-		UpdatedAt:     token.UpdatedAt(),
+		ID:          token.ID(),
+		Name:        token.Name(),
+		Scope:       string(token.Scope()),
+		UserID:      string(token.UserID()),
+		TeamID:      token.TeamID(),
+		Permissions: perms,
+		TokenPrefix: token.DisplayPrefix(),
+		ExpiresAt:   expiresAt,
+		CreatedBy:   string(token.CreatedBy()),
+		CreatedAt:   token.CreatedAt(),
+		UpdatedAt:   token.UpdatedAt(),
 	})
 }
 
@@ -305,7 +305,7 @@ func (r *KubernetesAPITokenRepository) fromSecret(secret *corev1.Secret) (*entit
 	return entities.RestoreAPIToken(
 		meta.ID,
 		string(secretBytes),
-		meta.DisplayPrefix,
+		meta.TokenPrefix,
 		meta.Name,
 		entities.APITokenScope(meta.Scope),
 		entities.UserID(meta.UserID),

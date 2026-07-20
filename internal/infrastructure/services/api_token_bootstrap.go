@@ -12,6 +12,9 @@ import (
 // in-memory auth service so they authenticate immediately after startup. It
 // is run after MigrateAPITokens so freshly migrated tokens are also loaded
 // (loading them twice is harmless).
+//
+// Any per-token load failure is propagated so the caller can prevent serving
+// traffic rather than silently running with a partially loaded auth map.
 func BootstrapAPITokens(
 	ctx context.Context,
 	authService *SimpleAuthService,
@@ -26,9 +29,11 @@ func BootstrapAPITokens(
 	}
 	loaded := 0
 	for _, token := range tokens {
+		if token == nil {
+			return fmt.Errorf("failed to load api token: token is nil")
+		}
 		if err := authService.LoadAPIToken(ctx, token); err != nil {
-			log.Printf("[BOOTSTRAP] warning: failed to load api token %s: %v", token.ID(), err)
-			continue
+			return fmt.Errorf("failed to load api token %s: %w", token.ID(), err)
 		}
 		loaded++
 	}

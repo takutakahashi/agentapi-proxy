@@ -51,11 +51,13 @@ type APITokenAnnotator interface {
 // For each legacy item the migration uses a deterministic token id. If a new
 // token with that id already exists with the SAME secret, the migration is a
 // no-op for that item (already migrated). If it exists with a DIFFERENT secret
-// the migration fails safely: it logs a warning, leaves both the legacy and
-// new records untouched, and continues with the next item. The application
-// continues authenticating legacy token strings after migration because the
-// migrated token's secret is the legacy plaintext value, which is loaded into
-// the in-memory auth map.
+// the migration fails fast: it returns an error and leaves both the legacy and
+// new records untouched. Any per-item failure (create conflict, annotation
+// error, or auth-service load error) propagates as a returned error so the
+// caller can prevent serving traffic. The application continues
+// authenticating legacy token strings after migration because the migrated
+// token's secret is the legacy plaintext value, which is loaded into the
+// in-memory auth map.
 func MigrateAPITokens(
 	ctx context.Context,
 	authService *SimpleAuthService,
@@ -96,28 +98,26 @@ func migratePersonalKeys(
 		userID := pk.UserID()
 		secret := pk.APIKey()
 		if userID == "" || secret == "" {
-			log.Printf("[MIGRATE] skipping legacy personal key with empty user/secret")
-			continue
+			return 0, fmt.Errorf("legacy personal api key has empty user/secret (user=%q)", userID)
 		}
 		tokenID := apitoken.MigrationTokenID("personal-" + string(userID))
 		token := buildMigrationPersonalToken(tokenID, secret, userID, pk.CreatedAt(), pk.UpdatedAt())
 
 		created, err := idempotentCreate(ctx, tokenRepo, token)
 		if err != nil {
-			log.Printf("[MIGRATE] warning: failed to migrate personal key for user %s: %v", userID, err)
-			continue
+			return 0, fmt.Errorf("migrate personal key for user %s: %w", userID, err)
 		}
 		if created {
 			count++
 		}
 		if annotator != nil {
 			if err := annotator.ApplyMigrationAnnotations(ctx, tokenID, migrationSourcePersonal, string(userID)); err != nil {
-				log.Printf("[MIGRATE] warning: failed to annotate migrated personal token %s: %v", tokenID, err)
+				return 0, fmt.Errorf("annotate migrated personal token %s: %w", tokenID, err)
 			}
 		}
 		if authService != nil {
 			if err := authService.LoadAPIToken(ctx, token); err != nil {
-				log.Printf("[MIGRATE] warning: failed to load migrated personal token for user %s: %v", userID, err)
+				return 0, fmt.Errorf("load migrated personal token for user %s: %w", userID, err)
 			}
 		}
 	}
@@ -147,8 +147,7 @@ func migrateTeamServiceAccounts(
 		teamID := tc.TeamID()
 		secret := sa.APIKey()
 		if teamID == "" || secret == "" {
-			log.Printf("[MIGRATE] skipping legacy team config %s with empty team/secret", teamID)
-			continue
+			return 0, fmt.Errorf("legacy team config %q has empty team/secret", teamID)
 		}
 		tokenID := apitoken.MigrationTokenID("team-" + teamID)
 		perms := sa.Permissions()
@@ -159,20 +158,19 @@ func migrateTeamServiceAccounts(
 
 		created, err := idempotentCreate(ctx, tokenRepo, token)
 		if err != nil {
-			log.Printf("[MIGRATE] warning: failed to migrate team service account for team %s: %v", teamID, err)
-			continue
+			return 0, fmt.Errorf("migrate team service account for team %s: %w", teamID, err)
 		}
 		if created {
 			count++
 		}
 		if annotator != nil {
 			if err := annotator.ApplyMigrationAnnotations(ctx, tokenID, migrationSourceTeam, teamID); err != nil {
-				log.Printf("[MIGRATE] warning: failed to annotate migrated team token %s: %v", tokenID, err)
+				return 0, fmt.Errorf("annotate migrated team token %s: %w", tokenID, err)
 			}
 		}
 		if authService != nil {
 			if err := authService.LoadAPIToken(ctx, token); err != nil {
-				log.Printf("[MIGRATE] warning: failed to load migrated team token for team %s: %v", teamID, err)
+				return 0, fmt.Errorf("load migrated team token for team %s: %w", teamID, err)
 			}
 		}
 	}

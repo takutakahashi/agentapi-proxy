@@ -105,6 +105,22 @@ func runProxy(cmd *cobra.Command, args []string) {
 	proxyServer := app.NewServer(configData, verbose)
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 
+	// Run the idempotent legacy→multi API token migration and load all named
+	// tokens into the auth service. Any migration conflict or bootstrap load
+	// error is fatal here: serving traffic with a partially migrated or
+	// partially loaded auth map would be unsafe. This keeps log.Fatal out of
+	// library code (internal/app) while still making startup fail-safe.
+	if err := proxyServer.InitAPITokens(context.Background()); err != nil {
+		cancelWorkers()
+		log.Fatalf("[SERVER] API token initialization failed, refusing to serve: %v", err)
+	}
+
+	// Keep named-token revocation eventually consistent across replicas.
+	// Local revocation is immediate; other replicas drop a deleted token on
+	// the next reconciliation pass. Legacy static/personal API keys are
+	// unaffected.
+	proxyServer.StartAPITokenReconciler(workerCtx, 30*time.Second)
+
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
 

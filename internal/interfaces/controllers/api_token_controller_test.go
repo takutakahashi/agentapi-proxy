@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -133,13 +134,26 @@ func setupAPITokenController() (*APITokenController, *mockAPITokenRepo, *mockTok
 	return newAPITokenControllerForTest(repo, authSvc), repo, authSvc
 }
 
+// requireMetadataShape asserts the raw JSON for a metadata-only payload (list
+// item or GET response) has token_prefix and lacks secret/plaintext_token.
+func requireMetadataShape(t *testing.T, raw map[string]json.RawMessage) {
+	t.Helper()
+	assert.Contains(t, raw, "token_prefix", "metadata must expose token_prefix")
+	_, hasDisplay := raw["display_prefix"]
+	assert.False(t, hasDisplay, "metadata must NOT expose display_prefix")
+	_, hasSecret := raw["secret"]
+	assert.False(t, hasSecret, "metadata must NOT expose secret")
+	_, hasPlain := raw["plaintext_token"]
+	assert.False(t, hasPlain, "metadata must NOT expose plaintext_token")
+}
+
 // --- Create ---
 
 func TestAPITokenController_Create_Personal_201_NoStore(t *testing.T) {
 	c, rec := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
 		CreateAPITokenRequest{
 			Name:        "laptop",
-			Scope:       "user",
+			Scope:       "personal",
 			Permissions: []string{"session:read"},
 		}, newTestAPIKeyUser("user-1"))
 	ctrl, repo, authSvc := setupAPITokenController()
@@ -148,30 +162,137 @@ func TestAPITokenController_Create_Personal_201_NoStore(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, rec.Code)
 	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 
-	var resp APITokenWithSecret
+	var resp CreateAPITokenResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Equal(t, "user-1", resp.UserID)
-	assert.NotEmpty(t, resp.Secret)
-	assert.Equal(t, "user", resp.Scope)
-	assert.Equal(t, "laptop", resp.Name)
+	assert.Equal(t, "personal", resp.Token.Scope, "public API scope must be 'personal'")
+	assert.Equal(t, "user-1", resp.Token.UserID)
+	assert.Equal(t, "laptop", resp.Token.Name)
+	assert.NotEmpty(t, resp.PlaintextToken)
+	assert.Contains(t, resp.Token.TokenPrefix, "apt_")
 
-	// The create response must expose the plaintext token under the
-	// agentapi-ui-contracted JSON key "plaintext_token" (not "secret").
+	// The create response must be the exact nested contract: {token, plaintext_token}.
 	var createRaw map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &createRaw))
+	assert.Contains(t, createRaw, "token")
 	assert.Contains(t, createRaw, "plaintext_token")
-	_, hasLegacySecret := createRaw["secret"]
-	assert.False(t, hasLegacySecret, "create response must use plaintext_token, not secret")
+	for _, banned := range []string{"secret", "display_prefix"} {
+		_, has := createRaw[banned]
+		assert.False(t, has, "create response must not contain %q", banned)
+	}
+	// The nested token object must itself be metadata-only (no secret leakage).
+	var nestedToken map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(createRaw["token"], &nestedToken))
+	requireMetadataShape(t, nestedToken)
+	var nestedScope string
+	require.NoError(t, json.Unmarshal(nestedToken["scope"], &nestedScope))
+	assert.Equal(t, "personal", nestedScope)
 
 	// Secret must NOT appear in metadata responses later.
 	all, _ := repo.ListAll(context.Background())
-	assert.Equal(t, resp.Secret, all[0].Secret()) // entity still holds secret
+	assert.Equal(t, resp.PlaintextToken, all[0].Secret()) // entity still holds secret
 	assert.Len(t, authSvc.loaded, 1)
+}
+
+func TestAPITokenController_Create_ScopeDefaultIsPersonal(t *testing.T) {
+	c, rec := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{
+			Name:        "default-scope",
+			Permissions: []string{"session:read"},
+		}, newTestAPIKeyUser("user-1"))
+	ctrl, _, _ := setupAPITokenController()
+	require.NoError(t, ctrl.Create(c))
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp CreateAPITokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "personal", resp.Token.Scope)
+}
+
+func TestAPITokenController_Create_RejectsInternalUserScope(t *testing.T) {
+	// The internal "user" wording must NOT be accepted on the public API.
+	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{Name: "x", Scope: "user", Permissions: []string{"session:read"}},
+		newTestAPIKeyUser("user-1"))
+	ctrl, _, _ := setupAPITokenController()
+	assertHTTPError(t, ctrl.Create(c), http.StatusBadRequest)
+}
+
+func TestAPITokenController_Create_NameRequired(t *testing.T) {
+	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{Name: "", Scope: "personal", Permissions: []string{"session:read"}},
+		newTestAPIKeyUser("user-1"))
+	ctrl, _, _ := setupAPITokenController()
+	assertHTTPError(t, ctrl.Create(c), http.StatusBadRequest)
+}
+
+func TestAPITokenController_Create_NameTrimmedAndLengthBoundaries(t *testing.T) {
+	ctrl, _, _ := setupAPITokenController()
+
+	// 1 character (after trimming surrounding spaces) is valid.
+	c, rec := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{Name: "   a   ", Scope: "personal", Permissions: []string{"session:read"}},
+		newTestAPIKeyUser("user-1"))
+	require.NoError(t, ctrl.Create(c))
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	var resp CreateAPITokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "a", resp.Token.Name, "name must be trimmed")
+
+	// exactly 64 runes is valid.
+	name64 := strings.Repeat("a", 64)
+	c2, rec2 := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{Name: name64, Scope: "personal", Permissions: []string{"session:read"}},
+		newTestAPIKeyUser("user-2"))
+	require.NoError(t, ctrl.Create(c2))
+	assert.Equal(t, http.StatusCreated, rec2.Code)
+
+	// 65 runes is rejected with 400.
+	name65 := strings.Repeat("a", 65)
+	c3, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{Name: name65, Scope: "personal", Permissions: []string{"session:read"}},
+		newTestAPIKeyUser("user-3"))
+	assertHTTPError(t, ctrl.Create(c3), http.StatusBadRequest)
+
+	// only-whitespace name is rejected (empty after trim) with 400.
+	c4, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{Name: "    ", Scope: "personal", Permissions: []string{"session:read"}},
+		newTestAPIKeyUser("user-4"))
+	assertHTTPError(t, ctrl.Create(c4), http.StatusBadRequest)
+}
+
+func TestAPITokenController_Create_DefaultPermissionsBoundedByCaller(t *testing.T) {
+	// A read-only caller (only session:read) must NOT silently receive
+	// session:delete when permissions are omitted.
+	readOnly := entities.NewUser(entities.UserID("ro-1"), entities.UserTypeRegular, "ro")
+	readOnly.SetPermissions([]entities.Permission{entities.PermissionSessionRead})
+
+	c, rec := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{Name: "ro", Scope: "personal"}, readOnly)
+	ctrl, _, _ := setupAPITokenController()
+	require.NoError(t, ctrl.Create(c))
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp CreateAPITokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, []string{"session:read"}, resp.Token.Permissions,
+		"default permissions must be exactly the caller's session permissions")
+}
+
+func TestAPITokenController_Create_DefaultPermissionsEmptyForCallerWithoutSessionPerms(t *testing.T) {
+	// A caller with no session permissions at all: default derivation yields
+	// an empty set, which the use case rejects with 400 (no silent over-grant).
+	none := entities.NewUser(entities.UserID("none-1"), entities.UserTypeRegular, "none")
+	none.SetPermissions([]entities.Permission{}) // no session perms
+
+	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
+		CreateAPITokenRequest{Name: "x", Scope: "personal"}, none)
+	ctrl, _, _ := setupAPITokenController()
+	assertHTTPError(t, ctrl.Create(c), http.StatusBadRequest)
 }
 
 func TestAPITokenController_Create_MissingAuth(t *testing.T) {
 	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
-		CreateAPITokenRequest{Scope: "user", Permissions: []string{"session:read"}}, nil)
+		CreateAPITokenRequest{Scope: "personal", Permissions: []string{"session:read"}}, nil)
 	ctrl, _, _ := setupAPITokenController()
 	assertHTTPError(t, ctrl.Create(c), http.StatusUnauthorized)
 }
@@ -179,7 +300,7 @@ func TestAPITokenController_Create_MissingAuth(t *testing.T) {
 func TestAPITokenController_Create_PermissionExceedsCaller(t *testing.T) {
 	user := newTestAPIKeyUser("u1") // has session:create, session:read only
 	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
-		CreateAPITokenRequest{Scope: "user", Permissions: []string{"session:delete"}}, user)
+		CreateAPITokenRequest{Name: "x", Scope: "personal", Permissions: []string{"session:delete"}}, user)
 	ctrl, _, _ := setupAPITokenController()
 	assertHTTPError(t, ctrl.Create(c), http.StatusForbidden)
 }
@@ -187,7 +308,7 @@ func TestAPITokenController_Create_PermissionExceedsCaller(t *testing.T) {
 func TestAPITokenController_Create_TeamNonMember(t *testing.T) {
 	user := newTestGitHubUser("u1", "org", "other") // member of org/other only
 	c, _ := makeAPITokenEchoContext(t, http.MethodPost, "/api-tokens",
-		CreateAPITokenRequest{Scope: "team", TeamID: "org/team", Permissions: []string{"session:create"}}, user)
+		CreateAPITokenRequest{Name: "x", Scope: "team", TeamID: "org/team", Permissions: []string{"session:create"}}, user)
 	ctrl, _, _ := setupAPITokenController()
 	assertHTTPError(t, ctrl.Create(c), http.StatusForbidden)
 }
@@ -207,27 +328,32 @@ func TestAPITokenController_List_ItemsShape(t *testing.T) {
 	seed("user-1b")
 	seed("user-2")
 
-	c, rec := makeAPITokenEchoContext(t, http.MethodGet, "/api-tokens?scope=user", nil, newTestAPIKeyUser("user-1"))
+	c, rec := makeAPITokenEchoContext(t, http.MethodGet, "/api-tokens?scope=personal", nil, newTestAPIKeyUser("user-1"))
 	require.NoError(t, ctrl.List(c))
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	var resp APITokenListResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	// user-1 owns tok_user-1 only (the other seeded for "user-1b" belongs to a different owner)
-	// Actually seed("user-1b") created owner user-1b, so user-1 sees only tok_user-1.
 	assert.Len(t, resp.Items, 1)
 	assert.Equal(t, "user-1", resp.Items[0].UserID)
-	// list response must not contain the secret field
+	assert.Equal(t, "personal", resp.Items[0].Scope, "list item scope must be 'personal'")
+
+	// list response must not contain secret/plaintext_token and must use token_prefix
 	var raw map[string]json.RawMessage
 	_ = json.Unmarshal(rec.Body.Bytes(), &raw)
-	// items is an array; verify each item lacks "secret"
 	var items []map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(raw["items"], &items))
 	for _, item := range items {
-		_, hasSecret := item["secret"]
-		assert.False(t, hasSecret, "list response leaked a secret")
-		assert.NotEmpty(t, item["display_prefix"])
+		requireMetadataShape(t, item)
+		assert.NotEmpty(t, item["token_prefix"])
 	}
+}
+
+func TestAPITokenController_List_RejectsInternalUserScope(t *testing.T) {
+	c, _ := makeAPITokenEchoContext(t, http.MethodGet, "/api-tokens?scope=user", nil, newTestAPIKeyUser("user-1"))
+	ctrl, _, _ := setupAPITokenController()
+	assertHTTPError(t, ctrl.List(c), http.StatusBadRequest)
 }
 
 // --- Get ---
@@ -246,11 +372,11 @@ func TestAPITokenController_Get_NoSecret(t *testing.T) {
 	var resp APITokenMetadata
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, "tok_get", resp.ID)
+	assert.Equal(t, "personal", resp.Scope, "get scope must be 'personal'")
 	// secret field must be absent on metadata-only responses
 	var raw map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
-	_, hasSecret := raw["secret"]
-	assert.False(t, hasSecret, "secret field must be absent on get")
+	requireMetadataShape(t, raw)
 }
 
 func TestAPITokenController_Get_OtherUserNotFound(t *testing.T) {
@@ -282,7 +408,7 @@ func TestAPITokenController_Delete_Owner_204(t *testing.T) {
 	c, rec := makeAPITokenEchoContextWithParam(t, http.MethodDelete, "/api-tokens/tok_del", "tok_del", nil, newTestAPIKeyUser("user-1"))
 	require.NoError(t, ctrl.Delete(c))
 	assert.Equal(t, http.StatusNoContent, rec.Code)
-	assert.Len(t, authSvc.revoked, 1, "immediate revocation expected")
+	assert.Len(t, authSvc.revoked, 1, "immediate local revocation expected")
 	_, err := repo.GetByID(context.Background(), "tok_del")
 	assert.True(t, errors.Is(err, entities.ErrAPITokenNotFound))
 }
@@ -318,6 +444,7 @@ func TestAPITokenController_Delete_TeamCreatorOrAdmin(t *testing.T) {
 		Caller:      creator,
 		Scope:       "team",
 		TeamID:      "org/team",
+		Name:        "team",
 		Permissions: []entities.Permission{entities.PermissionSessionCreate},
 	})
 	require.NoError(t, err)

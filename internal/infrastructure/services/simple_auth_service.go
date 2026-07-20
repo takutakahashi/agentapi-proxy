@@ -36,6 +36,7 @@ type SimpleAuthService struct {
 	users            map[entities.UserID]*entities.User
 	keyToUserID      map[string]entities.UserID
 	apiTokens        map[string]*apiTokenRecord // keyed by plaintext secret
+	apiTokenRepo     repositories.APITokenRepository
 	githubProvider   *auth.GitHubAuthProvider
 	githubAuthConfig *config.GitHubAuthConfig
 }
@@ -48,6 +49,59 @@ func NewSimpleAuthService() *SimpleAuthService {
 		keyToUserID: make(map[string]entities.UserID),
 		apiTokens:   make(map[string]*apiTokenRecord),
 	}
+}
+
+// SetAPITokenRepository wires the named API token repository so the auth
+// service can periodically reconcile its in-memory token map against the
+// authoritative Kubernetes Secret store. This is what makes revocation of a
+// named token eventually consistent across replicas: when a token is deleted
+// on one replica, every other replica drops it from its in-memory map on the
+// next reconciliation pass. Without this, a replica would keep accepting a
+// deleted named token for the lifetime of its process. Legacy static and
+// personal API keys live in the separate apiKeys map and are unaffected.
+func (s *SimpleAuthService) SetAPITokenRepository(repo repositories.APITokenRepository) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apiTokenRepo = repo
+}
+
+// ReconcileAPITokens refreshes the in-memory named-token map from the
+// repository. Tokens that no longer exist in the store (deleted on another
+// replica) are dropped from memory; tokens created on another replica are
+// loaded. It is safe to call concurrently with authentication since it holds
+// the write lock only while swapping in the freshly built map. The legacy
+// apiKeys map is untouched so static/personal API keys remain compatible.
+//
+// Revocation of a named token is therefore immediate on the replica that
+// performs the delete (RevokeAPIToken) and eventually consistent across other
+// replicas (bounded by the reconciliation cadence). Global immediate
+// revocation across replicas is intentionally NOT claimed.
+func (s *SimpleAuthService) ReconcileAPITokens(ctx context.Context) error {
+	s.mu.RLock()
+	repo := s.apiTokenRepo
+	s.mu.RUnlock()
+	if repo == nil {
+		return nil
+	}
+	tokens, err := repo.ListAll(ctx)
+	if err != nil {
+		return fmt.Errorf("reconcile api tokens: list: %w", err)
+	}
+	next := make(map[string]*apiTokenRecord, len(tokens))
+	for _, t := range tokens {
+		next[t.Secret()] = &apiTokenRecord{
+			tokenID:     t.ID(),
+			userID:      t.UserID(),
+			scope:       t.Scope(),
+			teamID:      t.TeamID(),
+			permissions: t.Permissions(),
+			expiresAt:   t.ExpiresAt(),
+		}
+	}
+	s.mu.Lock()
+	s.apiTokens = next
+	s.mu.Unlock()
+	return nil
 }
 
 // SetGitHubAuthConfig sets the GitHub authentication configuration.

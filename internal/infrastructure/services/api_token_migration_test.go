@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -240,7 +242,7 @@ func TestMigrateAPITokens_TeamServiceAccounts(t *testing.T) {
 	}
 }
 
-func TestMigrateAPITokens_ConflictingSecretFailsSafely(t *testing.T) {
+func TestMigrateAPITokens_ConflictingSecretFailsFast(t *testing.T) {
 	auth := NewSimpleAuthService()
 	tokenRepo := newMemTokenRepo()
 	personalRepo := newFakePersonalRepo()
@@ -255,10 +257,14 @@ func TestMigrateAPITokens_ConflictingSecretFailsSafely(t *testing.T) {
 		t.Fatalf("seed conflict: %v", err)
 	}
 
-	// Migration should fail safely: not overwrite the conflicting token. The
-	// migration logs the conflict and continues (does not return an error),
-	// preserving both records.
-	_ = MigrateAPITokens(context.Background(), auth, tokenRepo, personalRepo, nil, &noopAnnotator{})
+	// Migration must fail fast and propagate the conflict rather than swallow
+	// it: a deterministic-ID secret mismatch is an unsafe state and must
+	// prevent serving traffic.
+	err := MigrateAPITokens(context.Background(), auth, tokenRepo, personalRepo, nil, &noopAnnotator{})
+	if err == nil {
+		t.Fatal("expected migration to fail on secret conflict, got nil")
+	}
+
 	// The conflicting token must be untouched.
 	got, _ := tokenRepo.GetByID(context.Background(), conflictID)
 	if got.Secret() != "different_secret" {
@@ -267,5 +273,93 @@ func TestMigrateAPITokens_ConflictingSecretFailsSafely(t *testing.T) {
 	// Legacy data untouched.
 	if _, err := personalRepo.FindByUserID(context.Background(), entities.UserID("u1")); err != nil {
 		t.Errorf("legacy key removed on conflict: %v", err)
+	}
+}
+
+// failingAnnotator returns an error on every annotation call to verify that
+// annotation errors propagate through migration (fail-safe startup).
+type failingAnnotator struct{}
+
+func (failingAnnotator) ApplyMigrationAnnotations(context.Context, string, string, string) error {
+	return errors.New("annotator unavailable")
+}
+
+func TestMigrateAPITokens_AnnotationErrorPropagates(t *testing.T) {
+	auth := NewSimpleAuthService()
+	tokenRepo := newMemTokenRepo()
+	personalRepo := newFakePersonalRepo()
+	_ = personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1"))
+
+	err := MigrateAPITokens(context.Background(), auth, tokenRepo, personalRepo, nil, failingAnnotator{})
+	if err == nil {
+		t.Fatal("expected migration to fail when annotation fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "annotate") {
+		t.Errorf("expected annotation error to propagate, got: %v", err)
+	}
+}
+
+// failingTokenRepo wraps memTokenRepo to make Create return an arbitrary error
+// for a specific id, simulating a repository outage during migration.
+type failingTokenRepo struct {
+	*memTokenRepo
+	failNext bool
+}
+
+func (f *failingTokenRepo) Create(ctx context.Context, t *entities.APIToken) error {
+	if f.failNext {
+		f.failNext = false
+		return errors.New("repository unavailable")
+	}
+	return f.memTokenRepo.Create(ctx, t)
+}
+
+func TestMigrateAPITokens_RepositoryErrorPropagates(t *testing.T) {
+	auth := NewSimpleAuthService()
+	repo := &failingTokenRepo{memTokenRepo: newMemTokenRepo(), failNext: true}
+	personalRepo := newFakePersonalRepo()
+	_ = personalRepo.Save(context.Background(), entities.NewPersonalAPIKey(entities.UserID("u1"), "ap_legacy_1"))
+
+	err := MigrateAPITokens(context.Background(), auth, repo, personalRepo, nil, &noopAnnotator{})
+	if err == nil {
+		t.Fatal("expected migration to fail on repository error, got nil")
+	}
+}
+
+// failingListTokenRepo wraps memTokenRepo to make ListAll return an error,
+// simulating a repository outage during bootstrap.
+type failingListTokenRepo struct {
+	*memTokenRepo
+}
+
+func (f *failingListTokenRepo) ListAll(context.Context) ([]*entities.APIToken, error) {
+	return nil, errors.New("repository unavailable")
+}
+
+func TestBootstrapAPITokens_BootstrapErrorPropagates(t *testing.T) {
+	auth := NewSimpleAuthService()
+	repo := &failingListTokenRepo{memTokenRepo: newMemTokenRepo()}
+	err := BootstrapAPITokens(context.Background(), auth, repo)
+	if err == nil {
+		t.Fatal("expected bootstrap to fail on list error, got nil")
+	}
+}
+
+// nilTokenListRepo returns a single nil token from ListAll to simulate a
+// corrupt/unparseable stored entry; bootstrap must surface this as an error
+type nilTokenListRepo struct {
+	*memTokenRepo
+}
+
+func (nilTokenListRepo) ListAll(context.Context) ([]*entities.APIToken, error) {
+	return []*entities.APIToken{nil}, nil
+}
+
+func TestBootstrapAPITokens_LoadErrorPropagates(t *testing.T) {
+	auth := NewSimpleAuthService()
+	repo := &nilTokenListRepo{memTokenRepo: newMemTokenRepo()}
+	err := BootstrapAPITokens(context.Background(), auth, repo)
+	if err == nil {
+		t.Fatal("expected bootstrap to fail on corrupt (nil) token, got nil")
 	}
 }

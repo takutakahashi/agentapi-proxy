@@ -4790,7 +4790,7 @@
     "/api-tokens": {
       "get": {
         "summary": "List API tokens",
-        "description": "Lists named API tokens accessible to the authenticated user. Personal (user-scoped) tokens are strictly owner-only. Team-scoped tokens are visible to team members. The plaintext secret is never returned; each item only exposes a short display_prefix.",
+        "description": "Lists named API tokens accessible to the authenticated user. Personal (user-scoped) tokens are strictly owner-only. Team-scoped tokens are visible to team members. The plaintext secret is never returned; each item only exposes a short token_prefix.",
         "operationId": "listAPITokens",
         "tags": ["API Tokens"],
         "security": [
@@ -4798,7 +4798,7 @@
           { "BearerAuth": [] }
         ],
         "parameters": [
-          { "name": "scope", "in": "query", "required": false, "description": "Filter by scope: 'user' or 'team'. Omit to return both the caller's personal tokens and tokens for teams the caller belongs to.", "schema": { "type": "string", "enum": ["user", "team"] } },
+          { "name": "scope", "in": "query", "required": false, "description": "Filter by scope: 'personal' or 'team'. Omit to return both the caller's personal tokens and tokens for teams the caller belongs to.", "schema": { "type": "string", "enum": ["personal", "team"] } },
           { "name": "team_id", "in": "query", "required": false, "description": "Filter by team ID (required when scope=team)", "schema": { "type": "string" } }
         ],
         "responses": {
@@ -4816,7 +4816,7 @@
       },
       "post": {
         "summary": "Create an API token",
-        "description": "Creates a new named, revocable API token. Personal tokens authenticate as the owner; team tokens authenticate as a team-scoped service account. The plaintext secret is returned exactly once in the response. The response carries Cache-Control: no-store. Requested permissions cannot be broader than the caller's permissions. Team tokens require team membership (admins qualify).",
+        "description": "Creates a new named, revocable API token. Personal tokens authenticate as the owner; team tokens authenticate as a team-scoped service account. The plaintext secret is returned exactly once in the response. The response carries Cache-Control: no-store. Requested permissions cannot be broader than the caller's permissions; when omitted they default to the caller's own session permissions (never granting a permission the caller lacks). Team tokens require team membership (admins qualify). Name is required (1..64 characters after trimming). Scope uses the public vocabulary 'personal' (default) or 'team'.",
         "operationId": "createAPIToken",
         "tags": ["API Tokens"],
         "security": [
@@ -4833,7 +4833,7 @@
         },
         "responses": {
           "201": {
-            "description": "API token created. The plaintext token is included exactly once in the `plaintext_token` field.",
+            "description": "API token created. The plaintext token is included exactly once in the `plaintext_token` field; metadata is nested under `token`.",
             "headers": {
               "Cache-Control": {
                 "description": "Always 'no-store' to prevent caching the secret.",
@@ -4880,7 +4880,7 @@
       },
       "delete": {
         "summary": "Delete an API token",
-        "description": "Deletes (revokes) an API token. Personal tokens can only be deleted by the owner. Team tokens can be deleted by the creator or an admin. The operation is idempotent: a 204 is returned for nonexistent or not-authorized token IDs without leaking whether the token exists in another scope. Revocation takes effect immediately in the in-memory auth map.",
+        "description": "Deletes (revokes) an API token. Personal tokens can only be deleted by the owner. Team tokens can be deleted by the creator or an admin. The operation is idempotent: a 204 is returned for nonexistent or not-authorized token IDs without leaking whether the token exists in another scope. Revocation takes effect immediately on the replica handling the delete (in-memory auth map); across other replicas it is eventually consistent via periodic reconciliation with the token store. Global immediate cross-replica revocation is not guaranteed.",
         "operationId": "deleteAPIToken",
         "tags": ["API Tokens"],
         "security": [
@@ -7429,7 +7429,7 @@
         "properties": {
           "id": { "type": "string", "description": "Opaque, public token ID used in URLs" },
           "name": { "type": "string", "description": "Human-readable name" },
-          "scope": { "type": "string", "enum": ["user", "team"], "description": "Scope of the token" },
+          "scope": { "type": "string", "enum": ["personal", "team"], "description": "Scope of the token (public vocabulary)" },
           "user_id": { "type": "string", "description": "Identity the token authenticates as (owner for personal, service account id for team)" },
           "team_id": { "type": "string", "description": "Team ID (populated when scope is 'team')" },
           "permissions": {
@@ -7437,34 +7437,35 @@
             "items": { "type": "string" },
             "description": "Granted permissions, bounded by the creator's permissions"
           },
-          "display_prefix": { "type": "string", "description": "Short, safe prefix of the secret for display" },
+          "token_prefix": { "type": "string", "description": "Short, safe prefix of the secret for display" },
           "expires_at": { "type": "string", "format": "date-time", "description": "Optional expiration timestamp" },
           "created_by": { "type": "string", "description": "User ID of the token creator" },
           "created_at": { "type": "string", "format": "date-time" },
           "updated_at": { "type": "string", "format": "date-time" }
         },
-        "required": ["id", "name", "scope", "user_id", "permissions", "display_prefix", "created_by", "created_at", "updated_at"]
+        "required": ["id", "name", "scope", "user_id", "permissions", "token_prefix", "created_by", "created_at", "updated_at"]
       },
       "APITokenWithSecret": {
         "type": "object",
-        "description": "Create response: API token metadata plus the plaintext token, returned exactly once.",
-        "allOf": [{ "$ref": "#/components/schemas/APITokenMetadata" }],
+        "description": "Create response: a nested `token` object with the token metadata plus the plaintext token, returned exactly once.",
         "properties": {
+          "token": { "$ref": "#/components/schemas/APITokenMetadata", "description": "Token metadata (no secret)" },
           "plaintext_token": { "type": "string", "description": "Plaintext token secret. Returned exactly once on creation; never exposed again. Store it securely." }
         },
-        "required": ["plaintext_token"]
+        "required": ["token", "plaintext_token"]
       },
       "CreateAPITokenRequest": {
         "type": "object",
         "description": "Request body for creating an API token.",
+        "required": ["name"],
         "properties": {
-          "name": { "type": "string", "description": "Human-readable name" },
-          "scope": { "type": "string", "enum": ["user", "team"], "description": "Scope. Defaults to 'user'." },
+          "name": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Human-readable name. Required, 1..64 characters after trimming." },
+          "scope": { "type": "string", "enum": ["personal", "team"], "description": "Scope (public vocabulary). Defaults to 'personal'." },
           "team_id": { "type": "string", "description": "Team ID (required when scope is 'team')" },
           "permissions": {
             "type": "array",
             "items": { "type": "string", "enum": ["session:create", "session:read", "session:update", "session:delete", "admin"] },
-            "description": "Granted permissions; each must be granted to the caller (no broader than caller). Defaults to session CRUD."
+            "description": "Granted permissions; each must be granted to the caller (no broader than caller). When omitted, defaults to the caller's own session permissions (never granting a permission the caller lacks)."
           },
           "expires_at": { "type": "string", "format": "date-time", "description": "Optional RFC3339 expiration timestamp" }
         }
@@ -8151,7 +8152,7 @@
     },
     {
       "name": "API Tokens",
-      "description": "Named, revocable API tokens for personal users and teams. Plaintext secrets are returned only once on creation; list/get responses expose only metadata and a short display prefix. Legacy GET/POST /users/me/api-key is preserved for backward compatibility."
+      "description": "Named, revocable API tokens for personal users and teams. Plaintext secrets are returned only once on creation; list/get responses expose only metadata and a short token_prefix. Scope uses the public vocabulary 'personal'/'team'. Legacy GET/POST /users/me/api-key is preserved for backward compatibility."
     }
   ]
 }
