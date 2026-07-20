@@ -260,7 +260,7 @@ func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server
 	}
 
 	// Create and register schedule handlers
-	scheduleHandlers := schedule.NewHandlers(scheduleManager, proxyServer.GetSessionManager(), proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
+	scheduleHandlers := schedule.NewHandlers(scheduleManager, proxyServer.GetRoutingSessionManager(), proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
 	proxyServer.AddCustomHandler(scheduleHandlers)
 
 	log.Printf("[SCHEDULE_HANDLERS] Schedule handlers registered successfully")
@@ -331,7 +331,7 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 	// Create leader worker
 	leaderWorker := schedule.NewLeaderWorker(
 		scheduleManager,
-		proxyServer.GetSessionManager(),
+		proxyServer.GetRoutingSessionManager(),
 		client,
 		workerConfig,
 		electionConfig,
@@ -573,7 +573,7 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 	}
 
 	// Create and register webhook handlers with baseURL from config
-	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetSessionManager(), configData.Webhook.BaseURL, proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
+	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetRoutingSessionManager(), configData.Webhook.BaseURL, proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
 	proxyServer.AddCustomHandler(webhookHandlers)
 
 	if configData.Webhook.BaseURL != "" {
@@ -790,7 +790,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 
 	eventHandler := slackbot.NewSlackBotEventHandler(
 		slackbotRepo,
-		proxyServer.GetSessionManager(),
+		proxyServer.GetRoutingSessionManager(),
 		configData.KubernetesSession.SlackBotTokenSecretName,
 		configData.KubernetesSession.SlackBotTokenSecretKey,
 		channelResolver,

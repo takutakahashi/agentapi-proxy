@@ -171,7 +171,10 @@ type RepositoryInfo struct {
 
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
-	UserID                   string
+	UserID string
+	// ManagerID selects a specific External Session Manager. Empty means placement
+	// is resolved from allocator tags, the tenant default, or the local manager.
+	ManagerID                string
 	Environment              map[string]string
 	Tags                     map[string]string
 	RepoInfo                 *RepositoryInfo

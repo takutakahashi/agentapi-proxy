@@ -714,6 +714,13 @@ func (s *Server) GetSessionManager() portrepos.SessionManager {
 	return s.sessionManager
 }
 
+// GetRoutingSessionManager returns a manager that delegates lifecycle reads and
+// mutations locally while routing creation through External Session Manager
+// placement. Trigger-based launchers must use this accessor.
+func (s *Server) GetRoutingSessionManager() portrepos.SessionManager {
+	return &routingSessionManager{server: s, delegate: s.sessionManager}
+}
+
 // SetSessionManager allows configuration of a custom session manager (for testing)
 func (s *Server) SetSessionManager(manager portrepos.SessionManager) {
 	s.sessionManager = manager
@@ -741,16 +748,20 @@ func (s *Server) GetSessionRouteRepository() portrepos.SessionRouteRepository {
 
 // CreateSession creates a new agent session
 func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
+	dindRequested := startReq.Params != nil && startReq.Params.Docker != nil && startReq.Params.Docker.Enabled
+
 	// If ManagerID is set, forward session creation to an external session manager (External Session Manager)
 	if startReq.Params != nil && startReq.Params.ManagerID != "" {
+		if sandboxRequested || dindRequested {
+			return nil, fmt.Errorf("external session manager routing does not support sandbox or Docker-in-Docker")
+		}
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
 
 	// If no ManagerID is specified, check for a default external session manager.
 	// Skip ESM forwarding when sandbox or DinD is requested: the remote proxy may not support
 	// these features, which require local Kubernetes deployment to add init containers/sidecars.
-	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
-	dindRequested := startReq.Params != nil && startReq.Params.Docker != nil && startReq.Params.Docker.Enabled
 	hasAllocatorSelector := hasAllocatorSelector(startReq.Tags)
 	if hasAllocatorSelector && (sandboxRequested || dindRequested) {
 		return nil, fmt.Errorf("allocator.* routing does not support sandbox or Docker-in-Docker")
@@ -938,6 +949,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	}
 	runReq := &entities.RunServerRequest{
 		UserID:            userID,
+		ManagerID:         managerID,
 		Teams:             teams,
 		Scope:             startReq.Scope,
 		TeamID:            startReq.TeamID,
@@ -952,6 +964,13 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		UnsyncedFilePaths: unsyncedFilePaths,
 		CredentialSource:  credentialSource,
 	}
+	return s.createRemoteRunSession(ctx, sessionID, esm, runReq)
+}
+
+// createRemoteRunSession queues an already-resolved launch request for an
+// External Session Manager. It is shared by direct and trigger-based launches.
+func (s *Server) createRemoteRunSession(ctx context.Context, sessionID string, esm *entities.ExternalSessionManagerEntry, runReq *entities.RunServerRequest) (entities.Session, error) {
+	managerID := runReq.ManagerID
 
 	// Try to build fully-resolved settings (env vars, Bedrock, MCP servers, OAuth token, etc.)
 	// by delegating to the session manager which has access to the settings resolution logic.
@@ -969,17 +988,17 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		// Fallback: minimal settings without secrets resolution
 		settings = &sessionsettings.SessionSettings{
 			Session: sessionsettings.SessionMeta{
-				UserID:    userID,
-				Scope:     string(startReq.Scope),
-				TeamID:    startReq.TeamID,
-				AgentType: agentType,
-				Oneshot:   oneshot,
-				Teams:     teams,
-				MemoryKey: startReq.MemoryKey,
+				UserID:    runReq.UserID,
+				Scope:     string(runReq.Scope),
+				TeamID:    runReq.TeamID,
+				AgentType: runReq.AgentType,
+				Oneshot:   runReq.Oneshot,
+				Teams:     runReq.Teams,
+				MemoryKey: runReq.MemoryKey,
 			},
-			Env:               startReq.Environment,
-			InitialMessage:    initialMessage,
-			UnsyncedFilePaths: unsyncedFilePaths,
+			Env:               runReq.Environment,
+			InitialMessage:    runReq.InitialMessage,
+			UnsyncedFilePaths: runReq.UnsyncedFilePaths,
 		}
 	}
 
@@ -992,19 +1011,19 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	}
 	startedAt := time.Now()
 	if s.sessionRouteRepo != nil {
-		tags := startReq.Tags
+		tags := runReq.Tags
 		if tags == nil {
 			tags = map[string]string{}
 		}
 		route := &portrepos.SessionRoute{
 			SessionID:      sessionID,
 			HMACSecret:     esm.HMACSecret,
-			UserID:         userID,
-			Scope:          string(startReq.Scope),
-			TeamID:         startReq.TeamID,
+			UserID:         runReq.UserID,
+			Scope:          string(runReq.Scope),
+			TeamID:         runReq.TeamID,
 			Tags:           tags,
 			StartedAt:      startedAt,
-			InitialMessage: initialMessage,
+			InitialMessage: runReq.InitialMessage,
 		}
 		if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
 			log.Printf("[REMOTE_SESSION] Warning: failed to save pending session route: %v", saveErr)
@@ -1013,10 +1032,10 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	log.Printf("[REMOTE_SESSION] Queued external allocation for session %s (manager: %s)", sessionID, managerID)
 	return entities.NewProxySessionWithStatus(
 		sessionID,
-		userID,
-		startReq.Scope,
-		startReq.TeamID,
-		startReq.Tags,
+		runReq.UserID,
+		runReq.Scope,
+		runReq.TeamID,
+		runReq.Tags,
 		startedAt,
 		"creating",
 	), nil
