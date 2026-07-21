@@ -14,32 +14,39 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
-func TestConfigureNativeRepositoryCloneDir(t *testing.T) {
-	workdir := filepath.Join(t.TempDir(), "sessions", "native-1", "workdir")
-	req := &entities.RunServerRequest{
-		RepoInfo: &entities.RepositoryInfo{
-			FullName: "owner/repo",
-			CloneDir: "/home/agentapi/workdir/repo",
-		},
-		ProvisionSettings: &sessionsettings.SessionSettings{
-			Repository: &sessionsettings.RepositoryConfig{
-				FullName: "owner/repo",
-				CloneDir: "/home/agentapi/workdir/repo",
-			},
-		},
+func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *testing.T) {
+	req := &entities.RunServerRequest{}
+	stateDir := t.TempDir()
+	t.Setenv("AGENTAPI_WORKDIR", "/inherited/workdir")
+	t.Setenv("AGENTAPI_REPO_DIR", "/inherited/repo")
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", "/bin/true", false)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	configureNativeRepositoryCloneDir(req, workdir)
-
-	want := filepath.Join(workdir, "repo")
-	if req.RepoInfo.CloneDir != want {
-		t.Fatalf("RepoInfo.CloneDir = %q, want %q", req.RepoInfo.CloneDir, want)
+	session, err := m.CreateSessionDirect(context.Background(), "native-1", req, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if req.ProvisionSettings.Repository.CloneDir != want {
-		t.Fatalf("ProvisionSettings.Repository.CloneDir = %q, want %q", req.ProvisionSettings.Repository.CloneDir, want)
+	t.Cleanup(func() { _ = m.DeleteSession(session.ID()) })
+
+	if req.RepoInfo != nil || req.ProvisionSettings != nil {
+		t.Fatal("empty native request unexpectedly gained repository settings")
+	}
+	native := session.(*NativeSession)
+	wantHome := filepath.Join(stateDir, "sessions", "native-1", "home")
+	foundHome := false
+	for _, value := range native.cmd.Env {
+		if value == "HOME="+wantHome {
+			foundHome = true
+		}
+		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") || strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") {
+			t.Fatalf("native path override was retained: %q", value)
+		}
+	}
+	if !foundHome {
+		t.Fatalf("virtual HOME %q was not configured", wantHome)
 	}
 }
 
