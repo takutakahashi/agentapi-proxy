@@ -11,6 +11,50 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
+func TestConfigureTelemetry(t *testing.T) {
+	env := map[string]string{
+		"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment=dev,agentapi_session_id=untrusted",
+	}
+	settings := &sessionsettings.SessionSettings{
+		Telemetry: &sessionsettings.TelemetryConfig{
+			Enabled:    true,
+			SessionID:  "session-1",
+			UserID:     "user-1",
+			TeamID:     "org/team",
+			ScheduleID: "schedule-1",
+			WebhookID:  "-",
+			AgentType:  "claude",
+		},
+	}
+
+	configureTelemetry(settings, env)
+
+	if got := env["CLAUDE_CODE_ENABLE_TELEMETRY"]; got != "1" {
+		t.Fatalf("CLAUDE_CODE_ENABLE_TELEMETRY = %q, want 1", got)
+	}
+	if got := env["OTEL_METRICS_EXPORTER"]; got != "prometheus" {
+		t.Fatalf("OTEL_METRICS_EXPORTER = %q, want prometheus", got)
+	}
+	want := "deployment.environment=dev," +
+		"agentapi_session_id=session-1," +
+		"agentapi_user_id=user-1," +
+		"agentapi_team_id=org%2Fteam," +
+		"agentapi_schedule_id=schedule-1," +
+		"agentapi_webhook_id=-," +
+		"agentapi_agent_type=claude"
+	if got := env["OTEL_RESOURCE_ATTRIBUTES"]; got != want {
+		t.Fatalf("OTEL_RESOURCE_ATTRIBUTES = %q, want %q", got, want)
+	}
+}
+
+func TestConfigureTelemetryDisabled(t *testing.T) {
+	env := map[string]string{}
+	configureTelemetry(&sessionsettings.SessionSettings{}, env)
+	if len(env) != 0 {
+		t.Fatalf("disabled telemetry mutated environment: %#v", env)
+	}
+}
+
 // TestWriteWebhookPayloadFile_WritesWhenAbsent verifies that
 // writeWebhookPayloadFile creates the file with the given payload when
 // webhookPayloadPath does not exist (stock-session case).
