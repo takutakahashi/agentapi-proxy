@@ -42,6 +42,7 @@ type LaunchRequest struct {
 	SessionTTL               string
 	UnsyncedFilePaths        []string
 	CredentialSource         string
+	ProfileMCPServers        *entities.MCPServersSettings
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -210,6 +211,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		SessionTTL:               req.SessionTTL,
 		UnsyncedFilePaths:        req.UnsyncedFilePaths,
 		CredentialSource:         req.CredentialSource,
+		ProfileMCPServers:        req.ProfileMCPServers,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)
@@ -337,6 +339,9 @@ func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]st
 // applyProfileToLaunchRequest merges a SessionProfileConfig into a LaunchRequest.
 // The profile provides the base; explicit request fields override.
 func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchRequest) {
+	if cfg.MCPServers() != nil {
+		req.ProfileMCPServers = cfg.MCPServers()
+	}
 	// Environment: profile is base, request overrides key-by-key
 	if len(cfg.Environment()) > 0 {
 		merged := make(map[string]string, len(cfg.Environment()))

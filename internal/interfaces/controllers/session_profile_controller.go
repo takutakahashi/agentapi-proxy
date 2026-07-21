@@ -31,16 +31,17 @@ func (c *SessionProfileController) GetName() string {
 
 // SessionProfileConfigRequest represents session profile config in requests
 type SessionProfileConfigRequest struct {
-	Environment            map[string]string       `json:"environment,omitempty"`
-	Tags                   map[string]string       `json:"tags,omitempty"`
-	InitialMessageTemplate string                  `json:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string                  `json:"reuse_message_template,omitempty"`
-	Params                 *entities.SessionParams `json:"params,omitempty"`
-	ReuseSession           bool                    `json:"reuse_session,omitempty"`
-	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
-	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
-	SessionTTL             string                  `json:"session_ttl,omitempty"`
-	UnsyncedFilePaths      []string                `json:"unsynced_file_paths,omitempty"`
+	Environment            map[string]string            `json:"environment,omitempty"`
+	Tags                   map[string]string            `json:"tags,omitempty"`
+	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
+	Params                 *entities.SessionParams      `json:"params,omitempty"`
+	ReuseSession           bool                         `json:"reuse_session,omitempty"`
+	MemoryKey              map[string]string            `json:"memory_key,omitempty"`
+	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
+	SessionTTL             string                       `json:"session_ttl,omitempty"`
+	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
+	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
 
 // CreateSessionProfileRequest is the request body for creating a session profile
@@ -80,16 +81,17 @@ type SessionProfileResponse struct {
 
 // SessionProfileConfigResponse represents session profile config in responses
 type SessionProfileConfigResponse struct {
-	Environment            map[string]string       `json:"environment,omitempty"`
-	Tags                   map[string]string       `json:"tags,omitempty"`
-	InitialMessageTemplate string                  `json:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string                  `json:"reuse_message_template,omitempty"`
-	Params                 *entities.SessionParams `json:"params,omitempty"`
-	ReuseSession           bool                    `json:"reuse_session,omitempty"`
-	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
-	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
-	SessionTTL             string                  `json:"session_ttl,omitempty"`
-	UnsyncedFilePaths      []string                `json:"unsynced_file_paths,omitempty"`
+	Environment            map[string]string            `json:"environment,omitempty"`
+	Tags                   map[string]string            `json:"tags,omitempty"`
+	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
+	Params                 *entities.SessionParams      `json:"params,omitempty"`
+	ReuseSession           bool                         `json:"reuse_session,omitempty"`
+	MemoryKey              map[string]string            `json:"memory_key,omitempty"`
+	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
+	SessionTTL             string                       `json:"session_ttl,omitempty"`
+	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
+	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
 
 // --- Handlers ---
@@ -131,7 +133,11 @@ func (c *SessionProfileController) CreateSessionProfile(ctx echo.Context) error 
 	profile.SetTeamID(req.TeamID)
 	profile.SetIsDefault(req.IsDefault)
 	profile.SetSelectorTags(req.SelectorTags)
-	profile.SetConfig(c.requestToConfig(req.Config))
+	config := c.requestToConfig(req.Config)
+	if err := validateSessionProfileConfig(config); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	profile.SetConfig(config)
 
 	if err := c.repo.Create(ctx.Request().Context(), profile); err != nil {
 		log.Printf("Failed to create session profile: %v", err)
@@ -252,7 +258,11 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 		profile.SetSelectorTags(req.SelectorTags)
 	}
 	if req.Config != nil {
-		profile.SetConfig(c.requestToConfig(*req.Config))
+		config := c.requestToConfig(*req.Config)
+		if err := validateSessionProfileConfig(config); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		profile.SetConfig(config)
 	}
 
 	if err := c.repo.Update(ctx.Request().Context(), profile); err != nil {
@@ -261,6 +271,13 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 	}
 
 	return ctx.JSON(http.StatusOK, c.toResponse(profile))
+}
+
+func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
+	if config.MCPServers() != nil {
+		return config.MCPServers().Validate()
+	}
+	return nil
 }
 
 // DeleteSessionProfile handles DELETE /session-profiles/:id
@@ -331,11 +348,33 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetSandboxPolicyID(req.SandboxPolicyID)
 	cfg.SetSessionTTL(req.SessionTTL)
 	cfg.SetUnsyncedFilePaths(req.UnsyncedFilePaths)
+	if req.MCPServers != nil {
+		servers := entities.NewMCPServersSettings()
+		for name, item := range req.MCPServers {
+			if item == nil {
+				continue
+			}
+			server := entities.NewMCPServer(name, item.Type)
+			server.SetURL(item.URL)
+			server.SetCommand(item.Command)
+			server.SetArgs(item.Args)
+			server.SetEnv(item.Env)
+			server.SetHeaders(item.Headers)
+			servers.SetServer(name, server)
+		}
+		cfg.SetMCPServers(servers)
+	}
 	return cfg
 }
 
 func (c *SessionProfileController) toResponse(p *entities.SessionProfile) SessionProfileResponse {
 	cfg := p.Config()
+	mcpServers := make(map[string]*MCPServerRequest)
+	if cfg.MCPServers() != nil {
+		for name, server := range cfg.MCPServers().Servers() {
+			mcpServers[name] = &MCPServerRequest{Type: server.Type(), URL: server.URL(), Command: server.Command(), Args: server.Args(), Env: server.Env(), Headers: server.Headers()}
+		}
+	}
 	return SessionProfileResponse{
 		ID:           p.ID(),
 		Name:         p.Name(),
@@ -356,6 +395,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
+			MCPServers:             mcpServers,
 		},
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt: p.UpdatedAt().Format(time.RFC3339),

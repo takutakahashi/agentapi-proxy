@@ -5858,7 +5858,12 @@ func (m *KubernetesSessionManager) resolveSettings(
 		}
 	}
 
-	// 4. oneshot (highest priority)
+	// 4. session profile
+	if req.ProfileMCPServers != nil && !req.ProfileMCPServers.IsEmpty() {
+		layers = append(layers, settingsToMCPProfilePatch(req.ProfileMCPServers))
+	}
+
+	// 5. oneshot (highest priority)
 	if req.Oneshot {
 		appendIfExists(fmt.Sprintf("%s-oneshot-settings", session.ServiceName()))
 	}
@@ -5869,6 +5874,29 @@ func (m *KubernetesSessionManager) resolveSettings(
 		log.Printf("[K8S_SESSION] Warning: failed to materialize settings: %v", err)
 	}
 	return materialized
+}
+
+func settingsToMCPProfilePatch(servers *entities.MCPServersSettings) settingspatch.SettingsPatch {
+	patch := settingspatch.SettingsPatch{MCPServers: make(map[string]*settingspatch.MCPServerPatch)}
+	for name, server := range servers.Servers() {
+		patch.MCPServers[name] = &settingspatch.MCPServerPatch{
+			Type: server.Type(), URL: server.URL(), Command: server.Command(),
+			Args: append([]string(nil), server.Args()...), Env: cloneMCPStringMap(server.Env()),
+			Headers: cloneMCPStringMap(server.Headers()),
+		}
+	}
+	return patch
+}
+
+func cloneMCPStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 // resolvePreferredTeamID reads the user's personal settings to determine if a preferred team

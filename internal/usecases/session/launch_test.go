@@ -134,6 +134,36 @@ func TestLaunchAppliesDefaultProfileDocker(t *testing.T) {
 	}
 }
 
+func TestLaunchPropagatesProfileMCPServers(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "mcp", "user-1")
+	profile.SetIsDefault(true)
+	servers := entities.NewMCPServersSettings()
+	github := entities.NewMCPServer("github", "http")
+	github.SetURL("https://mcp.example.com/github")
+	github.SetHeaders(map[string]string{"Authorization": "Bearer token"})
+	servers.SetServer("github", github)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetMCPServers(servers)
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	if _, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1", Scope: entities.ScopeUser,
+	}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req == nil || sessionManager.req.ProfileMCPServers == nil {
+		t.Fatal("profile MCP servers were not propagated")
+	}
+	got := sessionManager.req.ProfileMCPServers.GetServer("github")
+	if got == nil || got.URL() != "https://mcp.example.com/github" || got.Headers()["Authorization"] != "Bearer token" {
+		t.Fatalf("unexpected MCP server: %#v", got)
+	}
+}
+
 func TestLaunchAppliesDefaultProfileSandbox(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "default", "user-1")

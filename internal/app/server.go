@@ -901,6 +901,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		SessionTTL:               sessionTTL,
 		UnsyncedFilePaths:        unsyncedFilePaths,
 		CredentialSource:         credentialSource,
+		ProfileMCPServers:        startReq.ProfileMCPServers,
 	})
 	if err != nil {
 		return nil, err
@@ -951,6 +952,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		AuthProxy:         authProxy,
 		UnsyncedFilePaths: unsyncedFilePaths,
 		CredentialSource:  credentialSource,
+		ProfileMCPServers: startReq.ProfileMCPServers,
 	}
 
 	// Try to build fully-resolved settings (env vars, Bedrock, MCP servers, OAuth token, etc.)

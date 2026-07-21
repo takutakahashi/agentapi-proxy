@@ -17,6 +17,13 @@ func TestSessionProfileToRecordEncryptsAllEnvironmentValues(t *testing.T) {
 		"PUBLIC_VALUE": "not-secret",
 		"API_TOKEN":    "secret-token",
 	})
+	servers := entities.NewMCPServersSettings()
+	mcpServer := entities.NewMCPServer("github", "http")
+	mcpServer.SetURL("https://mcp.example.com")
+	mcpServer.SetEnv(map[string]string{"TOKEN": "mcp-env-secret"})
+	mcpServer.SetHeaders(map[string]string{"Authorization": "mcp-header-secret"})
+	servers.SetServer("github", mcpServer)
+	cfg.SetMCPServers(servers)
 	cfg.SetParams(&entities.SessionParams{
 		Message:      "hello",
 		GithubToken:  "ghp_secret",
@@ -78,6 +85,8 @@ func TestSessionProfileToRecordEncryptsAllEnvironmentValues(t *testing.T) {
 		"not-secret",
 		"secret-token",
 		"ghp_secret",
+		"mcp-env-secret",
+		"mcp-header-secret",
 	} {
 		if strings.Contains(rendered, plaintext) {
 			t.Fatalf("exported YAML contains plaintext %q:\n%s", plaintext, rendered)
