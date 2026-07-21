@@ -142,6 +142,7 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 			return nil, fmt.Errorf("create session directory %s: %w", dir, err)
 		}
 	}
+	configureNativeRepositoryCloneDir(req, workdir)
 	agentPort, err := reserveTCPPort()
 	if err != nil {
 		return nil, err
@@ -231,6 +232,16 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		_ = m.persistSession(s)
 	}()
 	return s, nil
+}
+
+func configureNativeRepositoryCloneDir(req *entities.RunServerRequest, workdir string) {
+	cloneDir := filepath.Join(workdir, "repo")
+	if req.RepoInfo != nil {
+		req.RepoInfo.CloneDir = cloneDir
+	}
+	if req.ProvisionSettings != nil && req.ProvisionSettings.Repository != nil {
+		req.ProvisionSettings.Repository.CloneDir = cloneDir
+	}
 }
 
 func reserveTCPPort() (int, error) {
