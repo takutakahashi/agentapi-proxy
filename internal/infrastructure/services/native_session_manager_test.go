@@ -14,7 +14,34 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+func TestConfigureNativeRepositoryCloneDir(t *testing.T) {
+	workdir := filepath.Join(t.TempDir(), "sessions", "native-1", "workdir")
+	req := &entities.RunServerRequest{
+		RepoInfo: &entities.RepositoryInfo{
+			FullName: "owner/repo",
+			CloneDir: "/home/agentapi/workdir/repo",
+		},
+		ProvisionSettings: &sessionsettings.SessionSettings{
+			Repository: &sessionsettings.RepositoryConfig{
+				FullName: "owner/repo",
+				CloneDir: "/home/agentapi/workdir/repo",
+			},
+		},
+	}
+
+	configureNativeRepositoryCloneDir(req, workdir)
+
+	want := filepath.Join(workdir, "repo")
+	if req.RepoInfo.CloneDir != want {
+		t.Fatalf("RepoInfo.CloneDir = %q, want %q", req.RepoInfo.CloneDir, want)
+	}
+	if req.ProvisionSettings.Repository.CloneDir != want {
+		t.Fatalf("ProvisionSettings.Repository.CloneDir = %q, want %q", req.ProvisionSettings.Repository.CloneDir, want)
+	}
+}
 
 func TestNativeSessionManagerRestoresLiveSessionState(t *testing.T) {
 	stateDir := t.TempDir()
