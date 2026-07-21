@@ -5645,6 +5645,10 @@
             "default": 2,
             "example": 5
           },
+          "manager_id": {
+            "type": "string",
+            "description": "External Session Manager ID. An explicit session value overrides the value inherited from a Session Profile. When omitted, allocator tags, the tenant default manager, or the local manager determine placement."
+          },
           "cycle_message": {
             "type": "string",
             "description": "Message to send to the session after each Claude stop event. When set, a Stop hook is injected into the session's Claude settings that runs `agentapi-proxy client cycle <message>`. The cycle continues until /tmp/check/CYCLE_OK exists or cycle_max_count is reached.",

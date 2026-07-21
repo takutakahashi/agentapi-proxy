@@ -42,6 +42,9 @@ type LaunchRequest struct {
 	SessionTTL               string
 	UnsyncedFilePaths        []string
 	CredentialSource         string
+	// ManagerID selects a specific External Session Manager. A value supplied by
+	// the trigger overrides the value inherited from a session profile.
+	ManagerID string
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -189,6 +192,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 	// Teams is provided by the caller via ResolveTeams() so it is always set correctly.
 	runReq := &entities.RunServerRequest{
 		UserID:                   req.UserID,
+		ManagerID:                req.ManagerID,
 		Environment:              req.Environment,
 		Tags:                     req.Tags,
 		Scope:                    req.Scope,
@@ -372,6 +376,9 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 	}
 	// Params: profile fills in empty request fields
 	if cfg.Params() != nil {
+		if req.ManagerID == "" {
+			req.ManagerID = cfg.Params().ManagerID
+		}
 		if req.AgentType == "" {
 			req.AgentType = cfg.Params().AgentType
 		}

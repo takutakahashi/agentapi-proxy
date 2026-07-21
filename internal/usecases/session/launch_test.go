@@ -102,6 +102,53 @@ func (r *fakeSessionProfileRepo) Update(context.Context, *entities.SessionProfil
 }
 func (r *fakeSessionProfileRepo) Delete(context.Context, string) error { return nil }
 
+func TestLaunchAppliesSessionProfileManagerID(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "external", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{ManagerID: "manager-profile"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req == nil || sessionManager.req.ManagerID != "manager-profile" {
+		t.Fatalf("expected profile manager ID, got %#v", sessionManager.req)
+	}
+}
+
+func TestLaunchExplicitManagerIDOverridesSessionProfile(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "external", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{ManagerID: "manager-profile"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:    "user-1",
+		Scope:     entities.ScopeUser,
+		ManagerID: "manager-explicit",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req == nil || sessionManager.req.ManagerID != "manager-explicit" {
+		t.Fatalf("expected explicit manager ID, got %#v", sessionManager.req)
+	}
+}
+
 func TestLaunchAppliesDefaultProfileDocker(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
