@@ -2010,6 +2010,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	var sandboxEnvVars []corev1.EnvVar
 	effectiveSandbox := m.resolveSandboxParams(ctx, req)
 	initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
+	if m.isPVCEnabled() {
+		initContainers = append([]corev1.Container{m.buildSessionHomeInitContainer()}, initContainers...)
+	}
 
 	var sciaInitContainer *corev1.Container
 	var sciaSidecar *corev1.Container
@@ -3126,6 +3129,12 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 			},
 		},
 	}
+	if m.isPVCEnabled() {
+		// The PVC root is the main container's home. DinD only needs the shared
+		// workspace, which the session-home init container creates before app
+		// containers start.
+		sidecar.VolumeMounts[1].SubPath = "workdir"
+	}
 
 	volumes := []corev1.Volume{
 		{
@@ -3173,6 +3182,25 @@ func (m *KubernetesSessionManager) buildDinDContainers(docker *sessionsettings.D
 	return &sidecar, mainEnvVars, volumes
 }
 
+// buildSessionHomeInitContainer prepares directories inside a newly-created
+// session-home PVC before the main and sidecar containers mount it. In
+// particular, Kubernetes requires the DinD workdir subPath to exist before the
+// sidecar starts.
+func (m *KubernetesSessionManager) buildSessionHomeInitContainer() corev1.Container {
+	return corev1.Container{
+		Name:            "session-home-init",
+		Image:           m.k8sConfig.Image,
+		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+		Command:         []string{"mkdir", "-p", "/home/agentapi/workdir"},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "workdir",
+				MountPath: "/home/agentapi",
+			},
+		},
+	}
+}
+
 func defaultIfEmpty(s, def string) string {
 	if s == "" {
 		return def
@@ -3202,7 +3230,11 @@ func buildResourceRequirements(cpuReq, cpuLim, memReq, memLim string) corev1.Res
 
 // buildVolumes builds the volume configuration for the session pod
 func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []corev1.Volume {
-	// Build workdir volume - use PVC if enabled, otherwise EmptyDir
+	// PVC-backed sessions persist the entire agent home so agent-native session
+	// state (for example ~/.claude and ~/.codex) survives Pod recreation. The
+	// volume keeps the historical "workdir" name to avoid unnecessary template
+	// churn. Ephemeral sessions continue to persist only workdir for the lifetime
+	// of their Pod.
 	var workdirVolume corev1.Volume
 	if m.isPVCEnabled() {
 		workdirVolume = corev1.Volume{
@@ -3228,15 +3260,16 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 	// watches the file and syncs any changes back to the Secret.
 
 	volumes := []corev1.Volume{
-		// Workdir volume (PVC or EmptyDir based on configuration)
 		workdirVolume,
-		// dot-claude EmptyDir – used by main container for Claude Code settings
-		{
+	}
+	if !m.isPVCEnabled() {
+		// Ephemeral sessions keep Claude settings isolated from the image layer.
+		volumes = append(volumes, corev1.Volume{
 			Name: "dot-claude",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
-		},
+		})
 	}
 
 	// Add notification subscription Secret volume (source for init container)
@@ -4234,15 +4267,14 @@ func isPodReady(pod *corev1.Pod) bool {
 
 // buildMainContainerVolumeMounts builds the volume mounts for the main container
 func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *KubernetesSession, req *entities.RunServerRequest) []corev1.VolumeMount {
+	homeMountPath := "/home/agentapi/workdir"
+	if m.isPVCEnabled() {
+		homeMountPath = "/home/agentapi"
+	}
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      "workdir",
-			MountPath: "/home/agentapi/workdir",
-		},
-		// dot-claude EmptyDir – used by main container for Claude Code settings
-		{
-			Name:      "dot-claude",
-			MountPath: "/home/agentapi/.claude",
+			MountPath: homeMountPath,
 		},
 		// notification subscriptions source – read by setup on startup
 		{
@@ -4250,6 +4282,12 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 			MountPath: "/notification-subscriptions-source",
 			ReadOnly:  true,
 		},
+	}
+	if !m.isPVCEnabled() {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "dot-claude",
+			MountPath: "/home/agentapi/.claude",
+		})
 	}
 
 	// session-settings Secret – optional mount for Pod restart auto-provisioning.
