@@ -42,21 +42,22 @@ type nativeFilesystemSandboxConfig struct {
 }
 
 type nativeDaemonConfig struct {
-	Listen            string                        `json:"listen"`
-	UpstreamURL       string                        `json:"upstream_url"`
-	ConnectionToken   string                        `json:"connection_token"`
-	CredentialsPath   string                        `json:"credentials_path,omitempty"`
-	UpstreamAuthToken string                        `json:"upstream_auth_token,omitempty"`
-	PublicURL         string                        `json:"public_url"`
-	StateDir          string                        `json:"state_dir"`
-	BinaryPath        string                        `json:"binary_path,omitempty"`
-	ManagerID         string                        `json:"manager_id,omitempty"`
-	InstanceID        string                        `json:"instance_id,omitempty"`
-	Scope             string                        `json:"scope,omitempty"`
-	TeamID            string                        `json:"team_id,omitempty"`
-	Labels            map[string]string             `json:"labels,omitempty"`
-	Version           string                        `json:"version,omitempty"`
-	FilesystemSandbox nativeFilesystemSandboxConfig `json:"filesystem_sandbox,omitempty"`
+	Listen             string                        `json:"listen"`
+	UpstreamURL        string                        `json:"upstream_url"`
+	ConnectionToken    string                        `json:"connection_token"`
+	CredentialsPath    string                        `json:"credentials_path,omitempty"`
+	UpstreamAuthToken  string                        `json:"upstream_auth_token,omitempty"`
+	PublicURL          string                        `json:"public_url"`
+	StateDir           string                        `json:"state_dir"`
+	BinaryPath         string                        `json:"binary_path,omitempty"`
+	ManagerID          string                        `json:"manager_id,omitempty"`
+	InstanceID         string                        `json:"instance_id,omitempty"`
+	Scope              string                        `json:"scope,omitempty"`
+	TeamID             string                        `json:"team_id,omitempty"`
+	Labels             map[string]string             `json:"labels,omitempty"`
+	ManagerEnvironment map[string]string             `json:"manager_environment,omitempty"`
+	Version            string                        `json:"version,omitempty"`
+	FilesystemSandbox  nativeFilesystemSandboxConfig `json:"filesystem_sandbox,omitempty"`
 }
 
 func init() {
