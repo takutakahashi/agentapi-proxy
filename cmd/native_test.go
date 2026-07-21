@@ -35,7 +35,7 @@ func TestNativeConfigPersistsSeparateInstanceID(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 	credentialsPath := filepath.Join(dir, "credentials.json")
 	want := nativeDaemonConfig{ManagerID: "manager-1", InstanceID: "machine-1", ConnectionToken: "secret", CredentialsPath: credentialsPath,
-		FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: true}}
+		ManagerEnvironment: map[string]string{"PATH": "/opt/mise/bin:/usr/bin:/bin"}, FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: true}}
 	data, err := json.Marshal(want)
 	require.NoError(t, err)
 	var stored nativeDaemonConfig
@@ -57,6 +57,34 @@ func TestNativeConfigPersistsSeparateInstanceID(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestParseNativeManagerEnvironment(t *testing.T) {
+	key, value, err := parseNativeManagerEnvironment("PATH=/opt/mise/bin:/usr/bin:/bin")
+	require.NoError(t, err)
+	require.Equal(t, "PATH", key)
+	require.Equal(t, "/opt/mise/bin:/usr/bin:/bin", value)
+
+	_, _, err = parseNativeManagerEnvironment("1INVALID=value")
+	require.EqualError(t, err, `invalid --manager-env "1INVALID=value"; expected KEY=VALUE`)
+	_, _, err = parseNativeManagerEnvironment("MISSING_VALUE")
+	require.EqualError(t, err, `invalid --manager-env "MISSING_VALUE"; expected KEY=VALUE`)
+}
+
+func TestRenderNativeLaunchAgentEnvironment(t *testing.T) {
+	paths := nativeInstallPaths{binary: "/Applications/Agent & API/agentapi-proxy", config: "/tmp/config.json", logDir: "/tmp/logs"}
+	plist := renderNativeLaunchAgent(paths, map[string]string{"PATH": "/opt/mise/bin:/usr/bin", "SPECIAL": "one&two"})
+	require.Contains(t, plist, "<key>EnvironmentVariables</key><dict>")
+	require.Contains(t, plist, "<key>PATH</key><string>/opt/mise/bin:/usr/bin</string>")
+	require.Contains(t, plist, "<key>SPECIAL</key><string>one&amp;two</string>")
+	require.Contains(t, plist, "<string>/Applications/Agent &amp; API/agentapi-proxy</string>")
+}
+
+func TestRenderNativeSystemdEnvironment(t *testing.T) {
+	paths := nativeInstallPaths{binary: "/usr/local/libexec/agentapi-proxy", config: "/etc/agentapi-native/config.json"}
+	unit := renderNativeSystemdUnit(paths, map[string]string{"PATH": "/opt/mise/bin:/usr/bin", "SPECIAL": `quote"slash\percent%`})
+	require.Contains(t, unit, "Environment=\"PATH=/opt/mise/bin:/usr/bin\"")
+	require.Contains(t, unit, `Environment="SPECIAL=quote\"slash\\percent%%"`)
 }
 
 func TestSafeNativeStateDir(t *testing.T) {

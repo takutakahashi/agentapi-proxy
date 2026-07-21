@@ -30,6 +30,7 @@ type nativeManageOptions struct {
 	upstream, publicURL, name, listen, managerID, apiKeyEnv, apiKeyFile, configPath          string
 	scope, teamID, drainTimeout                                                              string
 	labels                                                                                   []string
+	environment                                                                              []string
 	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
 	logsFollow, logsDaemon                                                                   bool
 	logsTail                                                                                 int
@@ -64,6 +65,7 @@ func init() {
 	f.StringVar(&nativeManageOpts.scope, "scope", "user", "registration scope: user or team")
 	f.StringVar(&nativeManageOpts.teamID, "team-id", "", "team ID when --scope=team")
 	f.StringSliceVar(&nativeManageOpts.labels, "label", nil, "allocator label in key=value form")
+	f.StringArrayVar(&nativeManageOpts.environment, "manager-env", nil, "native manager environment variable in KEY=VALUE form (repeatable)")
 	f.BoolVar(&nativeManageOpts.defaultManager, "default", false, "make this the default external session manager")
 	f.BoolVar(&nativeManageOpts.force, "force", false, "install even if the existing state directory contains sessions")
 	f.BoolVar(&nativeManageOpts.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
@@ -121,6 +123,17 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 		}
 		labels[strings.TrimSpace(parts[0])] = parts[1]
 	}
+	environment := make(map[string]string, len(existing.ManagerEnvironment)+len(nativeManageOpts.environment))
+	for key, value := range existing.ManagerEnvironment {
+		environment[key] = value
+	}
+	for _, raw := range nativeManageOpts.environment {
+		key, value, parseErr := parseNativeManagerEnvironment(raw)
+		if parseErr != nil {
+			return parseErr
+		}
+		environment[key] = value
+	}
 	apiKey, err := readInstallAPIKey()
 	if err != nil {
 		return err
@@ -144,7 +157,7 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 	cfg := nativeDaemonConfig{Listen: nativeManageOpts.listen, UpstreamURL: strings.TrimRight(nativeManageOpts.upstream, "/"),
 		ConnectionToken: token, PublicURL: strings.TrimRight(nativeManageOpts.publicURL, "/"), StateDir: paths.state,
 		BinaryPath: paths.binary, ManagerID: registration.ID, InstanceID: instanceID, Scope: nativeManageOpts.scope, TeamID: nativeManageOpts.teamID,
-		Labels: labels, Version: nativeBuildVersion(),
+		Labels: labels, ManagerEnvironment: environment, Version: nativeBuildVersion(),
 		FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: nativeManageOpts.filesystemSandbox}}
 	if err := installNativeService(paths, cfg); err != nil {
 		return err
@@ -227,7 +240,7 @@ func installNativeService(paths nativeInstallPaths, cfg nativeDaemonConfig) erro
 		if err := secureNativeConfig(paths.config); err != nil {
 			return err
 		}
-		unit := fmt.Sprintf("[Unit]\nDescription=agentapi-proxy native external session manager\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=agentapi\nGroup=agentapi\nExecStart=%s native-session-manager --config %s\nRestart=always\nRestartSec=3\nKillMode=process\nTimeoutStopSec=30\nLimitNOFILE=65536\n\n[Install]\nWantedBy=multi-user.target\n", paths.binary, paths.config)
+		unit := renderNativeSystemdUnit(paths, cfg.ManagerEnvironment)
 		if err := atomicWriteFile(paths.service, []byte(unit), 0o644); err != nil {
 			return err
 		}
@@ -239,13 +252,70 @@ func installNativeService(paths nativeInstallPaths, cfg nativeDaemonConfig) erro
 		}
 		return runCommand("systemctl", "restart", "agentapi-native.service")
 	}
-	plist := fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>com.agentapi.native</string><key>ProgramArguments</key><array><string>%s</string><string>native-session-manager</string><string>--config</string><string>%s</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardOutPath</key><string>%s/native.log</string><key>StandardErrorPath</key><string>%s/native.log</string></dict></plist>\n", xmlEscape(paths.binary), xmlEscape(paths.config), xmlEscape(paths.logDir), xmlEscape(paths.logDir))
+	plist := renderNativeLaunchAgent(paths, cfg.ManagerEnvironment)
 	if err := atomicWriteFile(paths.service, []byte(plist), 0o600); err != nil {
 		return err
 	}
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	_ = runCommand("launchctl", "bootout", domain+"/com.agentapi.native")
 	return runCommand("launchctl", "bootstrap", domain, paths.service)
+}
+
+func parseNativeManagerEnvironment(raw string) (string, string, error) {
+	key, value, ok := strings.Cut(raw, "=")
+	if !ok || !validEnvironmentKey(key) {
+		return "", "", fmt.Errorf("invalid --manager-env %q; expected KEY=VALUE", raw)
+	}
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return "", "", fmt.Errorf("invalid --manager-env %q; value must not contain NUL or newlines", raw)
+	}
+	return key, value, nil
+}
+
+func validEnvironmentKey(key string) bool {
+	if key == "" || (!asciiLetter(key[0]) && key[0] != '_') {
+		return false
+	}
+	for i := 1; i < len(key); i++ {
+		if !asciiLetter(key[i]) && (key[i] < '0' || key[i] > '9') && key[i] != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLetter(value byte) bool {
+	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+}
+
+func sortedEnvironmentKeys(environment map[string]string) []string {
+	keys := make([]string, 0, len(environment))
+	for key := range environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func renderNativeSystemdUnit(paths nativeInstallPaths, environment map[string]string) string {
+	var env strings.Builder
+	for _, key := range sortedEnvironmentKeys(environment) {
+		value := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%").Replace(environment[key])
+		fmt.Fprintf(&env, "Environment=\"%s=%s\"\n", key, value)
+	}
+	return fmt.Sprintf("[Unit]\nDescription=agentapi-proxy native external session manager\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=agentapi\nGroup=agentapi\n%sExecStart=%s native-session-manager --config %s\nRestart=always\nRestartSec=3\nKillMode=process\nTimeoutStopSec=30\nLimitNOFILE=65536\n\n[Install]\nWantedBy=multi-user.target\n", env.String(), paths.binary, paths.config)
+}
+
+func renderNativeLaunchAgent(paths nativeInstallPaths, environment map[string]string) string {
+	var env strings.Builder
+	if len(environment) > 0 {
+		env.WriteString("<key>EnvironmentVariables</key><dict>")
+		for _, key := range sortedEnvironmentKeys(environment) {
+			fmt.Fprintf(&env, "<key>%s</key><string>%s</string>", xmlEscape(key), xmlEscape(environment[key]))
+		}
+		env.WriteString("</dict>")
+	}
+	return fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>com.agentapi.native</string><key>ProgramArguments</key><array><string>%s</string><string>native-session-manager</string><string>--config</string><string>%s</string></array>%s<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardOutPath</key><string>%s/native.log</string><key>StandardErrorPath</key><string>%s/native.log</string></dict></plist>\n", xmlEscape(paths.binary), xmlEscape(paths.config), env.String(), xmlEscape(paths.logDir), xmlEscape(paths.logDir))
 }
 
 func runNativeStatus(_ *cobra.Command, _ []string) error {
