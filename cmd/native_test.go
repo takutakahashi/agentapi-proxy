@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -62,4 +63,45 @@ func TestSafeNativeStateDir(t *testing.T) {
 	require.False(t, safeNativeStateDir("/"))
 	require.False(t, safeNativeStateDir("."))
 	require.True(t, safeNativeStateDir("/var/lib/agentapi-native"))
+}
+
+func TestReadNativeSessionList(t *testing.T) {
+	stateDir := t.TempDir()
+	older := time.Date(2026, time.July, 20, 1, 2, 3, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	for _, entry := range []nativeSessionListEntry{
+		{ID: "session-new", PID: 22, Status: "running", StartedAt: newer},
+		{ID: "session-old", PID: 11, Status: "stable", StartedAt: older},
+	} {
+		runtimeDir := filepath.Join(stateDir, "sessions", entry.ID, "runtime")
+		require.NoError(t, os.MkdirAll(runtimeDir, 0o700))
+		data, err := json.Marshal(entry)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(runtimeDir, "state.json"), data, 0o600))
+	}
+
+	entries, err := readNativeSessionList(stateDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	require.Equal(t, "session-old", entries[0].ID)
+	require.Equal(t, filepath.Join(stateDir, "sessions", "session-old", "runtime", "provisioner.log"), entries[0].LogPath)
+	require.Equal(t, "session-new", entries[1].ID)
+}
+
+func TestNativeLogPath(t *testing.T) {
+	paths := nativeInstallPaths{logDir: "/logs"}
+	cfg := nativeDaemonConfig{StateDir: "/state"}
+
+	path, err := nativeLogPath(paths, cfg, "session-1", false)
+	require.NoError(t, err)
+	require.Equal(t, "/state/sessions/session-1/runtime/provisioner.log", path)
+
+	path, err = nativeLogPath(paths, cfg, "", true)
+	require.NoError(t, err)
+	require.Equal(t, "/logs/native.log", path)
+
+	_, err = nativeLogPath(paths, cfg, "../session-1", false)
+	require.EqualError(t, err, "invalid session ID")
+	_, err = nativeLogPath(paths, cfg, "", false)
+	require.EqualError(t, err, "session ID is required (or use --daemon)")
 }

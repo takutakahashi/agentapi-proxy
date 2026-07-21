@@ -253,6 +253,18 @@ checks local configuration permissions, service health, and the parent
 heartbeat. If registration must retain an existing identity, pass the existing
 ID with `--manager-id`.
 
+List native sessions and inspect their provisioner logs directly from the host:
+
+```bash
+agentapi-proxy native session-list
+agentapi-proxy native logs <session-id>
+agentapi-proxy native logs --follow --tail 200 <session-id>
+agentapi-proxy native logs --daemon --follow
+```
+
+Session logs live below `<state-dir>/sessions/<session-id>/runtime/provisioner.log`.
+They are removed along with the session directory when the session is deleted.
+
 ## Starting a Session Through an ESM
 
 Specify the manager explicitly:

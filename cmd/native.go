@@ -14,9 +14,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,6 +31,8 @@ type nativeManageOptions struct {
 	scope, teamID, drainTimeout                                                              string
 	labels                                                                                   []string
 	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
+	logsFollow, logsDaemon                                                                   bool
+	logsTail                                                                                 int
 }
 
 var nativeManageOpts nativeManageOptions
@@ -74,7 +78,12 @@ func init() {
 	uninstall.Flags().StringVar(&nativeManageOpts.drainTimeout, "drain-timeout", "30m", "maximum time to wait with --drain")
 	uninstall.Flags().BoolVar(&nativeManageOpts.keepRegistration, "keep-registration", false, "keep the parent registration")
 	uninstall.Flags().BoolVar(&nativeManageOpts.keepData, "keep-data", false, "keep daemon state and configuration")
-	NativeCmd.AddCommand(install, status, doctor, restart, rotate, uninstall)
+	sessionList := &cobra.Command{Use: "session-list", Aliases: []string{"sessions"}, Short: "List native sessions on this host", Args: cobra.NoArgs, RunE: runNativeSessionList}
+	logs := &cobra.Command{Use: "logs [session-id]", Short: "Show native daemon or session logs", Args: cobra.MaximumNArgs(1), RunE: runNativeLogs}
+	logs.Flags().BoolVarP(&nativeManageOpts.logsFollow, "follow", "f", false, "follow log output")
+	logs.Flags().IntVarP(&nativeManageOpts.logsTail, "tail", "n", 100, "number of lines to show")
+	logs.Flags().BoolVar(&nativeManageOpts.logsDaemon, "daemon", false, "show the native daemon log")
+	NativeCmd.AddCommand(install, status, doctor, restart, rotate, uninstall, sessionList, logs)
 }
 
 func runNativeInstall(_ *cobra.Command, _ []string) error {
@@ -259,6 +268,114 @@ func runNativeStatus(_ *cobra.Command, _ []string) error {
 	active, _ := filepath.Glob(filepath.Join(cfg.StateDir, "sessions", "*"))
 	fmt.Printf("Service: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
 	return nil
+}
+
+type nativeSessionListEntry struct {
+	ID        string    `json:"id"`
+	PID       int       `json:"pid"`
+	StartedAt time.Time `json:"started_at"`
+	Status    string    `json:"status"`
+	LogPath   string    `json:"-"`
+}
+
+func readNativeSessionList(stateDir string) ([]nativeSessionListEntry, error) {
+	sessionDirs, err := filepath.Glob(filepath.Join(stateDir, "sessions", "*"))
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]nativeSessionListEntry, 0, len(sessionDirs))
+	for _, sessionDir := range sessionDirs {
+		data, readErr := os.ReadFile(filepath.Join(sessionDir, "runtime", "state.json"))
+		if readErr != nil {
+			continue
+		}
+		var entry nativeSessionListEntry
+		if err := json.Unmarshal(data, &entry); err != nil {
+			return nil, fmt.Errorf("read session state %s: %w", filepath.Base(sessionDir), err)
+		}
+		if entry.ID == "" {
+			entry.ID = filepath.Base(sessionDir)
+		}
+		entry.LogPath = filepath.Join(sessionDir, "runtime", "provisioner.log")
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].StartedAt.Before(entries[j].StartedAt) })
+	return entries, nil
+}
+
+func runNativeSessionList(command *cobra.Command, _ []string) error {
+	paths, err := nativePaths(nativeManageOpts.configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := readNativeConfig(paths.config)
+	if err != nil {
+		return err
+	}
+	entries, err := readNativeSessionList(cfg.StateDir)
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(command.OutOrStdout(), 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "SESSION ID\tSTATUS\tPID\tSTARTED\tLOG")
+	for _, entry := range entries {
+		started := "-"
+		if !entry.StartedAt.IsZero() {
+			started = entry.StartedAt.Local().Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", entry.ID, entry.Status, entry.PID, started, entry.LogPath)
+	}
+	return w.Flush()
+}
+
+func nativeLogPath(paths nativeInstallPaths, cfg nativeDaemonConfig, sessionID string, daemon bool) (string, error) {
+	if daemon {
+		if sessionID != "" {
+			return "", errors.New("a session ID cannot be used with --daemon")
+		}
+		return filepath.Join(paths.logDir, "native.log"), nil
+	}
+	if sessionID == "" {
+		return "", errors.New("session ID is required (or use --daemon)")
+	}
+	if sessionID == "." || filepath.Base(sessionID) != sessionID {
+		return "", errors.New("invalid session ID")
+	}
+	return filepath.Join(cfg.StateDir, "sessions", sessionID, "runtime", "provisioner.log"), nil
+}
+
+func runNativeLogs(command *cobra.Command, args []string) error {
+	if nativeManageOpts.logsTail < 0 {
+		return errors.New("--tail must be zero or greater")
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := readNativeConfig(paths.config)
+	if err != nil {
+		return err
+	}
+	sessionID := ""
+	if len(args) == 1 {
+		sessionID = args[0]
+	}
+	logPath, err := nativeLogPath(paths, cfg, sessionID, nativeManageOpts.logsDaemon)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		return fmt.Errorf("open log %s: %w", logPath, err)
+	}
+	tailArgs := []string{"-n", strconv.Itoa(nativeManageOpts.logsTail)}
+	if nativeManageOpts.logsFollow {
+		tailArgs = append(tailArgs, "-F")
+	}
+	tailArgs = append(tailArgs, logPath)
+	tail := exec.CommandContext(command.Context(), "tail", tailArgs...)
+	tail.Stdout = command.OutOrStdout()
+	tail.Stderr = command.ErrOrStderr()
+	return tail.Run()
 }
 
 func runNativeDoctor(_ *cobra.Command, _ []string) error {
