@@ -66,6 +66,39 @@ func assertOwnedByService(t *testing.T, obj metav1.Object, serviceName string) {
 	}
 }
 
+func findVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name string) corev1.VolumeMount {
+	t.Helper()
+	for _, mount := range mounts {
+		if mount.Name == name {
+			return mount
+		}
+	}
+	t.Fatalf("Expected volume mount %q, got %+v", name, mounts)
+	return corev1.VolumeMount{}
+}
+
+func findVolume(t *testing.T, volumes []corev1.Volume, name string) corev1.Volume {
+	t.Helper()
+	for _, volume := range volumes {
+		if volume.Name == name {
+			return volume
+		}
+	}
+	t.Fatalf("Expected volume %q, got %+v", name, volumes)
+	return corev1.Volume{}
+}
+
+func findContainer(t *testing.T, containers []corev1.Container, name string) corev1.Container {
+	t.Helper()
+	for _, container := range containers {
+		if container.Name == name {
+			return container
+		}
+	}
+	t.Fatalf("Expected container %q, got %+v", name, containers)
+	return corev1.Container{}
+}
+
 func TestCreateSessionWorkloadWithoutPVCUsesPodRestartPolicyNever(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	session := newWorkloadTestSession()
@@ -87,6 +120,17 @@ func TestCreateSessionWorkloadWithoutPVCUsesPodRestartPolicyNever(t *testing.T) 
 	if pod.Spec.Volumes[0].EmptyDir == nil {
 		t.Fatal("Expected workdir volume to use EmptyDir when PVC is disabled")
 	}
+	workdirMount := findVolumeMount(t, pod.Spec.Containers[0].VolumeMounts, "workdir")
+	if workdirMount.MountPath != "/home/agentapi/workdir" {
+		t.Fatalf("Expected ephemeral workdir mount, got %s", workdirMount.MountPath)
+	}
+	dotClaudeMount := findVolumeMount(t, pod.Spec.Containers[0].VolumeMounts, "dot-claude")
+	if dotClaudeMount.MountPath != "/home/agentapi/.claude" {
+		t.Fatalf("Expected ephemeral Claude config mount, got %s", dotClaudeMount.MountPath)
+	}
+	if findVolume(t, pod.Spec.Volumes, "dot-claude").EmptyDir == nil {
+		t.Fatal("Expected dot-claude volume to use EmptyDir when PVC is disabled")
+	}
 
 	deployments, err := manager.client.AppsV1().Deployments("test-ns").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
@@ -100,6 +144,7 @@ func TestCreateSessionWorkloadWithoutPVCUsesPodRestartPolicyNever(t *testing.T) 
 func TestCreateSessionWorkloadWithPVCUsesDeploymentRestartPolicyAlways(t *testing.T) {
 	manager := newWorkloadTestManager(t, true)
 	session := newWorkloadTestSession()
+	session.Request().Docker = &entities.DockerParams{Enabled: true}
 
 	if err := manager.createSessionWorkload(context.Background(), session, session.Request()); err != nil {
 		t.Fatalf("Failed to create workload: %v", err)
@@ -114,6 +159,36 @@ func TestCreateSessionWorkloadWithPVCUsesDeploymentRestartPolicyAlways(t *testin
 	}
 	if deployment.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim == nil {
 		t.Fatal("Expected workdir volume to mount PVC when PVC is enabled")
+	}
+	homeMount := findVolumeMount(t, deployment.Spec.Template.Spec.Containers[0].VolumeMounts, "workdir")
+	if homeMount.MountPath != "/home/agentapi" {
+		t.Fatalf("Expected PVC to mount the full agent home, got %s", homeMount.MountPath)
+	}
+	for _, mount := range deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if mount.Name == "dot-claude" {
+			t.Fatal("Expected Claude state to live on the session-home PVC")
+		}
+	}
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "dot-claude" {
+			t.Fatal("Expected no dot-claude EmptyDir for PVC-backed sessions")
+		}
+	}
+	if len(deployment.Spec.Template.Spec.InitContainers) == 0 {
+		t.Fatal("Expected session-home init container")
+	}
+	homeInit := deployment.Spec.Template.Spec.InitContainers[0]
+	if homeInit.Name != "session-home-init" {
+		t.Fatalf("Expected session-home init container first, got %s", homeInit.Name)
+	}
+	initMount := findVolumeMount(t, homeInit.VolumeMounts, "workdir")
+	if initMount.MountPath != "/home/agentapi" {
+		t.Fatalf("Expected init container to mount session home, got %s", initMount.MountPath)
+	}
+	dind := findContainer(t, deployment.Spec.Template.Spec.Containers, "docker-dind")
+	dindWorkdirMount := findVolumeMount(t, dind.VolumeMounts, "workdir")
+	if dindWorkdirMount.MountPath != "/home/agentapi/workdir" || dindWorkdirMount.SubPath != "workdir" {
+		t.Fatalf("Expected DinD to share the persisted workdir subPath, got %+v", dindWorkdirMount)
 	}
 
 	pods, err := manager.client.CoreV1().Pods("test-ns").List(context.Background(), metav1.ListOptions{})
