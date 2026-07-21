@@ -130,9 +130,6 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	if err := ctx.Bind(&startReq); err != nil {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
 	}
-	explicitSandbox := startReq.Params != nil && startReq.Params.Sandbox != nil
-	explicitDocker := startReq.Params != nil && startReq.Params.Docker != nil
-
 	// Get authorization context from middleware (guaranteed to be non-nil by AuthMiddleware)
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	user := authzCtx.User
@@ -223,10 +220,6 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 					startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
 				}
 			}
-			if containsAllocatorSelector(startReq.Tags) {
-				removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
-			}
-
 			// MemoryKey: profile is base, request keys override
 			if len(cfg.MemoryKey()) > 0 {
 				merged := make(map[string]string, len(cfg.MemoryKey()))
@@ -243,14 +236,9 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			if startReq.Params == nil {
 				startReq.Params = &entities.SessionParams{}
 			}
-			// Native allocator sessions intentionally do not support sandboxing.
-			// Do not let a profile's implicit sandbox default turn an otherwise valid
-			// allocator.* request into an unsupported-capability request. An explicit
-			// sandbox in the request remains intact and is rejected by the allocator
-			// selection layer.
-			if !containsAllocatorSelector(startReq.Tags) {
-				applyProfileSandboxDefaults(cfg, startReq.Params)
-			}
+			// Preserve capability requests through placement. Kubernetes allocators
+			// use them as requirements; native managers may ignore unsupported fields.
+			applyProfileSandboxDefaults(cfg, startReq.Params)
 
 			// SessionTTL: apply profile's TTL when request does not already specify one.
 			if cfg.SessionTTL() != "" {
@@ -290,18 +278,6 @@ func containsAllocatorSelector(tags map[string]string) bool {
 		}
 	}
 	return false
-}
-
-func removeImplicitAllocatorCapabilities(params *entities.SessionParams, explicitSandbox, explicitDocker bool) {
-	if params == nil {
-		return
-	}
-	if !explicitSandbox {
-		params.Sandbox = nil
-	}
-	if !explicitDocker {
-		params.Docker = nil
-	}
 }
 
 // SearchSessions handles GET /search requests to list and filter active sessions

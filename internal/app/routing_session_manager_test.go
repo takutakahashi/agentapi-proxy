@@ -125,11 +125,16 @@ func TestCreateRoutedSessionQueuesProfileSelectedManager(t *testing.T) {
 		UserID:    "user-1",
 		Scope:     entities.ScopeUser,
 		ManagerID: "manager-profile",
+		Sandbox:   &entities.SandboxParams{Enabled: true, CountMode: true},
+		Docker:    &entities.DockerParams{Enabled: true},
 	}, nil)
 	if err != nil {
 		t.Fatalf("createRoutedSession() error = %v", err)
 	}
 	if manager.queued != "manager-profile" || manager.req == nil || manager.req.ManagerID != "manager-profile" {
 		t.Fatalf("external allocation manager=%q req=%#v", manager.queued, manager.req)
+	}
+	if manager.req.Sandbox == nil || manager.req.Docker == nil {
+		t.Fatalf("allocator capability parameters were dropped: %#v", manager.req)
 	}
 }

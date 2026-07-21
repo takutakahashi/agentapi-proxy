@@ -748,40 +748,27 @@ func (s *Server) GetSessionRouteRepository() portrepos.SessionRouteRepository {
 
 // CreateSession creates a new agent session
 func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
-	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
-	dindRequested := startReq.Params != nil && startReq.Params.Docker != nil && startReq.Params.Docker.Enabled
-
 	// If ManagerID is set, forward session creation to an external session manager (External Session Manager)
 	if startReq.Params != nil && startReq.Params.ManagerID != "" {
-		if sandboxRequested || dindRequested {
-			return nil, fmt.Errorf("external session manager routing does not support sandbox or Docker-in-Docker")
-		}
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
 
 	// If no ManagerID is specified, check for a default external session manager.
-	// Skip ESM forwarding when sandbox or DinD is requested: the remote proxy may not support
-	// these features, which require local Kubernetes deployment to add init containers/sidecars.
 	hasAllocatorSelector := hasAllocatorSelector(startReq.Tags)
-	if hasAllocatorSelector && (sandboxRequested || dindRequested) {
-		return nil, fmt.Errorf("allocator.* routing does not support sandbox or Docker-in-Docker")
+	selectedESM, err := s.findDefaultESM(context.Background(), userID, teams, startReq.Tags)
+	if err != nil {
+		return nil, fmt.Errorf("select external session manager: %w", err)
 	}
-	if !sandboxRequested && !dindRequested {
-		selectedESM, err := s.findDefaultESM(context.Background(), userID, teams, startReq.Tags)
-		if err != nil {
-			return nil, fmt.Errorf("select external session manager: %w", err)
+	if selectedESM != nil {
+		log.Printf("[SESSION] Using external session manager %s (%s) for session %s", selectedESM.Name, selectedESM.ID, sessionID)
+		if startReq.Params == nil {
+			startReq.Params = &entities.SessionParams{}
 		}
-		if selectedESM != nil {
-			log.Printf("[SESSION] Using external session manager %s (%s) for session %s", selectedESM.Name, selectedESM.ID, sessionID)
-			if startReq.Params == nil {
-				startReq.Params = &entities.SessionParams{}
-			}
-			startReq.Params.ManagerID = selectedESM.ID
-			return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
-		}
-		if hasAllocatorSelector {
-			return nil, fmt.Errorf("no external session manager matches allocator.* tags")
-		}
+		startReq.Params.ManagerID = selectedESM.ID
+		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
+	}
+	if hasAllocatorSelector {
+		return nil, fmt.Errorf("no external session manager matches allocator.* tags")
 	}
 
 	// Get auth team env file from user context if available

@@ -49,23 +49,3 @@ func TestContainsAllocatorSelector(t *testing.T) {
 		t.Fatal("ordinary session tag was treated as allocator selector")
 	}
 }
-
-func TestRemoveImplicitAllocatorCapabilities(t *testing.T) {
-	params := &entities.SessionParams{
-		Sandbox: &entities.SandboxParams{Enabled: true},
-		Docker:  &entities.DockerParams{Enabled: true},
-	}
-	removeImplicitAllocatorCapabilities(params, false, false)
-	if params.Sandbox != nil || params.Docker != nil {
-		t.Fatalf("profile capabilities were retained: %#v", params)
-	}
-
-	explicit := &entities.SessionParams{
-		Sandbox: &entities.SandboxParams{Enabled: true},
-		Docker:  &entities.DockerParams{Enabled: true},
-	}
-	removeImplicitAllocatorCapabilities(explicit, true, true)
-	if explicit.Sandbox == nil || explicit.Docker == nil {
-		t.Fatalf("explicit capabilities were removed: %#v", explicit)
-	}
-}

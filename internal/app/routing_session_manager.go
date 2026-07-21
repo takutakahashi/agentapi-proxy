@@ -79,10 +79,6 @@ func (s *Server) createRoutedSession(ctx context.Context, sessionID string, req 
 	if selected == nil {
 		return s.sessionManager.CreateSession(ctx, sessionID, req, webhookPayload)
 	}
-	if (req.Sandbox != nil && req.Sandbox.Enabled) || (req.Docker != nil && req.Docker.Enabled) {
-		return nil, fmt.Errorf("external session manager routing does not support sandbox or Docker-in-Docker")
-	}
-
 	req.ManagerID = selected.ID
 	return s.createRemoteRunSession(ctx, sessionID, selected, req)
 }
