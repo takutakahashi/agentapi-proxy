@@ -142,7 +142,6 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 			return nil, fmt.Errorf("create session directory %s: %w", dir, err)
 		}
 	}
-	configureNativeRepositoryCloneDir(req, workdir)
 	agentPort, err := reserveTCPPort()
 	if err != nil {
 		return nil, err
@@ -177,14 +176,12 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		return nil, err
 	}
 	cmd.Dir = workdir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = nativeProvisionerEnvironment(os.Environ(),
 		"HOME="+home,
 		"TMPDIR="+tmpDir,
 		"CFFIXED_USER_HOME="+home,
 		"AGENTAPI_NATIVE_SESSION_ROOT="+root,
-		"AGENTAPI_WORKDIR="+workdir,
 		"AGENTAPI_BUILD_DIR="+buildDir,
-		"AGENTAPI_REPO_DIR="+filepath.Join(workdir, "repo"),
 		"AGENTAPI_SESSION_ID="+id,
 		"AGENTAPI_PORT="+strconv.Itoa(agentPort),
 		"PROVISIONER_PROXY_URL="+m.proxyURL,
@@ -234,14 +231,15 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 	return s, nil
 }
 
-func configureNativeRepositoryCloneDir(req *entities.RunServerRequest, workdir string) {
-	cloneDir := filepath.Join(workdir, "repo")
-	if req.RepoInfo != nil {
-		req.RepoInfo.CloneDir = cloneDir
+func nativeProvisionerEnvironment(base []string, values ...string) []string {
+	env := make([]string, 0, len(base)+len(values))
+	for _, value := range base {
+		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") || strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") {
+			continue
+		}
+		env = append(env, value)
 	}
-	if req.ProvisionSettings != nil && req.ProvisionSettings.Repository != nil {
-		req.ProvisionSettings.Repository.CloneDir = cloneDir
-	}
+	return append(env, values...)
 }
 
 func reserveTCPPort() (int, error) {
