@@ -208,6 +208,26 @@ agentapi-proxy native install \
   --filesystem-sandbox
 ```
 
+Use `--manager-env KEY=VALUE` to set an environment variable on the native
+manager service and its child provisioner processes. This is separate from
+session environment settings. The option is repeatable, and values are kept in
+the native configuration across later installs unless the same key is replaced.
+For example, a macOS manager can expose mise-managed Node.js and the installed
+`agentapi-proxy` binary through `PATH`:
+
+```bash
+NODE_BIN="$(dirname "$(mise which node)")"
+NATIVE_BIN="$HOME/Library/Application Support/agentapi-native/bin"
+
+agentapi-proxy native install \
+  --upstream "https://parent-proxy.example.com" \
+  --public-url "https://native-mac.example.com" \
+  --manager-env "PATH=$NODE_BIN:$NATIVE_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+```
+
+Do not pass secrets through `--manager-env`; service definitions may be
+readable by other local users on some platforms.
+
 Add `--default` to select this manager when a session does not specify a
 manager. To register it for a team instead of the current user:
 
@@ -252,6 +272,18 @@ sessions, and whether the filesystem sandbox is enabled. `native doctor`
 checks local configuration permissions, service health, and the parent
 heartbeat. If registration must retain an existing identity, pass the existing
 ID with `--manager-id`.
+
+List native sessions and inspect their provisioner logs directly from the host:
+
+```bash
+agentapi-proxy native session-list
+agentapi-proxy native logs <session-id>
+agentapi-proxy native logs --follow --tail 200 <session-id>
+agentapi-proxy native logs --daemon --follow
+```
+
+Session logs live below `<state-dir>/sessions/<session-id>/runtime/provisioner.log`.
+They are removed along with the session directory when the session is deleted.
 
 ## Starting a Session Through an ESM
 

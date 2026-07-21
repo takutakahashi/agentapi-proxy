@@ -14,9 +14,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,7 +30,10 @@ type nativeManageOptions struct {
 	upstream, publicURL, name, listen, managerID, apiKeyEnv, apiKeyFile, configPath          string
 	scope, teamID, drainTimeout                                                              string
 	labels                                                                                   []string
+	environment                                                                              []string
 	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
+	logsFollow, logsDaemon                                                                   bool
+	logsTail                                                                                 int
 }
 
 var nativeManageOpts nativeManageOptions
@@ -60,6 +65,7 @@ func init() {
 	f.StringVar(&nativeManageOpts.scope, "scope", "user", "registration scope: user or team")
 	f.StringVar(&nativeManageOpts.teamID, "team-id", "", "team ID when --scope=team")
 	f.StringSliceVar(&nativeManageOpts.labels, "label", nil, "allocator label in key=value form")
+	f.StringArrayVar(&nativeManageOpts.environment, "manager-env", nil, "native manager environment variable in KEY=VALUE form (repeatable)")
 	f.BoolVar(&nativeManageOpts.defaultManager, "default", false, "make this the default external session manager")
 	f.BoolVar(&nativeManageOpts.force, "force", false, "install even if the existing state directory contains sessions")
 	f.BoolVar(&nativeManageOpts.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
@@ -74,7 +80,12 @@ func init() {
 	uninstall.Flags().StringVar(&nativeManageOpts.drainTimeout, "drain-timeout", "30m", "maximum time to wait with --drain")
 	uninstall.Flags().BoolVar(&nativeManageOpts.keepRegistration, "keep-registration", false, "keep the parent registration")
 	uninstall.Flags().BoolVar(&nativeManageOpts.keepData, "keep-data", false, "keep daemon state and configuration")
-	NativeCmd.AddCommand(install, status, doctor, restart, rotate, uninstall)
+	sessionList := &cobra.Command{Use: "session-list", Aliases: []string{"sessions"}, Short: "List native sessions on this host", Args: cobra.NoArgs, RunE: runNativeSessionList}
+	logs := &cobra.Command{Use: "logs [session-id]", Short: "Show native daemon or session logs", Args: cobra.MaximumNArgs(1), RunE: runNativeLogs}
+	logs.Flags().BoolVarP(&nativeManageOpts.logsFollow, "follow", "f", false, "follow log output")
+	logs.Flags().IntVarP(&nativeManageOpts.logsTail, "tail", "n", 100, "number of lines to show")
+	logs.Flags().BoolVar(&nativeManageOpts.logsDaemon, "daemon", false, "show the native daemon log")
+	NativeCmd.AddCommand(install, status, doctor, restart, rotate, uninstall, sessionList, logs)
 }
 
 func runNativeInstall(_ *cobra.Command, _ []string) error {
@@ -112,6 +123,17 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 		}
 		labels[strings.TrimSpace(parts[0])] = parts[1]
 	}
+	environment := make(map[string]string, len(existing.ManagerEnvironment)+len(nativeManageOpts.environment))
+	for key, value := range existing.ManagerEnvironment {
+		environment[key] = value
+	}
+	for _, raw := range nativeManageOpts.environment {
+		key, value, parseErr := parseNativeManagerEnvironment(raw)
+		if parseErr != nil {
+			return parseErr
+		}
+		environment[key] = value
+	}
 	apiKey, err := readInstallAPIKey()
 	if err != nil {
 		return err
@@ -135,7 +157,7 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 	cfg := nativeDaemonConfig{Listen: nativeManageOpts.listen, UpstreamURL: strings.TrimRight(nativeManageOpts.upstream, "/"),
 		ConnectionToken: token, PublicURL: strings.TrimRight(nativeManageOpts.publicURL, "/"), StateDir: paths.state,
 		BinaryPath: paths.binary, ManagerID: registration.ID, InstanceID: instanceID, Scope: nativeManageOpts.scope, TeamID: nativeManageOpts.teamID,
-		Labels: labels, Version: nativeBuildVersion(),
+		Labels: labels, ManagerEnvironment: environment, Version: nativeBuildVersion(),
 		FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: nativeManageOpts.filesystemSandbox}}
 	if err := installNativeService(paths, cfg); err != nil {
 		return err
@@ -218,7 +240,7 @@ func installNativeService(paths nativeInstallPaths, cfg nativeDaemonConfig) erro
 		if err := secureNativeConfig(paths.config); err != nil {
 			return err
 		}
-		unit := fmt.Sprintf("[Unit]\nDescription=agentapi-proxy native external session manager\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=agentapi\nGroup=agentapi\nExecStart=%s native-session-manager --config %s\nRestart=always\nRestartSec=3\nKillMode=process\nTimeoutStopSec=30\nLimitNOFILE=65536\n\n[Install]\nWantedBy=multi-user.target\n", paths.binary, paths.config)
+		unit := renderNativeSystemdUnit(paths, cfg.ManagerEnvironment)
 		if err := atomicWriteFile(paths.service, []byte(unit), 0o644); err != nil {
 			return err
 		}
@@ -230,13 +252,70 @@ func installNativeService(paths nativeInstallPaths, cfg nativeDaemonConfig) erro
 		}
 		return runCommand("systemctl", "restart", "agentapi-native.service")
 	}
-	plist := fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>com.agentapi.native</string><key>ProgramArguments</key><array><string>%s</string><string>native-session-manager</string><string>--config</string><string>%s</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardOutPath</key><string>%s/native.log</string><key>StandardErrorPath</key><string>%s/native.log</string></dict></plist>\n", xmlEscape(paths.binary), xmlEscape(paths.config), xmlEscape(paths.logDir), xmlEscape(paths.logDir))
+	plist := renderNativeLaunchAgent(paths, cfg.ManagerEnvironment)
 	if err := atomicWriteFile(paths.service, []byte(plist), 0o600); err != nil {
 		return err
 	}
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	_ = runCommand("launchctl", "bootout", domain+"/com.agentapi.native")
 	return runCommand("launchctl", "bootstrap", domain, paths.service)
+}
+
+func parseNativeManagerEnvironment(raw string) (string, string, error) {
+	key, value, ok := strings.Cut(raw, "=")
+	if !ok || !validEnvironmentKey(key) {
+		return "", "", fmt.Errorf("invalid --manager-env %q; expected KEY=VALUE", raw)
+	}
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return "", "", fmt.Errorf("invalid --manager-env %q; value must not contain NUL or newlines", raw)
+	}
+	return key, value, nil
+}
+
+func validEnvironmentKey(key string) bool {
+	if key == "" || (!asciiLetter(key[0]) && key[0] != '_') {
+		return false
+	}
+	for i := 1; i < len(key); i++ {
+		if !asciiLetter(key[i]) && (key[i] < '0' || key[i] > '9') && key[i] != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLetter(value byte) bool {
+	return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+}
+
+func sortedEnvironmentKeys(environment map[string]string) []string {
+	keys := make([]string, 0, len(environment))
+	for key := range environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func renderNativeSystemdUnit(paths nativeInstallPaths, environment map[string]string) string {
+	var env strings.Builder
+	for _, key := range sortedEnvironmentKeys(environment) {
+		value := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%").Replace(environment[key])
+		fmt.Fprintf(&env, "Environment=\"%s=%s\"\n", key, value)
+	}
+	return fmt.Sprintf("[Unit]\nDescription=agentapi-proxy native external session manager\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=agentapi\nGroup=agentapi\n%sExecStart=%s native-session-manager --config %s\nRestart=always\nRestartSec=3\nKillMode=process\nTimeoutStopSec=30\nLimitNOFILE=65536\n\n[Install]\nWantedBy=multi-user.target\n", env.String(), paths.binary, paths.config)
+}
+
+func renderNativeLaunchAgent(paths nativeInstallPaths, environment map[string]string) string {
+	var env strings.Builder
+	if len(environment) > 0 {
+		env.WriteString("<key>EnvironmentVariables</key><dict>")
+		for _, key := range sortedEnvironmentKeys(environment) {
+			fmt.Fprintf(&env, "<key>%s</key><string>%s</string>", xmlEscape(key), xmlEscape(environment[key]))
+		}
+		env.WriteString("</dict>")
+	}
+	return fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>com.agentapi.native</string><key>ProgramArguments</key><array><string>%s</string><string>native-session-manager</string><string>--config</string><string>%s</string></array>%s<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardOutPath</key><string>%s/native.log</string><key>StandardErrorPath</key><string>%s/native.log</string></dict></plist>\n", xmlEscape(paths.binary), xmlEscape(paths.config), env.String(), xmlEscape(paths.logDir), xmlEscape(paths.logDir))
 }
 
 func runNativeStatus(_ *cobra.Command, _ []string) error {
@@ -259,6 +338,114 @@ func runNativeStatus(_ *cobra.Command, _ []string) error {
 	active, _ := filepath.Glob(filepath.Join(cfg.StateDir, "sessions", "*"))
 	fmt.Printf("Service: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
 	return nil
+}
+
+type nativeSessionListEntry struct {
+	ID        string    `json:"id"`
+	PID       int       `json:"pid"`
+	StartedAt time.Time `json:"started_at"`
+	Status    string    `json:"status"`
+	LogPath   string    `json:"-"`
+}
+
+func readNativeSessionList(stateDir string) ([]nativeSessionListEntry, error) {
+	sessionDirs, err := filepath.Glob(filepath.Join(stateDir, "sessions", "*"))
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]nativeSessionListEntry, 0, len(sessionDirs))
+	for _, sessionDir := range sessionDirs {
+		data, readErr := os.ReadFile(filepath.Join(sessionDir, "runtime", "state.json"))
+		if readErr != nil {
+			continue
+		}
+		var entry nativeSessionListEntry
+		if err := json.Unmarshal(data, &entry); err != nil {
+			return nil, fmt.Errorf("read session state %s: %w", filepath.Base(sessionDir), err)
+		}
+		if entry.ID == "" {
+			entry.ID = filepath.Base(sessionDir)
+		}
+		entry.LogPath = filepath.Join(sessionDir, "runtime", "provisioner.log")
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].StartedAt.Before(entries[j].StartedAt) })
+	return entries, nil
+}
+
+func runNativeSessionList(command *cobra.Command, _ []string) error {
+	paths, err := nativePaths(nativeManageOpts.configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := readNativeConfig(paths.config)
+	if err != nil {
+		return err
+	}
+	entries, err := readNativeSessionList(cfg.StateDir)
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(command.OutOrStdout(), 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "SESSION ID\tSTATUS\tPID\tSTARTED\tLOG")
+	for _, entry := range entries {
+		started := "-"
+		if !entry.StartedAt.IsZero() {
+			started = entry.StartedAt.Local().Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", entry.ID, entry.Status, entry.PID, started, entry.LogPath)
+	}
+	return w.Flush()
+}
+
+func nativeLogPath(paths nativeInstallPaths, cfg nativeDaemonConfig, sessionID string, daemon bool) (string, error) {
+	if daemon {
+		if sessionID != "" {
+			return "", errors.New("a session ID cannot be used with --daemon")
+		}
+		return filepath.Join(paths.logDir, "native.log"), nil
+	}
+	if sessionID == "" {
+		return "", errors.New("session ID is required (or use --daemon)")
+	}
+	if sessionID == "." || filepath.Base(sessionID) != sessionID {
+		return "", errors.New("invalid session ID")
+	}
+	return filepath.Join(cfg.StateDir, "sessions", sessionID, "runtime", "provisioner.log"), nil
+}
+
+func runNativeLogs(command *cobra.Command, args []string) error {
+	if nativeManageOpts.logsTail < 0 {
+		return errors.New("--tail must be zero or greater")
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := readNativeConfig(paths.config)
+	if err != nil {
+		return err
+	}
+	sessionID := ""
+	if len(args) == 1 {
+		sessionID = args[0]
+	}
+	logPath, err := nativeLogPath(paths, cfg, sessionID, nativeManageOpts.logsDaemon)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		return fmt.Errorf("open log %s: %w", logPath, err)
+	}
+	tailArgs := []string{"-n", strconv.Itoa(nativeManageOpts.logsTail)}
+	if nativeManageOpts.logsFollow {
+		tailArgs = append(tailArgs, "-F")
+	}
+	tailArgs = append(tailArgs, logPath)
+	tail := exec.CommandContext(command.Context(), "tail", tailArgs...)
+	tail.Stdout = command.OutOrStdout()
+	tail.Stderr = command.ErrOrStderr()
+	return tail.Run()
 }
 
 func runNativeDoctor(_ *cobra.Command, _ []string) error {
