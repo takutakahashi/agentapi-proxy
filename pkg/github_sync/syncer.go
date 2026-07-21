@@ -1411,26 +1411,36 @@ func sanitizeFilename(name string) string {
 
 // sessionProfileRecord is the YAML on-disk representation of a SessionProfile.
 type sessionProfileRecord struct {
-	ID                     string                      `yaml:"id"`
-	Name                   string                      `yaml:"name"`
-	Description            string                      `yaml:"description,omitempty"`
-	UserID                 string                      `yaml:"user_id"`
-	Scope                  string                      `yaml:"scope"`
-	TeamID                 string                      `yaml:"team_id,omitempty"`
-	IsDefault              bool                        `yaml:"is_default,omitempty"`
-	SelectorTags           map[string]string           `yaml:"selector_tags,omitempty"`
-	Environment            map[string]string           `yaml:"environment,omitempty"`
-	Tags                   map[string]string           `yaml:"tags,omitempty"`
-	InitialMessageTemplate string                      `yaml:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string                      `yaml:"reuse_message_template,omitempty"`
-	ReuseSession           bool                        `yaml:"reuse_session,omitempty"`
-	MemoryKey              map[string]string           `yaml:"memory_key,omitempty"`
-	UnsyncedFilePaths      []string                    `yaml:"unsynced_file_paths,omitempty"`
-	Params                 *sessionProfileParamsRecord `yaml:"params,omitempty"`
-	GitHubToken            string                      `yaml:"github_token,omitempty"`
-	InitialMessage         string                      `yaml:"initial_message,omitempty"`
-	CreatedAt              string                      `yaml:"created_at,omitempty"`
-	UpdatedAt              string                      `yaml:"updated_at,omitempty"`
+	ID                     string                                    `yaml:"id"`
+	Name                   string                                    `yaml:"name"`
+	Description            string                                    `yaml:"description,omitempty"`
+	UserID                 string                                    `yaml:"user_id"`
+	Scope                  string                                    `yaml:"scope"`
+	TeamID                 string                                    `yaml:"team_id,omitempty"`
+	IsDefault              bool                                      `yaml:"is_default,omitempty"`
+	SelectorTags           map[string]string                         `yaml:"selector_tags,omitempty"`
+	Environment            map[string]string                         `yaml:"environment,omitempty"`
+	Tags                   map[string]string                         `yaml:"tags,omitempty"`
+	InitialMessageTemplate string                                    `yaml:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                                    `yaml:"reuse_message_template,omitempty"`
+	ReuseSession           bool                                      `yaml:"reuse_session,omitempty"`
+	MemoryKey              map[string]string                         `yaml:"memory_key,omitempty"`
+	UnsyncedFilePaths      []string                                  `yaml:"unsynced_file_paths,omitempty"`
+	MCPServers             map[string]*sessionProfileMCPServerRecord `yaml:"mcp_servers,omitempty"`
+	Params                 *sessionProfileParamsRecord               `yaml:"params,omitempty"`
+	GitHubToken            string                                    `yaml:"github_token,omitempty"`
+	InitialMessage         string                                    `yaml:"initial_message,omitempty"`
+	CreatedAt              string                                    `yaml:"created_at,omitempty"`
+	UpdatedAt              string                                    `yaml:"updated_at,omitempty"`
+}
+
+type sessionProfileMCPServerRecord struct {
+	Type    string            `yaml:"type"`
+	URL     string            `yaml:"url,omitempty"`
+	Command string            `yaml:"command,omitempty"`
+	Args    []string          `yaml:"args,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
 }
 
 type sessionProfileParamsRecord struct {
@@ -1495,6 +1505,20 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) (sessionProf
 		CreatedAt:              p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt:              p.UpdatedAt().Format(time.RFC3339),
 	}
+	if servers := cfg.MCPServers(); servers != nil && !servers.IsEmpty() {
+		rec.MCPServers = make(map[string]*sessionProfileMCPServerRecord, len(servers.Servers()))
+		for name, server := range servers.Servers() {
+			env, err := encryptSessionProfileMCPMap(dek, server.Env(), "mcp_servers."+name+".env")
+			if err != nil {
+				return sessionProfileRecord{}, err
+			}
+			headers, err := encryptSessionProfileMCPMap(dek, server.Headers(), "mcp_servers."+name+".headers")
+			if err != nil {
+				return sessionProfileRecord{}, err
+			}
+			rec.MCPServers[name] = &sessionProfileMCPServerRecord{Type: server.Type(), URL: server.URL(), Command: server.Command(), Args: server.Args(), Env: env, Headers: headers}
+		}
+	}
 	if params := cfg.Params(); params != nil {
 		paramsRec := sessionParamsToRecord(params)
 		if paramsRec.GitHubToken != "" && !IsEncrypted(paramsRec.GitHubToken) {
@@ -1507,6 +1531,22 @@ func sessionProfileToRecord(p *entities.SessionProfile, dek []byte) (sessionProf
 		rec.Params = paramsRec
 	}
 	return rec, nil
+}
+
+func encryptSessionProfileMCPMap(dek []byte, values map[string]string, field string) (map[string]string, error) {
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		if IsEncrypted(value) {
+			result[key] = value
+			continue
+		}
+		encrypted, err := EncryptField(dek, value)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt session profile %s.%s: %w", field, key, err)
+		}
+		result[key] = encrypted
+	}
+	return result, nil
 }
 
 func sessionParamsToRecord(p *entities.SessionParams) *sessionProfileParamsRecord {
@@ -1725,10 +1765,50 @@ func (s *Syncer) importSessionProfileFile(ctx context.Context, data []byte, scop
 	if params != nil {
 		cfg.SetParams(sessionParamsFromRecord(params))
 	}
+	if len(rec.MCPServers) > 0 {
+		servers := entities.NewMCPServersSettings()
+		for name, item := range rec.MCPServers {
+			if item == nil {
+				continue
+			}
+			env, err := decryptSessionProfileMCPMap(dek, item.Env, "mcp_servers."+name+".env")
+			if err != nil {
+				return err
+			}
+			headers, err := decryptSessionProfileMCPMap(dek, item.Headers, "mcp_servers."+name+".headers")
+			if err != nil {
+				return err
+			}
+			server := entities.NewMCPServer(name, item.Type)
+			server.SetURL(item.URL)
+			server.SetCommand(item.Command)
+			server.SetArgs(item.Args)
+			server.SetEnv(env)
+			server.SetHeaders(headers)
+			servers.SetServer(name, server)
+		}
+		cfg.SetMCPServers(servers)
+	}
 	p.SetConfig(cfg)
 
 	if existing != nil {
 		return s.sessionProfileRepo.Update(ctx, p)
 	}
 	return s.sessionProfileRepo.Create(ctx, p)
+}
+
+func decryptSessionProfileMCPMap(dek []byte, values map[string]string, field string) (map[string]string, error) {
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		if !IsEncrypted(value) {
+			result[key] = value
+			continue
+		}
+		plain, err := DecryptField(dek, value)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt session profile %s.%s: %w", field, key, err)
+		}
+		result[key] = plain
+	}
+	return result, nil
 }

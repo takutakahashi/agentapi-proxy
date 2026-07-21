@@ -259,4 +259,5 @@ type SessionProfileConfigImport struct {
 	ReuseSession           bool                            `yaml:"reuse_session,omitempty" toml:"reuse_session,omitempty" json:"reuse_session,omitempty"`
 	MemoryKey              map[string]string               `yaml:"memory_key,omitempty" toml:"memory_key,omitempty" json:"memory_key,omitempty"`
 	UnsyncedFilePaths      []string                        `yaml:"unsynced_file_paths,omitempty" toml:"unsynced_file_paths,omitempty" json:"unsynced_file_paths,omitempty"`
+	MCPServers             map[string]*MCPServerImport     `yaml:"mcp_servers,omitempty" toml:"mcp_servers,omitempty" json:"mcp_servers,omitempty"`
 }

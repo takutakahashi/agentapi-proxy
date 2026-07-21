@@ -7855,6 +7855,13 @@
           "example": [
             "/home/agentapi/.codex/auth.json"
           ]
+        },
+        "mcp_servers": {
+          "type": "object",
+          "description": "MCP servers enabled for sessions using this profile. Entries override tenant settings by server name; unmentioned tenant servers are inherited.",
+          "additionalProperties": {
+            "$ref": "#/components/schemas/MCPServerRequest"
+          }
         }
       }
     },

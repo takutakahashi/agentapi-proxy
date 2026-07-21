@@ -190,6 +190,7 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID, startReq.Tags)
 		if profile != nil {
 			cfg := profile.Config()
+			startReq.ProfileMCPServers = cfg.MCPServers()
 
 			// Environment: profile is base, request keys override
 			if len(cfg.Environment()) > 0 {

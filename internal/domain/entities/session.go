@@ -159,6 +159,8 @@ type StartRequest struct {
 	// SessionProfileID is an optional reference to a SessionProfile.
 	// When set, the profile's config is used as a base; explicit fields override it.
 	SessionProfileID string `json:"session_profile_id,omitempty"`
+	// ProfileMCPServers is resolved from SessionProfileID and is never accepted from the API.
+	ProfileMCPServers *MCPServersSettings `json:"-"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -205,6 +207,8 @@ type RunServerRequest struct {
 	UnsyncedFilePaths []string
 	// CredentialSource selects the owner of managed credential files.
 	CredentialSource string
+	// ProfileMCPServers is applied as a settings layer above user/team settings.
+	ProfileMCPServers *MCPServersSettings
 }
 
 // Session represents a running agentapi session

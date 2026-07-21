@@ -48,16 +48,17 @@ type sessionProfileJSON struct {
 }
 
 type sessionProfileConfigJSON struct {
-	Environment            map[string]string       `json:"environment,omitempty"`
-	Tags                   map[string]string       `json:"tags,omitempty"`
-	InitialMessageTemplate string                  `json:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string                  `json:"reuse_message_template,omitempty"`
-	Params                 *entities.SessionParams `json:"params,omitempty"`
-	ReuseSession           bool                    `json:"reuse_session,omitempty"`
-	MemoryKey              map[string]string       `json:"memory_key,omitempty"`
-	SandboxPolicyID        string                  `json:"sandbox_policy_id,omitempty"`
-	SessionTTL             string                  `json:"session_ttl,omitempty"`
-	UnsyncedFilePaths      []string                `json:"unsynced_file_paths,omitempty"`
+	Environment            map[string]string         `json:"environment,omitempty"`
+	Tags                   map[string]string         `json:"tags,omitempty"`
+	InitialMessageTemplate string                    `json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                    `json:"reuse_message_template,omitempty"`
+	Params                 *entities.SessionParams   `json:"params,omitempty"`
+	ReuseSession           bool                      `json:"reuse_session,omitempty"`
+	MemoryKey              map[string]string         `json:"memory_key,omitempty"`
+	SandboxPolicyID        string                    `json:"sandbox_policy_id,omitempty"`
+	SessionTTL             string                    `json:"session_ttl,omitempty"`
+	UnsyncedFilePaths      []string                  `json:"unsynced_file_paths,omitempty"`
+	MCPServers             map[string]*mcpServerJSON `json:"mcp_servers,omitempty"`
 }
 
 // KubernetesSessionProfileRepository implements SessionProfileRepository using Kubernetes Secrets
@@ -323,6 +324,22 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetSandboxPolicyID(pj.Config.SandboxPolicyID)
 	cfg.SetSessionTTL(pj.Config.SessionTTL)
 	cfg.SetUnsyncedFilePaths(pj.Config.UnsyncedFilePaths)
+	if pj.Config.MCPServers != nil {
+		servers := entities.NewMCPServersSettings()
+		for name, item := range pj.Config.MCPServers {
+			if item == nil {
+				continue
+			}
+			server := entities.NewMCPServer(name, item.Type)
+			server.SetURL(item.URL)
+			server.SetCommand(item.Command)
+			server.SetArgs(item.Args)
+			server.SetEnv(item.Env)
+			server.SetHeaders(item.Headers)
+			servers.SetServer(name, server)
+		}
+		cfg.SetMCPServers(servers)
+	}
 	profile.SetConfig(cfg)
 
 	return profile
@@ -330,6 +347,12 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 
 func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.SessionProfile) *sessionProfileJSON {
 	cfg := profile.Config()
+	mcpServers := make(map[string]*mcpServerJSON)
+	if cfg.MCPServers() != nil {
+		for name, server := range cfg.MCPServers().Servers() {
+			mcpServers[name] = &mcpServerJSON{Type: server.Type(), URL: server.URL(), Command: server.Command(), Args: server.Args(), Env: server.Env(), Headers: server.Headers()}
+		}
+	}
 	return &sessionProfileJSON{
 		ID:           profile.ID(),
 		Name:         profile.Name(),
@@ -350,6 +373,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
+			MCPServers:             mcpServers,
 		},
 		CreatedAt: profile.CreatedAt(),
 		UpdatedAt: profile.UpdatedAt(),

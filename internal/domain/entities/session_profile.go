@@ -36,6 +36,7 @@ type SessionProfileConfig struct {
 	// Empty string means the global cleanup worker TTL is used.
 	sessionTTL        string
 	unsyncedFilePaths []string
+	mcpServers        *MCPServersSettings
 }
 
 // NewSessionProfile creates a new SessionProfile
@@ -256,6 +257,12 @@ func (c *SessionProfileConfig) UnsyncedFilePaths() []string {
 func (c *SessionProfileConfig) SetUnsyncedFilePaths(paths []string) {
 	c.unsyncedFilePaths = copyStringSlice(paths)
 }
+
+// MCPServers returns the MCP servers contributed by this profile.
+func (c *SessionProfileConfig) MCPServers() *MCPServersSettings { return c.mcpServers }
+
+// SetMCPServers sets the MCP servers contributed by this profile.
+func (c *SessionProfileConfig) SetMCPServers(servers *MCPServersSettings) { c.mcpServers = servers }
 
 // --- Error types ---
 
