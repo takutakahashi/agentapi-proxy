@@ -6033,6 +6033,14 @@
             "type": "string",
             "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
           },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ],
+            "description": "Initial status of the schedule (default: active)"
+          },
           "scheduled_at": {
             "type": "string",
             "format": "date-time",

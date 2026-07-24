@@ -71,6 +71,7 @@ type CreateScheduleRequest struct {
 	Name          string                 `json:"name"`
 	Scope         entities.ResourceScope `json:"scope,omitempty"`
 	TeamID        string                 `json:"team_id,omitempty"`
+	Status        *ScheduleStatus        `json:"status,omitempty"`
 	ScheduledAt   *time.Time             `json:"scheduled_at,omitempty"`
 	CronExpr      string                 `json:"cron_expr,omitempty"`
 	Timezone      string                 `json:"timezone,omitempty"`
@@ -121,6 +122,9 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 	}
 	if req.ScheduledAt == nil && req.CronExpr == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "either scheduled_at or cron_expr must be set")
+	}
+	if req.Status != nil && *req.Status != ScheduleStatusActive && *req.Status != ScheduleStatusPaused {
+		return echo.NewHTTPError(http.StatusBadRequest, "status must be active or paused")
 	}
 
 	// Validate cron expression if provided
@@ -199,6 +203,11 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		}
 	}
 
+	status := ScheduleStatusActive
+	if req.Status != nil {
+		status = *req.Status
+	}
+
 	// Create schedule
 	schedule := &Schedule{
 		ID:            uuid.New().String(),
@@ -207,7 +216,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 		Scope:         req.Scope,
 		TeamID:        req.TeamID,
 		UserTeams:     userTeams,
-		Status:        ScheduleStatusActive,
+		Status:        status,
 		ScheduledAt:   req.ScheduledAt,
 		CronExpr:      req.CronExpr,
 		Timezone:      timezone,
