@@ -388,22 +388,6 @@ spec:
             {{- if .Values.kubernetesSession.otelCollector.enabled }}
             - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED
               value: {{ .Values.kubernetesSession.otelCollector.enabled | quote }}
-            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IMAGE
-              value: {{ .Values.kubernetesSession.otelCollector.image | quote }}
-            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_SCRAPE_INTERVAL
-              value: {{ .Values.kubernetesSession.otelCollector.scrapeInterval | quote }}
-            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CLAUDE_CODE_PORT
-              value: {{ .Values.kubernetesSession.otelCollector.claudeCodeMetricsPort | quote }}
-            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_EXPORTER_PORT
-              value: {{ .Values.kubernetesSession.otelCollector.exporterPort | quote }}
-            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_REQUEST
-              value: {{ .Values.kubernetesSession.otelCollector.resources.requests.cpu | quote }}
-            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_LIMIT
-              value: {{ .Values.kubernetesSession.otelCollector.resources.limits.cpu | quote }}
-            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_REQUEST
-              value: {{ .Values.kubernetesSession.otelCollector.resources.requests.memory | quote }}
-            - name: AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT
-              value: {{ .Values.kubernetesSession.otelCollector.resources.limits.memory | quote }}
             {{- end }}
             # Settings base secret (proxy-side merge of settings.json)
             - name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET

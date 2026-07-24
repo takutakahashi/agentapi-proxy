@@ -169,20 +169,20 @@ type RegistryConfig struct {
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
-	Session        SessionMeta          `yaml:"session"                   json:"session"`
-	Env            map[string]string    `yaml:"env,omitempty"             json:"env,omitempty"`
-	Claude         ClaudeConfig         `yaml:"claude,omitempty"          json:"claude,omitempty"`
-	Codex          CodexConfig          `yaml:"codex,omitempty"           json:"codex,omitempty"`
-	Pi             PiConfig             `yaml:"pi,omitempty"              json:"pi,omitempty"`
-	Repository     *RepositoryConfig    `yaml:"repository,omitempty"      json:"repository,omitempty"`
-	InitialMessage string               `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
-	WebhookPayload string               `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
-	Startup        StartupConfig        `yaml:"startup,omitempty"         json:"startup,omitempty"`
-	Github         *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
-	SlackParams    *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
-	OtelCollector  *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
-	Sandbox        *SandboxConfig       `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
-	Docker         *DockerConfig        `yaml:"docker,omitempty"          json:"docker,omitempty"`
+	Session        SessionMeta       `yaml:"session"                   json:"session"`
+	Env            map[string]string `yaml:"env,omitempty"             json:"env,omitempty"`
+	Claude         ClaudeConfig      `yaml:"claude,omitempty"          json:"claude,omitempty"`
+	Codex          CodexConfig       `yaml:"codex,omitempty"           json:"codex,omitempty"`
+	Pi             PiConfig          `yaml:"pi,omitempty"              json:"pi,omitempty"`
+	Repository     *RepositoryConfig `yaml:"repository,omitempty"      json:"repository,omitempty"`
+	InitialMessage string            `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
+	WebhookPayload string            `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
+	Startup        StartupConfig     `yaml:"startup,omitempty"         json:"startup,omitempty"`
+	Github         *GithubConfig     `yaml:"github,omitempty"          json:"github,omitempty"`
+	SlackParams    *SlackParams      `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
+	Telemetry      *TelemetryConfig  `yaml:"telemetry,omitempty"       json:"telemetry,omitempty"`
+	Sandbox        *SandboxConfig    `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
+	Docker         *DockerConfig     `yaml:"docker,omitempty"          json:"docker,omitempty"`
 	// Files holds the managed files to be restored at session startup.
 	// They are read from the agentapi-agent-files-{userID} Secret at session creation
 	// time and written to their respective paths by the provisioner.
@@ -195,16 +195,12 @@ type SessionSettings struct {
 	UnsyncedFilePaths []string `yaml:"unsynced_file_paths,omitempty" json:"unsynced_file_paths,omitempty"`
 }
 
-// OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.
-// When set, the provisioner will launch otelcol as a subprocess after user context
-// is established, ensuring metrics labels (user_id, session_id, etc.) are correct
-// even when using the stock inventory feature.
-type OtelCollectorConfig struct {
-	Enabled        bool   `yaml:"enabled"          json:"enabled"`
-	ScrapeInterval string `yaml:"scrape_interval"  json:"scrape_interval"`
-	ClaudeCodePort int    `yaml:"claude_code_port" json:"claude_code_port"`
-	ExporterPort   int    `yaml:"exporter_port"    json:"exporter_port"`
-	// Label values resolved at session creation time (not startup time)
+// TelemetryConfig contains the labels that the provisioner adds to the agent's
+// OpenTelemetry resource after the session identity has been resolved.
+type TelemetryConfig struct {
+	Enabled        bool `yaml:"enabled"         json:"enabled"`
+	PrometheusPort int  `yaml:"prometheus_port" json:"prometheus_port"`
+	// Label values resolved at session creation time (not Pod creation time).
 	SessionID  string `yaml:"session_id"  json:"session_id"`
 	UserID     string `yaml:"user_id"     json:"user_id"`
 	TeamID     string `yaml:"team_id"     json:"team_id"`

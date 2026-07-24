@@ -338,25 +338,10 @@ type KubernetesSessionConfig struct {
 	// level during session settings generation. Team and user settings can override it.
 	SettingsBaseSecret string `json:"settings_base_secret" mapstructure:"settings_base_secret"`
 
-	// OpenTelemetry Collector configuration
-	// OtelCollectorEnabled enables OpenTelemetry Collector sidecar for metrics collection
+	// OtelCollectorEnabled is the legacy configuration name that enables Claude
+	// Code telemetry. The provisioner now applies resource attributes directly;
+	// no OpenTelemetry Collector process is started.
 	OtelCollectorEnabled bool `json:"otel_collector_enabled" mapstructure:"otel_collector_enabled"`
-	// OtelCollectorImage is the container image for otelcol sidecar
-	OtelCollectorImage string `json:"otel_collector_image" mapstructure:"otel_collector_image"`
-	// OtelCollectorScrapeInterval is the scrape interval for Claude Code metrics
-	OtelCollectorScrapeInterval string `json:"otel_collector_scrape_interval" mapstructure:"otel_collector_scrape_interval"`
-	// OtelCollectorClaudeCodePort is the port where Claude Code exposes metrics
-	OtelCollectorClaudeCodePort int `json:"otel_collector_claude_code_port" mapstructure:"otel_collector_claude_code_port"`
-	// OtelCollectorExporterPort is the port where otelcol exposes labeled metrics
-	OtelCollectorExporterPort int `json:"otel_collector_exporter_port" mapstructure:"otel_collector_exporter_port"`
-	// OtelCollectorCPURequest is the CPU request for otelcol sidecar
-	OtelCollectorCPURequest string `json:"otel_collector_cpu_request" mapstructure:"otel_collector_cpu_request"`
-	// OtelCollectorCPULimit is the CPU limit for otelcol sidecar
-	OtelCollectorCPULimit string `json:"otel_collector_cpu_limit" mapstructure:"otel_collector_cpu_limit"`
-	// OtelCollectorMemoryRequest is the memory request for otelcol sidecar
-	OtelCollectorMemoryRequest string `json:"otel_collector_memory_request" mapstructure:"otel_collector_memory_request"`
-	// OtelCollectorMemoryLimit is the memory limit for otelcol sidecar
-	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
 
 	// Slack Integration configuration
 	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token
@@ -1105,14 +1090,6 @@ func bindEnvVars(v *viper.Viper) {
 
 	// OpenTelemetry Collector configuration
 	_ = v.BindEnv("kubernetes_session.otel_collector_enabled", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED")
-	_ = v.BindEnv("kubernetes_session.otel_collector_image", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IMAGE")
-	_ = v.BindEnv("kubernetes_session.otel_collector_scrape_interval", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_SCRAPE_INTERVAL")
-	_ = v.BindEnv("kubernetes_session.otel_collector_claude_code_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CLAUDE_CODE_PORT")
-	_ = v.BindEnv("kubernetes_session.otel_collector_exporter_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_EXPORTER_PORT")
-	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_REQUEST")
-	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_LIMIT")
-	_ = v.BindEnv("kubernetes_session.otel_collector_memory_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_REQUEST")
-	_ = v.BindEnv("kubernetes_session.otel_collector_memory_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT")
 
 	// Slack Integration configuration
 	_ = v.BindEnv("kubernetes_session.slack_integration_image", "AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE")
@@ -1542,13 +1519,13 @@ func DefaultConfig() *Config {
 			},
 		},
 		StockInventoryWorker: StockInventoryWorkerConfig{
-			Enabled:        false,
-			CheckInterval:  "30s",
-			TargetCount:    2,
-			DockerEnabled:  false,
-			LeaseDuration:  "15s",
-			RenewDeadline:  "10s",
-			RetryPeriod:    "2s",
+			Enabled:       false,
+			CheckInterval: "30s",
+			TargetCount:   2,
+			DockerEnabled: false,
+			LeaseDuration: "15s",
+			RenewDeadline: "10s",
+			RetryPeriod:   "2s",
 		},
 		Asset: AssetConfig{
 			Backend:     "nginx",
@@ -1711,9 +1688,9 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 // K8sSessionConfigOverride represents kubernetes session configuration overrides from external file
 type K8sSessionConfigOverride struct {
 	KubernetesSession *struct {
-		NodeSelector          map[string]string `json:"node_selector,omitempty" yaml:"node_selector"`
+		NodeSelector map[string]string      `json:"node_selector,omitempty" yaml:"node_selector"`
 		Affinity     map[string]interface{} `json:"affinity,omitempty" yaml:"affinity"`
-		Tolerations           []Toleration      `json:"tolerations,omitempty" yaml:"tolerations"`
+		Tolerations  []Toleration           `json:"tolerations,omitempty" yaml:"tolerations"`
 	} `json:"kubernetes_session,omitempty" yaml:"kubernetes_session"`
 }
 

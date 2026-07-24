@@ -47,7 +47,10 @@ import (
 // provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
 // It serves local health/status and sandbox-domain endpoints; provisioning work
 // is pulled from the proxy internal API by the session Pod.
-const provisionerPort = 9001
+const (
+	provisionerPort         = 9001
+	telemetryPrometheusPort = 9090
+)
 
 // ProvisionerPort is the exported version of provisionerPort for use by other packages
 // (e.g. the session controller error handler that checks provisioner /status).
@@ -213,12 +216,6 @@ func NewKubernetesSessionManagerWithClient(
 	defer cancel()
 	if err := manager.ensureProvisionerToken(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure provisioner token: %w", err)
-	}
-
-	// Ensure OpenTelemetry Collector ConfigMap exists
-	if err := manager.ensureOtelcolConfigMap(ctx); err != nil {
-		log.Printf("[K8S_SESSION] Warning: Failed to ensure otelcol ConfigMap: %v", err)
-		// Don't fail initialization if ConfigMap creation fails
 	}
 
 	return manager, nil
@@ -2224,10 +2221,6 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	// by agent-provisioner (pkg/provisioner/provision.go) after agentapi starts.
 	// This avoids running claude-posts twice when stock sessions are used.
 
-	// otelcol runs as a subprocess inside the agentapi container (in-process mode).
-	// No sidecar is added here; the provisioner starts otelcol after user context
-	// is established so that metrics labels are correct even with stock sessions.
-
 	// Convert config tolerations to corev1 tolerations
 	var tolerations []corev1.Toleration
 	for _, t := range m.k8sConfig.Tolerations {
@@ -2245,16 +2238,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 
 	// Build pod annotations
 	podAnnotations := make(map[string]string)
-
-	// Add Prometheus scrape annotations for otelcol sidecar if enabled
 	if m.k8sConfig.OtelCollectorEnabled {
-		exporterPort := 9090
-		if m.k8sConfig.OtelCollectorExporterPort > 0 {
-			exporterPort = m.k8sConfig.OtelCollectorExporterPort
-		}
-
 		podAnnotations["prometheus.io/scrape"] = "true"
-		podAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", exporterPort)
+		podAnnotations["prometheus.io/port"] = strconv.Itoa(telemetryPrometheusPort)
 		podAnnotations["prometheus.io/path"] = "/metrics"
 	}
 
@@ -3284,9 +3270,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 		})
 	}
 
-	// No otelcol ConfigMap volume needed: otelcol runs as an in-process subprocess
-	// and generates its config file at /tmp/otelcol-config.yaml at provisioning time.
-
 	return volumes
 }
 
@@ -3611,14 +3594,6 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		{Name: "HOME", Value: "/home/agentapi"},
 		// GitHub App PEM path (file is written by setup directly to container FS)
 		{Name: "GITHUB_APP_PEM_PATH", Value: "/tmp/github-app/app.pem"},
-	}
-
-	// Add Claude Code telemetry configuration
-	if m.k8sConfig.OtelCollectorEnabled {
-		envVars = append(envVars,
-			corev1.EnvVar{Name: "CLAUDE_CODE_ENABLE_TELEMETRY", Value: "1"},
-			corev1.EnvVar{Name: "OTEL_METRICS_EXPORTER", Value: "prometheus"},
-		)
 	}
 
 	// Add Team ID if in team scope
@@ -4570,116 +4545,6 @@ func (m *KubernetesSessionManager) getStatusFromWorkloadObject(deployment *appsv
 	return "unhealthy"
 }
 
-// ensureOtelcolConfigMap creates or updates the OpenTelemetry Collector ConfigMap
-func (m *KubernetesSessionManager) ensureOtelcolConfigMap(ctx context.Context) error {
-	if !m.k8sConfig.OtelCollectorEnabled {
-		return nil
-	}
-
-	configMapName := "otelcol-config"
-	scrapeInterval := "15s"
-	if m.k8sConfig.OtelCollectorScrapeInterval != "" {
-		scrapeInterval = m.k8sConfig.OtelCollectorScrapeInterval
-	}
-	claudeCodePort := 9464
-	if m.k8sConfig.OtelCollectorClaudeCodePort > 0 {
-		claudeCodePort = m.k8sConfig.OtelCollectorClaudeCodePort
-	}
-	exporterPort := 9090
-	if m.k8sConfig.OtelCollectorExporterPort > 0 {
-		exporterPort = m.k8sConfig.OtelCollectorExporterPort
-	}
-
-	otelConfig := fmt.Sprintf(`receivers:
-  prometheus:
-    config:
-      scrape_configs:
-        - job_name: 'claude-code'
-          scrape_interval: %s
-          static_configs:
-            - targets: ['localhost:%d']
-
-processors:
-  resource:
-    attributes:
-      - key: user_id
-        action: delete
-      - key: session_id
-        action: delete
-  transform:
-    error_mode: ignore
-    metric_statements:
-      - context: datapoint
-        statements:
-          # Rename claude-code's native labels
-          - set(attributes["claude_user_id"], attributes["user_id"]) where attributes["user_id"] != nil
-          - set(attributes["claude_session_id"], attributes["session_id"]) where attributes["session_id"] != nil
-          - delete_key(attributes, "user_id")
-          - delete_key(attributes, "session_id")
-          # Remove user_email label to prevent it from being scraped by Prometheus
-          - delete_key(attributes, "user_email")
-          # Add agentapi labels
-          - set(attributes["agentapi_session_id"], "${env:SESSION_ID}")
-          - set(attributes["agentapi_user_id"], "${env:USER_ID}")
-          - set(attributes["agentapi_team_id"], "${env:TEAM_ID}")
-          - set(attributes["agentapi_schedule_id"], "${env:SCHEDULE_ID}")
-          - set(attributes["agentapi_webhook_id"], "${env:WEBHOOK_ID}")
-          - set(attributes["agentapi_agent_type"], "${env:AGENT_TYPE}")
-
-exporters:
-  prometheus:
-    endpoint: "0.0.0.0:%d"
-    resource_to_telemetry_conversion:
-      enabled: false
-
-service:
-  pipelines:
-    metrics:
-      receivers: [prometheus]
-      processors: [resource, transform]
-      exporters: [prometheus]`, scrapeInterval, claudeCodePort, exporterPort)
-
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
-			Namespace: m.namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "otelcol",
-				"app.kubernetes.io/managed-by": "agentapi-proxy",
-				"app.kubernetes.io/component":  "telemetry",
-			},
-		},
-		Data: map[string]string{
-			"otel-collector-config.yaml": otelConfig,
-		},
-	}
-
-	// Try to get existing ConfigMap
-	existingCM, err := m.client.CoreV1().ConfigMaps(m.namespace).Get(ctx, configMapName, metav1.GetOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new ConfigMap
-			_, err = m.client.CoreV1().ConfigMaps(m.namespace).Create(ctx, configMap, metav1.CreateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to create otelcol ConfigMap: %w", err)
-			}
-			log.Printf("[K8S_SESSION] Created otelcol ConfigMap: %s", configMapName)
-			return nil
-		}
-		return fmt.Errorf("failed to get otelcol ConfigMap: %w", err)
-	}
-
-	// Update existing ConfigMap
-	existingCM.Data = configMap.Data
-	existingCM.Labels = configMap.Labels
-	_, err = m.client.CoreV1().ConfigMaps(m.namespace).Update(ctx, existingCM, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update otelcol ConfigMap: %w", err)
-	}
-	log.Printf("[K8S_SESSION] Updated otelcol ConfigMap: %s", configMapName)
-	return nil
-}
-
 // buildServicePorts builds the service ports for the session
 func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession) []corev1.ServicePort {
 	ports := []corev1.ServicePort{
@@ -4698,16 +4563,11 @@ func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession)
 		},
 	}
 
-	// Add metrics port if otelcol is enabled
 	if m.k8sConfig.OtelCollectorEnabled {
-		exporterPort := 9090
-		if m.k8sConfig.OtelCollectorExporterPort > 0 {
-			exporterPort = m.k8sConfig.OtelCollectorExporterPort
-		}
 		ports = append(ports, corev1.ServicePort{
 			Name:       "metrics",
-			Port:       int32(exporterPort),
-			TargetPort: intstr.FromInt(exporterPort),
+			Port:       telemetryPrometheusPort,
+			TargetPort: intstr.FromInt(telemetryPrometheusPort),
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
@@ -4911,12 +4771,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"AGENTAPI_USER_ID":    req.UserID,
 		"HOME":                "/home/agentapi",
 		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
-	}
-
-	// Add Claude Code telemetry configuration
-	if m.k8sConfig.OtelCollectorEnabled {
-		env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
-		env["OTEL_METRICS_EXPORTER"] = "prometheus"
 	}
 
 	// Add Team ID if in team scope
@@ -5301,23 +5155,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
-	// OtelCollector in-process config: otelcol always runs as a subprocess inside
-	// the agentapi container, started by the provisioner after user context is known.
-	// This ensures metrics labels are correct even with the stock inventory feature.
+	// Telemetry labels are applied by the provisioner after the session identity is
+	// known. The legacy otelCollector.enabled value remains the feature gate so
+	// existing Helm values continue to enable Claude Code telemetry.
 	if m.k8sConfig.OtelCollectorEnabled {
-		scrapeInterval := "15s"
-		if m.k8sConfig.OtelCollectorScrapeInterval != "" {
-			scrapeInterval = m.k8sConfig.OtelCollectorScrapeInterval
-		}
-		claudeCodePort := 9464
-		if m.k8sConfig.OtelCollectorClaudeCodePort > 0 {
-			claudeCodePort = m.k8sConfig.OtelCollectorClaudeCodePort
-		}
-		exporterPort := 9090
-		if m.k8sConfig.OtelCollectorExporterPort > 0 {
-			exporterPort = m.k8sConfig.OtelCollectorExporterPort
-		}
-
 		scheduleID := "-"
 		webhookID := "-"
 		if req.Tags != nil {
@@ -5337,11 +5178,9 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			teamID = req.TeamID
 		}
 
-		settings.OtelCollector = &sessionsettings.OtelCollectorConfig{
+		settings.Telemetry = &sessionsettings.TelemetryConfig{
 			Enabled:        true,
-			ScrapeInterval: scrapeInterval,
-			ClaudeCodePort: claudeCodePort,
-			ExporterPort:   exporterPort,
+			PrometheusPort: telemetryPrometheusPort,
 			SessionID:      session.id,
 			UserID:         req.UserID,
 			TeamID:         teamID,
@@ -5349,7 +5188,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			WebhookID:      webhookID,
 			AgentType:      agentType,
 		}
-		log.Printf("[K8S_SESSION] OtelCollector in-process config embedded for session %s", session.id)
+		log.Printf("[K8S_SESSION] Telemetry labels embedded for session %s", session.id)
 	}
 
 	// Embed managed files from the selected credential owner so that
