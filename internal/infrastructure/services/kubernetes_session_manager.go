@@ -47,7 +47,10 @@ import (
 // provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
 // It serves local health/status and sandbox-domain endpoints; provisioning work
 // is pulled from the proxy internal API by the session Pod.
-const provisionerPort = 9001
+const (
+	provisionerPort         = 9001
+	telemetryPrometheusPort = 9090
+)
 
 // ProvisionerPort is the exported version of provisionerPort for use by other packages
 // (e.g. the session controller error handler that checks provisioner /status).
@@ -2235,6 +2238,11 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 
 	// Build pod annotations
 	podAnnotations := make(map[string]string)
+	if m.k8sConfig.OtelCollectorEnabled {
+		podAnnotations["prometheus.io/scrape"] = "true"
+		podAnnotations["prometheus.io/port"] = strconv.Itoa(telemetryPrometheusPort)
+		podAnnotations["prometheus.io/path"] = "/metrics"
+	}
 
 	affinity, err := sessionAffinity(m.k8sConfig.Affinity)
 	if err != nil {
@@ -4555,6 +4563,15 @@ func (m *KubernetesSessionManager) buildServicePorts(session *KubernetesSession)
 		},
 	}
 
+	if m.k8sConfig.OtelCollectorEnabled {
+		ports = append(ports, corev1.ServicePort{
+			Name:       "metrics",
+			Port:       telemetryPrometheusPort,
+			TargetPort: intstr.FromInt(telemetryPrometheusPort),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+
 	return ports
 }
 
@@ -5162,13 +5179,14 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 
 		settings.Telemetry = &sessionsettings.TelemetryConfig{
-			Enabled:    true,
-			SessionID:  session.id,
-			UserID:     req.UserID,
-			TeamID:     teamID,
-			ScheduleID: scheduleID,
-			WebhookID:  webhookID,
-			AgentType:  agentType,
+			Enabled:        true,
+			PrometheusPort: telemetryPrometheusPort,
+			SessionID:      session.id,
+			UserID:         req.UserID,
+			TeamID:         teamID,
+			ScheduleID:     scheduleID,
+			WebhookID:      webhookID,
+			AgentType:      agentType,
 		}
 		log.Printf("[K8S_SESSION] Telemetry labels embedded for session %s", session.id)
 	}

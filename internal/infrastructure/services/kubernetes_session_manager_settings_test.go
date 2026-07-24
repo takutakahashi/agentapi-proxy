@@ -50,7 +50,7 @@ func TestBuildSessionSettings_EmbedsProvisionerTelemetryLabels(t *testing.T) {
 		t.Fatal("Telemetry config is nil")
 	}
 	want := sessionsettings.TelemetryConfig{
-		Enabled: true, SessionID: "test-session", UserID: "test-user",
+		Enabled: true, PrometheusPort: 9090, SessionID: "test-session", UserID: "test-user",
 		TeamID: "org/team-a", ScheduleID: "schedule-1", WebhookID: "webhook-1", AgentType: "claude",
 	}
 	if got := *settings.Telemetry; got != want {
@@ -58,6 +58,31 @@ func TestBuildSessionSettings_EmbedsProvisionerTelemetryLabels(t *testing.T) {
 	}
 	if _, ok := settings.Env["OTEL_RESOURCE_ATTRIBUTES"]; ok {
 		t.Fatal("manager should leave OTEL_RESOURCE_ATTRIBUTES to the provisioner")
+	}
+}
+
+func TestBuildServicePorts_PreservesTelemetryExporterPort(t *testing.T) {
+	manager := &KubernetesSessionManager{
+		k8sConfig: &config.KubernetesSessionConfig{
+			BasePort:             8080,
+			OtelCollectorEnabled: true,
+		},
+	}
+	session := &KubernetesSession{servicePort: 8080}
+
+	ports := manager.buildServicePorts(session)
+	var metricsPort *corev1.ServicePort
+	for i := range ports {
+		if ports[i].Name == "metrics" {
+			metricsPort = &ports[i]
+			break
+		}
+	}
+	if metricsPort == nil {
+		t.Fatal("metrics service port is missing")
+	}
+	if metricsPort.Port != 9090 || metricsPort.TargetPort.IntValue() != 9090 {
+		t.Fatalf("metrics port = %#v, want port and targetPort 9090", *metricsPort)
 	}
 }
 

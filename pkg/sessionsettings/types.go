@@ -198,7 +198,8 @@ type SessionSettings struct {
 // TelemetryConfig contains the labels that the provisioner adds to the agent's
 // OpenTelemetry resource after the session identity has been resolved.
 type TelemetryConfig struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
+	Enabled        bool `yaml:"enabled"         json:"enabled"`
+	PrometheusPort int  `yaml:"prometheus_port" json:"prometheus_port"`
 	// Label values resolved at session creation time (not Pod creation time).
 	SessionID  string `yaml:"session_id"  json:"session_id"`
 	UserID     string `yaml:"user_id"     json:"user_id"`

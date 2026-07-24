@@ -17,13 +17,14 @@ func TestConfigureTelemetry(t *testing.T) {
 	}
 	settings := &sessionsettings.SessionSettings{
 		Telemetry: &sessionsettings.TelemetryConfig{
-			Enabled:    true,
-			SessionID:  "session-1",
-			UserID:     "user-1",
-			TeamID:     "org/team",
-			ScheduleID: "schedule-1",
-			WebhookID:  "-",
-			AgentType:  "claude",
+			Enabled:        true,
+			PrometheusPort: 9090,
+			SessionID:      "session-1",
+			UserID:         "user-1",
+			TeamID:         "org/team",
+			ScheduleID:     "schedule-1",
+			WebhookID:      "-",
+			AgentType:      "claude",
 		},
 	}
 
@@ -34,6 +35,12 @@ func TestConfigureTelemetry(t *testing.T) {
 	}
 	if got := env["OTEL_METRICS_EXPORTER"]; got != "prometheus" {
 		t.Fatalf("OTEL_METRICS_EXPORTER = %q, want prometheus", got)
+	}
+	if got := env["OTEL_EXPORTER_PROMETHEUS_HOST"]; got != "0.0.0.0" {
+		t.Fatalf("OTEL_EXPORTER_PROMETHEUS_HOST = %q, want 0.0.0.0", got)
+	}
+	if got := env["OTEL_EXPORTER_PROMETHEUS_PORT"]; got != "9090" {
+		t.Fatalf("OTEL_EXPORTER_PROMETHEUS_PORT = %q, want 9090", got)
 	}
 	want := "deployment.environment=dev," +
 		"agentapi_session_id=session-1," +

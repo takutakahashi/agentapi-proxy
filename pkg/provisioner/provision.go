@@ -989,6 +989,12 @@ func configureTelemetry(settings *sessionsettings.SessionSettings, env map[strin
 
 	env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
 	env["OTEL_METRICS_EXPORTER"] = "prometheus"
+	env["OTEL_EXPORTER_PROMETHEUS_HOST"] = "0.0.0.0"
+	prometheusPort := cfg.PrometheusPort
+	if prometheusPort <= 0 {
+		prometheusPort = 9090
+	}
+	env["OTEL_EXPORTER_PROMETHEUS_PORT"] = strconv.Itoa(prometheusPort)
 	env["OTEL_RESOURCE_ATTRIBUTES"] = strings.Join(attributes, ",")
 }
 
