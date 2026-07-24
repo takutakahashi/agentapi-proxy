@@ -49,6 +49,24 @@ func TestHandlers_CreateSchedule(t *testing.T) {
 			wantStatus: http.StatusCreated,
 		},
 		{
+			name: "valid paused schedule",
+			body: CreateScheduleRequest{
+				Name:        "Paused Schedule",
+				Status:      statusPtr(ScheduleStatusPaused),
+				ScheduledAt: timePtr(time.Now().Add(time.Hour)),
+			},
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name: "invalid status",
+			body: CreateScheduleRequest{
+				Name:        "Invalid Status",
+				Status:      statusPtr(ScheduleStatusCompleted),
+				ScheduledAt: timePtr(time.Now().Add(time.Hour)),
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
 			name: "missing name",
 			body: CreateScheduleRequest{
 				ScheduledAt: timePtr(time.Now().Add(time.Hour)),
@@ -103,6 +121,15 @@ func TestHandlers_CreateSchedule(t *testing.T) {
 
 			if rec.Code != tt.wantStatus {
 				t.Errorf("got status %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if tt.body.Status != nil {
+				var response ScheduleResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if response.Status != *tt.body.Status {
+					t.Errorf("got schedule status %q, want %q", response.Status, *tt.body.Status)
+				}
 			}
 		})
 	}

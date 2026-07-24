@@ -208,6 +208,37 @@ func TestCreateSlackBot_Success(t *testing.T) {
 	assert.Equal(t, entities.SlackBotStatusActive, resp.Status)
 }
 
+func TestCreateSlackBot_Paused(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo)
+
+	c, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
+		Name:   "Paused Bot",
+		Status: entities.SlackBotStatusPaused,
+	}, "user-1")
+
+	err := controller.CreateSlackBot(c)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp SlackBotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, entities.SlackBotStatusPaused, resp.Status)
+}
+
+func TestCreateSlackBot_InvalidStatus(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	controller := NewSlackBotController(repo)
+
+	c, _ := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots", CreateSlackBotRequest{
+		Name:   "Invalid Bot",
+		Status: entities.SlackBotStatus("invalid"),
+	}, "user-1")
+
+	err := controller.CreateSlackBot(c)
+	assertHTTPError(t, err, http.StatusBadRequest)
+}
+
 func TestCreateSlackBot_MissingName(t *testing.T) {
 	repo := newMockSlackBotRepository()
 	controller := NewSlackBotController(repo)
