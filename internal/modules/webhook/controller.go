@@ -43,6 +43,7 @@ type CreateWebhookRequest struct {
 	Name            string                        `json:"name"`
 	Scope           entities.ResourceScope        `json:"scope,omitempty"`
 	TeamID          string                        `json:"team_id,omitempty"`
+	Status          entities.WebhookStatus        `json:"status,omitempty"`
 	Type            entities.WebhookType          `json:"type"`
 	Secret          string                        `json:"secret,omitempty"`
 	SignatureHeader string                        `json:"signature_header,omitempty"`
@@ -253,6 +254,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	if req.Type != entities.WebhookTypeGitHub && req.Type != entities.WebhookTypeCustom {
 		return echo.NewHTTPError(http.StatusBadRequest, "type must be 'github' or 'custom'")
 	}
+	if req.Status != "" && req.Status != entities.WebhookStatusActive && req.Status != entities.WebhookStatusPaused {
+		return echo.NewHTTPError(http.StatusBadRequest, "status must be active or paused")
+	}
 	if len(req.Triggers) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one trigger is required")
 	}
@@ -298,6 +302,9 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 	webhook := entities.NewWebhook(uuid.New().String(), req.Name, userID, req.Type)
 	webhook.SetScope(req.Scope)
 	webhook.SetTeamID(req.TeamID)
+	if req.Status != "" {
+		webhook.SetStatus(req.Status)
+	}
 	if req.Secret != "" {
 		webhook.SetSecret(req.Secret)
 	}

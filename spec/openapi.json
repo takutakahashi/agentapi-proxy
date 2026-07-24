@@ -6274,6 +6274,10 @@
             "type": "string",
             "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
           },
+          "status": {
+            "$ref": "#/components/schemas/WebhookStatus",
+            "description": "Initial status of the webhook (default: active)"
+          },
           "type": {
             "$ref": "#/components/schemas/WebhookType"
           },
@@ -7575,6 +7579,10 @@
           "type": "string",
           "description": "Team ID for team-scoped SlackBots (format: 'org/team-slug')",
           "example": "myorg/backend"
+        },
+        "status": {
+          "$ref": "#/components/schemas/SlackBotStatus",
+          "description": "Initial status of the SlackBot (default: active)"
         },
         "bot_token_secret_name": {
           "type": "string",

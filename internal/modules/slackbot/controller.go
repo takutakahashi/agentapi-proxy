@@ -25,9 +25,10 @@ func NewSlackBotController(repo repositories.SlackBotRepository) *SlackBotContro
 
 // CreateSlackBotRequest is the request body for creating a SlackBot
 type CreateSlackBotRequest struct {
-	Name   string                 `json:"name"`
-	Scope  entities.ResourceScope `json:"scope,omitempty"`
-	TeamID string                 `json:"team_id,omitempty"`
+	Name   string                  `json:"name"`
+	Scope  entities.ResourceScope  `json:"scope,omitempty"`
+	TeamID string                  `json:"team_id,omitempty"`
+	Status entities.SlackBotStatus `json:"status,omitempty"`
 	// Teams is an explicit list of team IDs (e.g. ["org/team-slug"]) whose settings
 	// (MCP servers, env vars, Bedrock config, etc.) will be merged into sessions
 	// created by this bot. When omitted, the server falls back to the authenticated
@@ -150,6 +151,9 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	if req.Name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
+	if req.Status != "" && req.Status != entities.SlackBotStatusActive && req.Status != entities.SlackBotStatusPaused {
+		return echo.NewHTTPError(http.StatusBadRequest, "status must be active or paused")
+	}
 
 	userID := getSlackBotUserID(ctx)
 	if userID == "" {
@@ -167,6 +171,9 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	id := uuid.New().String()
 	bot := entities.NewSlackBot(id, req.Name, userID)
 
+	if req.Status != "" {
+		bot.SetStatus(req.Status)
+	}
 	if req.Scope != "" {
 		bot.SetScope(req.Scope)
 	}
