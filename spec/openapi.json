@@ -914,7 +914,7 @@
     },
     "/{sessionId}/{path}": {
       "summary": "Proxy to session",
-      "description": "All requests to /{sessionId}/* are proxied to the corresponding agentapi server instance.",
+      "description": "All requests to /{sessionId}/* are proxied to the corresponding agentapi server instance. ACP-backed sessions also expose session, messages, sse, and rpc paths through this route; session/prompt RPC requests may contain text and base64-encoded image content blocks.",
       "get": {
         "summary": "Proxy GET request to session",
         "operationId": "proxyGetToSession",
@@ -983,7 +983,7 @@
           }
         ],
         "requestBody": {
-          "description": "Request body to forward to agentapi",
+          "description": "Request body to forward to agentapi. For an ACP session's rpc path, session/prompt accepts ordered content blocks such as {\"type\":\"text\",\"text\":\"...\"} and {\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"<base64>\"}.",
           "content": {
             "application/json": {
               "schema": {

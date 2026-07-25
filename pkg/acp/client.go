@@ -173,6 +173,15 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return fmt.Errorf("acp initialize: parse result: %w", err)
 	}
+	if result.AgentCapabilities.LoadSession {
+		result.AgentCapabilities.SessionLoad = true
+	}
+	if result.AgentCapabilities.PromptCapabilities != nil {
+		result.AgentCapabilities.Image = result.AgentCapabilities.Image ||
+			result.AgentCapabilities.PromptCapabilities.Image
+		result.AgentCapabilities.Audio = result.AgentCapabilities.Audio ||
+			result.AgentCapabilities.PromptCapabilities.Audio
+	}
 	c.agentCaps = result.AgentCapabilities
 	if c.verbose {
 		log.Printf("[acp] initialized: protocol=%d agentCaps=%+v authMethods=%d", result.ProtocolVersion, result.AgentCapabilities, len(result.AuthMethods))
@@ -354,19 +363,26 @@ func modelValueToString(value interface{}) string {
 	return ""
 }
 
-// Prompt sends a user message and returns when the agent has finished the turn.
+// Prompt sends a text user message and returns when the agent has finished the turn.
 // While the agent is working, session/update notifications are dispatched to
 // the channel returned by Updates().
 func (c *Client) Prompt(ctx context.Context, text string) (StopReason, error) {
+	return c.PromptBlocks(ctx, []ContentBlock{{Type: ContentBlockTypeText, Text: text}})
+}
+
+// PromptBlocks sends an ordered multimodal prompt and returns when the agent
+// has finished the turn.
+func (c *Client) PromptBlocks(ctx context.Context, prompt []ContentBlock) (StopReason, error) {
 	sessionId := c.SessionID()
 	if sessionId == "" {
 		return "", fmt.Errorf("acp: no active session; call NewSession first")
 	}
+	if len(prompt) == 0 {
+		return "", fmt.Errorf("acp: prompt must contain at least one content block")
+	}
 	params := PromptParams{
 		SessionId: sessionId,
-		Prompt: []ContentBlock{
-			{Type: ContentBlockTypeText, Text: text},
-		},
+		Prompt:    prompt,
 	}
 	raw, err := c.rpc.Call(ctx, "session/prompt", params)
 	if err != nil {

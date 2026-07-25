@@ -254,19 +254,11 @@ func (s *Server) handleRPC(c echo.Context) error {
 			return c.JSON(http.StatusBadRequest,
 				rpcErrorResp(env.ID, -32602, "invalid params: "+err.Error()))
 		}
-		// Extract the first text content block.
-		text := ""
-		for _, block := range params.Prompt {
-			if block.Type == acp.ContentBlockTypeText {
-				text = block.Text
-				break
-			}
-		}
-		if text == "" {
+		if err := validatePromptContent(params.Prompt); err != nil {
 			return c.JSON(http.StatusBadRequest,
-				rpcErrorResp(env.ID, -32602, "prompt must contain at least one text content block"))
+				rpcErrorResp(env.ID, -32602, err.Error()))
 		}
-		if err := s.bridge.SendPrompt(*env.ID, text); err != nil {
+		if err := s.bridge.SendPrompt(*env.ID, params.Prompt); err != nil {
 			return c.JSON(http.StatusInternalServerError,
 				rpcErrorResp(env.ID, -32000, err.Error()))
 		}
@@ -315,6 +307,27 @@ func (s *Server) handleRPC(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest,
 			rpcErrorResp(env.ID, -32601, "method not supported: "+env.Method))
 	}
+}
+
+func validatePromptContent(prompt []acp.ContentBlock) error {
+	if len(prompt) == 0 {
+		return fmt.Errorf("prompt must contain at least one content block")
+	}
+	for i, block := range prompt {
+		switch block.Type {
+		case acp.ContentBlockTypeText:
+			if block.Text == "" {
+				return fmt.Errorf("prompt[%d] text must not be empty", i)
+			}
+		case acp.ContentBlockTypeImage:
+			if block.MimeType == "" || block.Data == "" {
+				return fmt.Errorf("prompt[%d] image requires mimeType and base64 data", i)
+			}
+		default:
+			return fmt.Errorf("prompt[%d] has unsupported content type %q", i, block.Type)
+		}
+	}
+	return nil
 }
 
 // GET /sse

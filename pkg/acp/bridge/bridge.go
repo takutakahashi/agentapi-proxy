@@ -72,10 +72,11 @@ type Bridge struct {
 
 	// Message history: every broadcast message is appended so that reconnecting
 	// SSE clients can replay missed events via GET /messages.
-	histMu             sync.RWMutex
-	history            []json.RawMessage
-	lastUserMessageIdx int
-	userMessageIndices []int // history indices of each user_message_chunk
+	histMu                  sync.RWMutex
+	history                 []json.RawMessage
+	lastUserMessageIdx      int
+	userMessageIndices      []int // history indices of each user_message_chunk
+	lastHistoryWasUserChunk bool
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -390,13 +391,30 @@ func isChunkKind(kind acp.SessionUpdateKind) bool {
 // after the pending chunk buffer is flushed.
 func (b *Bridge) emitUpdate(update acp.SessionUpdate) {
 	if isChunkKind(update.Kind) {
+		// Text chunks are coalesced to reduce UI churn. Binary content blocks
+		// (notably image output) must be relayed intact instead of disappearing
+		// into the text-only buffer.
+		text := acp.ExtractTextContent(update.Content)
+		if text == "" {
+			b.flushChunkBuffer()
+			b.broadcast(jsonRPCMsg{
+				JSONRPC: "2.0",
+				Method:  "session/update",
+				Params: sessionUpdateParams{
+					SessionId: b.sessionId,
+					Update:    update,
+					Time:      time.Now(),
+				},
+			})
+			return
+		}
 		b.chunkMu.Lock()
 		if b.chunkKind != "" && b.chunkKind != update.Kind {
 			// Kind changed – flush the previous buffer before accumulating.
 			b.flushChunkBufferLocked()
 		}
 		b.chunkKind = update.Kind
-		b.chunkText.WriteString(acp.ExtractTextContent(update.Content))
+		b.chunkText.WriteString(text)
 		b.chunkMu.Unlock()
 		return
 	}
@@ -519,35 +537,40 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 // SendPrompt sends a session/prompt request to the ACP agent.
 // clientID is the raw JSON-RPC id from the HTTP client; the result (or error)
 // is emitted via SSE with that same id so the client can correlate the response.
-func (b *Bridge) SendPrompt(clientID json.RawMessage, text string) error {
+func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock) error {
 	promptCtx := b.serverCtx
 	if promptCtx == nil {
 		promptCtx = context.Background()
 	}
 
-	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, textLen=%d)", b.sessionId, clientID, len(text))
+	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, blocks=%d)", b.sessionId, clientID, len(prompt))
 
-	// Broadcast the user's prompt as a synthetic session/update notification.
+	// Broadcast the user's prompt blocks as synthetic session/update notifications.
 	// The ACP server does not echo user messages, so we emit it here to ensure
 	// it appears in both the SSE live stream and GET /messages history.
-	userContentRaw, _ := json.Marshal(acp.ContentBlockText{Type: "text", Text: text})
-	b.broadcast(jsonRPCMsg{
-		JSONRPC: "2.0",
-		Method:  "session/update",
-		Params: sessionUpdateParams{
-			SessionId: b.sessionId,
-			Update: acp.SessionUpdate{
-				Kind:    acp.SessionUpdateKindUserMessageChunk,
-				Content: json.RawMessage(userContentRaw),
+	for _, block := range prompt {
+		userContentRaw, err := json.Marshal(block)
+		if err != nil {
+			return fmt.Errorf("marshal prompt content block: %w", err)
+		}
+		b.broadcast(jsonRPCMsg{
+			JSONRPC: "2.0",
+			Method:  "session/update",
+			Params: sessionUpdateParams{
+				SessionId: b.sessionId,
+				Update: acp.SessionUpdate{
+					Kind:    acp.SessionUpdateKindUserMessageChunk,
+					Content: json.RawMessage(userContentRaw),
+				},
+				Time: time.Now(),
 			},
-			Time: time.Now(),
-		},
-	})
+		})
+	}
 
 	b.setStatus("running")
 
 	go func() {
-		stopReason, err := b.acp.Prompt(promptCtx, text)
+		stopReason, err := b.acp.PromptBlocks(promptCtx, prompt)
 
 		// Flush any chunk that was still buffered when the agent turn ended.
 		b.flushChunkBuffer()
@@ -705,10 +728,12 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 
 	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
-	if isUserMessageUpdate(msg) {
+	isUserChunk := isUserMessageUpdate(msg)
+	if isUserChunk && !b.lastHistoryWasUserChunk {
 		b.lastUserMessageIdx = len(b.history)
 		b.userMessageIndices = append(b.userMessageIndices, len(b.history))
 	}
+	b.lastHistoryWasUserChunk = isUserChunk
 	b.history = append(b.history, raw)
 	b.histMu.Unlock()
 

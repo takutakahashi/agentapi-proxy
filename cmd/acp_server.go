@@ -41,10 +41,10 @@ Endpoints exposed:
   GET  /health    - health check
   GET  /status    - agent status (running|stable)
   GET  /messages  - conversation history (optional ?userPromptIndex=N for turn-based retrieval)
-  POST /message   - send a user message
+  GET  /session   - ACP session metadata and config options
+  POST /rpc       - send ACP JSON-RPC requests (including text/image prompts and config changes)
+  GET  /sse       - ACP JSON-RPC event stream (including text/image output)
   GET  /events    - SSE event stream (message_update, status_change, agent_error)
-  GET  /action    - list pending actions (permission requests, plan approvals)
-  POST /action    - submit a response to a pending action
 
 Example:
   agentapi-proxy acp-server --port 3284 -- my-acp-agent --model gpt-4`,

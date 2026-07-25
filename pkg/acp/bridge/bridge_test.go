@@ -85,6 +85,37 @@ func TestUserPromptInfosIncludePreview(t *testing.T) {
 	}
 }
 
+func TestImageBlockDoesNotCreateAnotherUserPromptTurn(t *testing.T) {
+	b := New(nil, "session-1", false, "", false)
+	b.broadcast(userPromptUpdate(t, "describe this image"))
+	image, err := json.Marshal(map[string]interface{}{
+		"type":     "image",
+		"mimeType": "image/png",
+		"data":     "iVBORw0KGgo=",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.broadcast(jsonRPCMsg{
+		JSONRPC: "2.0",
+		Method:  "session/update",
+		Params: sessionUpdateParams{
+			SessionId: "session-1",
+			Update: acp.SessionUpdate{
+				Kind:    acp.SessionUpdateKindUserMessageChunk,
+				Content: image,
+			},
+		},
+	})
+
+	if got := b.UserPromptCount(); got != 1 {
+		t.Fatalf("UserPromptCount = %d, want 1", got)
+	}
+	if got := len(b.Messages()); got != 2 {
+		t.Fatalf("Messages length = %d, want 2 content blocks", got)
+	}
+}
+
 func TestHandleGetMessagesUserPromptIndex(t *testing.T) {
 	b := New(nil, "session-1", false, "", false)
 	b.broadcast(userPromptUpdate(t, "turn one"))
@@ -235,6 +266,61 @@ func TestUserPromptPreviewTruncation(t *testing.T) {
 	}
 	if !strings.HasSuffix(preview, "…") {
 		t.Fatalf("preview should be truncated with ellipsis: %q", preview)
+	}
+}
+
+func TestValidatePromptContentAllowsTextAndImage(t *testing.T) {
+	err := validatePromptContent([]acp.ContentBlock{
+		{Type: acp.ContentBlockTypeText, Text: "describe this"},
+		{Type: acp.ContentBlockTypeImage, MimeType: "image/png", Data: "iVBORw0KGgo="},
+	})
+	if err != nil {
+		t.Fatalf("validatePromptContent returned error: %v", err)
+	}
+}
+
+func TestValidatePromptContentRejectsIncompleteImage(t *testing.T) {
+	err := validatePromptContent([]acp.ContentBlock{
+		{Type: acp.ContentBlockTypeImage, MimeType: "image/png"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "base64 data") {
+		t.Fatalf("validatePromptContent error = %v, want missing base64 data", err)
+	}
+}
+
+func TestEmitUpdatePreservesImageContent(t *testing.T) {
+	b := New(nil, "session-1", false, "", false)
+	content, err := json.Marshal(acp.ContentBlock{
+		Type:     acp.ContentBlockTypeImage,
+		MimeType: "image/png",
+		Data:     "iVBORw0KGgo=",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b.emitUpdate(acp.SessionUpdate{
+		Kind:    acp.SessionUpdateKindAgentMessageChunk,
+		Content: content,
+	})
+
+	msgs := b.Messages()
+	if len(msgs) != 1 {
+		t.Fatalf("Messages length = %d, want 1", len(msgs))
+	}
+	var envelope struct {
+		Params struct {
+			Update struct {
+				Content acp.ContentBlock `json:"content"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(msgs[0], &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Params.Update.Content.Type != acp.ContentBlockTypeImage ||
+		envelope.Params.Update.Content.Data != "iVBORw0KGgo=" {
+		t.Fatalf("image content was not preserved: %+v", envelope.Params.Update.Content)
 	}
 }
 

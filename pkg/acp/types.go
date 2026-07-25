@@ -23,9 +23,17 @@ type ClientCapabilities struct {
 type AgentCapabilities struct {
 	// Session restore / load
 	SessionLoad bool `json:"sessionLoad,omitempty"`
+	// ACP v1 uses loadSession and nests prompt media capabilities.
+	LoadSession        bool                `json:"loadSession,omitempty"`
+	PromptCapabilities *PromptCapabilities `json:"promptCapabilities,omitempty"`
 	// Image content blocks in prompts
 	Image bool `json:"image,omitempty"`
 	// Audio content blocks in prompts
+	Audio bool `json:"audio,omitempty"`
+}
+
+type PromptCapabilities struct {
+	Image bool `json:"image,omitempty"`
 	Audio bool `json:"audio,omitempty"`
 }
 
