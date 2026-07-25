@@ -1,6 +1,27 @@
 package acp
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestElicitationCapabilityIncludesEmptyFormObject(t *testing.T) {
+	params := InitializeParams{
+		ProtocolVersion: ProtocolVersion,
+		ClientCapabilities: ClientCapabilities{
+			Elicitation: &ElicitationCapability{Form: map[string]interface{}{}},
+		},
+	}
+
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"elicitation":{"form":{}}`) {
+		t.Fatalf("initialize params do not advertise form elicitation: %s", raw)
+	}
+}
 
 func TestExtractModelFromConfigOptions(t *testing.T) {
 	tests := []struct {

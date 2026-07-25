@@ -357,6 +357,7 @@ func (b *Bridge) Run(ctx context.Context) {
 	b.serverCtx = ctx
 	updates := b.acp.Updates()
 	perms := b.acp.PermissionRequests()
+	elicitations := b.acp.ElicitationRequests()
 
 	for {
 		select {
@@ -374,8 +375,60 @@ func (b *Bridge) Run(ctx context.Context) {
 				return
 			}
 			b.handlePermissionRequest(req)
+
+		case req, ok := <-elicitations:
+			if !ok {
+				return
+			}
+			b.handleElicitationRequest(req)
 		}
 	}
+}
+
+// handleElicitationRequest emits an ACP form elicitation via SSE and waits for
+// the browser client to return accept, decline, or cancel via POST /rpc.
+func (b *Bridge) handleElicitationRequest(req acp.ElicitationRequest) {
+	id, replyCh := b.beginAgentRequest("session/create_elicitation", req.Params)
+
+	go func() {
+		defer b.finishAgentRequest(id)
+
+		select {
+		case <-b.serverCtx.Done():
+			_ = req.Reply(acp.CreateElicitationResult{Action: "cancel"})
+		case raw := <-replyCh:
+			var result acp.CreateElicitationResult
+			if err := json.Unmarshal(raw, &result); err != nil {
+				result = acp.CreateElicitationResult{Action: "cancel"}
+			}
+			_ = req.Reply(result)
+		}
+	}()
+}
+
+func (b *Bridge) beginAgentRequest(method string, params interface{}) (int64, chan json.RawMessage) {
+	id := b.agentReqSeq.Add(1)
+	idRaw, _ := json.Marshal(id)
+	idRawMsg := json.RawMessage(idRaw)
+	replyCh := make(chan json.RawMessage, 1)
+
+	b.pendingReplyMu.Lock()
+	b.pendingReplies[id] = replyCh
+	b.pendingReplyMu.Unlock()
+
+	b.broadcast(jsonRPCMsg{
+		JSONRPC: "2.0",
+		ID:      &idRawMsg,
+		Method:  method,
+		Params:  params,
+	})
+	return id, replyCh
+}
+
+func (b *Bridge) finishAgentRequest(id int64) {
+	b.pendingReplyMu.Lock()
+	delete(b.pendingReplies, id)
+	b.pendingReplyMu.Unlock()
 }
 
 // isChunkKind reports whether kind is a streaming chunk that should be buffered.
@@ -491,30 +544,10 @@ func (b *Bridge) handlePermissionRequest(req acp.PermissionRequest) {
 		return
 	}
 
-	id := b.agentReqSeq.Add(1)
-	idRaw, _ := json.Marshal(id)
-	idRawMsg := json.RawMessage(idRaw)
-
-	replyCh := make(chan json.RawMessage, 1)
-
-	b.pendingReplyMu.Lock()
-	b.pendingReplies[id] = replyCh
-	b.pendingReplyMu.Unlock()
-
-	msg := jsonRPCMsg{
-		JSONRPC: "2.0",
-		ID:      &idRawMsg,
-		Method:  "session/request_permission",
-		Params:  req.Params,
-	}
-	b.broadcast(msg)
+	id, replyCh := b.beginAgentRequest("session/request_permission", req.Params)
 
 	go func() {
-		defer func() {
-			b.pendingReplyMu.Lock()
-			delete(b.pendingReplies, id)
-			b.pendingReplyMu.Unlock()
-		}()
+		defer b.finishAgentRequest(id)
 
 		select {
 		case <-b.serverCtx.Done():

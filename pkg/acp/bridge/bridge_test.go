@@ -1,15 +1,69 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/pkg/acp"
 )
+
+func TestHandleElicitationRequestBroadcastsAndReturnsReply(t *testing.T) {
+	b := New(nil, "session-1", false, "", false)
+	b.serverCtx = context.Background()
+	replied := make(chan acp.CreateElicitationResult, 1)
+
+	b.handleElicitationRequest(acp.ElicitationRequest{
+		Params: acp.CreateElicitationParams{
+			SessionId: "session-1",
+			Mode:      "form",
+			Message:   "Choose a color",
+			RequestedSchema: map[string]interface{}{
+				"type": "object",
+			},
+		},
+		Reply: func(result acp.CreateElicitationResult) error {
+			replied <- result
+			return nil
+		},
+	})
+
+	if len(b.history) != 1 {
+		t.Fatalf("history length = %d, want 1", len(b.history))
+	}
+	var request jsonRPCMsg
+	if err := json.Unmarshal(b.history[0], &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Method != "session/create_elicitation" {
+		t.Fatalf("method = %q, want session/create_elicitation", request.Method)
+	}
+
+	raw, err := json.Marshal(acp.CreateElicitationResult{
+		Action:  "accept",
+		Content: map[string]interface{}{"question_0": "Blue"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.HandleReply(1, raw); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case result := <-replied:
+		if result.Action != "accept" || result.Content["question_0"] != "Blue" {
+			t.Fatalf("unexpected result: %#v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for elicitation reply")
+	}
+}
 
 func TestMessagesReturnsMessagesSinceLastUserMessage(t *testing.T) {
 	b := New(nil, "session-1", false, "", false)

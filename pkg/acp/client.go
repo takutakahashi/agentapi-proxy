@@ -24,6 +24,13 @@ type PermissionRequest struct {
 	Reply func(optionId string) error
 }
 
+// ElicitationRequest is an inbound structured form request from the agent.
+type ElicitationRequest struct {
+	Params CreateElicitationParams
+	// Reply must be called exactly once to unblock the agent.
+	Reply func(CreateElicitationResult) error
+}
+
 // Client is a high-level ACP client backed by a JSON-RPC 2.0 connection.
 // It manages the lifecycle of a single ACP session.
 type Client struct {
@@ -39,16 +46,19 @@ type Client struct {
 	updateCh chan SessionUpdate
 	// permCh receives inbound permission requests from the agent.
 	permCh chan PermissionRequest
+	// elicitationCh receives inbound form elicitation requests from the agent.
+	elicitationCh chan ElicitationRequest
 }
 
 // NewClient creates an ACP client using the given reader (agent stdout) and
 // writer (agent stdin).
 func NewClient(r io.Reader, w io.Writer, verbose bool) *Client {
 	c := &Client{
-		rpc:      jsonrpc.New(r, w, verbose),
-		verbose:  verbose,
-		updateCh: make(chan SessionUpdate, 64),
-		permCh:   make(chan PermissionRequest, 8),
+		rpc:           jsonrpc.New(r, w, verbose),
+		verbose:       verbose,
+		updateCh:      make(chan SessionUpdate, 64),
+		permCh:        make(chan PermissionRequest, 8),
+		elicitationCh: make(chan ElicitationRequest, 8),
 	}
 	c.registerHandlers()
 	return c
@@ -70,6 +80,36 @@ func (c *Client) registerHandlers() {
 		case c.updateCh <- n.Update:
 		default:
 			log.Printf("[acp] updateCh full, dropping update kind=%s", n.Update.Kind)
+		}
+	})
+
+	// session/create_elicitation (agent→client, bidirectional RPC)
+	c.rpc.RegisterRequestHandler("session/create_elicitation", func(ctx context.Context, raw json.RawMessage) (interface{}, error) {
+		var p CreateElicitationParams
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, fmt.Errorf("parse create_elicitation: %w", err)
+		}
+
+		replyCh := make(chan CreateElicitationResult, 1)
+		req := ElicitationRequest{
+			Params: p,
+			Reply: func(result CreateElicitationResult) error {
+				replyCh <- result
+				return nil
+			},
+		}
+
+		select {
+		case c.elicitationCh <- req:
+		default:
+			return CreateElicitationResult{Action: "cancel"}, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return CreateElicitationResult{Action: "cancel"}, nil
+		case result := <-replyCh:
+			return result, nil
 		}
 	})
 
@@ -162,7 +202,8 @@ func (c *Client) Initialize(ctx context.Context) error {
 	params := InitializeParams{
 		ProtocolVersion: ProtocolVersion,
 		ClientCapabilities: ClientCapabilities{
-			Filesystem: &FilesystemCapability{Enabled: true},
+			Filesystem:  &FilesystemCapability{Enabled: true},
+			Elicitation: &ElicitationCapability{Form: map[string]interface{}{}},
 		},
 	}
 	raw, err := c.rpc.Call(ctx, "initialize", params)
@@ -437,4 +478,10 @@ func (c *Client) Updates() <-chan SessionUpdate {
 // requests from the agent.
 func (c *Client) PermissionRequests() <-chan PermissionRequest {
 	return c.permCh
+}
+
+// ElicitationRequests returns a channel that receives inbound form elicitation
+// requests from the agent.
+func (c *Client) ElicitationRequests() <-chan ElicitationRequest {
+	return c.elicitationCh
 }
