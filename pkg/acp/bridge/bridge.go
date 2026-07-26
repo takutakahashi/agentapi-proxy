@@ -80,9 +80,10 @@ type Bridge struct {
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
-	agentReqSeq    atomic.Int64
-	pendingReplyMu sync.Mutex
-	pendingReplies map[int64]chan json.RawMessage // local agentReqId → reply channel
+	agentReqSeq     atomic.Int64
+	pendingReplyMu  sync.Mutex
+	pendingReplies  map[int64]chan json.RawMessage // local agentReqId → reply channel
+	pendingRequests map[int64]json.RawMessage      // local agentReqId → JSON-RPC request for reconnect replay
 
 	// Chunk buffer: accumulates consecutive chunk updates of the same kind and
 	// emits them as a single batched session/update when the kind changes or the
@@ -118,6 +119,7 @@ func New(client *acp.Client, sessionId string, verbose bool, outputFile string, 
 		autoApprove:        autoApprove,
 		outputFile:         outputFile,
 		pendingReplies:     make(map[int64]chan json.RawMessage),
+		pendingRequests:    make(map[int64]json.RawMessage),
 		currentStatus:      "stable",
 		lastUserMessageIdx: -1,
 	}
@@ -412,22 +414,27 @@ func (b *Bridge) beginAgentRequest(method string, params interface{}) (int64, ch
 	idRawMsg := json.RawMessage(idRaw)
 	replyCh := make(chan json.RawMessage, 1)
 
-	b.pendingReplyMu.Lock()
-	b.pendingReplies[id] = replyCh
-	b.pendingReplyMu.Unlock()
-
-	b.broadcast(jsonRPCMsg{
+	msg := jsonRPCMsg{
 		JSONRPC: "2.0",
 		ID:      &idRawMsg,
 		Method:  method,
 		Params:  params,
-	})
+	}
+	raw, _ := json.Marshal(msg)
+
+	b.pendingReplyMu.Lock()
+	b.pendingReplies[id] = replyCh
+	b.pendingRequests[id] = raw
+	b.pendingReplyMu.Unlock()
+
+	b.broadcast(msg)
 	return id, replyCh
 }
 
 func (b *Bridge) finishAgentRequest(id int64) {
 	b.pendingReplyMu.Lock()
 	delete(b.pendingReplies, id)
+	delete(b.pendingRequests, id)
 	b.pendingReplyMu.Unlock()
 }
 
@@ -645,6 +652,20 @@ func (b *Bridge) HandleReply(id int64, result json.RawMessage) error {
 	default:
 	}
 	return nil
+}
+
+// PendingAgentRequests returns the unanswered agent-initiated JSON-RPC requests.
+// A newly opened UI connection uses this snapshot to recover prompts that were
+// emitted while no SSE subscriber was connected.
+func (b *Bridge) PendingAgentRequests() []json.RawMessage {
+	b.pendingReplyMu.Lock()
+	defer b.pendingReplyMu.Unlock()
+
+	requests := make([]json.RawMessage, 0, len(b.pendingRequests))
+	for _, raw := range b.pendingRequests {
+		requests = append(requests, append(json.RawMessage(nil), raw...))
+	}
+	return requests
 }
 
 // SetSessionConfigOption forwards a session/set_config_option request to the ACP agent.
