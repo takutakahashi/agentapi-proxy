@@ -23,6 +23,33 @@ func TestElicitationCapabilityIncludesEmptyFormObject(t *testing.T) {
 	}
 }
 
+func TestUpdateSessionModeUpdatesRuntimeInfo(t *testing.T) {
+	client := &Client{
+		sessionInfo: SessionRuntimeInfo{
+			Modes: &SessionModeState{CurrentModeId: "default"},
+		},
+	}
+
+	client.updateSessionMode("plan")
+
+	if got := client.SessionRuntimeInfo().Modes.CurrentModeId; got != "plan" {
+		t.Fatalf("current mode = %q, want plan", got)
+	}
+}
+
+func TestSessionUpdateDecodesCurrentModeID(t *testing.T) {
+	var notification SessionUpdateNotification
+	if err := json.Unmarshal([]byte(`{
+		"sessionId":"session-1",
+		"update":{"sessionUpdate":"current_mode_update","currentModeId":"plan"}
+	}`), &notification); err != nil {
+		t.Fatal(err)
+	}
+	if got := notification.Update.CurrentModeId; got != "plan" {
+		t.Fatalf("current mode = %q, want plan", got)
+	}
+}
+
 func TestExtractModelFromConfigOptions(t *testing.T) {
 	tests := []struct {
 		name    string

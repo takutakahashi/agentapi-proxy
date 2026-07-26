@@ -311,6 +311,8 @@ type SessionUpdate struct {
 	Title string `json:"title,omitempty"`
 
 	// current_mode_update
+	CurrentModeId string `json:"currentModeId,omitempty"`
+	// Mode is accepted for compatibility with older ACP agents.
 	Mode string `json:"mode,omitempty"`
 
 	// config_option_update

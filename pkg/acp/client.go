@@ -76,6 +76,12 @@ func (c *Client) registerHandlers() {
 		if n.Update.Kind == SessionUpdateKindConfigOptionUpdate {
 			c.updateSessionConfigOptions(n.Update.ConfigOptions)
 		}
+		if n.Update.Kind == SessionUpdateKindCurrentModeUpdate {
+			if n.Update.CurrentModeId == "" {
+				n.Update.CurrentModeId = n.Update.Mode
+			}
+			c.updateSessionMode(n.Update.CurrentModeId)
+		}
 		select {
 		case c.updateCh <- n.Update:
 		default:
@@ -360,6 +366,17 @@ func (c *Client) updateSessionConfigOptions(configOptions []ConfigOption) {
 	defer c.mu.Unlock()
 	c.sessionInfo.ConfigOptions = configOptions
 	c.sessionInfo.Model = ExtractModelFromConfigOptions(configOptions)
+}
+
+func (c *Client) updateSessionMode(modeId string) {
+	if modeId == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sessionInfo.Modes != nil {
+		c.sessionInfo.Modes.CurrentModeId = modeId
+	}
 }
 
 // ExtractModelFromConfigOptions returns the most likely active model value from ACP config options.
