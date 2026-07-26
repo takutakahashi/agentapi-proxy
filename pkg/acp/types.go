@@ -364,6 +364,8 @@ type PermissionOption struct {
 type RequestPermissionToolCall struct {
 	ToolCallId string          `json:"toolCallId"`
 	Kind       string          `json:"kind,omitempty"`     // e.g. "switch_mode" for ExitPlanMode
+	Title      string          `json:"title,omitempty"`    // human-readable tool call title
+	Content    json.RawMessage `json:"content,omitempty"`  // structured tool call content
 	RawInput   json.RawMessage `json:"rawInput,omitempty"` // raw tool input JSON
 }
 
