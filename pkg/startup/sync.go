@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	github_pkg "github.com/takutakahashi/agentapi-proxy/pkg/github"
@@ -63,6 +65,19 @@ type marketplaceJSON struct {
 // marketplacePluginJSON represents .claude-plugin/marketplace.json in a marketplace repository
 type marketplacePluginJSON struct {
 	Name string `json:"name"`
+}
+
+const maxConcurrentMarketplaceClones = 4
+
+type marketplaceCloneRequest struct {
+	aliasKey string
+	url      string
+	tempDir  string
+}
+
+type marketplaceCloneResult struct {
+	request marketplaceCloneRequest
+	err     error
 }
 
 // Sync synchronizes settings from Settings Secret to Claude configuration files.
@@ -180,8 +195,17 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		}
 	}
 
-	// Clone custom marketplace repositories
-	for aliasKey, marketplace := range mergedMarketplaces {
+	// Clone custom marketplace repositories concurrently. Results are processed
+	// in alias order below so name resolution and error handling stay deterministic.
+	aliasKeys := make([]string, 0, len(mergedMarketplaces))
+	for aliasKey := range mergedMarketplaces {
+		aliasKeys = append(aliasKeys, aliasKey)
+	}
+	sort.Strings(aliasKeys)
+
+	cloneRequests := make([]marketplaceCloneRequest, 0, len(aliasKeys))
+	for _, aliasKey := range aliasKeys {
+		marketplace := mergedMarketplaces[aliasKey]
 		if marketplace.URL == "" {
 			log.Printf("[SYNC] Skipping marketplace %s: no URL configured", aliasKey)
 			continue
@@ -189,28 +213,40 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 
 		tempDir := filepath.Join(marketplacesDir, ".tmp-"+aliasKey)
 		log.Printf("[SYNC] Cloning marketplace %s from %s", aliasKey, marketplace.URL)
+		cloneRequests = append(cloneRequests, marketplaceCloneRequest{
+			aliasKey: aliasKey,
+			url:      marketplace.URL,
+			tempDir:  tempDir,
+		})
+	}
 
-		if err := cloneMarketplace(marketplace.URL, tempDir); err != nil {
-			log.Printf("[SYNC] Warning: failed to clone marketplace %s: %v", aliasKey, err)
+	cloneResults := cloneMarketplacesConcurrently(
+		cloneRequests,
+		maxConcurrentMarketplaceClones,
+		cloneMarketplace,
+	)
+	for _, result := range cloneResults {
+		if result.err != nil {
+			log.Printf("[SYNC] Warning: failed to clone marketplace %s: %v", result.request.aliasKey, result.err)
 			continue
 		}
 
-		realName, err := readMarketplaceName(tempDir)
+		realName, err := readMarketplaceName(result.request.tempDir)
 		if err != nil {
-			log.Printf("[SYNC] Error: failed to read marketplace name for %s: %v", aliasKey, err)
-			removeTempDir(tempDir)
+			log.Printf("[SYNC] Error: failed to read marketplace name for %s: %v", result.request.aliasKey, err)
+			removeTempDir(result.request.tempDir)
 			continue
 		}
 
 		targetDir := filepath.Join(marketplacesDir, realName)
-		if err := os.Rename(tempDir, targetDir); err != nil {
-			log.Printf("[SYNC] Error: failed to rename marketplace dir from %s to %s: %v", tempDir, targetDir, err)
-			removeTempDir(tempDir)
+		if err := os.Rename(result.request.tempDir, targetDir); err != nil {
+			log.Printf("[SYNC] Error: failed to rename marketplace dir from %s to %s: %v", result.request.tempDir, targetDir, err)
+			removeTempDir(result.request.tempDir)
 			continue
 		}
 
-		nameMapping[aliasKey] = realName
-		log.Printf("[SYNC] Cloned marketplace %s (alias: %s) at %s", realName, aliasKey, targetDir)
+		nameMapping[result.request.aliasKey] = realName
+		log.Printf("[SYNC] Cloned marketplace %s (alias: %s) at %s", realName, result.request.aliasKey, targetDir)
 	}
 
 	if !opts.RegisterMarketplaces {
@@ -240,6 +276,48 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 	}
 
 	return nil
+}
+
+func cloneMarketplacesConcurrently(
+	requests []marketplaceCloneRequest,
+	maxConcurrent int,
+	cloneFn func(string, string) error,
+) []marketplaceCloneResult {
+	if len(requests) == 0 {
+		return nil
+	}
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+	if maxConcurrent > len(requests) {
+		maxConcurrent = len(requests)
+	}
+
+	results := make([]marketplaceCloneResult, len(requests))
+	requestIndexes := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(maxConcurrent)
+
+	for range maxConcurrent {
+		go func() {
+			defer workers.Done()
+			for index := range requestIndexes {
+				request := requests[index]
+				results[index] = marketplaceCloneResult{
+					request: request,
+					err:     cloneFn(request.url, request.tempDir),
+				}
+			}
+		}()
+	}
+
+	for index := range requests {
+		requestIndexes <- index
+	}
+	close(requestIndexes)
+	workers.Wait()
+
+	return results
 }
 
 // removeTempDir removes a temporary directory, logging a warning on failure.
