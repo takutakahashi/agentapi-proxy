@@ -299,9 +299,11 @@ func (c *Client) LoadSession(ctx context.Context, sessionId, cwd string) error {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return fmt.Errorf("acp session/load: parse result: %w", err)
 	}
-	c.setSessionRuntimeInfo(result.SessionId, result.Modes, result.ConfigOptions)
+	// ACP load responses do not repeat the requested session ID. Keep the ID
+	// from the request instead of replacing it with an empty value.
+	c.setSessionRuntimeInfo(sessionId, result.Modes, result.ConfigOptions)
 	if c.verbose {
-		log.Printf("[acp] session loaded: id=%s configOptions=%d", result.SessionId, len(result.ConfigOptions))
+		log.Printf("[acp] session loaded: id=%s configOptions=%d", sessionId, len(result.ConfigOptions))
 	}
 	return nil
 }

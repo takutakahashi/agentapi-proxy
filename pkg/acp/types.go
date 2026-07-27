@@ -162,7 +162,6 @@ type SessionLoadParams struct {
 
 // SessionLoadResult is the response to "session/load".
 type SessionLoadResult struct {
-	SessionId     string            `json:"sessionId"`
 	Modes         *SessionModeState `json:"modes,omitempty"`
 	ConfigOptions []ConfigOption    `json:"configOptions,omitempty"`
 }
