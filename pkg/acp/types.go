@@ -155,7 +155,9 @@ type SessionListResult struct {
 // SessionLoadParams is the params for "session/load" (client→agent).
 // Only valid when AgentCapabilities.SessionLoad is true.
 type SessionLoadParams struct {
-	SessionId string `json:"sessionId"`
+	SessionId  string      `json:"sessionId"`
+	Cwd        string      `json:"cwd"`
+	McpServers []McpServer `json:"mcpServers"`
 }
 
 // SessionLoadResult is the response to "session/load".

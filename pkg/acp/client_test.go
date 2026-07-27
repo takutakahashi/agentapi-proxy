@@ -1,6 +1,27 @@
 package acp
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestSessionLoadParamsIncludesRequiredFields(t *testing.T) {
+	params := SessionLoadParams{
+		SessionId:  "019fa1af-b421-7a59-9fca-00ec8143f882",
+		Cwd:        "/home/agentapi/workdir/repo",
+		McpServers: []McpServer{},
+	}
+
+	encoded, err := json.Marshal(params)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"sessionId": "019fa1af-b421-7a59-9fca-00ec8143f882",
+		"cwd": "/home/agentapi/workdir/repo",
+		"mcpServers": []
+	}`, string(encoded))
+}
 
 func TestExtractModelFromConfigOptions(t *testing.T) {
 	tests := []struct {
