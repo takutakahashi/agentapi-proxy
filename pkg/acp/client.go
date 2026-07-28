@@ -285,8 +285,12 @@ func (c *Client) SessionRuntimeInfo() SessionRuntimeInfo {
 // Only call this when AgentCaps().SessionLoad is true; otherwise fall back to NewSession.
 // On success the session ID is updated; on failure (session not found, etc.) the caller
 // should call NewSession to start fresh.
-func (c *Client) LoadSession(ctx context.Context, sessionId string) error {
-	params := SessionLoadParams{SessionId: sessionId}
+func (c *Client) LoadSession(ctx context.Context, sessionId, cwd string) error {
+	params := SessionLoadParams{
+		SessionId:  sessionId,
+		Cwd:        cwd,
+		McpServers: []McpServer{},
+	}
 	raw, err := c.rpc.Call(ctx, "session/load", params)
 	if err != nil {
 		return fmt.Errorf("acp session/load: %w", err)
@@ -295,9 +299,11 @@ func (c *Client) LoadSession(ctx context.Context, sessionId string) error {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return fmt.Errorf("acp session/load: parse result: %w", err)
 	}
-	c.setSessionRuntimeInfo(result.SessionId, result.Modes, result.ConfigOptions)
+	// ACP load responses do not repeat the requested session ID. Keep the ID
+	// from the request instead of replacing it with an empty value.
+	c.setSessionRuntimeInfo(sessionId, result.Modes, result.ConfigOptions)
 	if c.verbose {
-		log.Printf("[acp] session loaded: id=%s configOptions=%d", result.SessionId, len(result.ConfigOptions))
+		log.Printf("[acp] session loaded: id=%s configOptions=%d", sessionId, len(result.ConfigOptions))
 	}
 	return nil
 }
