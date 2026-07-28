@@ -316,7 +316,11 @@ func (m *NativeSessionManager) UpdateProvisionRequestStatus(_ context.Context, s
 func (m *NativeSessionManager) GetSession(id string) entities.Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.sessions[id]
+	session, ok := m.sessions[id]
+	if !ok || session == nil {
+		return nil
+	}
+	return session
 }
 
 func (m *NativeSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {

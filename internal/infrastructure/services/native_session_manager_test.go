@@ -86,6 +86,16 @@ func TestNativeSessionManagerRestoresLiveSessionState(t *testing.T) {
 	}
 }
 
+func TestNativeSessionManagerGetMissingSessionReturnsNil(t *testing.T) {
+	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session := m.GetSession("missing"); session != nil {
+		t.Fatalf("missing session returned a non-nil interface: %#v", session)
+	}
+}
+
 func TestNativeProvisionRequestPullLifecycle(t *testing.T) {
 	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
 	if err != nil {
