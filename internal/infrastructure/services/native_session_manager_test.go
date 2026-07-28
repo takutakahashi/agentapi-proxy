@@ -70,6 +70,13 @@ func TestNativeSessionManagerRestoresLiveSessionState(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = process.Process.Kill() })
+	deadline := time.Now().Add(2 * time.Second)
+	for !nativeProcessMatchesSession(process.Process.Pid, root) {
+		if time.Now().After(deadline) {
+			t.Fatal("native process environment was not visible before timeout")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	state := nativeSessionState{ID: "native-1", Request: &entities.RunServerRequest{UserID: "user-1", Tags: map[string]string{"allocator.os": "linux"}}, RootDir: root, AgentPort: port, ProvisionerPort: 42001, PID: process.Process.Pid, StartedAt: now, UpdatedAt: now, LastMessageAt: now, Status: "running", FilesystemSandbox: false}
 	data, _ := json.Marshal(state)
