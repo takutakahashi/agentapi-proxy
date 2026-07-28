@@ -1,4 +1,4 @@
-version: 1
+version: 2
 
 before:
   hooks:
@@ -20,7 +20,8 @@ builds:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -30,13 +31,14 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
 
 checksum:
   name_template: 'checksums.txt'
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
@@ -46,8 +48,6 @@ changelog:
       - '^test:'
 
 release:
-  github:
-    owner: takutakahashi
-    name: agentapi-proxy
-  draft: false
+  # The release workflow publishes the draft only after images and chart succeed.
+  draft: true
   prerelease: auto
