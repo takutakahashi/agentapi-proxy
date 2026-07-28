@@ -225,38 +225,65 @@ func (s *Server) handleOAuthRefresh(c echo.Context) error {
 
 // isAllowedRedirectURI validates if the redirect URI is in the allowed list
 func isAllowedRedirectURI(redirectURI string) bool {
+	redirectURL, err := url.Parse(redirectURI)
+	if err != nil || redirectURL.Scheme == "" || redirectURL.Host == "" {
+		return false
+	}
+
 	// Get allowed redirect URIs from environment variable
 	allowedURIs := os.Getenv("OAUTH_ALLOWED_REDIRECT_URIS")
 	if allowedURIs == "" {
 		// Fallback to localhost for development
-		allowedDefaultURIs := []string{
-			"http://localhost",
-			"https://localhost",
-			"http://127.0.0.1",
-			"https://127.0.0.1",
-		}
-		for _, allowed := range allowedDefaultURIs {
-			if strings.HasPrefix(redirectURI, allowed) {
-				return true
-			}
-		}
-		return false
+		return isLoopbackRedirectURI(redirectURL)
 	}
 
 	// Parse comma-separated allowed URIs
 	uris := strings.Split(allowedURIs, ",")
 	for _, allowed := range uris {
 		allowed = strings.TrimSpace(allowed)
-		if allowed == redirectURI {
-			return true
+		if allowed == "" {
+			continue
 		}
-		// Also allow prefix match for same domain with different paths
-		if strings.HasPrefix(redirectURI, allowed) {
+		if isSameAllowedRedirectURI(redirectURL, allowed) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func isLoopbackRedirectURI(redirectURL *url.URL) bool {
+	if redirectURL.Scheme != "http" && redirectURL.Scheme != "https" {
+		return false
+	}
+
+	host := strings.ToLower(redirectURL.Hostname())
+	return host == "localhost" || host == "127.0.0.1"
+}
+
+func isSameAllowedRedirectURI(redirectURL *url.URL, allowed string) bool {
+	allowedURL, err := url.Parse(allowed)
+	if err != nil || allowedURL.Scheme == "" || allowedURL.Host == "" {
+		return false
+	}
+
+	if !strings.EqualFold(redirectURL.Scheme, allowedURL.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(redirectURL.Host, allowedURL.Host) {
+		return false
+	}
+
+	allowedPath := allowedURL.EscapedPath()
+	redirectPath := redirectURL.EscapedPath()
+	if allowedPath == "" || allowedPath == "/" {
+		return true
+	}
+	if redirectPath == allowedPath {
+		return true
+	}
+
+	return strings.HasPrefix(redirectPath, strings.TrimRight(allowedPath, "/")+"/")
 }
 
 // validateOAuthSession validates an OAuth session from the request
