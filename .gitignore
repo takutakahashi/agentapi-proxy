@@ -49,3 +49,4 @@ logs/
 # envtest binaries
 bin/setup-envtest
 bin/k8s/
+dist/
