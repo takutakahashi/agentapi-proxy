@@ -1,6 +1,49 @@
 package acp
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPromptResultPreservesTokenUsage(t *testing.T) {
+	var result PromptResult
+	err := json.Unmarshal([]byte(`{
+		"stopReason": "end_turn",
+		"usage": {
+			"totalTokens": 5321,
+			"inputTokens": 913,
+			"cachedReadTokens": 4096,
+			"outputTokens": 312,
+			"thoughtTokens": 96
+		},
+		"_meta": {"quota": {"remaining": 42}}
+	}`), &result)
+	require.NoError(t, err)
+	require.Equal(t, StopReasonEndTurn, result.StopReason)
+	require.NotNil(t, result.Usage)
+	require.EqualValues(t, 5321, result.Usage.TotalTokens)
+	require.EqualValues(t, 913, result.Usage.InputTokens)
+	require.EqualValues(t, 4096, *result.Usage.CachedReadTokens)
+	require.EqualValues(t, 312, result.Usage.OutputTokens)
+	require.EqualValues(t, 96, *result.Usage.ThoughtTokens)
+	require.Contains(t, result.Meta, "quota")
+
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"stopReason": "end_turn",
+		"usage": {
+			"totalTokens": 5321,
+			"inputTokens": 913,
+			"cachedReadTokens": 4096,
+			"outputTokens": 312,
+			"thoughtTokens": 96
+		},
+		"_meta": {"quota": {"remaining": 42}}
+	}`, string(encoded))
+}
 
 func TestExtractModelFromConfigOptions(t *testing.T) {
 	tests := []struct {

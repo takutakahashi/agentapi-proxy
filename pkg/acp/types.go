@@ -231,9 +231,24 @@ const (
 	StopReasonMaxTurnRequests StopReason = "max_turn_requests"
 )
 
+// PromptUsage reports the tokens consumed by one "session/prompt" turn.
+// InputTokens excludes tokens served from the prompt cache; CachedReadTokens
+// reports those separately.
+type PromptUsage struct {
+	TotalTokens       int64                  `json:"totalTokens"`
+	InputTokens       int64                  `json:"inputTokens"`
+	OutputTokens      int64                  `json:"outputTokens"`
+	ThoughtTokens     *int64                 `json:"thoughtTokens,omitempty"`
+	CachedReadTokens  *int64                 `json:"cachedReadTokens,omitempty"`
+	CachedWriteTokens *int64                 `json:"cachedWriteTokens,omitempty"`
+	Meta              map[string]interface{} `json:"_meta,omitempty"`
+}
+
 // PromptResult is the response to "session/prompt".
 type PromptResult struct {
-	StopReason StopReason `json:"stopReason"`
+	StopReason StopReason             `json:"stopReason"`
+	Usage      *PromptUsage           `json:"usage,omitempty"`
+	Meta       map[string]interface{} `json:"_meta,omitempty"`
 }
 
 // SessionCancelParams is the params for "session/cancel" notification.

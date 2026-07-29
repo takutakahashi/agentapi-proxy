@@ -373,12 +373,29 @@ func (c *Client) Prompt(ctx context.Context, text string) (StopReason, error) {
 // PromptBlocks sends an ordered multimodal prompt and returns when the agent
 // has finished the turn.
 func (c *Client) PromptBlocks(ctx context.Context, prompt []ContentBlock) (StopReason, error) {
+	result, err := c.PromptBlocksWithResult(ctx, prompt)
+	return result.StopReason, err
+}
+
+// PromptWithResult sends a text user message and returns the complete ACP
+// prompt response, including token usage when the agent reports it.
+func (c *Client) PromptWithResult(ctx context.Context, text string) (PromptResult, error) {
+	return c.PromptBlocksWithResult(
+		ctx, []ContentBlock{{Type: ContentBlockTypeText, Text: text}},
+	)
+}
+
+// PromptBlocksWithResult sends an ordered multimodal prompt and returns the
+// complete ACP prompt response.
+func (c *Client) PromptBlocksWithResult(
+	ctx context.Context, prompt []ContentBlock,
+) (PromptResult, error) {
 	sessionId := c.SessionID()
 	if sessionId == "" {
-		return "", fmt.Errorf("acp: no active session; call NewSession first")
+		return PromptResult{}, fmt.Errorf("acp: no active session; call NewSession first")
 	}
 	if len(prompt) == 0 {
-		return "", fmt.Errorf("acp: prompt must contain at least one content block")
+		return PromptResult{}, fmt.Errorf("acp: prompt must contain at least one content block")
 	}
 	params := PromptParams{
 		SessionId: sessionId,
@@ -386,13 +403,14 @@ func (c *Client) PromptBlocks(ctx context.Context, prompt []ContentBlock) (StopR
 	}
 	raw, err := c.rpc.Call(ctx, "session/prompt", params)
 	if err != nil {
-		return StopReasonCancelled, fmt.Errorf("acp session/prompt: %w", err)
+		return PromptResult{StopReason: StopReasonCancelled},
+			fmt.Errorf("acp session/prompt: %w", err)
 	}
 	var result PromptResult
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", fmt.Errorf("acp session/prompt: parse result: %w", err)
+		return PromptResult{}, fmt.Errorf("acp session/prompt: parse result: %w", err)
 	}
-	return result.StopReason, nil
+	return result, nil
 }
 
 // SetSessionConfigOption changes a runtime session configuration option.
