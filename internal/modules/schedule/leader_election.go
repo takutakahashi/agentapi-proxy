@@ -44,6 +44,7 @@ type LeaderElector struct {
 	client   kubernetes.Interface
 	config   LeaderElectionConfig
 	identity string
+	run      func(context.Context, leaderelection.LeaderElectionConfig)
 }
 
 // NewLeaderElector creates a new LeaderElector
@@ -55,6 +56,7 @@ func NewLeaderElector(client kubernetes.Interface, config LeaderElectionConfig) 
 		client:   client,
 		config:   config,
 		identity: identity,
+		run:      leaderelection.RunOrDie,
 	}
 }
 
@@ -75,7 +77,7 @@ func (l *LeaderElector) Run(ctx context.Context, onStartedLeading func(ctx conte
 
 	log.Printf("[LEADER_ELECTION] Starting leader election with identity %s", l.identity)
 
-	leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
+	electionConfig := leaderelection.LeaderElectionConfig{
 		Lock:            lock,
 		ReleaseOnCancel: true,
 		LeaseDuration:   l.config.LeaseDuration,
@@ -98,7 +100,24 @@ func (l *LeaderElector) Run(ctx context.Context, onStartedLeading func(ctx conte
 				}
 			},
 		},
-	})
+	}
+
+	for ctx.Err() == nil {
+		l.run(ctx, electionConfig)
+		if ctx.Err() != nil {
+			return
+		}
+
+		// client-go returns from the election loop after this candidate loses
+		// leadership. Keep participating so a transient Kubernetes API outage
+		// does not permanently disable the leader-only worker in this process.
+		log.Printf("[LEADER_ELECTION] Election loop exited; retrying")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(l.config.RetryPeriod):
+		}
+	}
 }
 
 // Identity returns the identity of this elector
