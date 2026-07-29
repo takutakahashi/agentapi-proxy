@@ -570,7 +570,7 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 	b.setStatus("running")
 
 	go func() {
-		stopReason, err := b.acp.PromptBlocks(promptCtx, prompt)
+		result, err := b.acp.PromptBlocksWithResult(promptCtx, prompt)
 
 		// Flush any chunk that was still buffered when the agent turn ended.
 		b.flushChunkBuffer()
@@ -585,11 +585,11 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 			})
 			return
 		}
-		log.Printf("[bridge] Prompt done (session=%s, stopReason=%s)", b.sessionId, stopReason)
+		log.Printf("[bridge] Prompt done (session=%s, stopReason=%s)", b.sessionId, result.StopReason)
 		b.broadcast(jsonRPCMsg{
 			JSONRPC: "2.0",
 			ID:      &clientID,
-			Result:  acp.PromptResult{StopReason: stopReason},
+			Result:  result,
 		})
 	}()
 
