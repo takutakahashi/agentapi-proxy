@@ -2,7 +2,13 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -189,6 +195,72 @@ func TestBuildSessionSettings_TeamSettingsUsesRepositoryEnvVars(t *testing.T) {
 	models := provider["models"].([]interface{})
 	if got := models[0].(map[string]interface{})["id"]; got != "glm-5.2:cloud" {
 		t.Fatalf("custom model ID = %v", got)
+	}
+}
+
+func TestBuildSessionSettings_TeamGitHubInstallationIDCreatesInitialToken(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemData := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v3/app/installations/4242/access_tokens" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"team-installation-token"}`))
+	}))
+	defer api.Close()
+	t.Setenv("GITHUB_API", api.URL+"/")
+
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "github-auth", Namespace: "test-ns"},
+			Data: map[string][]byte{
+				"GITHUB_APP_ID":  []byte("1234"),
+				"GITHUB_APP_PEM": pemData,
+				"GITHUB_TOKEN":   []byte("shared-token"),
+			},
+		},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace:        "test-ns",
+		Image:            "test-image:latest",
+		BasePort:         9000,
+		PVCEnabled:       boolPtrForTest(false),
+		GitHubSecretName: "github-auth",
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.namespace = "test-ns"
+	teamSettings := entities.NewSettings("org/team-a")
+	teamSettings.SetGitHubAppInstallationID("4242")
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{
+		"org/team-a": teamSettings,
+	}})
+
+	session := NewKubernetesSession("test-session", &entities.RunServerRequest{UserID: "test-user"},
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, &entities.RunServerRequest{
+		UserID: "test-user",
+		Scope:  entities.ScopeTeam,
+		TeamID: "org/team-a",
+	}, nil)
+
+	if got := settings.Env["GITHUB_TOKEN"]; got != "team-installation-token" {
+		t.Fatalf("GITHUB_TOKEN = %q, want team installation token", got)
+	}
+	if got := settings.Env["GITHUB_INSTALLATION_ID"]; got != "4242" {
+		t.Fatalf("GITHUB_INSTALLATION_ID = %q, want 4242", got)
 	}
 }
 

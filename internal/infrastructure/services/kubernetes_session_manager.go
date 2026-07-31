@@ -42,6 +42,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
+	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 )
 
 // provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
@@ -5037,6 +5038,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		env[k] = v
 	}
 
+	m.setTeamGitHubInstallationToken(ctx, req, env)
+
 	if req.AgentType == "pi-ollama" {
 		ensurePiOllamaSettingsEnv(env)
 	}
@@ -5455,6 +5458,48 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	return settings
+}
+
+func (m *KubernetesSessionManager) setTeamGitHubInstallationToken(
+	ctx context.Context,
+	req *entities.RunServerRequest,
+	env map[string]string,
+) {
+	if req.Scope != entities.ScopeTeam || req.TeamID == "" || m.settingsRepo == nil {
+		return
+	}
+
+	teamSettings, err := m.settingsRepo.FindByName(ctx, req.TeamID)
+	if err != nil {
+		return
+	}
+	installationID := teamSettings.GitHubAppInstallationID()
+	if installationID == "" {
+		return
+	}
+	env["GITHUB_INSTALLATION_ID"] = installationID
+
+	appID := env["GITHUB_APP_ID"]
+	pem := env["GITHUB_APP_PEM"]
+	if appID == "" || pem == "" {
+		delete(env, "GITHUB_TOKEN")
+		log.Printf("[K8S_SESSION] Warning: team %s has a GitHub App installation ID but App credentials are unavailable", req.TeamID)
+		return
+	}
+
+	repoFullName := ""
+	if req.RepoInfo != nil {
+		repoFullName = req.RepoInfo.FullName
+	}
+	token, err := startup.GenerateGitHubAppTokenFromPEM(appID, installationID, []byte(pem), repoFullName)
+	if err != nil {
+		delete(env, "GITHUB_TOKEN")
+		log.Printf("[K8S_SESSION] Warning: failed to generate GitHub App token for team %s: %v", req.TeamID, err)
+		return
+	}
+
+	env["GITHUB_TOKEN"] = token
+	log.Printf("[K8S_SESSION] Added GitHub App installation token to session settings for team %s", req.TeamID)
 }
 
 func buildPiSettingsJSON(env map[string]string) map[string]interface{} {

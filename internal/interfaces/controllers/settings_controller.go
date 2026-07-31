@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -108,6 +109,7 @@ type UpdateSettingsRequest struct {
 	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`            // plugin@marketplace format
 	EnvVars                 map[string]string                `json:"env_vars,omitempty"`                   // Custom environment variables
 	PreferredTeamID         *string                          `json:"preferred_team_id,omitempty"`          // "org/team-slug" format; "" to clear
+	GitHubAppInstallationID *string                          `json:"github_app_installation_id,omitempty"` // Team GitHub App installation ID; "" to clear
 	SlackUserID             *string                          `json:"slack_user_id,omitempty"`              // Slack DM notification user ID
 	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`      // Active notification channels (e.g. ["web", "slack"])
 	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"`  // External session managers (External Session Manager registrations)
@@ -158,9 +160,10 @@ type SettingsResponse struct {
 	Marketplaces            map[string]*MarketplaceResponse  `json:"marketplaces,omitempty"`
 	HasClaudeCodeOAuthToken bool                             `json:"has_claude_code_oauth_token"`
 	AuthMode                string                           `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`            // plugin@marketplace format
-	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`               // only keys, not values
-	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"`          // "org/team-slug" format
+	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
+	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`      // only keys, not values
+	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"` // "org/team-slug" format
+	GitHubAppInstallationID string                           `json:"github_app_installation_id,omitempty"`
 	SlackUserID             string                           `json:"slack_user_id,omitempty"`              // Slack DM notification user ID
 	NotificationChannels    []string                         `json:"notification_channels,omitempty"`      // Active notification channels
 	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"`  // Registered external session managers
@@ -418,6 +421,17 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				settings.SetPreferredTeamID(teamID)
 			}
 		}
+	}
+
+	if req.GitHubAppInstallationID != nil {
+		installationID := strings.TrimSpace(*req.GitHubAppInstallationID)
+		if installationID != "" {
+			parsedID, err := strconv.ParseInt(installationID, 10, 64)
+			if err != nil || parsedID <= 0 {
+				return echo.NewHTTPError(http.StatusBadRequest, "github_app_installation_id must be a positive integer")
+			}
+		}
+		settings.SetGitHubAppInstallationID(installationID)
 	}
 
 	// Update Slack User ID
@@ -853,6 +867,7 @@ func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings
 	}
 
 	resp.PreferredTeamID = settings.PreferredTeamID()
+	resp.GitHubAppInstallationID = settings.GitHubAppInstallationID()
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
 	resp.DefaultSessionProfileID = settings.DefaultSessionProfileID()

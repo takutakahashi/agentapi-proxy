@@ -284,6 +284,54 @@ func TestUpdateSettings_DefaultSessionProfileID(t *testing.T) {
 	assert.Equal(t, "profile-1", resp.DefaultSessionProfileID)
 }
 
+func TestUpdateSettings_GitHubAppInstallationID(t *testing.T) {
+	repo := newMockSettingsRepository()
+	h := NewSettingsController(repo, nil, "", "")
+	installationID := "4242"
+	body, err := json.Marshal(UpdateSettingsRequest{GitHubAppInstallationID: &installationID})
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/settings/org%2Fteam-a", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("name")
+	c.SetParamValues("org/team-a")
+	c.Set("internal_user", createTestUser("test-user", true))
+
+	require.NoError(t, h.UpdateSettings(c))
+	saved, err := repo.FindByName(context.Background(), "org/team-a")
+	require.NoError(t, err)
+	assert.Equal(t, "4242", saved.GitHubAppInstallationID())
+
+	var resp SettingsResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "4242", resp.GitHubAppInstallationID)
+}
+
+func TestUpdateSettings_RejectsInvalidGitHubAppInstallationID(t *testing.T) {
+	repo := newMockSettingsRepository()
+	h := NewSettingsController(repo, nil, "", "")
+	installationID := "not-a-number"
+	body, err := json.Marshal(UpdateSettingsRequest{GitHubAppInstallationID: &installationID})
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/settings/test-user", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("name")
+	c.SetParamValues("test-user")
+	c.Set("internal_user", createTestUser("test-user", true))
+
+	err = h.UpdateSettings(c)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.Equal(t, http.StatusBadRequest, httpErr.Code)
+}
+
 func TestMergeSecrets(t *testing.T) {
 	ctrl := &SettingsController{}
 
