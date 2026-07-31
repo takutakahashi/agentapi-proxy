@@ -149,6 +149,14 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 
 	user.Teams = teams
 
+	// GitHub authentication is intentionally fail-closed: a valid GitHub token
+	// alone is not enough. The user must belong to at least one team configured
+	// in team_role_mapping. getUserTeamsOptimized only returns memberships that
+	// match those configured rules, including wildcard rules.
+	if len(teams) == 0 {
+		return nil, fmt.Errorf("user %q does not belong to any configured team", user.Login)
+	}
+
 	// Map user permissions based on team memberships
 	role, permissions, envFile := p.mapUserPermissions(teams)
 

@@ -113,6 +113,12 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 				case "/user/orgs":
 					w.WriteHeader(http.StatusOK)
 					_ = json.NewEncoder(w).Encode([]GitHubOrganization{})
+				case "/orgs/test-org/teams/developers/memberships/testuser":
+					w.WriteHeader(http.StatusOK)
+					_ = json.NewEncoder(w).Encode(map[string]string{
+						"state": "active",
+						"role":  "member",
+					})
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
@@ -124,6 +130,12 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 				UserMapping: config.GitHubUserMapping{
 					DefaultRole:        "user",
 					DefaultPermissions: []string{"read"},
+					TeamRoleMapping: map[string]config.TeamRoleRule{
+						"test-org/developers": {
+							Role:        "user",
+							Permissions: []string{"read"},
+						},
+					},
 				},
 			})
 
@@ -137,6 +149,44 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGitHubAuthProvider_AuthenticateRejectsUserOutsideConfiguredTeams(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/user":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(&GitHubUserInfo{
+				Login: "outsider",
+				ID:    12345,
+			})
+		case "/orgs/test-org/teams/developers/memberships/outsider":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+		BaseURL: mockServer.URL,
+		UserMapping: config.GitHubUserMapping{
+			DefaultRole:        "user",
+			DefaultPermissions: []string{"read"},
+			TeamRoleMapping: map[string]config.TeamRoleRule{
+				"test-org/developers": {
+					Role:        "user",
+					Permissions: []string{"read"},
+				},
+			},
+		},
+	})
+
+	user, err := provider.Authenticate(context.Background(), "valid-github-token")
+
+	require.Error(t, err)
+	assert.Nil(t, user)
+	assert.Contains(t, err.Error(), "does not belong to any configured team")
 }
 
 func TestGitHubAuthProvider_GetUser(t *testing.T) {

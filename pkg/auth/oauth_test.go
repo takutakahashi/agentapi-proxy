@@ -65,6 +65,10 @@ func TestGitHubOAuthProvider_ExchangeCode(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[{"login":"test-org","id":789}]`))
+		case "/orgs/test-org/teams/developers/memberships/testuser":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"state":"active","role":"member"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -85,7 +89,12 @@ func TestGitHubOAuthProvider_ExchangeCode(t *testing.T) {
 		UserMapping: config.GitHubUserMapping{
 			DefaultRole:        "user",
 			DefaultPermissions: []string{"read"},
-			TeamRoleMapping:    map[string]config.TeamRoleRule{},
+			TeamRoleMapping: map[string]config.TeamRoleRule{
+				"test-org/developers": {
+					Role:        "user",
+					Permissions: []string{"read"},
+				},
+			},
 		},
 	}
 
