@@ -336,28 +336,11 @@ func GenerateGitHubAppToken(appIDStr, installationIDStr, pemPath string) (string
 // GenerateGitHubAppTokenForRepository generates a GitHub App installation token,
 // optionally restricted to a single repository.
 func GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, repoFullName string) (string, error) {
-	repositories, err := installationTokenRepositories(repoFullName)
-	if err != nil {
-		return "", err
-	}
-
-	// Parse app ID
-	appID, err := strconv.ParseInt(appIDStr, 10, 64)
-	if err != nil {
-		return "", fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
-	}
-
-	// Parse installation ID
-	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
-	if err != nil {
-		return "", fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
-	}
-
 	// Read private key - try file first, then fallback to environment variable
 	var pemData []byte
 
 	// Try to read from file first
-	pemData, err = os.ReadFile(pemPath)
+	pemData, err := os.ReadFile(pemPath)
 	if err != nil {
 		// If file read fails, try to get from environment variable
 		if pemContent := os.Getenv("GITHUB_APP_PEM"); pemContent != "" {
@@ -372,6 +355,28 @@ func GenerateGitHubAppTokenForRepository(appIDStr, installationIDStr, pemPath, r
 			return "", fmt.Errorf("failed to read PEM file %s (size: %d bytes, mode: %s). Also checked GITHUB_APP_PEM environment variable: %w",
 				pemPath, fileInfo.Size(), fileInfo.Mode(), err)
 		}
+	}
+
+	return GenerateGitHubAppTokenFromPEM(appIDStr, installationIDStr, pemData, repoFullName)
+}
+
+// GenerateGitHubAppTokenFromPEM generates an installation token from in-memory
+// GitHub App credentials. This is used when credentials are loaded from a
+// Kubernetes Secret while constructing initial session settings.
+func GenerateGitHubAppTokenFromPEM(appIDStr, installationIDStr string, pemData []byte, repoFullName string) (string, error) {
+	repositories, err := installationTokenRepositories(repoFullName)
+	if err != nil {
+		return "", err
+	}
+
+	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
+	}
+
+	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid GITHUB_INSTALLATION_ID: %w", err)
 	}
 
 	// Create GitHub App transport

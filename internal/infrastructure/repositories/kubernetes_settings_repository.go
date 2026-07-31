@@ -48,10 +48,11 @@ type settingsJSON struct {
 	Marketplaces            map[string]*marketplaceJSON            `json:"marketplaces,omitempty"`
 	ClaudeCodeOAuthToken    string                                 `json:"claude_code_oauth_token,omitempty"`
 	AuthMode                string                                 `json:"auth_mode,omitempty"`
-	EnabledPlugins          []string                               `json:"enabled_plugins,omitempty"`           // plugin@marketplace format
-	EnvVars                 map[string]string                      `json:"env_vars,omitempty"`                  // plain env vars (legacy / noop)
-	EncryptedEnvVars        map[string]encryptedEnvVarJSON         `json:"encrypted_env_vars,omitempty"`        // encrypted env vars
-	PreferredTeamID         string                                 `json:"preferred_team_id,omitempty"`         // "org/team-slug" format
+	EnabledPlugins          []string                               `json:"enabled_plugins,omitempty"`    // plugin@marketplace format
+	EnvVars                 map[string]string                      `json:"env_vars,omitempty"`           // plain env vars (legacy / noop)
+	EncryptedEnvVars        map[string]encryptedEnvVarJSON         `json:"encrypted_env_vars,omitempty"` // encrypted env vars
+	PreferredTeamID         string                                 `json:"preferred_team_id,omitempty"`  // "org/team-slug" format
+	GitHubAppInstallationID string                                 `json:"github_app_installation_id,omitempty"`
 	SlackUserID             string                                 `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
 	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
 	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
@@ -347,6 +348,9 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 	if preferredTeamID := settings.PreferredTeamID(); preferredTeamID != "" {
 		sj.PreferredTeamID = preferredTeamID
 	}
+	if installationID := settings.GitHubAppInstallationID(); installationID != "" {
+		sj.GitHubAppInstallationID = installationID
+	}
 
 	if slackUserID := settings.SlackUserID(); slackUserID != "" {
 		sj.SlackUserID = slackUserID
@@ -517,6 +521,10 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 	if sj.PreferredTeamID != "" {
 		settings.SetPreferredTeamID(sj.PreferredTeamID)
 		// Reset updatedAt since SetPreferredTeamID updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+	if sj.GitHubAppInstallationID != "" {
+		settings.SetGitHubAppInstallationID(sj.GitHubAppInstallationID)
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 

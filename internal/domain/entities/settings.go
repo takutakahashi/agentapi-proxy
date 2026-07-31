@@ -138,6 +138,7 @@ type Settings struct {
 	enabledPlugins          []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
 	envVars                 map[string]string // Custom environment variables
 	preferredTeamID         string            // "org/team-slug" format; if set, only this team's settings are used
+	githubAppInstallationID string            // GitHub App installation ID used for team sessions
 	slackUserID             string            // Slack DM notification user ID
 	notificationChannels    []string          // Active notification channels (e.g. "web", "slack")
 	externalSessionManagers []ExternalSessionManagerEntry
@@ -303,6 +304,17 @@ func (s *Settings) PreferredTeamID() string {
 // SetPreferredTeamID sets the preferred team ID
 func (s *Settings) SetPreferredTeamID(id string) {
 	s.preferredTeamID = id
+	s.updatedAt = time.Now()
+}
+
+// GitHubAppInstallationID returns the GitHub App installation ID for this settings scope.
+func (s *Settings) GitHubAppInstallationID() string {
+	return s.githubAppInstallationID
+}
+
+// SetGitHubAppInstallationID sets the GitHub App installation ID for this settings scope.
+func (s *Settings) SetGitHubAppInstallationID(id string) {
+	s.githubAppInstallationID = id
 	s.updatedAt = time.Now()
 }
 

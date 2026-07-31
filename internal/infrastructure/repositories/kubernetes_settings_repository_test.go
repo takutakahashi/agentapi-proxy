@@ -204,6 +204,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	updatedBedrock.SetRoleARN("arn:aws:iam::222222222222:role/UpdatedRole")
 	updatedBedrock.SetProfile("updated-profile")
 	settings.SetBedrock(updatedBedrock)
+	settings.SetGitHubAppInstallationID("4242")
 
 	err = repo.Save(ctx, settings)
 	if err != nil {
@@ -249,6 +250,9 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	if bedrockData["profile"] != "updated-profile" {
 		t.Errorf("Expected updated profile 'updated-profile', got '%v'", bedrockData["profile"])
 	}
+	if parsed["github_app_installation_id"] != "4242" {
+		t.Errorf("Expected github_app_installation_id='4242', got '%v'", parsed["github_app_installation_id"])
+	}
 
 	// Verify through FindByName as well
 	loaded, err := repo.FindByName(ctx, "update-all-fields")
@@ -270,6 +274,9 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	}
 	if loaded.Bedrock().Profile() != "updated-profile" {
 		t.Errorf("FindByName: Expected profile 'updated-profile', got '%s'", loaded.Bedrock().Profile())
+	}
+	if loaded.GitHubAppInstallationID() != "4242" {
+		t.Errorf("FindByName: Expected github_app_installation_id '4242', got '%s'", loaded.GitHubAppInstallationID())
 	}
 }
 
