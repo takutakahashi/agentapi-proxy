@@ -203,8 +203,8 @@
     },
     "/sessions/{sessionId}": {
       "delete": {
-        "summary": "Delete a session",
-        "description": "Terminates and deletes a session. Users can only delete their own sessions.",
+        "summary": "Delete a session or pending session allocation",
+        "description": "Terminates and deletes a session, or cancels a pending session allocation. Users can only delete their own sessions and allocations.",
         "operationId": "deleteSession",
         "tags": [
           "Sessions"
@@ -222,7 +222,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Session deleted successfully",
+            "description": "Session or pending session allocation deleted successfully",
             "content": {
               "application/json": {
                 "schema": {
@@ -252,6 +252,9 @@
           },
           "404": {
             "description": "Session not found"
+          },
+          "409": {
+            "description": "Session allocation is no longer pending"
           },
           "500": {
             "description": "Failed to delete session"

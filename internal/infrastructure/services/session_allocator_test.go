@@ -216,6 +216,77 @@ func TestCompleteSessionAllocationDeletesAllocationSecret(t *testing.T) {
 	}
 }
 
+func TestDeletePendingSessionAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	client := fake.NewSimpleClientset()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := manager.saveSessionAllocation(ctx, &sessionallocation.AllocationRequest{
+		SessionID: "pending-session",
+		Request:   &entities.RunServerRequest{UserID: "test-user"},
+		Status:    sessionallocation.StatusPending,
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	deleted, err := manager.DeletePendingSessionAllocation(ctx, "pending-session")
+	if err != nil {
+		t.Fatalf("DeletePendingSessionAllocation() error = %v", err)
+	}
+	if !deleted {
+		t.Fatal("DeletePendingSessionAllocation() deleted=false, want true")
+	}
+	_, err = client.CoreV1().Secrets("test-ns").Get(
+		ctx,
+		sessionAllocationSecretName("pending-session"),
+		metav1.GetOptions{},
+	)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("allocation Secret still exists or returned unexpected error: %v", err)
+	}
+}
+
+func TestDeletePendingSessionAllocationDoesNotDeleteClaimedAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	client := fake.NewSimpleClientset()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := manager.saveSessionAllocation(ctx, &sessionallocation.AllocationRequest{
+		SessionID: "allocating-session",
+		Request:   &entities.RunServerRequest{UserID: "test-user"},
+		Status:    sessionallocation.StatusAllocating,
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	deleted, err := manager.DeletePendingSessionAllocation(ctx, "allocating-session")
+	if err != nil {
+		t.Fatalf("DeletePendingSessionAllocation() error = %v", err)
+	}
+	if deleted {
+		t.Fatal("DeletePendingSessionAllocation() deleted=true, want false")
+	}
+	if _, err := client.CoreV1().Secrets("test-ns").Get(
+		ctx,
+		sessionAllocationSecretName("allocating-session"),
+		metav1.GetOptions{},
+	); err != nil {
+		t.Fatalf("allocation Secret was deleted: %v", err)
+	}
+}
+
 func TestListSessionsIncludesAllocatingSessionAllocation(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 

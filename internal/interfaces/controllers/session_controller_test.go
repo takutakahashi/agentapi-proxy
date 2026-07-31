@@ -96,3 +96,22 @@ func TestRoutedSessionStatusFallbacks(t *testing.T) {
 		})
 	}
 }
+
+func TestFindPendingSessionAllocation(t *testing.T) {
+	pending := &sessionListTestSession{id: "pending-id", status: "pending"}
+	sessions := []entities.Session{
+		&sessionListTestSession{id: "running-id", status: "running"},
+		pending,
+		&sessionListTestSession{id: "allocating-id", status: "allocating"},
+	}
+
+	if got := findPendingSessionAllocation(sessions, "pending-id"); got != pending {
+		t.Fatalf("findPendingSessionAllocation() = %v, want pending session", got)
+	}
+	if got := findPendingSessionAllocation(sessions, "running-id"); got != nil {
+		t.Fatalf("findPendingSessionAllocation() returned running session %v", got)
+	}
+	if got := findPendingSessionAllocation(sessions, "allocating-id"); got != nil {
+		t.Fatalf("findPendingSessionAllocation() returned allocating session %v", got)
+	}
+}

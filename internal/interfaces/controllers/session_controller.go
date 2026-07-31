@@ -30,6 +30,10 @@ type SessionCreator interface {
 	DeleteSessionByID(sessionID string) error
 }
 
+type pendingSessionAllocationDeleter interface {
+	DeletePendingSessionAllocation(ctx context.Context, sessionID string) (bool, error)
+}
+
 // SessionManagerProvider provides access to the session manager
 // This allows the session manager to be swapped at runtime (e.g., for testing)
 type SessionManagerProvider interface {
@@ -613,6 +617,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	}
 
 	session := c.getSessionManager().GetSession(sessionID)
+	pendingAllocation := false
 	if session == nil {
 		// Check if it's a remote session
 		if c.sessionRouteRepo != nil {
@@ -626,10 +631,12 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 				return c.deleteRemoteSession(ctx, route)
 			}
 		}
-		log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
+		session = findPendingSessionAllocation(c.getSessionManager().ListSessions(entities.SessionFilter{}), sessionID)
 		if session == nil {
+			log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
 			return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 		}
+		pendingAllocation = true
 	}
 
 	// Check authorization using pre-resolved authorization context (guaranteed to be non-nil by AuthMiddleware)
@@ -641,6 +648,29 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 
 	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
 		sessionID, session.Status(), session.UserID(), clientIP)
+
+	if pendingAllocation {
+		deleter, ok := c.sessionCreator.(pendingSessionAllocationDeleter)
+		if !ok {
+			log.Printf("Failed to delete pending session allocation %s: deletion is unsupported", sessionID)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session allocation")
+		}
+		deleted, err := deleter.DeletePendingSessionAllocation(ctx.Request().Context(), sessionID)
+		if err != nil {
+			log.Printf("Failed to delete pending session allocation %s: %v", sessionID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session allocation")
+		}
+		if !deleted {
+			log.Printf("Pending session allocation %s was claimed before deletion", sessionID)
+			return echo.NewHTTPError(http.StatusConflict, "Session allocation is no longer pending")
+		}
+		log.Printf("Pending session allocation %s deletion completed successfully", sessionID)
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"message":    "Session allocation deleted successfully",
+			"session_id": sessionID,
+			"status":     "terminated",
+		})
+	}
 
 	if err := c.sessionCreator.DeleteSessionByID(sessionID); err != nil {
 		log.Printf("Failed to delete session %s: %v", sessionID, err)
@@ -654,6 +684,15 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
+}
+
+func findPendingSessionAllocation(sessions []entities.Session, sessionID string) entities.Session {
+	for _, session := range sessions {
+		if session.ID() == sessionID && session.Status() == "pending" {
+			return session
+		}
+	}
+	return nil
 }
 
 // RouteToSession routes requests to the appropriate agentapi server instance
