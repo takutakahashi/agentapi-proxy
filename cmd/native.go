@@ -33,6 +33,7 @@ type nativeManageOptions struct {
 	environment                                                                              []string
 	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
 	logsFollow, logsDaemon                                                                   bool
+	jsonOutput                                                                               bool
 	logsTail                                                                                 int
 }
 
@@ -71,7 +72,9 @@ func init() {
 	f.BoolVar(&nativeManageOpts.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
 
 	status := &cobra.Command{Use: "status", Short: "Show daemon and connection status", RunE: runNativeStatus}
+	status.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
 	doctor := &cobra.Command{Use: "doctor", Short: "Validate daemon configuration and connectivity", RunE: runNativeDoctor}
+	doctor.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
 	restart := &cobra.Command{Use: "restart", Short: "Restart the native ESM daemon", RunE: runNativeRestart}
 	rotate := &cobra.Command{Use: "rotate-token", Short: "Rotate the ESM connection token and restart", RunE: runNativeRotateToken}
 	uninstall := &cobra.Command{Use: "uninstall", Short: "Stop and remove the native ESM daemon", RunE: runNativeUninstall}
@@ -81,6 +84,7 @@ func init() {
 	uninstall.Flags().BoolVar(&nativeManageOpts.keepRegistration, "keep-registration", false, "keep the parent registration")
 	uninstall.Flags().BoolVar(&nativeManageOpts.keepData, "keep-data", false, "keep daemon state and configuration")
 	sessionList := &cobra.Command{Use: "session-list", Aliases: []string{"sessions"}, Short: "List native sessions on this host", Args: cobra.NoArgs, RunE: runNativeSessionList}
+	sessionList.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
 	logs := &cobra.Command{Use: "logs [session-id]", Short: "Show native daemon or session logs", Args: cobra.MaximumNArgs(1), RunE: runNativeLogs}
 	logs.Flags().BoolVarP(&nativeManageOpts.logsFollow, "follow", "f", false, "follow log output")
 	logs.Flags().IntVarP(&nativeManageOpts.logsTail, "tail", "n", 100, "number of lines to show")
@@ -318,7 +322,20 @@ func renderNativeLaunchAgent(paths nativeInstallPaths, environment map[string]st
 	return fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>com.agentapi.native</string><key>ProgramArguments</key><array><string>%s</string><string>native-session-manager</string><string>--config</string><string>%s</string></array>%s<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardOutPath</key><string>%s/native.log</string><key>StandardErrorPath</key><string>%s/native.log</string></dict></plist>\n", xmlEscape(paths.binary), xmlEscape(paths.config), env.String(), xmlEscape(paths.logDir), xmlEscape(paths.logDir))
 }
 
-func runNativeStatus(_ *cobra.Command, _ []string) error {
+type nativeStatusOutput struct {
+	Service           string            `json:"service"`
+	ManagerID         string            `json:"manager_id"`
+	Upstream          string            `json:"upstream"`
+	PublicURL         string            `json:"public_url"`
+	Labels            map[string]string `json:"labels"`
+	Version           string            `json:"version"`
+	FilesystemSandbox bool              `json:"filesystem_sandbox"`
+	ActiveSessions    int               `json:"active_sessions"`
+	Health            string            `json:"health"`
+	State             string            `json:"state"`
+}
+
+func runNativeStatus(command *cobra.Command, _ []string) error {
 	paths, err := nativePaths(nativeManageOpts.configPath)
 	if err != nil {
 		return err
@@ -336,8 +353,14 @@ func runNativeStatus(_ *cobra.Command, _ []string) error {
 		health = "ok"
 	}
 	active, _ := filepath.Glob(filepath.Join(cfg.StateDir, "sessions", "*"))
-	fmt.Printf("Service: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
-	return nil
+	status := nativeStatusOutput{Service: service, ManagerID: cfg.ManagerID, Upstream: cfg.UpstreamURL,
+		PublicURL: cfg.PublicURL, Labels: cfg.Labels, Version: cfg.Version, FilesystemSandbox: cfg.FilesystemSandbox.Enabled,
+		ActiveSessions: len(active), Health: health, State: cfg.StateDir}
+	if nativeManageOpts.jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(status)
+	}
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Service: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
+	return err
 }
 
 type nativeSessionListEntry struct {
@@ -345,7 +368,7 @@ type nativeSessionListEntry struct {
 	PID       int       `json:"pid"`
 	StartedAt time.Time `json:"started_at"`
 	Status    string    `json:"status"`
-	LogPath   string    `json:"-"`
+	LogPath   string    `json:"log_path"`
 }
 
 func readNativeSessionList(stateDir string) ([]nativeSessionListEntry, error) {
@@ -385,6 +408,9 @@ func runNativeSessionList(command *cobra.Command, _ []string) error {
 	entries, err := readNativeSessionList(cfg.StateDir)
 	if err != nil {
 		return err
+	}
+	if nativeManageOpts.jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(entries)
 	}
 	w := tabwriter.NewWriter(command.OutOrStdout(), 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "SESSION ID\tSTATUS\tPID\tSTARTED\tLOG")
@@ -448,40 +474,87 @@ func runNativeLogs(command *cobra.Command, args []string) error {
 	return tail.Run()
 }
 
-func runNativeDoctor(_ *cobra.Command, _ []string) error {
+type nativeDoctorCheck struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+type nativeDoctorOutput struct {
+	OK     bool                `json:"ok"`
+	Checks []nativeDoctorCheck `json:"checks"`
+}
+
+func runNativeDoctor(command *cobra.Command, _ []string) error {
 	paths, err := nativePaths(nativeManageOpts.configPath)
 	if err != nil {
 		return err
 	}
-	for name, path := range map[string]string{"config": paths.config, "credentials": paths.credentials} {
+	result := nativeDoctorOutput{OK: true, Checks: make([]nativeDoctorCheck, 0, 5)}
+	var firstErr error
+	check := func(id, success string, err error) {
+		entry := nativeDoctorCheck{ID: id, Status: "ok", Message: success}
+		if err != nil {
+			entry.Status = "error"
+			entry.Message = err.Error()
+			result.OK = false
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+		result.Checks = append(result.Checks, entry)
+	}
+	for _, file := range []struct{ name, path string }{{"config", paths.config}, {"credentials", paths.credentials}} {
+		name, path := file.name, file.path
 		info, err := os.Stat(path)
 		if err != nil {
-			return fmt.Errorf("%s: %w", name, err)
+			check(name, name+" permissions are secure", fmt.Errorf("%s: %w", name, err))
+			continue
 		}
 		if info.Mode().Perm()&0o037 != 0 {
-			return fmt.Errorf("%s permissions are too open: %o", name, info.Mode().Perm())
+			check(name, name+" permissions are secure", fmt.Errorf("%s permissions are too open: %o", name, info.Mode().Perm()))
+			continue
 		}
+		check(name, name+" permissions are secure", nil)
 	}
 	cfg, err := readNativeConfig(paths.config)
 	if err != nil {
+		check("config_load", "configuration loaded", fmt.Errorf("configuration: %w", err))
+		if nativeManageOpts.jsonOutput {
+			return json.NewEncoder(command.OutOrStdout()).Encode(result)
+		}
 		return err
 	}
+	check("config_load", "configuration loaded", nil)
 	if cfg.FilesystemSandbox.Enabled {
+		var sandboxErr error
 		if runtime.GOOS != "darwin" {
-			return errors.New("filesystem sandbox is enabled but this host is not macOS")
+			sandboxErr = errors.New("filesystem sandbox is enabled but this host is not macOS")
+		} else if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
+			sandboxErr = fmt.Errorf("filesystem sandbox executable: %w", err)
 		}
-		if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
-			return fmt.Errorf("filesystem sandbox executable: %w", err)
-		}
+		check("filesystem_sandbox", "filesystem sandbox is available", sandboxErr)
+	} else {
+		check("filesystem_sandbox", "filesystem sandbox is disabled", nil)
 	}
-	if err := nativeHealth(cfg.Listen); err != nil {
-		return fmt.Errorf("local health: %w", err)
+	localErr := nativeHealth(cfg.Listen)
+	if localErr != nil {
+		localErr = fmt.Errorf("local health: %w", localErr)
 	}
-	if err := sendNativeHeartbeat(cfg); err != nil {
-		return fmt.Errorf("parent heartbeat: %w", err)
+	check("local_health", "local daemon is healthy", localErr)
+	heartbeatErr := sendNativeHeartbeat(cfg)
+	if heartbeatErr != nil {
+		heartbeatErr = fmt.Errorf("parent heartbeat: %w", heartbeatErr)
 	}
-	fmt.Println("OK: service, config permissions, local health, and parent heartbeat")
-	return nil
+	check("parent_heartbeat", "parent heartbeat succeeded", heartbeatErr)
+	if nativeManageOpts.jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(result)
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+	_, err = fmt.Fprintln(command.OutOrStdout(), "OK: service, config permissions, local health, and parent heartbeat")
+	return err
 }
 
 func runNativeRestart(_ *cobra.Command, _ []string) error { return restartNativeService() }
