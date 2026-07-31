@@ -283,6 +283,10 @@ func (c *SettingsController) esmSettingsName(ctx echo.Context, scope, teamID str
 			return "", echo.NewHTTPError(http.StatusBadRequest, "team_id is required")
 		}
 		name = teamID
+		if !user.IsAdmin() && !user.IsMemberOfTeam(teamID) {
+			return "", echo.NewHTTPError(http.StatusForbidden, "access denied")
+		}
+		return name, nil
 	}
 	allowed := c.canAccess(user, name)
 	if modify {

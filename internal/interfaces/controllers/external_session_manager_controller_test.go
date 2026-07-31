@@ -9,6 +9,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
 func esmTestContext(e *echo.Echo, method, path string, body interface{}, userID string) (echo.Context, *httptest.ResponseRecorder) {
@@ -84,4 +85,24 @@ func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T
 	ctx.Request().Header.Set("Authorization", "Bearer "+created.ConnectionToken)
 	err := controller.HeartbeatExternalSessionManager(ctx)
 	require.Error(t, err)
+}
+
+func TestExternalSessionManagerRegistrationSupportsTeamServiceAccount(t *testing.T) {
+	repo := newMockSettingsRepository()
+	controller := NewSettingsController(repo, nil, "", "")
+	e := echo.New()
+	body := ESMRegistrationRequest{InstanceID: "team-machine", Name: "team-native", Scope: "team", TeamID: "org/builders"}
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers", body, "")
+	ctx.Set("internal_user", entities.NewServiceAccountUser("team-token", "org/builders", nil))
+
+	require.NoError(t, controller.RegisterExternalSessionManager(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, repo.settings["org/builders"].ExternalSessionManagers(), 1)
+
+	body.TeamID = "org/other"
+	ctx, _ = esmTestContext(e, http.MethodPost, "/external-session-managers", body, "")
+	ctx.Set("internal_user", entities.NewServiceAccountUser("team-token", "org/builders", nil))
+	err := controller.RegisterExternalSessionManager(ctx)
+	require.Error(t, err)
+	require.Equal(t, http.StatusForbidden, err.(*echo.HTTPError).Code)
 }
