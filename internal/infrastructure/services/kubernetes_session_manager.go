@@ -2263,6 +2263,10 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	if err != nil {
 		return nil, err
 	}
+	sessionServiceAccount := m.k8sConfig.ServiceAccount
+	if sessionServiceAccount == "" {
+		sessionServiceAccount = "agentapi-proxy-session"
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -2284,7 +2288,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "agentapi-proxy-session",
+					ServiceAccountName: sessionServiceAccount,
 					RestartPolicy:      corev1.RestartPolicyAlways,
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup:    int64Ptr(999),
@@ -3632,7 +3636,7 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 
 	proxyURL := m.k8sConfig.ProvisionerProxyURL
 	if proxyURL == "" {
-		proxyURL = fmt.Sprintf("http://agentapi-proxy.%s.svc.cluster.local:8080", m.namespace)
+		proxyURL = fmt.Sprintf("http://control.%s.svc.cluster.local:8080", m.namespace)
 	}
 	envVars = append(envVars,
 		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},

@@ -16,6 +16,30 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+func TestAllocationProxyURLUsesStableControlPlaneServiceByDefault(t *testing.T) {
+	manager := &KubernetesSessionManager{
+		namespace: "test-ns",
+		k8sConfig: &config.KubernetesSessionConfig{},
+	}
+
+	if got, want := manager.AllocationProxyURL(), "http://control.test-ns.svc.cluster.local:8080"; got != want {
+		t.Fatalf("AllocationProxyURL() = %q, want %q", got, want)
+	}
+}
+
+func TestAllocationProxyURLPrefersExplicitConfiguration(t *testing.T) {
+	manager := &KubernetesSessionManager{
+		namespace: "test-ns",
+		k8sConfig: &config.KubernetesSessionConfig{
+			ProvisionerProxyURL: "https://proxy.example.com/",
+		},
+	}
+
+	if got, want := manager.AllocationProxyURL(), "https://proxy.example.com"; got != want {
+		t.Fatalf("AllocationProxyURL() = %q, want %q", got, want)
+	}
+}
+
 func TestCreateSessionWithAllocatorReturnsAfterSubmittingAllocation(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 

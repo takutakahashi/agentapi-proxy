@@ -1,4 +1,7 @@
-{{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
+{{- $rbac := .Values.kubernetesSession.rbac | default dict }}
+{{- $rbacCreate := true }}
+{{- if hasKey $rbac "create" }}{{- $rbacCreate = $rbac.create }}{{- end }}
+{{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled $rbacCreate }}
 {{- $scia := .Values.scia | default dict }}
 {{- $sciaEnabled := true }}
 {{- if and (hasKey .Values "scia") (hasKey $scia "enabled") }}
@@ -7,7 +10,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: agentapi-proxy-session
+  name: {{ .Values.kubernetesSession.serviceAccountName | default "agentapi-proxy-session" }}
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 rules:

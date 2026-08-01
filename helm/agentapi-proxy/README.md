@@ -474,6 +474,30 @@ helm upgrade agentapi-proxy ./helm/agentapi-proxy
 helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0
 ```
 
+## Stable control-plane Service
+
+The chart creates `control` as a release-independent endpoint
+for session provisioners. The Service is retained when its creating release is
+uninstalled, allowing a blue/green deployment to move its selector to the new
+proxy without recreating existing session workloads.
+
+Install the shadow release without trying to create the shared Service or
+fixed-name session RBAC:
+
+```yaml
+controlPlaneService:
+  create: false
+
+kubernetesSession:
+  serviceAccountName: agentapi-proxy-session
+  rbac:
+    create: false
+```
+
+An explicit `kubernetesSession.provisioner.proxyUrl` takes precedence over the
+stable Service. Set `controlPlaneService.enabled=false` to retain the previous
+release-local Service behavior for new sessions.
+
 ## Values File Example
 
 ### Basic Setup

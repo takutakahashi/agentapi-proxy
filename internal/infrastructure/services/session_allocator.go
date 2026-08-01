@@ -419,7 +419,7 @@ func (m *KubernetesSessionManager) allocationProxyURL() string {
 	if proxyURL != "" {
 		return proxyURL
 	}
-	return fmt.Sprintf("http://agentapi-proxy.%s.svc.cluster.local:8080", m.namespace)
+	return fmt.Sprintf("http://control.%s.svc.cluster.local:8080", m.namespace)
 }
 
 func (m *KubernetesSessionManager) AllocationProxyURL() string {

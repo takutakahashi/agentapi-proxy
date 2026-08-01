@@ -71,6 +71,23 @@ service:
   type: ClusterIP
   port: 8080
 
+# Stable endpoint used by session provisioners to reach the active control plane.
+# Keep this name independent from the Helm release so blue/green releases can
+# switch the selector without recreating existing session workloads.
+controlPlaneService:
+  enabled: true
+  create: true
+  name: control
+  port: 8080
+  # Preserve the Service when its creating Helm release is uninstalled. A new
+  # release should use create=false and may take over traffic by updating the
+  # retained Service selector during cutover.
+  retainOnDelete: true
+  annotations: {}
+  # Empty uses the current proxy Deployment selector. During cutover this may
+  # be set to the selector of the new release.
+  selector: {}
+
 scia:
   # Deploy and configure scia Google OAuth broker/proxy integration.
   enabled: false
@@ -479,6 +496,12 @@ roleEnvFiles:
 kubernetesSession:
   # Creates the RBAC and ServiceAccount required by session workloads.
   enabled: true
+
+  # A shadow release can share the existing session identity and RBAC by using
+  # the same name with rbac.create=false.
+  serviceAccountName: agentapi-proxy-session
+  rbac:
+    create: true
 
   # Container image for session pods
   # If empty, uses the same image as the proxy
