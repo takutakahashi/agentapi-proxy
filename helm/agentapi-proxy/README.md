@@ -17,6 +17,11 @@ To install the chart with the release name `my-agentapi-proxy`:
 helm install my-agentapi-proxy ./helm/agentapi-proxy
 ```
 
+The default `values.yaml` is a minimal single-replica direct-session
+installation. SCIA, asset serving, persistent session workspaces, background workers,
+OpenTelemetry collection, and Redis are opt-in. More than one proxy replica
+requires the bundled Redis or `externalRedis.addr`.
+
 ### From OCI Registry (Recommended)
 
 Once published to ghcr.io, you can install directly from the OCI registry:
@@ -55,7 +60,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | `image.repository`  | AgentAPI Proxy image repository   | `ghcr.io/takutakahashi/agentapi-proxy`     |
 | `image.pullPolicy`  | AgentAPI Proxy image pull policy  | `IfNotPresent`                             |
 
-**Note:** The image tag is not configurable and always uses the Chart's `appVersion`.
+When `image.tag` is empty, the chart uses its `appVersion`.
 
 ### Deployment parameters
 
@@ -73,7 +78,6 @@ The command removes all the Kubernetes components associated with the chart and 
 | --------------------- | ----------------------------------------- | ----------- |
 | `service.type`        | AgentAPI Proxy service type              | `ClusterIP` |
 | `service.port`        | AgentAPI Proxy service HTTP port         | `8080`      |
-| `service.agentapiPort`| AgentAPI instances starting port         | `9000`      |
 
 ### Ingress parameters
 
@@ -89,7 +93,7 @@ The command removes all the Kubernetes components associated with the chart and 
 
 | Name                                               | Description                                      | Value |
 | -------------------------------------------------- | ------------------------------------------------ | ----- |
-| `scia.enabled`                                     | Deploy scia OAuth broker and configure sessions | `true` |
+| `scia.enabled`                                     | Deploy scia OAuth broker and configure sessions | `false` |
 | `scia.publicBaseUrl`                               | Browser-facing scia base URL                    | `""` |
 | `scia.credential`                                  | Google credential ID injected into sessions; empty disables Google OAuth config | `""` |
 | `scia.todoistCredential`                           | Todoist credential ID injected into sessions    | `default.todoist` |
@@ -410,22 +414,28 @@ readinessProbe:
 
 ## Scaling
 
-The chart uses StatefulSet for better management:
+The chart uses a Deployment. Single-replica operation does not require Redis.
+For multiple replicas, enable the bundled Redis or configure `externalRedis.addr`:
 
 ```bash
 # Scale to 3 replicas (local chart)
-helm upgrade agentapi-proxy ./helm/agentapi-proxy --set replicaCount=3
+helm upgrade agentapi-proxy ./helm/agentapi-proxy \
+  --set replicaCount=3 \
+  --set redis.enabled=true
 
 # Scale to 3 replicas (OCI registry)
-helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0 --set replicaCount=3
+helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
+  --version 0.1.0 \
+  --set replicaCount=3 \
+  --set redis.enabled=true
 ```
 
 ## Troubleshooting
 
-### Check StatefulSet status
+### Check Deployment status
 ```bash
-kubectl get statefulset
-kubectl describe statefulset agentapi-proxy
+kubectl get deployment
+kubectl describe deployment agentapi-proxy
 ```
 
 ### Check pod logs

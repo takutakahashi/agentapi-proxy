@@ -2880,9 +2880,7 @@ const (
 )
 
 func (m *KubernetesSessionManager) sciaSessionSidecarEnabled(req *entities.RunServerRequest) bool {
-	// scia sidecar is now mandatory when scia is enabled - it cannot be opted out.
-	// Previously req.AuthProxy could opt out; this is now ignored.
-	return m.config != nil && m.config.Scia.Enabled
+	return m.config != nil && m.config.Scia.Enabled && m.config.Scia.SessionSidecarEnabled
 }
 
 func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunServerRequest, sandboxEnabled bool, userToken string) (*corev1.Container, *corev1.Container, []corev1.EnvVar) {

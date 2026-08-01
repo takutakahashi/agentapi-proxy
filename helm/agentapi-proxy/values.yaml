@@ -37,6 +37,8 @@ image:
   # Defaults to the component Chart's appVersion when empty.
   tag: ""
 
+imagePullSecrets: []
+
 nameOverride: ""
 fullnameOverride: ""
 
@@ -63,14 +65,15 @@ podSecurityContext: {}
 # runAsUser: 999
 # runAsGroup: 999
 
+securityContext: {}
+
 service:
   type: ClusterIP
   port: 8080
-  agentapiPort: 9000
 
 scia:
   # Deploy and configure scia Google OAuth broker/proxy integration.
-  enabled: true
+  enabled: false
   image:
     repository: ghcr.io/takutakahashi/scia
     tag: "0.17.0"
@@ -104,7 +107,7 @@ scia:
     listen: "0.0.0.0:8081"
     redirectUrl: ""
     google:
-      scope: "https://www.googleapis.com/auth/calendar.readonly"
+      scope: "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/tasks.readonly"
       name: Google
       setup: {}
       scopes:
@@ -191,7 +194,7 @@ scia:
   affinity: {}
 
 asset:
-  enabled: true
+  enabled: false
   backend: nginx
   publicBaseUrl: ""
   storagePath: /var/lib/agentapi-assets
@@ -211,7 +214,7 @@ asset:
         memory: "128Mi"
         cpu: "250m"
   persistence:
-    enabled: true
+    enabled: false
     storageClass: ""
     accessModes:
       - ReadWriteOnce
@@ -225,12 +228,7 @@ asset:
 ingress:
   enabled: false
   className: "nginx"
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
-    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  annotations: {}
   # When empty, global.apiHostname or config.hostname is used.
   hosts: []
   tls: []
@@ -243,13 +241,16 @@ resources:
     memory: "512Mi"
     cpu: "500m"
   limits:
-    memory: "8Gi"
-    cpu: 8
+    memory: "1Gi"
+    cpu: 1
 
 # GitHub configuration
 github:
   # GitHub Personal Access Token (GitHub App を使わない場合)
   token: ""
+  tokenRef:
+    name: ""
+    key: "github-token"
 
   # GitHub Enterprise Server を使用する場合は true に設定
   enterprise:
@@ -295,7 +296,10 @@ config:
       oauth:
         clientId: ""
         clientSecret: ""
-        scope: "read:user read:org project repo workflow"
+        clientSecretRef:
+          name: ""
+          key: "client-secret"
+        scope: "read:user read:org project"
         baseUrl: ""
         # 許可するリダイレクトURI (カンマ区切りで複数指定可能)
         allowedRedirectUris: ""
@@ -311,14 +315,11 @@ config:
     publicKey: ""
     # VAPID 秘密鍵 (Web Push 通知用)
     privateKey: ""
+    privateKeyRef:
+      name: ""
+      key: "vapid-private-key"
     # VAPID 連絡先メールアドレス
     contactEmail: ""
-
-  # ロールベース環境変数ファイル設定
-  roleEnvFiles:
-    enabled: false
-    path: "/etc/role-env-files"
-    loadDefault: true
 
   # 通知設定
   notification:
@@ -381,13 +382,6 @@ readinessProbe:
   successThreshold: 1
   failureThreshold: 3
 
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 3
-  targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
-
 # Additional volumes on the output Deployment definition.
 volumes: []
 # - name: foo
@@ -444,6 +438,8 @@ authConfig:
 roleEnvFiles:
   # Configuration for role-based environment variables
   enabled: false
+  path: "/etc/role-env-files"
+  loadDefault: true
 
   # Simple mapping: filename -> secret configuration
   # ファイル名とSecretの設定を直接マッピング
@@ -481,11 +477,8 @@ roleEnvFiles:
 # Kubernetes Session Management
 # Sessions are created as separate Kubernetes Deployments
 kubernetesSession:
-  # Number of replicas for the agentapi-proxy Deployment
-  replicaCount: 3
-
-  # Deprecated: session resources always use the Helm release namespace.
-  namespace: ""
+  # Creates the RBAC and ServiceAccount required by session workloads.
+  enabled: true
 
   # Container image for session pods
   # If empty, uses the same image as the proxy
@@ -493,9 +486,6 @@ kubernetesSession:
 
   # Container image for the network-filter sidecar and initContainer (sandbox feature)
   networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.2"
-
-  # Deprecated: networkFilterImage is used to restore sandbox iptables rules.
-  sandboxInitImage: "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a"
 
   # Resource configuration for the network-filter sidecar and initContainer (sandbox feature)
   networkFilter:
@@ -519,12 +509,6 @@ kubernetesSession:
   # Image pull policy for session pods
   imagePullPolicy: "IfNotPresent"
 
-  # Service account for session pods (deprecated - always uses agentapi-proxy-session)
-  # This setting is ignored. Session pods always use the hardcoded ServiceAccount name
-  # "agentapi-proxy-session" which has minimal permissions (pods, configmaps read-only)
-  # and cannot access secrets directly.
-  serviceAccount: ""
-
   # Base port that agentapi listens on in session pods
   basePort: 9000
 
@@ -541,7 +525,7 @@ kubernetesSession:
   pvc:
     # Enable PersistentVolumeClaim for session pods workdir
     # When disabled, EmptyDir is used instead (data is not persisted across pod restarts)
-    enabled: true
+    enabled: false
     # Storage class for session PVCs (empty for default)
     storageClass: ""
     # Storage size for session PVCs
@@ -649,7 +633,7 @@ kubernetesSession:
   #         "enabled_plugins": ["my-plugin@myorg"],
   #         "env_vars": {"MY_GLOBAL_VAR": "value"}
   #       }
-  settingsBaseSecret: "agentapi-settings-base"
+  settingsBaseSecret: ""
 
   # Slack Integration
   # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar).
@@ -682,7 +666,7 @@ kubernetesSession:
   # started by the provisioner after user context is established. This ensures
   # metrics labels (user_id, session_id, etc.) are correct even with stock sessions.
   otelCollector:
-    enabled: true
+    enabled: false
 
     # Container image for otelcol (used to pull the binary into the agentapi image)
     image: "otel/opentelemetry-collector-contrib:0.143.1"
@@ -710,7 +694,7 @@ kubernetesSession:
 # Enables delayed start and recurring (cron-based) session scheduling
 scheduleWorker:
   # Enable schedule worker
-  enabled: true
+  enabled: false
 
   # How often to check for due schedules
   checkInterval: "30s"
@@ -724,24 +708,22 @@ scheduleWorker:
     # Retry period (how often non-leaders try to acquire lock)
     retryPeriod: "2s"
 
-  # Schedule storage configuration
-  storage:
-    # Secret name for schedule data
-    secretName: "agentapi-schedules"
-
 # Slackbot Session Cleanup Worker Configuration
 # Periodically deletes Slackbot sessions whose last message is older than sessionTTL.
 # Uses the agentapi.proxy/slack-last-message-at annotation (or created-at as fallback).
 slackbotCleanupWorker:
   # Enable slackbot session cleanup worker
-  enabled: true
+  enabled: false
 
   # Session TTL: duration after last Slack message before a session is deleted
   # Supports Go duration format: "3h", "30m", "72h", etc.
-  sessionTTL: "3h"
+  sessionTTL: "72h"
 
   # How often to scan for stale sessions
-  checkInterval: "30m"
+  checkInterval: "1h"
+
+  # How often to scan non-Slack sessions with an explicit session TTL.
+  sessionTTLCheckInterval: "1m"
 
   # Dry-run mode: log stale sessions without actually deleting them.
   # Useful for verifying TTL settings before enabling real cleanup.
@@ -770,25 +752,16 @@ stockInventoryWorker:
 
   # Capability template for stock sessions. These must match the pod sidecars
   # expected by sessions the allocator should serve from stock.
-  sandboxEnabled: false
   dockerEnabled: false
 
   # Optional capability pools. When set, each pool is replenished independently
-  # and the single targetCount/sandboxEnabled/dockerEnabled fields above are
+  # and the single targetCount/dockerEnabled fields above are
   # used only as defaults for pool entries with no targetCount.
-  # To keep inventory for every sandbox/DinD combination, configure:
+  # To keep inventory for both plain and DinD sessions, configure:
   # pools:
   #   - targetCount: 2
-  #     sandboxEnabled: false
   #     dockerEnabled: false
   #   - targetCount: 2
-  #     sandboxEnabled: false
-  #     dockerEnabled: true
-  #   - targetCount: 2
-  #     sandboxEnabled: true
-  #     dockerEnabled: false
-  #   - targetCount: 2
-  #     sandboxEnabled: true
   #     dockerEnabled: true
   pools: []
 
@@ -818,8 +791,8 @@ redis:
   # https://github.com/bitnami/charts/tree/main/bitnami/redis
   architecture: standalone
   image:
-    tag: latest
-    pullPolicy: Always
+    tag: 8.0.3-debian-12-r1
+    pullPolicy: IfNotPresent
   auth:
     enabled: false
     password: ""
@@ -840,8 +813,8 @@ redis:
 externalRedis:
   # addr: "your-redis-host:6379"
   addr: ""
-  # password: ""
-  password: ""
+  existingSecret: ""
+  existingSecretPasswordKey: "redis-password"
   # db: 0
   db: 0
   # tlsEnabled: false

@@ -1,5 +1,7 @@
-{{- $scheduleWorkerEnabled := ((.Values.scheduleWorker).enabled) | default true }}
-{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled }}
+{{- $scheduleWorkerEnabled := .Values.scheduleWorker.enabled }}
+{{- $slackbotCleanupWorkerEnabled := .Values.slackbotCleanupWorker.enabled }}
+{{- $stockInventoryWorkerEnabled := .Values.stockInventoryWorker.enabled }}
+{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled $stockInventoryWorkerEnabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

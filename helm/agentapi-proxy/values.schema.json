@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": { "type": "integer", "minimum": 1 },
+    "kubernetesSession": {
+      "type": "object",
+      "required": ["enabled", "pvc", "otelCollector"],
+      "properties": {
+        "enabled": { "const": true },
+        "pvc": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "otelCollector": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+    "scheduleWorker": {
+      "type": "object",
+      "required": ["enabled", "leaderElection"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "leaderElection": { "$ref": "#/definitions/leaderElection" }
+      }
+    },
+    "slackbotCleanupWorker": {
+      "type": "object",
+      "required": ["enabled", "leaderElection"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "leaderElection": { "$ref": "#/definitions/leaderElection" }
+      }
+    },
+    "stockInventoryWorker": {
+      "type": "object",
+      "required": ["enabled", "leaderElection"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "leaderElection": { "$ref": "#/definitions/leaderElection" }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "architecture": { "const": "standalone" }
+      }
+    },
+    "externalRedis": {
+      "type": "object",
+      "properties": {
+        "addr": { "type": "string" },
+        "existingSecret": { "type": "string" },
+        "existingSecretPasswordKey": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "replicaCount": { "minimum": 2 } },
+        "required": ["replicaCount"]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "redis": {
+                "properties": { "enabled": { "const": true } },
+                "required": ["enabled"]
+              }
+            }
+          },
+          {
+            "properties": {
+              "externalRedis": {
+                "properties": { "addr": { "minLength": 1 } },
+                "required": ["addr"]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "definitions": {
+    "leaderElection": {
+      "type": "object",
+      "required": ["leaseDuration", "renewDeadline", "retryPeriod"],
+      "properties": {
+        "leaseDuration": { "type": "string", "minLength": 1 },
+        "renewDeadline": { "type": "string", "minLength": 1 },
+        "retryPeriod": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

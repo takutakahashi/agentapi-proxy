@@ -1,6 +1,7 @@
-{{- $scheduleWorkerEnabled := ((.Values.scheduleWorker).enabled) | default true }}
-{{- $slackbotCleanupWorkerEnabled := ((.Values.slackbotCleanupWorker).enabled) | default false }}
-{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled }}
+{{- $scheduleWorkerEnabled := .Values.scheduleWorker.enabled }}
+{{- $slackbotCleanupWorkerEnabled := .Values.slackbotCleanupWorker.enabled }}
+{{- $stockInventoryWorkerEnabled := .Values.stockInventoryWorker.enabled }}
+{{- if or (and .Values.kubernetesSession .Values.kubernetesSession.enabled) $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled $stockInventoryWorkerEnabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -35,7 +36,7 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
-  {{- if or $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled }}
+  {{- if or $scheduleWorkerEnabled $slackbotCleanupWorkerEnabled $stockInventoryWorkerEnabled }}
   # Leader election for schedule worker and/or slackbot cleanup worker
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

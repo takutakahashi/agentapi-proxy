@@ -18,7 +18,7 @@ metadata:
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.kubernetesSession.replicaCount }}
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
@@ -58,9 +58,6 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-            - name: agentapi-start
-              containerPort: {{ .Values.service.agentapiPort }}
-              protocol: TCP
           env:
             - name: HOME
               value: "/home/agentapi"
@@ -95,6 +92,13 @@ spec:
               {{- end }}
               value: {{ $clientId | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET
+              {{- $oauthSecretRefName := dig "clientSecretRef" "name" "" .Values.config.auth.github.oauth }}
+              {{- if $oauthSecretRefName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $oauthSecretRefName | quote }}
+                  key: {{ dig "clientSecretRef" "key" "client-secret" .Values.config.auth.github.oauth | quote }}
+              {{- else }}
               {{- $clientSecret := .Values.config.auth.github.oauth.clientSecret }}
               {{- if .Values.global }}
                 {{- if .Values.global.github }}
@@ -113,6 +117,7 @@ spec:
                 {{- end }}
               {{- end }}
               value: {{ $clientSecret | quote }}
+              {{- end }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE
               value: {{ .Values.config.auth.github.oauth.scope | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL
@@ -123,11 +128,11 @@ spec:
             {{- end }}
             # Role-based environment files configuration
             - name: AGENTAPI_ROLE_ENV_FILES_ENABLED
-              value: {{ .Values.config.roleEnvFiles.enabled | quote }}
+              value: {{ .Values.roleEnvFiles.enabled | quote }}
             - name: AGENTAPI_ROLE_ENV_FILES_PATH
-              value: {{ .Values.config.roleEnvFiles.path | quote }}
+              value: {{ .Values.roleEnvFiles.path | quote }}
             - name: AGENTAPI_ROLE_ENV_FILES_LOAD_DEFAULT
-              value: {{ .Values.config.roleEnvFiles.loadDefault | quote }}
+              value: {{ .Values.roleEnvFiles.loadDefault | quote }}
             {{- $githubEnterpriseEnabled := .Values.github.enterprise.enabled }}
             {{- if .Values.global }}
               {{- if .Values.global.github }}
@@ -294,16 +299,12 @@ spec:
             - name: AGENTAPI_SCIA_TODOIST_PATHS
               value: {{ $scia.todoistPaths | default (list "/api/v1/*") | join "," | quote }}
             # Kubernetes Session Management configuration
-            - name: AGENTAPI_K8S_SESSION_ENABLED
-              value: "true"
             - name: AGENTAPI_K8S_SESSION_NAMESPACE
               value: {{ .Release.Namespace | quote }}
             - name: AGENTAPI_K8S_SESSION_IMAGE
               value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion)) | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE
               value: {{ .Values.kubernetesSession.networkFilterImage | quote }}
-            - name: AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE
-              value: {{ .Values.kubernetesSession.sandboxInitImage | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST
               value: {{ dig "networkFilter" "resources" "requests" "cpu" "250m" .Values.kubernetesSession | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT
@@ -407,31 +408,31 @@ spec:
             {{- end }}
             # Settings base secret (proxy-side merge of settings.json)
             - name: AGENTAPI_K8S_SESSION_SETTINGS_BASE_SECRET
-              value: {{ .Values.kubernetesSession.settingsBaseSecret | default "agentapi-settings-base" | quote }}
+              value: {{ .Values.kubernetesSession.settingsBaseSecret | quote }}
             # Schedule Worker configuration (enabled by default)
             - name: AGENTAPI_SCHEDULE_WORKER_ENABLED
-              value: {{ ((.Values.scheduleWorker).enabled) | default true | quote }}
+              value: {{ .Values.scheduleWorker.enabled | quote }}
             {{- if (.Values.scheduleWorker).checkInterval }}
             - name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL
               value: {{ .Values.scheduleWorker.checkInterval | quote }}
             {{- end }}
             - name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE
               value: {{ .Release.Namespace | quote }}
-            {{- if (.Values.scheduleWorker).leaseDuration }}
+            {{- if ((.Values.scheduleWorker).leaderElection).leaseDuration }}
             - name: AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION
-              value: {{ .Values.scheduleWorker.leaseDuration | quote }}
+              value: {{ .Values.scheduleWorker.leaderElection.leaseDuration | quote }}
             {{- end }}
-            {{- if (.Values.scheduleWorker).renewDeadline }}
+            {{- if ((.Values.scheduleWorker).leaderElection).renewDeadline }}
             - name: AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE
-              value: {{ .Values.scheduleWorker.renewDeadline | quote }}
+              value: {{ .Values.scheduleWorker.leaderElection.renewDeadline | quote }}
             {{- end }}
-            {{- if (.Values.scheduleWorker).retryPeriod }}
+            {{- if ((.Values.scheduleWorker).leaderElection).retryPeriod }}
             - name: AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD
-              value: {{ .Values.scheduleWorker.retryPeriod | quote }}
+              value: {{ .Values.scheduleWorker.leaderElection.retryPeriod | quote }}
             {{- end }}
             # Slackbot Cleanup Worker configuration
             - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED
-              value: {{ ((.Values.slackbotCleanupWorker).enabled) | default false | quote }}
+              value: {{ .Values.slackbotCleanupWorker.enabled | quote }}
             {{- if (.Values.slackbotCleanupWorker).sessionTTL }}
             - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL
               value: {{ .Values.slackbotCleanupWorker.sessionTTL | quote }}
@@ -439,6 +440,10 @@ spec:
             {{- if (.Values.slackbotCleanupWorker).checkInterval }}
             - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL
               value: {{ .Values.slackbotCleanupWorker.checkInterval | quote }}
+            {{- end }}
+            {{- if (.Values.slackbotCleanupWorker).sessionTTLCheckInterval }}
+            - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL_CHECK_INTERVAL
+              value: {{ .Values.slackbotCleanupWorker.sessionTTLCheckInterval | quote }}
             {{- end }}
             - name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN
               value: {{ ((.Values.slackbotCleanupWorker).dryRun) | default false | quote }}
@@ -456,7 +461,7 @@ spec:
             {{- end }}
             # Stock Inventory Worker configuration
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED
-              value: {{ ((.Values.stockInventoryWorker).enabled) | default false | quote }}
+              value: {{ .Values.stockInventoryWorker.enabled | quote }}
             {{- if (.Values.stockInventoryWorker).checkInterval }}
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL
               value: {{ .Values.stockInventoryWorker.checkInterval | quote }}
@@ -467,8 +472,6 @@ spec:
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT
               value: {{ .Values.stockInventoryWorker.targetCount | quote }}
             {{- end }}
-            - name: AGENTAPI_STOCK_INVENTORY_WORKER_SANDBOX_ENABLED
-              value: {{ ((.Values.stockInventoryWorker).sandboxEnabled) | default false | quote }}
             - name: AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED
               value: {{ ((.Values.stockInventoryWorker).dockerEnabled) | default false | quote }}
             {{- if (.Values.stockInventoryWorker).pools }}
@@ -492,7 +495,14 @@ spec:
               value: {{ .Values.config.encryption.key | quote }}
             {{- end }}
             # GitHub Token configuration (for backward compatibility)
-            {{- if .Values.github.token }}
+            {{- $githubTokenRefName := dig "tokenRef" "name" "" .Values.github }}
+            {{- if $githubTokenRefName }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $githubTokenRefName | quote }}
+                  key: {{ dig "tokenRef" "key" "github-token" .Values.github | quote }}
+            {{- else if .Values.github.token }}
             - name: GITHUB_TOKEN
               value: {{ .Values.github.token | quote }}
             {{- end }}
@@ -511,7 +521,14 @@ spec:
             - name: VAPID_PUBLIC_KEY
               value: {{ .Values.config.vapid.publicKey | quote }}
             {{- end }}
-            {{- if .Values.config.vapid.privateKey }}
+            {{- $vapidPrivateKeyRefName := dig "privateKeyRef" "name" "" .Values.config.vapid }}
+            {{- if $vapidPrivateKeyRefName }}
+            - name: VAPID_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $vapidPrivateKeyRefName | quote }}
+                  key: {{ dig "privateKeyRef" "key" "vapid-private-key" .Values.config.vapid | quote }}
+            {{- else if .Values.config.vapid.privateKey }}
             - name: VAPID_PRIVATE_KEY
               value: {{ .Values.config.vapid.privateKey | quote }}
             {{- end }}
@@ -533,9 +550,12 @@ spec:
             {{- else if .Values.externalRedis.addr }}
             - name: AGENTAPI_REDIS_ADDR
               value: {{ .Values.externalRedis.addr | quote }}
-            {{- if .Values.externalRedis.password }}
+            {{- if .Values.externalRedis.existingSecret }}
             - name: AGENTAPI_REDIS_PASSWORD
-              value: {{ .Values.externalRedis.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalRedis.existingSecret | quote }}
+                  key: {{ .Values.externalRedis.existingSecretPasswordKey | quote }}
             {{- end }}
             {{- if .Values.externalRedis.db }}
             - name: AGENTAPI_REDIS_DB
@@ -559,10 +579,8 @@ spec:
             {{- end }}
             {{- end }}
             {{- range .Values.env }}
-            {{- if not (hasPrefix "AGENTAPI_SCIA_" .name) }}
             - name: {{ .name }}
               value: {{ .value | quote }}
-            {{- end }}
             {{- end }}
           {{- with .Values.envFrom }}
           envFrom:
@@ -576,7 +594,7 @@ spec:
             {{- end }}
             {{- if .Values.roleEnvFiles.enabled }}
             - name: role-env-files
-              mountPath: {{ .Values.config.roleEnvFiles.path }}
+              mountPath: {{ .Values.roleEnvFiles.path }}
               readOnly: true
             {{- end }}
             {{- if and .Values.github.app.privateKey.secretName .Values.github.app.privateKey.key }}

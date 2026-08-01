@@ -22,10 +22,10 @@
 {{- end }}
 
 2. Check the status of your deployment:
-   kubectl get statefulset -n {{ .Release.Namespace }} {{ include "agentapi-proxy.fullname" . }}
+   kubectl get deployment -n {{ .Release.Namespace }} {{ include "agentapi-proxy.fullname" . }}
 
 3. View logs:
-   kubectl logs -f -n {{ .Release.Namespace }} {{ include "agentapi-proxy.fullname" . }}-0
+   kubectl logs -f -n {{ .Release.Namespace }} deployment/{{ include "agentapi-proxy.fullname" . }}
 
 4. To configure environment variables, create a ConfigMap or Secret and reference it in values.yaml:
    
@@ -36,4 +36,3 @@
    envFrom:
      - configMapRef:
          name: agentapi-config
-
