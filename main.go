@@ -24,6 +24,7 @@ func init() {
 	rootCmd.AddCommand(cmd.NativeCmd)
 	rootCmd.AddCommand(cmd.OneshotCmd)
 	rootCmd.AddCommand(cmd.AcpServerCmd)
+	rootCmd.AddCommand(cmd.DoctorCmd)
 }
 
 func main() {

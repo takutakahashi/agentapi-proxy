@@ -68,6 +68,34 @@ docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json ghcr.io/takutakah
 - `--config, -c`: Configuration file path (default: config.json)
 - `--verbose, -v`: Enable verbose logging
 
+### Checking a Helm Installation
+
+Use `doctor` to inspect the latest Helm release revision and verify every
+Kubernetes Secret referenced by its user-supplied values. The command checks
+that each Secret exists and that referenced keys contain non-empty data. It
+never prints Secret values.
+
+```bash
+agentapi-proxy doctor \
+	--namespace agentapi-ui
+```
+
+By default, both the `agentapi-proxy` and `agentapi-ui` releases are checked.
+Use one or more `--release` flags to select specific releases:
+
+```bash
+agentapi-proxy doctor -n agentapi-ui \
+  --release agentapi-proxy \
+  --release agentapi-ui
+```
+
+The command uses the standard Kubernetes client configuration resolution
+(in-cluster credentials or `KUBECONFIG`) and exits non-zero if a release or
+startup Deployment is unavailable, or if a startup-required Secret, key, or
+value is missing. Secrets for optional features such as GitHub, VAPID, SCIA,
+Slack, and ingress TLS are reported as `WARN` when incomplete. Sensitive-looking
+literal values and missing Service endpoints are also non-blocking warnings.
+
 ### Configuration
 
 Configuration is managed through environment variables and Kubernetes ConfigMaps. See the Helm chart values for detailed configuration options.
