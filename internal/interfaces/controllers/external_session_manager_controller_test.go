@@ -23,7 +23,7 @@ func esmTestContext(e *echo.Echo, method, path string, body interface{}, userID 
 	return ctx, rec
 }
 
-func TestExternalSessionManagerRegistrationIsIdempotentAndHeartbeatUsesToken(t *testing.T) {
+func TestExternalSessionManagerEnrollmentAndHeartbeatUsesToken(t *testing.T) {
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/healthz" {
 			http.NotFound(w, r)
@@ -36,23 +36,18 @@ func TestExternalSessionManagerRegistrationIsIdempotentAndHeartbeatUsesToken(t *
 	repo := newMockSettingsRepository()
 	controller := NewSettingsController(repo, nil, "", "")
 	e := echo.New()
-	body := ESMRegistrationRequest{InstanceID: "machine-1", Name: "native-1", PublicURL: probe.URL,
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	var issued esmEnrollmentTokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
+	body := ESMEnrollmentRequest{RegistrationToken: issued.RegistrationToken, InstanceID: "machine-1", Name: "native-1", PublicURL: probe.URL,
 		Labels: map[string]string{"os": "linux", "arch": "amd64"}}
-	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers", body, "user1")
-	require.NoError(t, controller.RegisterExternalSessionManager(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
+	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", body, "")
+	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
 	var created esmRegistrationResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 	require.True(t, created.Created)
 	require.NotEmpty(t, created.ConnectionToken)
-
-	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers", body, "user1")
-	require.NoError(t, controller.RegisterExternalSessionManager(ctx))
-	var repeated esmRegistrationResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &repeated))
-	require.False(t, repeated.Created)
-	require.Equal(t, created.ID, repeated.ID)
-	require.Empty(t, repeated.ConnectionToken)
 	require.Len(t, repo.settings["user1"].ExternalSessionManagers(), 1)
 
 	heartbeat := ESMHeartbeatRequest{PublicURL: probe.URL, Version: "test-version", ActiveSessions: 2}
@@ -72,9 +67,13 @@ func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T
 	repo := newMockSettingsRepository()
 	controller := NewSettingsController(repo, nil, "", "")
 	e := echo.New()
-	body := ESMRegistrationRequest{InstanceID: "machine-2", Name: "native-2"}
-	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers", body, "user1")
-	require.NoError(t, controller.RegisterExternalSessionManager(ctx))
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	var issued esmEnrollmentTokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
+	body := ESMEnrollmentRequest{RegistrationToken: issued.RegistrationToken, InstanceID: "machine-2", Name: "native-2"}
+	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", body, "")
+	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
 	var created esmRegistrationResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 
@@ -87,22 +86,54 @@ func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T
 	require.Error(t, err)
 }
 
-func TestExternalSessionManagerRegistrationSupportsTeamServiceAccount(t *testing.T) {
+func TestExternalSessionManagerEnrollmentTokenIsOneTime(t *testing.T) {
 	repo := newMockSettingsRepository()
 	controller := NewSettingsController(repo, nil, "", "")
 	e := echo.New()
-	body := ESMRegistrationRequest{InstanceID: "team-machine", Name: "team-native", Scope: "team", TeamID: "org/builders"}
-	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers", body, "")
-	ctx.Set("internal_user", entities.NewServiceAccountUser("team-token", "org/builders", nil))
 
-	require.NoError(t, controller.RegisterExternalSessionManager(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Len(t, repo.settings["org/builders"].ExternalSessionManagers(), 1)
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var issued esmEnrollmentTokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
+	require.NotEmpty(t, issued.RegistrationToken)
+	require.NotEmpty(t, issued.ManagerID)
 
-	body.TeamID = "org/other"
-	ctx, _ = esmTestContext(e, http.MethodPost, "/external-session-managers", body, "")
-	ctx.Set("internal_user", entities.NewServiceAccountUser("team-token", "org/builders", nil))
-	err := controller.RegisterExternalSessionManager(ctx)
+	enrollment := ESMEnrollmentRequest{RegistrationToken: issued.RegistrationToken, InstanceID: "machine-enrolled", Name: "native-enrolled"}
+	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", enrollment, "")
+	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
+	var registered esmRegistrationResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &registered))
+	require.Equal(t, issued.ManagerID, registered.ID)
+	require.NotEmpty(t, registered.ConnectionToken)
+
+	ctx, _ = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", enrollment, "")
+	err := controller.EnrollExternalSessionManager(ctx)
 	require.Error(t, err)
-	require.Equal(t, http.StatusForbidden, err.(*echo.HTTPError).Code)
+	require.Equal(t, http.StatusUnauthorized, err.(*echo.HTTPError).Code)
+}
+
+func TestServiceAccountEnrollmentTokenDefaultsToTeamScope(t *testing.T) {
+	repo := newMockSettingsRepository()
+	controller := NewSettingsController(repo, nil, "", "")
+	e := echo.New()
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "")
+	ctx.Set("internal_user", entities.NewServiceAccountUser("service-account", "org/builders", nil))
+
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Contains(t, repo.settings, "org/builders")
+	require.NotContains(t, repo.settings, "service-account")
+}
+
+func TestServiceAccountEnrollmentTokenHonorsExplicitUserScope(t *testing.T) {
+	repo := newMockSettingsRepository()
+	controller := NewSettingsController(repo, nil, "", "")
+	e := echo.New()
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{Scope: "user"}, "")
+	ctx.Set("internal_user", entities.NewServiceAccountUser("service-account", "org/builders", nil))
+
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Contains(t, repo.settings, "service-account")
 }

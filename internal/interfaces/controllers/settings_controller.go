@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -117,12 +116,11 @@ type UpdateSettingsRequest struct {
 	DefaultSessionProfileID *string                          `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
 }
 
-// ExternalSessionManagerRequest represents a single external session manager registration
+// ExternalSessionManagerRequest represents updates to an already-enrolled manager.
 type ExternalSessionManagerRequest struct {
-	ID         string            `json:"id,omitempty"`          // Auto-generated if empty
+	ID         string            `json:"id"`                    // Required; registration uses the enrollment-token API
 	InstanceID string            `json:"instance_id,omitempty"` // Stable native host installation ID
 	Name       string            `json:"name"`                  // Human-readable name
-	HMACSecret string            `json:"hmac_secret,omitempty"` // Connection token; auto-generated if empty, omit to keep existing
 	Default    bool              `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
 	Labels     map[string]string `json:"labels,omitempty"`      // Matches allocator.* session tags
 }
@@ -471,10 +469,8 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		}
 	}
 
-	// Update external session managers
-	// For each entry: auto-generate ID if empty, auto-generate HMAC secret if empty.
-	// Existing secrets are preserved when the entry already exists (matched by ID).
-	generatedESMTokens := map[string]string{}
+	// Update already-enrolled external session managers. New registrations are
+	// accepted only through the one-time enrollment-token API.
 	if req.ExternalSessionManagers != nil {
 		existing := make(map[string]entities.ExternalSessionManagerEntry)
 		for _, e := range settings.ExternalSessionManagers() {
@@ -495,41 +491,34 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		updated := make([]entities.ExternalSessionManagerEntry, 0, len(*req.ExternalSessionManagers))
 		for _, m := range *req.ExternalSessionManagers {
 			if m.ID == "" {
-				m.ID = uuid.New().String()
+				return echo.NewHTTPError(http.StatusBadRequest, "external session managers must be enrolled with a registration token")
 			}
-			// Preserve existing secret if not provided
-			if m.HMACSecret == "" {
-				if prev, ok := existing[m.ID]; ok {
-					m.HMACSecret = prev.HMACSecret
-				}
-			}
-			// Auto-generate secret if still empty
-			if m.HMACSecret == "" {
-				secret, err := generateSettingsESMSecret(32)
-				if err != nil {
-					log.Printf("[SETTINGS] Failed to generate connection token for ESM %s: %v", m.Name, err)
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate connection token")
-				}
-				m.HMACSecret = secret
-				generatedESMTokens[m.ID] = secret
+			prev, ok := existing[m.ID]
+			if !ok || prev.HMACSecret == "" {
+				return echo.NewHTTPError(http.StatusBadRequest, "external session manager is not enrolled")
 			}
 			entry := entities.ExternalSessionManagerEntry{
 				ID:         m.ID,
 				InstanceID: m.InstanceID,
 				Name:       m.Name,
-				HMACSecret: m.HMACSecret,
+				HMACSecret: prev.HMACSecret,
 				Default:    m.Default,
 				Labels:     m.Labels,
 			}
 			// These fields are owned by the daemon registration/heartbeat API and
 			// must survive a legacy settings update.
-			if prev, ok := existing[m.ID]; ok {
-				entry.PublicURL = prev.PublicURL
-				entry.Version = prev.Version
-				entry.ActiveSessions = prev.ActiveSessions
-				entry.LastHeartbeatAt = prev.LastHeartbeatAt
-			}
+			entry.PublicURL = prev.PublicURL
+			entry.Version = prev.Version
+			entry.ActiveSessions = prev.ActiveSessions
+			entry.LastHeartbeatAt = prev.LastHeartbeatAt
 			updated = append(updated, entry)
+		}
+		// Pending one-time enrollments are not returned by settings responses and
+		// must survive unrelated settings saves.
+		for _, prev := range existing {
+			if prev.HMACSecret == "" && prev.EnrollmentTokenHash != "" {
+				updated = append(updated, prev)
+			}
 		}
 		settings.SetExternalSessionManagers(updated)
 	}
@@ -594,7 +583,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 
-	return ctx.JSON(http.StatusOK, c.toResponseWithESMTokens(settings, generatedESMTokens))
+	return ctx.JSON(http.StatusOK, c.toResponse(settings))
 }
 
 // DeleteGitSync handles DELETE /settings/:name/sync
@@ -813,10 +802,6 @@ func (c *SettingsController) determineAuthMode(settings *entities.Settings, requ
 
 // toResponse converts Settings entity to response
 func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsResponse {
-	return c.toResponseWithESMTokens(settings, nil)
-}
-
-func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings, connectionTokens map[string]string) *SettingsResponse {
 	resp := &SettingsResponse{
 		Name:                    settings.Name(),
 		HasClaudeCodeOAuthToken: settings.HasClaudeCodeOAuthToken(),
@@ -891,16 +876,14 @@ func (c *SettingsController) toResponseWithESMTokens(settings *entities.Settings
 	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {
 		resp.ExternalSessionManagers = make([]ExternalSessionManagerResponse, 0, len(managers))
 		for _, m := range managers {
-			connectionToken := ""
-			if connectionTokens != nil {
-				connectionToken = connectionTokens[m.ID]
+			if m.HMACSecret == "" {
+				continue
 			}
 			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
 				ID:                 m.ID,
 				InstanceID:         m.InstanceID,
 				Name:               m.Name,
 				HasConnectionToken: m.HMACSecret != "",
-				ConnectionToken:    connectionToken,
 				Default:            m.Default,
 				Labels:             m.Labels,
 				PublicURL:          m.PublicURL,

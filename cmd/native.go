@@ -27,8 +27,8 @@ import (
 var NativeCmd = &cobra.Command{Use: "native", Short: "Install and manage a native External Session Manager"}
 
 type nativeManageOptions struct {
-	upstream, publicURL, name, listen, managerID, apiKeyEnv, apiKeyFile, configPath          string
-	scope, teamID, drainTimeout                                                              string
+	upstream, publicURL, name, listen, apiKeyEnv, apiKeyFile, configPath                     string
+	scope, teamID, drainTimeout, registrationToken                                           string
 	labels                                                                                   []string
 	environment                                                                              []string
 	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
@@ -52,9 +52,9 @@ type nativeRegistrationResponse struct {
 func init() {
 	p := NativeCmd.PersistentFlags()
 	p.StringVar(&nativeManageOpts.configPath, "config", "", "native daemon config path")
-	p.StringVar(&nativeManageOpts.apiKeyEnv, "api-key-env", "AGENTAPI_KEY", "environment variable containing the install API key")
-	p.StringVar(&nativeManageOpts.apiKeyFile, "api-key-file", "", "file containing the install API key")
-	p.BoolVar(&nativeManageOpts.apiKeyStdin, "api-key-stdin", false, "read the install API key from stdin")
+	p.StringVar(&nativeManageOpts.apiKeyEnv, "api-key-env", "AGENTAPI_KEY", "environment variable containing the API key for authenticated lifecycle operations")
+	p.StringVar(&nativeManageOpts.apiKeyFile, "api-key-file", "", "file containing the API key for authenticated lifecycle operations")
+	p.BoolVar(&nativeManageOpts.apiKeyStdin, "api-key-stdin", false, "read the API key for authenticated lifecycle operations from stdin")
 
 	install := &cobra.Command{Use: "install", Short: "Register and install the native ESM daemon", RunE: runNativeInstall}
 	f := install.Flags()
@@ -62,9 +62,9 @@ func init() {
 	f.StringVar(&nativeManageOpts.publicURL, "public-url", "", "parent-reachable URL for this host")
 	f.StringVar(&nativeManageOpts.name, "name", "", "human-readable manager name")
 	f.StringVar(&nativeManageOpts.listen, "listen", ":8080", "native ESM listen address")
-	f.StringVar(&nativeManageOpts.managerID, "manager-id", "", "stable manager ID (also migrates an existing registration)")
 	f.StringVar(&nativeManageOpts.scope, "scope", "user", "registration scope: user or team")
 	f.StringVar(&nativeManageOpts.teamID, "team-id", "", "team ID when --scope=team")
+	f.StringVar(&nativeManageOpts.registrationToken, "registration-token", "", "one-time registration token issued by the parent proxy")
 	f.StringSliceVar(&nativeManageOpts.labels, "label", nil, "allocator label in key=value form")
 	f.StringArrayVar(&nativeManageOpts.environment, "manager-env", nil, "native manager environment variable in KEY=VALUE form (repeatable)")
 	f.BoolVar(&nativeManageOpts.defaultManager, "default", false, "make this the default external session manager")
@@ -114,9 +114,6 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 	existing, _ := readNativeConfig(paths.config)
 	instanceID := existing.InstanceID
 	if instanceID == "" {
-		instanceID = nativeManageOpts.managerID
-	}
-	if instanceID == "" {
 		instanceID = stableNativeInstanceID(hostname)
 	}
 	labels := map[string]string{"os": runtime.GOOS, "arch": runtime.GOARCH, "hostname": hostname}
@@ -138,16 +135,15 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 		}
 		environment[key] = value
 	}
-	apiKey, err := readInstallAPIKey()
-	if err != nil {
-		return err
+	if nativeManageOpts.registrationToken == "" {
+		return errors.New("--registration-token is required")
 	}
-	registration, err := registerNativeManager(nativeManageOpts.upstream, apiKey, map[string]interface{}{
-		"manager_id": nativeManageOpts.managerID, "instance_id": instanceID, "name": nativeManageOpts.name,
-		"scope": nativeManageOpts.scope, "team_id": nativeManageOpts.teamID,
+	payload := map[string]interface{}{
+		"instance_id": instanceID, "name": nativeManageOpts.name,
 		"labels": labels, "default": nativeManageOpts.defaultManager, "public_url": nativeManageOpts.publicURL,
-		"version": nativeBuildVersion(), "rotate_token": existing.ConnectionToken == "",
-	})
+		"version": nativeBuildVersion(), "registration_token": nativeManageOpts.registrationToken,
+	}
+	registration, err := enrollNativeManager(nativeManageOpts.upstream, payload)
 	if err != nil {
 		return err
 	}
@@ -568,7 +564,7 @@ func runNativeRotateToken(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	apiKey, err := readInstallAPIKey()
+	apiKey, err := readLifecycleAPIKey()
 	if err != nil {
 		return err
 	}
@@ -648,7 +644,7 @@ func runNativeUninstall(_ *cobra.Command, _ []string) error {
 		_ = os.Remove(paths.service)
 	}
 	if !nativeManageOpts.keepRegistration && cfg.ManagerID != "" {
-		apiKey, keyErr := readInstallAPIKey()
+		apiKey, keyErr := readLifecycleAPIKey()
 		if keyErr != nil {
 			return fmt.Errorf("service removed; registration not removed: %w", keyErr)
 		}
@@ -707,13 +703,12 @@ func safeNativeStateDir(path string) bool {
 	return clean != "/" && clean != "." && len(strings.Split(clean, string(filepath.Separator))) >= 3
 }
 
-func registerNativeManager(upstream, apiKey string, payload interface{}) (*nativeRegistrationResponse, error) {
+func enrollNativeManager(upstream string, payload interface{}) (*nativeRegistrationResponse, error) {
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(upstream, "/")+"/external-session-managers", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(upstream, "/")+"/external-session-managers/enroll", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -746,7 +741,7 @@ func sendNativeHeartbeat(cfg nativeDaemonConfig) error {
 	return nil
 }
 
-func readInstallAPIKey() (string, error) {
+func readLifecycleAPIKey() (string, error) {
 	var value string
 	if nativeManageOpts.apiKeyStdin {
 		data, err := io.ReadAll(io.LimitReader(os.Stdin, 64*1024))
@@ -765,7 +760,7 @@ func readInstallAPIKey() (string, error) {
 	}
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", errors.New("install API key is required; use --api-key-stdin, --api-key-file, or --api-key-env")
+		return "", errors.New("API key is required for this lifecycle operation; use --api-key-stdin, --api-key-file, or --api-key-env")
 	}
 	return value, nil
 }

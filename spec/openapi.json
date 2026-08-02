@@ -2574,13 +2574,6 @@
       }
     },
     "/external-session-managers": {
-      "post": {
-        "summary": "Idempotently register a native External Session Manager",
-        "operationId": "registerExternalSessionManager",
-        "tags": ["External Session Managers"],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManagerRegistrationRequest"}}}},
-        "responses": {"200": {"description": "Registered or updated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManager"}}}}}
-      },
       "get": {
         "summary": "List External Session Managers",
         "operationId": "listExternalSessionManagers",
@@ -2592,10 +2585,27 @@
         "responses": {"200": {"description": "Registered managers"}}
       }
     },
+    "/external-session-managers/registration-tokens": {
+      "post": {
+        "summary": "Issue a short-lived one-time External Session Manager registration token",
+        "operationId": "issueExternalSessionManagerRegistrationToken",
+        "tags": ["External Session Managers"],
+        "responses": {"201": {"description": "Registration token issued; registration_token is returned once"}}
+      }
+    },
+    "/external-session-managers/enroll": {
+      "post": {
+        "summary": "Enroll an External Session Manager with a one-time registration token",
+        "operationId": "enrollExternalSessionManager",
+        "tags": ["External Session Managers"],
+        "security": [],
+        "responses": {"200": {"description": "Manager enrolled; connection_token is returned once"}, "401": {"description": "Invalid, expired, or already-used registration token"}}
+      }
+    },
     "/external-session-managers/{id}": {
       "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
       "get": {"summary": "Get an External Session Manager", "operationId": "getExternalSessionManager", "tags": ["External Session Managers"], "responses": {"200": {"description": "Manager", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManager"}}}}}},
-      "patch": {"summary": "Update an External Session Manager", "operationId": "updateExternalSessionManager", "tags": ["External Session Managers"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManagerRegistrationRequest"}}}}, "responses": {"200": {"description": "Updated manager"}}},
+      "patch": {"summary": "Update an External Session Manager", "operationId": "updateExternalSessionManager", "tags": ["External Session Managers"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManagerUpdateRequest"}}}}, "responses": {"200": {"description": "Updated manager"}}},
       "delete": {"summary": "Delete an External Session Manager", "operationId": "deleteExternalSessionManager", "tags": ["External Session Managers"], "responses": {"204": {"description": "Deleted"}}}
     },
     "/external-session-managers/{id}/rotate-token": {
@@ -7406,20 +7416,15 @@
           }
         }
       },
-      "ExternalSessionManagerRegistrationRequest": {
-        "type": "object",
-        "required": ["instance_id", "name"],
-        "properties": {
-          "manager_id": {"type": "string", "description": "Optional stable manager ID, also used to migrate a legacy registration"},
-          "instance_id": {"type": "string", "description": "Stable ID persisted on the native host for idempotent registration"},
-          "name": {"type": "string"},
-          "scope": {"type": "string", "enum": ["user", "team"], "default": "user"},
-          "team_id": {"type": "string"},
-          "labels": {"type": "object", "additionalProperties": {"type": "string"}},
-          "default": {"type": "boolean"},
-          "public_url": {"type": "string", "format": "uri"},
-          "version": {"type": "string"},
-          "rotate_token": {"type": "boolean", "description": "Generate and return a new token; used when local credentials are missing"}
+      "ExternalSessionManagerUpdateRequest": {
+		"type": "object",
+		"properties": {
+		  "instance_id": {"type": "string"},
+		  "name": {"type": "string"},
+		  "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+		  "default": {"type": "boolean"},
+		  "public_url": {"type": "string", "format": "uri"},
+		  "version": {"type": "string"}
         }
       },
       "ExternalSessionManager": {

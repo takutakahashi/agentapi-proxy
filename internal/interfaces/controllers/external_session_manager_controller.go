@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"net/http"
 	"strings"
 	"time"
@@ -13,17 +15,13 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
-type ESMRegistrationRequest struct {
-	ManagerID   string            `json:"manager_id,omitempty"`
-	InstanceID  string            `json:"instance_id"`
-	Name        string            `json:"name"`
-	Scope       string            `json:"scope,omitempty"`
-	TeamID      string            `json:"team_id,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Default     bool              `json:"default,omitempty"`
-	PublicURL   string            `json:"public_url,omitempty"`
-	Version     string            `json:"version,omitempty"`
-	RotateToken bool              `json:"rotate_token,omitempty"`
+type ESMUpdateRequest struct {
+	InstanceID string            `json:"instance_id"`
+	Name       string            `json:"name"`
+	Labels     map[string]string `json:"labels,omitempty"`
+	Default    bool              `json:"default,omitempty"`
+	PublicURL  string            `json:"public_url,omitempty"`
+	Version    string            `json:"version,omitempty"`
 }
 
 type ESMHeartbeatRequest struct {
@@ -37,15 +35,48 @@ type esmRegistrationResponse struct {
 	Created bool `json:"created"`
 }
 
-func (c *SettingsController) RegisterExternalSessionManager(ctx echo.Context) error {
-	var req ESMRegistrationRequest
-	if err := ctx.Bind(&req); err != nil || strings.TrimSpace(req.InstanceID) == "" || strings.TrimSpace(req.Name) == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "instance_id and name are required")
+type ESMEnrollmentTokenRequest struct {
+	Scope  string `json:"scope,omitempty"`
+	TeamID string `json:"team_id,omitempty"`
+}
+
+type esmEnrollmentTokenResponse struct {
+	ManagerID         string    `json:"manager_id"`
+	RegistrationToken string    `json:"registration_token"`
+	ExpiresAt         time.Time `json:"expires_at"`
+}
+
+type ESMEnrollmentRequest struct {
+	RegistrationToken string            `json:"registration_token"`
+	InstanceID        string            `json:"instance_id"`
+	Name              string            `json:"name"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Default           bool              `json:"default,omitempty"`
+	PublicURL         string            `json:"public_url,omitempty"`
+	Version           string            `json:"version,omitempty"`
+}
+
+func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo.Context) error {
+	var req ESMEnrollmentTokenRequest
+	if err := ctx.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	user := auth.GetUserFromContext(ctx)
+	if req.Scope == "" && user != nil && user.UserType() == entities.UserTypeServiceAccount && user.TeamID() != "" {
+		req.Scope = "team"
+		req.TeamID = user.TeamID()
 	}
 	name, err := c.esmSettingsName(ctx, req.Scope, req.TeamID, true)
 	if err != nil {
 		return err
 	}
+	token, err := generateSettingsESMSecret(32)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate registration token")
+	}
+	managerID := uuid.NewString()
+	expiresAt := time.Now().UTC().Add(15 * time.Minute)
+	hash := sha256.Sum256([]byte(token))
 
 	c.esmMu.Lock()
 	defer c.esmMu.Unlock()
@@ -53,49 +84,79 @@ func (c *SettingsController) RegisterExternalSessionManager(ctx echo.Context) er
 	if err != nil {
 		return err
 	}
-	managers := append([]entities.ExternalSessionManagerEntry(nil), settings.ExternalSessionManagers()...)
-	idx := -1
-	for i := range managers {
-		if managers[i].InstanceID == req.InstanceID || (req.ManagerID != "" && managers[i].ID == req.ManagerID) {
-			idx = i
-			break
+	managers := make([]entities.ExternalSessionManagerEntry, 0, len(settings.ExternalSessionManagers())+1)
+	for _, manager := range settings.ExternalSessionManagers() {
+		if manager.HMACSecret == "" && !manager.EnrollmentExpiresAt.IsZero() && time.Now().UTC().After(manager.EnrollmentExpiresAt) {
+			continue
 		}
+		managers = append(managers, manager)
 	}
-	created := idx < 0
-	connectionToken := ""
-	if created || req.RotateToken {
-		connectionToken, err = generateSettingsESMSecret(32)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate connection token")
-		}
-		if created {
-			managerID := req.ManagerID
-			if managerID == "" {
-				managerID = uuid.NewString()
-			}
-			managers = append(managers, entities.ExternalSessionManagerEntry{ID: managerID, InstanceID: req.InstanceID, HMACSecret: connectionToken})
-			idx = len(managers) - 1
-		} else {
-			managers[idx].HMACSecret = connectionToken
-		}
-	}
-	if req.Default {
-		for i := range managers {
-			managers[i].Default = false
-		}
-	}
-	manager := &managers[idx]
-	manager.InstanceID = req.InstanceID
-	manager.Name = req.Name
-	manager.Labels = req.Labels
-	manager.Default = req.Default
-	manager.PublicURL = req.PublicURL
-	manager.Version = req.Version
+	managers = append(managers, entities.ExternalSessionManagerEntry{
+		ID: managerID, Name: "pending registration", EnrollmentTokenHash: hex.EncodeToString(hash[:]), EnrollmentExpiresAt: expiresAt,
+	})
 	settings.SetExternalSessionManagers(managers)
 	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save external session manager")
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save registration token")
 	}
-	return ctx.JSON(http.StatusOK, esmRegistrationResponse{ExternalSessionManagerResponse: esmResponse(*manager, connectionToken), Created: created})
+	return ctx.JSON(http.StatusCreated, esmEnrollmentTokenResponse{
+		ManagerID: managerID, RegistrationToken: token, ExpiresAt: expiresAt,
+	})
+}
+
+func (c *SettingsController) EnrollExternalSessionManager(ctx echo.Context) error {
+	var req ESMEnrollmentRequest
+	if err := ctx.Bind(&req); err != nil || strings.TrimSpace(req.RegistrationToken) == "" ||
+		strings.TrimSpace(req.InstanceID) == "" || strings.TrimSpace(req.Name) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "registration_token, instance_id and name are required")
+	}
+	tokenHash := sha256.Sum256([]byte(req.RegistrationToken))
+	hashString := hex.EncodeToString(tokenHash[:])
+
+	c.esmMu.Lock()
+	defer c.esmMu.Unlock()
+	settingsList, err := c.repo.List(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to validate registration token")
+	}
+	now := time.Now().UTC()
+	for _, settings := range settingsList {
+		managers := settings.ExternalSessionManagers()
+		for i := range managers {
+			if subtle.ConstantTimeCompare([]byte(managers[i].EnrollmentTokenHash), []byte(hashString)) != 1 {
+				continue
+			}
+			if managers[i].EnrollmentExpiresAt.IsZero() || now.After(managers[i].EnrollmentExpiresAt) {
+				return echo.NewHTTPError(http.StatusUnauthorized, "registration token has expired")
+			}
+			connectionToken, genErr := generateSettingsESMSecret(32)
+			if genErr != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate connection token")
+			}
+			if req.Default {
+				for j := range managers {
+					managers[j].Default = false
+				}
+			}
+			manager := &managers[i]
+			manager.InstanceID = req.InstanceID
+			manager.Name = req.Name
+			manager.HMACSecret = connectionToken
+			manager.Labels = req.Labels
+			manager.Default = req.Default
+			manager.PublicURL = req.PublicURL
+			manager.Version = req.Version
+			manager.EnrollmentTokenHash = ""
+			manager.EnrollmentExpiresAt = time.Time{}
+			settings.SetExternalSessionManagers(managers)
+			if saveErr := c.repo.Save(ctx.Request().Context(), settings); saveErr != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to enroll external session manager")
+			}
+			return ctx.JSON(http.StatusOK, esmRegistrationResponse{
+				ExternalSessionManagerResponse: esmResponse(*manager, connectionToken), Created: true,
+			})
+		}
+	}
+	return echo.NewHTTPError(http.StatusUnauthorized, "invalid or already used registration token")
 }
 
 func (c *SettingsController) ListExternalSessionManagers(ctx echo.Context) error {
@@ -112,6 +173,9 @@ func (c *SettingsController) ListExternalSessionManagers(ctx echo.Context) error
 	}
 	responses := make([]ExternalSessionManagerResponse, 0, len(settings.ExternalSessionManagers()))
 	for _, manager := range settings.ExternalSessionManagers() {
+		if manager.HMACSecret == "" {
+			continue
+		}
 		responses = append(responses, esmResponse(manager, ""))
 	}
 	return ctx.JSON(http.StatusOK, map[string]interface{}{"external_session_managers": responses})
@@ -126,7 +190,7 @@ func (c *SettingsController) GetExternalSessionManager(ctx echo.Context) error {
 }
 
 func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error {
-	var req ESMRegistrationRequest
+	var req ESMUpdateRequest
 	if err := ctx.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
 	}

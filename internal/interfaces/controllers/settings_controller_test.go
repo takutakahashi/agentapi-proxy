@@ -284,6 +284,27 @@ func TestUpdateSettings_DefaultSessionProfileID(t *testing.T) {
 	assert.Equal(t, "profile-1", resp.DefaultSessionProfileID)
 }
 
+func TestUpdateSettingsRejectsDirectExternalSessionManagerRegistration(t *testing.T) {
+	repo := newMockSettingsRepository()
+	h := NewSettingsController(repo, nil, "", "")
+	managers := []ExternalSessionManagerRequest{{Name: "legacy-manager"}}
+	body, err := json.Marshal(UpdateSettingsRequest{ExternalSessionManagers: &managers})
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/settings/test-user", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("name")
+	c.SetParamValues("test-user")
+	c.Set("internal_user", createTestUser("test-user", true))
+
+	err = h.UpdateSettings(c)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, err.(*echo.HTTPError).Code)
+}
+
 func TestUpdateSettings_GitHubAppInstallationID(t *testing.T) {
 	repo := newMockSettingsRepository()
 	h := NewSettingsController(repo, nil, "", "")

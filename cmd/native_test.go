@@ -12,19 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRegisterNativeManager(t *testing.T) {
+func TestEnrollNativeManager(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, http.MethodPost, r.Method)
-		require.Equal(t, "/external-session-managers", r.URL.Path)
-		require.Equal(t, "Bearer install-key", r.Header.Get("Authorization"))
-		var body map[string]interface{}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		require.Equal(t, "machine-1", body["instance_id"])
-		_ = json.NewEncoder(w).Encode(nativeRegistrationResponse{ID: "manager-1", InstanceID: "machine-1", ConnectionToken: "connection-token", Created: true})
+		require.Equal(t, "/external-session-managers/enroll", r.URL.Path)
+		require.Empty(t, r.Header.Get("Authorization"))
+		_ = json.NewEncoder(w).Encode(nativeRegistrationResponse{ID: "manager-1", ConnectionToken: "connection-token", Created: true})
 	}))
 	defer server.Close()
 
-	result, err := registerNativeManager(server.URL, "install-key", map[string]string{"instance_id": "machine-1"})
+	result, err := enrollNativeManager(server.URL, map[string]string{"registration_token": "one-time-token"})
 	require.NoError(t, err)
 	require.Equal(t, "manager-1", result.ID)
 	require.Equal(t, "connection-token", result.ConnectionToken)
