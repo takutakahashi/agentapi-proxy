@@ -1542,13 +1542,13 @@ func DefaultConfig() *Config {
 			},
 		},
 		StockInventoryWorker: StockInventoryWorkerConfig{
-			Enabled:        false,
-			CheckInterval:  "30s",
-			TargetCount:    2,
-			DockerEnabled:  false,
-			LeaseDuration:  "15s",
-			RenewDeadline:  "10s",
-			RetryPeriod:    "2s",
+			Enabled:       false,
+			CheckInterval: "30s",
+			TargetCount:   2,
+			DockerEnabled: false,
+			LeaseDuration: "15s",
+			RenewDeadline: "10s",
+			RetryPeriod:   "2s",
 		},
 		Asset: AssetConfig{
 			Backend:     "nginx",
@@ -1711,9 +1711,9 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 // K8sSessionConfigOverride represents kubernetes session configuration overrides from external file
 type K8sSessionConfigOverride struct {
 	KubernetesSession *struct {
-		NodeSelector          map[string]string `json:"node_selector,omitempty" yaml:"node_selector"`
+		NodeSelector map[string]string      `json:"node_selector,omitempty" yaml:"node_selector"`
 		Affinity     map[string]interface{} `json:"affinity,omitempty" yaml:"affinity"`
-		Tolerations           []Toleration      `json:"tolerations,omitempty" yaml:"tolerations"`
+		Tolerations  []Toleration           `json:"tolerations,omitempty" yaml:"tolerations"`
 	} `json:"kubernetes_session,omitempty" yaml:"kubernetes_session"`
 }
 

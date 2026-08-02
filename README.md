@@ -96,6 +96,39 @@ value is missing. Secrets for optional features such as GitHub, VAPID, SCIA,
 Slack, and ingress TLS are reported as `WARN` when incomplete. Sensitive-looking
 literal values and missing Service endpoints are also non-blocking warnings.
 
+### Planning a Helm Chart Migration
+
+Use the read-only migration preflight before moving split backend/frontend
+releases to the `ccplant` chart:
+
+```bash
+agentapi-proxy helm migrate plan \
+  --namespace agentapi-ui \
+  --version 0.3.2 \
+  --values-out ccplant-shadow-values.yaml
+```
+
+The command checks the stable `control` Service, shared session RBAC, referenced
+Secrets, runtime resource ownership, PVCs, and legacy session callbacks. It
+generates mode-`0600` shadow values and prints suggested Helm/kubectl commands,
+but never changes the cluster or executes those commands. A blocking finding
+causes a non-zero exit status. Use `--output json` or `--output yaml` for
+automation.
+
+After the shadow release is installed, verify it without changing routing:
+
+```bash
+agentapi-proxy helm migrate verify \
+  --namespace agentapi-ui \
+  --target-release ccplant
+```
+
+`verify` checks rollout readiness, Service endpoints, `/health` through the
+Kubernetes API Service proxy, current `control` routing, runtime resources, and
+the shared release-independent worker Leases. Run it once during shadowing and
+again after switching `control`; the reported phase changes from `shadow` to
+`cutover`.
+
 ### Configuration
 
 Configuration is managed through environment variables and Kubernetes ConfigMaps. See the Helm chart values for detailed configuration options.

@@ -45,7 +45,7 @@ type Requirements struct {
 	// Sandbox is always true (network filter cannot be opted out).
 	// The field is kept for backward compatibility with existing JSON.
 	Sandbox bool `json:"sandbox"`
-	DinD    bool   `json:"dind"`
+	DinD    bool `json:"dind"`
 }
 
 func RequirementsFromRunServerRequest(req *entities.RunServerRequest) Requirements {

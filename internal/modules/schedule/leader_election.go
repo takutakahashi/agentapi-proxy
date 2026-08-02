@@ -14,6 +14,16 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
+// Release-independent Lease names let old and new Helm releases safely run
+// together during a control-plane migration without executing workers twice.
+const (
+	ScheduleWorkerLeaseName        = "agentapi-schedule-worker"
+	SlackbotCleanupWorkerLeaseName = "agentapi-slackbot-cleanup-worker"
+	StockInventoryWorkerLeaseName  = "agentapi-stock-inventory-worker"
+	SessionAllocatorLeaseName      = "agentapi-session-allocator"
+	GitHubSyncWorkerLeaseName      = "agentapi-github-sync-worker"
+)
+
 // LeaderElectionConfig contains configuration for leader election
 type LeaderElectionConfig struct {
 	// LeaseDuration is the duration that non-leader candidates will wait to force acquire leadership
@@ -34,7 +44,7 @@ func DefaultLeaderElectionConfig(namespace string) LeaderElectionConfig {
 		LeaseDuration: 15 * time.Second,
 		RenewDeadline: 10 * time.Second,
 		RetryPeriod:   2 * time.Second,
-		LeaseName:     "agentapi-schedule-worker",
+		LeaseName:     ScheduleWorkerLeaseName,
 		Namespace:     namespace,
 	}
 }

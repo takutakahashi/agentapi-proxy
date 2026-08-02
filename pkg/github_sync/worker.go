@@ -206,7 +206,7 @@ func NewLeaderWorker(
 	client kubernetes.Interface,
 	electionConfig schedule.LeaderElectionConfig,
 ) *LeaderWorker {
-	electionConfig.LeaseName = "agentapi-github-sync-worker"
+	electionConfig.LeaseName = schedule.GitHubSyncWorkerLeaseName
 	return &LeaderWorker{
 		worker:  NewWorker(syncer, settingsRepo, interval),
 		elector: schedule.NewLeaderElector(client, electionConfig),

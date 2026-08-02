@@ -387,7 +387,7 @@ func NewLeaderCleanupWorker(
 	electionConfig schedule.LeaderElectionConfig,
 ) *LeaderCleanupWorker {
 	// Use a distinct lease name so this worker does not compete with the schedule worker.
-	electionConfig.LeaseName = "agentapi-slackbot-cleanup-worker"
+	electionConfig.LeaseName = schedule.SlackbotCleanupWorkerLeaseName
 
 	worker := NewCleanupWorker(sessionManager, k8sClient, namespace, workerConfig)
 	elector := schedule.NewLeaderElector(k8sClient, electionConfig)

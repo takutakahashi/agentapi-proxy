@@ -324,7 +324,7 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 		LeaseDuration: leaseDuration,
 		RenewDeadline: renewDeadline,
 		RetryPeriod:   retryPeriod,
-		LeaseName:     "agentapi-schedule-worker",
+		LeaseName:     schedule.ScheduleWorkerLeaseName,
 		Namespace:     namespace,
 	}
 
@@ -504,7 +504,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 		LeaseDuration: leaseDuration,
 		RenewDeadline: renewDeadline,
 		RetryPeriod:   retryPeriod,
-		LeaseName:     "agentapi-stock-inventory-worker",
+		LeaseName:     schedule.StockInventoryWorkerLeaseName,
 		Namespace:     namespace,
 	}
 
@@ -631,7 +631,7 @@ func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *
 		RenewDeadline: renewDeadline,
 		RetryPeriod:   retryPeriod,
 		Namespace:     namespace,
-		LeaseName:     "agentapi-session-allocator",
+		LeaseName:     schedule.SessionAllocatorLeaseName,
 	}
 	elector := schedule.NewLeaderElector(client, electorConfig)
 	go elector.Run(context.Background(),
