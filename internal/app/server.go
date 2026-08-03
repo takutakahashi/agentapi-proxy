@@ -806,10 +806,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 
 	// Determine GitHub token from Params.GithubToken
 	// Note: github_token is not passed for team-scoped sessions (use GitHub App auth instead)
-	var githubToken string
-	if startReq.Params != nil && startReq.Params.GithubToken != "" && startReq.Scope != entities.ScopeTeam {
-		githubToken = startReq.Params.GithubToken
-	}
+	githubToken := githubTokenForStartRequest(startReq)
 
 	// Determine agent type from Params.AgentType
 	var agentType string
@@ -949,6 +946,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		MemoryKey:         startReq.MemoryKey,
 		InitialMessage:    initialMessage,
 		RepoInfo:          s.extractRepositoryInfo(sessionID, startReq.Tags),
+		GithubToken:       githubTokenForStartRequest(startReq),
 		AuthProxy:         authProxy,
 		UnsyncedFilePaths: unsyncedFilePaths,
 		CredentialSource:  credentialSource,
@@ -1022,6 +1020,13 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		startedAt,
 		"creating",
 	), nil
+}
+
+func githubTokenForStartRequest(startReq entities.StartRequest) string {
+	if startReq.Scope == entities.ScopeTeam || startReq.Params == nil {
+		return ""
+	}
+	return startReq.Params.GithubToken
 }
 
 // findESMByID searches the user's settings and team settings for an ESM entry with the given ID.

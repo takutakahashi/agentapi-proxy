@@ -1,12 +1,49 @@
 package controllers
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
+
+func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
+	tests := []struct {
+		name          string
+		scope         entities.ResourceScope
+		existingToken string
+		wantToken     string
+	}{
+		{name: "user scope receives header token", scope: entities.ScopeUser, wantToken: "oauth-token"},
+		{name: "explicit token is preserved", scope: entities.ScopeUser, existingToken: "explicit-token", wantToken: "explicit-token"},
+		{name: "team scope excludes user token", scope: entities.ScopeTeam, wantToken: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := echo.New()
+			req := httptest.NewRequest(http.MethodPost, "/start", nil)
+			req.Header.Set("Authorization", "Bearer oauth-token")
+			ctx := e.NewContext(req, httptest.NewRecorder())
+			ctx.Set("config", &config.Config{Auth: config.AuthConfig{GitHub: &config.GitHubAuthConfig{
+				Enabled:     true,
+				TokenHeader: "Authorization",
+			}}})
+			startReq := entities.StartRequest{Scope: tt.scope, Params: &entities.SessionParams{GithubToken: tt.existingToken}}
+
+			populateGitHubTokenFromAuthHeader(ctx, &startReq)
+
+			if startReq.Params.GithubToken != tt.wantToken {
+				t.Fatalf("GithubToken = %q, want %q", startReq.Params.GithubToken, tt.wantToken)
+			}
+		})
+	}
+}
 
 type sessionListTestSession struct {
 	id     string

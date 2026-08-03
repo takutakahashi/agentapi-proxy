@@ -169,6 +169,7 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		startReq.Scope = entities.ResourceScope(resolvedScope)
 		startReq.TeamID = resolvedTeamID
 	}
+	populateGitHubTokenFromAuthHeader(ctx, &startReq)
 
 	// Validate team scope authorization
 	if startReq.Scope == entities.ScopeTeam {
@@ -286,6 +287,23 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
+}
+
+func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.StartRequest) {
+	if startReq.Scope == entities.ScopeTeam {
+		return
+	}
+	if startReq.Params == nil {
+		startReq.Params = &entities.SessionParams{}
+	}
+	if startReq.Params.GithubToken != "" {
+		return
+	}
+	cfg := auth.GetConfigFromContext(ctx)
+	if cfg == nil || cfg.Auth.GitHub == nil || !cfg.Auth.GitHub.Enabled {
+		return
+	}
+	startReq.Params.GithubToken = auth.ExtractTokenFromHeader(ctx.Request().Header.Get(cfg.Auth.GitHub.TokenHeader))
 }
 
 func containsAllocatorSelector(tags map[string]string) bool {
