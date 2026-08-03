@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,12 +115,12 @@ func TestReadNativeSessionList(t *testing.T) {
 
 func TestNativeGUIJSONContracts(t *testing.T) {
 	statusJSON, err := json.Marshal(nativeStatusOutput{
-		Service: "running", ManagerID: "manager-1", Upstream: "https://parent.example",
+		Instance: "default", Service: "running", ManagerID: "manager-1", Upstream: "https://parent.example",
 		PublicURL: "https://mac.example", ActiveSessions: 2, Health: "ok",
 	})
 	require.NoError(t, err)
 	require.JSONEq(t, `{
-		"service":"running","manager_id":"manager-1","upstream":"https://parent.example",
+		"instance":"default","service":"running","manager_id":"manager-1","upstream":"https://parent.example",
 		"public_url":"https://mac.example","labels":null,"version":"",
 		"filesystem_sandbox":false,"active_sessions":2,"health":"ok","state":""
 	}`, string(statusJSON))
@@ -147,4 +148,188 @@ func TestNativeLogPath(t *testing.T) {
 	require.EqualError(t, err, "invalid session ID")
 	_, err = nativeLogPath(paths, cfg, "", false)
 	require.EqualError(t, err, "session ID is required (or use --daemon)")
+}
+
+func TestValidateNativeInstanceName(t *testing.T) {
+	require.NoError(t, validateNativeInstanceName(""))
+	require.NoError(t, validateNativeInstanceName("ios"))
+	require.NoError(t, validateNativeInstanceName("build-1"))
+	require.NoError(t, validateNativeInstanceName("a"))
+	require.NoError(t, validateNativeInstanceName("ab"))
+	require.NoError(t, validateNativeInstanceName("default"))
+	require.ErrorContains(t, validateNativeInstanceName("UPPER"), "invalid --instance")
+	require.ErrorContains(t, validateNativeInstanceName("-leading"), "invalid --instance")
+	require.ErrorContains(t, validateNativeInstanceName("trailing-"), "invalid --instance")
+	require.ErrorContains(t, validateNativeInstanceName("has space"), "invalid --instance")
+	require.ErrorContains(t, validateNativeInstanceName("has_underscore"), "invalid --instance")
+	require.ErrorContains(t, validateNativeInstanceName(strings.Repeat("a", 33)), "invalid --instance")
+}
+
+func TestNativeInstallPathsDefaultLinuxPreservesHistoricalPaths(t *testing.T) {
+	paths, err := nativeInstallPathsFor("linux", nativeDefaultInstance, "")
+	require.NoError(t, err)
+	require.Equal(t, "/etc/agentapi-native/config.json", paths.config)
+	require.Equal(t, "/etc/agentapi-native/credentials.json", paths.credentials)
+	require.Equal(t, "/var/lib/agentapi-native", paths.state)
+	require.Equal(t, "/usr/local/libexec/agentapi-proxy/agentapi-proxy", paths.binary)
+	require.Equal(t, "/etc/systemd/system/agentapi-native.service", paths.service)
+	require.Equal(t, "/var/log/agentapi-native", paths.logDir)
+}
+
+func TestNativeInstallPathsNonDefaultLinuxIsIsolated(t *testing.T) {
+	paths, err := nativeInstallPathsFor("linux", "ci", "")
+	require.NoError(t, err)
+	require.Equal(t, "/etc/agentapi-native-ci/config.json", paths.config)
+	require.Equal(t, "/etc/agentapi-native-ci/credentials.json", paths.credentials)
+	require.Equal(t, "/var/lib/agentapi-native-ci", paths.state)
+	// The managed binary is shared across instances on Linux.
+	require.Equal(t, "/usr/local/libexec/agentapi-proxy/agentapi-proxy", paths.binary)
+	require.Equal(t, "/etc/systemd/system/agentapi-native-ci.service", paths.service)
+	require.Equal(t, "/var/log/agentapi-native-ci", paths.logDir)
+}
+
+func TestNativeInstallPathsConfigOverrideRejectedForNonDefault(t *testing.T) {
+	// Config override is supported for the default instance and must not move a
+	// non-default instance off its isolated path. The CLI enforces this in
+	// runNativeInstall; nativeInstallPathsFor still honors an explicit override
+	// only for the default instance's config location.
+	paths, err := nativeInstallPathsFor("linux", nativeDefaultInstance, "/custom/config.json")
+	require.NoError(t, err)
+	require.Equal(t, "/custom/config.json", paths.config)
+	require.Equal(t, "/etc/agentapi-native/credentials.json", paths.credentials)
+}
+
+func TestNativeInstallPathsDefaultDarwinPreservesHistoricalPaths(t *testing.T) {
+	paths, err := nativeInstallPathsFor("darwin", nativeDefaultInstance, "")
+	if err != nil {
+		t.Skipf("darwin paths require a home directory on this host: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "config.json"), paths.config)
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "credentials.json"), paths.credentials)
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "state"), paths.state)
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "bin", "agentapi-proxy"), paths.binary)
+	require.Equal(t, filepath.Join(home, "Library", "LaunchAgents", "com.agentapi.native.plist"), paths.service)
+	require.Equal(t, filepath.Join(home, "Library", "Logs", "agentapi-native"), paths.logDir)
+}
+
+func TestNativeInstallPathsNonDefaultDarwinIsIsolated(t *testing.T) {
+	paths, err := nativeInstallPathsFor("darwin", "ios", "")
+	if err != nil {
+		t.Skipf("darwin paths require a home directory on this host: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "config.json"), paths.config)
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "credentials.json"), paths.credentials)
+	// macOS installs a per-instance binary copy, so it is not shared.
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "bin", "agentapi-proxy"), paths.binary)
+	require.Equal(t, filepath.Join(home, "Library", "LaunchAgents", "com.agentapi.native.ios.plist"), paths.service)
+	require.Equal(t, filepath.Join(home, "Library", "Logs", "agentapi-native-ios"), paths.logDir)
+}
+
+func TestNativeServiceNameDefaultPreservedAndInstanceScoped(t *testing.T) {
+	require.Equal(t, "agentapi-native.service", nativeServiceNameFor("linux", nativeDefaultInstance))
+	require.Equal(t, "agentapi-native.service", nativeServiceNameFor("linux", ""))
+	require.Equal(t, "agentapi-native-ci.service", nativeServiceNameFor("linux", "ci"))
+	require.Equal(t, "com.agentapi.native", nativeServiceNameFor("darwin", nativeDefaultInstance))
+	require.Equal(t, "com.agentapi.native", nativeServiceNameFor("darwin", ""))
+	require.Equal(t, "com.agentapi.native.ios", nativeServiceNameFor("darwin", "ios"))
+	require.Equal(t, "agentapi-native-ci.service", nativeServiceUnitName("/etc/systemd/system/agentapi-native-ci.service"))
+	require.Equal(t, "com.agentapi.native.ios", nativeLaunchLabel("/Users/x/Library/LaunchAgents/com.agentapi.native.ios.plist"))
+}
+
+func TestStableNativeInstanceIDDefaultUnchangedByInstanceFlag(t *testing.T) {
+	// The default instance ID must not change when instance selection is omitted,
+	// matching the historical stableNativeInstanceID(hostname) behavior.
+	defaultID := stableNativeInstanceID("host-1", "")
+	defaultIDExplicit := stableNativeInstanceID("host-1", nativeDefaultInstance)
+	require.Equal(t, defaultID, defaultIDExplicit)
+	require.True(t, strings.HasPrefix(defaultID, "native-host-1-"))
+
+	// A named instance must get a distinct but stable ID.
+	namedID := stableNativeInstanceID("host-1", "ci")
+	require.NotEqual(t, defaultID, namedID)
+	require.Equal(t, namedID, stableNativeInstanceID("host-1", "ci"))
+	require.True(t, strings.HasPrefix(namedID, "native-host-1-"))
+}
+
+func TestRenderNativeLaunchAgentUsesInstanceLabel(t *testing.T) {
+	paths := nativeInstallPaths{binary: "/bin/agentapi-proxy", config: "/tmp/c.json", service: "/Users/u/Library/LaunchAgents/com.agentapi.native.ios.plist", logDir: "/tmp/logs"}
+	plist := renderNativeLaunchAgent(paths, nil)
+	require.Contains(t, plist, "<key>Label</key><string>com.agentapi.native.ios</string>")
+	require.Contains(t, plist, "<string>--config</string><string>/tmp/c.json</string>")
+
+	defaultPaths := nativeInstallPaths{binary: "/bin/agentapi-proxy", config: "/tmp/c.json", service: "/Users/u/Library/LaunchAgents/com.agentapi.native.plist", logDir: "/tmp/logs"}
+	defaultPlist := renderNativeLaunchAgent(defaultPaths, nil)
+	require.Contains(t, defaultPlist, "<key>Label</key><string>com.agentapi.native</string>")
+}
+
+func TestDiscoverNativeInstancesListsDefaultAndNamed(t *testing.T) {
+	root := t.TempDir()
+	defaultConfig := filepath.Join(root, "agentapi-native", "config.json")
+	namedConfig := filepath.Join(root, "agentapi-native-ios", "config.json")
+	for _, p := range []string{defaultConfig, namedConfig} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	}
+	sharedBinary := "/usr/local/libexec/agentapi-proxy/agentapi-proxy"
+	writeConfig := func(path, instance, binary string) {
+		cfg := nativeDaemonConfig{ManagerID: "mgr-" + instance, UpstreamURL: "https://parent", PublicURL: "https://child", StateDir: filepath.Join(filepath.Dir(path), "state"), BinaryPath: binary}
+		data, err := json.Marshal(cfg)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+	}
+	writeConfig(defaultConfig, "default", sharedBinary)
+	writeConfig(namedConfig, "ios", sharedBinary)
+
+	pattern := filepath.Join(root, "agentapi-native-*", "config.json")
+	entries := discoverNativeInstances(defaultConfig, pattern)
+	require.Len(t, entries, 2)
+	require.Equal(t, "default", entries[0].Instance)
+	require.Equal(t, "agentapi-native.service", entries[0].Service)
+	require.Equal(t, "mgr-default", entries[0].ManagerID)
+	require.Equal(t, sharedBinary, entries[0].BinaryPath)
+	require.Equal(t, "ios", entries[1].Instance)
+	require.Equal(t, "agentapi-native-ios.service", entries[1].Service)
+	require.Equal(t, "mgr-ios", entries[1].ManagerID)
+}
+
+func TestDiscoverNativeInstancesSkipsUnreadableConfig(t *testing.T) {
+	root := t.TempDir()
+	defaultConfig := filepath.Join(root, "agentapi-native", "config.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(defaultConfig), 0o755))
+	// No config written; default is missing, only a named instance exists.
+	namedConfig := filepath.Join(root, "agentapi-native-ios", "config.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(namedConfig), 0o755))
+	cfg := nativeDaemonConfig{ManagerID: "mgr-ios", UpstreamURL: "https://parent", StateDir: "/state"}
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(namedConfig, data, 0o600))
+
+	pattern := filepath.Join(root, "agentapi-native-*", "config.json")
+	entries := discoverNativeInstances(defaultConfig, pattern)
+	require.Len(t, entries, 1)
+	require.Equal(t, "ios", entries[0].Instance)
+}
+
+func TestBinarySharedWith(t *testing.T) {
+	shared := "/usr/local/libexec/agentapi-proxy/agentapi-proxy"
+	entries := []nativeInstanceListEntry{
+		{Instance: "default", BinaryPath: shared},
+		{Instance: "ci", BinaryPath: shared},
+	}
+	// Uninstalling either instance while the other still references the shared
+	// binary must keep the binary on disk.
+	require.True(t, binarySharedWith(entries, "default", shared))
+	require.True(t, binarySharedWith(entries, "ci", shared))
+	// When only one instance remains and it is the one being uninstalled, the
+	// binary is no longer shared and can be removed.
+	solo := []nativeInstanceListEntry{{Instance: "default", BinaryPath: shared}}
+	require.False(t, binarySharedWith(solo, "default", shared))
+	// macOS-style per-instance binaries are never shared across instances.
+	macEntries := []nativeInstanceListEntry{
+		{Instance: "default", BinaryPath: "/Users/u/Library/Application Support/agentapi-native/bin/agentapi-proxy"},
+		{Instance: "ios", BinaryPath: "/Users/u/Library/Application Support/agentapi-native-ios/bin/agentapi-proxy"},
+	}
+	require.False(t, binarySharedWith(macEntries, "default", "/Users/u/Library/Application Support/agentapi-native/bin/agentapi-proxy"))
+	require.False(t, binarySharedWith(nil, "default", ""))
 }

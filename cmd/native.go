@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -24,10 +25,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var NativeCmd = &cobra.Command{Use: "native", Short: "Install and manage a native External Session Manager"}
+const nativeDefaultInstance = "default"
+
+var nativeInstanceNameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
+
+var NativeCmd = &cobra.Command{
+	Use:   "native",
+	Short: "Install and manage a native External Session Manager",
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		// `native list` enumerates every instance, so it does not select one.
+		if cmd.Name() == "list" {
+			return nil
+		}
+		return validateNativeInstanceName(nativeManageOpts.instance)
+	},
+}
 
 type nativeManageOptions struct {
-	upstream, publicURL, name, listen, apiKeyEnv, apiKeyFile, configPath                     string
+	upstream, publicURL, name, listen, apiKeyEnv, apiKeyFile, configPath, instance           string
 	scope, teamID, drainTimeout, registrationToken                                           string
 	labels                                                                                   []string
 	environment                                                                              []string
@@ -52,6 +67,7 @@ type nativeRegistrationResponse struct {
 func init() {
 	p := NativeCmd.PersistentFlags()
 	p.StringVar(&nativeManageOpts.configPath, "config", "", "native daemon config path")
+	p.StringVar(&nativeManageOpts.instance, "instance", "", "named native ESM instance; omit to select the default instance")
 	p.StringVar(&nativeManageOpts.apiKeyEnv, "api-key-env", "AGENTAPI_KEY", "environment variable containing the API key for authenticated lifecycle operations")
 	p.StringVar(&nativeManageOpts.apiKeyFile, "api-key-file", "", "file containing the API key for authenticated lifecycle operations")
 	p.BoolVar(&nativeManageOpts.apiKeyStdin, "api-key-stdin", false, "read the API key for authenticated lifecycle operations from stdin")
@@ -83,27 +99,64 @@ func init() {
 	uninstall.Flags().StringVar(&nativeManageOpts.drainTimeout, "drain-timeout", "30m", "maximum time to wait with --drain")
 	uninstall.Flags().BoolVar(&nativeManageOpts.keepRegistration, "keep-registration", false, "keep the parent registration")
 	uninstall.Flags().BoolVar(&nativeManageOpts.keepData, "keep-data", false, "keep daemon state and configuration")
+	listCmd := &cobra.Command{Use: "list", Short: "List installed native ESM instances on this host", Args: cobra.NoArgs, RunE: runNativeList}
+	listCmd.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
 	sessionList := &cobra.Command{Use: "session-list", Aliases: []string{"sessions"}, Short: "List native sessions on this host", Args: cobra.NoArgs, RunE: runNativeSessionList}
 	sessionList.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
 	logs := &cobra.Command{Use: "logs [session-id]", Short: "Show native daemon or session logs", Args: cobra.MaximumNArgs(1), RunE: runNativeLogs}
 	logs.Flags().BoolVarP(&nativeManageOpts.logsFollow, "follow", "f", false, "follow log output")
 	logs.Flags().IntVarP(&nativeManageOpts.logsTail, "tail", "n", 100, "number of lines to show")
 	logs.Flags().BoolVar(&nativeManageOpts.logsDaemon, "daemon", false, "show the native daemon log")
-	NativeCmd.AddCommand(install, status, doctor, restart, rotate, uninstall, sessionList, logs)
+	NativeCmd.AddCommand(install, status, doctor, restart, rotate, uninstall, listCmd, sessionList, logs)
 }
 
-func runNativeInstall(_ *cobra.Command, _ []string) error {
+// resolveNativeInstance validates and normalizes the selected instance name,
+// returning nativeDefaultInstance when --instance is omitted.
+func resolveNativeInstance() (string, error) {
+	if err := validateNativeInstanceName(nativeManageOpts.instance); err != nil {
+		return "", err
+	}
+	if nativeManageOpts.instance == "" {
+		return nativeDefaultInstance, nil
+	}
+	return nativeManageOpts.instance, nil
+}
+
+func validateNativeInstanceName(name string) error {
+	if name == "" {
+		return nil
+	}
+	if name == nativeDefaultInstance {
+		return nil
+	}
+	if !nativeInstanceNameRegexp.MatchString(name) {
+		return fmt.Errorf("invalid --instance %q; use 1-32 lowercase letters, digits, and hyphens (hyphens only in the middle)", name)
+	}
+	return nil
+}
+
+func runNativeInstall(command *cobra.Command, _ []string) error {
 	if nativeManageOpts.upstream == "" || nativeManageOpts.publicURL == "" {
 		return errors.New("--upstream and --public-url are required")
 	}
 	if nativeManageOpts.filesystemSandbox && runtime.GOOS != "darwin" {
 		return errors.New("--filesystem-sandbox is only supported on macOS")
 	}
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	if nativeManageOpts.configPath != "" && instance != nativeDefaultInstance {
+		return errors.New("--config cannot be combined with a non-default --instance; the instance selects its own isolated configuration path")
+	}
+	if instance != nativeDefaultInstance && !command.Flags().Changed("listen") {
+		return errors.New("--listen is required for non-default instances; specify a distinct port so it does not collide with the default :8080")
+	}
 	hostname, _ := os.Hostname()
 	if nativeManageOpts.name == "" {
 		nativeManageOpts.name = hostname
 	}
-	paths, err := nativePaths(nativeManageOpts.configPath)
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
 	}
@@ -114,15 +167,19 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 	existing, _ := readNativeConfig(paths.config)
 	instanceID := existing.InstanceID
 	if instanceID == "" {
-		instanceID = stableNativeInstanceID(hostname)
+		instanceID = stableNativeInstanceID(hostname, instance)
 	}
-	labels := map[string]string{"os": runtime.GOOS, "arch": runtime.GOARCH, "hostname": hostname}
+	labels := map[string]string{"os": runtime.GOOS, "arch": runtime.GOARCH, "hostname": hostname, "native_instance": instance}
 	for _, raw := range nativeManageOpts.labels {
 		parts := strings.SplitN(raw, "=", 2)
 		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
 			return fmt.Errorf("invalid --label %q; expected key=value", raw)
 		}
-		labels[strings.TrimSpace(parts[0])] = parts[1]
+		key := strings.TrimSpace(parts[0])
+		if key == "native_instance" {
+			return fmt.Errorf("invalid --label %q; the native_instance label is managed automatically by --instance", raw)
+		}
+		labels[key] = parts[1]
 	}
 	environment := make(map[string]string, len(existing.ManagerEnvironment)+len(nativeManageOpts.environment))
 	for key, value := range existing.ManagerEnvironment {
@@ -168,36 +225,73 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 	if err := sendNativeHeartbeat(cfg); err != nil {
 		return fmt.Errorf("daemon installed but parent heartbeat failed: %w", err)
 	}
-	fmt.Printf("Native ESM installed\nManager ID: %s\nService: %s\nLabels: %s\n", registration.ID, nativeServiceName(), formatLabels(labels))
+	fmt.Printf("Native ESM installed\nInstance: %s\nManager ID: %s\nService: %s\nLabels: %s\n", instance, registration.ID, nativeServiceName(instance), formatLabels(labels))
 	return nil
 }
 
 type nativeInstallPaths struct{ config, credentials, state, binary, service, logDir string }
 
-func nativePaths(configOverride string) (nativeInstallPaths, error) {
-	if runtime.GOOS == "linux" {
-		if os.Geteuid() != 0 && configOverride == "" {
-			return nativeInstallPaths{}, errors.New("native install on Linux must run as root (use sudo)")
+func nativePaths(configOverride, instance string) (nativeInstallPaths, error) {
+	if runtime.GOOS == "linux" && os.Geteuid() != 0 && configOverride == "" {
+		return nativeInstallPaths{}, errors.New("native install on Linux must run as root (use sudo)")
+	}
+	paths, err := nativeInstallPathsFor(runtime.GOOS, instance, configOverride)
+	if err != nil {
+		return nativeInstallPaths{}, err
+	}
+	return paths, nil
+}
+
+// nativeInstallPathsFor computes the install paths for an instance on the given
+// OS without touching the filesystem or checking privileges, which makes it
+// testable from non-root test processes. The default instance preserves the
+// historical paths and service names exactly.
+func nativeInstallPathsFor(goos, instance, configOverride string) (nativeInstallPaths, error) {
+	if instance == "" {
+		instance = nativeDefaultInstance
+	}
+	isDefault := instance == nativeDefaultInstance
+	if goos == "linux" {
+		var configDir, credentials, state, logDir string
+		binary := "/usr/local/libexec/agentapi-proxy/agentapi-proxy"
+		if isDefault {
+			configDir = "/etc/agentapi-native"
+			credentials = "/etc/agentapi-native/credentials.json"
+			state = "/var/lib/agentapi-native"
+			logDir = "/var/log/agentapi-native"
+		} else {
+			configDir = "/etc/agentapi-native-" + instance
+			credentials = filepath.Join(configDir, "credentials.json")
+			state = "/var/lib/agentapi-native-" + instance
+			logDir = "/var/log/agentapi-native-" + instance
 		}
-		config := "/etc/agentapi-native/config.json"
+		config := filepath.Join(configDir, "config.json")
 		if configOverride != "" {
 			config = configOverride
 		}
-		return nativeInstallPaths{config: config, credentials: "/etc/agentapi-native/credentials.json", state: "/var/lib/agentapi-native", binary: "/usr/local/libexec/agentapi-proxy/agentapi-proxy", service: "/etc/systemd/system/agentapi-native.service", logDir: "/var/log/agentapi-native"}, nil
+		service := filepath.Join("/etc/systemd/system", nativeServiceNameFor(goos, instance))
+		return nativeInstallPaths{config: config, credentials: credentials, state: state, binary: binary, service: service, logDir: logDir}, nil
 	}
-	if runtime.GOOS == "darwin" {
+	if goos == "darwin" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nativeInstallPaths{}, err
 		}
-		base := filepath.Join(home, "Library", "Application Support", "agentapi-native")
+		var base, logDir string
+		if isDefault {
+			base = filepath.Join(home, "Library", "Application Support", "agentapi-native")
+			logDir = filepath.Join(home, "Library", "Logs", "agentapi-native")
+		} else {
+			base = filepath.Join(home, "Library", "Application Support", "agentapi-native-"+instance)
+			logDir = filepath.Join(home, "Library", "Logs", "agentapi-native-"+instance)
+		}
 		config := filepath.Join(base, "config.json")
 		if configOverride != "" {
 			config = configOverride
 		}
-		return nativeInstallPaths{config: config, credentials: filepath.Join(base, "credentials.json"), state: filepath.Join(base, "state"), binary: filepath.Join(base, "bin", "agentapi-proxy"), service: filepath.Join(home, "Library", "LaunchAgents", "com.agentapi.native.plist"), logDir: filepath.Join(home, "Library", "Logs", "agentapi-native")}, nil
+		return nativeInstallPaths{config: config, credentials: filepath.Join(base, "credentials.json"), state: filepath.Join(base, "state"), binary: filepath.Join(base, "bin", "agentapi-proxy"), service: filepath.Join(home, "Library", "LaunchAgents", nativeServiceNameFor(goos, instance)+".plist"), logDir: logDir}, nil
 	}
-	return nativeInstallPaths{}, fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+	return nativeInstallPaths{}, fmt.Errorf("unsupported OS: %s", goos)
 }
 
 func installNativeService(paths nativeInstallPaths, cfg nativeDaemonConfig) error {
@@ -247,17 +341,17 @@ func installNativeService(paths nativeInstallPaths, cfg nativeDaemonConfig) erro
 		if err := runCommand("systemctl", "daemon-reload"); err != nil {
 			return err
 		}
-		if err := runCommand("systemctl", "enable", "agentapi-native.service"); err != nil {
+		if err := runCommand("systemctl", "enable", nativeServiceUnitName(paths.service)); err != nil {
 			return err
 		}
-		return runCommand("systemctl", "restart", "agentapi-native.service")
+		return runCommand("systemctl", "restart", nativeServiceUnitName(paths.service))
 	}
 	plist := renderNativeLaunchAgent(paths, cfg.ManagerEnvironment)
 	if err := atomicWriteFile(paths.service, []byte(plist), 0o600); err != nil {
 		return err
 	}
 	domain := "gui/" + strconv.Itoa(os.Getuid())
-	_ = runCommand("launchctl", "bootout", domain+"/com.agentapi.native")
+	_ = runCommand("launchctl", "bootout", domain+"/"+nativeLaunchLabel(paths.service))
 	return runCommand("launchctl", "bootstrap", domain, paths.service)
 }
 
@@ -307,6 +401,7 @@ func renderNativeSystemdUnit(paths nativeInstallPaths, environment map[string]st
 }
 
 func renderNativeLaunchAgent(paths nativeInstallPaths, environment map[string]string) string {
+	label := nativeLaunchLabel(paths.service)
 	var env strings.Builder
 	if len(environment) > 0 {
 		env.WriteString("<key>EnvironmentVariables</key><dict>")
@@ -315,10 +410,11 @@ func renderNativeLaunchAgent(paths nativeInstallPaths, environment map[string]st
 		}
 		env.WriteString("</dict>")
 	}
-	return fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>com.agentapi.native</string><key>ProgramArguments</key><array><string>%s</string><string>native-session-manager</string><string>--config</string><string>%s</string></array>%s<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardOutPath</key><string>%s/native.log</string><key>StandardErrorPath</key><string>%s/native.log</string></dict></plist>\n", xmlEscape(paths.binary), xmlEscape(paths.config), env.String(), xmlEscape(paths.logDir), xmlEscape(paths.logDir))
+	return fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>%s</string><key>ProgramArguments</key><array><string>%s</string><string>native-session-manager</string><string>--config</string><string>%s</string></array>%s<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardOutPath</key><string>%s/native.log</string><key>StandardErrorPath</key><string>%s/native.log</string></dict></plist>\n", xmlEscape(label), xmlEscape(paths.binary), xmlEscape(paths.config), env.String(), xmlEscape(paths.logDir), xmlEscape(paths.logDir))
 }
 
 type nativeStatusOutput struct {
+	Instance          string            `json:"instance"`
 	Service           string            `json:"service"`
 	ManagerID         string            `json:"manager_id"`
 	Upstream          string            `json:"upstream"`
@@ -332,7 +428,11 @@ type nativeStatusOutput struct {
 }
 
 func runNativeStatus(command *cobra.Command, _ []string) error {
-	paths, err := nativePaths(nativeManageOpts.configPath)
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
 	}
@@ -341,7 +441,7 @@ func runNativeStatus(command *cobra.Command, _ []string) error {
 		return err
 	}
 	service := "stopped"
-	if nativeServiceRunning() {
+	if nativeServiceRunning(instance) {
 		service = "running"
 	}
 	health := "unreachable"
@@ -349,13 +449,13 @@ func runNativeStatus(command *cobra.Command, _ []string) error {
 		health = "ok"
 	}
 	active, _ := filepath.Glob(filepath.Join(cfg.StateDir, "sessions", "*"))
-	status := nativeStatusOutput{Service: service, ManagerID: cfg.ManagerID, Upstream: cfg.UpstreamURL,
+	status := nativeStatusOutput{Instance: instance, Service: service, ManagerID: cfg.ManagerID, Upstream: cfg.UpstreamURL,
 		PublicURL: cfg.PublicURL, Labels: cfg.Labels, Version: cfg.Version, FilesystemSandbox: cfg.FilesystemSandbox.Enabled,
 		ActiveSessions: len(active), Health: health, State: cfg.StateDir}
 	if nativeManageOpts.jsonOutput {
 		return json.NewEncoder(command.OutOrStdout()).Encode(status)
 	}
-	_, err = fmt.Fprintf(command.OutOrStdout(), "Service: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Instance: %s\nService: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", instance, service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
 	return err
 }
 
@@ -393,7 +493,11 @@ func readNativeSessionList(stateDir string) ([]nativeSessionListEntry, error) {
 }
 
 func runNativeSessionList(command *cobra.Command, _ []string) error {
-	paths, err := nativePaths(nativeManageOpts.configPath)
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
 	}
@@ -440,7 +544,11 @@ func runNativeLogs(command *cobra.Command, args []string) error {
 	if nativeManageOpts.logsTail < 0 {
 		return errors.New("--tail must be zero or greater")
 	}
-	paths, err := nativePaths(nativeManageOpts.configPath)
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
 	}
@@ -482,7 +590,11 @@ type nativeDoctorOutput struct {
 }
 
 func runNativeDoctor(command *cobra.Command, _ []string) error {
-	paths, err := nativePaths(nativeManageOpts.configPath)
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
 	}
@@ -553,10 +665,20 @@ func runNativeDoctor(command *cobra.Command, _ []string) error {
 	return err
 }
 
-func runNativeRestart(_ *cobra.Command, _ []string) error { return restartNativeService() }
+func runNativeRestart(_ *cobra.Command, _ []string) error {
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	return restartNativeService(instance)
+}
 
 func runNativeRotateToken(_ *cobra.Command, _ []string) error {
-	paths, err := nativePaths(nativeManageOpts.configPath)
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
 	}
@@ -601,15 +723,19 @@ func runNativeRotateToken(_ *cobra.Command, _ []string) error {
 	if err := secureNativeConfig(cfg.CredentialsPath); err != nil {
 		return err
 	}
-	if err := restartNativeService(); err != nil {
+	if err := restartNativeService(instance); err != nil {
 		return err
 	}
-	fmt.Println("Connection token rotated and daemon restarted")
+	fmt.Printf("Connection token rotated and daemon %s restarted\n", nativeServiceName(instance))
 	return nil
 }
 
 func runNativeUninstall(_ *cobra.Command, _ []string) error {
-	paths, err := nativePaths(nativeManageOpts.configPath)
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
 	}
@@ -636,11 +762,11 @@ func runNativeUninstall(_ *cobra.Command, _ []string) error {
 		terminateNativeSessions(active)
 	}
 	if runtime.GOOS == "linux" {
-		_ = runCommand("systemctl", "disable", "--now", "agentapi-native.service")
+		_ = runCommand("systemctl", "disable", "--now", nativeServiceUnitName(paths.service))
 		_ = os.Remove(paths.service)
 		_ = runCommand("systemctl", "daemon-reload")
 	} else {
-		_ = runCommand("launchctl", "bootout", "gui/"+strconv.Itoa(os.Getuid())+"/com.agentapi.native")
+		_ = runCommand("launchctl", "bootout", "gui/"+strconv.Itoa(os.Getuid())+"/"+nativeLaunchLabel(paths.service))
 		_ = os.Remove(paths.service)
 	}
 	if !nativeManageOpts.keepRegistration && cfg.ManagerID != "" {
@@ -671,14 +797,19 @@ func runNativeUninstall(_ *cobra.Command, _ []string) error {
 		}
 	}
 	if !nativeManageOpts.keepData {
-		_ = os.Remove(paths.binary)
+		// The managed binary may be shared by other instances (notably on Linux,
+		// where every instance installs under /usr/local/libexec). Only remove it
+		// when no other discovered instance still references it.
+		if !nativeBinaryUsedByOtherInstances(instance, paths.binary) {
+			_ = os.Remove(paths.binary)
+		}
 		_ = os.Remove(paths.config)
 		_ = os.Remove(paths.credentials)
 		if safeNativeStateDir(cfg.StateDir) {
 			_ = os.RemoveAll(cfg.StateDir)
 		}
 	}
-	fmt.Println("Native ESM uninstalled")
+	fmt.Printf("Native ESM instance %q uninstalled\n", instance)
 	return nil
 }
 
@@ -701,6 +832,27 @@ func terminateNativeSessions(sessionDirs []string) {
 func safeNativeStateDir(path string) bool {
 	clean := filepath.Clean(path)
 	return clean != "/" && clean != "." && len(strings.Split(clean, string(filepath.Separator))) >= 3
+}
+
+// nativeBinaryUsedByOtherInstances reports whether any discovered instance
+// other than the one being uninstalled references the same managed binary.
+func nativeBinaryUsedByOtherInstances(currentInstance, binaryPath string) bool {
+	return binarySharedWith(nativeDiscoverInstances(), currentInstance, binaryPath)
+}
+
+func binarySharedWith(entries []nativeInstanceListEntry, currentInstance, binaryPath string) bool {
+	if binaryPath == "" {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Instance == currentInstance {
+			continue
+		}
+		if entry.BinaryPath == binaryPath {
+			return true
+		}
+	}
+	return false
 }
 
 func enrollNativeManager(upstream string, payload interface{}) (*nativeRegistrationResponse, error) {
@@ -838,8 +990,13 @@ func copyExecutable(destination string) error {
 	}
 	return os.Rename(name, destination)
 }
-func stableNativeInstanceID(hostname string) string {
+func stableNativeInstanceID(hostname, instance string) string {
 	source := hostname
+	if instance != "" && instance != nativeDefaultInstance {
+		// Keep non-default instance IDs distinct from the default instance while
+		// remaining stable across reinstalls of the same named instance.
+		source += "\x00" + instance
+	}
 	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
 		source += string(data)
 	}
@@ -899,31 +1056,57 @@ func runCommand(name string, args ...string) error {
 	command.Stderr = os.Stderr
 	return command.Run()
 }
-func nativeServiceName() string {
-	if runtime.GOOS == "linux" {
-		return "agentapi-native.service"
-	}
-	return "com.agentapi.native"
+
+// nativeServiceName returns the OS-native service identifier (systemd unit or
+// launchd label) for the given instance. The default instance preserves the
+// historical identifiers so existing installations keep working unchanged.
+func nativeServiceName(instance string) string {
+	return nativeServiceNameFor(runtime.GOOS, instance)
 }
-func nativeServiceRunning() bool {
+
+func nativeServiceNameFor(goos, instance string) string {
+	if instance == "" {
+		instance = nativeDefaultInstance
+	}
+	if goos == "linux" {
+		if instance == nativeDefaultInstance {
+			return "agentapi-native.service"
+		}
+		return "agentapi-native-" + instance + ".service"
+	}
+	if instance == nativeDefaultInstance {
+		return "com.agentapi.native"
+	}
+	return "com.agentapi.native." + instance
+}
+
+// nativeServiceUnitName derives the systemd unit name from a service file path.
+func nativeServiceUnitName(servicePath string) string { return filepath.Base(servicePath) }
+
+// nativeLaunchLabel derives the launchd label from a plist service file path.
+func nativeLaunchLabel(servicePath string) string {
+	return strings.TrimSuffix(filepath.Base(servicePath), ".plist")
+}
+
+func nativeServiceRunning(instance string) bool {
 	var command *exec.Cmd
 	if runtime.GOOS == "linux" {
-		command = exec.Command("systemctl", "is-active", "--quiet", "agentapi-native.service")
+		command = exec.Command("systemctl", "is-active", "--quiet", nativeServiceName(instance))
 	} else {
-		command = exec.Command("launchctl", "print", "gui/"+strconv.Itoa(os.Getuid())+"/com.agentapi.native")
+		command = exec.Command("launchctl", "print", "gui/"+strconv.Itoa(os.Getuid())+"/"+nativeServiceName(instance))
 	}
 	return command.Run() == nil
 }
-func restartNativeService() error {
+func restartNativeService(instance string) error {
 	if runtime.GOOS == "linux" {
-		return runCommand("systemctl", "restart", "agentapi-native.service")
+		return runCommand("systemctl", "restart", nativeServiceName(instance))
 	}
-	paths, err := nativePaths(nativeManageOpts.configPath)
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
 	}
 	domain := "gui/" + strconv.Itoa(os.Getuid())
-	_ = runCommand("launchctl", "bootout", domain+"/com.agentapi.native")
+	_ = runCommand("launchctl", "bootout", domain+"/"+nativeServiceName(instance))
 	return runCommand("launchctl", "bootstrap", domain, paths.service)
 }
 func ensureLinuxServiceUser() error {
@@ -960,4 +1143,99 @@ func secureNativeConfig(path string) error {
 func xmlEscape(value string) string {
 	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&apos;")
 	return replacer.Replace(value)
+}
+
+// nativeInstanceListEntry describes one discovered native ESM instance for
+// `native list`.
+type nativeInstanceListEntry struct {
+	Instance   string `json:"instance"`
+	Service    string `json:"service"`
+	ManagerID  string `json:"manager_id"`
+	Upstream   string `json:"upstream"`
+	PublicURL  string `json:"public_url"`
+	State      string `json:"state"`
+	BinaryPath string `json:"binary_path,omitempty"`
+	Config     string `json:"config"`
+	Running    bool   `json:"running"`
+}
+
+func runNativeList(command *cobra.Command, _ []string) error {
+	entries := nativeDiscoverInstances()
+	if nativeManageOpts.jsonOutput {
+		return json.NewEncoder(command.OutOrStdout()).Encode(entries)
+	}
+	w := tabwriter.NewWriter(command.OutOrStdout(), 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "INSTANCE\tSERVICE\tMANAGER ID\tSTATE\tRUNNING")
+	for _, entry := range entries {
+		running := "no"
+		if entry.Running {
+			running = "yes"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Instance, entry.Service, entry.ManagerID, entry.State, running)
+	}
+	return w.Flush()
+}
+
+// nativeInstanceBaseDirs returns the default instance config path and the glob
+// pattern matching named-instance config paths for the current platform.
+func nativeInstanceBaseDirs() (defaultConfig, pattern string) {
+	return nativeInstanceBaseDirsFor(runtime.GOOS)
+}
+
+func nativeInstanceBaseDirsFor(goos string) (defaultConfig, pattern string) {
+	if goos == "linux" {
+		return "/etc/agentapi-native/config.json", "/etc/agentapi-native-*/config.json"
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", ""
+	}
+	base := filepath.Join(home, "Library", "Application Support")
+	return filepath.Join(base, "agentapi-native", "config.json"), filepath.Join(base, "agentapi-native-*", "config.json")
+}
+
+// nativeDiscoverInstances enumerates installed native ESM instances on this
+// host by scanning the well-known config directories. Missing or unreadable
+// configs are skipped so a partially uninstalled host still lists the rest.
+func nativeDiscoverInstances() []nativeInstanceListEntry {
+	defaultConfig, pattern := nativeInstanceBaseDirs()
+	return discoverNativeInstances(defaultConfig, pattern)
+}
+
+func discoverNativeInstances(defaultConfig, pattern string) []nativeInstanceListEntry {
+	entries := make([]nativeInstanceListEntry, 0)
+	seen := make(map[string]bool)
+	add := func(name, configPath string) {
+		if name == "" || seen[configPath] || configPath == "" {
+			return
+		}
+		seen[configPath] = true
+		cfg, err := readNativeConfig(configPath)
+		if err != nil {
+			return
+		}
+		entries = append(entries, nativeInstanceListEntry{
+			Instance: name, Service: nativeServiceName(name), ManagerID: cfg.ManagerID,
+			Upstream: cfg.UpstreamURL, PublicURL: cfg.PublicURL, State: cfg.StateDir,
+			BinaryPath: cfg.BinaryPath, Config: configPath, Running: nativeServiceRunning(name),
+		})
+	}
+	add(nativeDefaultInstance, defaultConfig)
+	if pattern != "" {
+		matches, _ := filepath.Glob(pattern)
+		for _, match := range matches {
+			name := strings.TrimPrefix(filepath.Base(filepath.Dir(match)), "agentapi-native-")
+			add(name, match)
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Instance == nativeDefaultInstance && entries[j].Instance != nativeDefaultInstance {
+			return true
+		}
+		if entries[j].Instance == nativeDefaultInstance {
+			return false
+		}
+		return entries[i].Instance < entries[j].Instance
+	})
+	return entries
 }

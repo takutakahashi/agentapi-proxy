@@ -169,8 +169,35 @@ Before registering, prepare:
 - An upstream URL for the parent proxy.
 - A public URL through which the parent proxy can reach the native manager.
   The parent must be able to request `<public-url>/healthz` and proxy session
-  traffic through the same URL. A VPN, Tailscale, or reverse tunnel can be used
+traffic through the same URL. A VPN, Tailscale, or reverse tunnel can be used
   when the native machine is not directly reachable from the cluster.
+
+The CLI requires `--public-url`; it does not guess which host network is
+reachable from the parent. The macOS app can construct this explicit value from
+either the Tailscale IPv4 address or the LAN route to the parent. Use a custom
+URL for DNS, TLS, reverse proxies, NAT, or port mappings.
+
+Multiple managers can run on one host. Give every additional manager a unique
+instance name, listen address, and public URL:
+
+```bash
+agentapi-proxy native install --instance build-a --listen :8081 \
+  --upstream "$PARENT_PROXY_URL" --public-url "https://native.example.com:8081" \
+  --name build-a --registration-token "<registration-token>"
+agentapi-proxy native install --instance build-b --listen :8082 \
+  --upstream "$PARENT_PROXY_URL" --public-url "https://native.example.com:8082" \
+  --name build-b --registration-token "<registration-token>"
+
+agentapi-proxy native list
+agentapi-proxy native status --instance build-a
+agentapi-proxy native doctor --instance build-b
+```
+
+Omitting `--instance` selects the backward-compatible `default` instance. The
+CLI adds a protected `native_instance` allocator label automatically. Named
+instances have separate configuration, credentials, state, logs, and host
+services. On Linux they share the managed executable; uninstalling one instance
+does not remove that executable while another instance still uses it.
 
 For a user-scoped macOS manager with the filesystem sandbox enabled:
 
@@ -258,6 +285,10 @@ On macOS, configuration and credentials are stored under:
 ~/Library/Application Support/agentapi-native/config.json
 ~/Library/Application Support/agentapi-native/credentials.json
 ```
+
+Named instances use sibling directories such as
+`~/Library/Application Support/agentapi-native-build-a/` and LaunchAgent labels
+such as `com.agentapi.native.build-a`.
 
 Check the installed service and end-to-end parent connectivity:
 
