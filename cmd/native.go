@@ -1141,12 +1141,27 @@ func nativeServiceRunning(instance string) bool {
 	return command.Run() == nil
 }
 func restartNativeService(instance string) error {
-	if runtime.GOOS == "linux" {
-		return runCommand("systemctl", "restart", nativeServiceName(instance))
-	}
 	paths, err := nativePaths(nativeManageOpts.configPath, instance)
 	if err != nil {
 		return err
+	}
+	cfg, err := readNativeConfig(paths.config)
+	if err != nil {
+		return fmt.Errorf("read native daemon config: %w", err)
+	}
+	if runtime.GOOS == "linux" {
+		unit := renderNativeSystemdUnit(paths, cfg.ManagerEnvironment)
+		if err := atomicWriteFile(paths.service, []byte(unit), 0o644); err != nil {
+			return fmt.Errorf("refresh native service environment: %w", err)
+		}
+		if err := runCommand("systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+		return runCommand("systemctl", "restart", nativeServiceName(instance))
+	}
+	plist := renderNativeLaunchAgent(paths, cfg.ManagerEnvironment)
+	if err := atomicWriteFile(paths.service, []byte(plist), 0o600); err != nil {
+		return fmt.Errorf("refresh native service environment: %w", err)
 	}
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	_ = runCommand("launchctl", "bootout", domain+"/"+nativeServiceName(instance))
