@@ -92,6 +92,7 @@ func init() {
 	doctor := &cobra.Command{Use: "doctor", Short: "Validate daemon configuration and connectivity", RunE: runNativeDoctor}
 	doctor.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
 	restart := &cobra.Command{Use: "restart", Short: "Restart the native ESM daemon", RunE: runNativeRestart}
+	update := &cobra.Command{Use: "update", Short: "Replace the managed daemon binary with this executable and restart", RunE: runNativeUpdate}
 	rotate := &cobra.Command{Use: "rotate-token", Short: "Rotate the ESM connection token and restart", RunE: runNativeRotateToken}
 	uninstall := &cobra.Command{Use: "uninstall", Short: "Stop and remove the native ESM daemon", RunE: runNativeUninstall}
 	uninstall.Flags().BoolVar(&nativeManageOpts.force, "force", false, "terminate active sessions")
@@ -107,7 +108,7 @@ func init() {
 	logs.Flags().BoolVarP(&nativeManageOpts.logsFollow, "follow", "f", false, "follow log output")
 	logs.Flags().IntVarP(&nativeManageOpts.logsTail, "tail", "n", 100, "number of lines to show")
 	logs.Flags().BoolVar(&nativeManageOpts.logsDaemon, "daemon", false, "show the native daemon log")
-	NativeCmd.AddCommand(install, status, doctor, restart, rotate, uninstall, listCmd, sessionList, logs)
+	NativeCmd.AddCommand(install, status, doctor, restart, update, rotate, uninstall, listCmd, sessionList, logs)
 }
 
 // resolveNativeInstance validates and normalizes the selected instance name,
@@ -671,6 +672,48 @@ func runNativeRestart(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	return restartNativeService(instance)
+}
+
+func runNativeUpdate(_ *cobra.Command, _ []string) error {
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
+	if err != nil {
+		return err
+	}
+	cfg, err := readNativeConfig(paths.config)
+	if err != nil {
+		return fmt.Errorf("read native daemon config: %w", err)
+	}
+	active, _ := filepath.Glob(filepath.Join(cfg.StateDir, "sessions", "*"))
+	if len(active) > 0 {
+		return fmt.Errorf("refusing to update daemon with %d active session(s); drain them first", len(active))
+	}
+	if err := copyExecutable(paths.binary); err != nil {
+		return fmt.Errorf("replace managed daemon binary: %w", err)
+	}
+	cfg.Version = nativeBuildVersion()
+	cfg.ConnectionToken = ""
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode updated native daemon config: %w", err)
+	}
+	if err := atomicWriteFile(paths.config, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write updated native daemon config: %w", err)
+	}
+	if err := secureNativeConfig(paths.config); err != nil {
+		return fmt.Errorf("secure updated native daemon config: %w", err)
+	}
+	if err := restartNativeService(instance); err != nil {
+		return fmt.Errorf("restart native daemon: %w", err)
+	}
+	if err := waitNativeHealth(cfg.Listen, 30*time.Second); err != nil {
+		return fmt.Errorf("updated daemon did not become healthy: %w", err)
+	}
+	fmt.Printf("Native ESM instance %q updated and restarted\n", instance)
+	return nil
 }
 
 func runNativeRotateToken(_ *cobra.Command, _ []string) error {

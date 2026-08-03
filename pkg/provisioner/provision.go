@@ -1062,6 +1062,10 @@ service:
 // process, mirroring the logic in BuildRemoteProvisionSettings().
 func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, envMap map[string]string) (string, []string) {
 	agentType := settings.Session.AgentType
+	agentapiProxyBinary := getEnv(envMap, "AGENTAPI_PROXY_BINARY")
+	if agentapiProxyBinary == "" {
+		agentapiProxyBinary = "agentapi-proxy"
+	}
 
 	agentapiPort := os.Getenv("AGENTAPI_PORT")
 	if agentapiPort == "" {
@@ -1075,7 +1079,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// --output-file writes conversation history in acp-posts JSONL format for Slack integration.
 		// claude-agent-acp is the official ACP adapter for the Claude Agent SDK:
 		// https://github.com/agentclientprotocol/claude-agent-acp
-		return "agentapi-proxy", []string{
+		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--output-file", acpHistoryPath,
@@ -1087,7 +1091,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// Start the acp-server bridge that wraps codex-acp (ACP adapter for OpenAI Codex) via stdio.
 		// https://github.com/agentclientprotocol/codex-acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
-		return "agentapi-proxy", []string{
+		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--auto-approve",
@@ -1101,7 +1105,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// talk directly to Ollama Cloud without a local Ollama daemon.
 		// https://github.com/svkozak/pi-acp
 		ensurePiOllamaEnv(envMap)
-		return "agentapi-proxy", []string{
+		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--auto-approve",
@@ -1113,7 +1117,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// Start the acp-server bridge that wraps Cursor Agent CLI's native ACP server via stdio.
 		// https://cursor.com/docs/cli/acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
-		return "agentapi-proxy", []string{
+		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--auto-approve",
@@ -1808,7 +1812,11 @@ func (s *Server) fetchAndInjectMemory(envMap map[string]string) {
 	}
 
 	log.Printf("[PROVISIONER] Fetching session memory (keys: %s)", memoryKeyFlags)
-	out, err := exec.Command("agentapi-proxy", args...).Output()
+	agentapiProxyBinary := getEnv(envMap, "AGENTAPI_PROXY_BINARY")
+	if agentapiProxyBinary == "" {
+		agentapiProxyBinary = "agentapi-proxy"
+	}
+	out, err := exec.Command(agentapiProxyBinary, args...).Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		log.Printf("[PROVISIONER] No memory found for this session (non-fatal)")
 		return

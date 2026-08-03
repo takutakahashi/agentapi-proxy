@@ -182,6 +182,7 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		"CFFIXED_USER_HOME="+home,
 		"AGENTAPI_NATIVE_SESSION_ROOT="+root,
 		"AGENTAPI_BUILD_DIR="+buildDir,
+		"AGENTAPI_PROXY_BINARY="+m.binaryPath,
 		"AGENTAPI_SESSION_ID="+id,
 		"AGENTAPI_PORT="+strconv.Itoa(agentPort),
 		"PROVISIONER_PROXY_URL="+m.proxyURL,
@@ -234,7 +235,9 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 func nativeProvisionerEnvironment(base []string, values ...string) []string {
 	env := make([]string, 0, len(base)+len(values))
 	for _, value := range base {
-		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") || strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") {
+		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") ||
+			strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") ||
+			strings.HasPrefix(value, "AGENTAPI_PROXY_BINARY=") {
 			continue
 		}
 		env = append(env, value)

@@ -333,3 +333,21 @@ func TestBinarySharedWith(t *testing.T) {
 	require.False(t, binarySharedWith(macEntries, "default", "/Users/u/Library/Application Support/agentapi-native/bin/agentapi-proxy"))
 	require.False(t, binarySharedWith(nil, "default", ""))
 }
+
+func TestNativeUpdateRefusesActiveSessions(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	require.NoError(t, os.MkdirAll(filepath.Join(stateDir, "sessions", "session-1"), 0o700))
+	configPath := filepath.Join(root, "config.json")
+	cfg := nativeDaemonConfig{Listen: ":8080", StateDir: stateDir}
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o600))
+
+	previous := nativeManageOpts
+	nativeManageOpts = nativeManageOptions{configPath: configPath}
+	t.Cleanup(func() { nativeManageOpts = previous })
+
+	err = runNativeUpdate(nil, nil)
+	require.ErrorContains(t, err, "refusing to update daemon with 1 active session(s)")
+}
