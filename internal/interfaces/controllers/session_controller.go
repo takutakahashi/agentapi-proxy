@@ -716,6 +716,7 @@ func findPendingSessionAllocation(sessions []entities.Session, sessionID string)
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
+	workloadSessionID := sessionID
 
 	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
@@ -728,7 +729,7 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 				if route.ProxyURL == "" && route.RemoteSessionID != "" {
 					session = c.getSessionManager().GetSession(route.RemoteSessionID)
 					if session != nil {
-						sessionID = route.SessionID
+						workloadSessionID = route.RemoteSessionID
 					} else {
 						return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 					}
@@ -757,7 +758,7 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	// workload with the same proxy session ID and let the provisioner restore
 	// the ACP snapshot under that ID.
 	if ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer); ok && ctx.Request().Method == http.MethodGet {
-		ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), sessionID)
+		ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), workloadSessionID)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to restore session workload: %v", err))
 		}
