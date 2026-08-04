@@ -11,6 +11,10 @@
 {{- $assetPersistenceEnabled = $assetPersistence.enabled }}
 {{- end }}
 {{- $assetS3 := $asset.s3 | default dict }}
+{{- $sessionPersistence := .Values.sessionPersistence | default dict }}
+{{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
+{{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
+{{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -240,6 +244,20 @@ spec:
             {{- if $assetS3.endpoint }}
             - name: AGENTAPI_ASSET_S3_ENDPOINT
               value: {{ $assetS3.endpoint | quote }}
+            {{- end }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_BACKEND
+              value: {{ $sessionPersistenceBackend | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_PATH
+              value: {{ $sessionPersistencePath | quote }}
+            {{- if $sessionPersistenceS3.bucket }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET
+              value: {{ $sessionPersistenceS3.bucket | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_S3_REGION
+              value: {{ $sessionPersistenceS3.region | default "garage" | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX
+              value: {{ $sessionPersistenceS3.prefix | default "agentapi-sessions/" | quote }}
+            - name: AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT
+              value: {{ $sessionPersistenceS3.endpoint | quote }}
             {{- end }}
             {{- if .Values.config.webhook.githubEnterpriseHost }}
             - name: AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST
@@ -624,6 +642,10 @@ spec:
             - name: asset-storage
               mountPath: {{ $assetStoragePath | quote }}
             {{- end }}
+            {{- if eq $sessionPersistenceBackend "volume" }}
+            - name: session-state
+              mountPath: {{ $sessionPersistencePath | quote }}
+            {{- end }}
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -676,6 +698,11 @@ spec:
           {{ else }}
           emptyDir: {}
           {{ end }}
+        {{- end }}
+        {{- if eq $sessionPersistenceBackend "volume" }}
+        - name: session-state
+          persistentVolumeClaim:
+            claimName: {{ include "agentapi-proxy.fullname" . }}-session-state
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

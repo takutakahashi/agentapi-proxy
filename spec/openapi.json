@@ -5631,6 +5631,10 @@
       "SessionParams": {
         "type": "object",
         "properties": {
+          "resume_from": {
+            "type": "string",
+            "description": "Previous proxy session ID whose persisted ACP conversation state should be restored before starting the agent"
+          },
           "message": {
             "type": "string",
             "description": "Initial message to send to the agent after session starts"

@@ -3,7 +3,10 @@ package controllers
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +23,7 @@ type ProvisionerController struct {
 	allocationQueue  sessionallocation.Queue
 	settingsRepo     repositories.SettingsRepository
 	sessionRouteRepo repositories.SessionRouteRepository
+	stateStore       services.SessionStateStore
 }
 
 type ProvisionerManager interface {
@@ -29,8 +33,136 @@ type ProvisionerManager interface {
 	UpdateProvisionRequestStatus(ctx context.Context, sessionID, requestID string, req services.ProvisionRequestStatusUpdate) error
 }
 
-func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository) *ProvisionerController {
-	return &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
+func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository, stateStore ...services.SessionStateStore) *ProvisionerController {
+	pc := &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
+	if len(stateStore) > 0 {
+		pc.stateStore = stateStore[0]
+	}
+	return pc
+}
+
+const maxSessionStateBytes = 1 << 30
+
+type multipartStartResponse struct {
+	UploadID string `json:"upload_id"`
+	PartSize int64  `json:"part_size"`
+}
+
+func (pc *ProvisionerController) multipartStore(c echo.Context) (services.MultipartSessionStateStore, error) {
+	if !pc.authorized(c) {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	store, ok := pc.stateStore.(services.MultipartSessionStateStore)
+	if !ok {
+		return nil, echo.NewHTTPError(http.StatusNotImplemented, "direct transfer is unavailable")
+	}
+	return store, nil
+}
+
+func (pc *ProvisionerController) BeginSessionStateUpload(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	uploadID, partSize, err := store.BeginMultipart(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.JSON(http.StatusOK, multipartStartResponse{UploadID: uploadID, PartSize: partSize})
+}
+
+func (pc *ProvisionerController) PresignSessionStatePart(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	number, err := strconv.ParseInt(c.Param("partNumber"), 10, 32)
+	if err != nil || number < 1 || number > maxSessionStateBytes/(8<<20) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid part number"})
+	}
+	url, err := store.PresignPart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId"), int32(number))
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"url": url})
+}
+
+func (pc *ProvisionerController) CompleteSessionStateUpload(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Parts []services.MultipartPart `json:"parts"`
+	}
+	if err := c.Bind(&req); err != nil || len(req.Parts) == 0 || len(req.Parts) > maxSessionStateBytes/(8<<20) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "parts are required"})
+	}
+	if err := store.CompleteMultipart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId"), req.Parts); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) AbortSessionStateUpload(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	if err := store.AbortMultipart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId")); err != nil {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) PresignSessionStateDownload(c echo.Context) error {
+	store, err := pc.multipartStore(c)
+	if err != nil {
+		return err
+	}
+	url, err := store.PresignDownload(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"url": url})
+}
+
+func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
+	}
+	body := http.MaxBytesReader(c.Response(), c.Request().Body, maxSessionStateBytes)
+	if err := pc.stateStore.Save(c.Request().Context(), c.Param("sessionId"), body); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+		}
+		log.Printf("[SESSION_STATE] Backup skipped because persistence backend is unavailable: %v", err)
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
+	}
+	body, err := pc.stateStore.Load(c.Request().Context(), c.Param("sessionId"))
+	if os.IsNotExist(err) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if err != nil {
+		log.Printf("[SESSION_STATE] Restore skipped because persistence backend is unavailable: %v", err)
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	defer func() { _ = body.Close() }()
+	return c.Stream(http.StatusOK, "application/zstd", body)
 }
 
 func (pc *ProvisionerController) Connect(c echo.Context) error {

@@ -40,3 +40,11 @@ type SessionManager interface {
 	// Shutdown gracefully stops all sessions
 	Shutdown(timeout time.Duration) error
 }
+
+// SessionWorkloadEnsurer is implemented by managers that can lazily recreate
+// a missing runtime while retaining the same logical session ID.
+type SessionWorkloadEnsurer interface {
+	// EnsureSessionWorkload returns restoring=true while the workload is being
+	// created or is not ready yet. A missing canonical session is an error.
+	EnsureSessionWorkload(ctx context.Context, id string) (session entities.Session, restoring bool, err error)
+}

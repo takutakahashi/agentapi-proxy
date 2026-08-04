@@ -82,7 +82,11 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 				}
 			}()
 		})
-		srv.setStatus(StatusProvisioning, "")
+		if !srv.claimProvisioning() {
+			log.Printf("[PROVISIONER] Provision request %s ignored because provisioning is already %s", provisionReq.RequestID, srv.GetStatus())
+			<-ctx.Done()
+			return ctx.Err()
+		}
 		srv.runProvision(ctx, provisionReq.Settings)
 		<-ctx.Done()
 		return ctx.Err()

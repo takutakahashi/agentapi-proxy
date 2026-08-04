@@ -66,6 +66,7 @@ func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.M
 			// perform their own internal token check in the provisioner controller.
 			if strings.HasPrefix(path, "/internal/session-provisioners") ||
 				strings.HasPrefix(path, "/internal/session-allocations") ||
+				strings.HasPrefix(path, "/internal/session-state") ||
 				strings.HasPrefix(path, "/internal/external-session-manager") {
 				return next(c)
 			}

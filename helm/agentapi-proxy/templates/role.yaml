@@ -23,6 +23,10 @@ rules:
     # update: required for UpdateServiceAnnotation (e.g. agentapi.proxy/updated-at annotation)
     verbs: ["get", "list", "create", "delete", "patch", "update"]
   - apiGroups: [""]
+    resources: ["endpoints"]
+    # Lazy chat recovery checks whether the session Service has a ready Pod.
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "create", "delete"]
   - apiGroups: ["apps"]

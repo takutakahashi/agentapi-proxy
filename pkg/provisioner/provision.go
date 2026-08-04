@@ -6,9 +6,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +22,7 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionstate"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +39,8 @@ const (
 	// absent; the provisioner writes the file itself from SessionSettings so
 	// that both paths behave identically.
 )
+
+var errSessionStateBackendUnavailable = errors.New("session persistence backend is unavailable")
 
 var runtimeHome = provisionerHome()
 var sessionEnvFile = filepath.Join(runtimeHome, ".session", "env")
@@ -146,6 +152,7 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.SessionSettings) {
 	normalizeNativeSettings(settings)
+	injectSessionPersistenceHook(settings)
 	startedAt := time.Now()
 	s.setPhase("provision:start")
 	log.Printf("[PROVISIONER] Starting provisioning for session %s", settings.Session.ID)
@@ -203,6 +210,32 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
+	restoreSource := settings.Session.ResumeFrom
+	restoreRequired := restoreSource != ""
+	if restoreSource == "" && settings.Session.PersistenceEnabled {
+		// Pod replacement keeps the proxy session ID. Use that stable ID as the
+		// implicit snapshot key so restart recovery needs no API parameter.
+		restoreSource = settings.Session.ID
+	}
+	if restoreSource != "" {
+		s.setPhase("provision:restore-session-state")
+		restoreCWD := filepath.Dir(workdirRepoPath)
+		if settings.Repository != nil && strings.TrimSpace(settings.Repository.FullName) != "" {
+			restoreCWD = workdirRepoPath
+		}
+		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
+		if errors.Is(err, errSessionStateBackendUnavailable) {
+			log.Printf("[PROVISIONER] Session state restore skipped; continuing without persisted state: %v", err)
+		} else if err != nil {
+			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
+			return
+		} else if !found && restoreRequired {
+			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: snapshot %s was not found", restoreSource))
+			return
+		} else if found {
+			log.Printf("[PROVISIONER] Restored persisted ACP state for proxy session %s from %s", settings.Session.ID, restoreSource)
+		}
+	}
 
 	// ── Step 2.3: docker login for DinD registries ───────────────────────────
 	s.setPhase("provision:post-setup")
@@ -384,6 +417,127 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
+	if settings == nil || !settings.Session.PersistenceEnabled || (settings.Session.AgentType != "claude-acp" && settings.Session.AgentType != "codex-acp") {
+		return
+	}
+	// Return from the Stop hook before checkpointing: Codex commits its local
+	// thread state only after synchronous Stop hooks finish.
+	command := "nohup sh -c 'sleep 2; agentapi-proxy client backup-session-state' >/tmp/session-state-backup.log 2>&1 &"
+	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 10}}}
+	appendStop := func(root map[string]interface{}) map[string]interface{} {
+		if root == nil {
+			root = map[string]interface{}{}
+		}
+		hooks, _ := root["hooks"].(map[string]interface{})
+		if hooks == nil {
+			hooks = map[string]interface{}{}
+		}
+		stops := asInterfaceSlice(hooks["Stop"])
+		hooks["Stop"] = append(stops, hook)
+		root["hooks"] = hooks
+		return root
+	}
+	settings.Claude.SettingsJSON = appendStop(settings.Claude.SettingsJSON)
+	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
+}
+
+func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
+	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	token := os.Getenv("PROVISIONER_TOKEN")
+	if proxy == "" || token == "" {
+		return false, fmt.Errorf("provisioner proxy credentials are missing")
+	}
+	restoreCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	directReq, directErr := http.NewRequestWithContext(restoreCtx, http.MethodGet, proxy+"/internal/session-state/"+sourceID+"/download-url", nil)
+	if directErr == nil {
+		directReq.Header.Set("Authorization", "Bearer "+token)
+		directResp, err := s.httpClient.Do(directReq)
+		if err != nil {
+			return false, errSessionStateBackendUnavailable
+		}
+		if directResp.StatusCode == http.StatusOK {
+			var signed struct {
+				URL string `json:"url"`
+			}
+			decodeErr := json.NewDecoder(io.LimitReader(directResp.Body, 64<<10)).Decode(&signed)
+			directResp.Body.Close()
+			if decodeErr != nil || signed.URL == "" {
+				return false, fmt.Errorf("invalid direct restore response")
+			}
+			objectReq, reqErr := http.NewRequestWithContext(restoreCtx, http.MethodGet, signed.URL, nil)
+			if reqErr != nil {
+				return false, reqErr
+			}
+			objectResp, reqErr := sessionStateObjectClient(signed.URL).Do(objectReq)
+			if reqErr != nil {
+				return false, errSessionStateBackendUnavailable
+			}
+			defer objectResp.Body.Close()
+			if objectResp.StatusCode == http.StatusNotFound {
+				return false, nil
+			}
+			if objectResp.StatusCode != http.StatusOK {
+				return false, errSessionStateBackendUnavailable
+			}
+			if err := sessionstate.Unpack(objectResp.Body, runtimeHome, cwd); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		directResp.Body.Close()
+		if directResp.StatusCode == http.StatusServiceUnavailable {
+			return false, errSessionStateBackendUnavailable
+		}
+		if directResp.StatusCode != http.StatusNotImplemented {
+			return false, fmt.Errorf("direct restore endpoint returned HTTP %d", directResp.StatusCode)
+		}
+	}
+	req, err := http.NewRequestWithContext(restoreCtx, http.MethodGet, proxy+"/internal/session-state/"+sourceID, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return false, errSessionStateBackendUnavailable
+	}
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return false, fmt.Errorf("backend returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if err := sessionstate.Unpack(resp.Body, runtimeHome, cwd); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func sessionStateObjectClient(rawURL string) *http.Client {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return http.DefaultClient
+	}
+	hostname := parsed.Hostname()
+	if strings.Contains(hostname, ".") && !strings.HasSuffix(hostname, ".svc") && !strings.HasSuffix(hostname, ".cluster.local") {
+		return http.DefaultClient
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultClient
+	}
+	direct := transport.Clone()
+	direct.Proxy = nil
+	return &http.Client{Transport: direct}
 }
 
 func trustNativeWorkspace(configPath, workspace string) error {

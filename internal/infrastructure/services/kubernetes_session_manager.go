@@ -458,6 +458,17 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 	}
 
 	session.SetProvisionSettings(sessionSettings)
+	// Persist restart settings before creating the provision request or workload.
+	// A Pod can be evicted at any point after the workload is created; waiting for
+	// the first provisioning cycle to finish leaves such a replacement unable to
+	// auto-provision itself.
+	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after settings secret creation failure: %v", delErr)
+		}
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create session settings secret: %w", err)
+	}
 	if err := m.CreateProvisionRequest(ctx, session); err != nil {
 		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after provision request creation failure: %v", delErr)
@@ -879,6 +890,11 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	// Build session settings and create a provision request for the adopted pod.
 	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
 	session.SetProvisionSettings(sessionSettings)
+	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to create session settings secret for stock session: %w", err)
+	}
 	if err := m.CreateProvisionRequest(ctx, session); err != nil {
 		m.cleanupSession(stockID)
 		cancel()
@@ -1018,13 +1034,6 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 		return
 	}
 
-	// Persist settings Secret for automatic re-provisioning on Pod restart.
-	if ps := session.ProvisionSettings(); ps != nil {
-		if err := m.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), ps); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create settings secret for stock session %s: %v", session.id, err)
-		}
-	}
-
 	// Don't downgrade to "active" if watchAgentAPIStatus already detected the
 	// agent is running (e.g. provisioner's initial message is still in flight).
 	if session.Status() != "running" {
@@ -1104,6 +1113,98 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 	}
 
 	return restored
+}
+
+// EnsureSessionWorkload lazily recreates a missing Pod/Deployment while the
+// canonical Service, settings Secret, snapshot, and (when enabled) PVC remain.
+// It is invoked by authenticated GET traffic to the session chat routes.
+func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id string) (entities.Session, bool, error) {
+	session := m.GetSession(id)
+	if session == nil {
+		return nil, false, fmt.Errorf("session %s not found", id)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return session, false, nil
+	}
+	if _, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, false, fmt.Errorf("canonical service for session %s not found", id)
+		}
+		return session, false, fmt.Errorf("get canonical service: %w", err)
+	}
+	readyEndpoint, err := m.sessionHasReadyEndpoint(ctx, ks.ServiceName())
+	if err != nil {
+		return session, false, err
+	}
+
+	if m.isPVCEnabled() {
+		_, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, ks.DeploymentName(), metav1.GetOptions{})
+		switch {
+		case err == nil:
+			if readyEndpoint {
+				return session, false, nil
+			}
+			ks.SetStatus("starting")
+			return session, true, nil
+		case !errors.IsNotFound(err):
+			return session, false, fmt.Errorf("get deployment: %w", err)
+		}
+		if err := m.requireSessionSettingsSecret(ctx, ks); err != nil {
+			return session, false, err
+		}
+		if err := m.createDeployment(ctx, ks, ks.Request()); err != nil && !errors.IsAlreadyExists(err) {
+			return session, false, fmt.Errorf("recreate deployment: %w", err)
+		}
+	} else {
+		_, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, ks.DeploymentName(), metav1.GetOptions{})
+		switch {
+		case err == nil:
+			if readyEndpoint {
+				return session, false, nil
+			}
+			ks.SetStatus("starting")
+			return session, true, nil
+		case !errors.IsNotFound(err):
+			return session, false, fmt.Errorf("get pod: %w", err)
+		}
+		if err := m.requireSessionSettingsSecret(ctx, ks); err != nil {
+			return session, false, err
+		}
+		if err := m.createPod(ctx, ks, ks.Request()); err != nil && !errors.IsAlreadyExists(err) {
+			return session, false, fmt.Errorf("recreate pod: %w", err)
+		}
+	}
+
+	ks.SetStatus("starting")
+	log.Printf("[K8S_SESSION] Lazily recreated workload for session %s after chat access", id)
+	go m.watchAgentAPIStatus(context.Background(), ks)
+	go m.watchDeploymentStatus(context.Background(), ks)
+	return session, true, nil
+}
+
+func (m *KubernetesSessionManager) requireSessionSettingsSecret(ctx context.Context, session *KubernetesSession) error {
+	name := strings.TrimSuffix(session.ServiceName(), "-svc") + "-settings"
+	if _, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
+		return fmt.Errorf("get restart settings secret %s: %w", name, err)
+	}
+	return nil
+}
+
+func (m *KubernetesSessionManager) sessionHasReadyEndpoint(ctx context.Context, serviceName string) (bool, error) {
+	endpoints, err := m.client.CoreV1().Endpoints(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get session endpoints: %w", err)
+	}
+	for _, subset := range endpoints.Subsets {
+		if len(subset.Addresses) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // runtimeStatusOverrideFromRedis reads the latest agentapi runtime status from
@@ -3405,14 +3506,6 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 					return
 				}
 
-				// Create settings Secret for Pod restart recovery (after successful provisioning).
-				if ps := session.ProvisionSettings(); ps != nil {
-					if err := m.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), ps); err != nil {
-						log.Printf("[K8S_SESSION] Warning: failed to create settings secret for session %s: %v", session.id, err)
-						// Non-fatal: session works without it, but Pod restart will require re-provisioning
-					}
-				}
-
 				session.SetStatus("active")
 				log.Printf("[K8S_SESSION] Session %s is now active", session.id)
 
@@ -4896,14 +4989,16 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		scope = "user"
 	}
 	settings.Session = sessionsettings.SessionMeta{
-		ID:        session.id,
-		UserID:    req.UserID,
-		Scope:     scope,
-		TeamID:    req.TeamID,
-		AgentType: req.AgentType,
-		Oneshot:   req.Oneshot,
-		Teams:     req.Teams,
-		MemoryKey: req.MemoryKey,
+		ID:                 session.id,
+		UserID:             req.UserID,
+		Scope:              scope,
+		TeamID:             req.TeamID,
+		AgentType:          req.AgentType,
+		Oneshot:            req.Oneshot,
+		Teams:              req.Teams,
+		MemoryKey:          req.MemoryKey,
+		ResumeFrom:         req.ResumeFrom,
+		PersistenceEnabled: m.config.SessionPersistence.Backend != "",
 	}
 	settings.UnsyncedFilePaths = append([]string(nil), req.UnsyncedFilePaths...)
 
@@ -4914,6 +5009,9 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"AGENTAPI_USER_ID":    req.UserID,
 		"HOME":                "/home/agentapi",
 		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
+	}
+	if req.ResumeFrom != "" {
+		env["AGENTAPI_RESUME_FROM"] = req.ResumeFrom
 	}
 
 	// Add Claude Code telemetry configuration

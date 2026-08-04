@@ -75,6 +75,8 @@ type DockerRegistry struct {
 
 // SessionParams represents session parameters for agentapi server
 type SessionParams struct {
+	// ResumeFrom restores ACP conversation state saved by a previous session ID.
+	ResumeFrom string `json:"resume_from,omitempty"`
 	// Message is the initial message to send to the agent after session starts
 	Message string `json:"message,omitempty"`
 	// GithubToken is a GitHub token to use for authentication instead of GitHub App
@@ -173,6 +175,7 @@ type RepositoryInfo struct {
 
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
+	ResumeFrom               string
 	UserID                   string
 	Environment              map[string]string
 	Tags                     map[string]string

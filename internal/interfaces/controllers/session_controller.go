@@ -752,6 +752,27 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 		}
 	}
 
+	// Opening a chat is also the lazy recovery trigger. The Service remains the
+	// canonical session record after a Pod/workload disappears; recreate the
+	// workload with the same proxy session ID and let the provisioner restore
+	// the ACP snapshot under that ID.
+	if ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer); ok && ctx.Request().Method == http.MethodGet {
+		ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), sessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to restore session workload: %v", err))
+		}
+		if ensured != nil {
+			session = ensured
+		}
+		if restoring {
+			ctx.Response().Header().Set("Retry-After", "2")
+			return ctx.JSON(http.StatusAccepted, map[string]interface{}{
+				"session_id": sessionID,
+				"status":     "restoring",
+			})
+		}
+	}
+
 	// Determine target URL using session address
 	targetURL := fmt.Sprintf("http://%s", session.Addr())
 	target, err := url.Parse(targetURL)

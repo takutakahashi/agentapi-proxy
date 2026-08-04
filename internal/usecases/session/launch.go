@@ -16,6 +16,7 @@ import (
 // trigger source (schedule, webhook, slackbot, etc.).
 // Callers should use ResolveTeams() to populate the Teams field correctly.
 type LaunchRequest struct {
+	ResumeFrom string
 	// Identity
 	UserID string
 	Scope  entities.ResourceScope
@@ -189,6 +190,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 	// 3. Build RunServerRequest and create the session.
 	// Teams is provided by the caller via ResolveTeams() so it is always set correctly.
 	runReq := &entities.RunServerRequest{
+		ResumeFrom:               req.ResumeFrom,
 		UserID:                   req.UserID,
 		Environment:              req.Environment,
 		Tags:                     req.Tags,

@@ -217,13 +217,15 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 		t.Fatal("Expected session to be created")
 	}
 
-	// Note: the settings Secret is NOT created immediately in CreateSession().
-	// It is created asynchronously in watchSession() after successful provisioning.
-	// Verify the settings Secret does NOT exist at this point (before provisioning).
+	// The settings Secret must exist before provisioning so a Pod replacement can
+	// auto-provision even if the original Pod disappears during startup.
 	settingsSecretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
-	_, err = k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, settingsSecretName, metav1.GetOptions{})
-	if err == nil {
-		t.Error("Settings secret should NOT exist before provisioning completes")
+	settingsSecret, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, settingsSecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Settings secret should exist before provisioning completes: %v", err)
+	}
+	if len(settingsSecret.Data["settings.yaml"]) == 0 {
+		t.Error("Expected settings.yaml in restart settings secret")
 	}
 
 	// Verify that the session stores the provision settings for later use.

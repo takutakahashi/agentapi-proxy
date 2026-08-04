@@ -242,6 +242,22 @@ asset:
     prefix: "agentapi-assets/"
     endpoint: ""
 
+# ACP conversation snapshots. Use "volume" for a backend PVC or "s3" for
+# Garage/AWS-compatible object storage. S3 credentials are supplied with envFrom.
+sessionPersistence:
+  backend: ""
+  path: /var/lib/agentapi-session-state
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 5Gi
+  s3:
+    bucket: ""
+    region: garage
+    prefix: agentapi-sessions/
+    endpoint: ""
+
 ingress:
   enabled: false
   className: "nginx"

@@ -64,7 +64,8 @@ type Server struct {
 	apiTokenRepo       portrepos.APITokenRepository                    // Named API token repository
 	apiTokenDeps       *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
 	assetStore         services.AssetStore                             // Static asset storage backend
-	router             *Router                                         // Router for custom handler registration
+	sessionStateStore  services.SessionStateStore
+	router             *Router // Router for custom handler registration
 }
 
 // NewServer creates a new server instance
@@ -345,6 +346,14 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		log.Fatalf("[SERVER] Failed to initialize asset store: %v", err)
 	}
 	log.Printf("[SERVER] Asset store initialized (backend: %s)", cfg.Asset.Backend)
+	sessionStateStore, err := services.NewSessionStateStore(context.Background(), cfg.SessionPersistence)
+	if err != nil {
+		if cfg.SessionPersistence.Backend != "s3" {
+			log.Fatalf("[SERVER] Failed to initialize session state store: %v", err)
+		}
+		log.Printf("[SERVER] Session persistence disabled because S3 store initialization failed: %v", err)
+		sessionStateStore = nil
+	}
 
 	s := &Server{
 		config:             cfg,
@@ -367,6 +376,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionProfileRepo: sessionProfileRepo,
 		apiTokenRepo:       apiTokenRepo,
 		assetStore:         assetStore,
+		sessionStateStore:  sessionStateStore,
 	}
 
 	// Add logging middleware if verbose
@@ -866,16 +876,19 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 
 	var unsyncedFilePaths []string
 	var credentialSource string
+	var resumeFrom string
 	if startReq.Params != nil && len(startReq.Params.UnsyncedFilePaths) > 0 {
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
 	}
 	if startReq.Params != nil {
 		credentialSource = startReq.Params.CredentialSource
+		resumeFrom = startReq.Params.ResumeFrom
 	}
 
 	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
 		WithMemoryRepository(s.memoryRepo)
 	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
+		ResumeFrom:               resumeFrom,
 		UserID:                   userID,
 		Environment:              startReq.Environment,
 		Tags:                     startReq.Tags,

@@ -437,6 +437,14 @@ type MemoryS3Config struct {
 	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
 }
 
+// SessionPersistenceConfig stores ACP conversation snapshots. "volume" writes
+// to Path; "s3" uses any S3-compatible service (including Garage).
+type SessionPersistenceConfig struct {
+	Backend string          `json:"backend" mapstructure:"backend"`
+	Path    string          `json:"path" mapstructure:"path"`
+	S3      *MemoryS3Config `json:"s3,omitempty" mapstructure:"s3"`
+}
+
 // AssetConfig represents static asset upload configuration.
 type AssetConfig struct {
 	// Backend is the storage backend type: "nginx" (default) or "s3".
@@ -520,7 +528,8 @@ type Config struct {
 	// Scia is the configuration for scia OAuth token broker/proxy integration.
 	Scia SciaConfig `json:"scia" mapstructure:"scia"`
 	// Memory is the configuration for memory storage backend
-	Memory MemoryConfig `json:"memory" mapstructure:"memory"`
+	Memory             MemoryConfig             `json:"memory" mapstructure:"memory"`
+	SessionPersistence SessionPersistenceConfig `json:"session_persistence" mapstructure:"session_persistence"`
 	// Asset is the configuration for static asset upload and serving.
 	Asset AssetConfig `json:"asset" mapstructure:"asset"`
 	// Slack is the configuration for Slack bot inbound webhook functionality
@@ -769,6 +778,14 @@ func commaSeparatedList(value string) []string {
 
 // initializeConfigStructsFromEnv initializes config structs from environment variables
 func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
+	config.SessionPersistence.Backend = v.GetString("session_persistence.backend")
+	config.SessionPersistence.Path = v.GetString("session_persistence.path")
+	if bucket := v.GetString("session_persistence.s3.bucket"); bucket != "" {
+		config.SessionPersistence.S3 = &MemoryS3Config{
+			Bucket: bucket, Region: v.GetString("session_persistence.s3.region"),
+			Prefix: v.GetString("session_persistence.s3.prefix"), Endpoint: v.GetString("session_persistence.s3.endpoint"),
+		}
+	}
 	// Initialize Auth.Static if environment variables are set
 	if config.Auth.Static == nil && (v.GetBool("auth.static.enabled") || v.GetString("auth.static.header_name") != "" || v.GetString("auth.static.keys_file") != "") {
 		config.Auth.Static = &StaticAuthConfig{
@@ -1178,6 +1195,12 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("memory.s3.region", "AGENTAPI_MEMORY_S3_REGION")
 	_ = v.BindEnv("memory.s3.prefix", "AGENTAPI_MEMORY_S3_PREFIX")
 	_ = v.BindEnv("memory.s3.endpoint", "AGENTAPI_MEMORY_S3_ENDPOINT")
+	_ = v.BindEnv("session_persistence.backend", "AGENTAPI_SESSION_PERSISTENCE_BACKEND")
+	_ = v.BindEnv("session_persistence.path", "AGENTAPI_SESSION_PERSISTENCE_PATH")
+	_ = v.BindEnv("session_persistence.s3.bucket", "AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET")
+	_ = v.BindEnv("session_persistence.s3.region", "AGENTAPI_SESSION_PERSISTENCE_S3_REGION")
+	_ = v.BindEnv("session_persistence.s3.prefix", "AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX")
+	_ = v.BindEnv("session_persistence.s3.endpoint", "AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT")
 
 	// Asset backend configuration
 	_ = v.BindEnv("asset.backend", "AGENTAPI_ASSET_BACKEND")
@@ -1335,6 +1358,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("memory.s3.prefix", "agentapi-memory/")
 	v.SetDefault("memory.s3.region", "")
 	v.SetDefault("memory.s3.endpoint", "")
+	v.SetDefault("session_persistence.backend", "")
+	v.SetDefault("session_persistence.path", "/var/lib/agentapi-session-state")
+	v.SetDefault("session_persistence.s3.prefix", "agentapi-sessions/")
 	v.SetDefault("memory.external.url", "")
 	v.SetDefault("memory.external.admin_token", "")
 

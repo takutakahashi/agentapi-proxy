@@ -220,7 +220,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 
 	var provisionerController *controllers.ProvisionerController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
-		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo)
+		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo, server.sessionStateStore)
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
 
@@ -342,6 +342,13 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/internal/session-provisioners/:sessionId/provision-requests/:requestId/status", r.handlers.provisionerController.UpdateProvisionRequestStatus)
 		r.echo.GET("/internal/session-allocations/next", r.handlers.provisionerController.GetNextSessionAllocation)
 		r.echo.POST("/internal/session-allocations/:sessionId/result", r.handlers.provisionerController.CompleteSessionAllocation)
+		r.echo.PUT("/internal/session-state/:sessionId", r.handlers.provisionerController.SaveSessionState)
+		r.echo.GET("/internal/session-state/:sessionId", r.handlers.provisionerController.LoadSessionState)
+		r.echo.POST("/internal/session-state/:sessionId/uploads", r.handlers.provisionerController.BeginSessionStateUpload)
+		r.echo.GET("/internal/session-state/:sessionId/uploads/:uploadId/parts/:partNumber", r.handlers.provisionerController.PresignSessionStatePart)
+		r.echo.POST("/internal/session-state/:sessionId/uploads/:uploadId/complete", r.handlers.provisionerController.CompleteSessionStateUpload)
+		r.echo.DELETE("/internal/session-state/:sessionId/uploads/:uploadId", r.handlers.provisionerController.AbortSessionStateUpload)
+		r.echo.GET("/internal/session-state/:sessionId/download-url", r.handlers.provisionerController.PresignSessionStateDownload)
 		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.provisionerController.GetNextExternalSessionAllocation)
 		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.provisionerController.CompleteExternalSessionAllocation)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
