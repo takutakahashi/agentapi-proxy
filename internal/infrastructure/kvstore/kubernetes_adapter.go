@@ -96,7 +96,10 @@ func (a *secretAdapter) Get(ctx context.Context, name string, opts metav1.GetOpt
 }
 
 func (a *secretAdapter) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	err := a.store.Delete(ctx, KindSecret, a.namespace, name)
+	record, err := a.store.Get(ctx, KindSecret, a.namespace, name)
+	if err == nil {
+		err = a.store.Delete(ctx, KindSecret, a.namespace, name, record.Version)
+	}
 	if err != nil {
 		return storageError(secretResource, name, err)
 	}
@@ -177,7 +180,10 @@ func (a *configMapAdapter) Get(ctx context.Context, name string, opts metav1.Get
 }
 
 func (a *configMapAdapter) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	err := a.store.Delete(ctx, KindConfigMap, a.namespace, name)
+	record, err := a.store.Get(ctx, KindConfigMap, a.namespace, name)
+	if err == nil {
+		err = a.store.Delete(ctx, KindConfigMap, a.namespace, name, record.Version)
+	}
 	if err != nil {
 		return storageError(configMapResource, name, err)
 	}

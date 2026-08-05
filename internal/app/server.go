@@ -179,19 +179,13 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Build a separate persistence client. The session manager always retains
 	// the raw Kubernetes client; only non-session repositories use this client.
 	persistenceClient := k8sSessionManager.GetClient()
-	var applicationKVStore kvstore.Store
-	if cfg.KVStore.Backend == "libsql" {
-		if strings.TrimSpace(cfg.KVStore.DatabaseURL) == "" {
-			log.Fatal("kv_store.database_url is required for libSQL")
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		applicationKVStore, err = kvstore.NewLibSQLStore(ctx, cfg.KVStore.DatabaseURL, cfg.KVStore.AuthToken)
-		cancel()
-		if err != nil {
-			log.Fatalf("Failed to initialize libSQL KV store: %v", err)
-		}
+	applicationKVStore, wrapPersistence, err := buildApplicationKVStore(cfg.KVStore, persistenceClient)
+	if err != nil {
+		log.Fatalf("Failed to initialize application KV store: %v", err)
+	}
+	if wrapPersistence {
 		persistenceClient = kvstore.NewKubernetesAdapter(persistenceClient, applicationKVStore)
-		log.Printf("[SERVER] Non-session persistence initialized with libSQL")
+		log.Printf("[SERVER] Non-session persistence initialized with configured KV store")
 	}
 
 	// Initialize cross-pod status synchronisation via Redis (optional).
@@ -587,6 +581,63 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	s.setupRoutes()
 
 	return s
+}
+
+func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Interface) (kvstore.Store, bool, error) {
+	if cfg.Primary == nil && cfg.Secondary == nil {
+		if cfg.Backend == "" || cfg.Backend == "kubernetes" {
+			return nil, false, nil
+		}
+		store, err := buildKVBackend(config.KVStoreBackendConfig{Backend: cfg.Backend, DatabaseURL: cfg.DatabaseURL, AuthToken: cfg.AuthToken}, kubeClient)
+		return store, err == nil, err
+	}
+	if cfg.Primary == nil {
+		return nil, false, errors.New("kv_store.primary is required when secondary is configured")
+	}
+	if cfg.Backend != "" || cfg.DatabaseURL != "" || cfg.AuthToken != "" {
+		return nil, false, errors.New("legacy kv_store fields cannot be combined with primary/secondary")
+	}
+	primary, err := buildKVBackend(*cfg.Primary, kubeClient)
+	if err != nil {
+		return nil, false, fmt.Errorf("primary: %w", err)
+	}
+	if cfg.Secondary == nil {
+		if cfg.Primary.Backend == "kubernetes" || cfg.Primary.Backend == "" {
+			return nil, false, nil
+		}
+		return primary, true, nil
+	}
+	secondary, err := buildKVBackend(*cfg.Secondary, kubeClient)
+	if err != nil {
+		_ = primary.Close()
+		return nil, false, fmt.Errorf("secondary: %w", err)
+	}
+	mode := cfg.Replication.Mode
+	if mode == "" {
+		mode = string(kvstore.ReplicationModeRollback)
+	}
+	replicated, err := kvstore.NewReplicatedStore(primary, secondary, kvstore.ReplicationMode(mode))
+	if err != nil {
+		_ = errors.Join(primary.Close(), secondary.Close())
+		return nil, false, err
+	}
+	return replicated, true, nil
+}
+
+func buildKVBackend(cfg config.KVStoreBackendConfig, kubeClient kubernetes.Interface) (kvstore.Store, error) {
+	switch cfg.Backend {
+	case "", "kubernetes":
+		return kvstore.NewKubernetesStore(kubeClient), nil
+	case "libsql":
+		if strings.TrimSpace(cfg.DatabaseURL) == "" {
+			return nil, errors.New("database_url is required for libSQL")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return kvstore.NewLibSQLStore(ctx, cfg.DatabaseURL, cfg.AuthToken)
+	default:
+		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
+	}
 }
 
 func cleanupLocalSessionRoutes(ctx context.Context, repo portrepos.SessionRouteRepository, runtimeSessionID string) {

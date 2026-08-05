@@ -7,6 +7,7 @@ import (
 
 var ErrNotFound = errors.New("kv record not found")
 var ErrConflict = errors.New("kv record version conflict")
+var ErrInDoubt = errors.New("kv replication state is in doubt")
 
 type Kind string
 
@@ -35,7 +36,7 @@ type Store interface {
 	Create(context.Context, Record) (Record, error)
 	Update(context.Context, Record) (Record, error)
 	Get(context.Context, Kind, string, string) (Record, error)
-	Delete(context.Context, Kind, string, string) error
+	Delete(context.Context, Kind, string, string, int64) error
 	List(context.Context, Query) ([]Record, error)
 	Close() error
 }

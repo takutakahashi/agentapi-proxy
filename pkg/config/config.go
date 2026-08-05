@@ -510,10 +510,24 @@ type RedisConfig struct {
 
 // KVStoreConfig configures persistence for application data represented as
 // Kubernetes Secrets and ConfigMaps by the repository layer.
-type KVStoreConfig struct {
+type KVStoreBackendConfig struct {
 	Backend     string `json:"backend" mapstructure:"backend"`
 	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
 	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
+}
+
+type KVStoreReplicationConfig struct {
+	Mode string `json:"mode" mapstructure:"mode"`
+}
+
+type KVStoreConfig struct {
+	// Legacy single-backend fields. They remain supported as primary-only configuration.
+	Backend     string                   `json:"backend" mapstructure:"backend"`
+	DatabaseURL string                   `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string                   `json:"auth_token" mapstructure:"auth_token"`
+	Primary     *KVStoreBackendConfig    `json:"primary" mapstructure:"primary"`
+	Secondary   *KVStoreBackendConfig    `json:"secondary" mapstructure:"secondary"`
+	Replication KVStoreReplicationConfig `json:"replication" mapstructure:"replication"`
 }
 
 // Config represents the proxy configuration
@@ -1074,6 +1088,13 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
 	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
 	_ = v.BindEnv("kv_store.auth_token", "AGENTAPI_KV_STORE_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.primary.backend", "AGENTAPI_KV_STORE_PRIMARY_BACKEND")
+	_ = v.BindEnv("kv_store.primary.database_url", "AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL")
+	_ = v.BindEnv("kv_store.primary.auth_token", "AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.secondary.backend", "AGENTAPI_KV_STORE_SECONDARY_BACKEND")
+	_ = v.BindEnv("kv_store.secondary.database_url", "AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL")
+	_ = v.BindEnv("kv_store.secondary.auth_token", "AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.replication.mode", "AGENTAPI_KV_STORE_REPLICATION_MODE")
 
 	// scia OAuth broker/proxy configuration
 	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")

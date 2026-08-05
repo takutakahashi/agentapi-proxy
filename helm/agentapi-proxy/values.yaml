@@ -321,6 +321,7 @@ config:
 
   # Application KV persistence. "kubernetes" preserves the default behavior.
   kvStore:
+    # Legacy primary-only configuration.
     backend: kubernetes
     # Leave these empty to supply AGENTAPI_KV_STORE_DATABASE_URL and
     # AGENTAPI_KV_STORE_AUTH_TOKEN through env/envFrom instead.
@@ -333,6 +334,37 @@ config:
     authTokenSecretRef:
       name: ""
       key: "auth-token"
+    # Client-side replication configuration. When primary is configured, the
+    # legacy fields above must be set to empty strings.
+    primary:
+      backend: ""
+      databaseUrl: ""
+      authToken: ""
+      databaseUrlSecretRef:
+        name: ""
+        key: "database-url"
+      authTokenSecretRef:
+        name: ""
+        key: "auth-token"
+    secondary:
+      backend: ""
+      databaseUrl: ""
+      authToken: ""
+      databaseUrlSecretRef:
+        name: ""
+        key: "database-url"
+      authTokenSecretRef:
+        name: ""
+        key: "auth-token"
+    replication:
+      # rollback (default when secondary is configured) or best_effort
+      mode: ""
+    migration:
+      # Migrate primary -> secondary and verify equality before the proxy starts.
+      enabled: false
+      dryRun: false
+      overwrite: false
+      output: text
 
   # 認証設定
   auth:

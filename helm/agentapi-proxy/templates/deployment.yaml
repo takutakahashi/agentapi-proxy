@@ -53,6 +53,78 @@ spec:
         runAsUser: 999
         runAsGroup: 999
         {{- end }}
+      {{- if (dig "kvStore" "migration" "enabled" false .Values.config) }}
+      initContainers:
+        - name: kv-store-migrate
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+          args:
+            - -ec
+            - >-
+              /usr/local/bin/agentapi-proxy kv-store migrate
+              --namespace {{ .Release.Namespace | quote }}
+              --output {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
+              {{- if (dig "kvStore" "migration" "dryRun" false .Values.config) }} --dry-run{{- end }}
+              {{- if (dig "kvStore" "migration" "overwrite" false .Values.config) }} --overwrite{{- end }}
+              {{- if not (dig "kvStore" "migration" "dryRun" false .Values.config) }}
+              && /usr/local/bin/agentapi-proxy kv-store verify
+              --namespace {{ .Release.Namespace | quote }}
+              --output {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
+              {{- end }}
+          env:
+            - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND
+              value: {{ dig "kvStore" "primary" "backend" "" .Values.config | quote }}
+            {{- $migrationPrimaryDatabaseSecret := dig "kvStore" "primary" "databaseUrlSecretRef" "name" "" .Values.config }}
+            {{- if $migrationPrimaryDatabaseSecret }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationPrimaryDatabaseSecret | quote }}
+                  key: {{ dig "kvStore" "primary" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              value: {{ dig "kvStore" "primary" "databaseUrl" "" .Values.config | quote }}
+            {{- end }}
+            {{- $migrationPrimaryAuthSecret := dig "kvStore" "primary" "authTokenSecretRef" "name" "" .Values.config }}
+            {{- if $migrationPrimaryAuthSecret }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationPrimaryAuthSecret | quote }}
+                  key: {{ dig "kvStore" "primary" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              value: {{ dig "kvStore" "primary" "authToken" "" .Values.config | quote }}
+            {{- end }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_BACKEND
+              value: {{ dig "kvStore" "secondary" "backend" "" .Values.config | quote }}
+            {{- $migrationSecondaryDatabaseSecret := dig "kvStore" "secondary" "databaseUrlSecretRef" "name" "" .Values.config }}
+            {{- if $migrationSecondaryDatabaseSecret }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationSecondaryDatabaseSecret | quote }}
+                  key: {{ dig "kvStore" "secondary" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              value: {{ dig "kvStore" "secondary" "databaseUrl" "" .Values.config | quote }}
+            {{- end }}
+            {{- $migrationSecondaryAuthSecret := dig "kvStore" "secondary" "authTokenSecretRef" "name" "" .Values.config }}
+            {{- if $migrationSecondaryAuthSecret }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationSecondaryAuthSecret | quote }}
+                  key: {{ dig "kvStore" "secondary" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              value: {{ dig "kvStore" "secondary" "authToken" "" .Values.config | quote }}
+            {{- end }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -66,6 +138,70 @@ spec:
           env:
             - name: HOME
               value: "/home/agentapi"
+            {{- $kvPrimaryBackend := dig "kvStore" "primary" "backend" "" .Values.config }}
+            {{- if $kvPrimaryBackend }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND
+              value: {{ $kvPrimaryBackend | quote }}
+            {{- $kvPrimaryDatabaseURLSecretRefName := dig "kvStore" "primary" "databaseUrlSecretRef" "name" "" .Values.config }}
+            {{- if $kvPrimaryDatabaseURLSecretRefName }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvPrimaryDatabaseURLSecretRefName | quote }}
+                  key: {{ dig "kvStore" "primary" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            {{- else }}
+            {{- with (dig "kvStore" "primary" "databaseUrl" "" .Values.config) }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $kvPrimaryAuthTokenSecretRefName := dig "kvStore" "primary" "authTokenSecretRef" "name" "" .Values.config }}
+            {{- if $kvPrimaryAuthTokenSecretRefName }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvPrimaryAuthTokenSecretRefName | quote }}
+                  key: {{ dig "kvStore" "primary" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- else }}
+            {{- with (dig "kvStore" "primary" "authToken" "" .Values.config) }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $kvSecondaryBackend := dig "kvStore" "secondary" "backend" "" .Values.config }}
+            {{- if $kvSecondaryBackend }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_BACKEND
+              value: {{ $kvSecondaryBackend | quote }}
+            {{- $kvSecondaryDatabaseURLSecretRefName := dig "kvStore" "secondary" "databaseUrlSecretRef" "name" "" .Values.config }}
+            {{- if $kvSecondaryDatabaseURLSecretRefName }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvSecondaryDatabaseURLSecretRefName | quote }}
+                  key: {{ dig "kvStore" "secondary" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            {{- else }}
+            {{- with (dig "kvStore" "secondary" "databaseUrl" "" .Values.config) }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $kvSecondaryAuthTokenSecretRefName := dig "kvStore" "secondary" "authTokenSecretRef" "name" "" .Values.config }}
+            {{- if $kvSecondaryAuthTokenSecretRefName }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvSecondaryAuthTokenSecretRefName | quote }}
+                  key: {{ dig "kvStore" "secondary" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- else }}
+            {{- with (dig "kvStore" "secondary" "authToken" "" .Values.config) }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            - name: AGENTAPI_KV_STORE_REPLICATION_MODE
+              value: {{ dig "kvStore" "replication" "mode" "rollback" .Values.config | default "rollback" | quote }}
+            {{- end }}
+            {{- else }}
             - name: AGENTAPI_KV_STORE_BACKEND
               value: {{ dig "kvStore" "backend" "kubernetes" .Values.config | quote }}
             {{- $kvDatabaseURLSecretRefName := dig "kvStore" "databaseUrlSecretRef" "name" "" .Values.config }}
@@ -92,6 +228,7 @@ spec:
             {{- with (dig "kvStore" "authToken" "" .Values.config) }}
             - name: AGENTAPI_KV_STORE_AUTH_TOKEN
               value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             # Application configuration via environment variables (AGENTAPI_ prefix)

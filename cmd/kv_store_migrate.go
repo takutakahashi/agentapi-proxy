@@ -14,18 +14,23 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 type kvStoreMigrateOptions struct {
-	namespace   string
-	databaseURL string
-	authToken   string
-	dryRun      bool
-	overwrite   bool
-	output      string
+	namespace            string
+	primaryBackend       string
+	primaryDatabaseURL   string
+	primaryAuthToken     string
+	secondaryBackend     string
+	secondaryDatabaseURL string
+	secondaryAuthToken   string
+	legacyDatabaseURL    string
+	legacyAuthToken      string
+	dryRun               bool
+	overwrite            bool
+	output               string
 }
 
 type kvStoreMigrationEntry struct {
@@ -49,8 +54,8 @@ func newKVStoreMigrateCommand() *cobra.Command {
 	o := &kvStoreMigrateOptions{}
 	command := &cobra.Command{
 		Use:   "migrate",
-		Short: "Migrate application KV data from Kubernetes to libSQL",
-		Long: `Copy application-owned Secret and ConfigMap documents from Kubernetes to libSQL.
+		Short: "Migrate application KV data from the primary store to the secondary store",
+		Long: `Copy application-owned Secret and ConfigMap documents from the configured primary store to the secondary store.
 
 The command selects only resource families used by the application KV boundary;
 operational resources such as Pod-mounted Secrets and Helm ConfigMaps are not
@@ -63,27 +68,20 @@ different existing destination record is reported as a conflict unless
 without writing anything.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(o.databaseURL) == "" {
-				return errors.New("--database-url is required (or set AGENTAPI_KV_STORE_DATABASE_URL)")
-			}
 			if o.output != "text" && o.output != "json" {
 				return fmt.Errorf("unsupported output %q (must be text or json)", o.output)
 			}
-			config, err := ctrl.GetConfig()
-			if err != nil {
-				return fmt.Errorf("get Kubernetes config: %w", err)
-			}
-			client, err := kubernetes.NewForConfig(config)
-			if err != nil {
-				return fmt.Errorf("create Kubernetes client: %w", err)
-			}
-			store, err := kvstore.NewLibSQLStore(cmd.Context(), o.databaseURL, o.authToken)
+			primaryConfig, secondaryConfig, err := o.storeConfigs()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = store.Close() }()
+			primary, secondary, err := buildMigrationStores(cmd.Context(), primaryConfig, secondaryConfig)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = errors.Join(primary.Close(), secondary.Close()) }()
 
-			result, migrateErr := migrateKubernetesKV(cmd.Context(), client, store, *o)
+			result, migrateErr := migrateKVStores(cmd.Context(), primary, secondary, *o)
 			if err := writeKVStoreMigrationResult(cmd.OutOrStdout(), result, o.output); err != nil {
 				return err
 			}
@@ -92,17 +90,75 @@ without writing anything.`,
 	}
 	flags := command.Flags()
 	flags.StringVarP(&o.namespace, "namespace", "n", resolveKubernetesNamespace(), "Kubernetes namespace containing application KV data")
-	flags.StringVar(&o.databaseURL, "database-url", os.Getenv("AGENTAPI_KV_STORE_DATABASE_URL"), "libSQL database URL")
-	flags.StringVar(&o.authToken, "auth-token", os.Getenv("AGENTAPI_KV_STORE_AUTH_TOKEN"), "libSQL authentication token")
-	flags.BoolVar(&o.dryRun, "dry-run", false, "inspect records and conflicts without writing to libSQL")
-	flags.BoolVar(&o.overwrite, "overwrite", false, "replace different records that already exist in libSQL")
+	flags.StringVar(&o.primaryBackend, "primary-backend", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_BACKEND"), "primary backend (kubernetes or libsql)")
+	flags.StringVar(&o.primaryDatabaseURL, "primary-database-url", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL"), "primary libSQL database URL")
+	flags.StringVar(&o.primaryAuthToken, "primary-auth-token", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN"), "primary libSQL authentication token")
+	flags.StringVar(&o.secondaryBackend, "secondary-backend", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_BACKEND"), "secondary backend (kubernetes or libsql)")
+	flags.StringVar(&o.secondaryDatabaseURL, "secondary-database-url", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL"), "secondary libSQL database URL")
+	flags.StringVar(&o.secondaryAuthToken, "secondary-auth-token", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN"), "secondary libSQL authentication token")
+	flags.StringVar(&o.legacyDatabaseURL, "database-url", os.Getenv("AGENTAPI_KV_STORE_DATABASE_URL"), "deprecated: destination libSQL database URL")
+	flags.StringVar(&o.legacyAuthToken, "auth-token", os.Getenv("AGENTAPI_KV_STORE_AUTH_TOKEN"), "deprecated: destination libSQL authentication token")
+	flags.BoolVar(&o.dryRun, "dry-run", false, "inspect records and conflicts without writing to the secondary store")
+	flags.BoolVar(&o.overwrite, "overwrite", false, "replace different records that already exist in the secondary store")
 	flags.StringVarP(&o.output, "output", "o", "text", "output format: text or json")
 	return command
 }
 
-func migrateKubernetesKV(ctx context.Context, client kubernetes.Interface, destination kvstore.Store, options kvStoreMigrateOptions) (kvStoreMigrationResult, error) {
+type migrationStoreConfig struct {
+	backend, databaseURL, authToken string
+}
+
+func (o kvStoreMigrateOptions) storeConfigs() (migrationStoreConfig, migrationStoreConfig, error) {
+	if o.primaryBackend == "" && o.secondaryBackend == "" && o.legacyDatabaseURL != "" {
+		return migrationStoreConfig{backend: "kubernetes"}, migrationStoreConfig{backend: "libsql", databaseURL: o.legacyDatabaseURL, authToken: o.legacyAuthToken}, nil
+	}
+	if o.primaryBackend == "" || o.secondaryBackend == "" {
+		return migrationStoreConfig{}, migrationStoreConfig{}, errors.New("primary and secondary backends are required (configure AGENTAPI_KV_STORE_PRIMARY_BACKEND and AGENTAPI_KV_STORE_SECONDARY_BACKEND)")
+	}
+	return migrationStoreConfig{backend: o.primaryBackend, databaseURL: o.primaryDatabaseURL, authToken: o.primaryAuthToken}, migrationStoreConfig{backend: o.secondaryBackend, databaseURL: o.secondaryDatabaseURL, authToken: o.secondaryAuthToken}, nil
+}
+
+func buildMigrationStores(ctx context.Context, primaryConfig, secondaryConfig migrationStoreConfig) (kvstore.Store, kvstore.Store, error) {
+	var client kubernetes.Interface
+	if primaryConfig.backend == "kubernetes" || secondaryConfig.backend == "kubernetes" {
+		config, err := ctrl.GetConfig()
+		if err != nil {
+			return nil, nil, fmt.Errorf("get Kubernetes config: %w", err)
+		}
+		client, err = kubernetes.NewForConfig(config)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create Kubernetes client: %w", err)
+		}
+	}
+	primary, err := buildMigrationStore(ctx, primaryConfig, client)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initialize primary store: %w", err)
+	}
+	secondary, err := buildMigrationStore(ctx, secondaryConfig, client)
+	if err != nil {
+		_ = primary.Close()
+		return nil, nil, fmt.Errorf("initialize secondary store: %w", err)
+	}
+	return primary, secondary, nil
+}
+
+func buildMigrationStore(ctx context.Context, config migrationStoreConfig, client kubernetes.Interface) (kvstore.Store, error) {
+	switch config.backend {
+	case "kubernetes":
+		return kvstore.NewKubernetesStore(client), nil
+	case "libsql":
+		if strings.TrimSpace(config.databaseURL) == "" {
+			return nil, errors.New("database URL is required for libsql")
+		}
+		return kvstore.NewLibSQLStore(ctx, config.databaseURL, config.authToken)
+	default:
+		return nil, fmt.Errorf("unsupported backend %q", config.backend)
+	}
+}
+
+func migrateKVStores(ctx context.Context, source, destination kvstore.Store, options kvStoreMigrateOptions) (kvStoreMigrationResult, error) {
 	result := kvStoreMigrationResult{DryRun: options.dryRun, Entries: []kvStoreMigrationEntry{}}
-	records, err := collectApplicationKVRecords(ctx, client, options.namespace)
+	records, err := collectApplicationKVStoreRecords(ctx, source, options.namespace)
 	if err != nil {
 		return result, err
 	}
@@ -151,38 +207,46 @@ func migrateKubernetesKV(ctx context.Context, client kubernetes.Interface, desti
 	return result, nil
 }
 
+func migrateKubernetesKV(ctx context.Context, client kubernetes.Interface, destination kvstore.Store, options kvStoreMigrateOptions) (kvStoreMigrationResult, error) {
+	return migrateKVStores(ctx, kvstore.NewKubernetesStore(client), destination, options)
+}
+
 func collectApplicationKVRecords(ctx context.Context, client kubernetes.Interface, namespace string) ([]kvstore.Record, error) {
-	secrets, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
+	return collectApplicationKVStoreRecords(ctx, kvstore.NewKubernetesStore(client), namespace)
+}
+
+func collectApplicationKVStoreRecords(ctx context.Context, source kvstore.Store, namespace string) ([]kvstore.Record, error) {
+	secrets, err := source.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: namespace})
 	if err != nil {
-		return nil, fmt.Errorf("list Kubernetes Secrets: %w", err)
+		return nil, fmt.Errorf("list source Secrets: %w", err)
 	}
-	configMaps, err := client.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
+	configMaps, err := source.List(ctx, kvstore.Query{Kind: kvstore.KindConfigMap, Namespace: namespace})
 	if err != nil {
-		return nil, fmt.Errorf("list Kubernetes ConfigMaps: %w", err)
+		return nil, fmt.Errorf("list source ConfigMaps: %w", err)
 	}
 
-	records := make([]kvstore.Record, 0, len(secrets.Items)+len(configMaps.Items))
-	for i := range secrets.Items {
-		object := &secrets.Items[i]
-		if !isApplicationKVSecret(object) {
+	records := make([]kvstore.Record, 0, len(secrets)+len(configMaps))
+	for _, record := range secrets {
+		var object corev1.Secret
+		if err := json.Unmarshal(record.Value, &object); err != nil {
+			return nil, fmt.Errorf("decode source Secret/%s: %w", record.Key, err)
+		}
+		if !isApplicationKVSecret(&object) {
 			continue
 		}
-		value, marshalErr := json.Marshal(object)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("marshal Secret/%s: %w", object.Name, marshalErr)
-		}
-		records = append(records, kvstore.Record{Kind: kvstore.KindSecret, Namespace: namespace, Key: object.Name, Value: value})
+		record.Version = 0
+		records = append(records, record)
 	}
-	for i := range configMaps.Items {
-		object := &configMaps.Items[i]
-		if !isApplicationKVConfigMap(object) {
+	for _, record := range configMaps {
+		var object corev1.ConfigMap
+		if err := json.Unmarshal(record.Value, &object); err != nil {
+			return nil, fmt.Errorf("decode source ConfigMap/%s: %w", record.Key, err)
+		}
+		if !isApplicationKVConfigMap(&object) {
 			continue
 		}
-		value, marshalErr := json.Marshal(object)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("marshal ConfigMap/%s: %w", object.Name, marshalErr)
-		}
-		records = append(records, kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: namespace, Key: object.Name, Value: value})
+		record.Version = 0
+		records = append(records, record)
 	}
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].Kind == records[j].Kind {

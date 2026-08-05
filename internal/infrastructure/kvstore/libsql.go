@@ -82,8 +82,8 @@ WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key).Scan(&recor
 	return record, nil
 }
 
-func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM agentapi_kv WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key)
+func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key string, version int64) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM agentapi_kv WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`, kind, namespace, key, version)
 	if err != nil {
 		return fmt.Errorf("delete libSQL record: %w", err)
 	}
@@ -92,7 +92,10 @@ func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key stri
 		return fmt.Errorf("read libSQL delete result: %w", err)
 	}
 	if affected == 0 {
-		return ErrNotFound
+		if _, getErr := s.Get(ctx, kind, namespace, key); errors.Is(getErr, ErrNotFound) {
+			return ErrNotFound
+		}
+		return ErrConflict
 	}
 	return nil
 }

@@ -42,10 +42,14 @@ func (s *memoryStore) Get(_ context.Context, kind Kind, namespace, key string) (
 	}
 	return r, nil
 }
-func (s *memoryStore) Delete(_ context.Context, kind Kind, namespace, key string) error {
+func (s *memoryStore) Delete(_ context.Context, kind Kind, namespace, key string, version int64) error {
 	k := recordKey(kind, namespace, key)
-	if _, ok := s.records[k]; !ok {
+	r, ok := s.records[k]
+	if !ok {
 		return ErrNotFound
+	}
+	if r.Version != version {
+		return ErrConflict
 	}
 	delete(s.records, k)
 	return nil

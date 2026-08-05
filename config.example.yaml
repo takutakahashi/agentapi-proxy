@@ -8,6 +8,15 @@ kv_store:
   backend: kubernetes
   database_url: ""
   auth_token: ""
+  # To mirror application KV writes, replace the legacy fields above with:
+  # primary:
+  #   backend: kubernetes
+  # secondary:
+  #   backend: libsql
+  #   database_url: "libsql://example.turso.io"
+  #   auth_token: ""
+  # replication:
+  #   mode: rollback # rollback or best_effort
 
 # Authentication configuration
 auth:
