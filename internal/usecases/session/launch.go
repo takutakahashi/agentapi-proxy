@@ -19,8 +19,10 @@ type LaunchRequest struct {
 	ResumeFrom string
 	// Identity
 	UserID string
-	Scope  entities.ResourceScope
-	TeamID string
+	// TriggeredUserID is the external event actor (for example a GitHub login).
+	TriggeredUserID string
+	Scope           entities.ResourceScope
+	TeamID          string
 	// Teams is the list of GitHub team slugs for settings injection.
 	// MUST be populated via ResolveTeams() — never leave empty for team-scoped sessions.
 	Teams []string
@@ -192,6 +194,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 	runReq := &entities.RunServerRequest{
 		ResumeFrom:               req.ResumeFrom,
 		UserID:                   req.UserID,
+		TriggeredUserID:          req.TriggeredUserID,
 		Environment:              req.Environment,
 		Tags:                     req.Tags,
 		Scope:                    req.Scope,

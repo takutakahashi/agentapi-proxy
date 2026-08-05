@@ -14,6 +14,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -68,6 +69,75 @@ func TestBuildSessionSettings_TeamScopeUsesSessionUserCredentialsWhenSelected(t 
 	}
 	if got := settings.Files[0].Content; got != `{"tokens":{"access_token":"user-token"}}` {
 		t.Fatalf("credential content = %q, want session user's credentials", got)
+	}
+}
+
+func TestBuildSessionSettings_TriggeredUserCredentialsFallBackToTeam(t *testing.T) {
+	tests := []struct {
+		name               string
+		triggeredUserID    string
+		includeUserSecret  bool
+		wantCredentialBody string
+	}{
+		{
+			name:               "uses triggered user credentials when present",
+			triggeredUserID:    "github-user",
+			includeUserSecret:  true,
+			wantCredentialBody: `{"tokens":{"access_token":"triggered-token"}}`,
+		},
+		{
+			name:               "falls back when triggered user credentials are missing",
+			triggeredUserID:    "github-user",
+			wantCredentialBody: `{"tokens":{"access_token":"team-token"}}`,
+		},
+		{
+			name:               "falls back when triggered user is unresolved",
+			wantCredentialBody: `{"tokens":{"access_token":"team-token"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := []runtime.Object{
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-org-team-a", Namespace: "test-ns"},
+					Data: sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+						Path: sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth], Content: `{"tokens":{"access_token":"team-token"}}`,
+					}}),
+				},
+			}
+			if tt.includeUserSecret {
+				objects = append(objects, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-github-user", Namespace: "test-ns"},
+					Data: sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+						Path: sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth], Content: tt.wantCredentialBody,
+					}}),
+				})
+			}
+
+			k8sClient := fake.NewSimpleClientset(objects...)
+			cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+				Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000, PVCEnabled: boolPtrForTest(false),
+			}}
+			manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+			if err != nil {
+				t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+			}
+			manager.namespace = "test-ns"
+			req := &entities.RunServerRequest{
+				UserID: "webhook-owner", TriggeredUserID: tt.triggeredUserID,
+				Scope: entities.ScopeTeam, TeamID: "org/team-a", CredentialSource: "triggered_user",
+			}
+			session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+			settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+			if len(settings.Files) != 1 {
+				t.Fatalf("managed files count = %d, want 1", len(settings.Files))
+			}
+			if got := settings.Files[0].Content; got != tt.wantCredentialBody {
+				t.Fatalf("credential content = %q, want %q", got, tt.wantCredentialBody)
+			}
+		})
 	}
 }
 

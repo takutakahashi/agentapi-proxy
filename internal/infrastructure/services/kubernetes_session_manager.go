@@ -5627,22 +5627,32 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// on startup via the provision endpoint payload.
 	// Empty CredentialSource preserves the legacy behavior: user-scoped sessions
 	// use the session creator and team-scoped sessions receive no credentials.
-	credentialOwner := ""
+	credentialOwners := make([]string, 0, 2)
 	switch req.CredentialSource {
 	case "session_user":
-		credentialOwner = req.UserID
+		credentialOwners = append(credentialOwners, req.UserID)
+	case "triggered_user":
+		if req.TriggeredUserID != "" {
+			credentialOwners = append(credentialOwners, req.TriggeredUserID)
+		}
+		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+			credentialOwners = append(credentialOwners, req.TeamID)
+		}
 	case "team":
-		credentialOwner = req.TeamID
+		credentialOwners = append(credentialOwners, req.TeamID)
 	case "none":
 		// Explicitly disabled.
 	case "":
 		if req.Scope == entities.ScopeUser || req.Scope == "" {
-			credentialOwner = req.UserID
+			credentialOwners = append(credentialOwners, req.UserID)
 		}
 	default:
 		log.Printf("[K8S_SESSION] Warning: unknown credential_source %q for session %s; credentials disabled", req.CredentialSource, session.id)
 	}
-	if credentialOwner != "" {
+	for _, credentialOwner := range credentialOwners {
+		if credentialOwner == "" {
+			continue
+		}
 		filesSecretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(credentialOwner))
 		filesSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, filesSecretName, metav1.GetOptions{})
 		if err == nil && len(filesSecret.Data) > 0 {
@@ -5655,9 +5665,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			} else {
 				log.Printf("[K8S_SESSION] Embedded %d managed file(s) from Secret %s for session %s",
 					len(settings.Files), filesSecretName, session.id)
+				break
 			}
 		}
-		// Not found or no data is normal (user hasn't logged in yet); skip silently.
+		// Not found or no data is normal. For triggered_user, try the team owner next.
 	}
 
 	// User-managed files retain their existing user-scope-only behavior; the

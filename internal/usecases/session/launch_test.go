@@ -102,6 +102,32 @@ func (r *fakeSessionProfileRepo) Update(context.Context, *entities.SessionProfil
 }
 func (r *fakeSessionProfileRepo) Delete(context.Context, string) error { return nil }
 
+func TestLaunchPropagatesTriggeredUserAndCredentialSource(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	launcher := NewLaunchUseCase(sessionManager)
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:           "webhook-owner",
+		TriggeredUserID:  "github-actor",
+		Scope:            entities.ScopeTeam,
+		TeamID:           "org/team-a",
+		Teams:            []string{"org/team-a"},
+		CredentialSource: "triggered_user",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.TriggeredUserID; got != "github-actor" {
+		t.Fatalf("TriggeredUserID = %q, want github-actor", got)
+	}
+	if got := sessionManager.req.CredentialSource; got != "triggered_user" {
+		t.Fatalf("CredentialSource = %q, want triggered_user", got)
+	}
+	if got := sessionManager.req.UserID; got != "webhook-owner" {
+		t.Fatalf("UserID = %q, want webhook-owner", got)
+	}
+}
+
 func TestLaunchAppliesDefaultProfileDocker(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "default", "user-1")

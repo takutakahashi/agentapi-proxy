@@ -122,7 +122,7 @@ type SessionParams struct {
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string `json:"unsynced_file_paths,omitempty"`
 	// CredentialSource selects which managed credentials are injected into the session.
-	// Valid values are "session_user", "team", and "none". Empty preserves the
+	// Valid values are "session_user", "triggered_user", "team", and "none". Empty preserves the
 	// legacy behavior (session user for user scope, none for team scope).
 	CredentialSource string `json:"credential_source,omitempty"`
 }
@@ -175,8 +175,11 @@ type RepositoryInfo struct {
 
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
-	ResumeFrom               string
-	UserID                   string
+	ResumeFrom string
+	UserID     string
+	// TriggeredUserID identifies the external actor that caused a trigger-backed session.
+	// It is distinct from UserID, which remains the trigger configuration owner.
+	TriggeredUserID          string
 	Environment              map[string]string
 	Tags                     map[string]string
 	RepoInfo                 *RepositoryInfo

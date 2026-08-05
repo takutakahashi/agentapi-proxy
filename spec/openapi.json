@@ -5743,10 +5743,11 @@
             "type": "string",
             "enum": [
               "session_user",
+              "triggered_user",
               "team",
               "none"
             ],
-            "description": "Managed credential files to inject. session_user uses the user who created the session, team uses the session team, and none disables credential injection. When omitted, user-scoped sessions use session_user and team-scoped sessions use none.",
+            "description": "Managed credential files to inject. session_user uses the trigger configuration owner, triggered_user uses the rendered username tag and falls back to team credentials, team uses the session team, and none disables credential injection. When omitted, user-scoped sessions use session_user and team-scoped sessions use none.",
             "example": "session_user"
           }
         }
@@ -7581,6 +7582,11 @@
           "type": "boolean",
           "description": "If true, session exits after one response",
           "default": false
+        },
+        "credential_source": {
+          "type": "string",
+          "enum": ["session_user", "triggered_user", "team", "none"],
+          "description": "Managed credential files to inject. triggered_user uses the rendered username tag and falls back to team credentials."
         },
         "repo_full_name": {
           "type": "string",
