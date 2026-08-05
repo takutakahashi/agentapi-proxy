@@ -53,7 +53,7 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	if proxy == "" || token == "" || id == "" {
 		return fmt.Errorf("PROVISIONER_PROXY_URL, PROVISIONER_TOKEN and AGENTAPI_SESSION_ID are required")
 	}
-	cwd, err := os.Getwd()
+	cwd, err := sessionStateCWD()
 	if err != nil {
 		return err
 	}
@@ -107,6 +107,24 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("session state backup failed: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// sessionStateCWD prefers the provisioner's canonical clone path over the
+// hook runner's process directory. ACP hook implementations do not all invoke
+// commands from the session workspace.
+func sessionStateCWD() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	cloneDir := strings.TrimSpace(os.Getenv("AGENTAPI_CLONE_DIR"))
+	if cloneDir == "" {
+		return cwd, nil
+	}
+	if info, statErr := os.Stat(filepath.Join(cloneDir, ".git")); statErr == nil && (info.IsDir() || info.Mode().IsRegular()) {
+		return cloneDir, nil
+	}
+	return cwd, nil
 }
 
 type directUpload struct {

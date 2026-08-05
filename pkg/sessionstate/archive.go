@@ -350,6 +350,16 @@ func restoreGitWorkspace(cwd string, manifest gitManifest, staged, worktree []by
 	if err := runGit(cwd, nil, "checkout", "--force", "--detach", manifest.Base); err != nil {
 		return err
 	}
+	if manifest.Branch != "" {
+		if err := runGit(cwd, nil, "check-ref-format", "--branch", manifest.Branch); err != nil {
+			return fmt.Errorf("invalid git snapshot branch %q: %w", manifest.Branch, err)
+		}
+		// Recreate the local branch at the captured commit. This also handles
+		// branches whose tip only existed in the suspended workspace.
+		if err := runGit(cwd, nil, "checkout", "--force", "-B", manifest.Branch, manifest.Base); err != nil {
+			return err
+		}
+	}
 	if len(staged) > 0 {
 		if err := runGit(cwd, staged, "apply", "--cached", "--binary", "-"); err != nil {
 			return err

@@ -19,6 +19,7 @@ func TestPackUnpackGitWorkspaceUsesDelta(t *testing.T) {
 	mustWrite(t, filepath.Join(srcCwd, "deleted.txt"), "delete me\n")
 	runTestGit(t, srcCwd, "add", ".")
 	runTestGit(t, srcCwd, "commit", "-m", "base")
+	runTestGit(t, srcCwd, "checkout", "-b", "feature/session-restore")
 	mustWrite(t, filepath.Join(srcCwd, "changed.txt"), "staged\n")
 	runTestGit(t, srcCwd, "add", "changed.txt")
 	mustWrite(t, filepath.Join(srcCwd, "changed.txt"), "working\n")
@@ -58,6 +59,36 @@ func TestPackUnpackGitWorkspaceUsesDelta(t *testing.T) {
 	status := runTestGit(t, dstCwd, "status", "--porcelain")
 	if !strings.Contains(status, "MM changed.txt") || !strings.Contains(status, " D deleted.txt") || !strings.Contains(status, "?? new.txt") {
 		t.Fatalf("unexpected restored status:\n%s", status)
+	}
+	if branch := strings.TrimSpace(runTestGit(t, dstCwd, "branch", "--show-current")); branch != "feature/session-restore" {
+		t.Fatalf("restored branch = %q, want feature/session-restore", branch)
+	}
+}
+
+func TestPackUnpackGitWorkspacePreservesDetachedHead(t *testing.T) {
+	srcHome, srcCwd := t.TempDir(), t.TempDir()
+	runTestGit(t, srcCwd, "init")
+	runTestGit(t, srcCwd, "config", "user.email", "test@example.com")
+	runTestGit(t, srcCwd, "config", "user.name", "Test")
+	mustWrite(t, filepath.Join(srcCwd, "tracked.txt"), "base\n")
+	runTestGit(t, srcCwd, "add", ".")
+	runTestGit(t, srcCwd, "commit", "-m", "base")
+	runTestGit(t, srcCwd, "checkout", "--detach")
+	id := "44444444-4444-4444-4444-444444444444"
+	mustWrite(t, filepath.Join(srcCwd, ".acp-session-id"), id)
+	mustWrite(t, filepath.Join(srcHome, ".claude", "projects", "p", id+".jsonl"), "chat\n")
+
+	var archive bytes.Buffer
+	if err := Pack(&archive, "claude-acp", id, srcHome, srcCwd); err != nil {
+		t.Fatal(err)
+	}
+	dstCwd := t.TempDir()
+	runTestGit(t, dstCwd, "clone", "--no-local", srcCwd, ".")
+	if err := Unpack(&archive, t.TempDir(), dstCwd); err != nil {
+		t.Fatal(err)
+	}
+	if branch := strings.TrimSpace(runTestGit(t, dstCwd, "branch", "--show-current")); branch != "" {
+		t.Fatalf("restored branch = %q, want detached HEAD", branch)
 	}
 }
 
