@@ -68,10 +68,32 @@ spec:
               value: "/home/agentapi"
             - name: AGENTAPI_KV_STORE_BACKEND
               value: {{ dig "kvStore" "backend" "kubernetes" .Values.config | quote }}
+            {{- $kvDatabaseURLSecretRefName := dig "kvStore" "databaseUrlSecretRef" "name" "" .Values.config }}
+            {{- if $kvDatabaseURLSecretRefName }}
             - name: AGENTAPI_KV_STORE_DATABASE_URL
-              value: {{ dig "kvStore" "databaseUrl" "" .Values.config | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvDatabaseURLSecretRefName | quote }}
+                  key: {{ dig "kvStore" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            {{- else }}
+            {{- with (dig "kvStore" "databaseUrl" "" .Values.config) }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $kvAuthTokenSecretRefName := dig "kvStore" "authTokenSecretRef" "name" "" .Values.config }}
+            {{- if $kvAuthTokenSecretRefName }}
             - name: AGENTAPI_KV_STORE_AUTH_TOKEN
-              value: {{ dig "kvStore" "authToken" "" .Values.config | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kvAuthTokenSecretRefName | quote }}
+                  key: {{ dig "kvStore" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- else }}
+            {{- with (dig "kvStore" "authToken" "" .Values.config) }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             # Application configuration via environment variables (AGENTAPI_ prefix)
             - name: AGENTAPI_AUTH_STATIC_ENABLED
               value: {{ .Values.config.auth.static.enabled | quote }}

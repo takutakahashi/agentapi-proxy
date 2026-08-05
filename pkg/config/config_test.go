@@ -115,6 +115,22 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
+func TestLoadConfigKVStoreFromEnvironment(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	t.Setenv("AGENTAPI_KV_STORE_BACKEND", "libsql")
+	t.Setenv("AGENTAPI_KV_STORE_DATABASE_URL", "https://example.turso.io")
+	t.Setenv("AGENTAPI_KV_STORE_AUTH_TOKEN", "secret-token")
+
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	assert.Equal(t, "libsql", loadedConfig.KVStore.Backend)
+	assert.Equal(t, "https://example.turso.io", loadedConfig.KVStore.DatabaseURL)
+	assert.Equal(t, "secret-token", loadedConfig.KVStore.AuthToken)
+}
+
 func TestLoadConfigNonexistentFile(t *testing.T) {
 	_, err := LoadConfig("nonexistent-file.json")
 	if err == nil {
