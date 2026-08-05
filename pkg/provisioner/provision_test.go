@@ -53,6 +53,23 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 	}
 }
 
+func TestInjectSessionPersistenceHookBacksUpThenSchedulesSuspend(t *testing.T) {
+	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		AgentType: "codex-acp", PersistenceEnabled: true,
+	}}
+	injectSessionPersistenceHook(settings)
+	encoded, err := json.Marshal(settings.Codex.HooksJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(encoded)
+	backup := strings.Index(command, "backup-session-state")
+	suspend := strings.Index(command, "schedule-session-suspend")
+	if backup < 0 || suspend < 0 || backup >= suspend {
+		t.Fatalf("persistence hook must checkpoint before scheduling suspend: %s", command)
+	}
+}
+
 func TestBuildAgentCommandUsesConfiguredProxyBinary(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
 	env := map[string]string{"AGENTAPI_PROXY_BINARY": "/Applications/agentapi-proxy.app/Contents/MacOS/agentapi-proxy"}

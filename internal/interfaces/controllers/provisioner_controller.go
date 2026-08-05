@@ -33,6 +33,10 @@ type ProvisionerManager interface {
 	UpdateProvisionRequestStatus(ctx context.Context, sessionID, requestID string, req services.ProvisionRequestStatusUpdate) error
 }
 
+type sessionSuspendScheduler interface {
+	ScheduleSessionSuspend(ctx context.Context, sessionID string) error
+}
+
 func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository, stateStore ...services.SessionStateStore) *ProvisionerController {
 	pc := &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
 	if len(stateStore) > 0 {
@@ -142,6 +146,20 @@ func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
 		}
 		log.Printf("[SESSION_STATE] Backup skipped because persistence backend is unavailable: %v", err)
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) ScheduleSessionSuspend(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	scheduler, ok := pc.manager.(sessionSuspendScheduler)
+	if !ok || pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence suspend is unavailable"})
+	}
+	if err := scheduler.ScheduleSessionSuspend(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	return c.NoContent(http.StatusNoContent)
 }

@@ -115,6 +115,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.POST("/start", c.StartSession)
 	e.GET("/search", c.SearchSessions)
 	e.PATCH("/sessions/:sessionId/annotations", c.UpdateSessionAnnotations)
+	e.POST("/sessions/:sessionId/resume", c.ResumeSession)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
@@ -713,10 +714,57 @@ func findPendingSessionAllocation(sessions []entities.Session, sessionID string)
 	return nil
 }
 
+// ResumeSession explicitly recreates a suspended session workload. Read-only
+// status, message, and SSE endpoints deliberately do not wake a session.
+func (c *SessionController) ResumeSession(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	workloadSessionID := sessionID
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil && c.sessionRouteRepo != nil {
+		route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to look up session route")
+		}
+		if route != nil {
+			if route.ProxyURL != "" {
+				return c.resumeRemoteSession(ctx, route)
+			}
+			if route.RemoteSessionID != "" {
+				workloadSessionID = route.RemoteSessionID
+				session = c.getSessionManager().GetSession(workloadSessionID)
+			}
+		}
+	}
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Session resume is not supported by this session manager")
+	}
+	ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), workloadSessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to restore session workload: %v", err))
+	}
+	status := "active"
+	code := http.StatusOK
+	if restoring {
+		status = "restoring"
+		code = http.StatusAccepted
+		ctx.Response().Header().Set("Retry-After", "2")
+	} else if ensured != nil {
+		status = ensured.Status()
+	}
+	return ctx.JSON(code, map[string]interface{}{"session_id": sessionID, "status": status})
+}
+
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
-	workloadSessionID := sessionID
 
 	session := c.getSessionManager().GetSession(sessionID)
 	if session == nil {
@@ -728,9 +776,7 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 			} else if route != nil {
 				if route.ProxyURL == "" && route.RemoteSessionID != "" {
 					session = c.getSessionManager().GetSession(route.RemoteSessionID)
-					if session != nil {
-						workloadSessionID = route.RemoteSessionID
-					} else {
+					if session == nil {
 						return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 					}
 				} else {
@@ -750,27 +796,6 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 		if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 			log.Printf("User does not have access to session %s", sessionID)
 			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
-		}
-	}
-
-	// Opening a chat is also the lazy recovery trigger. The Service remains the
-	// canonical session record after a Pod/workload disappears; recreate the
-	// workload with the same proxy session ID and let the provisioner restore
-	// the ACP snapshot under that ID.
-	if ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer); ok && ctx.Request().Method == http.MethodGet {
-		ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), workloadSessionID)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to restore session workload: %v", err))
-		}
-		if ensured != nil {
-			session = ensured
-		}
-		if restoring {
-			ctx.Response().Header().Set("Retry-After", "2")
-			return ctx.JSON(http.StatusAccepted, map[string]interface{}{
-				"session_id": sessionID,
-				"status":     "restoring",
-			})
 		}
 	}
 
@@ -984,6 +1009,42 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 	}
 	proxy.ServeHTTP(ctx.Response(), ctx.Request())
 	return nil
+}
+
+func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	if route.RemoteSessionID == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
+	}
+	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/sessions/" + route.RemoteSessionID + "/resume"
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+	}
+	ts := hmacutil.NowTimestamp()
+	parsedTarget, err := url.Parse(targetURL)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
+	}
+	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, nil)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
+		req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
+	}
+	if route.TeamID != "" {
+		req.Header.Set("X-Forwarded-Team", route.TeamID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for key, values := range resp.Header {
+		for _, value := range values {
+			ctx.Response().Header().Add(key, value)
+		}
+	}
+	return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
 }
 
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.

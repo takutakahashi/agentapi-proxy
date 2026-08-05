@@ -312,6 +312,7 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.POST("/start", r.handlers.sessionController.StartSession)
 	r.echo.GET("/search", r.handlers.sessionController.SearchSessions)
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
+	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 
 	// Proxy-wide session status push endpoints (registered before /:sessionId/* catch-all)
@@ -343,6 +344,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/session-allocations/next", r.handlers.provisionerController.GetNextSessionAllocation)
 		r.echo.POST("/internal/session-allocations/:sessionId/result", r.handlers.provisionerController.CompleteSessionAllocation)
 		r.echo.PUT("/internal/session-state/:sessionId", r.handlers.provisionerController.SaveSessionState)
+		r.echo.POST("/internal/session-state/:sessionId/suspend", r.handlers.provisionerController.ScheduleSessionSuspend)
 		r.echo.GET("/internal/session-state/:sessionId", r.handlers.provisionerController.LoadSessionState)
 		r.echo.POST("/internal/session-state/:sessionId/uploads", r.handlers.provisionerController.BeginSessionStateUpload)
 		r.echo.GET("/internal/session-state/:sessionId/uploads/:uploadId/parts/:partNumber", r.handlers.provisionerController.PresignSessionStatePart)

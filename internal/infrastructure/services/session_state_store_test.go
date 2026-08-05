@@ -21,7 +21,7 @@ func TestVolumeSessionStateStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer got.Close()
+	defer func() { _ = got.Close() }()
 	gotBytes, err := io.ReadAll(got)
 	if err != nil {
 		t.Fatal(err)

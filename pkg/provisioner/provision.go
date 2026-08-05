@@ -425,7 +425,7 @@ func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
 	}
 	// Return from the Stop hook before checkpointing: Codex commits its local
 	// thread state only after synchronous Stop hooks finish.
-	command := "nohup sh -c 'sleep 2; agentapi-proxy client backup-session-state' >/tmp/session-state-backup.log 2>&1 &"
+	command := "nohup sh -c 'sleep 2; AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1 agentapi-proxy client backup-session-state && agentapi-proxy client schedule-session-suspend' >/tmp/session-state-backup.log 2>&1 &"
 	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 10}}}
 	appendStop := func(root map[string]interface{}) map[string]interface{} {
 		if root == nil {
@@ -464,7 +464,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 				URL string `json:"url"`
 			}
 			decodeErr := json.NewDecoder(io.LimitReader(directResp.Body, 64<<10)).Decode(&signed)
-			directResp.Body.Close()
+			_ = directResp.Body.Close()
 			if decodeErr != nil || signed.URL == "" {
 				return false, fmt.Errorf("invalid direct restore response")
 			}
@@ -476,7 +476,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			if reqErr != nil {
 				return false, errSessionStateBackendUnavailable
 			}
-			defer objectResp.Body.Close()
+			defer func() { _ = objectResp.Body.Close() }()
 			if objectResp.StatusCode == http.StatusNotFound {
 				return false, nil
 			}
@@ -488,7 +488,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			}
 			return true, nil
 		}
-		directResp.Body.Close()
+		_ = directResp.Body.Close()
 		if directResp.StatusCode == http.StatusServiceUnavailable {
 			return false, errSessionStateBackendUnavailable
 		}

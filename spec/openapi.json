@@ -262,6 +262,51 @@
         }
       }
     },
+    "/sessions/{sessionId}/resume": {
+      "post": {
+        "summary": "Resume a suspended session",
+        "description": "Explicitly recreates the runtime workload for a suspended session. Read-only status, message, and SSE requests do not resume sessions.",
+        "operationId": "resumeSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session workload is active"
+          },
+          "202": {
+            "description": "Session workload is being restored",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "501": {
+            "description": "Resume is not supported by the configured session manager"
+          }
+        }
+      }
+    },
     "/sessions/status/stream": {
       "get": {
         "summary": "Stream all session status changes (SSE)",

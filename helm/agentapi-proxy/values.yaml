@@ -247,6 +247,8 @@ asset:
 sessionPersistence:
   backend: ""
   path: /var/lib/agentapi-session-state
+  # Suspend the workload this long after an ACP turn is checkpointed.
+  suspendAfter: 1h
   persistence:
     enabled: true
     storageClass: ""

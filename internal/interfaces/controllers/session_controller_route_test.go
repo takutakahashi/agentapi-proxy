@@ -46,7 +46,7 @@ func routeContext(e *echo.Echo, method, path, sessionID string) (echo.Context, *
 	return ctx, rec
 }
 
-func TestRouteToSessionEnsuresLocalAliasByRemoteSessionID(t *testing.T) {
+func TestRouteToSessionDoesNotWakeLocalAliasOnGet(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/status" {
 			t.Errorf("upstream path = %q, want /status", r.URL.Path)
@@ -74,12 +74,12 @@ func TestRouteToSessionEnsuresLocalAliasByRemoteSessionID(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if len(manager.ensuredIDs) != 1 || manager.ensuredIDs[0] != "remote-id" {
-		t.Fatalf("ensured IDs = %v, want [remote-id]", manager.ensuredIDs)
+	if len(manager.ensuredIDs) != 0 {
+		t.Fatalf("GET unexpectedly woke sessions: %v", manager.ensuredIDs)
 	}
 }
 
-func TestRouteToSessionEnsuresRegularLocalSessionByPublicID(t *testing.T) {
+func TestRouteToSessionDoesNotWakeRegularLocalSessionOnGet(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -97,12 +97,12 @@ func TestRouteToSessionEnsuresRegularLocalSessionByPublicID(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if len(manager.ensuredIDs) != 1 || manager.ensuredIDs[0] != "local-id" {
-		t.Fatalf("ensured IDs = %v, want [local-id]", manager.ensuredIDs)
+	if len(manager.ensuredIDs) != 0 {
+		t.Fatalf("GET unexpectedly woke sessions: %v", manager.ensuredIDs)
 	}
 }
 
-func TestRouteToSessionLocalAliasRestoringReturnsPublicSessionID(t *testing.T) {
+func TestResumeSessionLocalAliasRestoringReturnsPublicSessionID(t *testing.T) {
 	manager := &ensuringSessionManager{
 		fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{
 			"remote-id": {id: "remote-id", userID: "user-1", scope: entities.ScopeUser},
@@ -116,9 +116,9 @@ func TestRouteToSessionLocalAliasRestoringReturnsPublicSessionID(t *testing.T) {
 			SessionID: "public-id", RemoteSessionID: "remote-id",
 		}}),
 	)
-	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
+	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/resume", "public-id")
 
-	if err := controller.RouteToSession(ctx); err != nil {
+	if err := controller.ResumeSession(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if rec.Code != http.StatusAccepted {

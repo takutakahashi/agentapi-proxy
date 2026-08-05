@@ -353,6 +353,18 @@ func (c *ACPController) handleSessionResume(ctx echo.Context, req acpRequest) er
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "permission denied"))
 	}
+	if ensurer, ok := c.sessionManagerProvider.GetSessionManager().(portrepos.SessionWorkloadEnsurer); ok {
+		ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), params.SessionId)
+		if err != nil {
+			return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to resume session workload: "+err.Error()))
+		}
+		if ensured != nil {
+			session = ensured
+		}
+		if restoring {
+			return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, map[string]string{"status": "restoring"}))
+		}
+	}
 
 	// "active" is the proxy-level status for a running K8s session.
 	// "running"/"stable" are agentapi-level statuses used in other contexts.
@@ -522,7 +534,6 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 	}
-
 	addr := session.Addr()
 	if addr == "" {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session has no address"})
@@ -587,7 +598,6 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 		log.Printf("[ACP] HandleSessionSSE: permission denied (sessionId=%s)", sessionId)
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 	}
-
 	addr := session.Addr()
 	if addr == "" {
 		log.Printf("[ACP] HandleSessionSSE: session has no address (sessionId=%s)", sessionId)

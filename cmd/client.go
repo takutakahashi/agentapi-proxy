@@ -626,6 +626,7 @@ func init() {
 	ClientCmd.AddCommand(memoryCmd)
 	ClientCmd.AddCommand(assetCmd)
 	ClientCmd.AddCommand(backupSessionStateCmd)
+	ClientCmd.AddCommand(scheduleSessionSuspendCmd)
 }
 
 const (
