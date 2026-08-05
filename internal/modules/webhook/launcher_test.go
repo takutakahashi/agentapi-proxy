@@ -2,7 +2,7 @@ package webhook
 
 import "testing"
 
-func TestResolveTriggeredUserID(t *testing.T) {
+func TestResolveTriggeredUsername(t *testing.T) {
 	tests := []struct {
 		name             string
 		tags             map[string]string
@@ -52,9 +52,27 @@ func TestResolveTriggeredUserID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveTriggeredUserID(tt.tags, tt.payload, tt.credentialSource); got != tt.want {
-				t.Fatalf("resolveTriggeredUserID() = %q, want %q", got, tt.want)
+			if got := resolveTriggeredUsername(tt.tags, tt.payload, tt.credentialSource); got != tt.want {
+				t.Fatalf("resolveTriggeredUsername() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestApplyTriggeredUsernameTags(t *testing.T) {
+	tags := map[string]string{}
+
+	got := applyTriggeredUsernameTags(tags, map[string]interface{}{
+		"sender": map[string]interface{}{"login": "github-user"},
+	}, "triggered_user")
+
+	if got != "github-user" {
+		t.Fatalf("applyTriggeredUsernameTags() = %q, want github-user", got)
+	}
+	if tags["username"] != "github-user" {
+		t.Fatalf("username tag = %q, want github-user", tags["username"])
+	}
+	if tags["triggered_user_id"] != "github-user" {
+		t.Fatalf("triggered_user_id tag = %q, want github-user", tags["triggered_user_id"])
 	}
 }
