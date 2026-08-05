@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // TestBroadcastMessageUpdate_UpdatesLastMessageAt verifies that broadcastMessageUpdate
@@ -251,6 +254,41 @@ func TestSupportedAgentTypeOrDefault(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := supportedAgentTypeOrDefault(tt.agentType); got != tt.want {
 				t.Fatalf("supportedAgentTypeOrDefault(%q) = %q, want %q", tt.agentType, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveAutoAgentType(t *testing.T) {
+	const namespace = "test"
+	codexFiles := sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+		Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
+		Content: `{}`,
+	}})
+	tests := []struct {
+		name      string
+		agentType string
+		objects   []runtime.Object
+		want      string
+	}{
+		{name: "explicit agent is unchanged", agentType: "cursor", want: "cursor"},
+		{name: "auto without credentials uses claude", agentType: "auto", want: "claude-acp"},
+		{
+			name:      "auto with codex auth uses codex",
+			agentType: "auto",
+			objects: []runtime.Object{&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-user1", Namespace: namespace},
+				Data:       codexFiles,
+			}},
+			want: "codex-acp",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &KubernetesSessionManager{client: fake.NewSimpleClientset(tt.objects...), namespace: namespace}
+			req := &entities.RunServerRequest{UserID: "user1", Scope: entities.ScopeUser, AgentType: tt.agentType}
+			if got := m.resolveAutoAgentType(context.Background(), req); got != tt.want {
+				t.Fatalf("resolveAutoAgentType() = %q, want %q", got, tt.want)
 			}
 		})
 	}

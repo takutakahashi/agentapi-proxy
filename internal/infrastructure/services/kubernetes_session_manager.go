@@ -458,6 +458,7 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 // It first attempts to use a pre-warmed stock session (labeled agentapi.proxy/stock=true).
 // If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
 	applySandboxDefaults(req)
 
@@ -2098,6 +2099,62 @@ func supportedAgentTypeOrDefault(agentType string) string {
 	default:
 		return ""
 	}
+}
+
+func credentialOwnersForRequest(req *entities.RunServerRequest) []string {
+	owners := make([]string, 0, 2)
+	switch req.CredentialSource {
+	case "session_user":
+		owners = append(owners, req.UserID)
+	case "triggered_user":
+		if req.TriggeredUserID != "" {
+			owners = append(owners, req.TriggeredUserID)
+		}
+		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+			owners = append(owners, req.TeamID)
+		}
+	case "team":
+		owners = append(owners, req.TeamID)
+	case "none":
+	case "":
+		if req.Scope == entities.ScopeUser || req.Scope == "" {
+			owners = append(owners, req.UserID)
+		}
+	}
+	return owners
+}
+
+// resolveAutoAgentType selects Codex only when the credentials that will be
+// mounted into the session contain ~/.codex/auth.json. All other cases use Claude.
+func (m *KubernetesSessionManager) resolveAutoAgentType(ctx context.Context, req *entities.RunServerRequest) string {
+	if req.AgentType != "auto" {
+		return req.AgentType
+	}
+	for _, owner := range credentialOwnersForRequest(req) {
+		if owner == "" {
+			continue
+		}
+		secretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(owner))
+		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			continue
+		}
+		files := sessionsettings.SecretDataToFiles(secret.Data)
+		if len(files) == 0 {
+			continue
+		}
+		for _, file := range files {
+			if file.Path == sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth] {
+				log.Printf("[K8S_SESSION] Resolved auto agent type to codex-acp from Secret %s", secretName)
+				return "codex-acp"
+			}
+		}
+		// buildSessionSettings mounts the first owner's valid file set only, so a
+		// later fallback owner's Codex credentials would not be available.
+		break
+	}
+	log.Printf("[K8S_SESSION] Resolved auto agent type to claude-acp (Codex auth.json not found)")
+	return "claude-acp"
 }
 
 func restoreAgentTypeFromService(svc *corev1.Service) string {
@@ -5627,26 +5684,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	// on startup via the provision endpoint payload.
 	// Empty CredentialSource preserves the legacy behavior: user-scoped sessions
 	// use the session creator and team-scoped sessions receive no credentials.
-	credentialOwners := make([]string, 0, 2)
-	switch req.CredentialSource {
-	case "session_user":
-		credentialOwners = append(credentialOwners, req.UserID)
-	case "triggered_user":
-		if req.TriggeredUserID != "" {
-			credentialOwners = append(credentialOwners, req.TriggeredUserID)
-		}
-		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
-			credentialOwners = append(credentialOwners, req.TeamID)
-		}
-	case "team":
-		credentialOwners = append(credentialOwners, req.TeamID)
-	case "none":
-		// Explicitly disabled.
-	case "":
-		if req.Scope == entities.ScopeUser || req.Scope == "" {
-			credentialOwners = append(credentialOwners, req.UserID)
-		}
-	default:
+	credentialOwners := credentialOwnersForRequest(req)
+	if req.CredentialSource != "" && req.CredentialSource != "session_user" && req.CredentialSource != "triggered_user" && req.CredentialSource != "team" && req.CredentialSource != "none" {
 		log.Printf("[K8S_SESSION] Warning: unknown credential_source %q for session %s; credentials disabled", req.CredentialSource, session.id)
 	}
 	for _, credentialOwner := range credentialOwners {
@@ -6256,6 +6295,7 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 	sessionID string,
 	req *entities.RunServerRequest,
 ) (*sessionsettings.SessionSettings, error) {
+	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	// Create a temporary session with the provided ID to satisfy buildSessionSettings
 	tempSession := &KubernetesSession{
 		id:          sessionID,
