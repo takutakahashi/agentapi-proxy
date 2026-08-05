@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tursodatabase/libsql-client-go/libsql"
+	_ "modernc.org/sqlite" // register the sqlite driver for local file:// databases
 )
 
 type LibSQLStore struct{ db *sql.DB }

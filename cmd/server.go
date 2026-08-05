@@ -734,7 +734,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 
 	// Create dependencies
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace)
-	channelResolver := slackbot.NewSlackChannelResolver(proxyServer.GetPersistenceClient(), namespace)
+	channelResolver := slackbot.NewSlackChannelResolver(proxyServer.GetPersistenceClient(), namespace).WithSecretClient(client)
 
 	eventHandler := slackbot.NewSlackBotEventHandler(
 		slackbotRepo,

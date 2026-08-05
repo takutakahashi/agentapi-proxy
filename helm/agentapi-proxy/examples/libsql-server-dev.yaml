@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agentapi-libsql-kv
+  labels:
+    app.kubernetes.io/name: agentapi-libsql-kv
+    app.kubernetes.io/component: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nfs-csi
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentapi-libsql-kv
+  labels:
+    app.kubernetes.io/name: agentapi-libsql-kv
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agentapi-libsql-kv
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agentapi-libsql-kv
+        app.kubernetes.io/component: database
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsGroup: 999
+        runAsUser: 999
+      containers:
+        - name: libsql-server
+          image: ghcr.io/tursodatabase/libsql-server:3ec6803
+          imagePullPolicy: IfNotPresent
+          # Bypass the image entrypoint's chown so a root-squashed NFS volume
+          # can be used by the non-root server process.
+          command:
+            - /bin/sqld
+          args:
+            - --db-path
+            - /var/lib/sqld/agentapi.db
+            - --http-listen-addr
+            - 0.0.0.0:8080
+            - --grpc-listen-addr
+            - 0.0.0.0:5001
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/sqld
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: agentapi-libsql-kv
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentapi-libsql-kv
+  labels:
+    app.kubernetes.io/name: agentapi-libsql-kv
+    app.kubernetes.io/component: database
+spec:
+  selector:
+    app.kubernetes.io/name: agentapi-libsql-kv
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

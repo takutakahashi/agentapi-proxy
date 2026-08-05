@@ -58,7 +58,7 @@ func (a *secretAdapter) Create(ctx context.Context, object *corev1.Secret, opts 
 	}
 	record, err := a.store.Create(ctx, Record{Kind: KindSecret, Namespace: a.namespace, Key: object.Name, Value: value})
 	if err != nil {
-		return nil, storageError(secretResource, object.Name, err)
+		return nil, createStorageError(secretResource, object.Name, err)
 	}
 	result := object.DeepCopy()
 	result.Namespace = a.namespace
@@ -139,7 +139,7 @@ func (a *configMapAdapter) Create(ctx context.Context, object *corev1.ConfigMap,
 	}
 	record, err := a.store.Create(ctx, Record{Kind: KindConfigMap, Namespace: a.namespace, Key: object.Name, Value: value})
 	if err != nil {
-		return nil, storageError(configMapResource, object.Name, err)
+		return nil, createStorageError(configMapResource, object.Name, err)
 	}
 	result := object.DeepCopy()
 	result.Namespace = a.namespace
@@ -216,4 +216,11 @@ func storageError(resource schema.GroupResource, name string, err error) error {
 	default:
 		return err
 	}
+}
+
+func createStorageError(resource schema.GroupResource, name string, err error) error {
+	if errors.Is(err, ErrConflict) {
+		return apierrors.NewAlreadyExists(resource, name)
+	}
+	return storageError(resource, name, err)
 }

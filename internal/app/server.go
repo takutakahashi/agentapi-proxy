@@ -473,7 +473,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		// Set up subscription secret syncer if Kubernetes mode is enabled
 		if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok {
 			syncer := services.NewKubernetesSubscriptionSecretSyncer(
-				persistenceClient,
+				k8sSessionManager.GetClient(),
 				k8sManager.GetNamespace(),
 				notificationSvc.GetStorage(),
 				"", // Use default prefix

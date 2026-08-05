@@ -83,6 +83,19 @@ func TestAdapterPersistsSecretAndConfigMap(t *testing.T) {
 	}
 }
 
+func TestAdapterCreateConflictIsAlreadyExists(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	client := NewKubernetesAdapter(fake.NewSimpleClientset(), store)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "existing"}}
+	if _, err := client.CoreV1().Secrets("ns").Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().Secrets("ns").Create(ctx, secret, metav1.CreateOptions{}); !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("Create() error = %v, want AlreadyExists", err)
+	}
+}
+
 func TestAdapterDoesNotReadLegacyKubernetesKV(t *testing.T) {
 	ctx := context.Background()
 	legacy := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-task-legacy", Namespace: "ns"}, Data: map[string]string{"old": "data"}}

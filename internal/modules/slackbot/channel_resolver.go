@@ -30,7 +30,8 @@ const (
 // SlackChannelResolver resolves Slack channel IDs to names using the Slack API,
 // with a two-level cache: in-memory (sync.Map) and a Kubernetes ConfigMap for persistence.
 type SlackChannelResolver struct {
-	kubeClient   kubernetes.Interface
+	cacheClient  kubernetes.Interface
+	secretClient kubernetes.Interface
 	namespace    string
 	slackAPIBase string // base URL for the Slack API, e.g. "https://slack.com/api"
 	// in-memory cache: channel ID → channel name (cleared on pod restart)
@@ -40,10 +41,19 @@ type SlackChannelResolver struct {
 // NewSlackChannelResolver creates a new SlackChannelResolver
 func NewSlackChannelResolver(kubeClient kubernetes.Interface, namespace string) *SlackChannelResolver {
 	return &SlackChannelResolver{
-		kubeClient:   kubeClient,
+		cacheClient:  kubeClient,
+		secretClient: kubeClient,
 		namespace:    namespace,
 		slackAPIBase: slackDefaultAPIBase,
 	}
+}
+
+// WithSecretClient uses a separate raw Kubernetes client for externally
+// managed token Secrets while retaining the persistence client for the channel
+// cache. This keeps operational Secrets outside the application KV backend.
+func (r *SlackChannelResolver) WithSecretClient(client kubernetes.Interface) *SlackChannelResolver {
+	r.secretClient = client
+	return r
 }
 
 // WithSlackAPIBase overrides the Slack API base URL. Intended for testing only;
@@ -100,7 +110,7 @@ func (r *SlackChannelResolver) GetBotToken(ctx context.Context, secretName, secr
 		secretKey = "bot-token"
 	}
 
-	secret, err := r.kubeClient.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	secret, err := r.secretClient.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to get secret %s: %w", secretName, err)
 	}
@@ -116,7 +126,7 @@ func (r *SlackChannelResolver) GetBotToken(ctx context.Context, secretName, secr
 // loadFromConfigMap looks up a channel ID in the persistent ConfigMap cache.
 // Returns (name, true, nil) on hit, ("", false, nil) on miss, ("", false, err) on error.
 func (r *SlackChannelResolver) loadFromConfigMap(ctx context.Context, channelID string) (string, bool, error) {
-	cm, err := r.kubeClient.CoreV1().ConfigMaps(r.namespace).Get(ctx, slackChannelCacheConfigMapName, metav1.GetOptions{})
+	cm, err := r.cacheClient.CoreV1().ConfigMaps(r.namespace).Get(ctx, slackChannelCacheConfigMapName, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return "", false, nil
@@ -133,7 +143,7 @@ func (r *SlackChannelResolver) loadFromConfigMap(ctx context.Context, channelID 
 
 // upsertConfigMap creates or updates the cache ConfigMap with the given channel ID→name mapping.
 func (r *SlackChannelResolver) upsertConfigMap(ctx context.Context, channelID, channelName string) error {
-	cm, err := r.kubeClient.CoreV1().ConfigMaps(r.namespace).Get(ctx, slackChannelCacheConfigMapName, metav1.GetOptions{})
+	cm, err := r.cacheClient.CoreV1().ConfigMaps(r.namespace).Get(ctx, slackChannelCacheConfigMapName, metav1.GetOptions{})
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get ConfigMap: %w", err)
@@ -151,7 +161,7 @@ func (r *SlackChannelResolver) upsertConfigMap(ctx context.Context, channelID, c
 				channelID: channelName,
 			},
 		}
-		_, err = r.kubeClient.CoreV1().ConfigMaps(r.namespace).Create(ctx, newCM, metav1.CreateOptions{})
+		_, err = r.cacheClient.CoreV1().ConfigMaps(r.namespace).Create(ctx, newCM, metav1.CreateOptions{})
 		return err
 	}
 
@@ -160,7 +170,7 @@ func (r *SlackChannelResolver) upsertConfigMap(ctx context.Context, channelID, c
 		cm.Data = make(map[string]string)
 	}
 	cm.Data[channelID] = channelName
-	_, err = r.kubeClient.CoreV1().ConfigMaps(r.namespace).Update(ctx, cm, metav1.UpdateOptions{})
+	_, err = r.cacheClient.CoreV1().ConfigMaps(r.namespace).Update(ctx, cm, metav1.UpdateOptions{})
 	return err
 }
 
