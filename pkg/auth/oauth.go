@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -12,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -32,11 +33,14 @@ func logVerbose(format string, args ...interface{}) {
 	}
 }
 
-// OAuthState represents a pending OAuth authentication state
-type OAuthState struct {
-	State       string    `json:"state"`
-	RedirectURI string    `json:"redirect_uri"`
-	CreatedAt   time.Time `json:"created_at"`
+const oauthStateTTL = 15 * time.Minute
+
+// oauthStatePayload is signed and carried by the OAuth state parameter.
+type oauthStatePayload struct {
+	Nonce       string `json:"nonce"`
+	RedirectURI string `json:"redirect_uri"`
+	IssuedAt    int64  `json:"iat"`
+	ExpiresAt   int64  `json:"exp"`
 }
 
 // OAuthTokenResponse represents the GitHub OAuth token response
@@ -50,7 +54,6 @@ type OAuthTokenResponse struct {
 type GitHubOAuthProvider struct {
 	config         *config.GitHubOAuthConfig
 	client         *http.Client
-	stateStore     OAuthStateStore
 	githubProvider *GitHubAuthProvider
 }
 
@@ -62,68 +65,16 @@ func NewGitHubOAuthProvider(cfg *config.GitHubOAuthConfig, provider *GitHubAuthP
 	return &GitHubOAuthProvider{
 		config:         cfg,
 		client:         utils.NewDefaultHTTPClient(),
-		stateStore:     &memoryOAuthStateStore{},
 		githubProvider: provider,
 	}
 }
 
-// SetStateStore replaces the default in-memory state store with a shared implementation
-// (e.g. ConfigMap-backed) to support multi-pod deployments.
-func (p *GitHubOAuthProvider) SetStateStore(store OAuthStateStore) {
-	p.stateStore = store
-}
-
-// memoryOAuthStateStore is the default in-memory OAuthStateStore backed by sync.Map.
-type memoryOAuthStateStore struct {
-	m sync.Map
-}
-
-func (s *memoryOAuthStateStore) Store(_ context.Context, state string, entry *OAuthState) error {
-	s.m.Store(state, entry)
-	return nil
-}
-
-func (s *memoryOAuthStateStore) Load(_ context.Context, state string) (*OAuthState, bool, error) {
-	v, ok := s.m.Load(state)
-	if !ok {
-		return nil, false, nil
-	}
-	return v.(*OAuthState), true, nil
-}
-
-func (s *memoryOAuthStateStore) Delete(_ context.Context, state string) error {
-	s.m.Delete(state)
-	return nil
-}
-
-func (s *memoryOAuthStateStore) Range(_ context.Context, fn func(string, *OAuthState) bool) error {
-	s.m.Range(func(k, v interface{}) bool {
-		return fn(k.(string), v.(*OAuthState))
-	})
-	return nil
-}
-
 // GenerateAuthURL generates the GitHub OAuth authorization URL
 func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, string, error) {
-	ctx := context.Background()
-
-	// Generate secure random state
-	state, err := p.generateState()
+	state, err := p.generateState(redirectURI, time.Now())
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate state: %w", err)
 	}
-
-	// Store state with expiration (15 minutes)
-	if err := p.stateStore.Store(ctx, state, &OAuthState{
-		State:       state,
-		RedirectURI: redirectURI,
-		CreatedAt:   time.Now(),
-	}); err != nil {
-		return "", "", fmt.Errorf("failed to store OAuth state: %w", err)
-	}
-
-	// Clean up expired states
-	p.cleanupExpiredStates(ctx)
 
 	// Build authorization URL
 	params := url.Values{
@@ -145,23 +96,10 @@ func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, strin
 
 // ExchangeCode exchanges the authorization code for an access token
 func (p *GitHubOAuthProvider) ExchangeCode(ctx context.Context, code, state string) (*UserContext, error) {
-	// Verify state
-	oauthState, exists, err := p.stateStore.Load(ctx, state)
+	oauthState, err := p.verifyState(state, time.Now())
 	if err != nil {
-		return nil, fmt.Errorf("failed to load OAuth state: %w", err)
+		return nil, err
 	}
-	if !exists {
-		return nil, fmt.Errorf("invalid state parameter")
-	}
-
-	// Check if state is expired (15 minutes)
-	if time.Since(oauthState.CreatedAt) > 15*time.Minute {
-		_ = p.stateStore.Delete(ctx, state)
-		return nil, fmt.Errorf("state expired")
-	}
-
-	// Remove state after use
-	_ = p.stateStore.Delete(ctx, state)
 
 	// Exchange code for token
 	token, err := p.exchangeCodeForToken(ctx, code, oauthState.RedirectURI)
@@ -228,30 +166,63 @@ func (p *GitHubOAuthProvider) exchangeCodeForToken(ctx context.Context, code, re
 	return &tokenResp, nil
 }
 
-// generateState generates a secure random state parameter
-func (p *GitHubOAuthProvider) generateState() (string, error) {
+// generateState creates a signed, self-contained OAuth state parameter.
+func (p *GitHubOAuthProvider) generateState(redirectURI string, now time.Time) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return base64.URLEncoding.EncodeToString(b), nil
+
+	return p.signState(oauthStatePayload{
+		Nonce:       base64.RawURLEncoding.EncodeToString(b),
+		RedirectURI: redirectURI,
+		IssuedAt:    now.Unix(),
+		ExpiresAt:   now.Add(oauthStateTTL).Unix(),
+	})
 }
 
-// cleanupExpiredStates removes expired states from the store
-func (p *GitHubOAuthProvider) cleanupExpiredStates(ctx context.Context) {
-	now := time.Now()
-	var toDelete []string
-
-	_ = p.stateStore.Range(ctx, func(state string, oauthState *OAuthState) bool {
-		if now.Sub(oauthState.CreatedAt) > 15*time.Minute {
-			toDelete = append(toDelete, state)
-		}
-		return true
-	})
-
-	for _, state := range toDelete {
-		_ = p.stateStore.Delete(ctx, state)
+func (p *GitHubOAuthProvider) signState(payload oauthStatePayload) (string, error) {
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
 	}
+	payloadPart := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	signature := base64.RawURLEncoding.EncodeToString(p.stateSignature(payloadPart))
+	return payloadPart + "." + signature, nil
+}
+
+func (p *GitHubOAuthProvider) verifyState(state string, now time.Time) (*oauthStatePayload, error) {
+	parts := strings.Split(state, ".")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid state parameter")
+	}
+
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || !hmac.Equal(signature, p.stateSignature(parts[0])) {
+		return nil, fmt.Errorf("invalid state parameter")
+	}
+
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("invalid state parameter")
+	}
+	var payload oauthStatePayload
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil || payload.Nonce == "" || payload.RedirectURI == "" {
+		return nil, fmt.Errorf("invalid state parameter")
+	}
+	if payload.ExpiresAt <= now.Unix() {
+		return nil, fmt.Errorf("state expired")
+	}
+	if payload.IssuedAt > now.Add(time.Minute).Unix() || payload.ExpiresAt-payload.IssuedAt > int64(oauthStateTTL/time.Second) {
+		return nil, fmt.Errorf("invalid state parameter")
+	}
+	return &payload, nil
+}
+
+func (p *GitHubOAuthProvider) stateSignature(payload string) []byte {
+	mac := hmac.New(sha256.New, []byte("agentapi-proxy/oauth-state/v1\x00"+p.config.ClientSecret))
+	_, _ = mac.Write([]byte(payload))
+	return mac.Sum(nil)
 }
 
 // getOAuthHost returns the appropriate OAuth host URL based on the configured base URL

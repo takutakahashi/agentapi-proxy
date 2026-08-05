@@ -157,26 +157,20 @@ func TestGitHubOAuthProvider_ExchangeCode_ExpiredState(t *testing.T) {
 
 	provider := NewGitHubOAuthProvider(cfg, NewGitHubAuthProvider(githubCfg))
 
-	// Manually create an expired state
-	state := "expired-state"
+	state, err := provider.generateState("http://localhost:3000/callback", time.Now().Add(-20*time.Minute))
+	assert.NoError(t, err)
 	ctx := context.Background()
-	_ = provider.stateStore.Store(ctx, state, &OAuthState{
-		State:       state,
-		RedirectURI: "http://localhost:3000/callback",
-		CreatedAt:   time.Now().Add(-20 * time.Minute), // 20 minutes ago
-	})
-
-	_, err := provider.ExchangeCode(ctx, "test-code", state)
+	_, err = provider.ExchangeCode(ctx, "test-code", state)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "state expired")
 }
 
 func TestGitHubOAuthProvider_generateState(t *testing.T) {
-	provider := &GitHubOAuthProvider{}
+	provider := &GitHubOAuthProvider{config: &config.GitHubOAuthConfig{ClientSecret: "secret"}}
 
-	state1, err1 := provider.generateState()
-	state2, err2 := provider.generateState()
+	state1, err1 := provider.generateState("https://example.com/callback", time.Now())
+	state2, err2 := provider.generateState("https://example.com/callback", time.Now())
 
 	assert.NoError(t, err1)
 	assert.NoError(t, err2)
@@ -185,34 +179,43 @@ func TestGitHubOAuthProvider_generateState(t *testing.T) {
 	assert.NotEqual(t, state1, state2) // States should be unique
 }
 
-func TestGitHubOAuthProvider_cleanupExpiredStates(t *testing.T) {
-	ctx := context.Background()
-	provider := &GitHubOAuthProvider{
-		stateStore: &memoryOAuthStateStore{},
-	}
+func TestGitHubOAuthProvider_StateWorksAcrossInstances(t *testing.T) {
+	cfg := &config.GitHubOAuthConfig{ClientSecret: "shared-secret"}
+	issuer := &GitHubOAuthProvider{config: cfg}
+	verifier := &GitHubOAuthProvider{config: cfg}
+	now := time.Now()
 
-	// Add valid state
-	validState := "valid-state"
-	_ = provider.stateStore.Store(ctx, validState, &OAuthState{
-		State:       validState,
-		RedirectURI: "http://localhost:3000/callback",
-		CreatedAt:   time.Now(),
-	})
+	state, err := issuer.generateState("https://example.com/callback", now)
+	assert.NoError(t, err)
+	payload, err := verifier.verifyState(state, now)
 
-	// Add expired state
-	expiredState := "expired-state"
-	_ = provider.stateStore.Store(ctx, expiredState, &OAuthState{
-		State:       expiredState,
-		RedirectURI: "http://localhost:3000/callback",
-		CreatedAt:   time.Now().Add(-20 * time.Minute),
-	})
+	assert.NoError(t, err)
+	assert.Equal(t, "https://example.com/callback", payload.RedirectURI)
+}
 
-	// Clean up
-	provider.cleanupExpiredStates(ctx)
+func TestGitHubOAuthProvider_StateRejectsTampering(t *testing.T) {
+	provider := &GitHubOAuthProvider{config: &config.GitHubOAuthConfig{ClientSecret: "secret"}}
+	now := time.Now()
+	state, err := provider.generateState("https://example.com/callback", now)
+	assert.NoError(t, err)
 
-	// Check results
-	_, validExists, _ := provider.stateStore.Load(ctx, validState)
-	_, expiredExists, _ := provider.stateStore.Load(ctx, expiredState)
-	assert.True(t, validExists)
-	assert.False(t, expiredExists)
+	parts := strings.Split(state, ".")
+	tamperedState := "A" + parts[0][1:] + "." + parts[1]
+	_, err = provider.verifyState(tamperedState, now)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid state parameter")
+}
+
+func TestGitHubOAuthProvider_StateRejectsDifferentSecret(t *testing.T) {
+	issuer := &GitHubOAuthProvider{config: &config.GitHubOAuthConfig{ClientSecret: "secret-one"}}
+	verifier := &GitHubOAuthProvider{config: &config.GitHubOAuthConfig{ClientSecret: "secret-two"}}
+	now := time.Now()
+	state, err := issuer.generateState("https://example.com/callback", now)
+	assert.NoError(t, err)
+
+	_, err = verifier.verifyState(state, now)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid state parameter")
 }
