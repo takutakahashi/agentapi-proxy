@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -24,6 +25,7 @@ import (
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -35,6 +37,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -49,6 +52,8 @@ type Server struct {
 	notificationSvc    *notification.Service
 	container          *di.Container                                   // Internal DI container
 	sessionManager     portrepos.SessionManager                        // Session lifecycle manager
+	persistenceClient  kubernetes.Interface                            // Secret/ConfigMap client for non-session application data
+	kvStore            kvstore.Store                                   // non-nil when persistenceClient is backed by libSQL
 	settingsRepo       portrepos.SettingsRepository                    // Settings repository
 	credentialsRepo    portrepos.CredentialsRepository                 // Credentials repository
 	shareRepo          portrepos.ShareRepository                       // Share repository for session sharing
@@ -171,6 +176,24 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	sessionManager := portrepos.SessionManager(k8sSessionManager)
 	log.Printf("[SERVER] Kubernetes session manager initialized successfully")
 
+	// Build a separate persistence client. The session manager always retains
+	// the raw Kubernetes client; only non-session repositories use this client.
+	persistenceClient := k8sSessionManager.GetClient()
+	var applicationKVStore kvstore.Store
+	if cfg.KVStore.Backend == "libsql" {
+		if strings.TrimSpace(cfg.KVStore.DatabaseURL) == "" {
+			log.Fatal("kv_store.database_url is required for libSQL")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		applicationKVStore, err = kvstore.NewLibSQLStore(ctx, cfg.KVStore.DatabaseURL, cfg.KVStore.AuthToken)
+		cancel()
+		if err != nil {
+			log.Fatalf("Failed to initialize libSQL KV store: %v", err)
+		}
+		persistenceClient = kvstore.NewKubernetesAdapter(persistenceClient, applicationKVStore)
+		log.Printf("[SERVER] Non-session persistence initialized with libSQL")
+	}
+
 	// Initialize cross-pod status synchronisation via Redis (optional).
 	// When Redis is not configured a no-op fallback is used transparently.
 	statusEventRepo := buildStatusEventRepository(cfg)
@@ -216,7 +239,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Initialize settings repository
 	settingsRepo = repositories.NewKubernetesSettingsRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 		encryptionRegistry,
 	)
@@ -226,20 +249,20 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Initialize credentials repository
 	credentialsRepo := portrepos.CredentialsRepository(repositories.NewKubernetesCredentialsRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	))
 	log.Printf("[SERVER] Credentials repository initialized")
 	// Initialize share repository
 	shareRepo = repositories.NewKubernetesShareRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	)
 	log.Printf("[SERVER] Share repository initialized")
 
 	// Initialize team config repository
 	teamConfigRepo := repositories.NewKubernetesTeamConfigRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	)
 	// Set team config repository in session manager for service account integration
@@ -248,7 +271,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Initialize personal API key repository
 	personalAPIKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	)
 	// Set personal API key repository in session manager
@@ -258,7 +281,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Initialize the named API token repository (multi-token CRUD). It is
 	// backed by one Kubernetes Secret per token.
 	apiTokenRepo := repositories.NewKubernetesAPITokenRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	)
 	log.Printf("[SERVER] API token repository initialized")
@@ -285,7 +308,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		log.Printf("[SERVER] Memory repository initialized (backend: external, url: %s)", cfg.Memory.External.URL)
 	default:
 		memoryRepo = repositories.NewKubernetesMemoryRepository(
-			k8sSessionManager.GetClient(),
+			persistenceClient,
 			k8sSessionManager.GetNamespace(),
 		)
 		log.Printf("[SERVER] Memory repository initialized (backend: kubernetes)")
@@ -293,7 +316,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Initialize sandbox policy repository (Kubernetes ConfigMap-backed)
 	sandboxPolicyRepo := portrepos.SandboxPolicyRepository(repositories.NewKubernetesSandboxPolicyRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	))
 	k8sSessionManager.SetSandboxPolicyRepository(sandboxPolicyRepo)
@@ -301,42 +324,42 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Initialize sandbox domain repository (Kubernetes ConfigMap-backed)
 	sandboxDomainRepo := repositories.NewKubernetesSandboxDomainRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	)
 	log.Printf("[SERVER] Sandbox domain repository initialized")
 
 	// Initialize task repository (Kubernetes ConfigMap-backed)
 	taskRepo := repositories.NewKubernetesTaskRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	)
 	log.Printf("[SERVER] Task repository initialized")
 
 	// Initialize task group repository (Kubernetes ConfigMap-backed)
 	taskGroupRepo := repositories.NewKubernetesTaskGroupRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	)
 	log.Printf("[SERVER] Task group repository initialized")
 
 	// Initialize session route repository (Kubernetes Secret-backed)
 	sessionRouteRepo := repositories.NewKubernetesSessionRouteRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	)
 	log.Printf("[SERVER] Session route repository initialized")
 
 	// Initialize user file repository (Kubernetes Secret-backed)
 	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	))
 	log.Printf("[SERVER] User file repository initialized")
 
 	// Initialize session profile repository (Kubernetes Secret-backed)
 	sessionProfileRepo := portrepos.SessionProfileRepository(repositories.NewKubernetesSessionProfileRepository(
-		k8sSessionManager.GetClient(),
+		persistenceClient,
 		k8sSessionManager.GetNamespace(),
 	))
 	log.Printf("[SERVER] Session profile repository initialized")
@@ -362,6 +385,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		logger:             lgr,
 		container:          container,
 		sessionManager:     sessionManager,
+		persistenceClient:  persistenceClient,
+		kvStore:            applicationKVStore,
 		settingsRepo:       settingsRepo,
 		credentialsRepo:    credentialsRepo,
 		shareRepo:          shareRepo,
@@ -395,7 +420,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 		// Inject ConfigMap-backed team mapping cache (1 user = 1 key in the ConfigMap)
 		teamMappingRepo := repositories.NewKubernetesUserTeamMappingRepository(
-			k8sSessionManager.GetClient(),
+			persistenceClient,
 			k8sSessionManager.GetNamespace(),
 		)
 		githubAuthProvider.SetTeamMappingRepo(teamMappingRepo)
@@ -421,9 +446,9 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		s.oauthProvider = auth.NewGitHubOAuthProvider(cfg.Auth.GitHub.OAuth, githubAuthProvider)
 		// Inject ConfigMap-backed state store for multi-pod deployments.
 		// Falls back to the default in-memory store when Kubernetes is unavailable.
-		if k8sSessionManager.GetClient() != nil {
+		if persistenceClient != nil {
 			oauthStateRepo := repositories.NewKubernetesOAuthStateRepository(
-				k8sSessionManager.GetClient(),
+				persistenceClient,
 				k8sSessionManager.GetNamespace(),
 			)
 			s.oauthProvider.SetStateStore(oauthStateRepo)
@@ -448,7 +473,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		// Set up subscription secret syncer if Kubernetes mode is enabled
 		if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok {
 			syncer := services.NewKubernetesSubscriptionSecretSyncer(
-				k8sManager.GetClient(),
+				persistenceClient,
 				k8sManager.GetNamespace(),
 				notificationSvc.GetStorage(),
 				"", // Use default prefix
@@ -722,6 +747,12 @@ func (s *Server) AddCustomHandler(handler CustomHandler) {
 // GetSessionManager returns the session manager
 func (s *Server) GetSessionManager() portrepos.SessionManager {
 	return s.sessionManager
+}
+
+// GetPersistenceClient returns the Secret/ConfigMap client used by all
+// application repositories outside KubernetesSessionManager.
+func (s *Server) GetPersistenceClient() kubernetes.Interface {
+	return s.persistenceClient
 }
 
 // SetSessionManager allows configuration of a custom session manager (for testing)
@@ -1322,7 +1353,11 @@ func buildIntegrationPrompt(memTagFlags, memKeyFlags, scope, draftMemoryID strin
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (s *Server) Shutdown(timeout time.Duration) error {
-	return s.sessionManager.Shutdown(timeout)
+	managerErr := s.sessionManager.Shutdown(timeout)
+	if s.kvStore != nil {
+		return errors.Join(managerErr, s.kvStore.Close())
+	}
+	return managerErr
 }
 
 // GetEcho returns the Echo instance for external access

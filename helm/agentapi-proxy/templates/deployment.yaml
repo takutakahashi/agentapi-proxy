@@ -66,6 +66,12 @@ spec:
           env:
             - name: HOME
               value: "/home/agentapi"
+            - name: AGENTAPI_KV_STORE_BACKEND
+              value: {{ dig "kvStore" "backend" "kubernetes" .Values.config | quote }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              value: {{ dig "kvStore" "databaseUrl" "" .Values.config | quote }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              value: {{ dig "kvStore" "authToken" "" .Values.config | quote }}
             # Application configuration via environment variables (AGENTAPI_ prefix)
             - name: AGENTAPI_AUTH_STATIC_ENABLED
               value: {{ .Values.config.auth.static.enabled | quote }}

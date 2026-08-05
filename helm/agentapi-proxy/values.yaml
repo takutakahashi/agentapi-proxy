@@ -319,6 +319,12 @@ config:
   # ホスト名設定 (例: agentapi.example.com)
   hostname: ""
 
+  # Application KV persistence. "kubernetes" preserves the default behavior.
+  kvStore:
+    backend: kubernetes
+    databaseUrl: ""
+    authToken: ""
+
   # 認証設定
   auth:
     static:
@@ -864,3 +870,9 @@ externalRedis:
   dialTimeout: "5s"
   readTimeout: "3s"
   writeTimeout: "3s"
+
+# Ephemeral libSQL Server for development trials only.
+libsqlTrial:
+  enabled: false
+  image: ghcr.io/tursodatabase/libsql-server:3ec6803
+  storageSize: 1Gi

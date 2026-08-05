@@ -2,6 +2,13 @@
 # This file demonstrates all available configuration options
 # Values can be overridden by environment variables with AGENTAPI_ prefix
 
+# Persistence for application KV data represented as Secrets and ConfigMaps.
+# Inject auth_token with AGENTAPI_KV_STORE_AUTH_TOKEN in production.
+kv_store:
+  backend: kubernetes
+  database_url: ""
+  auth_token: ""
+
 # Authentication configuration
 auth:
   enabled: false

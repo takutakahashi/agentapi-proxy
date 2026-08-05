@@ -234,24 +234,11 @@ func runProxy(cmd *cobra.Command, args []string) {
 func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
 
-	// Create Kubernetes client
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		log.Printf("[SCHEDULE_HANDLERS] Kubernetes config not available, skipping schedule handlers: %v", err)
-		return
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[SCHEDULE_HANDLERS] Failed to create Kubernetes client, skipping schedule handlers: %v", err)
-		return
-	}
-
 	// Determine namespace
 	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create schedule manager
-	scheduleManager := schedule.NewKubernetesManager(client, namespace)
+	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)
 
 	// Run migration from legacy single-Secret format to individual Secrets
 	if err := scheduleManager.MigrateFromLegacy(context.Background()); err != nil {
@@ -287,7 +274,7 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create schedule manager
-	scheduleManager := schedule.NewKubernetesManager(client, namespace)
+	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)
 
 	// Parse worker config durations
 	checkInterval, err := time.ParseDuration(configData.ScheduleWorker.CheckInterval)
@@ -547,24 +534,11 @@ func buildStockInventoryPools(workerConfig config.StockInventoryWorkerConfig, de
 func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[WEBHOOK_HANDLERS] Registering webhook handlers...")
 
-	// Create Kubernetes client
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		log.Printf("[WEBHOOK_HANDLERS] Kubernetes config not available, skipping webhook handlers: %v", err)
-		return
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[WEBHOOK_HANDLERS] Failed to create Kubernetes client, skipping webhook handlers: %v", err)
-		return
-	}
-
 	// Determine namespace
 	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create webhook repository (clean architecture)
-	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
+	webhookRepo := repositories.NewKubernetesWebhookRepository(proxyServer.GetPersistenceClient(), namespace)
 
 	// Set default GitHub Enterprise host if configured
 	if configData.Webhook.GitHubEnterpriseHost != "" {
@@ -688,27 +662,14 @@ func buildSessionAllocationNotifier(configData *config.Config) sessionallocation
 func registerImportExportHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[IMPORT_EXPORT_HANDLERS] Registering import/export handlers...")
 
-	// Create Kubernetes client
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		log.Printf("[IMPORT_EXPORT_HANDLERS] Kubernetes config not available, skipping import/export handlers: %v", err)
-		return
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[IMPORT_EXPORT_HANDLERS] Failed to create Kubernetes client, skipping import/export handlers: %v", err)
-		return
-	}
-
 	// Determine namespace
 	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create schedule manager
-	scheduleManager := schedule.NewKubernetesManager(client, namespace)
+	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)
 
 	// Create webhook repository
-	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
+	webhookRepo := repositories.NewKubernetesWebhookRepository(proxyServer.GetPersistenceClient(), namespace)
 
 	// Set default GitHub Enterprise host if configured
 	if configData.Webhook.GitHubEnterpriseHost != "" {
@@ -738,24 +699,11 @@ func registerImportExportHandlers(configData *config.Config, proxyServer *app.Se
 func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[SLACKBOT_HANDLERS] Registering slackbot handlers...")
 
-	// Create Kubernetes client
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		log.Printf("[SLACKBOT_HANDLERS] Kubernetes config not available, skipping slackbot handlers: %v", err)
-		return
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[SLACKBOT_HANDLERS] Failed to create Kubernetes client, skipping slackbot handlers: %v", err)
-		return
-	}
-
 	// Determine namespace
 	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create SlackBot repository
-	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
+	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace)
 
 	// Create and register SlackBot management handlers (no event reception - handled by Socket Mode)
 	slackbotHandlers := slackbot.NewHandlers(slackbotRepo)
@@ -785,8 +733,8 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create dependencies
-	slackbotRepo := repositories.NewKubernetesSlackBotRepository(client, namespace)
-	channelResolver := slackbot.NewSlackChannelResolver(client, namespace)
+	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace)
+	channelResolver := slackbot.NewSlackChannelResolver(proxyServer.GetPersistenceClient(), namespace)
 
 	eventHandler := slackbot.NewSlackBotEventHandler(
 		slackbotRepo,
@@ -913,15 +861,15 @@ func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Serv
 
 	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
-	scheduleManager := schedule.NewKubernetesManager(client, namespace)
-	webhookRepo := repositories.NewKubernetesWebhookRepository(client, namespace)
+	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)
+	webhookRepo := repositories.NewKubernetesWebhookRepository(proxyServer.GetPersistenceClient(), namespace)
 	settingsRepo := proxyServer.GetSettingsRepository()
 	memoryRepo := proxyServer.GetMemoryRepository()
 	taskRepo := proxyServer.GetTaskRepository()
 	taskGroupRepo := proxyServer.GetTaskGroupRepository()
 
-	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(client, namespace))
-	slackbotRepo := portrepos.SlackBotRepository(repositories.NewKubernetesSlackBotRepository(client, namespace))
+	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(proxyServer.GetPersistenceClient(), namespace))
+	slackbotRepo := portrepos.SlackBotRepository(repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace))
 
 	syncHandlers := githubsync.NewHandlers(
 		settingsRepo,

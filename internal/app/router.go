@@ -68,7 +68,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 		apiKeyRepo = repositories.NewKubernetesPersonalAPIKeyRepository(
-			k8sManager.GetClient(),
+			server.GetPersistenceClient(),
 			k8sManager.GetNamespace(),
 		)
 	}
@@ -76,7 +76,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var googleOAuthController *controllers.GoogleOAuthController
 	if cfg := server.GetConfig(); cfg != nil {
 		if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
-			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, k8sManager.GetClient(), k8sManager.GetNamespace())
+			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, server.GetPersistenceClient(), k8sManager.GetNamespace())
 		} else {
 			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, nil, "")
 		}
@@ -188,7 +188,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		resource_transfer.WithSandboxPolicyRepository(server.sandboxPolicyRepo),
 	}
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
-		client := k8sManager.GetClient()
+		client := server.GetPersistenceClient()
 		namespace := k8sManager.GetNamespace()
 		resourceTransferOptions = append(resourceTransferOptions,
 			resource_transfer.WithWebhookRepository(repositories.NewKubernetesWebhookRepository(client, namespace)),
